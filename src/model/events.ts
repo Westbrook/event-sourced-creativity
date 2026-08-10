@@ -43,6 +43,14 @@ export type CreativeCollection = {
   sourceClaimRef: string | null;
 };
 
+export type CreativeDocument = {
+  id: string;
+  title: string;
+  handle: string;
+  createdSequence: number;
+  sourceEvents: string[];
+};
+
 export type CreativeOutput = {
   id: string;
   documentId: string;
@@ -65,6 +73,7 @@ export type CreativeProjection = {
   projectState: string;
   documentId: string;
   documentTitle: string;
+  documents: CreativeDocument[];
   blocks: CreativeBlock[];
   libraryBlocks: CreativeBlock[];
   collections: CreativeCollection[];
@@ -95,6 +104,7 @@ const itemId = (value: unknown) => {
 
 export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFINITY): CreativeProjection {
   const blocks = new Map<string, CreativeBlock>();
+  const documents = new Map<string, CreativeDocument>();
   const collections = new Map<string, CreativeCollection>();
   const membership: Record<string, { collectionId: string; position: string }> = {};
   const outputs = new Map<string, CreativeOutput>();
@@ -108,7 +118,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
     projectState: "active",
     documentId: "",
     documentTitle: "Untitled document",
-    blocks: [], libraryBlocks: [], collections: [], membership, outputs: [], libraryOutputs: [],
+    documents: [], blocks: [], libraryBlocks: [], collections: [], membership, outputs: [], libraryOutputs: [],
     latestCompile: null, brief: null, presentedBriefItems: new Set(),
     annotations: [], families: [], preferences: [], conditions: [], lastSession: null, currentSessionId: null, sessionOpen: false,
   };
@@ -120,9 +130,20 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ProjectCreated": state.projectId = String(p.project_id ?? ""); state.projectName = String(p.name ?? state.projectName); break;
       case "ProjectRenamed": state.projectName = String(p.new_name ?? state.projectName); break;
       case "ProjectStateChanged": state.projectState = String(p.state ?? state.projectState); break;
-      case "DocumentCreated": state.documentId = String(p.document_id ?? ""); state.documentTitle = String(p.title ?? state.documentTitle); state.latestCompile = null; break;
-      case "DocumentRenamed": if (String(p.document_id ?? state.documentId) === state.documentId) state.documentTitle = String(p.new_title ?? state.documentTitle); break;
-      case "DocumentForked": state.documentId = String(p.document_id ?? state.documentId); state.documentTitle = String(p.title ?? "Imported document fork"); state.latestCompile = null; break;
+      case "DocumentCreated": {
+        const id=String(p.document_id??"");const title=String(p.title??state.documentTitle);state.documentId=id;state.documentTitle=title;state.latestCompile=null;
+        documents.set(id,{id,title,handle:String(p.handle??`document-${id.slice(0,8)}`),createdSequence:event.sequence,sourceEvents:[event.eventId]});break;
+      }
+      case "DocumentRenamed": {
+        const id=String(p.document_id??state.documentId);const document=documents.get(id);if(document){document.title=String(p.new_title??document.title);document.sourceEvents.push(event.eventId);}if(id===state.documentId)state.documentTitle=String(p.new_title??state.documentTitle);break;
+      }
+      case "DocumentForked": {
+        const id=String(p.document_id??state.documentId);const title=String(p.title??"Imported document fork");state.documentId=id;state.documentTitle=title;state.latestCompile=null;
+        documents.set(id,{id,title,handle:String(p.handle??`fork-${id.slice(0,8)}`),createdSequence:event.sequence,sourceEvents:[event.eventId]});break;
+      }
+      case "DocumentOpened": {
+        const document=documents.get(String(p.document_id??""));if(document){state.documentId=document.id;state.documentTitle=document.title;state.latestCompile=null;document.sourceEvents.push(event.eventId);}break;
+      }
       case "BlockCreated": {
         const id = String(p.block_id);
         blocks.set(id, { id, documentId: String(p.document_id ?? state.documentId), type: String(p.type ?? "text"), handle: String(p.handle ?? id), position: String(p.position ?? "a0"), removed: false, locked: false, properties: { ...asRecord(p.properties) }, sourceEvents: [event.eventId] });
@@ -203,6 +224,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
     }
   }
   state.libraryBlocks = [...blocks.values()].filter((b) => !b.removed).sort((a, b) => a.position.localeCompare(b.position));
+  state.documents = [...documents.values()].sort((a,b)=>b.createdSequence-a.createdSequence);
   state.blocks = state.libraryBlocks.filter((block) => block.documentId === state.documentId);
   state.collections = [...collections.values()].filter((c) => !c.removed).sort((a, b) => a.position.localeCompare(b.position) || a.handle.localeCompare(b.handle));
   state.libraryOutputs = [...outputs.values()].filter((o) => !o.discarded).sort((a, b) => b.sequence - a.sequence);

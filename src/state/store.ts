@@ -22,11 +22,11 @@ export class FormaStore {
   readonly asOf = new Signal.State(Number.POSITIVE_INFINITY);
   readonly replayEvents = new Signal.State<CreativeEvent[]>([]);
   readonly replayAsOf = new Signal.State(0);
-  readonly route = new Signal.State(location.pathname);
+  readonly route = new Signal.State(`${location.pathname}${location.search}${location.hash}`);
   readonly session = new Signal.State<PilotSession | null>(null);
   readonly content = new Signal.State<Record<string, string>>({});
   readonly shares = new Signal.State<ShareRecord[]>([]);
-  readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, instrumentation: true, selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", search: "", toast: "" });
+  readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, instrumentation: true, selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", libraryView: "all", libraryOutputScope: "recent", search: "", toast: "" });
   readonly projection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.events.get(), this.asOf.get()));
   readonly replayProjection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.replayEvents.get(), this.replayAsOf.get()));
   #listeners = new Set<Listener>();
@@ -37,7 +37,7 @@ export class FormaStore {
   notify() { this.#listeners.forEach((listener) => listener()); }
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   toast(message: string) { this.ui.toast = message; this.notify(); window.setTimeout(() => { if (this.ui.toast === message) { this.ui.toast = ""; this.notify(); } }, 2800); }
-  setRoute(path: string) { if (location.pathname !== path) history.pushState({}, "", path); this.route.set(path); this.notify(); }
+  setRoute(path: string) { const current=`${location.pathname}${location.search}${location.hash}`;if(current!==path)history.pushState({}, "", path); this.route.set(path); this.notify(); }
 
   async load() {
     this.loading.set(true); this.notify();
@@ -78,7 +78,7 @@ export class FormaStore {
       if (!response.ok) throw new Error(body.error ?? "Append rejected");
       const appended = body.appended ?? [];
       this.events.set([...this.events.get(), ...appended]); this.head.set(body.head ?? this.head.get());
-      if (options.remember !== false) { this.#undo.push(...appended.filter((e) => e.actor === "user")); this.#redo = []; }
+      if (options.remember !== false) { this.#undo.push(...appended.filter((e) => e.actor === "user" && !e.compensatesEventId && inverseEvent(e))); this.#redo = []; }
       if (body.rejected?.length) this.toast(`${body.rejected.length} event${body.rejected.length === 1 ? "" : "s"} rejected; valid events still appended.`);
       return appended;
     } catch (error) { this.toast(error instanceof Error ? error.message : "Append failed"); return []; }
@@ -116,6 +116,12 @@ export class FormaStore {
       await this.refreshSession(); this.toast(`Generated with ${this.session.get()?.provider.model ?? "OpenAI"}; provenance and usage recorded.`);
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
     finally { this.busy.set(""); this.notify(); }
+  }
+
+  async openDocument(documentId: string) {
+    const projection=this.projection.get();if(!documentId||documentId===projection.documentId){this.setRoute("/");return true;}
+    const appended=await this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:projection.documentId,source_surface:"library"}});
+    if(!appended.length)return false;this.patchUi({focusBlockId:"",focusCollectionId:"",selectedOutputId:"",compareOpen:false});this.setRoute("/");this.toast("Document opened in Studio.");return true;
   }
 
   async evaluateExtractors() {
@@ -247,9 +253,19 @@ export class FormaStore {
     if (!response.ok) return this.toast(body.error ?? "Share link could not be revoked"); await this.loadShares(); this.toast("Share link revoked immediately.");
   }
 
+  canUndo() {
+    if(this.#undo.some((event)=>Boolean(inverseEvent(event))))return true;const compensated=new Set(this.events.get().map((event)=>event.compensatesEventId).filter(Boolean));
+    return this.events.get().some((event)=>event.actor==="user"&&!event.compensatesEventId&&!compensated.has(event.eventId)&&Boolean(inverseEvent(event)));
+  }
+  canRedo() { return this.#redo.length>0; }
+  #undoCandidate() {
+    while(this.#undo.length){const event=this.#undo.pop()!;if(inverseEvent(event))return event;}
+    const compensated=new Set(this.events.get().map((event)=>event.compensatesEventId).filter(Boolean));
+    return [...this.events.get()].reverse().find((event)=>event.actor==="user"&&!event.compensatesEventId&&!compensated.has(event.eventId)&&Boolean(inverseEvent(event)));
+  }
   async undo() {
-    const source = this.#undo.pop(); if (!source) return this.toast("Nothing to undo in this session.");
-    const inverse = inverseEvent(source); if (!inverse) return this.toast(`${source.type} has no safe compensation in this prototype.`);
+    const source = this.#undoCandidate(); if (!source) return this.toast("Nothing reversible remains in this document history.");
+    const inverse = inverseEvent(source)!;
     const appended = await this.append({ ...inverse, compensatesEventId: source.eventId }, { remember: false });
     if (appended.length) this.#redo.push(source);
   }
@@ -257,7 +273,7 @@ export class FormaStore {
   async redo() {
     const source = this.#redo.pop(); if (!source) return this.toast("Nothing to redo in this session.");
     const appended = await this.append({ type: source.type, payload: source.payload }, { remember: false });
-    if (appended.length) this.#undo.push(source);
+    const redone=appended.find((event)=>event.actor==="user"&&Boolean(inverseEvent(event)));if(redone)this.#undo.push(redone);
   }
 
   buildReplay(key: ScenarioKey, count: number) { const events = buildScenario(key, count); this.replayEvents.set(events); this.replayAsOf.set(0); this.notify(); }
@@ -268,6 +284,16 @@ function inverseEvent(event: CreativeEvent): EventInput | null {
   const p = event.payload;
   const pairs: Record<string, string> = { BlockLocked: "BlockUnlocked", BlockUnlocked: "BlockLocked", BlockRemoved: "BlockRestored", BlockRestored: "BlockRemoved", ObjectPinned: "ObjectUnpinned", ObjectUnpinned: "ObjectPinned", AddedToLibrary: "RemovedFromLibrary", RemovedFromLibrary: "AddedToLibrary" };
   if (pairs[event.type]) return { type: pairs[event.type], payload: p };
+  if (event.type === "BlockCreated") return { type: "BlockRemoved", payload: { block_id: p.block_id, reason: "undo-created-block" } };
+  if (event.type === "CollectionCreated") return { type: "CollectionRemoved", payload: { collection_id: p.collection_id, reason: "undo-created-collection" } };
+  if (event.type === "BlockRenamed") return { type: event.type, payload: { ...p, old_handle: p.new_handle, new_handle: p.old_handle } };
+  if (event.type === "CollectionRenamed") return { type: event.type, payload: { ...p, old_handle: p.new_handle, new_handle: p.old_handle } };
+  if (event.type === "ProjectRenamed") return { type: event.type, payload: { ...p, old_name: p.new_name, new_name: p.old_name } };
+  if (event.type === "ProjectStateChanged") return { type: event.type, payload: { ...p, state: p.previous_state, previous_state: p.state } };
+  if (event.type === "DocumentOpened") return { type: event.type, payload: { ...p, document_id: p.previous_document_id, previous_document_id: p.document_id } };
+  if (event.type === "CollectionItemAdded") return { type: "CollectionItemRemoved", payload: p };
+  if (event.type === "CollectionItemRemoved") return { type: "CollectionItemAdded", payload: p };
+  if (event.type === "CollectionItemMoved") return { type: event.type, payload: { ...p, from_collection_id: p.to_collection_id, to_collection_id: p.from_collection_id } };
   if (event.type === "BlockPropertyEdited") return { type: event.type, payload: { ...p, old_value: p.new_value, new_value: p.old_value } };
   if (event.type === "DocumentRenamed") return { type: event.type, payload: { ...p, old_title: p.new_title, new_title: p.old_title } };
   if (event.type === "BlockWeightSet") return { type: event.type, payload: { ...p, weight: p.previous_weight, previous_weight: p.weight } };

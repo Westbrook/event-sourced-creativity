@@ -21,7 +21,7 @@ export class FormaShell extends FormaElement {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); if (event.shiftKey) void this.store.redo(); else void this.store.undo(); }
     if (event.key === "Escape") this.store.patchUi({ commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false });
   };
-  #pop = () => { this.store.route.set(location.pathname); this.store.notify(); };
+  #pop = () => { this.store.route.set(`${location.pathname}${location.search}${location.hash}`); this.store.notify(); };
 
   override connectedCallback() {
     super.connectedCallback(); window.addEventListener("keydown", this.#keydown); window.addEventListener("popstate", this.#pop);
@@ -29,7 +29,7 @@ export class FormaShell extends FormaElement {
   }
   override disconnectedCallback() { window.removeEventListener("keydown", this.#keydown); window.removeEventListener("popstate", this.#pop); super.disconnectedCallback(); }
 
-  #route(path: string) { this.store.patchUi({ commandOpen: false, accountOpen: false }); this.store.setRoute(path); window.scrollTo({ top: 0 }); }
+  #route(path: string) { this.store.patchUi({ commandOpen: false, accountOpen: false }); this.store.setRoute(path); const hash=path.includes("#")?path.slice(path.indexOf("#")+1):"";if(hash)window.setTimeout(()=>{const target=document.getElementById(hash);target?.scrollIntoView({behavior:"smooth",block:"center"});target?.focus({preventScroll:true});},0);else window.scrollTo({ top: 0 }); }
   #page() {
     const path = this.store.route.get();
     if (path.startsWith("/admin/events")) return html`<forma-admin-events></forma-admin-events>`;
@@ -97,7 +97,7 @@ export class FormaShell extends FormaElement {
           ${!isAdmin ? html`<button class="button secondary compact" @click=${() => {void this.store.loadShares();this.store.patchUi({ shareOpen: true });}}>${icon("share")} Share</button>` : nothing}
           <button class="avatar" aria-label="Open account and privacy settings" aria-expanded=${this.store.ui.accountOpen} @click=${() => this.store.patchUi({ accountOpen: !this.store.ui.accountOpen })}>${session?.user.displayName?.slice(0,1).toUpperCase()??"·"}</button>
         </div>
-        ${this.store.ui.accountOpen ? html`<div class="account-popover"><span class="eyebrow">${session?.user.role??"authenticated"}</span><b>${session?.user.displayName??"Signed-in creative"}</b><p>${session?.user.email??"Identity loading"} · ${this.store.head.get()} events</p><div class="account-policy"><span>Terms</span><b>${session?.policy.accepted?"accepted":"required"}</b><span>Provider</span><b>${session?.provider.configured?session.provider.model:"key required"}</b><span>Retention</span><b>${session?.policy.retentionDays??30} days</b></div><label class="toggle-row"><input type="checkbox" .checked=${this.store.ui.instrumentation} @change=${(e: Event) => this.store.patchUi({ instrumentation: (e.target as HTMLInputElement).checked })}><span>Action instrumentation</span></label><small>No passive or dwell-time capture. This device preference only controls explicit engagement events.</small><button class="button ghost" @click=${() => this.#route("/system")}>Review governance</button></div>` : nothing}
+        ${this.store.ui.accountOpen ? html`<div class="account-popover"><span class="eyebrow">${session?.user.role??"authenticated"}</span><b>${session?.user.displayName??"Signed-in creative"}</b><p>${session?.user.email??"Identity loading"} · ${this.store.head.get()} events</p><div class="account-policy"><span>Terms</span><b>${session?.policy.accepted?"accepted":"required"}</b><span>Provider</span><b>${session?.provider.configured?session.provider.model:"key required"}</b><span>Retention</span><b>${session?.policy.retentionDays??30} days</b><span>Passive / dwell capture</span><b>locked off</b></div><label class="toggle-row"><input type="checkbox" .checked=${this.store.ui.instrumentation} @change=${(e: Event) => this.store.patchUi({ instrumentation: (e.target as HTMLInputElement).checked })}><span>Record explicit view actions</span></label><small>This device preference controls only receipts created by your clicks. Passive, dwell-time, microphone, and ambient capture have no toggle and no collection path.</small><button class="button ghost" @click=${() => this.#route("/system#governance")}>Review governance controls</button></div>` : nothing}
       </header>
       ${this.store.error.get() ? html`<div class="error-banner" role="alert"><b>Durable stream unavailable.</b> ${this.store.error.get()} <button @click=${() => this.store.load()}>Retry</button></div>` : nothing}
       <main id="main-content">${this.#page()}</main>
