@@ -51,3 +51,21 @@ test("packages a responsive SPA and Sites metadata", async () => {
   assert.match(css, /@media \(max-width: 760px\)/);
   assert.match(hosting, /appgprj_/);
 });
+
+test("enforces the adopted production-pilot boundaries", async () => {
+  const [policy, adapter, shares, media, shell, schema, envExample] = await Promise.all([
+    readFile(new URL("../worker/pilot-policy.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/openai-adapter.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/shares-api.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/media-api.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8"),
+    readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
+    readFile(new URL("../.env.example", import.meta.url), "utf8"),
+  ]);
+  assert.match(policy, /oai-authenticated-user-id/); assert.match(policy, /cf-access-authenticated-user-email/);
+  assert.match(policy, /pilot_terms_required/); assert.match(policy, /reserved_tokens/); assert.match(policy, /250_000/); assert.match(policy, /2_500_000/);
+  assert.match(adapter, /api\.openai\.com\/v1\/responses/); assert.match(adapter, /store: false/); assert.match(adapter, /safety_identifier/);
+  assert.match(shares, /expiresHours/); assert.match(shares, /ShareLinkRevoked/); assert.match(shares, /token_hash/);
+  assert.match(media, /rightsConfirmed/); assert.match(shell, /acceptTerms/); assert.match(shell, /forma-shared-view/);
+  assert.match(schema, /private_content/); assert.match(schema, /budget_counters/); assert.match(envExample, /OPENAI_API_KEY=/);
+});

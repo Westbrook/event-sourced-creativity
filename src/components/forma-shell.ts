@@ -5,6 +5,7 @@ import "./forma-library";
 import "./forma-sessions";
 import "./forma-system";
 import "./forma-admin-events";
+import "./forma-shared-view";
 
 const routes = [
   ["/", "Studio"], ["/library", "Library"], ["/sessions", "Sessions"], ["/system", "System"], ["/admin/events", "Event admin"],
@@ -12,6 +13,7 @@ const routes = [
 
 export class FormaShell extends FormaElement {
   #commandIndex = 0;
+  #shareHours = 24; #freshShareUrl = ""; #termsOwnership = false; #termsProvider = false;
   #keydown = (event: KeyboardEvent) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); this.store.patchUi({ commandOpen: !this.store.ui.commandOpen }); }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); if (event.shiftKey) void this.store.redo(); else void this.store.undo(); }
@@ -39,14 +41,20 @@ export class FormaShell extends FormaElement {
     return html`<dialog class="modal" open aria-labelledby="share-title">
       <div class="modal-card">
         <button class="icon-button modal-close" aria-label="Close share dialog" @click=${() => this.store.patchUi({ shareOpen: false })}>${icon("close")}</button>
-        <span class="eyebrow">Lossless handoff</span><h2 id="share-title">Export or share this work</h2>
-        <p>Downloads are operational now. Shared links remain disabled until a human selects personal, team, or community scope.</p>
+        <span class="eyebrow">Private handoff</span><h2 id="share-title">Export or share this work</h2>
+        <p>Create an expiring, revocable, read-only projection or download a lossless archive. New links are private by default.</p>
+        <div class="share-link-builder"><label>Link lifetime<select .value=${String(this.#shareHours)} @change=${(e:Event)=>{this.#shareHours=Number((e.target as HTMLSelectElement).value);}}><option value="1">1 hour</option><option value="24">24 hours</option><option value="72">3 days</option><option value="168">7 days</option></select></label><button class="button primary" @click=${async()=>{const share=await this.store.createShare(this.#shareHours);if(share?.token){this.#freshShareUrl=`${location.origin}/share/${share.token}`;await navigator.clipboard.writeText(this.#freshShareUrl);this.requestUpdate();}}}>${icon("share")} Create & copy link</button></div>
+        ${this.#freshShareUrl ? html`<div class="fresh-share"><b>Copied</b><input readonly .value=${this.#freshShareUrl}><small>The secret token is shown once. The durable event stores only the share ID and expiry.</small></div>` : nothing}
+        ${this.store.shares.get().length ? html`<div class="share-list"><h3>Recent links</h3>${this.store.shares.get().slice(0,4).map((share)=>html`<div><span><b>${share.active?"Active":"Closed"}</b><small>Expires ${new Date(share.expiresAt).toLocaleString()}</small></span>${share.active?html`<button @click=${()=>this.store.revokeShare(share.shareId)}>Revoke</button>`:nothing}</div>`)}</div>` : nothing}
         <div class="choice-grid">
           ${[["Recipe", "Blocks, weights, constraints, and compiler snapshot."], ["Output + receipts", "Selected output with source context and rights clearance."], ["Full graph", "Event stream, projections, provenance edges, and media manifest."]].map(([name, desc], i) => html`<button class="choice-card" @click=${() => { downloadJson(`forma-${name.toLowerCase().replaceAll(" ", "-")}.json`, i === 0 ? { blocks: p.blocks, compile: p.latestCompile } : i === 1 ? { output: p.outputs[0], compile: p.latestCompile, clearance: "owned" } : { events: this.store.events.get(), projection: { ...p, presentedBriefItems: [...p.presentedBriefItems] } }); this.store.append({ type: "ObjectExported", payload: { object_id: p.outputs[0]?.id ?? p.documentId, destination_class: "download", format: "application/json" } }); this.store.patchUi({ shareOpen: false }); } }><b>${name}</b><span>${desc}</span><small>${icon("download")} Download JSON</small></button>`) }
         </div>
-        <div class="gate-note"><span>${icon("lock")}</span><div><b>Shared links need a product decision</b><p>Scope changes identity, moderation, and infrastructure. The event schema seam is ready; publishing is intentionally not assumed.</p></div></div>
+        <div class="gate-note"><span>${icon("lock")}</span><div><b>Read-only by construction</b><p>Links carry no append authority, expire after at most seven days, and can be revoked immediately. Sites access controls still apply.</p></div></div>
       </div>
     </dialog>`;
+  }
+  #terms() {
+    return html`<dialog class="modal consent-modal" open aria-labelledby="consent-title"><div class="modal-card"><span class="eyebrow">Pilot governance · ${this.store.session.get()?.policy.version}</span><h2 id="consent-title">Set the rules before creating</h2><p>Forma keeps prompts and provider outputs private for ${this.store.session.get()?.policy.retentionDays ?? 30} days, performs no passive device capture, and records policy acceptance as an immutable event.</p><label class="consent-check"><input type="checkbox" .checked=${this.#termsOwnership} @change=${(e:Event)=>{this.#termsOwnership=(e.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>I control the work I submit</b><small>I own it or have permission to use it; external assets require a separate assertion at upload.</small></span></label><label class="consent-check"><input type="checkbox" .checked=${this.#termsProvider} @change=${(e:Event)=>{this.#termsProvider=(e.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>I approve private provider processing</b><small>Generation context may be sent to the configured OpenAI Responses API with server-side credentials.</small></span></label><button class="button primary consent-action" ?disabled=${!this.#termsOwnership||!this.#termsProvider||!!this.store.busy.get()} @click=${()=>this.store.acceptTerms()}>${this.store.busy.get()==="consent"?"Recording…":"Accept pilot terms"}</button></div></dialog>`;
   }
   #commands() {
     const q = this.store.ui.search.toLowerCase();
@@ -72,22 +80,25 @@ export class FormaShell extends FormaElement {
 
   override render() {
     const path = this.store.route.get(); const isAdmin = path.startsWith("/admin");
+    if(path.startsWith("/share/"))return html`<forma-shared-view .token=${decodeURIComponent(path.slice("/share/".length))}></forma-shared-view>`;
+    const session=this.store.session.get();const visibleRoutes=routes.filter(([href])=>href!=="/admin/events"||session?.user.role==="admin");
     return html`<div class="app-shell ${isAdmin ? "admin-shell" : ""}">
       <header class="topbar">
         <button class="brand" @click=${() => this.#route("/")} aria-label="Open Forma studio"><span class="brand-mark">F</span><span>Forma</span></button>
-        <nav class="global-nav" aria-label="Primary">${routes.map(([href, label]) => html`<a href=${href} class=${path === href || (href !== "/" && path.startsWith(href)) ? "active" : ""} @click=${(e: MouseEvent) => { e.preventDefault(); this.#route(href); }}>${label}</a>`)}</nav>
+        <nav class="global-nav" aria-label="Primary">${visibleRoutes.map(([href, label]) => html`<a href=${href} class=${path === href || (href !== "/" && path.startsWith(href)) ? "active" : ""} @click=${(e: MouseEvent) => { e.preventDefault(); this.#route(href); }}>${label}</a>`)}</nav>
         <div class="top-actions">
           <button class="command-trigger" @click=${() => this.store.patchUi({ commandOpen: true })}><span>${icon("search")}</span><span class="command-label">Search or command</span><kbd>⌘ K</kbd></button>
-          ${!isAdmin ? html`<button class="button secondary compact" @click=${() => this.store.patchUi({ shareOpen: true })}>${icon("share")} Share</button>` : nothing}
-          <button class="avatar" aria-label="Open account and privacy settings" aria-expanded=${this.store.ui.accountOpen} @click=${() => this.store.patchUi({ accountOpen: !this.store.ui.accountOpen })}>W</button>
+          ${!isAdmin ? html`<button class="button secondary compact" @click=${() => {void this.store.loadShares();this.store.patchUi({ shareOpen: true });}}>${icon("share")} Share</button>` : nothing}
+          <button class="avatar" aria-label="Open account and privacy settings" aria-expanded=${this.store.ui.accountOpen} @click=${() => this.store.patchUi({ accountOpen: !this.store.ui.accountOpen })}>${session?.user.displayName?.slice(0,1).toUpperCase()??"·"}</button>
         </div>
-        ${this.store.ui.accountOpen ? html`<div class="account-popover"><span class="eyebrow">Local creative</span><b>Westbrook</b><p>Authenticated stream · ${this.store.head.get()} events</p><label class="toggle-row"><input type="checkbox" .checked=${this.store.ui.instrumentation} @change=${(e: Event) => this.store.patchUi({ instrumentation: (e.target as HTMLInputElement).checked })}><span>Action instrumentation</span></label><small>Device-session preference. Dwell-time tracking is not collected; witnessed product data stays in the durable event log.</small><button class="button ghost" @click=${() => this.#route("/system")}>Review governance</button></div>` : nothing}
+        ${this.store.ui.accountOpen ? html`<div class="account-popover"><span class="eyebrow">${session?.user.role??"authenticated"}</span><b>${session?.user.displayName??"Signed-in creative"}</b><p>${session?.user.email??"Identity loading"} · ${this.store.head.get()} events</p><div class="account-policy"><span>Terms</span><b>${session?.policy.accepted?"accepted":"required"}</b><span>Provider</span><b>${session?.provider.configured?session.provider.model:"key required"}</b><span>Retention</span><b>${session?.policy.retentionDays??30} days</b></div><label class="toggle-row"><input type="checkbox" .checked=${this.store.ui.instrumentation} @change=${(e: Event) => this.store.patchUi({ instrumentation: (e.target as HTMLInputElement).checked })}><span>Action instrumentation</span></label><small>No passive or dwell-time capture. This device preference only controls explicit engagement events.</small><button class="button ghost" @click=${() => this.#route("/system")}>Review governance</button></div>` : nothing}
       </header>
       ${this.store.error.get() ? html`<div class="error-banner" role="alert"><b>Durable stream unavailable.</b> ${this.store.error.get()} <button @click=${() => this.store.load()}>Retry</button></div>` : nothing}
       <main id="main-content">${this.#page()}</main>
       ${this.store.ui.toast ? html`<div class="toast" role="status">${icon("check")} ${this.store.ui.toast}</div>` : nothing}
       ${this.store.ui.commandOpen ? this.#commands() : nothing}
       ${this.store.ui.shareOpen ? this.#share() : nothing}
+      ${session&&!session.policy.accepted?this.#terms():nothing}
       <span class="sr-only" aria-live="polite">${this.store.busy.get() ? `Working: ${this.store.busy.get()}` : "Ready"}</span>
     </div>`;
   }

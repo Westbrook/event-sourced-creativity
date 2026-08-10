@@ -15,6 +15,13 @@
       "when": 1786383935009,
       "tag": "0001_slimy_dragon_lord",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786385722784,
+      "tag": "0002_cooing_paladin",
+      "breakpoints": true
     }
   ]
 }

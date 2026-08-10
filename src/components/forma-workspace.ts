@@ -15,15 +15,17 @@ export class FormaWorkspace extends FormaElement {
   }
   async #upload(event: Event) {
     const input = event.target as HTMLInputElement; const file = input.files?.[0]; if (!file) return;
+    if (!window.confirm(`Confirm that you own or are licensed to use “${file.name}” with Forma and its configured generation provider.`)) { input.value = ""; this.store.toast("Upload cancelled — no rights assertion was recorded."); return; }
     this.#uploading = true; this.requestUpdate();
     try {
-      const form = new FormData(); form.append("file", file); const response = await fetch("/api/media", { method: "POST", body: form }); const media = await response.json() as { key?: string; url?: string; error?: string };
+      const form = new FormData(); form.append("file", file); form.append("rightsConfirmed", "true"); const response = await fetch("/api/media", { method: "POST", body: form }); const media = await response.json() as { key?: string; url?: string; error?: string };
       if (!response.ok) throw new Error(media.error ?? "Upload failed");
       const ref = crypto.randomUUID(); const block = crypto.randomUUID();
       await this.store.appendBatch([
-        { type: "ReferenceIngested", payload: { reference_id: ref, source_type: "upload", source_ref: media.url, content_hash: media.key, rights_class: "unknown" } },
+        { type: "ReferenceIngested", payload: { reference_id: ref, source_type: "upload", source_ref: media.url, content_hash: media.key, rights_class: "asserted" } },
+        { type: "RightsAsserted", payload: { reference_id: ref, rights_class: "owned_or_licensed", assertion_method: "explicit-upload-confirmation" } },
         { type: "BlockCreated", payload: { block_id: block, type: "reference", handle: `reference/${file.name.replace(/\W+/g,"-").toLowerCase()}`, position: `z${this.store.head.get()}`, properties: { reference_id: ref, label: file.name, media_url: media.url, weight: .72, authority: "authored" } } },
-      ]); this.store.toast("Reference stored in R2 and appended to the document.");
+      ]); this.store.toast("Reference stored privately; the explicit rights assertion is in the event stream.");
     } catch (error) { this.store.toast(error instanceof Error ? error.message : "Upload failed"); }
     this.#uploading = false; this.requestUpdate(); input.value = "";
   }
@@ -77,17 +79,17 @@ export class FormaWorkspace extends FormaElement {
             <button class="add-block" @click=${this.#addBlock}>${icon("plus")} Add context block</button>
             <div class="compile-bridge"><span>${icon("branch")}</span><div><b>Deterministic context compiler</b><small>${p.latestCompile ? "Snapshot embedded at last generation" : "Ready to compile"} · citations intact</small></div><button @click=${() => this.store.patchUi({ inspectorOpen:true })}>Inspect</button></div>
           </section>
-          <section class="output-column" aria-labelledby="output-title"><div class="section-heading"><div><span class="eyebrow">Adapter-neutral simulation</span><h2 id="output-title">Output</h2></div><button class="text-button" @click=${this.#compare}>Compare history</button></div>
+          <section class="output-column" aria-labelledby="output-title"><div class="section-heading"><div><span class="eyebrow">${this.store.session.get()?.provider.configured ? `Live · ${this.store.session.get()?.provider.model}` : "Provider awaiting secure key"}</span><h2 id="output-title">Output</h2></div><button class="text-button" @click=${this.#compare}>Compare history</button></div>
             ${output ? html`<forma-output-card .output=${output} .primary=${true}></forma-output-card>` : html`<div class="empty-output"><span>${icon("image")}</span><h3>Context is ready</h3><p>Generate a replayable simulation from the current projection.</p></div>`}
             ${p.outputs.length > 1 ? html`<div class="output-filmstrip" aria-label="Previous outputs">${p.outputs.slice(1,5).map((o) => html`<button class="mini-output variant-${o.variant % 4} ${this.store.ui.selectedOutputId===o.id?"selected":""}" aria-label="Select ${o.id}" aria-pressed=${this.store.ui.selectedOutputId===o.id} @click=${() => { this.store.patchUi({ selectedOutputId:o.id }); if (this.store.ui.instrumentation) void this.store.hot({type:"ObjectViewed",payload:{object_id:o.id}}); }}></button>`)}</div>` : nothing}
-            <label class="dropzone"><input type="file" accept="image/*" @change=${this.#upload}><span>${icon("plus")}</span><b>${this.#uploading ? "Uploading…" : "Drop or choose a reference"}</b><small>Stored in R2; rights stay unknown until asserted</small></label>
+            <label class="dropzone"><input type="file" accept="image/*" @change=${this.#upload}><span>${icon("plus")}</span><b>${this.#uploading ? "Uploading…" : "Drop or choose a reference"}</b><small>Stored in R2 after an explicit ownership or license assertion</small></label>
           </section>
         </div>
       </div>
       ${this.store.ui.inspectorOpen ? this.#inspector() : nothing}
       <div class="composer-dock">
         ${this.#proposal ? html`<div class="proposal-preview"><div><span class="eyebrow">Proposed events · inert until accepted</span><b>${this.#proposal.events.map((e) => shortEventType(e.type)).join(" + ")}</b><small>Expected sequence ${this.store.head.get()} · previewed with context diff</small></div><button class="button ghost" @click=${this.#rejectProposal}>Decline</button><button class="button primary" @click=${this.#acceptProposal}>Accept proposal</button></div>` : nothing}
-        <div class="composer"><label class="sr-only" for="creative-command">Describe a change or ask Forma</label><textarea id="creative-command" rows="1" placeholder="Describe a change — “make the palette warmer”…" .value=${this.#prompt} @input=${(e: InputEvent) => { this.#prompt = (e.target as HTMLTextAreaElement).value; }} @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void this.#ask(); } }}></textarea><label class="icon-button add-ref" title="Add reference"><input type="file" accept="image/*" @change=${this.#upload}>${icon("plus")}</label><button class="button secondary ask" @click=${this.#ask}>Ask Forma</button><button class="button primary generate" ?disabled=${!!this.store.busy.get()} @click=${() => this.store.generate()}>${icon("spark")} ${this.store.busy.get()==="generate" ? "Compiling…" : "Generate"}</button></div>
+        <div class="composer"><label class="sr-only" for="creative-command">Describe a change or ask Forma</label><textarea id="creative-command" rows="1" placeholder="Describe a change — “make the palette warmer”…" .value=${this.#prompt} @input=${(e: InputEvent) => { this.#prompt = (e.target as HTMLTextAreaElement).value; }} @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void this.#ask(); } }}></textarea><label class="icon-button add-ref" title="Add reference"><input type="file" accept="image/*" @change=${this.#upload}>${icon("plus")}</label><button class="button secondary ask" @click=${this.#ask}>Ask Forma</button><button class="button primary generate" ?disabled=${!!this.store.busy.get() || !this.store.session.get()?.provider.configured} title=${this.store.session.get()?.provider.configured ? "Generate with the live provider" : "Connect OPENAI_API_KEY to enable generation"} @click=${() => this.store.generate()}>${icon("spark")} ${this.store.busy.get()==="generate" ? "Generating…" : "Generate"}</button></div>
       </div>
       ${this.store.ui.compareOpen ? this.#comparison() : nothing}
     </section>`;

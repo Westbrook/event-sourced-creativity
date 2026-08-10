@@ -53,6 +53,8 @@ export type CreativeOutput = {
   saved: boolean;
   discarded: boolean;
   library: boolean;
+  contentRef: string | null;
+  provider: string;
 };
 
 export type CreativeProjection = {
@@ -139,7 +141,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ContextCompiled": state.latestCompile = p; break;
       case "GenerationCompleted": {
         const ids = Array.isArray(p.object_ids) ? p.object_ids : [];
-        ids.forEach((value) => { const id = String(value); outputs.set(id, { id, generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false }); });
+        ids.forEach((value) => { const id = String(value); outputs.set(id, { id, generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")) }); });
         break;
       }
       case "ObjectPinned": case "ObjectUnpinned": { const o = outputs.get(String(p.object_id)); if (o) o.pinned = event.type === "ObjectPinned"; break; }

@@ -4,6 +4,13 @@ import { foldEvents, type CreativeEvent, type CreativeProjection, type EventInpu
 import { buildScenario, type ScenarioKey } from "../model/scenarios";
 
 type Listener = () => void;
+export type PilotSession = {
+  user: { userId: string; email: string; displayName: string; role: "admin" | "creator" | "agent" | "viewer"; consentVersion: string | null; consentedAt: string | null };
+  policy: { version: string; accepted: boolean; passiveCapture: false; externalAssetsRequireAssertion: true; retentionDays: number; sharing: string };
+  provider: { name: string; model: string; configured: boolean };
+  budgets: { period: string; user: { used: number; reserved: number; limit: number }; workspace: { used: number; reserved: number; limit: number } };
+};
+export type ShareRecord = { shareId: string; token?: string; expiresAt: string; revokedAt?: string | null; createdAt?: string; active: boolean };
 
 export class FormaStore {
   readonly events = new Signal.State<CreativeEvent[]>([]);
@@ -15,6 +22,9 @@ export class FormaStore {
   readonly replayEvents = new Signal.State<CreativeEvent[]>([]);
   readonly replayAsOf = new Signal.State(0);
   readonly route = new Signal.State(location.pathname);
+  readonly session = new Signal.State<PilotSession | null>(null);
+  readonly content = new Signal.State<Record<string, string>>({});
+  readonly shares = new Signal.State<ShareRecord[]>([]);
   readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, instrumentation: true, selectedEventId: "", selectedOutputId: "", search: "", toast: "" });
   readonly projection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.events.get(), this.asOf.get()));
   readonly replayProjection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.replayEvents.get(), this.replayAsOf.get()));
@@ -31,12 +41,28 @@ export class FormaStore {
   async load() {
     this.loading.set(true); this.notify();
     try {
+      await this.refreshSession();
       const response = await fetch("/api/events");
       if (!response.ok) throw new Error(`Event stream returned ${response.status}`);
-      const body = await response.json() as { events: CreativeEvent[]; head: number };
-      this.events.set(body.events); this.head.set(body.head); this.error.set("");
+      const body = await response.json() as { events: CreativeEvent[]; content?: Record<string, string>; head: number };
+      this.events.set(body.events); this.content.set(body.content ?? {}); this.head.set(body.head); this.error.set("");
     } catch (error) { this.error.set(error instanceof Error ? error.message : "Unable to load event stream"); }
     finally { this.loading.set(false); this.notify(); }
+  }
+
+  async refreshSession() {
+    const response = await fetch("/api/session"); const body = await response.json() as PilotSession & { error?: string };
+    if (!response.ok) throw new Error(body.error ?? "Authentication required"); this.session.set(body); this.notify(); return body;
+  }
+
+  async acceptTerms() {
+    this.busy.set("consent"); this.notify();
+    try {
+      const response = await fetch("/api/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "accept_terms", ownershipConfirmed: true, providerProcessingConfirmed: true }) });
+      const body = await response.json() as PilotSession & { error?: string }; if (!response.ok) throw new Error(body.error ?? "Consent could not be recorded");
+      this.session.set(body); await this.load(); this.toast("Pilot terms accepted and witnessed in the event stream.");
+    } catch (error) { this.toast(error instanceof Error ? error.message : "Consent failed"); }
+    finally { this.busy.set(""); this.notify(); }
   }
 
   async append(event: EventInput, options: { expected?: number; remember?: boolean } = {}) {
@@ -82,11 +108,28 @@ export class FormaStore {
     const projection = this.projection.get(); this.busy.set("generate"); this.notify();
     try {
       const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "generate", expectedSequence: this.head.get(), snapshot: { facts: projection.blocks.map((b) => ({ handle: b.handle, properties: b.properties, authority: b.properties.authority ?? "authored", citations: b.sourceEvents })), pins: projection.outputs.filter((o) => o.pinned).map((o) => o.id), tail: [] }, sourceBlockVersions: projection.blocks.map((b) => ({ block_id: b.id, version: b.sourceEvents.length })) }) });
-      const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Generation failed");
-      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Adapter-neutral simulation completed. Provider activation is human-gated.");
+      const body = await response.json() as { appended?: CreativeEvent[]; content?: Record<string, string>; head?: number; error?: string };
+      if (body.appended?.length) { this.events.set([...this.events.get(), ...body.appended]); this.head.set(body.head ?? this.head.get()); }
+      if (body.content) this.content.set({ ...this.content.get(), ...body.content });
+      if (!response.ok) throw new Error(body.error === "provider_not_configured" ? "OpenAI is ready but its production key has not been connected." : body.error ?? "Generation failed");
+      await this.refreshSession(); this.toast(`Generated with ${this.session.get()?.provider.model ?? "OpenAI"}; provenance and usage recorded.`);
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
     finally { this.busy.set(""); this.notify(); }
+  }
+
+  async loadShares() {
+    const response = await fetch("/api/shares"); if (!response.ok) return; const body = await response.json() as { shares: ShareRecord[] }; this.shares.set(body.shares); this.notify();
+  }
+
+  async createShare(expiresHours: number) {
+    const response = await fetch("/api/shares", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ expiresHours }) }); const body = await response.json() as { share?: ShareRecord; error?: string };
+    if (!response.ok || !body.share) { this.toast(body.error ?? "Share link could not be created"); return null; }
+    await this.loadShares(); this.toast("Private read-only link created."); return body.share;
+  }
+
+  async revokeShare(shareId: string) {
+    const response = await fetch(`/api/shares/${encodeURIComponent(shareId)}`, { method: "DELETE" }); const body = await response.json() as { error?: string };
+    if (!response.ok) return this.toast(body.error ?? "Share link could not be revoked"); await this.loadShares(); this.toast("Share link revoked immediately.");
   }
 
   async undo() {

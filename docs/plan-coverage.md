@@ -1,21 +1,29 @@
 # Forma plan coverage
 
-This ledger reconciles Revision 2.1 of the synthesis/build plan with the kickoff addendum. “Operational” means the interaction appends to the durable D1 stream or derives from it. “Simulation” means the product contract and UI work without an external paid/model dependency. “Gated” means an addendum §2 human decision intentionally blocks activation.
+This ledger reconciles Revision 2.1 of the synthesis/build plan with the kickoff addendum and the adopted pilot baseline. “Operational” means the interaction is server-enforced, appends a durable fact, or derives from those facts. “Evaluation” means the product contract is active but still requires pilot evidence.
 
 | Slice | Status | Implemented evidence | Remaining gate |
 |---|---|---|---|
-| Phase 0 | Operational | Append-only decision ledger, event classification, collection shape, envelope fields, adapter registry events | Five human-required decisions remain recorded, not assumed |
+| Phase 0 | Operational | Append-only decision ledger, authenticated identities, admin/creator/agent/viewer roles, consent receipt, configurable policy | Production organization membership and wider access remain pilot operations |
 | Phase 1 | Operational | Immutable D1 log, actor permissions, partial batches, stale-sequence checks, authored-wins fold, compensation, collection validation, standalone stream viewer and replay lab | Production Postgres/Timescale topology is outside this Sites slice |
-| Phase 2 | Simulation | Deterministic context snapshots, citations, adapter versions, compute metadata, lossless download | Two model providers and spend ceiling |
+| Phase 2 | Operational | Deterministic context snapshots, citations, server-side OpenAI Responses adapter, structured output, token receipts, hard-cap reservation | A second provider remains future adapter work |
 | Phase 3 | Operational | Editable chips/swatches, confidence text, authority labels, compensation semantics, extractor events | Real extractor eval threshold requires selected extractor implementation |
 | Phase 4 | Operational | Provenance inspector, context diff, side-by-side comparison, rights receipt at export, region-promotion event seam | Attribution algorithm and influence-taint policy remain open |
-| Phase 5 | Operational | Chat proposal → preview → explicit accept/reject; externalized command content; expected sequence; same committed event vocabulary | Real chat model provider |
+| Phase 5 | Operational | Chat proposal → preview → explicit accept/reject; 30-day externalized private content; expected sequence; same committed event vocabulary | Pilot evaluation of proposal quality |
 | Phase 5.5 | Operational | Authored nested collection tree, handles, filing/moving, duplicate and cycle validation, family promotion | Multi-membership deliberately absent |
 | Phase 6 | Evaluation | Brief as small context document, impression events, accept/ignore/dismiss/blank, cold-start threshold, optional intent, conditions | Real usage must validate the go/no-go gate |
 | Phase 7 | Simulation | Inferred family surface, evidence summary, user-only promotion to collection, fixture corpus path | Embedding model and data-rights posture |
-| Phase 8 | Gated | Scout report-space scenario, evidence/judgment events, producer permissions, budget-exhaustion semantics | Phase 6 gate and human budget ceilings |
-| Phase 9 | Gated | Preference/time event folds, condition UI, authority/history semantics | Phase 6 gate, decay tuning, legal posture |
-| Phase 10 | Partial | Reusable-block library, output library, archive import/export, recipe/output/full-graph downloads | Shared links require personal/team/community scope |
+| Phase 8 | Gated | Scout report-space scenario, evidence/judgment events, producer permissions, hard budget ceilings | Autonomous execution remains outside the human-in-the-loop pilot |
+| Phase 9 | Evaluation | Preference/time folds, condition UI, authority/history semantics, 30-day private-content redaction | Pilot evidence must tune decay semantics |
+| Phase 10 | Operational | Reusable library, archive import/export, lossless downloads, expiring revocable read-only share projections | Broader team/community publication remains out of scope |
+
+## Adopted pilot controls
+
+- Identity uses authenticated Sites or Cloudflare Access headers; the first private-site user is bootstrapped as admin and all authorization remains server-side.
+- Generation uses OpenAI Responses with `store: false`, a privacy-preserving safety identifier, structured output, and private content references rather than natural language in immutable payloads.
+- Budgets reserve capacity before an external call, settle against reported token usage, and fail closed when user or workspace limits are reached.
+- Prompt/provider content is redacted after 30 days; events retain only non-sensitive receipts and references.
+- Uploads require explicit ownership or license confirmation. Shares are read-only, expire after at most seven days, and are immediately revocable.
 
 ## UI affordance audit
 

@@ -1,15 +1,10 @@
-export interface WorkerEnv {
-  ASSETS: Fetcher;
-  DB: D1Database;
-  MEDIA: R2Bucket;
-}
+import { generateCreativeDirection } from "./openai-adapter";
+import { loadPrivateContent, releaseBudget, requireConsent, requireUser, reserveBudget, settleBudget, storePrivateContent } from "./pilot-policy";
+import { ensureSchema, insertEvent, makeEvent, readEvents, streamHead, uuidV7, type EventRow, type WorkerEnv } from "./runtime";
+
+export type { WorkerEnv } from "./runtime";
 
 type EventInput = { type?: string; payload?: Record<string, unknown>; compensatesEventId?: string | null };
-type EventRow = {
-  eventId: string; streamId: string; sequence: number; occurredAt: string; recordedAt: string;
-  actor: string; clientId: string; correlationId: string; causationId: string | null;
-  compensatesEventId: string | null; schemaVersion: number; type: string; payload: Record<string, unknown>;
-};
 
 const USER_EVENTS = new Set([
   "ProjectCreated","ProjectRenamed","ProjectStateChanged","DocumentCreated","DocumentForked","BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet","BlockLocked","BlockUnlocked","BlockRemoved","BlockRestored","ReferenceIngested","RegionPromoted","ExtractionRequested","ChipEdited","GenerationRequested","ObjectViewed","ObjectSaved","ObjectDiscarded","ObjectPinned","ObjectUnpinned","ObjectRegenerated","ObjectCritiqued","ObjectExported","SessionOpened","SessionClosed","BriefItemPresented","BriefItemAccepted","BriefItemIgnored","BriefDismissed","EmptyCanvasChosen","ComparisonOpened","ProposalAccepted","ProposalRejected","ProposalDeclined","AnnotationAdded","AnnotationRetracted","PreferenceAuthored","PreferenceRevoked","ObservationJudged","IntentDeclared","Deferred","ConditionSet","ConditionFired","Resurfaced","AddedToLibrary","RemovedFromLibrary","FamilyDeclared","FamilyAnchorSet","FamilyMembershipAsserted","CollectionCreated","CollectionRenamed","CollectionRemoved","CollectionRestored","CollectionItemAdded","CollectionItemRemoved","CollectionItemMoved","FactRetracted","ClaimSuperseded","RightsAsserted",
@@ -26,6 +21,7 @@ const PRODUCER_EVENTS: Record<string, Set<string>> = {
   "worker:scheduler": new Set(["BranchAbandoned"]),
   "worker:attribution": new Set(["AttributionComputed"]),
   "worker:annotator": new Set(["AnnotationAdded","AnnotationRetracted"]),
+  "worker:policy": new Set(["BudgetReserved","BudgetReleased","BudgetExceeded","GenerationUsageRecorded","RetentionSweepCompleted"]),
   "worker:scout": new Set(["ScoutRunStarted","ScoutObserved","ScoutRunCompleted","ScoutBudgetExhausted","GenerationRequested","GenerationCompleted","GenerationFailed"]),
   "model:forma-chat": new Set(["MutationProposed","AssistantReasoned"]),
 };
@@ -34,41 +30,8 @@ const HOT_EVENTS = new Set(["AnnotationAdded","ComparisonOpened","ObjectViewed",
 const PERMISSION_SCHEMA_VERSION = 1;
 
 const canAppend = (actor: string, type: string) => actor === "user" ? USER_EVENTS.has(type) : PRODUCER_EVENTS[actor]?.has(type) ?? false;
-const uuidV7 = () => {
-  const time = Date.now().toString(16).padStart(12,"0"); const bytes = crypto.getRandomValues(new Uint8Array(10)); const hex = Array.from(bytes,b=>b.toString(16).padStart(2,"0")).join(""); const variant=((bytes[4]&0x3f)|0x80).toString(16).padStart(2,"0");
-  return `${time.slice(0,8)}-${time.slice(8)}-7${hex.slice(0,3)}-${variant}${hex.slice(5,7)}-${hex.slice(7,19)}`;
-};
-const identity = (request: Request) => { const ownerId=request.headers.get("oai-authenticated-user-id")??"local-creative"; return {ownerId,streamId:`creative:${ownerId}`}; };
-
-async function ensureSchema(env: WorkerEnv) {
-  await env.DB.batch([
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (
-      event_id TEXT PRIMARY KEY NOT NULL, stream_id TEXT NOT NULL, sequence INTEGER NOT NULL,
-      occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL, actor TEXT NOT NULL, client_id TEXT NOT NULL,
-      correlation_id TEXT NOT NULL, causation_id TEXT, compensates_event_id TEXT,
-      schema_version INTEGER NOT NULL DEFAULT 1, type TEXT NOT NULL, payload TEXT NOT NULL
-    )`),
-    env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_events_stream_sequence ON events(stream_id, sequence)"),
-    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_events_stream_type ON events(stream_id, type)"),
-    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_events_correlation ON events(correlation_id)"),
-    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_events_stream_actor ON events(stream_id, actor)"),
-    env.DB.prepare("CREATE TRIGGER IF NOT EXISTS events_block_update BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END"),
-    env.DB.prepare("CREATE TRIGGER IF NOT EXISTS events_block_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END"),
-    env.DB.prepare("CREATE TABLE IF NOT EXISTS external_content (content_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL)"),
-    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_external_content_owner ON external_content(owner_id)"),
-  ]);
-}
-
-function makeEvent(streamId:string,sequence:number,actor:string,clientId:string,correlationId:string,type:string,payload:Record<string,unknown>,options:{causationId?:string|null;compensatesEventId?:string|null}={}):EventRow {
-  const now=new Date().toISOString(); return {eventId:uuidV7(),streamId,sequence,occurredAt:now,recordedAt:now,actor,clientId,correlationId,causationId:options.causationId??null,compensatesEventId:options.compensatesEventId??null,schemaVersion:1,type,payload};
-}
-const insert = (env:WorkerEnv,e:EventRow) => env.DB.prepare(`INSERT INTO events (event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(e.eventId,e.streamId,e.sequence,e.occurredAt,e.recordedAt,e.actor,e.clientId,e.correlationId,e.causationId,e.compensatesEventId,e.schemaVersion,e.type,JSON.stringify(e.payload));
-async function head(env:WorkerEnv,streamId:string){const row=await env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(streamId).first<{head:number}>();return Number(row?.head??0);}
-function serialize(row:Record<string,unknown>):EventRow{return{eventId:String(row.event_id),streamId:String(row.stream_id),sequence:Number(row.sequence),occurredAt:String(row.occurred_at),recordedAt:String(row.recorded_at),actor:String(row.actor),clientId:String(row.client_id),correlationId:String(row.correlation_id),causationId:row.causation_id?String(row.causation_id):null,compensatesEventId:row.compensates_event_id?String(row.compensates_event_id):null,schemaVersion:Number(row.schema_version),type:String(row.type),payload:JSON.parse(String(row.payload)) as Record<string,unknown>};}
-async function readEvents(env:WorkerEnv,streamId:string){const result=await env.DB.prepare("SELECT * FROM events WHERE stream_id=? ORDER BY sequence ASC LIMIT 2000").bind(streamId).all<Record<string,unknown>>();return result.results.map(serialize);}
-
 async function seedIfEmpty(env:WorkerEnv,streamId:string) {
-  if(await head(env,streamId)>0)return; const corr=uuidV7(); const client="seed:lit-studio";
+  if(await streamHead(env,streamId)>0)return; const corr=uuidV7(); const client="seed:lit-studio";
   const specs:Array<[string,string,Record<string,unknown>]> = [
     ["user","ProjectCreated",{project_id:"project-atmosphere",name:"Studio launch",state:"active"}],
     ["user","DocumentCreated",{document_id:"doc-atmosphere",handle:"atmosphere-studies",title:"Atmosphere studies"}],
@@ -96,7 +59,7 @@ async function seedIfEmpty(env:WorkerEnv,streamId:string) {
     ["user","BriefItemPresented",{brief_id:"brief-today",item_id:"item-comparison"}],
     ["user","ConditionSet",{condition_id:"condition-palette-3",condition_ref:"three-new-generations",scope:"project"}],
   ];
-  const rows=specs.map(([actor,type,payload],i)=>makeEvent(streamId,i+1,actor,client,corr,type,payload)); await env.DB.batch(rows.map(e=>insert(env,e)));
+  const rows=specs.map(([actor,type,payload],i)=>makeEvent(streamId,i+1,actor,client,corr,type,payload)); await env.DB.batch(rows.map(e=>insertEvent(env,e)));
 }
 
 type CollectionState={parents:Map<string,string|null>;handles:Map<string,{handle:string;removed:boolean}>;membership:Map<string,string>};
@@ -106,23 +69,35 @@ function validateCollection(item:EventInput,state:CollectionState){const p=item.
 
 export async function handleEvents(request:Request,env:WorkerEnv,hot=false):Promise<Response>{
   try{
-    await ensureSchema(env);const {ownerId,streamId}=identity(request);await seedIfEmpty(env,streamId);
-    if(request.method==="GET"){const events=await readEvents(env,streamId);return Response.json({events,head:events.at(-1)?.sequence??0,permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});}
+    await ensureSchema(env);const auth=await requireUser(request,env,request.method==="GET"?"viewer":"creator");if(auth.response||!auth.user)return auth.response!;const {userId:ownerId,streamId}=auth.user;await seedIfEmpty(env,streamId);
+    if(request.method==="GET"){const events=await readEvents(env,streamId);return Response.json({events,content:await loadPrivateContent(env,ownerId),head:events.at(-1)?.sequence??0,permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});}
     if(request.method!=="POST")return new Response("Method not allowed",{status:405});
+    const consent=requireConsent(auth.user);if(consent)return consent;
     const body=await request.json() as {action?:"append"|"batch"|"propose"|"generate"|"hot";event?:EventInput;events?:EventInput[];expectedSequence?:number;clientId?:string;correlationId?:string;prompt?:string;snapshot?:Record<string,unknown>;sourceBlockVersions?:Array<Record<string,unknown>>};
-    const current=await head(env,streamId),client=body.clientId||"web:lit",corr=body.correlationId||uuidV7();const requested=body.action==="batch"||hot?body.events??(body.event?[body.event]:[]):body.event?[body.event]:[];
+    const current=await streamHead(env,streamId),client=body.clientId||"web:lit",corr=body.correlationId||uuidV7();const requested=body.action==="batch"||hot?body.events??(body.event?[body.event]:[]):body.event?[body.event]:[];
     if(hot&&!requested.every(e=>HOT_EVENTS.has(e.type??"")))return Response.json({error:"hot_path_accepts_commutative_engagement_only"},{status:400});
     const commutative=requested.length>0&&requested.every(e=>COMMUTATIVE.has(e.type??""));
     if(typeof body.expectedSequence==="number"&&body.expectedSequence!==current&&body.action!=="propose"&&!commutative)return Response.json({error:"stale_sequence",expected:body.expectedSequence,head:current},{status:409});
     if(body.action==="propose"){
-      const contentId=uuidV7();await env.DB.prepare("INSERT INTO external_content (content_id,owner_id,content,created_at) VALUES (?,?,?,?)").bind(contentId,ownerId,body.prompt??"",new Date().toISOString()).run();
-      const proposal=makeEvent(streamId,current+1,"model:forma-chat",client,corr,"MutationProposed",{content_ref:contentId,proposed_events:body.events??[],expected_sequence:current});await insert(env,proposal).run();return Response.json({appended:[proposal],rejected:[],head:proposal.sequence});
+      const stored=await storePrivateContent(env,ownerId,"prompt",body.prompt??"");
+      const proposal=makeEvent(streamId,current+1,"model:forma-chat",client,corr,"MutationProposed",{content_ref:stored.contentId,content_expires_at:stored.expiresAt,proposed_events:body.events??[],expected_sequence:current});await insertEvent(env,proposal).run();return Response.json({appended:[proposal],rejected:[],head:proposal.sequence});
     }
     if(body.action==="generate"){
-      const id=uuidV7();const requestedAt=makeEvent(streamId,current+1,"user",client,corr,"GenerationRequested",{generation_id:id,stream_id:streamId,model_ids:["adapter-neutral"],document_version:current});const compiled=makeEvent(streamId,current+2,"worker:compiler",client,corr,"ContextCompiled",{generation_id:id,model_id:"adapter-neutral",adapter_version:"v0.2",compiled_snapshot:body.snapshot??{},source_block_versions:body.sourceBlockVersions??[]},{causationId:requestedAt.eventId});const complete=makeEvent(streamId,current+3,"worker:generator",client,corr,"GenerationCompleted",{generation_id:id,model_id:"adapter-neutral",object_ids:[`object-${id.slice(-8)}`],latency_ms:900+((current*83)%1400),variant:(current+1)%4,simulation:true},{causationId:compiled.eventId});await env.DB.batch([requestedAt,compiled,complete].map(e=>insert(env,e)));return Response.json({appended:[requestedAt,compiled,complete],rejected:[],head:complete.sequence,simulation:true});
+      if(!env.OPENAI_API_KEY)return Response.json({error:"provider_not_configured"},{status:503});
+      const reserved=32_000;const reservation=await reserveBudget(env,ownerId,reserved);if(!reservation.ok){const denied=makeEvent(streamId,current+1,"worker:policy",client,corr,"BudgetExceeded",{reason:"hard_cap_reached",scope:reservation.scope,reserved_tokens:0});await insertEvent(env,denied).run();return Response.json({error:"budget_hard_cap_reached",scope:reservation.scope},{status:429});}
+      const id=uuidV7();const model=env.OPENAI_MODEL??"gpt-5.6-terra";
+      const requestedAt=makeEvent(streamId,current+1,"user",client,corr,"GenerationRequested",{generation_id:id,stream_id:streamId,model_ids:[model],document_version:current});
+      const compiled=makeEvent(streamId,current+2,"worker:compiler",client,corr,"ContextCompiled",{generation_id:id,model_id:model,adapter_version:"openai-responses-v1",compiled_snapshot:body.snapshot??{},source_block_versions:body.sourceBlockVersions??[]},{causationId:requestedAt.eventId});
+      const budgeted=makeEvent(streamId,current+3,"worker:policy",client,corr,"BudgetReserved",{generation_id:id,reservation_id:reservation.reservationId,reserved_tokens:reserved,period:new Date().toISOString().slice(0,7)},{causationId:requestedAt.eventId});
+      await env.DB.batch([requestedAt,compiled,budgeted].map(e=>insertEvent(env,e)));
+      try{
+        const generated=await generateCreativeDirection(env,ownerId,body.snapshot??{});const stored=await storePrivateContent(env,ownerId,"provider-output",generated.raw);await settleBudget(env,ownerId,reserved,generated.usage.totalTokens);
+        const next=await streamHead(env,streamId);const complete=makeEvent(streamId,next+1,"worker:generator",client,corr,"GenerationCompleted",{generation_id:id,model_id:generated.model,provider:"openai",provider_response_id:generated.responseId,object_ids:[`object-${id.slice(-8)}`],output_ref:stored.contentId,content_expires_at:stored.expiresAt,latency_ms:generated.latencyMs,variant:(current+1)%4,simulation:false},{causationId:compiled.eventId});
+        const usage=makeEvent(streamId,next+2,"worker:policy",client,corr,"GenerationUsageRecorded",{generation_id:id,reservation_id:reservation.reservationId,input_tokens:generated.usage.inputTokens,output_tokens:generated.usage.outputTokens,total_tokens:generated.usage.totalTokens,reserved_tokens:reserved,model_id:generated.model},{causationId:complete.eventId});await env.DB.batch([complete,usage].map(e=>insertEvent(env,e)));return Response.json({appended:[requestedAt,compiled,budgeted,complete,usage],content:{[stored.contentId]:generated.raw},rejected:[],head:usage.sequence,simulation:false});
+      }catch(error){await releaseBudget(env,ownerId,reserved);const next=await streamHead(env,streamId);const failed=makeEvent(streamId,next+1,"worker:generator",client,corr,"GenerationFailed",{generation_id:id,model_id:model,error_class:error instanceof Error?error.message:"provider_failed"},{causationId:compiled.eventId});const released=makeEvent(streamId,next+2,"worker:policy",client,corr,"BudgetReleased",{generation_id:id,reservation_id:reservation.reservationId,reserved_tokens:reserved,reason:"generation_failed"},{causationId:failed.eventId});await env.DB.batch([failed,released].map(e=>insertEvent(env,e)));return Response.json({error:error instanceof Error?error.message:"generation_failed",appended:[requestedAt,compiled,budgeted,failed,released],head:released.sequence},{status:502});}
     }
     if(body.action!=="append"&&body.action!=="batch"&&body.action!=="hot"&&!hot)return Response.json({error:"unsupported_action"},{status:400});
     const rejected:Array<{index:number;type:string;reason:string}>=[];const state=collectionState(await readEvents(env,streamId));const valid=requested.filter((item,index)=>{const type=item.type??"";if(!type||!canAppend("user",type)){rejected.push({index,type,reason:"event_not_permitted_for_user"});return false;}if(!item.payload||typeof item.payload!=="object"){rejected.push({index,type,reason:"payload_must_be_object"});return false;}if(type.startsWith("Collection")){const reason=validateCollection(item,state);if(reason){rejected.push({index,type,reason});return false;}}return true;});
-    let sequence=current;const appended=valid.map(item=>makeEvent(streamId,++sequence,"user",client,corr,item.type!,item.payload!,{compensatesEventId:item.compensatesEventId}));if(rejected.length)appended.push(makeEvent(streamId,++sequence,"worker:validator",client,corr,"ValidationFailed",{attempted_type:"emit_events",attempted_by:"user",permission_schema_version:PERMISSION_SCHEMA_VERSION,errors:rejected}));if(appended.length)await env.DB.batch(appended.map(e=>insert(env,e)));return Response.json({appended,rejected,head:sequence});
+    let sequence=current;const appended=valid.map(item=>makeEvent(streamId,++sequence,"user",client,corr,item.type!,item.payload!,{compensatesEventId:item.compensatesEventId}));if(rejected.length)appended.push(makeEvent(streamId,++sequence,"worker:validator",client,corr,"ValidationFailed",{attempted_type:"emit_events",attempted_by:"user",permission_schema_version:PERMISSION_SCHEMA_VERSION,errors:rejected}));if(appended.length)await env.DB.batch(appended.map(e=>insertEvent(env,e)));return Response.json({appended,rejected,head:sequence});
   }catch(error){return Response.json({error:error instanceof Error?error.message:"event_api_failed"},{status:500});}
 }
