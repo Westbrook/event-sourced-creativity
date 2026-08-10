@@ -3,12 +3,14 @@ import { FormaElement, icon, downloadJson } from "./forma-element";
 import "./forma-workspace";
 import "./forma-library";
 import "./forma-sessions";
+import "./forma-scout";
+import "./forma-memory";
 import "./forma-system";
 import "./forma-admin-events";
 import "./forma-shared-view";
 
 const routes = [
-  ["/", "Studio"], ["/library", "Library"], ["/sessions", "Sessions"], ["/system", "System"], ["/admin/events", "Event admin"],
+  ["/", "Studio"], ["/library", "Library"], ["/sessions", "Sessions"], ["/scout", "Scout"], ["/memory", "Memory"], ["/system", "System"], ["/admin/events", "Event admin"],
 ];
 
 export class FormaShell extends FormaElement {
@@ -33,12 +35,14 @@ export class FormaShell extends FormaElement {
     if (path.startsWith("/admin/events")) return html`<forma-admin-events></forma-admin-events>`;
     if (path.startsWith("/library")) return html`<forma-library></forma-library>`;
     if (path.startsWith("/sessions")) return html`<forma-sessions></forma-sessions>`;
+    if (path.startsWith("/scout")) return html`<forma-scout></forma-scout>`;
+    if (path.startsWith("/memory")) return html`<forma-memory></forma-memory>`;
     if (path.startsWith("/system")) return html`<forma-system></forma-system>`;
     return html`<forma-workspace></forma-workspace>`;
   }
   #share() {
     const p = this.store.projection.get();
-    return html`<dialog class="modal" open aria-labelledby="share-title">
+    return html`<dialog class="modal" open closedby="any" aria-labelledby="share-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.store.patchUi({shareOpen:false});}}>
       <div class="modal-card">
         <button class="icon-button modal-close" aria-label="Close share dialog" @click=${() => this.store.patchUi({ shareOpen: false })}>${icon("close")}</button>
         <span class="eyebrow">Private handoff</span><h2 id="share-title">Export or share this work</h2>
@@ -54,7 +58,7 @@ export class FormaShell extends FormaElement {
     </dialog>`;
   }
   #terms() {
-    return html`<dialog class="modal consent-modal" open aria-labelledby="consent-title"><div class="modal-card"><span class="eyebrow">Pilot governance · ${this.store.session.get()?.policy.version}</span><h2 id="consent-title">Set the rules before creating</h2><p>Forma keeps prompts and provider outputs private for ${this.store.session.get()?.policy.retentionDays ?? 30} days, performs no passive device capture, and records policy acceptance as an immutable event.</p><label class="consent-check"><input type="checkbox" .checked=${this.#termsOwnership} @change=${(e:Event)=>{this.#termsOwnership=(e.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>I control the work I submit</b><small>I own it or have permission to use it; external assets require a separate assertion at upload.</small></span></label><label class="consent-check"><input type="checkbox" .checked=${this.#termsProvider} @change=${(e:Event)=>{this.#termsProvider=(e.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>I approve private provider processing</b><small>Generation context may be sent to the configured OpenAI Responses API with server-side credentials.</small></span></label><button class="button primary consent-action" ?disabled=${!this.#termsOwnership||!this.#termsProvider||!!this.store.busy.get()} @click=${()=>this.store.acceptTerms()}>${this.store.busy.get()==="consent"?"Recording…":"Accept pilot terms"}</button></div></dialog>`;
+    return html`<dialog class="modal consent-modal" open closedby="none" aria-labelledby="consent-title"><div class="modal-card"><span class="eyebrow">Pilot governance · ${this.store.session.get()?.policy.version}</span><h2 id="consent-title">Set the rules before creating</h2><p>Forma keeps prompts and provider outputs private for ${this.store.session.get()?.policy.retentionDays ?? 30} days, performs no passive device capture, and records policy acceptance as an immutable event.</p><label class="consent-check"><input type="checkbox" .checked=${this.#termsOwnership} @change=${(e:Event)=>{this.#termsOwnership=(e.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>I control the work I submit</b><small>I own it or have permission to use it; external assets require a separate assertion at upload.</small></span></label><label class="consent-check"><input type="checkbox" .checked=${this.#termsProvider} @change=${(e:Event)=>{this.#termsProvider=(e.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>I approve private provider processing</b><small>Generation context may be sent to the configured OpenAI Responses API with server-side credentials.</small></span></label><button class="button primary consent-action" ?disabled=${!this.#termsOwnership||!this.#termsProvider||!!this.store.busy.get()} @click=${()=>this.store.acceptTerms()}>${this.store.busy.get()==="consent"?"Recording…":"Accept pilot terms"}</button></div></dialog>`;
   }
   #commands() {
     const q = this.store.ui.search.toLowerCase();
@@ -63,12 +67,14 @@ export class FormaShell extends FormaElement {
       { label: "Add a direction block", hint: "Document", run: () => this.store.append({ type: "BlockCreated", payload: { block_id: crypto.randomUUID(), type: "direction", handle: `direction/study-${this.store.head.get()}`, position: `z${this.store.head.get()}`, properties: { text: "A new creative direction", weight: .65, authority: "authored" } } }) },
       { label: "Review the durable stream", hint: "Admin", run: () => this.#route("/admin/events") },
       { label: "Open reusable library", hint: "Library", run: () => this.#route("/library") },
+      { label: "Run a bounded scout report", hint: "Scout", run: () => this.#route("/scout") },
+      { label: "Review taste and time memory", hint: "Memory", run: () => this.#route("/memory") },
       { label: "Inspect plan coverage", hint: "System", run: () => this.#route("/system") },
       { label: "Undo last authored change", hint: "⌘Z", run: () => this.store.undo() },
       { label: "Export full graph", hint: "JSON", run: () => this.store.patchUi({ shareOpen: true }) },
     ].filter((c) => c.label.toLowerCase().includes(q) || c.hint.toLowerCase().includes(q));
     const run = async (index: number) => { const command = commands[index]; if (!command) return; this.store.patchUi({ commandOpen: false, search: "" }); this.#commandIndex = 0; await command.run(); };
-    return html`<dialog class="command-dialog" open aria-labelledby="command-title">
+    return html`<dialog class="command-dialog" open closedby="any" aria-labelledby="command-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.store.patchUi({commandOpen:false});}}>
       <div class="command-card">
         <label id="command-title" class="sr-only" for="command-search">Search commands</label>
         <div class="command-search"><span>${icon("search")}</span><input id="command-search" autofocus placeholder="Type a command…" .value=${this.store.ui.search} @input=${(e: InputEvent) => { this.#commandIndex = 0; this.store.patchUi({ search: (e.target as HTMLInputElement).value }); }} @keydown=${(e: KeyboardEvent) => { if (e.key === "ArrowDown") { e.preventDefault(); this.#commandIndex = Math.min(commands.length - 1, this.#commandIndex + 1); this.requestUpdate(); } else if (e.key === "ArrowUp") { e.preventDefault(); this.#commandIndex = Math.max(0, this.#commandIndex - 1); this.requestUpdate(); } else if (e.key === "Enter") { e.preventDefault(); void run(this.#commandIndex); } }}><kbd>esc</kbd></div>

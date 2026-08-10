@@ -113,6 +113,8 @@ test("runs the Phase 6 pilot from event-derived sessions instead of brief fixtur
   assert.match(referenceImage, /reference-viewer/); assert.doesNotMatch(referenceImage, /target="_blank"/);
   assert.match(contextBlock, /text\/forma-block-id/); assert.match(contextBlock, /BlockRemoved/); assert.match(contextBlock, /Explore palettes/);
   assert.match(palettePicker, /palette_strategy/); assert.match(palettePicker, /getImageData/); assert.match(palettePicker, /source_reference_block_id/);
+  assert.doesNotMatch(palettePicker, /type=["']color/); assert.match(palettePicker, /next click replaces swatch/i);
+  assert.match(referenceImage, /showModal/); assert.match(palettePicker, /showModal/); assert.match(referenceImage, /closedby="any"/); assert.match(palettePicker, /closedby="any"/);
   assert.match(sessions, /PhaseGateReviewed/); assert.match(eventsApi, /PhaseGateReviewed/); assert.match(classification, /PhaseGateReviewed,human_judgment/);
 });
 
@@ -130,4 +132,39 @@ test("runs the Phase 7 private-pilot index as a correctable derived projection",
   assert.match(store, /rebuildIndex/); assert.match(library, /Vector, family, and corpus index/); assert.match(library, /Correct grouping/);
   assert.match(indexing, /EMBEDDING_MODEL_ID/); assert.match(indexing, /retrieveFewShotExemplars/); assert.match(indexing, /collectionIds/);
   assert.match(coverage, /Phase 7.*Operational pilot/); assert.match(classification, /FamilyDeclared.*worker:indexer/);
+});
+
+test("operationalizes bounded Scout and reversible ranking-only taste memory", async () => {
+  const [eventsApi, store, shell, scoutPage, memoryPage, scoutModel, tasteModel, outputCard, coverage, classification] = await Promise.all([
+    readFile(new URL("../worker/events-api.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/state/store.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/forma-scout.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/forma-memory.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/model/scout.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/model/taste.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/output-card.ts", import.meta.url), "utf8"),
+    readFile(new URL("../docs/plan-coverage.md", import.meta.url), "utf8"),
+    readFile(new URL("../docs/event-classification.csv", import.meta.url), "utf8"),
+  ]);
+  assert.match(shell, /forma-scout/); assert.match(shell, /forma-memory/); assert.match(shell, /"\/scout"/); assert.match(shell, /"\/memory"/);
+  assert.match(eventsApi, /run_scout/); assert.match(eventsApi, /ScoutBudgetExhausted/); assert.match(eventsApi, /report_space:"scout"/);
+  assert.doesNotMatch(`${eventsApi}${scoutModel}${scoutPage}`, /DirectionChosen/);
+  assert.match(scoutModel, /convergence/); assert.match(scoutModel, /divergence/); assert.match(scoutModel, /stall/); assert.match(scoutModel, /adjacency/);
+  assert.match(scoutPage, /ObservationJudged/); assert.match(scoutPage, /Promote to document/); assert.match(store, /runScout/);
+  assert.match(eventsApi, /standing_constraints/); assert.match(eventsApi, /ranking_only:true/); assert.match(eventsApi, /half_life_days:60/);
+  assert.match(tasteModel, /PreferenceAuthored/); assert.match(tasteModel, /PreferenceRevoked/); assert.match(tasteModel, /FactRetracted/);
+  assert.match(memoryPage, /Affirm as standing/); assert.match(memoryPage, /Forget inference/); assert.match(memoryPage, /Bi-temporal history/);
+  assert.match(outputCard, /ObjectCritiqued|critiqueObject/); assert.match(coverage, /Phase 8.*Operational pilot/); assert.match(coverage, /Phase 9.*Evaluation/);
+  const userPermissions = eventsApi.match(/const USER_EVENTS[\s\S]*?\]\);/)?.[0] ?? "";
+  assert.doesNotMatch(userPermissions, /ObjectCritiqued|Deferred|ConditionSet|ConditionFired|Resurfaced/); assert.match(eventsApi, /Deferred/); assert.match(classification, /ConditionFired,behavioral,structured_only,worker:scheduler/);
+});
+
+test("makes closeable dialogs light-dismissable with a compatibility fallback", async () => {
+  const sources = await Promise.all([
+    "forma-shell.ts", "forma-workspace.ts", "forma-library.ts", "reference-image.ts", "reference-palette-picker.ts",
+  ].map((file) => readFile(new URL(`../src/components/${file}`, import.meta.url), "utf8")));
+  const dialogs = sources.flatMap((source) => source.match(/<dialog[^>]*>/g) ?? []);
+  assert.ok(dialogs.length >= 7); assert.ok(dialogs.every((dialog) => /closedby="(?:any|none)"/.test(dialog)));
+  assert.ok(dialogs.filter((dialog) => /closedby="any"/.test(dialog)).every((dialog) => /@click=/.test(dialog)));
 });

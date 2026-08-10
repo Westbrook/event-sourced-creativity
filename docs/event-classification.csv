@@ -72,8 +72,8 @@ FamilyAnchorSet,derived_claim,external_blob_pointer,worker:indexer,immutable
 FamilyMembershipAsserted,derived_claim,structured_only,worker:indexer,immutable
 Deferred,behavioral,structured_only,user,immutable
 ConditionSet,user_sensitive,external_pointer_for_condition,user,immutable
-ConditionFired,behavioral,structured_only,user,immutable
-Resurfaced,behavioral,structured_only,user,immutable
+ConditionFired,behavioral,structured_only,worker:scheduler,immutable
+Resurfaced,behavioral,structured_only,worker:scheduler,immutable
 AddedToLibrary,behavioral,structured_only,user,immutable
 RemovedFromLibrary,behavioral,structured_only,user,immutable
 CollectionCreated,user_content,structured_only,user,immutable
