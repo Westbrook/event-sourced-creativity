@@ -195,3 +195,14 @@ test("connects the final Library and Studio affordances to explicit destinations
   assert.match(outputCard,/Taste evidence/);assert.match(outputCard,/taste-axis-grid/);assert.match(outputCard,/Record taste evidence/);
   assert.match(shell,/system#governance/);assert.match(shell,/Passive \/ dwell capture/);assert.match(system,/id="governance"/);assert.match(system,/structurally unavailable/);
 });
+
+test("uses one edge rail and one header vocabulary without Library overflow traps", async()=>{
+  const [library,workspace,sessions,scout,memory,system,admin,styles]=await Promise.all([
+    "forma-library.ts","forma-workspace.ts","forma-sessions.ts","forma-scout.ts","forma-memory.ts","forma-system.ts","forma-admin-events.ts",
+  ].map((file)=>readFile(new URL(`../src/components/${file}`,import.meta.url),"utf8")).concat(readFile(new URL("../src/styles.css",import.meta.url),"utf8")));
+  assert.match(library,/library-page"><forma-project-rail surface="library"/);assert.match(workspace,/forma-project-rail surface="studio"/);
+  assert.doesNotMatch(library,/library-layout|page-pad/);assert.match(library,/library-main/);assert.match(styles,/\.workspace-page, \.library-page/);
+  for(const source of [library,workspace,sessions,scout,memory,system,admin])assert.match(source,/page-header/);
+  assert.match(styles,/\.library-main \{ container-type: inline-size/);assert.match(styles,/@container \(max-width: 760px\)/);
+  assert.match(styles,/repeat\(auto-fit,minmax\(min\(220px,100%\),1fr\)\)/);assert.match(styles,/\.library-content > section \{ min-width: 0/);
+});
