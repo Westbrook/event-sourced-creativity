@@ -170,10 +170,11 @@ test("makes closeable dialogs light-dismissable with a compatibility fallback", 
 });
 
 test("connects the final Library and Studio affordances to explicit destinations", async()=>{
-  const [library,workspace,collections,store,eventsModel,eventsApi,outputCard,styles,shell,system,classification]=await Promise.all([
+  const [library,workspace,collections,projectRail,store,eventsModel,eventsApi,outputCard,styles,shell,system,classification]=await Promise.all([
     readFile(new URL("../src/components/forma-library.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/components/forma-workspace.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/components/collection-tree.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/project-rail.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/model/events.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),
@@ -187,7 +188,9 @@ test("connects the final Library and Studio affordances to explicit destinations
   assert.match(library,/Keep for reuse/);assert.match(library,/Recent shows the project trail/);assert.match(library,/Project contents/);assert.match(library,/openDocument/);
   assert.match(eventsModel,/DocumentOpened/);assert.match(eventsApi,/DocumentOpened/);assert.match(store,/openDocument/);assert.match(classification,/DocumentOpened,behavioral/);
   assert.match(collections,/File open document/);assert.match(collections,/New nested collection/);assert.match(collections,/collection-dialog/);assert.doesNotMatch(collections,/window\.prompt/);
-  assert.match(workspace,/project-settings-dialog/);assert.match(workspace,/All documents/);assert.match(workspace,/type:BlockKind/);assert.match(workspace,/block-composer-dialog/);
+  assert.match(workspace,/project-settings-dialog/);assert.match(workspace,/type:BlockKind/);assert.match(workspace,/block-composer-dialog/);
+  assert.match(workspace,/forma-project-rail surface="studio"/);assert.match(library,/forma-project-rail surface="library"/);assert.match(projectRail,/Library overview/);assert.match(projectRail,/All documents/);assert.match(projectRail,/No auto-filing/);
+  assert.doesNotMatch(`${workspace}${library}${styles}`,/studio-sidebar|library-tree/);assert.match(styles,/\.project-rail/);
   assert.match(workspace,/\?disabled=\$\{!canCompare\}/);assert.match(store,/canUndo/);assert.match(store,/canRedo/);assert.match(styles,/\.document-bar \{ position: sticky/);
   assert.match(outputCard,/Taste evidence/);assert.match(outputCard,/taste-axis-grid/);assert.match(outputCard,/Record taste evidence/);
   assert.match(shell,/system#governance/);assert.match(shell,/Passive \/ dwell capture/);assert.match(system,/id="governance"/);assert.match(system,/structurally unavailable/);

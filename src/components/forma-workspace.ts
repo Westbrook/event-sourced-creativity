@@ -5,8 +5,8 @@ import { sampleImageFile } from "../model/image-sample";
 import type { ImageSample } from "../model/extractors";
 import { retrieveFewShotExemplars, type RetrievedExemplar } from "../model/indexing";
 import "./context-block";
-import "./collection-tree";
 import "./output-card";
+import "./project-rail";
 
 type BlockKind = "direction"|"subject"|"composition"|"style"|"lighting"|"exclusion"|"palette"|"reference";
 type BlockDraft = { type: BlockKind|""; text: string; colors: string[] };
@@ -95,7 +95,6 @@ export class FormaWorkspace extends FormaElement {
   #openProjectSettings(){const projection=this.store.projection.get();this.#projectName=projection.projectName;this.#projectState=projection.projectState;this.#projectSettings=true;this.requestUpdate();}
   #closeProjectSettings(){this.querySelector<HTMLDialogElement>(".project-settings-dialog")?.close();this.#projectSettings=false;this.requestUpdate();}
   async #saveProject(event:SubmitEvent){event.preventDefault();const projection=this.store.projection.get();const name=this.#projectName.trim();if(!name)return;const changes:EventInput[]=[];if(name!==projection.projectName)changes.push({type:"ProjectRenamed",payload:{project_id:projection.projectId,old_name:projection.projectName,new_name:name}});if(this.#projectState!==projection.projectState)changes.push({type:"ProjectStateChanged",payload:{project_id:projection.projectId,state:this.#projectState,previous_state:projection.projectState}});if(changes.length){const appended=await this.store.appendBatch(changes);if(!appended.length)return;}this.#closeProjectSettings();}
-  #openLibrary(view:"documents"|"blocks"|"outputs"|"families"){this.store.patchUi({libraryView:view,focusCollectionId:""});this.store.setRoute("/library");}
   #beginDocumentRename(title: string) {
     this.#documentName = title; this.requestUpdate();
     void this.updateComplete.then(() => this.querySelector<HTMLInputElement>(".document-title-editor input")?.select());
@@ -127,12 +126,7 @@ export class FormaWorkspace extends FormaElement {
   override render() {
     const p = this.store.projection.get(); const output = p.outputs.find((item)=>item.id===this.store.ui.selectedOutputId)??p.outputs[0]; const canCompare=p.outputs.length>=2;
     return html`<section class="workspace-page">
-      <aside class="studio-sidebar">
-        <div class="project-switcher"><span class="eyebrow">Current project</span><div class="project-title"><b>${p.projectName}</b><span class=${`project-status ${p.projectState}`}>${p.projectState}</span></div><div class="project-actions"><button @click=${this.#openProjectSettings}>${icon("edit")} Edit project</button><button @click=${()=>this.#openLibrary("documents")}>${p.documents.length} document${p.documents.length===1?"":"s"} ${icon("arrow")}</button></div></div>
-        <forma-collection-tree></forma-collection-tree>
-        <div class="side-links"><button @click=${()=>this.#openLibrary("documents")}>All documents <span>${p.documents.length}</span></button><button @click=${()=>this.#openLibrary("blocks")}>Reusable blocks <span>${p.libraryBlocks.length}</span></button><button @click=${()=>this.#openLibrary("outputs")}>Recent outputs <span>${p.libraryOutputs.length}</span></button><button @click=${()=>this.#openLibrary("families")}>Aesthetic families <span>${p.families.filter((family)=>!family.superseded).length}</span></button></div>
-        <div class="stream-peek"><span class="live-dot"></span><div><b>Durable stream</b><small>#${this.store.head.get()} · ${this.store.loading.get() ? "syncing" : "caught up"}</small></div><button @click=${() => this.store.setRoute("/admin/events")}>Review</button></div>
-      </aside>
+      <forma-project-rail surface="studio" @edit-project=${()=>this.#openProjectSettings()}></forma-project-rail>
       <div class="studio-main">
         <div class="document-bar"><div><span class="eyebrow">Document / ${p.documentId || "loading"}</span>${this.#documentName===null?html`<div class="document-title-row"><h1>${p.documentTitle}</h1><button class="icon-button" aria-label=${`Rename ${p.documentTitle}`} title="Rename document" @click=${()=>this.#beginDocumentRename(p.documentTitle)}>${icon("edit")}</button></div>`:html`<form class="document-title-editor" @submit=${(event:SubmitEvent)=>this.#renameDocument(event,p.documentId,p.documentTitle)}><label class="sr-only" for="document-title-input">Document name</label><input id="document-title-input" maxlength="80" .value=${this.#documentName} @input=${(event:InputEvent)=>{this.#documentName=(event.target as HTMLInputElement).value;this.requestUpdate();}}><button type="button" class="button ghost compact" @click=${()=>{this.#documentName=null;this.requestUpdate();}}>Cancel</button><button type="submit" class="button primary compact" ?disabled=${!this.#documentName.trim()}>Save name</button></form>`}</div><div class="document-actions"><button class="icon-button labeled" ?disabled=${!this.store.canUndo()} title=${this.store.canUndo()?"Undo the latest reversible authored change":"No reversible authored change"} @click=${() => this.store.undo()}>${icon("undo")}<span>Undo</span></button><button class="icon-button labeled" ?disabled=${!this.store.canRedo()} title=${this.store.canRedo()?"Redo the last undone change":"Nothing has been undone in this session"} @click=${() => this.store.redo()}>${icon("redo")}<span>Redo</span></button><button class="button secondary compact" ?disabled=${!canCompare} title=${canCompare?"Compare the two latest outputs":"Generate one more output to compare"} @click=${this.#compare}>${icon("compare")} Compare</button></div></div>
         <div class="studio-grid">
