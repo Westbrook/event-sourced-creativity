@@ -79,12 +79,21 @@ test("a blank-canvas document becomes current without removing earlier library w
     event(3, "BlockCreated", { document_id: "d1", block_id: "b1", type: "reference", handle: "reference/elephants", position: "a0", properties: { media_url: "/api/media/elephants" } }),
     event(4, "GenerationCompleted", { document_id: "d1", generation_id: "g1", model_id: "m1", object_ids: ["o1"] }),
     event(5, "EmptyCanvasChosen", { brief_id: "brief-1", new_document_id: "d2" }),
-    event(6, "DocumentCreated", { document_id: "d2", title: "Untitled study", entry_surface: "blank-canvas" }),
-    event(7, "BlockCreated", { document_id: "d2", block_id: "b2", type: "direction", handle: "direction/untitled", position: "a0", properties: { text: "", placeholder: "Describe a direction…" } }),
+    event(6, "DocumentCreated", { document_id: "d2", title: "Named blank canvas", entry_surface: "blank-canvas" }),
   ]);
   assert.equal(projection.documentId, "d2");
-  assert.deepEqual(projection.blocks.map((block) => block.id), ["b2"]);
+  assert.equal(projection.documentTitle, "Named blank canvas");
+  assert.deepEqual(projection.blocks, []);
   assert.deepEqual(projection.outputs, []);
-  assert.deepEqual(projection.libraryBlocks.map((block) => block.id), ["b1", "b2"]);
+  assert.deepEqual(projection.libraryBlocks.map((block) => block.id), ["b1"]);
   assert.deepEqual(projection.libraryOutputs.map((output) => output.id), ["o1"]);
+});
+
+test("document renames are replayed only for the current document", () => {
+  const projection = foldEvents([
+    event(1, "DocumentCreated", { document_id: "d1", title: "Initial name" }),
+    event(2, "DocumentRenamed", { document_id: "d1", old_title: "Initial name", new_title: "Evening studies" }),
+    event(3, "DocumentRenamed", { document_id: "another-document", old_title: "Other", new_title: "Ignored" }),
+  ]);
+  assert.equal(projection.documentTitle, "Evening studies");
 });

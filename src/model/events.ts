@@ -121,6 +121,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ProjectRenamed": state.projectName = String(p.new_name ?? state.projectName); break;
       case "ProjectStateChanged": state.projectState = String(p.state ?? state.projectState); break;
       case "DocumentCreated": state.documentId = String(p.document_id ?? ""); state.documentTitle = String(p.title ?? state.documentTitle); state.latestCompile = null; break;
+      case "DocumentRenamed": if (String(p.document_id ?? state.documentId) === state.documentId) state.documentTitle = String(p.new_title ?? state.documentTitle); break;
       case "DocumentForked": state.documentId = String(p.document_id ?? state.documentId); state.documentTitle = String(p.title ?? "Imported document fork"); state.latestCompile = null; break;
       case "BlockCreated": {
         const id = String(p.block_id);

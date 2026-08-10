@@ -6,11 +6,20 @@ import "./reference-image";
 export class ContextBlock extends FormaElement {
   static properties = { block: { attribute: false } };
   block!: CreativeBlock;
+  #draft = "";
 
-  #editText() {
-    const current = String(this.block.properties.text ?? this.block.properties.label ?? "");
-    const next = window.prompt("Edit block content", current);
-    if (next !== null && next !== current) void this.store.append({ type: "BlockPropertyEdited", payload: { block_id: this.block.id, property_path: this.block.properties.text !== undefined ? "text" : "label", old_value: current, new_value: next } });
+  #beginEdit() {
+    if (this.block.locked) return;
+    this.#draft = String(this.block.properties.text ?? this.block.properties.label ?? "");
+    this.store.patchUi({ editingBlockId: this.block.id });
+    void this.updateComplete.then(() => this.querySelector<HTMLTextAreaElement>(".block-editor textarea")?.focus());
+  }
+  #cancelEdit() { this.store.patchUi({ editingBlockId: "" }); }
+  async #saveEdit() {
+    const current = String(this.block.properties.text ?? this.block.properties.label ?? ""); const next = this.#draft.trim();
+    if (next === current) return this.#cancelEdit();
+    const appended = await this.store.append({ type: "BlockPropertyEdited", payload: { block_id: this.block.id, property_path: this.block.properties.text !== undefined ? "text" : "label", old_value: current, new_value: next } });
+    if (appended.length) this.#cancelEdit();
   }
   #rename() {
     const next = window.prompt("Rename handle", this.block.handle)?.trim();
@@ -32,7 +41,7 @@ export class ContextBlock extends FormaElement {
   override render() {
     if (!this.block) return nothing;
     const p = this.block.properties; const authority = String(p.authority ?? "authored"); const confidence = Number(p.confidence ?? 1); const colors = Array.isArray(p.colors) ? p.colors as string[] : []; const dimensions = p.dimensions && typeof p.dimensions === "object" ? p.dimensions as Record<string, unknown> : null; const extractionStatus = String(p.extraction_status ?? "");
-    const copy = String(p.text ?? p.label ?? ""); const displayCopy = copy || String(p.placeholder ?? "Describe a direction…"); const focused = this.store.ui.focusBlockId === this.block.id;
+    const copy = String(p.text ?? p.label ?? ""); const displayCopy = copy || String(p.placeholder ?? "Describe a direction…"); const focused = this.store.ui.focusBlockId === this.block.id; const editing = this.store.ui.editingBlockId === this.block.id;
     return html`<article class="context-block ${focused?"brief-focus":""}" tabindex="0" data-block-id=${this.block.id} aria-label="${this.block.type} block, ${this.block.handle}">
       <div class="block-rail">
         <span class="drag-handle" aria-hidden="true" title="Reorder with the adjacent arrow controls">${icon("dots")}</span>
@@ -40,7 +49,7 @@ export class ContextBlock extends FormaElement {
       </div>
       <div class="block-body">
         <header><div><span class="block-type">${this.block.type}</span><button class="handle" @click=${this.#rename}>${this.block.handle} ${icon("edit")}</button></div><button class="icon-button lock-button" aria-label=${this.block.locked ? "Unlock block" : "Lock block"} title=${this.block.locked ? "Unlock block" : "Lock block"} @click=${() => this.store.append({ type: this.block.locked ? "BlockUnlocked" : "BlockLocked", payload: { block_id: this.block.id, locked_by: "user" } })}>${icon(this.block.locked ? "lock" : "unlock")}<span class="lock-label">${this.block.locked ? "Locked" : "Lock"}</span></button></header>
-        ${colors.length ? html`<div class="palette-row" aria-label="Editable palette">${colors.map((color, i) => html`<label class="swatch" style="--swatch:${color}" title="Edit swatch ${i+1}"><input type="color" .value=${color} @change=${(e: Event) => this.#changeColor(i, (e.target as HTMLInputElement).value)}><span></span><small>${color}</small></label>`)}</div>` : html`<button class="block-copy ${copy?"":"placeholder"}" @click=${this.#editText}>${displayCopy}</button>`}
+        ${colors.length ? html`<div class="palette-row" aria-label="Editable palette">${colors.map((color, i) => html`<label class="swatch" style="--swatch:${color}" title="Edit swatch ${i+1}"><input type="color" .value=${color} @change=${(e: Event) => this.#changeColor(i, (e.target as HTMLInputElement).value)}><span></span><small>${color}</small></label>`)}</div>` : editing ? html`<div class="block-editor"><label for=${`block-copy-${this.block.id}`}>Edit ${this.block.type} content</label><textarea id=${`block-copy-${this.block.id}`} rows="3" .value=${this.#draft} placeholder=${String(p.placeholder??"Describe a direction…")} @input=${(event:InputEvent)=>{this.#draft=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}} @keydown=${(event:KeyboardEvent)=>{if(event.key==="Escape"){event.preventDefault();this.#cancelEdit();}else if(event.key==="Enter"&&(event.metaKey||event.ctrlKey)){event.preventDefault();void this.#saveEdit();}}}></textarea><div><small>⌘/Ctrl + Enter to save · Esc to cancel</small><button class="button ghost" @click=${this.#cancelEdit}>Cancel</button><button class="button primary" @click=${this.#saveEdit}>Save</button></div></div>` : html`<button class="block-copy ${copy?"":"placeholder"}" ?disabled=${this.block.locked} title=${this.block.locked?"Unlock this block to edit":"Edit block content"} @click=${this.#beginEdit}>${displayCopy}</button>`}
         ${this.block.type === "reference" ? html`<forma-reference-image .src=${String(p.media_url??"")} .alt=${String(p.label??this.block.handle)}></forma-reference-image>` : nothing}
         ${this.block.type === "reference" && extractionStatus ? html`<div class="extraction-summary" aria-live="polite" aria-busy=${extractionStatus === "pending" ? "true" : "false"}>
           <span>${extractionStatus === "pending" ? "Extracting deterministic facts…" : extractionStatus === "complete" ? "Extraction complete" : "Extraction unavailable"}</span>

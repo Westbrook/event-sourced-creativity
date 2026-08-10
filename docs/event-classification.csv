@@ -3,6 +3,7 @@ ProjectCreated,user_content,structured_only,user,immutable
 ProjectRenamed,user_content,structured_only,user,immutable
 ProjectStateChanged,non_pii,structured_only,user,immutable
 DocumentCreated,user_content,structured_only,user,immutable
+DocumentRenamed,user_content,structured_only,user,immutable
 DocumentForked,identifier,structured_only,user,immutable
 BlockCreated,user_content,external_pointer_for_free_text,user_or_ingest_worker,immutable
 BlockRenamed,user_content,structured_only,user,immutable

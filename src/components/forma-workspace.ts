@@ -10,11 +10,20 @@ import "./output-card";
 
 export class FormaWorkspace extends FormaElement {
   #prompt = "";
+  #draftDirection: string | null = null;
+  #documentName: string | null = null;
   #proposal: { prompt: string; events: EventInput[]; proposalId?: string; exemplars: RetrievedExemplar[] } | null = null;
   #uploading = false;
 
-  #addBlock() {
-    void this.store.append({ type: "BlockCreated", payload: { block_id: crypto.randomUUID(), type: "direction", handle: `direction/study-${this.store.head.get()+1}`, position: `z${String(this.store.head.get()+1).padStart(4,"0")}`, properties: { text: "Describe a new direction", weight: .64, authority: "authored" } } });
+  #beginDirection() {
+    this.#draftDirection = ""; this.requestUpdate();
+    void this.updateComplete.then(() => this.querySelector<HTMLTextAreaElement>(".direction-composer textarea")?.focus());
+  }
+  async #addBlock(event: SubmitEvent) {
+    event.preventDefault(); const text = this.#draftDirection?.trim(); if (!text) return;
+    const blockId = crypto.randomUUID(); const slug = text.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"").slice(0,42) || `study-${this.store.head.get()+1}`;
+    const appended = await this.store.append({ type: "BlockCreated", payload: { block_id: blockId, type: "direction", handle: `direction/${slug}`, position: `z${String(this.store.head.get()+1).padStart(4,"0")}`, properties: { text, weight: .64, authority: "authored" } } });
+    if (appended.length) { this.#draftDirection = null; this.store.patchUi({ focusBlockId: blockId }); this.requestUpdate(); }
   }
   async #upload(event: Event) {
     const input = event.target as HTMLInputElement; const file = input.files?.[0]; if (!file) return;
@@ -54,6 +63,16 @@ export class FormaWorkspace extends FormaElement {
     const p = this.store.projection.get(); const next = window.prompt("Rename project", p.projectName)?.trim();
     if (next && next !== p.projectName) void this.store.append({ type: "ProjectRenamed", payload: { project_id: p.projectId, old_name: p.projectName, new_name: next } });
   }
+  #beginDocumentRename(title: string) {
+    this.#documentName = title; this.requestUpdate();
+    void this.updateComplete.then(() => this.querySelector<HTMLInputElement>(".document-title-editor input")?.select());
+  }
+  async #renameDocument(event: SubmitEvent, documentId: string, currentTitle: string) {
+    event.preventDefault(); const title = this.#documentName?.trim(); if (!title) return;
+    if (title === currentTitle) { this.#documentName = null; this.requestUpdate(); return; }
+    const appended = await this.store.append({ type: "DocumentRenamed", payload: { document_id: documentId, old_title: currentTitle, new_title: title } });
+    if (appended.length) { this.#documentName = null; this.requestUpdate(); }
+  }
   #compare() {
     const out = this.store.projection.get().outputs.slice(0,2); if (out.length < 2) return this.store.toast("Generate one more output to compare.");
     const ids = out.map((o) => o.id); void this.store.append({ type: "ComparisonOpened", payload: { object_ids: ids, source_surface: "studio" } }); this.store.patchUi({ compareOpen: true, comparisonOutputIds: ids.join("|") });
@@ -82,15 +101,15 @@ export class FormaWorkspace extends FormaElement {
         <div class="stream-peek"><span class="live-dot"></span><div><b>Durable stream</b><small>#${this.store.head.get()} · ${this.store.loading.get() ? "syncing" : "caught up"}</small></div><button @click=${() => this.store.setRoute("/admin/events")}>Review</button></div>
       </aside>
       <div class="studio-main">
-        <div class="document-bar"><div><span class="eyebrow">Document / ${p.documentId || "loading"}</span><h1>${p.documentTitle}</h1></div><div class="document-actions"><button class="icon-button labeled" @click=${() => this.store.undo()}>${icon("undo")}<span>Undo</span></button><button class="icon-button labeled" @click=${() => this.store.redo()}>${icon("redo")}<span>Redo</span></button><button class="button secondary compact" @click=${this.#compare}>${icon("compare")} Compare</button></div></div>
+        <div class="document-bar"><div><span class="eyebrow">Document / ${p.documentId || "loading"}</span>${this.#documentName===null?html`<div class="document-title-row"><h1>${p.documentTitle}</h1><button class="icon-button" aria-label=${`Rename ${p.documentTitle}`} title="Rename document" @click=${()=>this.#beginDocumentRename(p.documentTitle)}>${icon("edit")}</button></div>`:html`<form class="document-title-editor" @submit=${(event:SubmitEvent)=>this.#renameDocument(event,p.documentId,p.documentTitle)}><label class="sr-only" for="document-title-input">Document name</label><input id="document-title-input" maxlength="80" .value=${this.#documentName} @input=${(event:InputEvent)=>{this.#documentName=(event.target as HTMLInputElement).value;this.requestUpdate();}}><button type="button" class="button ghost compact" @click=${()=>{this.#documentName=null;this.requestUpdate();}}>Cancel</button><button type="submit" class="button primary compact" ?disabled=${!this.#documentName.trim()}>Save name</button></form>`}</div><div class="document-actions"><button class="icon-button labeled" @click=${() => this.store.undo()}>${icon("undo")}<span>Undo</span></button><button class="icon-button labeled" @click=${() => this.store.redo()}>${icon("redo")}<span>Redo</span></button><button class="button secondary compact" @click=${this.#compare}>${icon("compare")} Compare</button></div></div>
         <div class="studio-grid">
           <section class="context-column" aria-labelledby="context-title"><div class="section-heading"><div><span class="eyebrow">Projection · sequence ${this.store.head.get()}</span><h2 id="context-title">Creative context</h2></div><span class="health-pill"><i></i> replayable</span></div>
-            <div class="block-list">${p.blocks.map((block) => html`<forma-context-block .block=${block}></forma-context-block>`)}</div>
-            <button class="add-block" @click=${this.#addBlock}>${icon("plus")} Add context block</button>
+            ${p.blocks.length ? html`<div class="block-list">${p.blocks.map((block) => html`<forma-context-block .block=${block}></forma-context-block>`)}</div>` : this.#draftDirection === null ? html`<div class="blank-context"><span>${icon("plus")}</span><h3>This document is empty</h3><p>Add a direction, upload a reference, or ask Forma only when you are ready. Nothing is created on your behalf.</p><button class="button primary" @click=${this.#beginDirection}>Add a direction</button></div>` : nothing}
+            ${this.#draftDirection !== null ? html`<form class="direction-composer" @submit=${this.#addBlock}><label for="new-direction"><span class="eyebrow">New authored block</span><b>What direction do you want to explore?</b></label><textarea id="new-direction" rows="3" placeholder="Describe a direction…" .value=${this.#draftDirection} @input=${(event:InputEvent)=>{this.#draftDirection=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}}></textarea><div><button type="button" class="button ghost" @click=${()=>{this.#draftDirection=null;this.requestUpdate();}}>Cancel</button><button type="submit" class="button primary" ?disabled=${!this.#draftDirection.trim()}>Add direction</button></div></form>` : p.blocks.length ? html`<button class="add-block" @click=${this.#beginDirection}>${icon("plus")} Add context block</button>` : nothing}
             <div class="compile-bridge"><span>${icon("branch")}</span><div><b>Deterministic context compiler</b><small>${p.latestCompile ? "Snapshot embedded at last generation" : "Ready to compile"} · citations intact</small></div><button @click=${() => this.store.patchUi({ inspectorOpen:true })}>Inspect</button></div>
           </section>
           <section class="output-column" aria-labelledby="output-title"><div class="section-heading"><div><span class="eyebrow">${this.store.session.get()?.provider.configured ? `Live · ${this.store.session.get()?.provider.model}` : "Provider awaiting secure key"}</span><h2 id="output-title">Output</h2></div><button class="text-button" @click=${this.#compare}>Compare history</button></div>
-            ${output ? html`<forma-output-card .output=${output} .primary=${true}></forma-output-card>` : html`<div class="empty-output"><span>${icon("image")}</span><h3>Context is ready</h3><p>Generate a replayable simulation from the current projection.</p></div>`}
+            ${output ? html`<forma-output-card .output=${output} .primary=${true}></forma-output-card>` : html`<div class="empty-output"><span>${icon("image")}</span><h3>${p.blocks.length ? "Context is ready" : "A genuinely blank canvas"}</h3><p>${p.blocks.length ? "Generate a replayable simulation from the current projection." : "No context or output has been inferred. Add only what you choose."}</p></div>`}
             ${p.outputs.length > 1 ? html`<div class="output-filmstrip" aria-label="Previous outputs">${p.outputs.slice(1,5).map((o) => html`<button class="mini-output variant-${o.variant % 4} ${this.store.ui.selectedOutputId===o.id?"selected":""}" aria-label="Select ${o.id}" aria-pressed=${this.store.ui.selectedOutputId===o.id} @click=${() => { this.store.patchUi({ selectedOutputId:o.id }); if (this.store.ui.instrumentation) void this.store.hot({type:"ObjectViewed",payload:{object_id:o.id}}); }}></button>`)}</div>` : nothing}
             <label class="dropzone"><input type="file" accept="image/*" @change=${this.#upload}><span>${icon("plus")}</span><b>${this.#uploading ? "Uploading…" : "Drop or choose a reference"}</b><small>Stored in R2 after an explicit ownership or license assertion</small></label>
           </section>
