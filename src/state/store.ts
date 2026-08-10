@@ -94,10 +94,10 @@ export class FormaStore {
     } catch { /* Engagement instrumentation never blocks the creative action. */ }
   }
 
-  async propose(prompt: string, events: EventInput[]) {
+  async propose(prompt: string, events: EventInput[], exemplarRefs: Array<Record<string, unknown>> = []) {
     this.busy.set("proposal"); this.notify();
     try {
-      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "propose", prompt, events, expectedSequence: this.head.get(), clientId: "web:lit" }) });
+      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "propose", prompt, events, exemplarRefs, expectedSequence: this.head.get(), clientId: "web:lit" }) });
       if (!response.ok) throw new Error("Proposal could not be recorded");
       const body = await response.json() as { appended: CreativeEvent[]; head: number };
       this.events.set([...this.events.get(), ...body.appended]); this.head.set(body.head); this.toast("Proposal recorded — review it before applying.");
@@ -126,6 +126,18 @@ export class FormaStore {
       if (!response.ok) throw new Error(body.error === "admin_required" ? "An admin must witness the quality-gate rerun." : body.error ?? "Extractor evaluation failed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Extractor gate passed and the result was appended to the event stream.");
     } catch (error) { this.toast(error instanceof Error ? error.message : "Extractor evaluation failed"); }
+    finally { this.busy.set(""); this.notify(); }
+  }
+
+  async rebuildIndex() {
+    this.busy.set("phase7-index"); this.notify();
+    try {
+      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "rebuild_index", expectedSequence: this.head.get(), clientId: "web:library" }) });
+      const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; report?: { indexedItems?: number; exemplars?: number; families?: number } };
+      if (!response.ok) throw new Error(body.error === "admin_required" ? "An admin must run the derived index." : body.error ?? "Index rebuild failed");
+      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get());
+      this.toast(body.appended?.length ? `Indexed ${body.report?.indexedItems ?? 0} objects, ${body.report?.exemplars ?? 0} exemplars, and ${body.report?.families ?? 0} families.` : "The Phase 7 index is already fresh.");
+    } catch (error) { this.toast(error instanceof Error ? error.message : "Index rebuild failed"); }
     finally { this.busy.set(""); this.notify(); }
   }
 

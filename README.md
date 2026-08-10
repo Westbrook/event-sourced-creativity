@@ -11,6 +11,7 @@ projections over one append-only event stream.
 - editable reflection chips with authority-restoring compensation
 - deterministic uploaded-reference extraction with a fixed correction-rate quality gate
 - event-derived re-entry briefs with cold-start protection, rejected-path memory, and measurable dosage
+- versioned event-derived vectors, correctable aesthetic-family claims, and cited private few-shot retrieval
 - authored collection tree with cycle and duplicate-membership validation
 - chat proposals previewed before user acceptance
 - provenance lineage and filterable event stream
@@ -52,6 +53,11 @@ without calling a model provider.
 The Sessions page now runs the Phase 6 pilot from durable facts. Closing a
 session captures its projection receipt; opening an eligible session composes a
 bounded brief and witnesses every rendered item in the same append batch.
+
+The Library page runs the Phase 7 private-pilot index. An admin rebuild derives
+versioned vectors, worker-owned family claims, and a cited corpus from the
+stream; correcting a family supersedes one inferred edge without deleting the
+family, and promotion still requires an authored collection event.
 
 The Event admin page can export a theoretical replay fixture. Rebuild it from
 the command line with:

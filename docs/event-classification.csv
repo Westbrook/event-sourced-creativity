@@ -66,9 +66,9 @@ AdapterVersioned,operational,structured_only,worker:registry,immutable
 CapabilityDeclared,operational,structured_only,worker:registry,immutable
 RightsAsserted,rights_and_source,external_pointer_for_evidence,user,immutable
 AttributionComputed,derived_claim,external_blob_pointer,worker:attribution,immutable
-FamilyDeclared,derived_claim,structured_only,user,immutable
-FamilyAnchorSet,derived_claim,external_blob_pointer,user,immutable
-FamilyMembershipAsserted,derived_claim,structured_only,user,immutable
+FamilyDeclared,derived_claim,structured_only,worker:indexer,immutable
+FamilyAnchorSet,derived_claim,external_blob_pointer,worker:indexer,immutable
+FamilyMembershipAsserted,derived_claim,structured_only,worker:indexer,immutable
 Deferred,behavioral,structured_only,user,immutable
 ConditionSet,user_sensitive,external_pointer_for_condition,user,immutable
 ConditionFired,behavioral,structured_only,user,immutable

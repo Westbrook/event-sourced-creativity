@@ -3,13 +3,14 @@ import { FormaElement, icon } from "./forma-element";
 import { contextDiff, foldEvents, shortEventType, type EventInput } from "../model/events";
 import { sampleImageFile } from "../model/image-sample";
 import type { ImageSample } from "../model/extractors";
+import { retrieveFewShotExemplars, type RetrievedExemplar } from "../model/indexing";
 import "./context-block";
 import "./collection-tree";
 import "./output-card";
 
 export class FormaWorkspace extends FormaElement {
   #prompt = "";
-  #proposal: { prompt: string; events: EventInput[]; proposalId?: string } | null = null;
+  #proposal: { prompt: string; events: EventInput[]; proposalId?: string; exemplars: RetrievedExemplar[] } | null = null;
   #uploading = false;
 
   #addBlock() {
@@ -38,7 +39,9 @@ export class FormaWorkspace extends FormaElement {
     const prompt = this.#prompt.trim(); if (!prompt) return;
     const p = this.store.projection.get(); const palette = p.blocks.find((b) => b.type === "palette");
     const events: EventInput[] = /warm/i.test(prompt) && palette ? [{ type: "BlockPropertyEdited", payload: { block_id: palette.id, property_path: "temperature", old_value: palette.properties.temperature ?? "neutral", new_value: "warmer" } }] : [{ type: "BlockCreated", payload: { block_id: crypto.randomUUID(), type: "direction", handle: `direction/chat-${this.store.head.get()}`, position: `z${this.store.head.get()}`, properties: { text: prompt, authority: "authored", weight: .7 } } }];
-    const proposal = await this.store.propose(prompt, events); this.#proposal = { prompt, events, proposalId: proposal?.eventId }; this.#prompt = ""; this.requestUpdate();
+    const exemplars = retrieveFewShotExemplars(this.store.events.get(), prompt, this.store.content.get(), { limit: 3 });
+    const exemplarRefs = exemplars.map((item) => ({ exemplar_id: item.exemplarId, evidence_refs: item.citations, similarity: Number(item.score.toFixed(3)), kind: item.kind }));
+    const proposal = await this.store.propose(prompt, events, exemplarRefs); this.#proposal = { prompt, events, proposalId: proposal?.eventId, exemplars }; this.#prompt = ""; this.requestUpdate();
   }
   async #acceptProposal() {
     if (!this.#proposal) return; const proposal = this.#proposal;
@@ -93,7 +96,7 @@ export class FormaWorkspace extends FormaElement {
       </div>
       ${this.store.ui.inspectorOpen ? this.#inspector() : nothing}
       <div class="composer-dock">
-        ${this.#proposal ? html`<div class="proposal-preview"><div><span class="eyebrow">Proposed events · inert until accepted</span><b>${this.#proposal.events.map((e) => shortEventType(e.type)).join(" + ")}</b><small>Expected sequence ${this.store.head.get()} · previewed with context diff</small></div><button class="button ghost" @click=${this.#rejectProposal}>Decline</button><button class="button primary" @click=${this.#acceptProposal}>Accept proposal</button></div>` : nothing}
+        ${this.#proposal ? html`<div class="proposal-preview"><div><span class="eyebrow">Proposed events · inert until accepted</span><b>${this.#proposal.events.map((e) => shortEventType(e.type)).join(" + ")}</b><small>Expected sequence ${this.store.head.get()} · previewed with context diff</small>${this.#proposal.exemplars.length ? html`<div class="proposal-corpus"><span>${icon("branch")} ${this.#proposal.exemplars.length} cited corpus match${this.#proposal.exemplars.length===1?"":"es"}</span>${this.#proposal.exemplars.map((item)=>html`<button title=${item.citations.join(" · ")} @click=${()=>{this.store.patchUi({selectedEventId:item.citations[0],inspectorOpen:true});}}>${item.label} · ${Math.round(item.score*100)}%</button>`)}</div>` : html`<small class="corpus-empty">No accepted precedent yet; this proposal can become one after explicit acceptance.</small>`}</div><button class="button ghost" @click=${this.#rejectProposal}>Decline</button><button class="button primary" @click=${this.#acceptProposal}>Accept proposal</button></div>` : nothing}
         <div class="composer"><label class="sr-only" for="creative-command">Describe a change or ask Forma</label><textarea id="creative-command" rows="1" placeholder="Describe a change — “make the palette warmer”…" .value=${this.#prompt} @input=${(e: InputEvent) => { this.#prompt = (e.target as HTMLTextAreaElement).value; }} @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void this.#ask(); } }}></textarea><label class="icon-button add-ref" title="Add reference"><input type="file" accept="image/*" @change=${this.#upload}>${icon("plus")}</label><button class="button secondary ask" @click=${this.#ask}>Ask Forma</button><button class="button primary generate" ?disabled=${!!this.store.busy.get() || !this.store.session.get()?.provider.configured} title=${this.store.session.get()?.provider.configured ? "Generate with the live provider" : "Connect OPENAI_API_KEY to enable generation"} @click=${() => this.store.generate()}>${icon("spark")} ${this.store.busy.get()==="generate" ? "Generating…" : "Generate"}</button></div>
       </div>
       ${this.store.ui.compareOpen ? this.#comparison() : nothing}

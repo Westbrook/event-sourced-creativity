@@ -11,7 +11,7 @@ const phases = [
   ["5","Conversation","operational","Propose → diff boundary → accept/reject, expected sequence, externalized command text."],
   ["5.5","Collections","operational","Authored tree, nested handles, filing, move validation, and family promotion."],
   ["6","Sessions & brief","evaluation","Event-derived close snapshots, cold-start enforcement, atomic brief impressions, rejected-path memory, and live dosage metrics are collecting pilot evidence."],
-  ["7","Vectors & families","simulation","Family claims and promotion path are demonstrable; production vector model/data rights are pending."],
+  ["7","Vectors, families & corpus","operational","A versioned, rebuildable pilot index now clusters correctable family claims and retrieves cited precedents; pgvector/HNSW scale remains a production migration."],
   ["8","Scout","gated","Report-space scenario and permissions exist. Autonomous scouting remains disabled during the human-in-the-loop pilot."],
   ["9","Taste & time","evaluation","Preference and condition history run under the adopted 30-day private-content retention policy."],
   ["10","Library & sharing","operational","Personal library, lossless files, and private expiring revocable read-only links are available."],

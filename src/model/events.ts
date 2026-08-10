@@ -169,8 +169,26 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "SessionClosed": state.lastSession = p; state.currentSessionId = null; state.sessionOpen = false; state.brief = null; state.presentedBriefItems.clear(); break;
       case "AnnotationAdded": annotations.set(String(p.annotation_id), p); break;
       case "AnnotationRetracted": annotations.delete(String(p.annotation_id)); break;
-      case "FamilyDeclared": families.set(String(p.family_id), { ...p, authority: "inferred" }); break;
-      case "FamilyAnchorSet": { const f = families.get(String(p.family_id)); if (f) Object.assign(f, p); break; }
+      case "FamilyDeclared": {
+        const id = String(p.family_id); const current = families.get(id);
+        families.set(id, { ...current, ...p, authority: "inferred", members: Array.isArray(current?.members) ? current.members : [], source_events: [...(Array.isArray(current?.source_events) ? current.source_events : []), event.eventId], superseded: false });
+        break;
+      }
+      case "FamilyAnchorSet": { const f = families.get(String(p.family_id)); if (f) { Object.assign(f, p); f.source_events = [...(Array.isArray(f.source_events) ? f.source_events : []), event.eventId]; } break; }
+      case "FamilyMembershipAsserted": {
+        const familyId = String(p.family_id); const f = families.get(familyId); if (!f) break;
+        const objectId = String(p.object_id); const members = Array.isArray(f.members) ? f.members.map(asRecord).filter((member) => String(member.object_id) !== objectId) : [];
+        members.push({ ...p, object_id: objectId, claim_ref: p.claim_ref ?? `family-membership:${familyId}:${objectId}`, event_id: event.eventId, authority: "inferred" }); f.members = members; f.source_events = [...(Array.isArray(f.source_events) ? f.source_events : []), event.eventId];
+        break;
+      }
+      case "ClaimSuperseded": {
+        const claimRef = String(p.claim_ref ?? "");
+        if (claimRef.startsWith("family-membership:")) {
+          const [, familyId, ...objectParts] = claimRef.split(":"); const f = families.get(familyId); const objectId = objectParts.join(":");
+          if (f && Array.isArray(f.members)) { f.members = f.members.map(asRecord).filter((member) => String(member.object_id) !== objectId); f.corrected_claims = [...(Array.isArray(f.corrected_claims) ? f.corrected_claims : []), claimRef]; }
+        } else if (claimRef.startsWith("family:")) { const f = families.get(claimRef.slice(7)); if (f) { f.superseded = true; f.superseded_by = p.new_event_id ?? p.replacement_ref ?? null; } }
+        break;
+      }
       case "PreferenceAuthored": preferences.set(String(p.preference_id), { ...p, authority: "authored" }); break;
       case "PreferenceRevoked": preferences.delete(String(p.preference_id)); break;
       case "ConditionSet": conditions.set(String(p.condition_id), { ...p, fired: false }); break;

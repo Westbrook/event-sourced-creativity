@@ -12,7 +12,7 @@ This ledger reconciles Revision 2.1 of the synthesis/build plan with the kickoff
 | Phase 5 | Operational | Chat proposal → preview → explicit accept/reject; 30-day externalized private content; expected sequence; same committed event vocabulary | Pilot evaluation of proposal quality |
 | Phase 5.5 | Operational | Authored nested collection tree, handles, filing/moving, duplicate and cycle validation, family promotion | Multi-membership deliberately absent |
 | Phase 6 | Evaluation | Server-owned close snapshots, continuity delta, warm-thread composition, rejected-path memory, atomic `BriefComposed` + impression batches, accept/ignore/dismiss/blank, cold-start threshold, private optional intent, cost and dosage projections | Collect at least 10 witnessed impressions, then conduct the human go/no-go review; no automatic pass threshold |
-| Phase 7 | Simulation | Inferred family surface, evidence summary, user-only promotion to collection, fixture corpus path | Embedding model and data-rights posture |
+| Phase 7 | Operational pilot | Versioned rebuildable vector projection, collection-filter metadata, event-derived family clustering, worker-only family claims, edge correction by `ClaimSuperseded`, embedding freshness, private cited few-shot retrieval in chat | Production pgvector/HNSW scale, representative licensed corpus, and the D-0019 second-provider revisit before production rollout |
 | Phase 8 | Gated | Scout report-space scenario, evidence/judgment events, producer permissions, hard budget ceilings | Autonomous execution remains outside the human-in-the-loop pilot |
 | Phase 9 | Evaluation | Preference/time folds, condition UI, authority/history semantics, 30-day private-content redaction | Pilot evidence must tune decay semantics |
 | Phase 10 | Operational | Reusable library, archive import/export, lossless downloads, expiring revocable read-only share projections | Broader team/community publication remains out of scope |
@@ -26,10 +26,12 @@ This ledger reconciles Revision 2.1 of the synthesis/build plan with the kickoff
 - Uploads require explicit ownership or license confirmation. Shares are read-only, expire after at most seven days, and are immediately revocable.
 - The Phase 3 deterministic suite extracts dimensions, a k-means palette, and dominant edge direction from uploaded references. The frozen corpus gate must pass globally and per extractor at a correction rate of 10% or less.
 - Phase 6 composes no brief before three closed sessions and one dormant or unresolved thread. Composition and item impressions append atomically, and the pilot remains in evaluation until at least ten impressions support a human review of acceptance, cost, and dosage.
+- Phase 7 uses a deterministic, versioned local embedding projection for the private pilot. Rebuilding writes only inferred family claims; vectors and corpus rankings remain disposable projections, family edges are individually correctable, and keeping a family still requires an authored collection event.
 
 ## Accepted delivery debt
 
 - Phase 2's two-provider done-when is intentionally deferred under D-0019. The OpenAI adapter is the sole live pilot adapter; a second provider and same-context comparison are required before Phase 7 production rollout or general availability.
+- Phase 7's private-pilot index deliberately does not claim production pgvector/HNSW scale. D-0022 keeps the projection contract and model/version receipts stable so that migration remains a rebuild, not an event rewrite.
 
 ## UI affordance audit
 

@@ -4,13 +4,14 @@ import { ensureSchema, insertEvent, makeEvent, readEvents, streamHead, uuidV7, t
 import { analyzeImageSample, runExtractorEvaluation, type ImageSample } from "../src/model/extractors";
 import { briefEligibility, composeReentryBrief } from "../src/model/brief";
 import { foldEvents } from "../src/model/events";
+import { buildPhase7Index } from "../src/model/indexing";
 
 export type { WorkerEnv } from "./runtime";
 
 type EventInput = { type?: string; payload?: Record<string, unknown>; compensatesEventId?: string | null };
 
 const USER_EVENTS = new Set([
-  "ProjectCreated","ProjectRenamed","ProjectStateChanged","DocumentCreated","DocumentForked","BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet","BlockLocked","BlockUnlocked","BlockRemoved","BlockRestored","ReferenceIngested","RegionPromoted","ExtractionRequested","ChipEdited","GenerationRequested","ObjectViewed","ObjectSaved","ObjectDiscarded","ObjectPinned","ObjectUnpinned","ObjectRegenerated","ObjectCritiqued","ObjectExported","SessionOpened","SessionClosed","BriefItemPresented","BriefItemAccepted","BriefItemIgnored","BriefDismissed","EmptyCanvasChosen","ComparisonOpened","ProposalAccepted","ProposalRejected","ProposalDeclined","AnnotationAdded","AnnotationRetracted","PreferenceAuthored","PreferenceRevoked","ObservationJudged","IntentDeclared","Deferred","ConditionSet","ConditionFired","Resurfaced","AddedToLibrary","RemovedFromLibrary","FamilyDeclared","FamilyAnchorSet","FamilyMembershipAsserted","CollectionCreated","CollectionRenamed","CollectionRemoved","CollectionRestored","CollectionItemAdded","CollectionItemRemoved","CollectionItemMoved","FactRetracted","ClaimSuperseded","RightsAsserted",
+  "ProjectCreated","ProjectRenamed","ProjectStateChanged","DocumentCreated","DocumentForked","BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet","BlockLocked","BlockUnlocked","BlockRemoved","BlockRestored","ReferenceIngested","RegionPromoted","ExtractionRequested","ChipEdited","GenerationRequested","ObjectViewed","ObjectSaved","ObjectDiscarded","ObjectPinned","ObjectUnpinned","ObjectRegenerated","ObjectCritiqued","ObjectExported","SessionOpened","SessionClosed","BriefItemPresented","BriefItemAccepted","BriefItemIgnored","BriefDismissed","EmptyCanvasChosen","ComparisonOpened","ProposalAccepted","ProposalRejected","ProposalDeclined","AnnotationAdded","AnnotationRetracted","PreferenceAuthored","PreferenceRevoked","ObservationJudged","IntentDeclared","Deferred","ConditionSet","ConditionFired","Resurfaced","AddedToLibrary","RemovedFromLibrary","CollectionCreated","CollectionRenamed","CollectionRemoved","CollectionRestored","CollectionItemAdded","CollectionItemRemoved","CollectionItemMoved","FactRetracted","ClaimSuperseded","RightsAsserted",
 ]);
 const PRODUCER_EVENTS: Record<string, Set<string>> = {
   "worker:compiler": new Set(["ContextCompiled"]),
@@ -74,14 +75,14 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false):Prom
     if(request.method==="GET"){const events=await readEvents(env,streamId);return Response.json({events,content:await loadPrivateContent(env,ownerId),head:events.at(-1)?.sequence??0,permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});}
     if(request.method!=="POST")return new Response("Method not allowed",{status:405});
     const consent=requireConsent(auth.user);if(consent)return consent;
-    const body=await request.json() as {action?:"append"|"batch"|"propose"|"generate"|"hot"|"evaluate_extractors"|"extract_reference"|"open_session"|"close_session"|"compose_brief"|"declare_intent";event?:EventInput;events?:EventInput[];expectedSequence?:number;clientId?:string;correlationId?:string;prompt?:string;snapshot?:Record<string,unknown>;sourceBlockVersions?:Array<Record<string,unknown>>;blockId?:string;referenceId?:string;sample?:ImageSample;statement?:string;deadline?:string|null};
+    const body=await request.json() as {action?:"append"|"batch"|"propose"|"generate"|"hot"|"evaluate_extractors"|"rebuild_index"|"extract_reference"|"open_session"|"close_session"|"compose_brief"|"declare_intent";event?:EventInput;events?:EventInput[];expectedSequence?:number;clientId?:string;correlationId?:string;prompt?:string;exemplarRefs?:Array<Record<string,unknown>>;snapshot?:Record<string,unknown>;sourceBlockVersions?:Array<Record<string,unknown>>;blockId?:string;referenceId?:string;sample?:ImageSample;statement?:string;deadline?:string|null};
     const current=await streamHead(env,streamId),client=body.clientId||"web:lit",corr=body.correlationId||uuidV7();const requested=body.action==="batch"||hot?body.events??(body.event?[body.event]:[]):body.event?[body.event]:[];
     if(hot&&!requested.every(e=>HOT_EVENTS.has(e.type??"")))return Response.json({error:"hot_path_accepts_commutative_engagement_only"},{status:400});
     const commutative=requested.length>0&&requested.every(e=>COMMUTATIVE.has(e.type??""));
     if(typeof body.expectedSequence==="number"&&body.expectedSequence!==current&&body.action!=="propose"&&!commutative)return Response.json({error:"stale_sequence",expected:body.expectedSequence,head:current},{status:409});
     if(body.action==="propose"){
       const stored=await storePrivateContent(env,ownerId,"prompt",body.prompt??"");
-      const proposal=makeEvent(streamId,current+1,"model:forma-chat",client,corr,"MutationProposed",{content_ref:stored.contentId,content_expires_at:stored.expiresAt,proposed_events:body.events??[],expected_sequence:current});await insertEvent(env,proposal).run();return Response.json({appended:[proposal],rejected:[],head:proposal.sequence});
+      const proposal=makeEvent(streamId,current+1,"model:forma-chat",client,corr,"MutationProposed",{content_ref:stored.contentId,content_expires_at:stored.expiresAt,proposed_events:body.events??[],exemplar_refs:body.exemplarRefs??[],expected_sequence:current});await insertEvent(env,proposal).run();return Response.json({appended:[proposal],rejected:[],head:proposal.sequence});
     }
     if(body.action==="generate"){
       if(!env.OPENAI_API_KEY)return Response.json({error:"provider_not_configured"},{status:503});
@@ -102,6 +103,19 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false):Prom
       const report=runExtractorEvaluation();
       const completed=makeEvent(streamId,current+1,"worker:extractor",client,corr,"ExtractorEvaluationCompleted",{...report,evaluated_at:new Date().toISOString(),gate:"phase-3-a5"});
       await insertEvent(env,completed).run();return Response.json({appended:[completed],rejected:[],head:completed.sequence,report});
+    }
+    if(body.action==="rebuild_index"){
+      if(auth.user.role!=="admin")return Response.json({error:"admin_required"},{status:403});
+      const events=await readEvents(env,streamId);const report=buildPhase7Index(events,await loadPrivateContent(env,ownerId));
+      const signatures=new Set(events.filter(event=>event.type==="FamilyDeclared").map(event=>String(event.payload.index_signature??"")));
+      const corrected=new Set(events.filter(event=>event.type==="ClaimSuperseded").map(event=>String(event.payload.claim_ref??"")));
+      const appended:EventRow[]=[];let sequence=current;
+      for(const family of report.families.filter(item=>!signatures.has(item.indexSignature))){
+        const declared=makeEvent(streamId,++sequence,"worker:indexer",client,corr,"FamilyDeclared",{family_id:family.familyId,label:family.label,confidence:family.confidence,evidence_refs:family.evidenceRefs,embedding_model_id:report.embeddingModelId,embedding_version:report.embeddingVersion,source_head:family.sourceHead,index_signature:family.indexSignature});appended.push(declared);
+        appended.push(makeEvent(streamId,++sequence,"worker:indexer",client,corr,"FamilyAnchorSet",{family_id:family.familyId,object_id:family.anchorObjectId,evidence_refs:family.evidenceRefs.slice(0,4),index_signature:family.indexSignature},{causationId:declared.eventId}));
+        for(const member of family.members.filter(item=>!corrected.has(item.claimRef)))appended.push(makeEvent(streamId,++sequence,"worker:indexer",client,corr,"FamilyMembershipAsserted",{family_id:family.familyId,object_id:member.objectId,confidence:member.confidence,evidence_refs:member.evidenceRefs,claim_ref:member.claimRef,index_signature:family.indexSignature},{causationId:declared.eventId}));
+      }
+      if(appended.length)await env.DB.batch(appended.map(event=>insertEvent(env,event)));return Response.json({appended,rejected:[],head:sequence,report:{embeddingModelId:report.embeddingModelId,embeddingVersion:report.embeddingVersion,sourceHead:report.sourceHead,indexedItems:report.items.length,exemplars:report.exemplars.length,families:report.families.length}});
     }
     if(body.action==="extract_reference"){
       if(!body.blockId||!body.referenceId||!body.sample)return Response.json({error:"block_reference_and_sample_required"},{status:400});

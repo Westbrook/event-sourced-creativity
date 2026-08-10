@@ -98,3 +98,19 @@ test("runs the Phase 6 pilot from event-derived sessions instead of brief fixtur
   assert.match(store, /composeBrief/); assert.match(sessions, /event-derived/); assert.match(sessions, /Dosage curve/);
   assert.match(briefModel, /PHASE6_MIN_CLOSED_SESSIONS/); assert.match(briefModel, /rejectedPathMemory/); assert.match(briefModel, /phase6GateMetrics/);
 });
+
+test("runs the Phase 7 private-pilot index as a correctable derived projection", async () => {
+  const [eventsApi, store, library, indexing, coverage, classification] = await Promise.all([
+    readFile(new URL("../worker/events-api.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/state/store.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/forma-library.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/model/indexing.ts", import.meta.url), "utf8"),
+    readFile(new URL("../docs/plan-coverage.md", import.meta.url), "utf8"),
+    readFile(new URL("../docs/event-classification.csv", import.meta.url), "utf8"),
+  ]);
+  assert.match(eventsApi, /rebuild_index/); assert.match(eventsApi, /worker:indexer/);
+  assert.doesNotMatch(eventsApi.match(/const USER_EVENTS[\s\S]*?\]\);/)?.[0] ?? "", /FamilyDeclared|FamilyMembershipAsserted/);
+  assert.match(store, /rebuildIndex/); assert.match(library, /Vector, family, and corpus index/); assert.match(library, /Correct grouping/);
+  assert.match(indexing, /EMBEDDING_MODEL_ID/); assert.match(indexing, /retrieveFewShotExemplars/); assert.match(indexing, /collectionIds/);
+  assert.match(coverage, /Phase 7.*Operational pilot/); assert.match(classification, /FamilyDeclared.*worker:indexer/);
+});
