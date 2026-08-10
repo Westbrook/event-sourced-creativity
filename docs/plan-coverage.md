@@ -6,8 +6,8 @@ This ledger reconciles Revision 2.1 of the synthesis/build plan with the kickoff
 |---|---|---|---|
 | Phase 0 | Operational | Append-only decision ledger, authenticated identities, admin/creator/agent/viewer roles, consent receipt, configurable policy | Production organization membership and wider access remain pilot operations |
 | Phase 1 | Operational | Immutable D1 log, actor permissions, partial batches, stale-sequence checks, authored-wins fold, compensation, collection validation, standalone stream viewer and replay lab | Production Postgres/Timescale topology is outside this Sites slice |
-| Phase 2 | Operational | Deterministic context snapshots, citations, server-side OpenAI Responses adapter, structured output, token receipts, hard-cap reservation | A second provider remains future adapter work |
-| Phase 3 | Operational | Editable chips/swatches, confidence text, authority labels, compensation semantics, extractor events | Real extractor eval threshold requires selected extractor implementation |
+| Phase 2 | Operational with accepted debt | Deterministic context snapshots, citations, server-side OpenAI Responses adapter, structured output, token receipts, hard-cap reservation | D-0019 records the second-provider debt; revisit before Phase 7 production rollout or general availability |
+| Phase 3 | Operational | Editable chips/swatches, confidence text, authority labels, compensation semantics, real upload extraction, fixed v1 corpus, executable 10% correction-rate gate, durable evaluation receipts | Expand the corpus with representative licensed pilot references while keeping the frozen baseline |
 | Phase 4 | Operational | Provenance inspector, context diff, side-by-side comparison, rights receipt at export, region-promotion event seam | Attribution algorithm and influence-taint policy remain open |
 | Phase 5 | Operational | Chat proposal → preview → explicit accept/reject; 30-day externalized private content; expected sequence; same committed event vocabulary | Pilot evaluation of proposal quality |
 | Phase 5.5 | Operational | Authored nested collection tree, handles, filing/moving, duplicate and cycle validation, family promotion | Multi-membership deliberately absent |
@@ -24,6 +24,11 @@ This ledger reconciles Revision 2.1 of the synthesis/build plan with the kickoff
 - Budgets reserve capacity before an external call, settle against reported token usage, and fail closed when user or workspace limits are reached.
 - Prompt/provider content is redacted after 30 days; events retain only non-sensitive receipts and references.
 - Uploads require explicit ownership or license confirmation. Shares are read-only, expire after at most seven days, and are immediately revocable.
+- The Phase 3 deterministic suite extracts dimensions, a k-means palette, and dominant edge direction from uploaded references. The frozen corpus gate must pass globally and per extractor at a correction rate of 10% or less.
+
+## Accepted delivery debt
+
+- Phase 2's two-provider done-when is intentionally deferred under D-0019. The OpenAI adapter is the sole live pilot adapter; a second provider and same-context comparison are required before Phase 7 production rollout or general availability.
 
 ## UI affordance audit
 

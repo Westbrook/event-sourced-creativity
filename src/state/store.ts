@@ -2,6 +2,7 @@ import { Signal } from "signal-polyfill";
 import { SignalObject } from "signal-utils/object";
 import { foldEvents, type CreativeEvent, type CreativeProjection, type EventInput } from "../model/events";
 import { buildScenario, type ScenarioKey } from "../model/scenarios";
+import type { ImageSample } from "../model/extractors";
 
 type Listener = () => void;
 export type PilotSession = {
@@ -114,6 +115,28 @@ export class FormaStore {
       if (!response.ok) throw new Error(body.error === "provider_not_configured" ? "OpenAI is ready but its production key has not been connected." : body.error ?? "Generation failed");
       await this.refreshSession(); this.toast(`Generated with ${this.session.get()?.provider.model ?? "OpenAI"}; provenance and usage recorded.`);
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
+    finally { this.busy.set(""); this.notify(); }
+  }
+
+  async evaluateExtractors() {
+    this.busy.set("extractor-eval"); this.notify();
+    try {
+      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "evaluate_extractors", expectedSequence: this.head.get(), clientId: "web:system" }) });
+      const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string };
+      if (!response.ok) throw new Error(body.error === "admin_required" ? "An admin must witness the quality-gate rerun." : body.error ?? "Extractor evaluation failed");
+      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Extractor gate passed and the result was appended to the event stream.");
+    } catch (error) { this.toast(error instanceof Error ? error.message : "Extractor evaluation failed"); }
+    finally { this.busy.set(""); this.notify(); }
+  }
+
+  async extractReference(blockId: string, referenceId: string, sample: ImageSample) {
+    this.busy.set("extract-reference"); this.notify();
+    try {
+      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "extract_reference", expectedSequence: this.head.get(), clientId: "web:lit", blockId, referenceId, sample }) });
+      const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Reference extraction failed");
+      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Reference stored and deterministic extraction completed.");
+    } catch (error) { this.toast(error instanceof Error ? error.message : "Reference extraction failed"); }
     finally { this.busy.set(""); this.notify(); }
   }
 

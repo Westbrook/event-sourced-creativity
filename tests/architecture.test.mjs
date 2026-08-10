@@ -69,3 +69,19 @@ test("enforces the adopted production-pilot boundaries", async () => {
   assert.match(media, /rightsConfirmed/); assert.match(shell, /acceptTerms/); assert.match(shell, /forma-shared-view/);
   assert.match(schema, /private_content/); assert.match(schema, /budget_counters/); assert.match(envExample, /OPENAI_API_KEY=/);
 });
+
+test("records the accepted provider debt and makes the extractor gate operational", async () => {
+  const [decisions, coverage, eventsApi, store, system, classification] = await Promise.all([
+    readFile(new URL("../docs/decisions.ndjson", import.meta.url), "utf8"),
+    readFile(new URL("../docs/plan-coverage.md", import.meta.url), "utf8"),
+    readFile(new URL("../worker/events-api.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/state/store.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/forma-system.ts", import.meta.url), "utf8"),
+    readFile(new URL("../docs/event-classification.csv", import.meta.url), "utf8"),
+  ]);
+  assert.match(decisions, /D-0019.*accepted-debt.*second adapter/);
+  assert.match(coverage, /Phase 3.*executable 10% correction-rate gate/);
+  assert.match(eventsApi, /evaluate_extractors/); assert.match(eventsApi, /extract_reference/);
+  assert.match(store, /evaluateExtractors/); assert.match(system, /Extractor quality gate/);
+  assert.match(classification, /ExtractorEvaluationCompleted,operational/);
+});

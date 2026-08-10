@@ -1,6 +1,7 @@
 import { generateCreativeDirection } from "./openai-adapter";
 import { loadPrivateContent, releaseBudget, requireConsent, requireUser, reserveBudget, settleBudget, storePrivateContent } from "./pilot-policy";
 import { ensureSchema, insertEvent, makeEvent, readEvents, streamHead, uuidV7, type EventRow, type WorkerEnv } from "./runtime";
+import { analyzeImageSample, runExtractorEvaluation, type ImageSample } from "../src/model/extractors";
 
 export type { WorkerEnv } from "./runtime";
 
@@ -12,7 +13,7 @@ const USER_EVENTS = new Set([
 const PRODUCER_EVENTS: Record<string, Set<string>> = {
   "worker:compiler": new Set(["ContextCompiled"]),
   "worker:generator": new Set(["GenerationCompleted","GenerationFailed"]),
-  "worker:extractor": new Set(["ExtractionCompleted","ExtractionFailed","ExtractionSuperseded"]),
+  "worker:extractor": new Set(["ExtractionCompleted","ExtractionFailed","ExtractionSuperseded","ExtractorEvaluationCompleted"]),
   "worker:brief": new Set(["BriefComposed"]),
   "worker:taste": new Set(["TasteModelVersioned"]),
   "worker:validator": new Set(["ValidationFailed"]),
@@ -73,7 +74,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false):Prom
     if(request.method==="GET"){const events=await readEvents(env,streamId);return Response.json({events,content:await loadPrivateContent(env,ownerId),head:events.at(-1)?.sequence??0,permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});}
     if(request.method!=="POST")return new Response("Method not allowed",{status:405});
     const consent=requireConsent(auth.user);if(consent)return consent;
-    const body=await request.json() as {action?:"append"|"batch"|"propose"|"generate"|"hot";event?:EventInput;events?:EventInput[];expectedSequence?:number;clientId?:string;correlationId?:string;prompt?:string;snapshot?:Record<string,unknown>;sourceBlockVersions?:Array<Record<string,unknown>>};
+    const body=await request.json() as {action?:"append"|"batch"|"propose"|"generate"|"hot"|"evaluate_extractors"|"extract_reference";event?:EventInput;events?:EventInput[];expectedSequence?:number;clientId?:string;correlationId?:string;prompt?:string;snapshot?:Record<string,unknown>;sourceBlockVersions?:Array<Record<string,unknown>>;blockId?:string;referenceId?:string;sample?:ImageSample};
     const current=await streamHead(env,streamId),client=body.clientId||"web:lit",corr=body.correlationId||uuidV7();const requested=body.action==="batch"||hot?body.events??(body.event?[body.event]:[]):body.event?[body.event]:[];
     if(hot&&!requested.every(e=>HOT_EVENTS.has(e.type??"")))return Response.json({error:"hot_path_accepts_commutative_engagement_only"},{status:400});
     const commutative=requested.length>0&&requested.every(e=>COMMUTATIVE.has(e.type??""));
@@ -95,6 +96,19 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false):Prom
         const next=await streamHead(env,streamId);const complete=makeEvent(streamId,next+1,"worker:generator",client,corr,"GenerationCompleted",{generation_id:id,model_id:generated.model,provider:"openai",provider_response_id:generated.responseId,object_ids:[`object-${id.slice(-8)}`],output_ref:stored.contentId,content_expires_at:stored.expiresAt,latency_ms:generated.latencyMs,variant:(current+1)%4,simulation:false},{causationId:compiled.eventId});
         const usage=makeEvent(streamId,next+2,"worker:policy",client,corr,"GenerationUsageRecorded",{generation_id:id,reservation_id:reservation.reservationId,input_tokens:generated.usage.inputTokens,output_tokens:generated.usage.outputTokens,total_tokens:generated.usage.totalTokens,reserved_tokens:reserved,model_id:generated.model},{causationId:complete.eventId});await env.DB.batch([complete,usage].map(e=>insertEvent(env,e)));return Response.json({appended:[requestedAt,compiled,budgeted,complete,usage],content:{[stored.contentId]:generated.raw},rejected:[],head:usage.sequence,simulation:false});
       }catch(error){await releaseBudget(env,ownerId,reserved);const next=await streamHead(env,streamId);const failed=makeEvent(streamId,next+1,"worker:generator",client,corr,"GenerationFailed",{generation_id:id,model_id:model,error_class:error instanceof Error?error.message:"provider_failed"},{causationId:compiled.eventId});const released=makeEvent(streamId,next+2,"worker:policy",client,corr,"BudgetReleased",{generation_id:id,reservation_id:reservation.reservationId,reserved_tokens:reserved,reason:"generation_failed"},{causationId:failed.eventId});await env.DB.batch([failed,released].map(e=>insertEvent(env,e)));return Response.json({error:error instanceof Error?error.message:"generation_failed",appended:[requestedAt,compiled,budgeted,failed,released],head:released.sequence},{status:502});}
+    }
+    if(body.action==="evaluate_extractors"){
+      if(auth.user.role!=="admin")return Response.json({error:"admin_required"},{status:403});
+      const report=runExtractorEvaluation();
+      const completed=makeEvent(streamId,current+1,"worker:extractor",client,corr,"ExtractorEvaluationCompleted",{...report,evaluated_at:new Date().toISOString(),gate:"phase-3-a5"});
+      await insertEvent(env,completed).run();return Response.json({appended:[completed],rejected:[],head:completed.sequence,report});
+    }
+    if(body.action==="extract_reference"){
+      if(!body.blockId||!body.referenceId||!body.sample)return Response.json({error:"block_reference_and_sample_required"},{status:400});
+      const facts=analyzeImageSample(body.sample);
+      const requestedAt=makeEvent(streamId,current+1,"user",client,corr,"ExtractionRequested",{block_id:body.blockId,reference_id:body.referenceId,extractors:["dimensions-v1","palette-kmeans-v1","dominant-edges-v1"]});
+      const completed=makeEvent(streamId,current+2,"worker:extractor",client,corr,"ExtractionCompleted",{block_id:body.blockId,reference_id:body.referenceId,extractor_name:"deterministic-image-suite-v1",extractor_versions:["dimensions-v1","palette-kmeans-v1","dominant-edges-v1"],chips:[{chip_id:`chip-${body.blockId}-dimensions`,property:"dimensions",value:facts.dimensions,confidence:facts.confidence.dimensions},{chip_id:`chip-${body.blockId}-palette`,property:"colors",value:facts.palette,confidence:facts.confidence.palette},{chip_id:`chip-${body.blockId}-edges`,property:"dominant_edges",value:facts.dominantEdges,confidence:facts.confidence.dominantEdges}],overall_confidence:facts.confidence.overall,sample_grid:{width:body.sample.gridWidth,height:body.sample.gridHeight}},{causationId:requestedAt.eventId});
+      await env.DB.batch([requestedAt,completed].map(event=>insertEvent(env,event)));return Response.json({appended:[requestedAt,completed],rejected:[],head:completed.sequence});
     }
     if(body.action!=="append"&&body.action!=="batch"&&body.action!=="hot"&&!hot)return Response.json({error:"unsupported_action"},{status:400});
     const rejected:Array<{index:number;type:string;reason:string}>=[];const state=collectionState(await readEvents(env,streamId));const valid=requested.filter((item,index)=>{const type=item.type??"";if(!type||!canAppend("user",type)){rejected.push({index,type,reason:"event_not_permitted_for_user"});return false;}if(!item.payload||typeof item.payload!=="object"){rejected.push({index,type,reason:"payload_must_be_object"});return false;}if(type.startsWith("Collection")){const reason=validateCollection(item,state);if(reason){rejected.push({index,type,reason});return false;}}return true;});

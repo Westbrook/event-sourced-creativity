@@ -1,6 +1,8 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
 import { contextDiff, foldEvents, shortEventType, type EventInput } from "../model/events";
+import { sampleImageFile } from "../model/image-sample";
+import type { ImageSample } from "../model/extractors";
 import "./context-block";
 import "./collection-tree";
 import "./output-card";
@@ -18,14 +20,17 @@ export class FormaWorkspace extends FormaElement {
     if (!window.confirm(`Confirm that you own or are licensed to use “${file.name}” with Forma and its configured generation provider.`)) { input.value = ""; this.store.toast("Upload cancelled — no rights assertion was recorded."); return; }
     this.#uploading = true; this.requestUpdate();
     try {
+      let sample: ImageSample | null = null;
+      try { sample = await sampleImageFile(file); } catch { /* Upload remains useful when this browser cannot sample an image. */ }
       const form = new FormData(); form.append("file", file); form.append("rightsConfirmed", "true"); const response = await fetch("/api/media", { method: "POST", body: form }); const media = await response.json() as { key?: string; url?: string; error?: string };
       if (!response.ok) throw new Error(media.error ?? "Upload failed");
       const ref = crypto.randomUUID(); const block = crypto.randomUUID();
       await this.store.appendBatch([
         { type: "ReferenceIngested", payload: { reference_id: ref, source_type: "upload", source_ref: media.url, content_hash: media.key, rights_class: "asserted" } },
         { type: "RightsAsserted", payload: { reference_id: ref, rights_class: "owned_or_licensed", assertion_method: "explicit-upload-confirmation" } },
-        { type: "BlockCreated", payload: { block_id: block, type: "reference", handle: `reference/${file.name.replace(/\W+/g,"-").toLowerCase()}`, position: `z${this.store.head.get()}`, properties: { reference_id: ref, label: file.name, media_url: media.url, weight: .72, authority: "authored" } } },
-      ]); this.store.toast("Reference stored privately; the explicit rights assertion is in the event stream.");
+        { type: "BlockCreated", payload: { block_id: block, type: "reference", handle: `reference/${file.name.replace(/\W+/g,"-").toLowerCase()}`, position: `z${this.store.head.get()}`, properties: { reference_id: ref, label: file.name, media_url: media.url, weight: .72, authority: "authored", extraction_status: sample ? "pending" : "unavailable" } } },
+      ]);
+      if (sample) await this.store.extractReference(block, ref, sample); else this.store.toast("Reference stored; deterministic extraction is unavailable in this browser.");
     } catch (error) { this.store.toast(error instanceof Error ? error.message : "Upload failed"); }
     this.#uploading = false; this.requestUpdate(); input.value = "";
   }

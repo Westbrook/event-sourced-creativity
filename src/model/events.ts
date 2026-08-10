@@ -132,6 +132,16 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "BlockLocked": case "BlockUnlocked": { const b = blocks.get(String(p.block_id)); if (b) b.locked = event.type === "BlockLocked"; break; }
       case "BlockRemoved": case "BlockRestored": { const b = blocks.get(String(p.block_id)); if (b) b.removed = event.type === "BlockRemoved"; break; }
       case "ChipEdited": { const b = blocks.get(String(p.block_id)); if (b) { b.properties[String(p.property ?? "value")] = p.new_value; b.properties.authority = event.compensatesEventId ? "inferred" : "authored"; b.sourceEvents.push(event.eventId); } break; }
+      case "ExtractionRequested": { const b = blocks.get(String(p.block_id)); if (b) { b.properties.extraction_status = "pending"; b.sourceEvents.push(event.eventId); } break; }
+      case "ExtractionCompleted": {
+        const b = blocks.get(String(p.block_id)); const chips = Array.isArray(p.chips) ? p.chips : [];
+        if (b) {
+          for (const value of chips) { const chip = asRecord(value); const property = String(chip.property ?? ""); if (property) b.properties[property] = chip.value; }
+          b.properties.extraction_status = "complete"; b.properties.extractor = p.extractor_name; b.properties.confidence = Number(p.overall_confidence ?? Math.min(...chips.map((value) => Number(asRecord(value).confidence ?? 1)))); b.sourceEvents.push(event.eventId);
+        }
+        break;
+      }
+      case "ExtractionFailed": { const b = blocks.get(String(p.block_id)); if (b) { b.properties.extraction_status = "failed"; b.sourceEvents.push(event.eventId); } break; }
       case "CollectionCreated": { const id = String(p.collection_id); collections.set(id, { id, handle: String(p.handle ?? "untitled"), parentId: p.parent_collection_id ? String(p.parent_collection_id) : null, removed: false, position: String(p.position ?? "a0"), sourceClaimRef: p.source_claim_ref ? String(p.source_claim_ref) : null }); break; }
       case "CollectionRenamed": { const c = collections.get(String(p.collection_id)); if (c) c.handle = String(p.new_handle ?? c.handle); break; }
       case "CollectionRemoved": case "CollectionRestored": { const c = collections.get(String(p.collection_id)); if (c) c.removed = event.type === "CollectionRemoved"; break; }

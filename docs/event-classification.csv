@@ -19,6 +19,7 @@ ExtractionCompleted,derived_claim,structured_only,worker:extractor,immutable
 ExtractionFailed,operational,structured_only,worker:extractor,immutable
 ChipEdited,user_content,structured_only,user,immutable
 ExtractionSuperseded,derived_claim,structured_only,worker:extractor,immutable
+ExtractorEvaluationCompleted,operational,structured_only,worker:extractor,immutable
 GenerationRequested,identifier,structured_only,user_or_worker:scout,immutable
 ContextCompiled,user_content,external_pointer_for_free_text,worker:compiler,immutable_snapshot
 GenerationCompleted,operational,external_blob_pointer,worker:generator_or_scout,immutable

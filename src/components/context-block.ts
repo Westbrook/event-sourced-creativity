@@ -30,7 +30,7 @@ export class ContextBlock extends FormaElement {
 
   override render() {
     if (!this.block) return nothing;
-    const p = this.block.properties; const authority = String(p.authority ?? "authored"); const confidence = Number(p.confidence ?? 1); const colors = Array.isArray(p.colors) ? p.colors as string[] : [];
+    const p = this.block.properties; const authority = String(p.authority ?? "authored"); const confidence = Number(p.confidence ?? 1); const colors = Array.isArray(p.colors) ? p.colors as string[] : []; const dimensions = p.dimensions && typeof p.dimensions === "object" ? p.dimensions as Record<string, unknown> : null; const extractionStatus = String(p.extraction_status ?? "");
     return html`<article class="context-block" tabindex="0" data-block-id=${this.block.id} aria-label="${this.block.type} block, ${this.block.handle}">
       <div class="block-rail">
         <span class="drag-handle" aria-hidden="true" title="Reorder with the adjacent arrow controls">${icon("dots")}</span>
@@ -40,6 +40,11 @@ export class ContextBlock extends FormaElement {
         <header><div><span class="block-type">${this.block.type}</span><button class="handle" @click=${this.#rename}>${this.block.handle} ${icon("edit")}</button></div><button class="icon-button lock-button" aria-label=${this.block.locked ? "Unlock block" : "Lock block"} title=${this.block.locked ? "Unlock block" : "Lock block"} @click=${() => this.store.append({ type: this.block.locked ? "BlockUnlocked" : "BlockLocked", payload: { block_id: this.block.id, locked_by: "user" } })}>${icon(this.block.locked ? "lock" : "unlock")}<span class="lock-label">${this.block.locked ? "Locked" : "Lock"}</span></button></header>
         ${colors.length ? html`<div class="palette-row" aria-label="Editable palette">${colors.map((color, i) => html`<label class="swatch" style="--swatch:${color}" title="Edit swatch ${i+1}"><input type="color" .value=${color} @change=${(e: Event) => this.#changeColor(i, (e.target as HTMLInputElement).value)}><span></span><small>${color}</small></label>`)}</div>` : html`<button class="block-copy" @click=${this.#editText}>${String(p.text ?? p.label ?? "Reference material")}</button>`}
         ${this.block.type === "reference" ? html`<div class="reference-thumb art-thumb v1" role="img" aria-label="Abstract warm window-light reference"></div>` : nothing}
+        ${this.block.type === "reference" && extractionStatus ? html`<div class="extraction-summary" aria-live="polite" aria-busy=${extractionStatus === "pending" ? "true" : "false"}>
+          <span>${extractionStatus === "pending" ? "Extracting deterministic facts…" : extractionStatus === "complete" ? "Extraction complete" : "Extraction unavailable"}</span>
+          ${dimensions ? html`<b>${String(dimensions.width)} × ${String(dimensions.height)}</b><b>${String(p.dominant_edges ?? "balanced")} edges</b>` : nothing}
+          ${extractionStatus === "complete" ? html`<small>${Math.round(confidence * 100)}% confidence · ${String(p.extractor ?? "deterministic suite")}</small>` : nothing}
+        </div>` : nothing}
         <div class="block-meta">
           <label>Influence <input type="range" min="0" max="1" step="0.05" .value=${String(Number(p.weight ?? .5))} @change=${(e: Event) => this.#weight(Number((e.target as HTMLInputElement).value))}><output>${Math.round(Number(p.weight ?? .5) * 100)}%</output></label>
           <span class="authority ${authority}">${authority}</span>

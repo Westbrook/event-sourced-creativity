@@ -9,6 +9,7 @@ projections over one append-only event stream.
 - context blocks with authored/inferred/constraint authority
 - generated studies compiled from cited block snapshots
 - editable reflection chips with authority-restoring compensation
+- deterministic uploaded-reference extraction with a fixed correction-rate quality gate
 - authored collection tree with cycle and duplicate-membership validation
 - chat proposals previewed before user acceptance
 - provenance lineage and filterable event stream
@@ -42,6 +43,10 @@ pnpm test
 The UI is implemented entirely as Lit custom elements. `signal-polyfill` and
 `signal-utils` are isolated behind `FormaStore` because both packages are still
 experimental. React and framework-specific UI runtimes are not dependencies.
+
+The System Architecture page exposes the Phase 3 extractor scorecard. Admins
+can rerun the frozen corpus and append an `ExtractorEvaluationCompleted` receipt
+without calling a model provider.
 
 The Event admin page can export a theoretical replay fixture. Rebuild it from
 the command line with:
