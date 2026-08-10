@@ -21,6 +21,22 @@ export type TasteBelief = {
   preferenceId?: string;
 };
 
+export type CompilerBlameCluster = {
+  clusterId: string;
+  modelId: string;
+  adapterVersion: string;
+  critiqueCount: number;
+  positive: number;
+  negative: number;
+  attributed: boolean;
+  axes: Array<{axis: CreatorAxis; positive: number; negative: number}>;
+  sourceBlockVersions: Array<{blockId: string; version: number; critiqueCount: number; positive: number; negative: number}>;
+  critiqueRefs: string[];
+  compileRefs: string[];
+  generationIds: string[];
+  objectIds: string[];
+};
+
 const list = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
 const round = (value: number, precision = 3) => Number(value.toFixed(precision));
 const safeAxis = (value: unknown): CreatorAxis => CREATOR_AXES.includes(value as CreatorAxis) ? value as CreatorAxis : "style";
@@ -87,12 +103,50 @@ export function preferenceCapsule(events: CreativeEvent[], limit = 8) {
   return [...authored,...inferred.filter((item)=>!authoredKeys.has(`${item.axis}:${item.value.toLowerCase()}:${item.polarity}`))].sort((left,right)=>Number(right.authority==="authored")-Number(left.authority==="authored")||right.confidence-left.confidence).slice(0,limit);
 }
 
+export function compilerBlameLedger(events: CreativeEvent[]): CompilerBlameCluster[] {
+  type MutableCluster = Omit<CompilerBlameCluster,"axes"|"sourceBlockVersions"|"critiqueRefs"|"compileRefs"|"generationIds"|"objectIds"> & {
+    axes: Map<CreatorAxis,{positive:number;negative:number}>;
+    sourceBlockVersions: Map<string,{blockId:string;version:number;critiqueCount:number;positive:number;negative:number}>;
+    critiqueRefs: Set<string>;
+    compileRefs: Set<string>;
+    generationIds: Set<string>;
+    objectIds: Set<string>;
+  };
+  const clusters = new Map<string,MutableCluster>();
+  for (const critique of events.filter((event)=>event.type==="ObjectCritiqued")) {
+    const objectId=String(critique.payload.object_id??"");
+    const completed=[...events].reverse().find((event)=>event.sequence<critique.sequence&&event.type==="GenerationCompleted"&&list(event.payload.object_ids).map(String).includes(objectId));
+    const generationId=String(completed?.payload.generation_id??"");
+    const compiled=generationId?[...events].reverse().find((event)=>event.sequence<(completed?.sequence??critique.sequence)&&event.type==="ContextCompiled"&&String(event.payload.generation_id)===generationId):undefined;
+    const modelId=String(completed?.payload.model_id??compiled?.payload.model_id??"unresolved-model");
+    const adapterVersion=String(compiled?.payload.adapter_version??"unresolved-adapter");
+    const clusterId=`${modelId}:${adapterVersion}`;
+    const cluster=clusters.get(clusterId)??{clusterId,modelId,adapterVersion,critiqueCount:0,positive:0,negative:0,attributed:false,axes:new Map(),sourceBlockVersions:new Map(),critiqueRefs:new Set(),compileRefs:new Set(),generationIds:new Set(),objectIds:new Set()};
+    const axis=safeAxis(critique.payload.axis_ref); const positive=critique.payload.polarity==="positive";
+    cluster.critiqueCount+=1; cluster.positive+=Number(positive); cluster.negative+=Number(!positive); cluster.attributed ||= Boolean(completed&&compiled);
+    const axisRow=cluster.axes.get(axis)??{positive:0,negative:0}; axisRow.positive+=Number(positive); axisRow.negative+=Number(!positive); cluster.axes.set(axis,axisRow);
+    for (const source of list(compiled?.payload.source_block_versions)) {
+      if (!source||typeof source!=="object") continue;
+      const row=source as Record<string,unknown>; const blockId=String(row.block_id??""); if(!blockId)continue; const version=Number(row.version??0); const key=`${blockId}@${version}`;
+      const sourceRow=cluster.sourceBlockVersions.get(key)??{blockId,version,critiqueCount:0,positive:0,negative:0}; sourceRow.critiqueCount+=1; sourceRow.positive+=Number(positive); sourceRow.negative+=Number(!positive); cluster.sourceBlockVersions.set(key,sourceRow);
+    }
+    cluster.critiqueRefs.add(critique.eventId); if(compiled)cluster.compileRefs.add(compiled.eventId); if(generationId)cluster.generationIds.add(generationId); if(objectId)cluster.objectIds.add(objectId); clusters.set(clusterId,cluster);
+  }
+  return [...clusters.values()].map((cluster)=>({
+    ...cluster,
+    axes:CREATOR_AXES.flatMap((axis)=>{const row=cluster.axes.get(axis);return row?[{axis,...row}]:[]}),
+    sourceBlockVersions:[...cluster.sourceBlockVersions.values()].sort((left,right)=>right.critiqueCount-left.critiqueCount||left.blockId.localeCompare(right.blockId)),
+    critiqueRefs:[...cluster.critiqueRefs],compileRefs:[...cluster.compileRefs],generationIds:[...cluster.generationIds],objectIds:[...cluster.objectIds],
+  })).sort((left,right)=>right.critiqueCount-left.critiqueCount||left.clusterId.localeCompare(right.clusterId));
+}
+
 export function tasteMetrics(events: CreativeEvent[]) {
   const versions=events.filter((event)=>event.type==="TasteModelVersioned"); const latest=versions.at(-1); const retracted=new Set(events.filter((event)=>event.type==="FactRetracted").map((event)=>String(event.payload.fact_ref))); const inferred=list(latest?.payload.beliefs).map((item)=>item as TasteBelief).filter((item)=>!retracted.has(item.claimRef)).length;
   const authored=events.filter((event)=>event.type==="PreferenceAuthored"); const promoted=authored.filter((event)=>Boolean(event.payload.source_claim_ref)).length;
   const critiques=events.filter((event)=>event.type==="ObjectCritiqued");
   const axisLedger=CREATOR_AXES.map((axis)=>({axis,positive:critiques.filter((event)=>event.payload.axis_ref===axis&&event.payload.polarity==="positive").length,negative:critiques.filter((event)=>event.payload.axis_ref===axis&&event.payload.polarity!=="positive").length}));
-  return {versions:versions.length,inferred,activeAuthored:standingConstraints(events).length,promoted,promotionRate:inferred?round(Math.min(1,promoted/inferred)):0,axisLedger};
+  const compilerBlame=compilerBlameLedger(events);
+  return {versions:versions.length,inferred,activeAuthored:standingConstraints(events).length,promoted,promotionRate:inferred?round(Math.min(1,promoted/inferred)):0,axisLedger,compilerBlame,attributedCritiques:compilerBlame.filter((cluster)=>cluster.attributed).reduce((total,cluster)=>total+cluster.critiqueCount,0)};
 }
 
 export function beliefHistory(events: CreativeEvent[]) {

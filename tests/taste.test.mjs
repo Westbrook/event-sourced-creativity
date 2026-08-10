@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { beliefHistory, inferTasteBeliefs, preferenceCapsule, standingConstraints, tasteMetrics } from "../src/model/taste.ts";
+import { beliefHistory, compilerBlameLedger, inferTasteBeliefs, preferenceCapsule, standingConstraints, tasteMetrics } from "../src/model/taste.ts";
 
 const event = (sequence, type, payload, actor = "user", occurredAt = "2026-08-09T12:00:00.000Z") => ({
   eventId: `event-${sequence}`, streamId: "stream-taste", sequence, occurredAt,
@@ -43,4 +43,18 @@ test("exposes valid-time and recorded-time belief history", () => {
   const history = beliefHistory(base);
   assert.equal(history[0].type, "PreferenceRevoked");
   assert.ok(history.every((item) => item.occurredAt && item.recordedAt));
+});
+
+test("joins critiques through generated objects to compiler inputs and model adapters", () => {
+  const evidence = [
+    event(1,"ContextCompiled",{generation_id:"g1",model_id:"model-a",adapter_version:"adapter-v2",source_block_versions:[{block_id:"direction-a",version:3},{block_id:"palette-a",version:2}]},"worker:compiler"),
+    event(2,"GenerationCompleted",{generation_id:"g1",model_id:"model-a",object_ids:["object-a"]},"worker:generator"),
+    event(3,"ObjectCritiqued",{object_id:"object-a",axis_ref:"composition",polarity:"negative",value:"too centered"}),
+    event(4,"ObjectCritiqued",{object_id:"object-a",axis_ref:"palette",polarity:"positive",value:"restrained amber"}),
+    event(5,"ObjectCritiqued",{object_id:"missing-object",axis_ref:"style",polarity:"negative",value:"too polished"}),
+  ];
+  const ledger=compilerBlameLedger(evidence); const attributed=ledger.find((cluster)=>cluster.modelId==="model-a"); const unresolved=ledger.find((cluster)=>!cluster.attributed);
+  assert.equal(attributed?.adapterVersion,"adapter-v2"); assert.equal(attributed?.critiqueCount,2); assert.deepEqual(attributed?.sourceBlockVersions.map((source)=>`${source.blockId}@${source.version}`),["direction-a@3","palette-a@2"]);
+  assert.ok(attributed?.axes.some((row)=>row.axis==="composition"&&row.negative===1)); assert.ok(attributed?.axes.some((row)=>row.axis==="palette"&&row.positive===1)); assert.equal(attributed?.compileRefs.length,1);
+  assert.equal(unresolved?.critiqueCount,1); assert.equal(tasteMetrics(evidence).attributedCritiques,2);
 });

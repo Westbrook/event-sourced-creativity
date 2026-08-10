@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import { exportArchive, importArchive } from "../src/model/archive.ts";
-import { buildScenario } from "../src/model/scenarios.ts";
+import { buildScenario, explainReplayEvent, SCENARIOS, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
 import { foldEvents } from "../src/model/events.ts";
 
 test("uses Lit custom elements and the requested signal packages without React", async () => {
@@ -30,6 +30,19 @@ test("builds and replays theoretical long streams deterministically", () => {
   const halfway = foldEvents(first, 5_000); const final = foldEvents(first);
   assert.ok(final.blocks.length >= halfway.blocks.length);
   assert.ok(final.outputs.length >= halfway.outputs.length);
+});
+
+test("keeps every replay fixture current and every mocked event specifically explained", () => {
+  assert.ok(SCENARIOS.length >= 6);
+  const stories = new Set();
+  for (const scenario of SCENARIOS) {
+    const events=buildScenario(scenario.key,SCENARIO_EVENT_TYPES.length*3);
+    for (const event of events) { const story=explainReplayEvent(event); assert.doesNotMatch(story.action,/ appended /); assert.ok(story.value.length>40); assert.match(story.cause,/actor /); stories.add(`${event.type}:${story.value}`); }
+  }
+  assert.equal(stories.size,SCENARIO_EVENT_TYPES.length);
+  const taste=buildScenario("taste-time",13); const compile=taste.find((event)=>event.type==="ContextCompiled"); const complete=taste.find((event)=>event.type==="GenerationCompleted"); const critique=taste.find((event)=>event.type==="ObjectCritiqued");
+  assert.equal(compile?.payload.generation_id,complete?.payload.generation_id); assert.ok(complete?.payload.object_ids.includes(critique?.payload.object_id)); assert.ok(compile?.payload.source_block_versions.length);
+  assert.ok(buildScenario("attention-friction",12).some((event)=>event.type==="AttentionSignalsForgotten"));
 });
 
 test("round-trips a lossless Forma event archive", () => {
