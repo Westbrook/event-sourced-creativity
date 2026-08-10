@@ -8,26 +8,38 @@ import "./context-block";
 import "./collection-tree";
 import "./output-card";
 
+type BlockKind = "direction"|"subject"|"composition"|"style"|"lighting"|"exclusion"|"palette"|"reference";
+type BlockDraft = { type: BlockKind|""; text: string; colors: string[] };
+const BLOCK_KINDS: Array<{type:BlockKind;label:string;description:string}> = [
+  {type:"direction",label:"Direction",description:"A broad creative intention"},{type:"subject",label:"Subject",description:"What the work depicts"},{type:"composition",label:"Composition",description:"Framing, balance, and spatial structure"},{type:"style",label:"Style",description:"Visual language and treatment"},
+  {type:"lighting",label:"Lighting",description:"Light, atmosphere, and time"},{type:"exclusion",label:"Exclusion",description:"Something the work must avoid"},{type:"palette",label:"Palette",description:"An authored set of colors"},{type:"reference",label:"Reference",description:"An owned or licensed image"},
+];
+
 export class FormaWorkspace extends FormaElement {
   #prompt = "";
-  #draftDirection: string | null = null;
+  #blockDraft: BlockDraft | null = null;
   #documentName: string | null = null;
   #proposal: { prompt: string; events: EventInput[]; proposalId?: string; exemplars: RetrievedExemplar[] } | null = null;
-  #uploading = false;
+  #uploading = false; #pendingUpload: File | null = null; #rightsConfirmed = false;
 
-  #beginDirection() {
-    this.#draftDirection = ""; this.requestUpdate();
-    void this.updateComplete.then(() => this.querySelector<HTMLTextAreaElement>(".direction-composer textarea")?.focus());
+  #beginBlock() {
+    this.#blockDraft = {type:"",text:"",colors:["#27252b","#e9a073","#e8d7bd","#8a6571"]}; this.requestUpdate();
   }
   async #addBlock(event: SubmitEvent) {
-    event.preventDefault(); const text = this.#draftDirection?.trim(); if (!text) return;
+    event.preventDefault(); const draft = this.#blockDraft; const text = draft?.text.trim(); if (!draft?.type || draft.type === "reference" || !text) return;
     const blockId = crypto.randomUUID(); const slug = text.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"").slice(0,42) || `study-${this.store.head.get()+1}`;
-    const appended = await this.store.append({ type: "BlockCreated", payload: { block_id: blockId, type: "direction", handle: `direction/${slug}`, position: `z${String(this.store.head.get()+1).padStart(4,"0")}`, properties: { text, weight: .64, authority: "authored" } } });
-    if (appended.length) { this.#draftDirection = null; this.store.patchUi({ focusBlockId: blockId }); this.requestUpdate(); }
+    const properties = draft.type === "palette" ? {label:text,colors:draft.colors,weight:.64,authority:"authored"} : {text,weight:.64,authority:"authored"};
+    const appended = await this.store.append({ type: "BlockCreated", payload: { block_id: blockId, type: draft.type, handle: `${draft.type}/${slug}`, position: `z${String(this.store.head.get()+1).padStart(4,"0")}`, properties } });
+    if (appended.length) { this.#blockDraft = null; this.store.patchUi({ focusBlockId: blockId }); this.requestUpdate(); }
   }
-  async #upload(event: Event) {
+  #queueUpload(event: Event) {
     const input = event.target as HTMLInputElement; const file = input.files?.[0]; if (!file) return;
-    if (!window.confirm(`Confirm that you own or are licensed to use “${file.name}” with Forma and its configured generation provider.`)) { input.value = ""; this.store.toast("Upload cancelled — no rights assertion was recorded."); return; }
+    this.#pendingUpload = file; this.#rightsConfirmed = false; this.requestUpdate();
+  }
+  #resetFileInputs() { this.querySelectorAll<HTMLInputElement>('input[type="file"]').forEach((input)=>{input.value="";}); }
+  #cancelUpload() { this.#pendingUpload = null; this.#rightsConfirmed = false; this.#resetFileInputs(); this.requestUpdate(); }
+  async #confirmUpload() {
+    const file = this.#pendingUpload; if (!file || !this.#rightsConfirmed) return;
     this.#uploading = true; this.requestUpdate();
     try {
       let sample: ImageSample | null = null;
@@ -41,8 +53,16 @@ export class FormaWorkspace extends FormaElement {
         { type: "BlockCreated", payload: { block_id: block, type: "reference", handle: `reference/${file.name.replace(/\W+/g,"-").toLowerCase()}`, position: `z${this.store.head.get()}`, properties: { reference_id: ref, label: file.name, media_url: media.url, weight: .72, authority: "authored", extraction_status: sample ? "pending" : "unavailable" } } },
       ]);
       if (sample) await this.store.extractReference(block, ref, sample); else this.store.toast("Reference stored; deterministic extraction is unavailable in this browser.");
+      this.#pendingUpload = null; this.#rightsConfirmed = false; this.#blockDraft = null; this.#resetFileInputs();
     } catch (error) { this.store.toast(error instanceof Error ? error.message : "Upload failed"); }
-    this.#uploading = false; this.requestUpdate(); input.value = "";
+    this.#uploading = false; this.requestUpdate();
+  }
+  #blockComposer() {
+    const draft = this.#blockDraft; if (!draft) return nothing; const selected = BLOCK_KINDS.find((option)=>option.type===draft.type);
+    const placeholders:Record<string,string>={direction:"Describe the overall direction…",subject:"What should the work depict?",composition:"Describe the framing or structure…",style:"Describe the visual style…",lighting:"Describe the light and atmosphere…",exclusion:"What should the work avoid?",palette:"Name this palette…"};
+    return html`<form class="block-composer" @submit=${this.#addBlock}><header><div><span class="eyebrow">New authored block</span><h3>${selected?selected.label:"Choose a block type"}</h3><p>${selected?.description??"Each type compiles differently and remains independently editable."}</p></div>${selected?html`<button type="button" class="text-button" @click=${()=>{draft.type="";this.requestUpdate();}}>Choose another type</button>`:nothing}</header>
+      ${!draft.type?html`<div class="block-type-grid">${BLOCK_KINDS.map((option)=>html`<button type="button" @click=${()=>{draft.type=option.type;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLElement>(".block-composer textarea,.block-composer input")?.focus());}}><span>${option.label.slice(0,2).toUpperCase()}</span><b>${option.label}</b><small>${option.description}</small></button>`)}</div>`:draft.type==="reference"?html`<div class="reference-choice"><span>${icon("image")}</span><div><b>Choose an image reference</b><small>Its bytes stay in private object storage; rights are confirmed before upload.</small></div><label class="button primary">Choose image<input type="file" accept="image/*" @change=${this.#queueUpload}></label></div>`:draft.type==="palette"?html`<label class="block-draft-copy">Palette name<input maxlength="120" placeholder=${placeholders.palette} .value=${draft.text} @input=${(event:InputEvent)=>{draft.text=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label><div class="draft-palette">${draft.colors.map((color,index)=>html`<label><input type="color" .value=${color} @input=${(event:InputEvent)=>{draft.colors=draft.colors.map((value,position)=>position===index?(event.target as HTMLInputElement).value:value);this.requestUpdate();}}><span style=${`--swatch:${color}`}></span><small>${color}</small></label>`)}</div>`:html`<label class="block-draft-copy">${selected?.label} content<textarea rows="3" placeholder=${placeholders[draft.type]} .value=${draft.text} @input=${(event:InputEvent)=>{draft.text=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}}></textarea></label>`}
+      <footer><button type="button" class="button ghost" @click=${()=>{this.#blockDraft=null;this.requestUpdate();}}>Cancel</button>${draft.type&&draft.type!=="reference"?html`<button type="submit" class="button primary" ?disabled=${!draft.text.trim()}>Add ${selected?.label.toLowerCase()}</button>`:nothing}</footer></form>`;
   }
   async #ask() {
     const prompt = this.#prompt.trim(); if (!prompt) return;
@@ -104,23 +124,25 @@ export class FormaWorkspace extends FormaElement {
         <div class="document-bar"><div><span class="eyebrow">Document / ${p.documentId || "loading"}</span>${this.#documentName===null?html`<div class="document-title-row"><h1>${p.documentTitle}</h1><button class="icon-button" aria-label=${`Rename ${p.documentTitle}`} title="Rename document" @click=${()=>this.#beginDocumentRename(p.documentTitle)}>${icon("edit")}</button></div>`:html`<form class="document-title-editor" @submit=${(event:SubmitEvent)=>this.#renameDocument(event,p.documentId,p.documentTitle)}><label class="sr-only" for="document-title-input">Document name</label><input id="document-title-input" maxlength="80" .value=${this.#documentName} @input=${(event:InputEvent)=>{this.#documentName=(event.target as HTMLInputElement).value;this.requestUpdate();}}><button type="button" class="button ghost compact" @click=${()=>{this.#documentName=null;this.requestUpdate();}}>Cancel</button><button type="submit" class="button primary compact" ?disabled=${!this.#documentName.trim()}>Save name</button></form>`}</div><div class="document-actions"><button class="icon-button labeled" @click=${() => this.store.undo()}>${icon("undo")}<span>Undo</span></button><button class="icon-button labeled" @click=${() => this.store.redo()}>${icon("redo")}<span>Redo</span></button><button class="button secondary compact" @click=${this.#compare}>${icon("compare")} Compare</button></div></div>
         <div class="studio-grid">
           <section class="context-column" aria-labelledby="context-title"><div class="section-heading"><div><span class="eyebrow">Projection · sequence ${this.store.head.get()}</span><h2 id="context-title">Creative context</h2></div><span class="health-pill"><i></i> replayable</span></div>
-            ${p.blocks.length ? html`<div class="block-list">${p.blocks.map((block) => html`<forma-context-block .block=${block}></forma-context-block>`)}</div>` : this.#draftDirection === null ? html`<div class="blank-context"><span>${icon("plus")}</span><h3>This document is empty</h3><p>Add a direction, upload a reference, or ask Forma only when you are ready. Nothing is created on your behalf.</p><button class="button primary" @click=${this.#beginDirection}>Add a direction</button></div>` : nothing}
-            ${this.#draftDirection !== null ? html`<form class="direction-composer" @submit=${this.#addBlock}><label for="new-direction"><span class="eyebrow">New authored block</span><b>What direction do you want to explore?</b></label><textarea id="new-direction" rows="3" placeholder="Describe a direction…" .value=${this.#draftDirection} @input=${(event:InputEvent)=>{this.#draftDirection=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}}></textarea><div><button type="button" class="button ghost" @click=${()=>{this.#draftDirection=null;this.requestUpdate();}}>Cancel</button><button type="submit" class="button primary" ?disabled=${!this.#draftDirection.trim()}>Add direction</button></div></form>` : p.blocks.length ? html`<button class="add-block" @click=${this.#beginDirection}>${icon("plus")} Add context block</button>` : nothing}
+            ${p.blocks.length ? html`<div class="block-list">${p.blocks.map((block) => html`<forma-context-block .block=${block}></forma-context-block>`)}</div>` : this.#blockDraft === null ? html`<div class="blank-context"><span>${icon("plus")}</span><h3>This document is empty</h3><p>Add a typed context block, upload a reference, or ask Forma only when you are ready. Nothing is created on your behalf.</p><button class="button primary" @click=${this.#beginBlock}>Add a context block</button></div>` : nothing}
+            ${this.#blockComposer()}
+            ${this.#blockDraft===null&&p.blocks.length?html`<button class="add-block" @click=${this.#beginBlock}>${icon("plus")} Add context block</button>`:nothing}
             <div class="compile-bridge"><span>${icon("branch")}</span><div><b>Deterministic context compiler</b><small>${p.latestCompile ? "Snapshot embedded at last generation" : "Ready to compile"} · citations intact</small></div><button @click=${() => this.store.patchUi({ inspectorOpen:true })}>Inspect</button></div>
           </section>
           <section class="output-column" aria-labelledby="output-title"><div class="section-heading"><div><span class="eyebrow">${this.store.session.get()?.provider.configured ? `Live · ${this.store.session.get()?.provider.model}` : "Provider awaiting secure key"}</span><h2 id="output-title">Output</h2></div><button class="text-button" @click=${this.#compare}>Compare history</button></div>
             ${output ? html`<forma-output-card .output=${output} .primary=${true}></forma-output-card>` : html`<div class="empty-output"><span>${icon("image")}</span><h3>${p.blocks.length ? "Context is ready" : "A genuinely blank canvas"}</h3><p>${p.blocks.length ? "Generate a replayable simulation from the current projection." : "No context or output has been inferred. Add only what you choose."}</p></div>`}
             ${p.outputs.length > 1 ? html`<div class="output-filmstrip" aria-label="Previous outputs">${p.outputs.slice(1,5).map((o) => html`<button class="mini-output variant-${o.variant % 4} ${this.store.ui.selectedOutputId===o.id?"selected":""}" aria-label="Select ${o.id}" aria-pressed=${this.store.ui.selectedOutputId===o.id} @click=${() => { this.store.patchUi({ selectedOutputId:o.id }); if (this.store.ui.instrumentation) void this.store.hot({type:"ObjectViewed",payload:{object_id:o.id}}); }}></button>`)}</div>` : nothing}
-            <label class="dropzone"><input type="file" accept="image/*" @change=${this.#upload}><span>${icon("plus")}</span><b>${this.#uploading ? "Uploading…" : "Drop or choose a reference"}</b><small>Stored in R2 after an explicit ownership or license assertion</small></label>
+            <label class="dropzone"><input type="file" accept="image/*" @change=${this.#queueUpload}><span>${icon("plus")}</span><b>${this.#uploading ? "Uploading…" : "Drop or choose a reference"}</b><small>Stored in R2 after an explicit ownership or license assertion</small></label>
           </section>
         </div>
       </div>
       ${this.store.ui.inspectorOpen ? this.#inspector() : nothing}
       <div class="composer-dock">
         ${this.#proposal ? html`<div class="proposal-preview"><div><span class="eyebrow">Proposed events · inert until accepted</span><b>${this.#proposal.events.map((e) => shortEventType(e.type)).join(" + ")}</b><small>Expected sequence ${this.store.head.get()} · previewed with context diff</small>${this.#proposal.exemplars.length ? html`<div class="proposal-corpus"><span>${icon("branch")} ${this.#proposal.exemplars.length} cited corpus match${this.#proposal.exemplars.length===1?"":"es"}</span>${this.#proposal.exemplars.map((item)=>html`<button title=${item.citations.join(" · ")} @click=${()=>{this.store.patchUi({selectedEventId:item.citations[0],inspectorOpen:true});}}>${item.label} · ${Math.round(item.score*100)}%</button>`)}</div>` : html`<small class="corpus-empty">No accepted precedent yet; this proposal can become one after explicit acceptance.</small>`}</div><button class="button ghost" @click=${this.#rejectProposal}>Decline</button><button class="button primary" @click=${this.#acceptProposal}>Accept proposal</button></div>` : nothing}
-        <div class="composer"><label class="sr-only" for="creative-command">Describe a change or ask Forma</label><textarea id="creative-command" rows="1" placeholder="Describe a change — “make the palette warmer”…" .value=${this.#prompt} @input=${(e: InputEvent) => { this.#prompt = (e.target as HTMLTextAreaElement).value; }} @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void this.#ask(); } }}></textarea><label class="icon-button add-ref" title="Add reference"><input type="file" accept="image/*" @change=${this.#upload}>${icon("plus")}</label><button class="button secondary ask" @click=${this.#ask}>Ask Forma</button><button class="button primary generate" ?disabled=${!!this.store.busy.get() || !this.store.session.get()?.provider.configured} title=${this.store.session.get()?.provider.configured ? "Generate with the live provider" : "Connect OPENAI_API_KEY to enable generation"} @click=${() => this.store.generate()}>${icon("spark")} ${this.store.busy.get()==="generate" ? "Generating…" : "Generate"}</button></div>
+        <div class="composer"><label class="sr-only" for="creative-command">Describe a change or ask Forma</label><textarea id="creative-command" rows="1" placeholder="Describe a change — “make the palette warmer”…" .value=${this.#prompt} @input=${(e: InputEvent) => { this.#prompt = (e.target as HTMLTextAreaElement).value; }} @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void this.#ask(); } }}></textarea><label class="icon-button add-ref" title="Add reference"><input type="file" accept="image/*" @change=${this.#queueUpload}>${icon("plus")}</label><button class="button secondary ask" @click=${this.#ask}>Ask Forma</button><button class="button primary generate" ?disabled=${!!this.store.busy.get() || !this.store.session.get()?.provider.configured} title=${this.store.session.get()?.provider.configured ? "Generate with the live provider" : "Connect OPENAI_API_KEY to enable generation"} @click=${() => this.store.generate()}>${icon("spark")} ${this.store.busy.get()==="generate" ? "Generating…" : "Generate"}</button></div>
       </div>
       ${this.store.ui.compareOpen ? this.#comparison() : nothing}
+      ${this.#pendingUpload?html`<dialog class="modal upload-rights-modal" open aria-modal="true" aria-labelledby="upload-rights-title"><div class="modal-card"><button class="icon-button modal-close" aria-label="Cancel upload" ?disabled=${this.#uploading} @click=${this.#cancelUpload}>${icon("close")}</button><span class="eyebrow">Rights checkpoint · before upload</span><h2 id="upload-rights-title">Confirm you may use this image</h2><div class="upload-file-receipt"><span>${icon("image")}</span><div><b>${this.#pendingUpload.name}</b><small>${(this.#pendingUpload.size/1_048_576).toFixed(1)} MB · ${this.#pendingUpload.type||"image"}</small></div></div><p>Forma will store this file privately and may send it to the configured generation provider when it becomes part of compiled context.</p><label class="rights-check"><input type="checkbox" .checked=${this.#rightsConfirmed} @change=${(event:Event)=>{this.#rightsConfirmed=(event.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>I own this image or have a license that permits this use.</b><small>This assertion is recorded alongside the reference. It does not transfer ownership.</small></span></label><footer><button class="button ghost" ?disabled=${this.#uploading} @click=${this.#cancelUpload}>Cancel</button><button class="button primary" ?disabled=${!this.#rightsConfirmed||this.#uploading} @click=${this.#confirmUpload}>${this.#uploading?"Uploading securely…":"Confirm & upload"}</button></footer></div></dialog>`:nothing}
     </section>`;
   }
 }

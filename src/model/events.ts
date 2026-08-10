@@ -216,7 +216,7 @@ export function eventCategory(type: string) {
   if (type.startsWith("Collection")) return "collection";
   if (/Generation|ContextCompiled|Model|Adapter|Capability/.test(type)) return "generation";
   if (/Extraction|Chip|Fact|Claim/.test(type)) return "reflection";
-  if (/Brief|Session|Deferred|Condition|Resurfaced/.test(type)) return "session";
+  if (/Brief|Session|PhaseGate|Deferred|Condition|Resurfaced/.test(type)) return "session";
   if (/Proposal|Mutation|Assistant/.test(type)) return "conversation";
   if (/Scout|Observation/.test(type)) return "scout";
   return "engagement";

@@ -87,7 +87,7 @@ test("records the accepted provider debt and makes the extractor gate operationa
 });
 
 test("runs the Phase 6 pilot from event-derived sessions instead of brief fixtures", async () => {
-  const [eventsApi, store, sessions, briefModel, contextBlock, workspace, library, referenceImage, classification] = await Promise.all([
+  const [eventsApi, store, sessions, briefModel, contextBlock, workspace, library, referenceImage, palettePicker, classification] = await Promise.all([
     readFile(new URL("../worker/events-api.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/state/store.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-sessions.ts", import.meta.url), "utf8"),
@@ -96,6 +96,7 @@ test("runs the Phase 6 pilot from event-derived sessions instead of brief fixtur
     readFile(new URL("../src/components/forma-workspace.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-library.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/reference-image.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/reference-palette-picker.ts", import.meta.url), "utf8"),
     readFile(new URL("../docs/event-classification.csv", import.meta.url), "utf8"),
   ]);
   assert.match(eventsApi, /open_session/); assert.match(eventsApi, /close_session/); assert.match(eventsApi, /compose_brief/); assert.match(eventsApi, /declare_intent/);
@@ -108,6 +109,11 @@ test("runs the Phase 6 pilot from event-derived sessions instead of brief fixtur
   assert.match(eventsApi, /DocumentRenamed/); assert.match(classification, /DocumentRenamed,user_content/); assert.match(workspace, /Rename document/);
   assert.match(workspace, /This document is empty/); assert.match(workspace, /New authored block/); assert.match(contextBlock, /block-editor/);
   assert.match(contextBlock, /forma-reference-image/); assert.match(library, /forma-reference-image/); assert.match(referenceImage, /<img/);
+  assert.match(workspace, /upload-rights-modal/); assert.doesNotMatch(workspace, /window\.confirm/); assert.match(workspace, /type:"subject"/); assert.match(workspace, /type:"exclusion"/);
+  assert.match(referenceImage, /reference-viewer/); assert.doesNotMatch(referenceImage, /target="_blank"/);
+  assert.match(contextBlock, /text\/forma-block-id/); assert.match(contextBlock, /BlockRemoved/); assert.match(contextBlock, /Explore palettes/);
+  assert.match(palettePicker, /palette_strategy/); assert.match(palettePicker, /getImageData/); assert.match(palettePicker, /source_reference_block_id/);
+  assert.match(sessions, /PhaseGateReviewed/); assert.match(eventsApi, /PhaseGateReviewed/); assert.match(classification, /PhaseGateReviewed,human_judgment/);
 });
 
 test("runs the Phase 7 private-pilot index as a correctable derived projection", async () => {

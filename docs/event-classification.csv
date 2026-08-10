@@ -83,3 +83,4 @@ CollectionRestored,user_content,structured_only,user,immutable
 CollectionItemAdded,identifier,structured_only,user,immutable
 CollectionItemRemoved,identifier,structured_only,user,immutable
 CollectionItemMoved,identifier,structured_only,user,immutable
+PhaseGateReviewed,human_judgment,structured_only,user,immutable
