@@ -37,7 +37,6 @@ yarn-error.log*
 /dist/
 /.wrangler/
 /.pnpm-store/
-/pnpm-workspace.yaml
 *.tsbuildinfo
 /outputs/
 /work/

@@ -1,0 +1,53 @@
+import assert from "node:assert/strict";
+import { readFile, readdir } from "node:fs/promises";
+import test from "node:test";
+import { exportArchive, importArchive } from "../src/model/archive.ts";
+import { buildScenario } from "../src/model/scenarios.ts";
+import { foldEvents } from "../src/model/events.ts";
+
+test("uses Lit custom elements and the requested signal packages without React", async () => {
+  const [pkg, main, shell, store, admin, files] = await Promise.all([
+    readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../src/main.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/state/store.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/forma-admin-events.ts", import.meta.url), "utf8"),
+    readdir(new URL("../src/components/", import.meta.url)),
+  ]);
+  assert.doesNotMatch(pkg, /"react"|"react-dom"|vinext|@vitejs\/plugin-react/);
+  assert.match(pkg, /"lit"/); assert.match(pkg, /"signal-polyfill"/); assert.match(pkg, /"signal-utils"/);
+  assert.match(main, /forma-shell/); assert.match(shell, /customElements\.define/);
+  assert.match(store, /new Signal\.State/); assert.match(store, /new SignalObject/);
+  assert.match(admin, /50000|50,000/); assert.match(admin, /Replay laboratory/);
+  assert.ok(files.filter((file) => file.endsWith(".ts")).length >= 9);
+});
+
+test("builds and replays theoretical long streams deterministically", () => {
+  const first = buildScenario("creative-loop", 10_000);
+  const second = buildScenario("creative-loop", 10_000);
+  assert.equal(first.length, 10_000); assert.deepEqual(first, second);
+  assert.equal(first[0].sequence, 1); assert.equal(first.at(-1).sequence, 10_000);
+  const halfway = foldEvents(first, 5_000); const final = foldEvents(first);
+  assert.ok(final.blocks.length >= halfway.blocks.length);
+  assert.ok(final.outputs.length >= halfway.outputs.length);
+});
+
+test("round-trips a lossless Forma event archive", () => {
+  const events = buildScenario("promotion", 100);
+  const archive = exportArchive(events);
+  const imported = importArchive(JSON.parse(JSON.stringify(archive)));
+  assert.deepEqual(imported.events, events);
+  assert.equal(imported.format, "forma-event-archive");
+});
+
+test("packages a responsive SPA and Sites metadata", async () => {
+  const [html, css, hosting] = await Promise.all([
+    readFile(new URL("../dist/client/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../dist/.openai/hosting.json", import.meta.url), "utf8"),
+  ]);
+  assert.match(html, /Forma — An event-sourced creative studio/);
+  assert.match(html, /forma-shell/);
+  assert.match(css, /@media \(max-width: 760px\)/);
+  assert.match(hosting, /appgprj_/);
+});

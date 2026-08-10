@@ -8,6 +8,13 @@
       "when": 1786380541541,
       "tag": "0000_lively_owl",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786383935009,
+      "tag": "0001_slimy_dragon_lord",
+      "breakpoints": true
     }
   ]
 }

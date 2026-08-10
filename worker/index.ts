@@ -1,48 +1,14 @@
-/** Cloudflare Worker entry point for the vinext-starter template. */
-import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
-import handler from "vinext/server/app-router-entry";
+import { handleEvents, type WorkerEnv } from "./events-api";
+import { getMedia, uploadMedia } from "./media-api";
 
-interface Env {
-  ASSETS: Fetcher;
-  DB: D1Database;
-  MEDIA: R2Bucket;
-  IMAGES: {
-    input(stream: ReadableStream): {
-      transform(options: Record<string, unknown>): {
-        output(options: { format: string; quality: number }): Promise<{ response(): Response }>;
-      };
-    };
-  };
-}
-
-interface ExecutionContext {
-  waitUntil(promise: Promise<unknown>): void;
-  passThroughOnException(): void;
-}
-
-// Image security config. SVG sources with .svg extension auto-skip the
-// optimization endpoint on the client side (served directly, no proxy).
-// To route SVGs through the optimizer (with security headers), set
-// dangerouslyAllowSVG: true in next.config.js and uncomment below:
-// const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
-
-const worker = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(request.url);
-
-    if (url.pathname === "/_vinext/image") {
-      const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
-      return handleImageOptimization(request, {
-        fetchAsset: (path) => env.ASSETS.fetch(new Request(new URL(path, request.url))),
-        transformImage: async (body, { width, format, quality }) => {
-          const result = await env.IMAGES.input(body).transform(width > 0 ? { width } : {}).output({ format, quality });
-          return result.response();
-        },
-      }, allowedWidths);
-    }
-
-    return handler.fetch(request, env, ctx);
+export default {
+  async fetch(request: Request, env: WorkerEnv): Promise<Response> {
+    const url=new URL(request.url);
+    if(url.pathname==="/api/events")return handleEvents(request,env);
+    if(url.pathname==="/api/events/hot")return handleEvents(request,env,true);
+    if(url.pathname==="/api/media"&&request.method==="POST")return uploadMedia(request,env);
+    if(url.pathname.startsWith("/api/media/")&&request.method==="GET")return getMedia(decodeURIComponent(url.pathname.slice("/api/media/".length)),env);
+    if(url.pathname.startsWith("/api/"))return Response.json({error:"not_found"},{status:404});
+    return env.ASSETS.fetch(request);
   },
 };
-
-export default worker;

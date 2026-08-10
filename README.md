@@ -12,6 +12,9 @@ projections over one append-only event stream.
 - authored collection tree with cycle and duplicate-membership validation
 - chat proposals previewed before user acceptance
 - provenance lineage and filterable event stream
+- standalone event administration with projection inspection and as-of replay
+- deterministic 1k/10k/50k theoretical interaction streams
+- personal library plus lossless graph import/export
 - durable D1 event storage and R2 reference uploads
 - append-time actor permissions and optimistic sequence checks
 - external storage for erasable natural-language content
@@ -24,16 +27,27 @@ hypothesis and the human decisions recorded in `docs/decisions.ndjson`.
 Requires Node.js 22.13 or newer.
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Validation:
 
 ```bash
-npm run build
-npm run lint
-npm test
+pnpm build
+pnpm lint
+pnpm test
+```
+
+The UI is implemented entirely as Lit custom elements. `signal-polyfill` and
+`signal-utils` are isolated behind `FormaStore` because both packages are still
+experimental. React and framework-specific UI runtimes are not dependencies.
+
+The Event admin page can export a theoretical replay fixture. Rebuild it from
+the command line with:
+
+```bash
+pnpm replay --file ./creative-loop-50000.json --as-of 32000 --projection context-document
 ```
 
 The Sites runtime reads logical D1 and R2 bindings from

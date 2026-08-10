@@ -25,6 +25,7 @@ export const events = sqliteTable(
     uniqueIndex("idx_events_stream_sequence").on(table.streamId, table.sequence),
     index("idx_events_stream_type").on(table.streamId, table.type),
     index("idx_events_correlation").on(table.correlationId),
+    index("idx_events_stream_actor").on(table.streamId, table.actor),
   ],
 );
 
