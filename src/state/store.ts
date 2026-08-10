@@ -3,11 +3,12 @@ import { SignalObject } from "signal-utils/object";
 import { foldEvents, type CreativeEvent, type CreativeProjection, type EventInput } from "../model/events";
 import { buildScenario, type ScenarioKey } from "../model/scenarios";
 import type { ImageSample } from "../model/extractors";
+import { readAttentionPreference, writeAttentionPreference } from "../model/attention";
 
 type Listener = () => void;
 export type PilotSession = {
   user: { userId: string; email: string; displayName: string; role: "admin" | "creator" | "agent" | "viewer"; consentVersion: string | null; consentedAt: string | null };
-  policy: { version: string; accepted: boolean; passiveCapture: false; externalAssetsRequireAssertion: true; retentionDays: number; sharing: string };
+  policy: { version: string; accepted: boolean; passiveCapture: false; attentionCapture?: { available: boolean; defaultOn: false; retentionDays: number; rawInputCapture: false }; externalAssetsRequireAssertion: true; retentionDays: number; sharing: string };
   provider: { name: string; model: string; configured: boolean };
   budgets: { period: string; user: { used: number; reserved: number; limit: number }; workspace: { used: number; reserved: number; limit: number } };
 };
@@ -26,7 +27,7 @@ export class FormaStore {
   readonly session = new Signal.State<PilotSession | null>(null);
   readonly content = new Signal.State<Record<string, string>>({});
   readonly shares = new Signal.State<ShareRecord[]>([]);
-  readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, instrumentation: true, selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", libraryView: "all", libraryOutputScope: "recent", search: "", toast: "" });
+  readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, instrumentation: true, attentionCapture: readAttentionPreference(), attentionPaused: false, selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", libraryView: "all", libraryOutputScope: "recent", search: "", toast: "" });
   readonly projection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.events.get(), this.asOf.get()));
   readonly replayProjection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.replayEvents.get(), this.replayAsOf.get()));
   #listeners = new Set<Listener>();
@@ -35,9 +36,13 @@ export class FormaStore {
 
   subscribe(listener: Listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   notify() { this.#listeners.forEach((listener) => listener()); }
+  #publishAppended(events:CreativeEvent[]){if(events.length)window.dispatchEvent(new CustomEvent("forma-events-appended",{detail:{events}}));}
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   toast(message: string) { this.ui.toast = message; this.notify(); window.setTimeout(() => { if (this.ui.toast === message) { this.ui.toast = ""; this.notify(); } }, 2800); }
-  setRoute(path: string) { const current=`${location.pathname}${location.search}${location.hash}`;if(current!==path)history.pushState({}, "", path); this.route.set(path); this.notify(); }
+  setRoute(path: string) { const current=`${location.pathname}${location.search}${location.hash}`;if(current!==path)history.pushState({}, "", path); this.route.set(path); this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed",{detail:{path}})); }
+  setAttentionCapture(enabled:boolean){writeAttentionPreference(enabled,this.session.get()?.user.userId??"anonymous");this.patchUi({attentionCapture:enabled,attentionPaused:false});this.toast(enabled?"Attention signals enabled for this account on this device.":"Attention signals disabled; the current episode was closed.");}
+  setAttentionPaused(paused:boolean){this.patchUi({attentionPaused:paused});this.toast(paused?"Attention capture paused on this device.":"Attention capture resumed.");}
+  async forgetAttentionSignals(){window.dispatchEvent(new Event("forma-attention-forget"));const appended=await this.append({type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:this.head.get(),reason:"user-requested",device_ledger_cleared:true}});if(appended.length)this.toast("Attention episodes were forgotten and excluded from Scout and Memory.");return appended;}
 
   async load() {
     this.loading.set(true); this.notify();
@@ -53,7 +58,7 @@ export class FormaStore {
 
   async refreshSession() {
     const response = await fetch("/api/session"); const body = await response.json() as PilotSession & { error?: string };
-    if (!response.ok) throw new Error(body.error ?? "Authentication required"); this.session.set(body); this.notify(); return body;
+    if (!response.ok) throw new Error(body.error ?? "Authentication required");const previousUserId=this.session.get()?.user.userId;this.session.set(body);if(previousUserId!==body.user.userId){this.ui.attentionCapture=readAttentionPreference(body.user.userId);this.ui.attentionPaused=false;} this.notify(); return body;
   }
 
   async acceptTerms() {
@@ -77,7 +82,7 @@ export class FormaStore {
       const body = await response.json() as { appended?: CreativeEvent[]; rejected?: Array<{ reason: string }>; head?: number; error?: string };
       if (!response.ok) throw new Error(body.error ?? "Append rejected");
       const appended = body.appended ?? [];
-      this.events.set([...this.events.get(), ...appended]); this.head.set(body.head ?? this.head.get());
+      this.events.set([...this.events.get(), ...appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(appended);
       if (options.remember !== false) { this.#undo.push(...appended.filter((e) => e.actor === "user" && !e.compensatesEventId && inverseEvent(e))); this.#redo = []; }
       if (body.rejected?.length) this.toast(`${body.rejected.length} event${body.rejected.length === 1 ? "" : "s"} rejected; valid events still appended.`);
       return appended;
@@ -85,12 +90,12 @@ export class FormaStore {
     finally { this.busy.set(""); this.notify(); }
   }
 
-  async hot(event: EventInput) {
+  async hot(event: EventInput, options: { keepalive?: boolean } = {}) {
     try {
-      const response = await fetch("/api/events/hot", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "hot", event, events: [event], clientId: "web:lit" }) });
+      const response = await fetch("/api/events/hot", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "hot", event, events: [event], clientId: "web:lit" }), keepalive: options.keepalive });
       if (!response.ok) return;
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number };
-      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.notify();
+      const appended=body.appended??[];this.events.set([...this.events.get(), ...appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(appended);this.notify();
     } catch { /* Engagement instrumentation never blocks the creative action. */ }
   }
 
@@ -110,7 +115,7 @@ export class FormaStore {
     try {
       const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "generate", expectedSequence: this.head.get(), snapshot: { facts: projection.blocks.map((b) => ({ handle: b.handle, properties: b.properties, authority: b.properties.authority ?? "authored", citations: b.sourceEvents })), pins: projection.outputs.filter((o) => o.pinned).map((o) => o.id), tail: [] }, sourceBlockVersions: projection.blocks.map((b) => ({ block_id: b.id, version: b.sourceEvents.length })) }) });
       const body = await response.json() as { appended?: CreativeEvent[]; content?: Record<string, string>; head?: number; error?: string };
-      if (body.appended?.length) { this.events.set([...this.events.get(), ...body.appended]); this.head.set(body.head ?? this.head.get()); }
+      if (body.appended?.length) { this.events.set([...this.events.get(), ...body.appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(body.appended); }
       if (body.content) this.content.set({ ...this.content.get(), ...body.content });
       if (!response.ok) throw new Error(body.error === "provider_not_configured" ? "OpenAI is ready but its production key has not been connected." : body.error ?? "Generation failed");
       await this.refreshSession(); this.toast(`Generated with ${this.session.get()?.provider.model ?? "OpenAI"}; provenance and usage recorded.`);
@@ -122,6 +127,13 @@ export class FormaStore {
     const projection=this.projection.get();if(!documentId||documentId===projection.documentId){this.setRoute("/");return true;}
     const appended=await this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:projection.documentId,source_surface:"library"}});
     if(!appended.length)return false;this.patchUi({focusBlockId:"",focusCollectionId:"",selectedOutputId:"",compareOpen:false});this.setRoute("/");this.toast("Document opened in Studio.");return true;
+  }
+
+  async removeDocument(documentId: string) {
+    const projection=this.projection.get();const target=projection.documents.find((document)=>document.id===documentId);if(!target){this.toast("That document is no longer available.");return[];}if(projection.documents.length<=1){this.toast("Create another document before removing the project’s final document.");return[];}
+    const fallback=projection.documents.find((document)=>document.id!==documentId)!;const wasCurrent=documentId===projection.documentId;
+    const appended=await this.append({type:"DocumentRemoved",payload:{document_id:documentId,title:target.title,was_current:wasCurrent,previous_document_id:projection.documentId,fallback_document_id:fallback.id,reason:"removed-by-user"}});
+    if(appended.length){this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});this.toast(wasCurrent?`${target.title} was removed. ${fallback.title} is now open.`:`${target.title} was removed. Undo can restore it.`);}return appended;
   }
 
   async evaluateExtractors() {
@@ -282,7 +294,7 @@ export class FormaStore {
 
 function inverseEvent(event: CreativeEvent): EventInput | null {
   const p = event.payload;
-  const pairs: Record<string, string> = { BlockLocked: "BlockUnlocked", BlockUnlocked: "BlockLocked", BlockRemoved: "BlockRestored", BlockRestored: "BlockRemoved", ObjectPinned: "ObjectUnpinned", ObjectUnpinned: "ObjectPinned", AddedToLibrary: "RemovedFromLibrary", RemovedFromLibrary: "AddedToLibrary" };
+  const pairs: Record<string, string> = { BlockLocked: "BlockUnlocked", BlockUnlocked: "BlockLocked", BlockRemoved: "BlockRestored", BlockRestored: "BlockRemoved", DocumentRemoved: "DocumentRestored", DocumentRestored: "DocumentRemoved", ObjectPinned: "ObjectUnpinned", ObjectUnpinned: "ObjectPinned", AddedToLibrary: "RemovedFromLibrary", RemovedFromLibrary: "AddedToLibrary" };
   if (pairs[event.type]) return { type: pairs[event.type], payload: p };
   if (event.type === "BlockCreated") return { type: "BlockRemoved", payload: { block_id: p.block_id, reason: "undo-created-block" } };
   if (event.type === "CollectionCreated") return { type: "CollectionRemoved", payload: { collection_id: p.collection_id, reason: "undo-created-collection" } };

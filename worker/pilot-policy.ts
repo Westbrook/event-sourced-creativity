@@ -105,7 +105,7 @@ export async function handleSession(request: Request, env: WorkerEnv) {
     await appendAuditEvent(env, user.streamId, "user", "ConsentAccepted", { policy_version: POLICY_VERSION, ownership_confirmed: true, external_provider_processing_confirmed: true });
     user.consentVersion = POLICY_VERSION; user.consentedAt = now;
   } else if (request.method !== "GET") return new Response("Method not allowed", { status: 405 });
-  return Response.json({ user, policy: { version: POLICY_VERSION, accepted: user.consentVersion === POLICY_VERSION, passiveCapture: false, externalAssetsRequireAssertion: true, retentionDays: intEnv(env.FORMA_RETENTION_DAYS, 30), sharing: "private-expiring-revocable" }, provider: { name: "OpenAI Responses API", model: env.OPENAI_MODEL ?? "gpt-5.6-terra", configured: Boolean(env.OPENAI_API_KEY) }, budgets: await readBudgets(env, user.userId) });
+  return Response.json({ user, policy: { version: POLICY_VERSION, accepted: user.consentVersion === POLICY_VERSION, passiveCapture: false, attentionCapture: { available: true, defaultOn: false, retentionDays: 14, rawInputCapture: false }, externalAssetsRequireAssertion: true, retentionDays: intEnv(env.FORMA_RETENTION_DAYS, 30), sharing: "private-expiring-revocable" }, provider: { name: "OpenAI Responses API", model: env.OPENAI_MODEL ?? "gpt-5.6-terra", configured: Boolean(env.OPENAI_API_KEY) }, budgets: await readBudgets(env, user.userId) });
 }
 
 export async function handleAdminUsers(request: Request, env: WorkerEnv) {

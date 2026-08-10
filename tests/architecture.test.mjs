@@ -187,13 +187,37 @@ test("connects the final Library and Studio affordances to explicit destinations
   assert.match(library,/Use in open document/);assert.match(library,/focused preview/i);assert.match(library,/Generated with this block/);assert.match(library,/Open family lightbox/);
   assert.match(library,/Keep for reuse/);assert.match(library,/Recent shows the project trail/);assert.match(library,/Project contents/);assert.match(library,/openDocument/);
   assert.match(eventsModel,/DocumentOpened/);assert.match(eventsApi,/DocumentOpened/);assert.match(store,/openDocument/);assert.match(classification,/DocumentOpened,behavioral/);
+  assert.match(eventsModel,/DocumentRemoved/);assert.match(eventsApi,/DocumentRemoved/);assert.match(store,/removeDocument/);assert.match(classification,/DocumentRemoved,user_content/);
   assert.match(collections,/File open document/);assert.match(collections,/New nested collection/);assert.match(collections,/collection-dialog/);assert.doesNotMatch(collections,/window\.prompt/);
   assert.match(workspace,/project-settings-dialog/);assert.match(workspace,/type:BlockKind/);assert.match(workspace,/block-composer-dialog/);
   assert.match(workspace,/forma-project-rail surface="studio"/);assert.match(library,/forma-project-rail surface="library"/);assert.match(projectRail,/Library overview/);assert.match(projectRail,/All documents/);assert.match(projectRail,/No auto-filing/);
+  assert.match(workspace,/studio-document-delete-dialog/);assert.match(library,/document-delete-dialog/);assert.match(`${workspace}${library}`,/Remove document/);
   assert.doesNotMatch(`${workspace}${library}${styles}`,/studio-sidebar|library-tree/);assert.match(styles,/\.project-rail/);
   assert.match(workspace,/\?disabled=\$\{!canCompare\}/);assert.match(store,/canUndo/);assert.match(store,/canRedo/);assert.match(styles,/\.document-bar \{ position: sticky/);
   assert.match(outputCard,/Taste evidence/);assert.match(outputCard,/taste-axis-grid/);assert.match(outputCard,/Record taste evidence/);
-  assert.match(shell,/system#governance/);assert.match(shell,/Passive \/ dwell capture/);assert.match(system,/id="governance"/);assert.match(system,/structurally unavailable/);
+  assert.match(shell,/system#governance/);assert.match(shell,/Use attention signals to improve Forma/);assert.match(system,/id="governance"/);assert.match(system,/Forget attention data/);
+});
+
+test("keeps opt-in attention capture visible-only, coarse, bounded, and forgettable",async()=>{
+  const [observer,attention,store,shell,system,scout,memory,eventsApi,policy,decisions,classification]=await Promise.all([
+    readFile(new URL("../src/components/forma-attention-observer.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/model/attention.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-shell.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-system.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/model/scout.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-memory.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/pilot-policy.ts",import.meta.url),"utf8"),
+    readFile(new URL("../docs/decisions.ndjson",import.meta.url),"utf8"),
+    readFile(new URL("../docs/event-classification.csv",import.meta.url),"utf8"),
+  ]);
+  assert.match(observer,/document\.visibilityState==="visible"/);assert.match(observer,/IntersectionObserver/);assert.match(observer,/idle_timeout/);assert.match(observer,/terminal_type/);
+  assert.doesNotMatch(observer,/clientX|clientY|screenX|screenY|event\.key|\.value/);
+  assert.match(attention,/ATTENTION_RETENTION_DAYS = 14/);assert.match(attention,/\.25/);assert.match(attention,/AttentionSignalsForgotten/);
+  assert.match(store,/setAttentionCapture/);assert.match(store,/forgetAttentionSignals/);assert.match(shell,/off until you enable them separately/);assert.match(system,/off by default/);
+  assert.match(scout,/attention_weight_cap:\.25/);assert.match(memory,/cannot create a taste belief/);assert.match(eventsApi,/AttentionEpisodeObserved/);assert.match(eventsApi,/normalizeAttention/);assert.match(policy,/rawInputCapture: false/);
+  assert.match(decisions,/D-0029.*supersedes":"D-0015"/);assert.match(classification,/AttentionEpisodeObserved,derived_sensitive/);
 });
 
 test("uses one edge rail and one header vocabulary without Library overflow traps", async()=>{

@@ -26,3 +26,25 @@ test("replays a compensated document-open event back to the previous document",(
   const events=[event(1,"DocumentCreated",{document_id:"doc-a",title:"A"}),event(2,"DocumentCreated",{document_id:"doc-b",title:"B"}),event(3,"DocumentOpened",{document_id:"doc-a",previous_document_id:"doc-b"}),event(4,"DocumentOpened",{document_id:"doc-b",previous_document_id:"doc-a"},"user","event-3")];
   assert.equal(foldEvents(events).documentId,"doc-b");
 });
+
+test("removes a document from active projections and restores it without erasing history",()=>{
+  const events=[
+    event(1,"DocumentCreated",{document_id:"doc-a",title:"A"}),
+    event(2,"BlockCreated",{block_id:"block-a",document_id:"doc-a",type:"direction",handle:"direction/a",position:"a0",properties:{text:"A"}}),
+    event(3,"GenerationCompleted",{generation_id:"generation-a",document_id:"doc-a",model_id:"model",object_ids:["output-a"]},"worker:generation"),
+    event(4,"CollectionCreated",{collection_id:"collection-a",handle:"work",position:"a0"}),
+    event(5,"CollectionItemAdded",{collection_id:"collection-a",item_ref:{document_id:"doc-a"},position:"a0"}),
+    event(6,"DocumentCreated",{document_id:"doc-b",title:"B"}),
+    event(7,"DocumentOpened",{document_id:"doc-a",previous_document_id:"doc-b"}),
+    event(8,"DocumentRemoved",{document_id:"doc-a",was_current:true,fallback_document_id:"doc-b"}),
+  ];
+  const removed=foldEvents(events);
+  assert.deepEqual(removed.documents.map((document)=>document.id),["doc-b"]);
+  assert.equal(removed.documentId,"doc-b");
+  assert.equal(removed.libraryBlocks.length,0);assert.equal(removed.libraryOutputs.length,0);assert.equal(removed.membership["doc-a"],undefined);
+
+  const restored=foldEvents([...events,event(9,"DocumentRestored",events[7].payload,"user","event-8")]);
+  assert.equal(restored.documents.length,2);assert.equal(restored.documentId,"doc-a");
+  assert.deepEqual(restored.blocks.map((block)=>block.id),["block-a"]);assert.deepEqual(restored.outputs.map((output)=>output.id),["output-a"]);
+  assert.equal(restored.membership["doc-a"].collectionId,"collection-a");
+});

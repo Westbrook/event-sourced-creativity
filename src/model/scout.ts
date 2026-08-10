@@ -1,5 +1,6 @@
 import { buildPhase7Index, cosineSimilarity } from "./indexing.ts";
 import { foldEvents, type CreativeEvent } from "./events.ts";
+import { attentionEvents } from "./attention.ts";
 
 export type ScoutObservationType = "convergence" | "divergence" | "stall" | "adjacency";
 
@@ -52,6 +53,8 @@ export function buildScoutTrajectory(events: CreativeEvent[]): ScoutTrajectorySl
   const requestEvents = events.filter((event) => event.type === "GenerationRequested" && event.actor !== "worker:scout");
   const engagementEvents = events.filter((event) => /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary|BriefItemAccepted)$/.test(event.type));
   const comparisonEvents = events.filter((event) => event.type === "ComparisonOpened");
+  const retainedAttention = attentionEvents(events);
+  const frictionAttention = retainedAttention.filter((event) => Number(event.payload.friction_score ?? 0) >= .45);
   const similarities = recent.slice(1).map((item, index) => cosineSimilarity(recent[index].vector, item.vector));
   const meanSimilarity = similarities.length ? similarities.reduce((sum, value) => sum + value, 0) / similarities.length : 0;
   const acceptedRecent = recent.filter((item) => item.accepted).length;
@@ -86,9 +89,18 @@ export function buildScoutTrajectory(events: CreativeEvent[]): ScoutTrajectorySl
     slices.push({
       sliceId: `trajectory:${signature}:density`, type: "stall", label: "Iteration is outpacing commitment",
       summary: "Generation attempts are accumulating faster than saves, pins, exports, or accepted continuations. This is a stall marker, not a diagnosis.",
-      confidence: round(Math.min(.9, .58 + Math.min(1, attempts / 10) * .28)), signature,
-      evidenceRefs: [...recentRequests.map(eventRef), ...engagementEvents.slice(-3).map(eventRef)].filter(Boolean),
-      metrics: { attempts, progression_events: progression, progression_ratio: round(progression / attempts), comparisons: comparisonEvents.length },
+      confidence: round(Math.min(.9, .58 + Math.min(1, attempts / 10) * .28 + Math.min(.05,frictionAttention.length*.01))), signature,
+      evidenceRefs: [...recentRequests.map(eventRef), ...engagementEvents.slice(-3).map(eventRef),...frictionAttention.slice(-2).map(eventRef)].filter(Boolean),
+      metrics: { attempts, progression_events: progression, progression_ratio: round(progression / attempts), comparisons: comparisonEvents.length, attention_support: frictionAttention.length, attention_weight_cap:.25 },
+    });
+  }
+
+  if(attempts<3&&frictionAttention.length>=2){
+    const recentFriction=frictionAttention.slice(-4);const signature=`attention-friction:${recentFriction[0].sequence}-${recentFriction.at(-1)?.sequence}`;
+    slices.push({sliceId:`trajectory:${signature}`,type:"stall",label:"Repeated attention friction may mark a UX break",
+      summary:"Multiple visible-page episodes ended without a strong completion signal after sustained active attention. This is weak product-friction evidence, not a claim about creative intent.",
+      confidence:round(Math.min(.44,.3+recentFriction.length*.035)),signature,evidenceRefs:recentFriction.map(eventRef),
+      metrics:{episodes:recentFriction.length,mean_friction:round(recentFriction.reduce((sum,event)=>sum+Number(event.payload.friction_score??0),0)/recentFriction.length),attention_weight_cap:.25},
     });
   }
 

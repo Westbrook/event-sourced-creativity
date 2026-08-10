@@ -47,6 +47,7 @@ export type CreativeDocument = {
   id: string;
   title: string;
   handle: string;
+  removed: boolean;
   createdSequence: number;
   sourceEvents: string[];
 };
@@ -132,17 +133,20 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ProjectStateChanged": state.projectState = String(p.state ?? state.projectState); break;
       case "DocumentCreated": {
         const id=String(p.document_id??"");const title=String(p.title??state.documentTitle);state.documentId=id;state.documentTitle=title;state.latestCompile=null;
-        documents.set(id,{id,title,handle:String(p.handle??`document-${id.slice(0,8)}`),createdSequence:event.sequence,sourceEvents:[event.eventId]});break;
+        documents.set(id,{id,title,handle:String(p.handle??`document-${id.slice(0,8)}`),removed:false,createdSequence:event.sequence,sourceEvents:[event.eventId]});break;
       }
       case "DocumentRenamed": {
         const id=String(p.document_id??state.documentId);const document=documents.get(id);if(document){document.title=String(p.new_title??document.title);document.sourceEvents.push(event.eventId);}if(id===state.documentId)state.documentTitle=String(p.new_title??state.documentTitle);break;
       }
       case "DocumentForked": {
         const id=String(p.document_id??state.documentId);const title=String(p.title??"Imported document fork");state.documentId=id;state.documentTitle=title;state.latestCompile=null;
-        documents.set(id,{id,title,handle:String(p.handle??`fork-${id.slice(0,8)}`),createdSequence:event.sequence,sourceEvents:[event.eventId]});break;
+        documents.set(id,{id,title,handle:String(p.handle??`fork-${id.slice(0,8)}`),removed:false,createdSequence:event.sequence,sourceEvents:[event.eventId]});break;
       }
       case "DocumentOpened": {
-        const document=documents.get(String(p.document_id??""));if(document){state.documentId=document.id;state.documentTitle=document.title;state.latestCompile=null;document.sourceEvents.push(event.eventId);}break;
+        const document=documents.get(String(p.document_id??""));if(document&&!document.removed){state.documentId=document.id;state.documentTitle=document.title;state.latestCompile=null;document.sourceEvents.push(event.eventId);}break;
+      }
+      case "DocumentRemoved": case "DocumentRestored": {
+        const document=documents.get(String(p.document_id??""));if(document){document.removed=event.type==="DocumentRemoved";document.sourceEvents.push(event.eventId);if(event.type==="DocumentRestored"&&p.was_current){state.documentId=document.id;state.documentTitle=document.title;state.latestCompile=null;}}break;
       }
       case "BlockCreated": {
         const id = String(p.block_id);
@@ -223,11 +227,14 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ConditionFired": { const c = conditions.get(String(p.condition_id)); if (c) c.fired = true; break; }
     }
   }
-  state.libraryBlocks = [...blocks.values()].filter((b) => !b.removed).sort((a, b) => a.position.localeCompare(b.position));
-  state.documents = [...documents.values()].sort((a,b)=>b.createdSequence-a.createdSequence);
+  const visibleDocuments=[...documents.values()].filter((document)=>!document.removed).sort((a,b)=>b.createdSequence-a.createdSequence);const visibleDocumentIds=new Set(visibleDocuments.map((document)=>document.id));
+  for(const id of Object.keys(membership))if(documents.has(id)&&!visibleDocumentIds.has(id))delete membership[id];
+  state.libraryBlocks = [...blocks.values()].filter((b) => !b.removed&&(!documents.has(b.documentId)||visibleDocumentIds.has(b.documentId))).sort((a, b) => a.position.localeCompare(b.position));
+  state.documents = visibleDocuments;
+  if(!visibleDocumentIds.has(state.documentId)){const fallback=visibleDocuments[0];state.documentId=fallback?.id??"";state.documentTitle=fallback?.title??"No document open";state.latestCompile=null;}
   state.blocks = state.libraryBlocks.filter((block) => block.documentId === state.documentId);
   state.collections = [...collections.values()].filter((c) => !c.removed).sort((a, b) => a.position.localeCompare(b.position) || a.handle.localeCompare(b.handle));
-  state.libraryOutputs = [...outputs.values()].filter((o) => !o.discarded).sort((a, b) => b.sequence - a.sequence);
+  state.libraryOutputs = [...outputs.values()].filter((o) => !o.discarded&&(!documents.has(o.documentId)||visibleDocumentIds.has(o.documentId))).sort((a, b) => b.sequence - a.sequence);
   state.outputs = state.libraryOutputs.filter((output) => output.documentId === state.documentId);
   state.annotations = [...annotations.values()]; state.families = [...families.values()]; state.preferences = [...preferences.values()]; state.conditions = [...conditions.values()];
   return state;
