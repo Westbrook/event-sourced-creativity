@@ -11,7 +11,7 @@ This ledger reconciles Revision 2.1 of the synthesis/build plan with the kickoff
 | Phase 4 | Operational | Provenance inspector, context diff, side-by-side comparison, rights receipt at export, region-promotion event seam | Attribution algorithm and influence-taint policy remain open |
 | Phase 5 | Operational | Chat proposal → preview → explicit accept/reject; 30-day externalized private content; expected sequence; same committed event vocabulary | Pilot evaluation of proposal quality |
 | Phase 5.5 | Operational | Authored nested collection tree, handles, filing/moving, duplicate and cycle validation, family promotion | Multi-membership deliberately absent |
-| Phase 6 | Evaluation | Brief as small context document, impression events, accept/ignore/dismiss/blank, cold-start threshold, optional intent, conditions | Real usage must validate the go/no-go gate |
+| Phase 6 | Evaluation | Server-owned close snapshots, continuity delta, warm-thread composition, rejected-path memory, atomic `BriefComposed` + impression batches, accept/ignore/dismiss/blank, cold-start threshold, private optional intent, cost and dosage projections | Collect at least 10 witnessed impressions, then conduct the human go/no-go review; no automatic pass threshold |
 | Phase 7 | Simulation | Inferred family surface, evidence summary, user-only promotion to collection, fixture corpus path | Embedding model and data-rights posture |
 | Phase 8 | Gated | Scout report-space scenario, evidence/judgment events, producer permissions, hard budget ceilings | Autonomous execution remains outside the human-in-the-loop pilot |
 | Phase 9 | Evaluation | Preference/time folds, condition UI, authority/history semantics, 30-day private-content redaction | Pilot evidence must tune decay semantics |
@@ -25,6 +25,7 @@ This ledger reconciles Revision 2.1 of the synthesis/build plan with the kickoff
 - Prompt/provider content is redacted after 30 days; events retain only non-sensitive receipts and references.
 - Uploads require explicit ownership or license confirmation. Shares are read-only, expire after at most seven days, and are immediately revocable.
 - The Phase 3 deterministic suite extracts dimensions, a k-means palette, and dominant edge direction from uploaded references. The frozen corpus gate must pass globally and per extractor at a correction rate of 10% or less.
+- Phase 6 composes no brief before three closed sessions and one dormant or unresolved thread. Composition and item impressions append atomically, and the pilot remains in evaluation until at least ten impressions support a human review of acceptance, cost, and dosage.
 
 ## Accepted delivery debt
 

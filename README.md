@@ -10,6 +10,7 @@ projections over one append-only event stream.
 - generated studies compiled from cited block snapshots
 - editable reflection chips with authority-restoring compensation
 - deterministic uploaded-reference extraction with a fixed correction-rate quality gate
+- event-derived re-entry briefs with cold-start protection, rejected-path memory, and measurable dosage
 - authored collection tree with cycle and duplicate-membership validation
 - chat proposals previewed before user acceptance
 - provenance lineage and filterable event stream
@@ -47,6 +48,10 @@ experimental. React and framework-specific UI runtimes are not dependencies.
 The System Architecture page exposes the Phase 3 extractor scorecard. Admins
 can rerun the frozen corpus and append an `ExtractorEvaluationCompleted` receipt
 without calling a model provider.
+
+The Sessions page now runs the Phase 6 pilot from durable facts. Closing a
+session captures its projection receipt; opening an eligible session composes a
+bounded brief and witnesses every rendered item in the same append batch.
 
 The Event admin page can export a theoretical replay fixture. Rebuild it from
 the command line with:

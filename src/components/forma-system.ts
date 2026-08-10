@@ -10,7 +10,7 @@ const phases = [
   ["4","Provenance","operational","Trace inspector, context diff, comparisons, rights receipts, region-promotion event seam."],
   ["5","Conversation","operational","Propose → diff boundary → accept/reject, expected sequence, externalized command text."],
   ["5.5","Collections","operational","Authored tree, nested handles, filing, move validation, and family promotion."],
-  ["6","Sessions & brief","evaluation","Brief-as-context, impressions, cold-start threshold, blank canvas, dosage instrumentation."],
+  ["6","Sessions & brief","evaluation","Event-derived close snapshots, cold-start enforcement, atomic brief impressions, rejected-path memory, and live dosage metrics are collecting pilot evidence."],
   ["7","Vectors & families","simulation","Family claims and promotion path are demonstrable; production vector model/data rights are pending."],
   ["8","Scout","gated","Report-space scenario and permissions exist. Autonomous scouting remains disabled during the human-in-the-loop pilot."],
   ["9","Taste & time","evaluation","Preference and condition history run under the adopted 30-day private-content retention policy."],

@@ -140,6 +140,50 @@ export class FormaStore {
     finally { this.busy.set(""); this.notify(); }
   }
 
+  async closeSession() {
+    this.busy.set("close-session"); this.notify();
+    try {
+      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "close_session", expectedSequence: this.head.get(), clientId: "web:sessions" }) });
+      const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; eligibility?: { closedSessions?: number; requiredClosedSessions?: number } };
+      if (!response.ok) throw new Error(body.error === "no_open_session" ? "Open a session before closing it." : body.error ?? "Session could not be closed");
+      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast(`Session closed with a state receipt · ${body.eligibility?.closedSessions ?? 0}/${body.eligibility?.requiredClosedSessions ?? 3} toward brief eligibility.`);
+    } catch (error) { this.toast(error instanceof Error ? error.message : "Session could not be closed"); }
+    finally { this.busy.set(""); this.notify(); }
+  }
+
+  async openSession() {
+    this.busy.set("open-session"); this.notify();
+    try {
+      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "open_session", expectedSequence: this.head.get(), clientId: "web:sessions" }) });
+      const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; briefComposed?: boolean };
+      if (!response.ok) throw new Error(body.error === "session_already_open" ? "The current session is already open." : body.error ?? "Session could not be opened");
+      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast(body.briefComposed ? "Session opened with an eligible re-entry brief; every impression was witnessed." : "Session opened. More history is needed before composing a valid brief.");
+    } catch (error) { this.toast(error instanceof Error ? error.message : "Session could not be opened"); }
+    finally { this.busy.set(""); this.notify(); }
+  }
+
+  async composeBrief() {
+    this.busy.set("compose-brief"); this.notify();
+    try {
+      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "compose_brief", expectedSequence: this.head.get(), clientId: "web:sessions" }) });
+      const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; eligibility?: { reasons?: string[] } };
+      if (!response.ok) throw new Error(body.error === "brief_not_eligible" ? `Brief is not eligible: ${body.eligibility?.reasons?.join(" and ") ?? "more history required"}.` : body.error === "open_session_required" ? "Open a session before composing a brief." : body.error ?? "Brief could not be composed");
+      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Re-entry brief composed from the event stream; impressions were witnessed in the same batch.");
+    } catch (error) { this.toast(error instanceof Error ? error.message : "Brief could not be composed"); }
+    finally { this.busy.set(""); this.notify(); }
+  }
+
+  async declareIntent(statement: string, deadline: string | null = null) {
+    this.busy.set("declare-intent"); this.notify();
+    try {
+      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "declare_intent", expectedSequence: this.head.get(), clientId: "web:sessions", statement, deadline }) });
+      const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Intent could not be recorded");
+      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Intent recorded privately; the immutable event keeps only its expiring reference.");
+    } catch (error) { this.toast(error instanceof Error ? error.message : "Intent could not be recorded"); }
+    finally { this.busy.set(""); this.notify(); }
+  }
+
   async loadShares() {
     const response = await fetch("/api/shares"); if (!response.ok) return; const body = await response.json() as { shares: ShareRecord[] }; this.shares.set(body.shares); this.notify();
   }

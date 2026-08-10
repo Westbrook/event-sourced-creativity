@@ -2,6 +2,8 @@ import { generateCreativeDirection } from "./openai-adapter";
 import { loadPrivateContent, releaseBudget, requireConsent, requireUser, reserveBudget, settleBudget, storePrivateContent } from "./pilot-policy";
 import { ensureSchema, insertEvent, makeEvent, readEvents, streamHead, uuidV7, type EventRow, type WorkerEnv } from "./runtime";
 import { analyzeImageSample, runExtractorEvaluation, type ImageSample } from "../src/model/extractors";
+import { briefEligibility, composeReentryBrief } from "../src/model/brief";
+import { foldEvents } from "../src/model/events";
 
 export type { WorkerEnv } from "./runtime";
 
@@ -56,8 +58,6 @@ async function seedIfEmpty(env:WorkerEnv,streamId:string) {
     ["worker:generator","GenerationCompleted",{generation_id:"generation-02",model_id:"adapter-neutral",object_ids:["object-nocturne-02"],latency_ms:1450,variant:1}],
     ["user","ObjectPinned",{object_id:"object-nocturne-01",scope:"project"}],
     ["user","ComparisonOpened",{object_ids:["object-nocturne-01","object-nocturne-02"],source_surface:"studio"}],
-    ["worker:brief","BriefComposed",{brief_id:"brief-today",session_id:"session-today",items:[{item_id:"item-comparison",item_type:"comparison",ref_id:"object-nocturne-01",rank:1,rationale_ref:"event:22"},{item_id:"item-palette",item_type:"thread",ref_id:"palette/dusk-warm",rank:2,rationale_ref:"event:11"}]}],
-    ["user","BriefItemPresented",{brief_id:"brief-today",item_id:"item-comparison"}],
     ["user","ConditionSet",{condition_id:"condition-palette-3",condition_ref:"three-new-generations",scope:"project"}],
   ];
   const rows=specs.map(([actor,type,payload],i)=>makeEvent(streamId,i+1,actor,client,corr,type,payload)); await env.DB.batch(rows.map(e=>insertEvent(env,e)));
@@ -74,7 +74,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false):Prom
     if(request.method==="GET"){const events=await readEvents(env,streamId);return Response.json({events,content:await loadPrivateContent(env,ownerId),head:events.at(-1)?.sequence??0,permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});}
     if(request.method!=="POST")return new Response("Method not allowed",{status:405});
     const consent=requireConsent(auth.user);if(consent)return consent;
-    const body=await request.json() as {action?:"append"|"batch"|"propose"|"generate"|"hot"|"evaluate_extractors"|"extract_reference";event?:EventInput;events?:EventInput[];expectedSequence?:number;clientId?:string;correlationId?:string;prompt?:string;snapshot?:Record<string,unknown>;sourceBlockVersions?:Array<Record<string,unknown>>;blockId?:string;referenceId?:string;sample?:ImageSample};
+    const body=await request.json() as {action?:"append"|"batch"|"propose"|"generate"|"hot"|"evaluate_extractors"|"extract_reference"|"open_session"|"close_session"|"compose_brief"|"declare_intent";event?:EventInput;events?:EventInput[];expectedSequence?:number;clientId?:string;correlationId?:string;prompt?:string;snapshot?:Record<string,unknown>;sourceBlockVersions?:Array<Record<string,unknown>>;blockId?:string;referenceId?:string;sample?:ImageSample;statement?:string;deadline?:string|null};
     const current=await streamHead(env,streamId),client=body.clientId||"web:lit",corr=body.correlationId||uuidV7();const requested=body.action==="batch"||hot?body.events??(body.event?[body.event]:[]):body.event?[body.event]:[];
     if(hot&&!requested.every(e=>HOT_EVENTS.has(e.type??"")))return Response.json({error:"hot_path_accepts_commutative_engagement_only"},{status:400});
     const commutative=requested.length>0&&requested.every(e=>COMMUTATIVE.has(e.type??""));
@@ -109,6 +109,26 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false):Prom
       const requestedAt=makeEvent(streamId,current+1,"user",client,corr,"ExtractionRequested",{block_id:body.blockId,reference_id:body.referenceId,extractors:["dimensions-v1","palette-kmeans-v1","dominant-edges-v1"]});
       const completed=makeEvent(streamId,current+2,"worker:extractor",client,corr,"ExtractionCompleted",{block_id:body.blockId,reference_id:body.referenceId,extractor_name:"deterministic-image-suite-v1",extractor_versions:["dimensions-v1","palette-kmeans-v1","dominant-edges-v1"],chips:[{chip_id:`chip-${body.blockId}-dimensions`,property:"dimensions",value:facts.dimensions,confidence:facts.confidence.dimensions},{chip_id:`chip-${body.blockId}-palette`,property:"colors",value:facts.palette,confidence:facts.confidence.palette},{chip_id:`chip-${body.blockId}-edges`,property:"dominant_edges",value:facts.dominantEdges,confidence:facts.confidence.dominantEdges}],overall_confidence:facts.confidence.overall,sample_grid:{width:body.sample.gridWidth,height:body.sample.gridHeight}},{causationId:requestedAt.eventId});
       await env.DB.batch([requestedAt,completed].map(event=>insertEvent(env,event)));return Response.json({appended:[requestedAt,completed],rejected:[],head:completed.sequence});
+    }
+    if(body.action==="close_session"){
+      const events=await readEvents(env,streamId);const projection=foldEvents(events);
+      if(!projection.sessionOpen)return Response.json({error:"no_open_session"},{status:409});
+      const closed=makeEvent(streamId,current+1,"user",client,corr,"SessionClosed",{session_id:projection.currentSessionId,snapshot_ref:{head:current,project_id:projection.projectId,document_id:projection.documentId,block_versions:projection.blocks.map(block=>({block_id:block.id,version:block.sourceEvents.length})),output_ids:projection.outputs.map(output=>output.id),collection_ids:projection.collections.map(collection=>collection.id)}});
+      await insertEvent(env,closed).run();return Response.json({appended:[closed],rejected:[],head:closed.sequence,eligibility:briefEligibility([...events,closed])});
+    }
+    if(body.action==="open_session"){
+      const events=await readEvents(env,streamId);const projection=foldEvents(events);
+      if(projection.sessionOpen)return Response.json({error:"session_already_open"},{status:409});
+      const sessionId=uuidV7();const opened=makeEvent(streamId,current+1,"user",client,corr,"SessionOpened",{session_id:sessionId,snapshot_ref:projection.lastSession?.snapshot_ref??null});const streamWithOpen=[...events,opened];const briefId=uuidV7();const composition=composeReentryBrief(streamWithOpen,briefId);const appended:EventRow[]=[opened];
+      if(composition.eligible&&composition.payload){const brief=makeEvent(streamId,current+2,"worker:brief",client,corr,"BriefComposed",composition.payload,{causationId:opened.eventId});appended.push(brief);for(const item of composition.payload.items){appended.push(makeEvent(streamId,current+appended.length+1,"user",client,corr,"BriefItemPresented",{brief_id:briefId,item_id:item.item_id,rank:item.rank,brief_size:composition.payload.items.length,presentation_mode:"rendered-or-reading-order"},{causationId:brief.eventId}));}}
+      await env.DB.batch(appended.map(event=>insertEvent(env,event)));return Response.json({appended,rejected:[],head:appended.at(-1)?.sequence??current,eligibility:composition.eligibility,briefComposed:composition.eligible});
+    }
+    if(body.action==="compose_brief"){
+      const events=await readEvents(env,streamId);const projection=foldEvents(events);if(!projection.sessionOpen)return Response.json({error:"open_session_required"},{status:409});const briefId=uuidV7();const composition=composeReentryBrief(events,briefId);if(!composition.eligible||!composition.payload)return Response.json({error:"brief_not_eligible",eligibility:composition.eligibility},{status:409});
+      const brief=makeEvent(streamId,current+1,"worker:brief",client,corr,"BriefComposed",composition.payload);const appended:EventRow[]=[brief];for(const item of composition.payload.items)appended.push(makeEvent(streamId,current+appended.length+1,"user",client,corr,"BriefItemPresented",{brief_id:briefId,item_id:item.item_id,rank:item.rank,brief_size:composition.payload.items.length,presentation_mode:"rendered-or-reading-order"},{causationId:brief.eventId}));await env.DB.batch(appended.map(event=>insertEvent(env,event)));return Response.json({appended,rejected:[],head:appended.at(-1)?.sequence??current,eligibility:composition.eligibility,briefComposed:true});
+    }
+    if(body.action==="declare_intent"){
+      const statement=body.statement?.trim();if(!statement||statement.length>500)return Response.json({error:"intent_statement_required"},{status:400});const stored=await storePrivateContent(env,ownerId,"intent",statement);const intent=makeEvent(streamId,current+1,"user",client,corr,"IntentDeclared",{scope_ref:foldEvents(await readEvents(env,streamId)).documentId,statement_ref:stored.contentId,content_expires_at:stored.expiresAt,deadline:body.deadline??null});await insertEvent(env,intent).run();return Response.json({appended:[intent],rejected:[],head:intent.sequence});
     }
     if(body.action!=="append"&&body.action!=="batch"&&body.action!=="hot"&&!hot)return Response.json({error:"unsupported_action"},{status:400});
     const rejected:Array<{index:number;type:string;reason:string}>=[];const state=collectionState(await readEvents(env,streamId));const valid=requested.filter((item,index)=>{const type=item.type??"";if(!type||!canAppend("user",type)){rejected.push({index,type,reason:"event_not_permitted_for_user"});return false;}if(!item.payload||typeof item.payload!=="object"){rejected.push({index,type,reason:"payload_must_be_object"});return false;}if(type.startsWith("Collection")){const reason=validateCollection(item,state);if(reason){rejected.push({index,type,reason});return false;}}return true;});

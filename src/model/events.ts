@@ -75,6 +75,8 @@ export type CreativeProjection = {
   preferences: Array<Record<string, unknown>>;
   conditions: Array<Record<string, unknown>>;
   lastSession: Record<string, unknown> | null;
+  currentSessionId: string | null;
+  sessionOpen: boolean;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -104,7 +106,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
     documentTitle: "Untitled document",
     blocks: [], collections: [], membership, outputs: [],
     latestCompile: null, brief: null, presentedBriefItems: new Set(),
-    annotations: [], families: [], preferences: [], conditions: [], lastSession: null,
+    annotations: [], families: [], preferences: [], conditions: [], lastSession: null, currentSessionId: null, sessionOpen: false,
   };
 
   for (const event of events) {
@@ -137,7 +139,8 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
         const b = blocks.get(String(p.block_id)); const chips = Array.isArray(p.chips) ? p.chips : [];
         if (b) {
           for (const value of chips) { const chip = asRecord(value); const property = String(chip.property ?? ""); if (property) b.properties[property] = chip.value; }
-          b.properties.extraction_status = "complete"; b.properties.extractor = p.extractor_name; b.properties.confidence = Number(p.overall_confidence ?? Math.min(...chips.map((value) => Number(asRecord(value).confidence ?? 1)))); b.sourceEvents.push(event.eventId);
+          const confidenceValues = chips.map((value) => Number(asRecord(value).confidence ?? 1));
+          b.properties.extraction_status = "complete"; b.properties.extractor = p.extractor_name; b.properties.confidence = Number(p.overall_confidence ?? (confidenceValues.length ? Math.min(...confidenceValues) : 1)); b.sourceEvents.push(event.eventId);
         }
         break;
       }
@@ -158,9 +161,12 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ObjectSaved": { const o = outputs.get(String(p.object_id)); if (o) o.saved = true; break; }
       case "ObjectDiscarded": { const o = outputs.get(String(p.object_id)); if (o) o.discarded = true; break; }
       case "AddedToLibrary": case "RemovedFromLibrary": { const o = outputs.get(String(p.object_id ?? p.item_id)); if (o) o.library = event.type === "AddedToLibrary"; break; }
-      case "BriefComposed": state.brief = p; break;
+      case "BriefComposed": state.brief = p; state.presentedBriefItems.clear(); break;
       case "BriefItemPresented": state.presentedBriefItems.add(String(p.item_id)); break;
-      case "SessionClosed": state.lastSession = p; break;
+      case "BriefItemIgnored": if (state.brief && String(state.brief.brief_id) === String(p.brief_id) && Array.isArray(state.brief.items)) state.brief = { ...state.brief, items: state.brief.items.filter((value) => String(asRecord(value).item_id) !== String(p.item_id)) }; break;
+      case "BriefItemAccepted": case "BriefDismissed": case "EmptyCanvasChosen": if (!p.brief_id || String(state.brief?.brief_id) === String(p.brief_id)) { state.brief = null; state.presentedBriefItems.clear(); } break;
+      case "SessionOpened": state.currentSessionId = String(p.session_id ?? ""); state.sessionOpen = true; break;
+      case "SessionClosed": state.lastSession = p; state.currentSessionId = null; state.sessionOpen = false; state.brief = null; state.presentedBriefItems.clear(); break;
       case "AnnotationAdded": annotations.set(String(p.annotation_id), p); break;
       case "AnnotationRetracted": annotations.delete(String(p.annotation_id)); break;
       case "FamilyDeclared": families.set(String(p.family_id), { ...p, authority: "inferred" }); break;
