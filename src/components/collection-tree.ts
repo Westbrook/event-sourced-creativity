@@ -16,8 +16,8 @@ export class CollectionTree extends FormaElement {
   }
   override render() {
     const p = this.store.projection.get(); const roots = p.collections.filter((c) => !c.parentId); const children = (id: string) => p.collections.filter((c) => c.parentId === id);
-    const node = (c: typeof p.collections[number], level: number): TemplateResult => html`<li role="treeitem" aria-level=${level} aria-expanded=${children(c.id).length ? "true" : undefined} tabindex="0">
-      <div class="tree-row"><span>${icon("folder")}</span><button class="tree-name" @click=${() => this.store.setRoute("/library")}>${c.handle}</button><span class="tree-count">${Object.values(p.membership).filter((m) => m.collectionId === c.id).length}</span><button class="tree-more" aria-label="Rename ${c.handle}" @click=${() => this.#rename(c.id, c.handle)}>•••</button></div>
+    const node = (c: typeof p.collections[number], level: number): TemplateResult => html`<li role="treeitem" aria-level=${level} aria-expanded=${children(c.id).length ? "true" : undefined} aria-current=${this.store.ui.focusCollectionId===c.id?"true":undefined} class=${this.store.ui.focusCollectionId===c.id?"brief-focus":""} data-collection-id=${c.id} tabindex="0">
+      <div class="tree-row"><span>${icon("folder")}</span><button class="tree-name" @click=${() => {this.store.patchUi({focusCollectionId:c.id});this.store.setRoute("/library");}}>${c.handle}</button><span class="tree-count">${Object.values(p.membership).filter((m) => m.collectionId === c.id).length}</span><button class="tree-more" aria-label="Rename ${c.handle}" @click=${() => this.#rename(c.id, c.handle)}>•••</button></div>
       ${children(c.id).length ? html`<ul role="group">${children(c.id).map((child) => node(child, level + 1))}</ul>` : ""}
       <div class="tree-actions"><button @click=${() => this.#moveDocument(c.id)}>File current</button><button @click=${() => this.#create(c.id)}>+ nested</button></div>
     </li>`;

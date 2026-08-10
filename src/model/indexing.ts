@@ -111,7 +111,7 @@ function engagementFor(events: CreativeEvent[], objectId: string) {
 
 export function buildVectorIndex(events: CreativeEvent[]): VectorItem[] {
   const projection = foldEvents(events);
-  const blocks: VectorItem[] = projection.blocks.map((block) => {
+  const blocks: VectorItem[] = projection.libraryBlocks.map((block) => {
     const sources = events.filter((event) => relevantBlockEvent(event, block.id));
     return {
       id: block.id,
@@ -126,7 +126,7 @@ export function buildVectorIndex(events: CreativeEvent[]): VectorItem[] {
       accepted: String(block.properties.authority ?? "authored") === "authored",
     };
   });
-  const outputs: VectorItem[] = projection.outputs.map((output) => {
+  const outputs: VectorItem[] = projection.libraryOutputs.map((output) => {
     const completed = events.find((event) => event.type === "GenerationCompleted" && list(event.payload.object_ids).map(String).includes(output.id));
     const compiled = generationContext(events, output.generationId);
     const engagement = engagementFor(events, output.id);

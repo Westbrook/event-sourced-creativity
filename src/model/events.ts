@@ -24,6 +24,7 @@ export type EventInput = {
 
 export type CreativeBlock = {
   id: string;
+  documentId: string;
   type: string;
   handle: string;
   position: string;
@@ -44,6 +45,7 @@ export type CreativeCollection = {
 
 export type CreativeOutput = {
   id: string;
+  documentId: string;
   generationId: string;
   modelId: string;
   variant: number;
@@ -64,9 +66,11 @@ export type CreativeProjection = {
   documentId: string;
   documentTitle: string;
   blocks: CreativeBlock[];
+  libraryBlocks: CreativeBlock[];
   collections: CreativeCollection[];
   membership: Record<string, { collectionId: string; position: string }>;
   outputs: CreativeOutput[];
+  libraryOutputs: CreativeOutput[];
   latestCompile: Record<string, unknown> | null;
   brief: Record<string, unknown> | null;
   presentedBriefItems: Set<string>;
@@ -104,7 +108,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
     projectState: "active",
     documentId: "",
     documentTitle: "Untitled document",
-    blocks: [], collections: [], membership, outputs: [],
+    blocks: [], libraryBlocks: [], collections: [], membership, outputs: [], libraryOutputs: [],
     latestCompile: null, brief: null, presentedBriefItems: new Set(),
     annotations: [], families: [], preferences: [], conditions: [], lastSession: null, currentSessionId: null, sessionOpen: false,
   };
@@ -116,10 +120,11 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ProjectCreated": state.projectId = String(p.project_id ?? ""); state.projectName = String(p.name ?? state.projectName); break;
       case "ProjectRenamed": state.projectName = String(p.new_name ?? state.projectName); break;
       case "ProjectStateChanged": state.projectState = String(p.state ?? state.projectState); break;
-      case "DocumentCreated": state.documentId = String(p.document_id ?? ""); state.documentTitle = String(p.title ?? state.documentTitle); break;
+      case "DocumentCreated": state.documentId = String(p.document_id ?? ""); state.documentTitle = String(p.title ?? state.documentTitle); state.latestCompile = null; break;
+      case "DocumentForked": state.documentId = String(p.document_id ?? state.documentId); state.documentTitle = String(p.title ?? "Imported document fork"); state.latestCompile = null; break;
       case "BlockCreated": {
         const id = String(p.block_id);
-        blocks.set(id, { id, type: String(p.type ?? "text"), handle: String(p.handle ?? id), position: String(p.position ?? "a0"), removed: false, locked: false, properties: { ...asRecord(p.properties) }, sourceEvents: [event.eventId] });
+        blocks.set(id, { id, documentId: String(p.document_id ?? state.documentId), type: String(p.type ?? "text"), handle: String(p.handle ?? id), position: String(p.position ?? "a0"), removed: false, locked: false, properties: { ...asRecord(p.properties) }, sourceEvents: [event.eventId] });
         break;
       }
       case "BlockRenamed": { const b = blocks.get(String(p.block_id)); if (b) { b.handle = String(p.new_handle ?? b.handle); b.sourceEvents.push(event.eventId); } break; }
@@ -154,7 +159,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ContextCompiled": state.latestCompile = p; break;
       case "GenerationCompleted": {
         const ids = Array.isArray(p.object_ids) ? p.object_ids : [];
-        ids.forEach((value) => { const id = String(value); outputs.set(id, { id, generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")) }); });
+        ids.forEach((value) => { const id = String(value); outputs.set(id, { id, documentId: String(p.document_id ?? state.documentId), generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")) }); });
         break;
       }
       case "ObjectPinned": case "ObjectUnpinned": { const o = outputs.get(String(p.object_id)); if (o) o.pinned = event.type === "ObjectPinned"; break; }
@@ -195,9 +200,11 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ConditionFired": { const c = conditions.get(String(p.condition_id)); if (c) c.fired = true; break; }
     }
   }
-  state.blocks = [...blocks.values()].filter((b) => !b.removed).sort((a, b) => a.position.localeCompare(b.position));
+  state.libraryBlocks = [...blocks.values()].filter((b) => !b.removed).sort((a, b) => a.position.localeCompare(b.position));
+  state.blocks = state.libraryBlocks.filter((block) => block.documentId === state.documentId);
   state.collections = [...collections.values()].filter((c) => !c.removed).sort((a, b) => a.position.localeCompare(b.position) || a.handle.localeCompare(b.handle));
-  state.outputs = [...outputs.values()].filter((o) => !o.discarded).sort((a, b) => b.sequence - a.sequence);
+  state.libraryOutputs = [...outputs.values()].filter((o) => !o.discarded).sort((a, b) => b.sequence - a.sequence);
+  state.outputs = state.libraryOutputs.filter((output) => output.documentId === state.documentId);
   state.annotations = [...annotations.values()]; state.families = [...families.values()]; state.preferences = [...preferences.values()]; state.conditions = [...conditions.values()];
   return state;
 }

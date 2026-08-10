@@ -87,16 +87,21 @@ test("records the accepted provider debt and makes the extractor gate operationa
 });
 
 test("runs the Phase 6 pilot from event-derived sessions instead of brief fixtures", async () => {
-  const [eventsApi, store, sessions, briefModel] = await Promise.all([
+  const [eventsApi, store, sessions, briefModel, contextBlock, library, referenceImage] = await Promise.all([
     readFile(new URL("../worker/events-api.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/state/store.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-sessions.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/model/brief.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/context-block.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/forma-library.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/reference-image.ts", import.meta.url), "utf8"),
   ]);
   assert.match(eventsApi, /open_session/); assert.match(eventsApi, /close_session/); assert.match(eventsApi, /compose_brief/); assert.match(eventsApi, /declare_intent/);
   assert.doesNotMatch(eventsApi, /brief-today/);
   assert.match(store, /composeBrief/); assert.match(sessions, /event-derived/); assert.match(sessions, /Dosage curve/);
   assert.match(briefModel, /PHASE6_MIN_CLOSED_SESSIONS/); assert.match(briefModel, /rejectedPathMemory/); assert.match(briefModel, /phase6GateMetrics/);
+  assert.match(briefModel, /destination/); assert.match(sessions, /new_document_id/); assert.match(sessions, /data-target-ref/);
+  assert.match(contextBlock, /forma-reference-image/); assert.match(library, /forma-reference-image/); assert.match(referenceImage, /<img/);
 });
 
 test("runs the Phase 7 private-pilot index as a correctable derived projection", async () => {

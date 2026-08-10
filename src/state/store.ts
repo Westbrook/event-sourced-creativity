@@ -26,7 +26,7 @@ export class FormaStore {
   readonly session = new Signal.State<PilotSession | null>(null);
   readonly content = new Signal.State<Record<string, string>>({});
   readonly shares = new Signal.State<ShareRecord[]>([]);
-  readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, instrumentation: true, selectedEventId: "", selectedOutputId: "", search: "", toast: "" });
+  readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, instrumentation: true, selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", search: "", toast: "" });
   readonly projection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.events.get(), this.asOf.get()));
   readonly replayProjection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.replayEvents.get(), this.replayAsOf.get()));
   #listeners = new Set<Listener>();

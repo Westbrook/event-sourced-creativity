@@ -4,6 +4,13 @@ export const PHASE6_MIN_CLOSED_SESSIONS = 3;
 export const PHASE6_MIN_IMPRESSIONS = 10;
 const REJECTED_PATH_STALENESS_EVENTS = 30;
 
+export type BriefDestination = {
+  route: "/" | "/library";
+  view: "comparison" | "context-block" | "collection";
+  ref_id: string;
+  object_ids?: string[];
+};
+
 export type BriefItem = {
   item_id: string;
   item_type: "comparison" | "thread" | "collection";
@@ -14,6 +21,7 @@ export type BriefItem = {
   rationale_ref: string;
   source_event_refs: string[];
   authority: "inferred";
+  destination: BriefDestination;
 };
 
 export type BriefEligibility = {
@@ -80,7 +88,7 @@ function candidates(events: CreativeEvent[]): BriefItem[] {
   const comparison = comparisons.at(-1);
   if (comparison) {
     const objectIds = list(comparison.payload.object_ids);
-    items.push({ item_id: `comparison:${comparison.eventId}`, item_type: "comparison", ref_id: objectIds[0] ?? comparison.eventId, rank: 0, title: "Resolve an open comparison", summary: `${objectIds.length || 2} alternatives remain on the decision frontier.`, rationale_ref: `event:${comparison.eventId}`, source_event_refs: [comparison.eventId], authority: "inferred", lastSequence: comparison.sequence });
+    items.push({ item_id: `comparison:${comparison.eventId}`, item_type: "comparison", ref_id: objectIds[0] ?? comparison.eventId, rank: 0, title: "Resolve an open comparison", summary: `${objectIds.length || 2} alternatives remain on the decision frontier.`, rationale_ref: `event:${comparison.eventId}`, source_event_refs: [comparison.eventId], authority: "inferred", destination: { route: "/", view: "comparison", ref_id: objectIds[0] ?? comparison.eventId, object_ids: objectIds }, lastSequence: comparison.sequence });
   }
   const recentBlockEvents = [...events].reverse().filter((event) => /^(BlockCreated|BlockPropertyEdited|ChipEdited|ExtractionCompleted)$/.test(event.type));
   const seenBlocks = new Set<string>();
@@ -89,17 +97,17 @@ function candidates(events: CreativeEvent[]): BriefItem[] {
     if (!blockId || seenBlocks.has(blockId)) continue;
     const block = projection.blocks.find((value) => value.id === blockId); if (!block) continue;
     seenBlocks.add(blockId);
-    items.push({ item_id: `thread:${block.id}`, item_type: "thread", ref_id: block.handle, rank: 0, title: `Continue ${block.handle}`, summary: `This authored thread was recently active and remains available as portable context.`, rationale_ref: `event:${event.eventId}`, source_event_refs: block.sourceEvents.slice(-4), authority: "inferred", lastSequence: event.sequence });
+    items.push({ item_id: `thread:${block.id}`, item_type: "thread", ref_id: block.handle, rank: 0, title: `Continue ${block.handle}`, summary: `This authored thread was recently active and remains available as portable context.`, rationale_ref: `event:${event.eventId}`, source_event_refs: block.sourceEvents.slice(-4), authority: "inferred", destination: { route: "/", view: "context-block", ref_id: block.id }, lastSequence: event.sequence });
     if (seenBlocks.size >= 2) break;
   }
   const collection = projection.collections.find((value) => Object.values(projection.membership).some((membership) => membership.collectionId === value.id));
   if (collection) {
     const related = events.filter((event) => String(event.payload.collection_id ?? event.payload.to_collection_id ?? "") === collection.id);
     const latest = related.at(-1);
-    items.push({ item_id: `collection:${collection.id}`, item_type: "collection", ref_id: collection.handle, rank: 0, title: `Return to ${collection.handle}`, summary: "This authored collection groups active context into one re-entry point.", rationale_ref: `event:${latest?.eventId ?? collection.id}`, source_event_refs: related.slice(-4).map((event) => event.eventId), authority: "inferred", lastSequence: latest?.sequence ?? 0 });
+    items.push({ item_id: `collection:${collection.id}`, item_type: "collection", ref_id: collection.handle, rank: 0, title: `Return to ${collection.handle}`, summary: "This authored collection groups active context into one re-entry point.", rationale_ref: `event:${latest?.eventId ?? collection.id}`, source_event_refs: related.slice(-4).map((event) => event.eventId), authority: "inferred", destination: { route: "/library", view: "collection", ref_id: collection.id }, lastSequence: latest?.sequence ?? 0 });
   }
   const rejected = new Set(rejectedPathMemory(events).filter((entry) => entry.active).map((entry) => entry.refId));
-  return items.filter((item) => !rejected.has(item.item_id) && !rejected.has(item.ref_id)).sort((a, b) => b.lastSequence - a.lastSequence || a.item_id.localeCompare(b.item_id)).slice(0, 3).map((candidate, index) => ({ item_id: candidate.item_id, item_type: candidate.item_type, ref_id: candidate.ref_id, rank: index + 1, title: candidate.title, summary: candidate.summary, rationale_ref: candidate.rationale_ref, source_event_refs: candidate.source_event_refs, authority: candidate.authority }));
+  return items.filter((item) => !rejected.has(item.item_id) && !rejected.has(item.ref_id)).sort((a, b) => b.lastSequence - a.lastSequence || a.item_id.localeCompare(b.item_id)).slice(0, 3).map((candidate, index) => ({ item_id: candidate.item_id, item_type: candidate.item_type, ref_id: candidate.ref_id, rank: index + 1, title: candidate.title, summary: candidate.summary, rationale_ref: candidate.rationale_ref, source_event_refs: candidate.source_event_refs, authority: candidate.authority, destination: candidate.destination }));
 }
 
 export function composeReentryBrief(events: CreativeEvent[], briefId: string) {

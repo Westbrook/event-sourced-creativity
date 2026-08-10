@@ -1,5 +1,5 @@
 import { html, nothing } from "lit";
-import { briefEligibility, phase6GateMetrics, sessionContinuityDelta, type BriefItem } from "../model/brief";
+import { briefEligibility, phase6GateMetrics, sessionContinuityDelta, type BriefDestination, type BriefItem } from "../model/brief";
 import { FormaElement, icon } from "./forma-element";
 
 const duration = (milliseconds: number | null) => milliseconds === null ? "pending" : milliseconds < 1000 ? `${milliseconds} ms` : `${(milliseconds / 1000).toFixed(1)} s`;
@@ -7,9 +7,50 @@ const duration = (milliseconds: number | null) => milliseconds === null ? "pendi
 export class FormaSessions extends FormaElement {
   #intent = "";
 
+  #destination(item: BriefItem): BriefDestination {
+    if (item.destination?.view && item.destination?.ref_id) return item.destination;
+    const projection = this.store.projection.get();
+    if (item.item_type === "thread") {
+      const block = projection.libraryBlocks.find((value) => value.id === item.ref_id || value.handle === item.ref_id);
+      return { route: "/", view: "context-block", ref_id: block?.id ?? item.ref_id };
+    }
+    if (item.item_type === "collection") {
+      const collection = projection.collections.find((value) => value.id === item.ref_id || value.handle === item.ref_id);
+      return { route: "/library", view: "collection", ref_id: collection?.id ?? item.ref_id };
+    }
+    const sourceId = item.rationale_ref.startsWith("event:") ? item.rationale_ref.slice(6) : "";
+    const source = this.store.events.get().find((event) => event.eventId === sourceId);
+    const objectIds = Array.isArray(source?.payload.object_ids) ? source.payload.object_ids.map(String) : [item.ref_id];
+    return { route: "/", view: "comparison", ref_id: objectIds[0] ?? item.ref_id, object_ids: objectIds };
+  }
+
+  #openDestination(destination: BriefDestination) {
+    if (destination.view === "comparison") this.store.patchUi({ selectedOutputId: destination.ref_id, comparisonOutputIds: (destination.object_ids ?? [destination.ref_id]).join("|"), compareOpen: true, focusBlockId: "", focusCollectionId: "" });
+    else if (destination.view === "collection") this.store.patchUi({ focusCollectionId: destination.ref_id, focusBlockId: "", compareOpen: false });
+    else this.store.patchUi({ focusBlockId: destination.ref_id, focusCollectionId: "", compareOpen: false });
+    this.store.setRoute(destination.route);
+    window.setTimeout(() => {
+      const selector = destination.view === "collection" ? `[data-collection-id="${CSS.escape(destination.ref_id)}"]` : destination.view === "context-block" ? `[data-block-id="${CSS.escape(destination.ref_id)}"]` : ".comparison-modal";
+      const target = document.querySelector<HTMLElement>(selector);
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      target?.focus({ preventScroll: true });
+    }, 0);
+  }
+
   async #respond(type: "BriefItemAccepted" | "BriefItemIgnored", item: BriefItem, briefId: string) {
-    const appended = await this.store.append({ type, payload: { brief_id: briefId, item_id: item.item_id, rank: item.rank, brief_size: this.#items().length } });
-    if (type === "BriefItemAccepted" && appended.length) this.store.setRoute("/");
+    const destination = this.#destination(item);
+    const appended = await this.store.append({ type, payload: { brief_id: briefId, item_id: item.item_id, rank: item.rank, brief_size: this.#items().length, destination } });
+    if (type === "BriefItemAccepted" && appended.length) this.#openDestination(destination);
+  }
+
+  async #startBlank(briefId: string, sessionId: string | null) {
+    const documentId = crypto.randomUUID(); const blockId = crypto.randomUUID();
+    const appended = await this.store.appendBatch([
+      { type: "EmptyCanvasChosen", payload: { session_id: sessionId, brief_id: briefId, new_document_id: documentId } },
+      { type: "DocumentCreated", payload: { document_id: documentId, handle: `untitled-${documentId.slice(0,8)}`, title: "Untitled study", entry_surface: "blank-canvas" } },
+      { type: "BlockCreated", payload: { document_id: documentId, block_id: blockId, type: "direction", handle: "direction/untitled", position: "a0", properties: { text: "", placeholder: "Describe a direction…", weight: .7, authority: "authored" } } },
+    ]);
+    if (appended.length === 3) this.#openDestination({ route: "/", view: "context-block", ref_id: blockId });
   }
 
   #brief() {
@@ -23,7 +64,7 @@ export class FormaSessions extends FormaElement {
     const p = this.store.projection.get(); const events = this.store.events.get(); const eligibility = briefEligibility(events); const metrics = phase6GateMetrics(events); const delta = sessionContinuityDelta(events); const brief = this.#brief(); const items = this.#items(); const briefId = String(brief?.brief_id ?? ""); const busy = this.store.busy.get();
     return html`<section class="sessions-page page-pad"><header class="page-hero"><div><span class="eyebrow">Continuity without dependency</span><h1>Sessions & re-entry</h1><p>Return to a small context document composed from witnessed state—not a summary fixture and never a required detour.</p></div><div class="hero-actions"><span class="session-state ${p.sessionOpen?"open":"closed"}">${p.sessionOpen?"Session open":"Session closed"}</span>${p.sessionOpen?html`<button class="button secondary" ?disabled=${busy==="close-session"} @click=${()=>this.store.closeSession()}>${busy==="close-session"?"Capturing state…":"Close current session"}</button>`:html`<button class="button primary" ?disabled=${busy==="open-session"} @click=${()=>this.store.openSession()}>${busy==="open-session"?"Opening…":"Open new session"}</button>`}</div></header>
       <div class="session-grid"><main><section class="brief-card"><header><div><span class="eyebrow">Re-entry brief · ${items.length} items</span><h2>${items.length?"Pick up the thread":"Brief waits for valid history"}</h2></div><span class="health-pill ${items.length?"":"waiting"}"><i></i> ${items.length?"event-derived":eligibility.eligible?"ready to compose":"cold start"}</span></header><p class="brief-lead">The brief uses the same portable references as the studio. Composition, presentation, and response are separate immutable facts, so the pilot can distinguish usefulness from mere visibility.</p>
-        ${items.length?html`<div class="brief-blocks">${items.map((item,index)=>html`<article class="brief-block" tabindex="0"><div class="brief-index">${String(index+1).padStart(2,"0")}</div><div><span class="block-type">${item.item_type} · inferred</span><h3>${item.title}</h3><p>${item.summary}</p><small>Why: ${item.rationale_ref} · ${item.source_event_refs.length} cited event${item.source_event_refs.length===1?"":"s"} · impression witnessed</small></div><div class="brief-actions"><button class="button primary" @click=${()=>this.#respond("BriefItemAccepted",item,briefId)}>Open thread</button><button class="button ghost" @click=${()=>this.#respond("BriefItemIgnored",item,briefId)}>Ignore</button></div></article>`)}</div><footer><button class="button ghost" @click=${()=>this.store.append({type:"BriefDismissed",payload:{brief_id:briefId,brief_size:items.length}})}>Dismiss brief</button><button class="blank-choice" @click=${()=>{void this.store.append({type:"EmptyCanvasChosen",payload:{session_id:p.currentSessionId,brief_id:briefId}});this.store.setRoute("/");}}>Start with a blank canvas ${icon("arrow")}</button></footer>`:html`<div class="brief-empty"><span>${icon(eligibility.eligible?"spark":"clock")}</span><div><h3>${eligibility.eligible?"The event stream is eligible":"Cold-start protection is active"}</h3><p>${eligibility.eligible?"Compose a brief now; its items and impressions will be appended atomically before they render.":`Forma still needs ${eligibility.reasons.join(" and ")}. A brief composed sooner would test cold start, not re-entry value.`}</p></div><button class="button primary" ?disabled=${!eligibility.eligible||!p.sessionOpen||busy==="compose-brief"} @click=${()=>this.store.composeBrief()}>${busy==="compose-brief"?"Composing…":"Compose eligible brief"}</button></div>`}
+        ${items.length?html`<div class="brief-blocks">${items.map((item,index)=>{const destination=this.#destination(item);const label=item.item_type==="comparison"?"Open comparison":item.item_type==="collection"?"Open collection":"Open thread";return html`<article class="brief-block" tabindex="0"><div class="brief-index">${String(index+1).padStart(2,"0")}</div><div><span class="block-type">${item.item_type} · inferred</span><h3>${item.title}</h3><p>${item.summary}</p><small>Why: ${item.rationale_ref} · ${item.source_event_refs.length} cited event${item.source_event_refs.length===1?"":"s"} · impression witnessed</small></div><div class="brief-actions"><button class="button primary" data-destination-view=${destination.view} data-target-ref=${destination.ref_id} title=${`Open ${destination.view.replace("-"," ")}: ${destination.ref_id}`} @click=${()=>this.#respond("BriefItemAccepted",item,briefId)}>${label}</button><button class="button ghost" @click=${()=>this.#respond("BriefItemIgnored",item,briefId)}>Ignore</button></div></article>`;})}</div><footer><button class="button ghost" @click=${()=>this.store.append({type:"BriefDismissed",payload:{brief_id:briefId,brief_size:items.length}})}>Dismiss brief</button><button class="blank-choice" @click=${()=>this.#startBlank(briefId,p.currentSessionId)}>Start with a blank canvas ${icon("arrow")}</button></footer>`:html`<div class="brief-empty"><span>${icon(eligibility.eligible?"spark":"clock")}</span><div><h3>${eligibility.eligible?"The event stream is eligible":"Cold-start protection is active"}</h3><p>${eligibility.eligible?"Compose a brief now; its items and impressions will be appended atomically before they render.":`Forma still needs ${eligibility.reasons.join(" and ")}. A brief composed sooner would test cold start, not re-entry value.`}</p></div><button class="button primary" ?disabled=${!eligibility.eligible||!p.sessionOpen||busy==="compose-brief"} @click=${()=>this.store.composeBrief()}>${busy==="compose-brief"?"Composing…":"Compose eligible brief"}</button></div>`}
         <div class="continuity-receipt"><span>${icon("replay")}</span><div><b>Continuity delta</b><small>State at close: sequence ${delta.snapshotHead || "not captured"} · ${delta.eventCount} meaningful event${delta.eventCount===1?"":"s"} since · ${delta.eventTypes.length?delta.eventTypes.join(", "):"no changes"}</small></div></div>
       </section>
         <section class="time-section"><div class="section-heading"><div><span class="eyebrow">Authored future memory</span><h2>Conditions & resurfacing</h2></div></div><div class="condition-row"><div><span>${icon("clock")}</span><div><b>Revisit the palette after three new generations</b><small>ConditionSet · project scope · not yet fired</small></div></div><button @click=${()=>this.store.append({type:"ConditionFired",payload:{condition_id:"condition-palette-3"}})}>Simulate trigger</button></div><button class="add-condition" @click=${()=>{const condition=window.prompt("What should resurface, and when?");if(condition)void this.store.append({type:"ConditionSet",payload:{condition_id:crypto.randomUUID(),condition_ref:condition,scope:"project"}});}}>${icon("plus")} Add a future condition</button></section>

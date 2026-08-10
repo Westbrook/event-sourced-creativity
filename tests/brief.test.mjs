@@ -34,6 +34,11 @@ test("re-entry composition is deterministic, cited, bounded, and rejects recent 
   assert.equal(first.eligible, true); assert.ok(first.payload);
   assert.ok(first.payload.items.length > 0 && first.payload.items.length <= 3);
   assert.ok(first.payload.items.every((item) => item.source_event_refs.length > 0 && item.authority === "inferred"));
+  assert.ok(first.payload.items.every((item) => item.destination?.route && item.destination?.view && item.destination?.ref_id));
+  const comparison = first.payload.items.find((item) => item.item_type === "comparison");
+  assert.deepEqual(comparison?.destination, { route: "/", view: "comparison", ref_id: "o1", object_ids: ["o1", "o2"] });
+  const thread = first.payload.items.find((item) => item.item_type === "thread");
+  assert.deepEqual(thread?.destination, { route: "/", view: "context-block", ref_id: "b1" });
   assert.equal(first.payload.composition.cost_usd, 0);
   assert.deepEqual(composeReentryBrief(history, "brief-1"), first);
   const ignored = first.payload.items[0];
@@ -65,4 +70,21 @@ test("session projection clears a closed brief and tracks active boundaries", ()
   assert.equal(active.sessionOpen, true); assert.equal(active.currentSessionId, "s4"); assert.equal(active.brief?.brief_id, "brief-1");
   const closed = foldEvents([...history, event(13, "BriefComposed", brief.payload), event(14, "SessionClosed", { session_id: "s4", snapshot_ref: { head: 13 } })]);
   assert.equal(closed.sessionOpen, false); assert.equal(closed.brief, null);
+});
+
+test("a blank-canvas document becomes current without removing earlier library work", () => {
+  const projection = foldEvents([
+    event(1, "ProjectCreated", { project_id: "p1", name: "Pilot" }),
+    event(2, "DocumentCreated", { document_id: "d1", title: "Existing study" }),
+    event(3, "BlockCreated", { document_id: "d1", block_id: "b1", type: "reference", handle: "reference/elephants", position: "a0", properties: { media_url: "/api/media/elephants" } }),
+    event(4, "GenerationCompleted", { document_id: "d1", generation_id: "g1", model_id: "m1", object_ids: ["o1"] }),
+    event(5, "EmptyCanvasChosen", { brief_id: "brief-1", new_document_id: "d2" }),
+    event(6, "DocumentCreated", { document_id: "d2", title: "Untitled study", entry_surface: "blank-canvas" }),
+    event(7, "BlockCreated", { document_id: "d2", block_id: "b2", type: "direction", handle: "direction/untitled", position: "a0", properties: { text: "", placeholder: "Describe a direction…" } }),
+  ]);
+  assert.equal(projection.documentId, "d2");
+  assert.deepEqual(projection.blocks.map((block) => block.id), ["b2"]);
+  assert.deepEqual(projection.outputs, []);
+  assert.deepEqual(projection.libraryBlocks.map((block) => block.id), ["b1", "b2"]);
+  assert.deepEqual(projection.libraryOutputs.map((output) => output.id), ["o1"]);
 });
