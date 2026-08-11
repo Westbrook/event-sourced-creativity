@@ -78,7 +78,8 @@ The Forma mark also returns to Projects. System & governance and Event operation
 ## Visual-system invariant
 
 - A rounded element may use a balanced border on all four sides, but never a one-sided or otherwise imbalanced CSS border.
-- Directional emphasis on a rounded element uses a separate accent layer, such as an inset shadow or pseudo-element, so its geometry remains coherent.
+- Directional emphasis must not simulate an imbalanced border with an offset inset shadow or another paint effect.
+- An inset highlight on a rounded element must be concentric: zero horizontal and vertical offsets, with a balanced spread around every edge.
 
 ## Follow-up evaluation
 

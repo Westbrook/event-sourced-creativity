@@ -268,7 +268,7 @@ test("keeps account, project, document, intelligence, and administration scopes 
   assert.match(review,/Deficiencies found and resolved/);assert.match(review,/Primary navigation/);assert.match(review,/Follow-up evaluation/);
 });
 
-test("never combines a rounded element with an imbalanced CSS border",async()=>{
+test("never gives a rounded element an imbalanced border or simulated edge",async()=>{
   const [styles,review]=await Promise.all([
     readFile(new URL("../src/styles.css",import.meta.url),"utf8"),
     readFile(new URL("../docs/information-architecture-review.md",import.meta.url),"utf8"),
@@ -282,10 +282,16 @@ test("never combines a rounded element with an imbalanced CSS border",async()=>{
     selector===base||selector.startsWith(`${base}.`)||selector.startsWith(`${base}:`)||selector.startsWith(`${base}[`),
   ));
   assert.deepEqual(violations.map(({selector})=>selector),[]);
+  const insetOffsets=[...styles.matchAll(/\binset\s+(-?(?:\d*\.)?\d+)(?:[a-z%]+)?\s+(-?(?:\d*\.)?\d+)(?:[a-z%]+)?/gi)];
+  const insetShadowCount=[...styles.matchAll(/\bbox-shadow\s*:\s*([^;{}]+)/gi)].reduce((count,[,value])=>count+[...value.matchAll(/\binset\b/gi)].length,0);
+  assert.ok(insetOffsets.length>0,"expected balanced inset highlights to remain covered by the invariant");
+  assert.equal(insetOffsets.length,insetShadowCount,"every inset shadow must declare auditable numeric x/y offsets first");
+  assert.deepEqual(insetOffsets.filter(([,x,y])=>Number(x)!==0||Number(y)!==0).map((match)=>match[0]),[]);
+  assert.match(styles,/\.rail-links a\.active \{[^}]*box-shadow: inset 0 0 0/);
   assert.match(styles,/\.observation-card \{[^}]*box-shadow: inset/);
   assert.match(styles,/\.belief-card \{[^}]*box-shadow: inset/);
   assert.match(styles,/\.blame-cluster \{[^}]*box-shadow: inset/);
-  assert.match(review,/never a one-sided or otherwise imbalanced CSS border/);
+  assert.match(review,/must not simulate an imbalanced border with an offset inset shadow/);
 });
 
 test("keeps opt-in attention capture visible-only, coarse, bounded, and forgettable",async()=>{
