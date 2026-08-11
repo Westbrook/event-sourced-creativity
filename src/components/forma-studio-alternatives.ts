@@ -9,14 +9,20 @@ import "./event-inspector";
 
 const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 42) || "untitled";
 
-export type AlternativeMode = "board" | "guided" | "layers" | "adaptive";
+export type AlternativeMode = "board" | "guided" | "layers" | "adaptive" | "editor";
+
+type AlternativeShellOptions = {
+  continuity?: boolean;
+  inspector?: boolean;
+  quietRail?: boolean;
+};
 
 export abstract class AlternativeStudio extends FormaElement {
-  protected shell(active: AlternativeMode, title: string, description: string, body: unknown) {
+  protected shell(active: AlternativeMode, title: string, description: string, body: unknown, options: AlternativeShellOptions = {}) {
     const projection = this.store.projection.get();
     const destination = `/studio/${active}`;
     return html`<section class="workspace-page studio-subpage studio-alternative">
-      <forma-project-rail surface="studio" destination=${destination}></forma-project-rail>
+      <forma-project-rail surface="studio" destination=${destination} ?quiet=${options.quietRail ?? false}></forma-project-rail>
       <div class="studio-main">
         <header class="page-header page-header--document">
           <div class="page-header-copy">
@@ -28,11 +34,11 @@ export abstract class AlternativeStudio extends FormaElement {
         <forma-studio-mode-nav active=${active}></forma-studio-mode-nav>
         <div class="studio-subpage-body">
           <forma-studio-navigator destination=${destination}></forma-studio-navigator>
-          <forma-document-continuity view=${active}></forma-document-continuity>
+          ${options.continuity === false ? nothing : html`<forma-document-continuity view=${active}></forma-document-continuity>`}
           ${body}
         </div>
       </div>
-      <forma-event-inspector></forma-event-inspector>
+      ${options.inspector === false ? nothing : html`<forma-event-inspector></forma-event-inspector>`}
     </section>`;
   }
 }

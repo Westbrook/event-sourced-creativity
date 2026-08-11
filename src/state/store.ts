@@ -131,7 +131,7 @@ export class FormaStore {
       this.events.set([...this.events.get(), ...appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(appended);
       this.#reflectDocumentInRoute();
       if (options.remember !== false) { this.#undo.push(...appended.filter((e) => e.actor === "user" && !e.compensatesEventId && inverseEvent(e))); this.#redo = []; }
-      if (body.rejected?.length) this.toast(`${body.rejected.length} event${body.rejected.length === 1 ? "" : "s"} rejected; valid events still appended.`);
+      if (body.rejected?.length) this.toast(documentViewFromRoute(this.route.get()) === "editor" ? `${body.rejected.length} change${body.rejected.length === 1 ? "" : "s"} could not be saved; the other changes are safe.` : `${body.rejected.length} event${body.rejected.length === 1 ? "" : "s"} rejected; valid events still appended.`);
       return appended;
     } catch (error) { this.toast(error instanceof Error ? error.message : "Append failed"); return []; }
     finally { this.busy.set(""); this.notify(); }
@@ -165,7 +165,7 @@ export class FormaStore {
       if (body.appended?.length) { this.events.set([...this.events.get(), ...body.appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(body.appended); }
       if (body.content) this.content.set({ ...this.content.get(), ...body.content });
       if (!response.ok) throw new Error(body.error === "provider_not_configured" ? "OpenAI is ready but its production key has not been connected." : body.error ?? "Generation failed");
-      await this.refreshSession(); this.toast(`Generated with ${this.session.get()?.provider.model ?? "OpenAI"}; provenance and usage recorded.`);
+      await this.refreshSession(); this.toast(documentViewFromRoute(this.route.get()) === "editor" ? "Preview ready." : `Generated with ${this.session.get()?.provider.model ?? "OpenAI"}; provenance and usage recorded.`);
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
     finally { this.busy.set(""); this.notify(); }
   }
@@ -336,7 +336,7 @@ export class FormaStore {
     return [...this.events.get()].reverse().find((event)=>event.actor==="user"&&!event.compensatesEventId&&!compensated.has(event.eventId)&&Boolean(inverseEvent(event)));
   }
   async undo() {
-    const source = this.#undoCandidate(); if (!source) return this.toast("Nothing reversible remains in this document history.");
+    const source = this.#undoCandidate(); if (!source) return this.toast(documentViewFromRoute(this.route.get()) === "editor" ? "Nothing to undo." : "Nothing reversible remains in this document history.");
     const inverse = inverseEvent(source)!;
     const appended = await this.append({ ...inverse, compensatesEventId: source.eventId }, { remember: false });
     if (appended.length) this.#redo.push(source);

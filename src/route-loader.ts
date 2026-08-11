@@ -13,6 +13,7 @@ export function loadRouteComponent(path: string): RouteModule {
   if (path.startsWith("/studio/project")) return import("./components/forma-project-contents");
   if (documentView === "board" || documentView === "guided") return import("./components/forma-studio-alternatives");
   if (documentView === "layers" || documentView === "adaptive") return import("./components/forma-studio-editor-alternatives");
+  if (documentView === "editor") return import("./components/forma-creative-editor");
   if (path.startsWith("/admin/events")) return import("./components/forma-admin-events");
   if (path.startsWith("/library")) return import("./components/forma-library");
   if (path.startsWith("/sessions")) return import("./components/forma-sessions");

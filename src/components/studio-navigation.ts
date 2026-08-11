@@ -2,7 +2,7 @@ import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
 import { withDocumentInRoute } from "../model/routes";
 
-type StudioMode = "document" | "board" | "guided" | "layers" | "adaptive";
+type StudioMode = "document" | "board" | "guided" | "layers" | "adaptive" | "editor";
 
 const modes: Array<{ id: StudioMode; label: string; path: string }> = [
   { id: "document", label: "Document", path: "/" },
@@ -10,6 +10,7 @@ const modes: Array<{ id: StudioMode; label: string; path: string }> = [
   { id: "guided", label: "Guided brief", path: "/studio/guided" },
   { id: "layers", label: "Reality layers", path: "/studio/layers" },
   { id: "adaptive", label: "Adaptive path", path: "/studio/adaptive" },
+  { id: "editor", label: "Creative editor", path: "/studio/editor" },
 ];
 
 const lensCopy: Record<Exclude<StudioMode, "document">, string> = {
@@ -17,6 +18,7 @@ const lensCopy: Record<Exclude<StudioMode, "document">, string> = {
   guided: "The interview focuses the next questions without dropping supporting decisions.",
   layers: "Every decision stays in the stack, including choices with no current influence.",
   adaptive: "The next-step path changes, while the complete document remains in scope.",
+  editor: "The creative plan stays complete while the machinery stays out of sight.",
 };
 
 export class StudioModeNav extends FormaElement {

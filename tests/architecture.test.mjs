@@ -89,7 +89,7 @@ test("packages first-class HTML entry points for every named application route",
   const shell = await readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8");
   const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
   const config = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
-  const routes = ["document","projects","studio/project","studio/board","studio/guided","studio/layers","studio/adaptive","library","sessions","scout","memory","system","admin/events","admin/events/stream","admin/events/replay","admin/events/permissions"];
+  const routes = ["document","projects","studio/project","studio/board","studio/guided","studio/layers","studio/adaptive","studio/editor","library","sessions","scout","memory","system","admin/events","admin/events/stream","admin/events/replay","admin/events/permissions"];
   for (const route of routes) {
     assert.match(plugin, new RegExp(`path: "/${route.replaceAll("/", "\\/")}"`));
     const entry = await readFile(new URL(`../dist/client/${route}/index.html`, import.meta.url), "utf8");
@@ -137,15 +137,21 @@ test("restores focused Library dialogs from durable URLs", async () => {
 });
 
 test("presents every alternate Studio lens as the same complete durable document", async () => {
-  const [alternatives, editorAlternatives, navigation] = await Promise.all([
+  const [alternatives, editorAlternatives, creativeEditor, navigation] = await Promise.all([
     readFile(new URL("../src/components/forma-studio-alternatives.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-studio-editor-alternatives.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/forma-creative-editor.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/studio-navigation.ts", import.meta.url), "utf8"),
   ]);
   assert.match(alternatives, /forma-document-continuity/); assert.match(alternatives, /Next useful move/); assert.match(alternatives, /Whole-document check/);
   assert.match(alternatives, /projection\.blocks|projection\.get\(\)\.blocks/); assert.match(alternatives, /BLOCK_GROUPS/);
   assert.match(editorAlternatives, /Everything in this document/); assert.match(editorAlternatives, /supportingBlocks/); assert.match(editorAlternatives, /Why this is next/); assert.match(editorAlternatives, /What this unlocks/);
+  assert.match(creativeEditor, /projection\.blocks/); assert.match(creativeEditor, /Everything shaping the work/); assert.match(creativeEditor, /continuity: false/); assert.match(creativeEditor, /inspector: false/); assert.match(creativeEditor, /quietRail: true/);
+  assert.match(creativeEditor, /BlockCreated/); assert.match(creativeEditor, /BlockPropertyEdited/); assert.match(creativeEditor, /BlockWeightSet/); assert.match(creativeEditor, /BlockRemoved/);
+  assert.match(creativeEditor, /The brief/); assert.match(creativeEditor, /The picture/); assert.match(creativeEditor, /The look/); assert.match(creativeEditor, /The guardrails/); assert.match(creativeEditor, /Visual references/);
+  assert.doesNotMatch(creativeEditor, />Event|>Metadata|>Provenance|Creative history|source events/i);
   assert.match(navigation, /projection\.blocks\.length/); assert.match(navigation, /projection\.outputs\.length/); assert.match(navigation, /Every saved decision and result/);
+  assert.match(navigation, /Creative editor/);
 });
 
 test("lets Reference blocks prepare and explicitly adopt multiple image realities", async () => {

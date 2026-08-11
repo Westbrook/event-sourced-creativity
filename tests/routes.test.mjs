@@ -3,7 +3,7 @@ import test from "node:test";
 import { appEntryPath, documentEntryPath, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentInRoute } from "../src/model/routes.ts";
 
 test("document views use a readable path for the selected durable document", () => {
-  const paths = [["/", "document"], ["/studio/board", "board"], ["/studio/guided", "guided"], ["/studio/layers", "layers"], ["/studio/adaptive", "adaptive"]];
+  const paths = [["/", "document"], ["/studio/board", "board"], ["/studio/guided", "guided"], ["/studio/layers", "layers"], ["/studio/adaptive", "adaptive"], ["/studio/editor", "editor"]];
   for (const [path, view] of paths) {
     const routed = withDocumentInRoute(path, "document-42", "Evening Atmosphere");
     assert.equal(documentIdFromRoute(routed), "document-42");
@@ -25,6 +25,7 @@ test("dynamic document paths select the smallest matching page entry", () => {
   assert.equal(documentEntryPath("/document/doc-a/name"), "/index.html");
   assert.equal(documentEntryPath("/document/doc-a/name/view/board"), "/studio/board/index.html");
   assert.equal(documentEntryPath("/document/doc-a/view/adaptive"), "/studio/adaptive/index.html");
+  assert.equal(documentEntryPath("/document/doc-a/name/view/editor"), "/studio/editor/index.html");
 });
 
 test("Library focus dialogs have refresh-safe content paths", () => {

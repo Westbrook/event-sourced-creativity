@@ -30,18 +30,19 @@ export class ProjectRail extends FormaElement {
     const surface = (this.getAttribute("surface") === "library" ? "library" : "studio") as RailSurface;
     const currentView = String(this.store.ui.libraryView);
     const collapsed = Boolean(this.store.ui.projectRailCollapsed);
+    const quiet = this.hasAttribute("quiet");
     const pathname = routePathname(route);
     const documentRoute = withDocumentInRoute("/", projection.documentId, projection.documentTitle);
     const projectActive = pathname.startsWith("/studio/project");
     const documentActive = isDocumentViewRoute(route);
-    const libraryLinks: Array<{ view: LibraryView; label: string; count?: number; glyph: string }> = [
-      { view: "all", label: "Library overview", glyph: "⌂" },
-      { view: "blocks", label: "Reusable blocks", count: projection.libraryBlocks.length, glyph: "▦" },
-      { view: "outputs", label: "Recent outputs", count: projection.libraryOutputs.length, glyph: "▧" },
-      { view: "families", label: "Aesthetic families", count: projection.families.filter((family) => !family.superseded).length, glyph: "◌" },
-    ];
+   const libraryLinks: Array<{ view: LibraryView; label: string; count?: number; glyph: string }> = [
+     { view: "all", label: "Library overview", glyph: "⌂" },
+      { view: "blocks", label: quiet ? "Reusable ideas" : "Reusable blocks", count: projection.libraryBlocks.length, glyph: "▦" },
+      { view: "outputs", label: quiet ? "Recent results" : "Recent outputs", count: projection.libraryOutputs.length, glyph: "▧" },
+      { view: "families", label: quiet ? "Visual families" : "Aesthetic families", count: projection.families.filter((family) => !family.superseded).length, glyph: "◌" },
+   ];
 
-    return html`<aside class=${`project-rail ${collapsed ? "collapsed" : "expanded"}`} aria-label=${surface === "studio" ? "Studio project navigation" : "Library project navigation"}>
+    return html`<aside class=${`project-rail ${collapsed ? "collapsed" : "expanded"} ${quiet ? "quiet" : ""}`} aria-label=${quiet ? "Creative editor navigation" : surface === "studio" ? "Studio project navigation" : "Library project navigation"}>
       <header class="rail-toolbar">
         <span class="rail-toolbar-context"><i class="rail-live-dot"></i><span>${surface === "library" ? "Project library" : "Project workspace"}</span></span>
         <button class="rail-collapse-toggle" aria-controls="project-rail-content" aria-label=${collapsed ? "Expand project navigation" : "Collapse project navigation"} title=${collapsed ? "Expand project navigation" : "Give the workspace more room"} aria-expanded=${!collapsed} @click=${()=>this.store.patchUi({projectRailCollapsed:!collapsed})}>
@@ -54,11 +55,11 @@ export class ProjectRail extends FormaElement {
         <a href="/studio/project" class=${projectActive?"active":""} aria-current=${projectActive?"page":nothing} title="Project overview" @click=${(event:MouseEvent)=>this.#go(event,"/studio/project")}>${icon("folder")}<small>Overview</small></a>
         <a href=${documentRoute} class=${documentActive?"active":""} aria-current=${documentActive?"page":nothing} title=${`Open ${projection.documentTitle}`} @click=${(event:MouseEvent)=>this.#go(event,documentRoute)}>▤<small>Document</small></a>
         <a href="/library" class=${surface==="library"?"active":""} aria-current=${surface==="library"?"page":nothing} title="Project library" @click=${(event:MouseEvent)=>this.#openLibrary(event,"all")}>▦<small>Library</small></a>
-        ${this.store.session.get()?.user.role==="admin"?html`<a href="/admin/events" title="Event operations" @click=${(event:MouseEvent)=>this.#go(event,"/admin/events")}>${icon("replay")}<small>Events</small></a>`:nothing}
+        ${!quiet&&this.store.session.get()?.user.role==="admin"?html`<a href="/admin/events" title="Event operations" @click=${(event:MouseEvent)=>this.#go(event,"/admin/events")}>${icon("replay")}<small>Events</small></a>`:nothing}
       </nav>` : html`<div id="project-rail-content" class="rail-content">
         <section class="rail-project-card" aria-labelledby="rail-project-name">
-          <div class="rail-project-heading"><span class="project-monogram">${projection.projectName.slice(0,1).toUpperCase() || "P"}</span><div><span class="eyebrow">Current project</span><h2 id="rail-project-name">${projection.projectName}</h2></div><span class=${`project-status ${projection.projectState}`}>${projection.projectState}</span></div>
-          <div class="rail-project-meta"><span><b>${projection.documents.length}</b> document${projection.documents.length===1?"":"s"}</span><span><b>${projection.collections.length}</b> collection${projection.collections.length===1?"":"s"}</span></div>
+          <div class="rail-project-heading"><span class="project-monogram">${projection.projectName.slice(0,1).toUpperCase() || "P"}</span><div><span class="eyebrow">Current project</span><h2 id="rail-project-name">${projection.projectName}</h2></div>${quiet?nothing:html`<span class=${`project-status ${projection.projectState}`}>${projection.projectState}</span>`}</div>
+          ${quiet?nothing:html`<div class="rail-project-meta"><span><b>${projection.documents.length}</b> document${projection.documents.length===1?"":"s"}</span><span><b>${projection.collections.length}</b> collection${projection.collections.length===1?"":"s"}</span></div>`}
           <div class="rail-project-actions"><a href="/projects" @click=${(event:MouseEvent)=>this.#go(event,"/projects")}>All projects</a>${surface==="studio"&&pathname==="/"?html`<button @click=${this.#editProject}>${icon("edit")} Edit project</button>`:nothing}</div>
         </section>
 
@@ -77,9 +78,9 @@ export class ProjectRail extends FormaElement {
           ${libraryLinks.map((link) => html`<a href="/library" class=${surface === "library" && currentView === link.view ? "active" : ""} aria-current=${surface === "library" && currentView === link.view ? "page" : nothing} @click=${(event:MouseEvent)=>this.#openLibrary(event,link.view)}><span><i>${link.glyph}</i> ${link.label}</span>${link.count === undefined ? html`<small>${icon("arrow")}</small>` : html`<small>${link.count}</small>`}</a>`)}
         </nav>
 
-        <div class="rail-note"><span>${icon("info")}</span><p><b>No auto-filing.</b> Collections are deliberate. Search and aesthetic families remain derived views.</p></div>
+        ${quiet?nothing:html`<div class="rail-note"><span>${icon("info")}</span><p><b>No auto-filing.</b> Collections are deliberate. Search and aesthetic families remain derived views.</p></div>`}
 
-        <footer class="rail-stream"><span class="rail-live-dot"></span><div><b>Creative history</b><small>#${this.store.head.get()} · ${this.store.loading.get() ? "syncing" : "caught up"}</small></div>${this.store.session.get()?.user.role==="admin"?html`<a href="/admin/events" @click=${(event:MouseEvent)=>this.#go(event,"/admin/events")}>Review</a>`:nothing}</footer>
+        ${quiet?nothing:html`<footer class="rail-stream"><span class="rail-live-dot"></span><div><b>Creative history</b><small>#${this.store.head.get()} · ${this.store.loading.get() ? "syncing" : "caught up"}</small></div>${this.store.session.get()?.user.role==="admin"?html`<a href="/admin/events" @click=${(event:MouseEvent)=>this.#go(event,"/admin/events")}>Review</a>`:nothing}</footer>`}
       </div>`}
     </aside>`;
   }

@@ -34,7 +34,7 @@ System & governance → Event operations
 - Projects are durable boundaries rather than cosmetic folders.
 - Documents remain the unit of creative context and output generation.
 - Collections are explicitly authored; search, family detection, and ranking stay derived.
-- The five Studio document views expose different ways to author the same replayable document rather than separate document formats.
+- The six Studio document views expose different ways to author the same replayable document rather than separate document formats. Creative Editor deliberately hides stream and provenance machinery while preserving the same complete projection and authored operations.
 - Re-entry, Scout, and Taste & time preserve distinct authority boundaries: resume, investigate, and remember.
 - Event operations remains outside the creative workspace and is role-gated.
 
