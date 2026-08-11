@@ -42,8 +42,12 @@ All visible buttons now do one of three explicit things: perform an event-backed
 ## Administrative scenarios
 
 - Creative loop: extraction → authored correction → compile → generate → compare → export.
+- Document evolution: project and document lifecycle → all 20 block types → reversible context, object, annotation, library, and collection changes.
 - Asynchronous return: session close → brief/scout report space → judgment → user acceptance → document promotion.
 - Concurrent pressure: inert model proposal, commutative actions, stale validation, partial progress, explicit rejection.
 - Family promotion: inferred grouping remains separate from the user-authored collection that keeps it.
+- Taste & time: critique → versioned beliefs → authored preference → delayed resurfacing → revocation and forgetting.
+- Attention & friction: visible-only dwell → weighted terminal actions → review and deletion.
+- Operational safeguards: registry → reservation and settlement → structured failure → retention and phase-gate receipts.
 
-The replay laboratory can deterministically build 1,000, 10,000, or 50,000 events and replay any projection to any sequence without writing fixtures to D1.
+Together the scenarios exercise all 95 authorized or server-produced event types and all 20 authored block types. Their deterministic clocks distinguish rapid user edits, agent handoffs, session interruptions, delayed resurfacing, branch abandonment, and retention windows. The replay laboratory can build 1,000, 10,000, or 50,000 events and replay any projection to any sequence without writing fixtures to D1.

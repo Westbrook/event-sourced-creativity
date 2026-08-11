@@ -1,24 +1,37 @@
 import { SignalArray } from "signal-utils/array";
 import type { CreativeEvent } from "./events";
+import { BLOCK_TYPES } from "./block-types.ts";
 
-export type ScenarioKey = "creative-loop" | "async-return" | "concurrency" | "promotion" | "taste-time" | "attention-friction";
+export type ScenarioKey = "creative-loop" | "document-evolution" | "async-return" | "concurrency" | "promotion" | "taste-time" | "attention-friction" | "operational-safety";
 
 export const SCENARIOS = [
   { key: "creative-loop" as const, label: "Creative loop", kicker: "Authored wins", summary: "A reference becomes editable context, an authored correction survives compilation, and the resulting output carries critique, library, and export receipts.", actors: ["user", "worker:extractor", "worker:compiler", "worker:generator"] },
+  { key: "document-evolution" as const, label: "Document evolution", kicker: "Every block has a life", summary: "A project and document evolve through all twenty context types, reversible block and document changes, extraction outcomes, object actions, collections, and annotations.", actors: ["user", "worker:extractor", "worker:compiler", "worker:generator"] },
   { key: "async-return" as const, label: "Asynchronous return", kicker: "Agency preserved", summary: "A re-entry brief, bounded Scout run, human judgment, and accepted context bridge a session boundary without agents silently editing the document.", actors: ["user", "worker:brief", "worker:scout"] },
   { key: "concurrency" as const, label: "Concurrent pressure", kicker: "Conflicts are explicit", summary: "Views, annotations, and coarse attention evidence keep landing while stale model proposals and version-sensitive generation receive explicit validation outcomes.", actors: ["user", "model:forma-chat", "worker:validator"] },
   { key: "promotion" as const, label: "Family promotion", kicker: "Inference is not authorship", summary: "The index proposes a visual family and anchors its evidence; only a separate accepted proposal creates and organizes a durable user collection.", actors: ["worker:indexer", "model:forma-chat", "user"] },
   { key: "taste-time" as const, label: "Taste & time", kicker: "Memory stays reversible", summary: "An output critique is joined to its compiler inputs, versioned as ranking-only taste, promoted explicitly, resurfaced on a condition, then revoked and forgotten.", actors: ["user", "worker:compiler", "worker:taste", "worker:scheduler"] },
   { key: "attention-friction" as const, label: "Attention & friction", kicker: "Weak signals stay weak", summary: "Visible-page dwell becomes bounded, reviewable evidence around intent, generation, and comparison—then the user can erase the entire attention ledger.", actors: ["user", "worker:attention", "worker:compiler", "worker:generator"] },
+  { key: "operational-safety" as const, label: "Operational safeguards", kicker: "Failure stays legible", summary: "Registry, budget, provider, attribution, retention, abandonment, and gate events explain how the application contains failures without rewriting creative truth.", actors: ["user", "model:forma-chat", "worker:registry", "worker:policy", "worker:generator"] },
 ];
 
 const baseTypes: Record<ScenarioKey, Array<[string, string]>> = {
   "creative-loop": [["user","ProjectCreated"],["user","DocumentCreated"],["user","EmptyCanvasChosen"],["user","BlockCreated"],["user","ReferenceIngested"],["user","RightsAsserted"],["user","ExtractionRequested"],["worker:extractor","ExtractionCompleted"],["user","ChipEdited"],["user","GenerationRequested"],["worker:compiler","ContextCompiled"],["worker:generator","GenerationCompleted"],["user","ComparisonOpened"],["user","ObjectCritiqued"],["user","ObjectPinned"],["user","AddedToLibrary"],["user","ObjectExported"]],
+  "document-evolution": [
+    ["user","ProjectCreated"],["user","ProjectOpened"],["user","ProjectRenamed"],["user","ProjectStateChanged"],["user","DocumentCreated"],["user","DocumentRenamed"],["user","DocumentOpened"],["user","EmptyCanvasChosen"],
+    ...BLOCK_TYPES.map(()=>["user","BlockCreated"] as [string,string]),
+    ["user","BlockRenamed"],["user","BlockPropertyEdited"],["user","BlockWeightSet"],["user","BlockLocked"],["user","BlockUnlocked"],["user","BlockRemoved"],["user","BlockRestored"],
+    ["user","ReferenceIngested"],["user","RightsAsserted"],["user","RegionPromoted"],["user","ExtractionRequested"],["worker:extractor","ExtractionCompleted"],["worker:extractor","ExtractionFailed"],["worker:extractor","ExtractionSuperseded"],["worker:extractor","ExtractorEvaluationCompleted"],
+    ["user","GenerationRequested"],["worker:compiler","ContextCompiled"],["worker:generator","GenerationCompleted"],["user","ObjectViewed"],["user","ObjectSaved"],["user","ObjectPinned"],["user","ObjectUnpinned"],["user","ObjectRegenerated"],["user","AddedToLibrary"],["user","RemovedFromLibrary"],["user","AnnotationAdded"],["user","AnnotationRetracted"],["user","ObjectDiscarded"],["user","ObjectExported"],
+    ["user","CollectionCreated"],["user","CollectionCreated"],["user","CollectionItemAdded"],["user","CollectionItemMoved"],["user","CollectionItemRemoved"],["user","CollectionRenamed"],["user","CollectionRemoved"],["user","CollectionRestored"],
+    ["user","DocumentForked"],["user","DocumentRemoved"],["user","DocumentRestored"],
+  ],
   "async-return": [["user","SessionClosed"],["worker:brief","BriefComposed"],["user","BriefItemPresented"],["worker:scout","ScoutRunStarted"],["worker:scout","GenerationRequested"],["worker:scout","GenerationCompleted"],["worker:scout","ScoutObserved"],["worker:scout","ScoutRunCompleted"],["user","ObservationJudged"],["user","BriefItemAccepted"],["user","BlockCreated"],["user","SessionOpened"]],
   concurrency: [["model:forma-chat","MutationProposed"],["user","ObjectViewed"],["user","AttentionEpisodeObserved"],["user","AnnotationAdded"],["user","ProposalAccepted"],["user","GenerationRequested"],["worker:validator","ValidationFailed"],["user","BlockPropertyEdited"],["user","ObjectPinned"],["user","ProposalRejected"]],
   promotion: [["worker:indexer","FamilyDeclared"],["worker:indexer","FamilyAnchorSet"],["worker:indexer","FamilyMembershipAsserted"],["model:forma-chat","MutationProposed"],["user","ProposalAccepted"],["user","CollectionCreated"],["user","CollectionItemAdded"],["user","CollectionRenamed"]],
   "taste-time": [["user","DocumentCreated"],["user","BlockCreated"],["user","GenerationRequested"],["worker:compiler","ContextCompiled"],["worker:generator","GenerationCompleted"],["user","ObjectCritiqued"],["worker:taste","TasteModelVersioned"],["user","PreferenceAuthored"],["user","ConditionSet"],["worker:scheduler","ConditionFired"],["worker:scheduler","Resurfaced"],["user","PreferenceRevoked"],["user","FactRetracted"]],
   "attention-friction": [["user","SessionOpened"],["user","DocumentCreated"],["user","IntentDeclared"],["user","AttentionEpisodeObserved"],["user","GenerationRequested"],["worker:compiler","ContextCompiled"],["worker:generator","GenerationCompleted"],["user","ComparisonOpened"],["user","ObjectPinned"],["user","AttentionEpisodeObserved"],["user","AttentionSignalsForgotten"],["user","SessionClosed"]],
+  "operational-safety": [["worker:registry","ModelRegistered"],["worker:registry","AdapterVersioned"],["worker:registry","CapabilityDeclared"],["worker:policy","BudgetReserved"],["model:forma-chat","AssistantReasoned"],["worker:policy","GenerationUsageRecorded"],["worker:attribution","AttributionComputed"],["worker:policy","BudgetReleased"],["worker:policy","BudgetExceeded"],["worker:generator","GenerationFailed"],["worker:extractor","ExtractionFailed"],["worker:extractor","ExtractionSuperseded"],["worker:extractor","ExtractorEvaluationCompleted"],["user","BriefItemIgnored"],["user","BriefDismissed"],["user","PhaseGateReviewed"],["user","ProposalDeclined"],["worker:scheduler","BranchAbandoned"],["worker:scout","ScoutBudgetExhausted"],["user","ClaimSuperseded"],["worker:policy","RetentionSweepCompleted"]],
 };
 
 export const SCENARIO_EVENT_TYPES = [...new Set(Object.values(baseTypes).flat().map(([,type])=>type))];
@@ -74,50 +87,132 @@ const EVENT_STORIES: Record<string,ReplayEventStory> = {
   FactRetracted:{action:"The user forgot an inferred taste claim.",value:"The claim disappears from current capsules without deleting the evidence trail that explains the retraction."},
   IntentDeclared:{action:"The user stated the goal for the current session.",value:"Attention and generation outcomes can be interpreted against explicit intent rather than guessed from dwell alone."},
   AttentionSignalsForgotten:{action:"The user erased retained coarse attention evidence.",value:"The low-authority signal path remains consent-based, reviewable, and genuinely reversible."},
+  ProjectOpened:{action:"The user switched the active project boundary.",value:"Every document, collection, and library projection can change scope without copying or silently merging project state."},
+  ProjectRenamed:{action:"The user renamed the project in their own language.",value:"Stable identity survives a changing label, so links and event history do not depend on mutable presentation text."},
+  ProjectStateChanged:{action:"The user changed the project lifecycle state.",value:"Active and archived work remain explicitly distinguishable without deleting their documents, objects, or receipts."},
+  DocumentRenamed:{action:"The user gave the current document a new title.",value:"The document stays addressable by durable identity while its human-facing name evolves with the work."},
+  DocumentForked:{action:"The user created a document fork with a source receipt.",value:"A new direction can diverge safely while retaining the exact stream and sequence from which it began."},
+  DocumentOpened:{action:"The user opened a specific existing document.",value:"Navigation becomes witnessed context, allowing re-entry and projections to return to the intended work rather than a default document."},
+  DocumentRemoved:{action:"The user removed a document from active project views.",value:"A reversible tombstone clears the working surface without erasing the event history needed for audit or restoration."},
+  DocumentRestored:{action:"The user restored a previously removed document.",value:"The complete document reappears from its event history, including blocks, outputs, and organizational relationships."},
+  BlockRenamed:{action:"The user renamed a context block handle.",value:"Readable vocabulary can improve without changing the block identity cited by generations and downstream evidence."},
+  BlockWeightSet:{action:"The user adjusted how strongly a block should influence compilation.",value:"Influence becomes an explicit, replayable decision rather than an invisible prompt-order side effect."},
+  BlockLocked:{action:"The user locked a resolved block against incidental editing.",value:"Stable decisions can remain visible and compilable while exploratory parts of the document continue to change."},
+  BlockUnlocked:{action:"The user reopened a locked block for revision.",value:"A prior decision can evolve deliberately without losing the interval during which its locked version governed generation."},
+  BlockRemoved:{action:"The user removed a block from the live document projection.",value:"The block stops compiling immediately while its earlier contribution remains attributable to outputs already generated."},
+  BlockRestored:{action:"The user restored a removed context block.",value:"The same stable block identity returns, avoiding a misleading copy that would sever its earlier provenance."},
+  RegionPromoted:{action:"The user promoted a selected reference region into explicit context.",value:"A local visual observation becomes addressable evidence with its own provenance instead of an unexplained crop."},
+  ObjectSaved:{action:"The user saved an output as a deliberate working result.",value:"This stronger outcome signal can guide re-entry and ranking while remaining distinct from library filing or export."},
+  ObjectDiscarded:{action:"The user discarded an output from active result views.",value:"Negative creative judgment remains learnable and reversible without deleting the generation and compile receipts."},
+  ObjectUnpinned:{action:"The user removed an output from active pinned context.",value:"A former preference stops steering the workspace while the duration and source of its earlier importance remain visible."},
+  ObjectRegenerated:{action:"The user requested another attempt from an existing output context.",value:"Iteration is linked to the result that motivated it, distinguishing refinement from an unrelated new generation."},
+  BriefItemIgnored:{action:"The user ignored one re-entry suggestion.",value:"Dosage and rejected-path memory can improve without treating non-selection as permission to mutate the document."},
+  BriefDismissed:{action:"The user dismissed the remaining re-entry brief.",value:"The application witnesses a preference to resume unaided and can stop repeating stale preparation."},
+  PhaseGateReviewed:{action:"A human reviewer recorded the evidence-based phase decision.",value:"Product advancement remains an accountable judgment with cited metrics rather than an automatic threshold crossing."},
+  ProposalDeclined:{action:"The user declined a proposal before any mutation was authorized.",value:"Model assistance stays preview-only, and declined intent can inform future suggestions without entering authored state."},
+  AnnotationRetracted:{action:"The annotation owner retracted a previous comment.",value:"Current collaboration views stay accurate while the durable history can still explain that the comment once existed."},
+  RemovedFromLibrary:{action:"The user removed an output from the kept library set.",value:"Intentional reuse remains reversible and does not require deleting the underlying object or its originating document."},
+  CollectionRemoved:{action:"The user removed a collection from the active project tree.",value:"Authored organization can be simplified with a reversible tombstone while contained items keep their durable identities."},
+  CollectionRestored:{action:"The user restored a removed collection.",value:"The project organization returns from witnessed state rather than reconstructing a look-alike container with new identity."},
+  CollectionItemRemoved:{action:"The user removed an item from its authored collection.",value:"Filing changes independently from the item itself, preserving both content provenance and organization history."},
+  CollectionItemMoved:{action:"The user moved an item between authored collections.",value:"The latest project structure is direct to query while the stream still explains every earlier location."},
+  ClaimSuperseded:{action:"The user or worker superseded a specific inferred claim.",value:"One incorrect family or taste edge can be corrected without deleting the evidence set or rebuilding unrelated claims."},
+  GenerationFailed:{action:"The generator returned a structured failure instead of an object.",value:"Provider errors, timeouts, and policy stops stay distinct from creative rejection and never masquerade as successful output."},
+  ExtractionFailed:{action:"The extractor could not derive reliable properties from the reference.",value:"Unavailable machine evidence is explicit, allowing the user to author context directly without trusting fabricated chips."},
+  ExtractionSuperseded:{action:"A newer extraction replaced an earlier derived result.",value:"Improved analysis can become current while every generation retains the exact extractor version it originally used."},
+  ExtractorEvaluationCompleted:{action:"The extractor suite recorded a fixed-corpus evaluation receipt.",value:"Quality claims remain tied to reproducible corrections and named versions instead of subjective confidence alone."},
+  ModelRegistered:{action:"The registry introduced a model identity to the workspace.",value:"Later generations and critiques can name the real producer rather than relying on a mutable provider default."},
+  AdapterVersioned:{action:"The registry recorded a new model-adapter contract version.",value:"Behavior changes at the integration boundary remain attributable and comparable across otherwise similar generations."},
+  CapabilityDeclared:{action:"The registry declared the operations a model adapter may perform.",value:"Routing and authorization can fail closed instead of discovering unsupported powers during a creative request."},
+  BranchAbandoned:{action:"The scheduler marked an inactive exploration branch abandoned.",value:"Re-entry can avoid stale paths while preserving the evidence that explains why the branch stopped receiving attention."},
+  AttributionComputed:{action:"The attribution worker joined an output to contributing inputs and receipts.",value:"Critique can point to likely sources without overstating statistical association as singular creative causation."},
+  BudgetReserved:{action:"The policy worker reserved capacity before provider execution.",value:"Concurrent requests cannot overspend a shared hard cap simply because their final token receipts arrive later."},
+  BudgetReleased:{action:"The policy worker returned an unused reservation after a stopped operation.",value:"Failed or cancelled work does not strand capacity, and the release remains auditable against its original reservation."},
+  BudgetExceeded:{action:"The policy worker denied work at a declared hard cap.",value:"The application fails before external spend while presenting a predictable operational reason rather than a broken canvas."},
+  GenerationUsageRecorded:{action:"The policy worker settled actual token usage against the reservation.",value:"Cost and capacity reports reflect provider receipts while preserving the safety of pre-execution reservation."},
+  RetentionSweepCompleted:{action:"The policy worker completed a private-content retention sweep.",value:"Sensitive provider and prompt material expires on schedule while non-sensitive event receipts preserve accountability."},
+  ScoutBudgetExhausted:{action:"The Scout reached its declared exploration limit.",value:"The run stops as a planned envelope outcome, preventing curiosity from becoming an unbounded autonomous loop."},
+  AssistantReasoned:{action:"Forma produced a private structured interpretation for review.",value:"The reasoning result remains an inspectable, expiring proposal artifact and cannot directly become authored context."},
 };
 
-export function explainReplayEvent(event: CreativeEvent) {
+export function formatReplayDuration(milliseconds:number) {
+  const seconds=Math.max(0,Math.round(milliseconds/1000));if(seconds<60)return`${seconds}s`;
+  const minutes=Math.floor(seconds/60);if(minutes<60)return`${minutes}m ${seconds%60}s`;
+  const hours=Math.floor(minutes/60);if(hours<24)return`${hours}h ${minutes%60}m`;
+  const days=Math.floor(hours/24);return`${days}d ${hours%24}h`;
+}
+
+export function explainReplayEvent(event: CreativeEvent, previousEvent?:CreativeEvent) {
   const story=EVENT_STORIES[event.type]??{action:`${event.actor} appended ${event.type}.`,value:"The typed event remains independently inspectable and replayable."};
-  return {...story,cause:event.causationId?`Causation points to ${event.causationId}; actor ${event.actor} owns this step.`:`This is the first witnessed step in its scenario; actor ${event.actor} owns it.`};
+  const gapMs=previousEvent?Math.max(0,Date.parse(event.occurredAt)-Date.parse(previousEvent.occurredAt)):0;const elapsed=previousEvent?formatReplayDuration(gapMs):"Scenario start";
+  let temporalValue="This timestamp establishes the baseline from which later creative actions, interruptions, and machine responses are measured.";
+  if(previousEvent&&event.type==="SessionOpened")temporalValue=`The ${elapsed} gap makes re-entry explicit: Forma can prepare continuity without pretending the user stayed in one uninterrupted session.`;
+  else if(previousEvent&&["ConditionFired","Resurfaced"].includes(event.type))temporalValue=`The ${elapsed} delay demonstrates that remembered context can return at an authored trigger rather than merely appearing in the next render.`;
+  else if(previousEvent&&gapMs>=86_400_000)temporalValue=`The ${elapsed} interval tests durable meaning across days, when transient UI state would no longer be a trustworthy explanation.`;
+  else if(previousEvent&&gapMs>=3_600_000)temporalValue=`The ${elapsed} interruption distinguishes resumed work from a continuous editing burst and gives re-entry evidence a real boundary.`;
+  else if(previousEvent&&(event.actor.startsWith("worker:")||event.actor.startsWith("model:")))temporalValue=`The ${elapsed} handoff exposes machine latency and causation, so assistance can be evaluated separately from the user action that requested it.`;
+  else if(previousEvent&&(previousEvent.actor.startsWith("worker:")||previousEvent.actor.startsWith("model:")))temporalValue=`The user responded ${elapsed} after machine work, preserving a measurable review interval instead of collapsing assistance and acceptance into one step.`;
+  else if(previousEvent)temporalValue=`The ${elapsed} interval preserves the pace of the creative decision, helping distinguish rapid manipulation from considered revision.`;
+  return {...story,cause:event.causationId?`Causation points to ${event.causationId}; actor ${event.actor} owns this step.`:`This is the first witnessed step in its scenario; actor ${event.actor} owns it.`,timing:{gapMs,label:elapsed,value:temporalValue}};
 }
 
 function payloadFor(type: string, i: number, key: ScenarioKey, cycle: number): Record<string, unknown> {
-  const documentId=`document-${key}-${cycle}`; const blockId=`block-${key}-${cycle}`; const generationId=`generation-${key}-${cycle}`; const objectId=`object-${key}-${cycle}`; const runId=`run-${key}-${cycle}`; const observationId=`observation-${key}-${cycle}`; const familyId=`family-${cycle}`; const collectionId=`collection-${cycle}`; const preferenceId=`preference-${cycle}`; const conditionId=`condition-${cycle}`;
+  const patternPosition=i%baseTypes[key].length;const patternPrefix=baseTypes[key].slice(0,patternPosition+1);const blockOrdinal=patternPrefix.filter(([,eventType])=>eventType==="BlockCreated").length-1;const replayBlockType=key==="document-evolution"?BLOCK_TYPES[Math.max(0,blockOrdinal)%BLOCK_TYPES.length].type:key==="async-return"?"direction":"reference";
+  const documentId=`document-${key}-${cycle}`; const blockId=key==="document-evolution"?`block-${key}-${cycle}-${replayBlockType}`:`block-${key}-${cycle}`; const referenceBlockId=key==="document-evolution"?`block-${key}-${cycle}-reference`:blockId; const generationId=`generation-${key}-${cycle}`; const objectId=`object-${key}-${cycle}`; const runId=`run-${key}-${cycle}`; const observationId=`observation-${key}-${cycle}`; const familyId=`family-${cycle}`; const collectionId=`collection-${cycle}`; const preferenceId=`preference-${cycle}`; const conditionId=`condition-${cycle}`;
   if(type==="ProjectCreated")return{project_id:"project-long-horizon",name:"Long horizon study",state:"active"};
+  if(type==="ProjectOpened")return{project_id:"project-long-horizon",previous_project_id:"project-previous"};
+  if(type==="ProjectRenamed")return{project_id:"project-long-horizon",old_name:"Long horizon study",new_name:"Long horizon creative system"};
+  if(type==="ProjectStateChanged")return{project_id:"project-long-horizon",previous_state:"draft",state:"active"};
   if(type==="DocumentCreated")return{document_id:documentId,title:`Atmosphere study ${cycle+1}`,handle:`atmosphere-${cycle+1}`};
+  if(type==="DocumentRenamed")return{document_id:documentId,old_title:`Atmosphere study ${cycle+1}`,new_title:`Nocturne system ${cycle+1}`};
+  if(type==="DocumentOpened")return{document_id:documentId,previous_document_id:`document-previous-${cycle}`};
+  if(type==="DocumentForked")return{document_id:`document-${key}-${cycle}-fork`,title:`Nocturne system ${cycle+1} · fork`,source_stream_id:`theory:${key}`,source_sequence:i,carried_block_ids:BLOCK_TYPES.map((definition)=>`block-${key}-${cycle}-${definition.type}`)};
+  if(type==="DocumentRemoved"||type==="DocumentRestored")return{document_id:documentId,reason:type==="DocumentRemoved"?"project cleanup":"user undo"};
   if(type==="EmptyCanvasChosen")return{document_id:documentId,brief_id:null,explicit_blank:true};
-  if(type==="BlockCreated")return{block_id:blockId,document_id:documentId,type:key==="async-return"?"direction":"reference",handle:`study/${key}-${cycle}`,position:`a${String(cycle).padStart(6,"0")}`,properties:{text:"A quiet, warm nocturne",authority:"authored",weight:.8}};
-  if(type==="ReferenceIngested")return{reference_id:`reference-${cycle}`,block_id:blockId,document_id:documentId,media_type:"image/jpeg",content_ref:`media-${cycle}`};
+  if(type==="BlockCreated"){const properties=replayBlockType==="palette"?{label:"Dusk amber",colors:["#27252b","#e9a073","#e8d7bd","#8a6571"],subtype:"Emotional",authority:"authored",weight:.8}:replayBlockType==="reference"?{reference_id:`reference-${cycle}`,label:"Window light",subtype:"Mood",authority:"authored",weight:.8}:{text:`${replayBlockType} decision for a quiet, warm nocturne`,subtype:BLOCK_TYPES.find((definition)=>definition.type===replayBlockType)?.subtypes[0],authority:"authored",weight:.8};return{block_id:blockId,document_id:documentId,type:replayBlockType,handle:`${replayBlockType}/${key}-${cycle}`,position:`a${String(Math.max(0,blockOrdinal)).padStart(6,"0")}`,properties};}
+  if(type==="BlockRenamed")return{block_id:`block-${key}-${cycle}-direction`,old_handle:`direction/${key}-${cycle}`,new_handle:`direction/nocturne-${cycle}`};
+  if(type==="BlockWeightSet")return{block_id:`block-${key}-${cycle}-direction`,old_weight:.8,weight:.92};
+  if(type==="BlockLocked"||type==="BlockUnlocked"||type==="BlockRemoved"||type==="BlockRestored")return{block_id:`block-${key}-${cycle}-direction`,reason:type.toLowerCase()};
+  if(type==="ReferenceIngested")return{reference_id:`reference-${cycle}`,block_id:referenceBlockId,document_id:documentId,media_type:"image/jpeg",content_ref:`media-${cycle}`};
   if(type==="RightsAsserted")return{reference_id:`reference-${cycle}`,assertion:"user-owns-or-may-use",scope:"generation"};
-  if(type==="ExtractionRequested")return{reference_id:`reference-${cycle}`,block_id:blockId,extractor_name:"palette-light-v2"};
-  if(type==="ExtractionCompleted")return{reference_id:`reference-${cycle}`,block_id:blockId,extractor_name:"palette-light-v2",overall_confidence:.86,chips:[{property:"palette",value:"dusk amber",confidence:.88},{property:"lighting",value:"low lateral light",confidence:.84}]};
-  if(type==="ChipEdited")return{block_id:blockId,chip_id:`chip-${cycle}`,property:"palette",old_value:"dusk amber",new_value:"restrained amber"};
+  if(type==="RegionPromoted")return{reference_id:`reference-${cycle}`,block_id:referenceBlockId,region:{x:.18,y:.22,width:.44,height:.38},promoted_property:"lighting",label:"Window edge light"};
+  if(type==="ExtractionRequested")return{reference_id:`reference-${cycle}`,block_id:referenceBlockId,extractor_name:"palette-light-v2"};
+  if(type==="ExtractionCompleted")return{reference_id:`reference-${cycle}`,block_id:referenceBlockId,extractor_name:"palette-light-v2",overall_confidence:.86,chips:[{property:"palette",value:"dusk amber",confidence:.88},{property:"lighting",value:"low lateral light",confidence:.84}]};
+  if(type==="ExtractionFailed")return{reference_id:`reference-${cycle}`,block_id:referenceBlockId,extractor_name:"palette-light-v2",reason:"insufficient-readable-pixels",retryable:true};
+  if(type==="ExtractionSuperseded")return{reference_id:`reference-${cycle}`,block_id:referenceBlockId,superseded_extractor:"palette-light-v1",replacement_extractor:"palette-light-v2"};
+  if(type==="ExtractorEvaluationCompleted")return{evaluation_id:`extractor-eval-${cycle}`,corpus_version:"fixed-v1",extractor_version:"palette-light-v2",sample_count:40,correction_rate:.075,passed:true};
+  if(type==="ChipEdited")return{block_id:referenceBlockId,chip_id:`chip-${cycle}`,property:"palette",old_value:"dusk amber",new_value:"restrained amber"};
   if(type==="GenerationRequested")return{generation_id:generationId,document_id:documentId,document_version:i,model_ids:[key==="async-return"?"deterministic-scout-v1":"gpt-5.6-terra"],...(key==="async-return"?{run_id:runId,report_space:"scout"}:{})};
-  if(type==="ContextCompiled")return{generation_id:generationId,document_id:documentId,model_id:"gpt-5.6-terra",adapter_version:"openai-responses-v1",compiled_snapshot:{facts:["direction/quiet-nocturne","palette/restrained-amber"],pins:[blockId],standing_constraints:key==="taste-time"?["style/restrained-grain"]:[],tail:[],as_of:{head:i,lag:0}},source_block_versions:[{block_id:blockId,version:cycle+1}]};
+  if(type==="ContextCompiled")return{generation_id:generationId,document_id:documentId,model_id:"gpt-5.6-terra",adapter_version:"openai-responses-v1",compiled_snapshot:{facts:["direction/quiet-nocturne","palette/restrained-amber"],pins:[key==="document-evolution"?`block-${key}-${cycle}-direction`:blockId],standing_constraints:key==="taste-time"?["style/restrained-grain"]:[],tail:[],as_of:{head:i,lag:0}},source_block_versions:key==="document-evolution"?BLOCK_TYPES.map((definition)=>({block_id:`block-${key}-${cycle}-${definition.type}`,version:1})):[{block_id:blockId,version:cycle+1}]};
   if(type==="GenerationCompleted")return{generation_id:generationId,document_id:documentId,model_id:key==="async-return"?"deterministic-scout-v1":"gpt-5.6-terra",adapter_version:key==="async-return"?"scout-v1":"openai-responses-v1",object_ids:[objectId],latency_ms:key==="async-return"?0:930,variant:cycle%4,simulation:key==="async-return",...(key==="async-return"?{run_id:runId,report_space:"scout",candidate:{kind:"adjacent-palette",colors:["#2f4840","#c88358","#d7e780"]}}:{})};
   if(type==="ComparisonOpened")return{comparison_id:`comparison-${cycle}`,object_ids:[objectId,`object-${key}-${Math.max(0,cycle-1)}`]};
   if(type==="ObjectCritiqued")return{object_id:objectId,axis_ref:key==="taste-time"?"composition":"palette",polarity:key==="taste-time"?"negative":"positive",value:key==="taste-time"?"too centered":"restrained amber"};
-  if(type==="ObjectPinned"||type==="ObjectViewed"||type==="ObjectExported"||type==="AddedToLibrary")return{object_id:objectId,view_id:`view-${cycle}`,...(type==="ObjectExported"?{format:"png"}:{})};
+  if(type==="ObjectPinned"||type==="ObjectViewed"||type==="ObjectSaved"||type==="ObjectDiscarded"||type==="ObjectUnpinned"||type==="ObjectExported"||type==="AddedToLibrary"||type==="RemovedFromLibrary")return{object_id:objectId,view_id:`view-${cycle}`,...(type==="ObjectExported"?{format:"png",rights_receipt_ref:`rights-${cycle}`}:{})};
+  if(type==="ObjectRegenerated")return{object_id:objectId,source_generation_id:generationId,new_generation_id:`generation-${key}-${cycle}-retry`,reason:"user requested another variation"};
   if(type==="SessionClosed")return{session_id:`session-${cycle}`,closed_at_sequence:i,reason:"user-ended",duration_seconds:780};
   if(type==="SessionOpened")return{session_id:`session-${cycle+1}`,intent_ref:`intent-${cycle}`,reentry:true};
   if(type==="BriefComposed")return{brief_id:`brief-${cycle}`,source_session_id:`session-${cycle}`,items:[{item_id:`brief-item-${cycle}`,item_type:"comparison",rank:1,destination:{kind:"document",document_id:documentId}}]};
-  if(type==="BriefItemPresented"||type==="BriefItemAccepted")return{brief_id:`brief-${cycle}`,item_id:`brief-item-${cycle}`,destination:{kind:"document",document_id:documentId}};
+  if(type==="BriefItemPresented"||type==="BriefItemAccepted"||type==="BriefItemIgnored")return{brief_id:`brief-${cycle}`,item_id:`brief-item-${cycle}`,destination:{kind:"document",document_id:documentId},...(type==="BriefItemIgnored"?{reason:"not useful now"}:{})};
+  if(type==="BriefDismissed")return{brief_id:`brief-${cycle}`,reason:"resume without assistance"};
+  if(type==="PhaseGateReviewed")return{phase:6,decision:"advance-with-monitoring",evidence_refs:[`acceptance-ledger-${cycle}`,`dosage-ledger-${cycle}`],reviewer:"pilot-owner"};
   if(type==="ScoutRunStarted")return{run_id:runId,envelope:{max_observations:1,max_generations:1,max_cost_usd:.02},report_only:true};
   if(type==="ScoutObserved")return{run_id:runId,observation_id:observationId,type:"adjacency",confidence:.74,evidence_refs:[`trajectory:${cycle}`,objectId],falsifier:"User rejects the adjacent palette as unrelated."};
   if(type==="ScoutRunCompleted")return{run_id:runId,observations:1,generations:1,cost_usd:0,terminal:"envelope-satisfied"};
   if(type==="ObservationJudged")return{run_id:runId,observation_id:observationId,verdict:cycle%3===0?"unclear":"confirmed",note:"Evidence was reviewed by the user."};
   if(type==="MutationProposed")return{proposal_id:`proposal-${cycle}`,content_ref:`proposal-content-${cycle}`,expected_sequence:Math.max(0,i-2),proposed_events:[{type:"BlockPropertyEdited",payload:{block_id:blockId,property_path:"weight",new_value:.9}}]};
   if(type==="AttentionEpisodeObserved")return{episode_id:`attention-${i}`,surface:key==="attention-friction"?"studio":"library",context:key==="attention-friction"?(i%2?"comparison":"generation"):"library-browsing",visible_refs:[objectId,blockId],active_ms:42_000,idle_ms:i%2?4_000:28_000,terminal_type:i%2?"ObjectPinned":"GenerationRequested",outcome_weight:i%2?.25:.08,expires_at:new Date(Date.UTC(2026,0,19)).toISOString()};
-  if(type==="AnnotationAdded")return{annotation_id:`annotation-${cycle}`,object_id:objectId,body_ref:`annotation-content-${cycle}`};
-  if(type==="ProposalAccepted"||type==="ProposalRejected")return{proposal_id:`proposal-${cycle}`,expected_sequence:Math.max(0,i-2),...(type==="ProposalRejected"?{reason:"not aligned with authored direction"}:{})};
+  if(type==="AnnotationAdded"||type==="AnnotationRetracted")return{annotation_id:`annotation-${cycle}`,object_id:objectId,...(type==="AnnotationAdded"?{body_ref:`annotation-content-${cycle}`}:{reason:"comment resolved"})};
+  if(type==="ProposalAccepted"||type==="ProposalRejected"||type==="ProposalDeclined")return{proposal_id:`proposal-${cycle}`,expected_sequence:Math.max(0,i-2),...(type!=="ProposalAccepted"?{reason:type==="ProposalRejected"?"not aligned with authored direction":"declined before mutation"}:{})};
   if(type==="ValidationFailed")return{attempted_type:"GenerationRequested",attempted_by:"model:forma-chat",errors:[{index:0,reason:"stale_sequence",expected:Math.max(0,i-3),actual:i}]};
-  if(type==="BlockPropertyEdited")return{block_id:blockId,property_path:"weight",old_value:.8,new_value:.9};
+  if(type==="BlockPropertyEdited")return{block_id:key==="document-evolution"?`block-${key}-${cycle}-direction`:blockId,property_path:"weight",old_value:.8,new_value:.9};
   if(type==="FamilyDeclared")return{family_id:familyId,label:"Warm nocturnes",confidence:.81,evidence_refs:[`object-promotion-${cycle}`],embedding_model_id:"deterministic-visual-v1",source_head:i};
   if(type==="FamilyAnchorSet")return{family_id:familyId,anchor_object_ids:[`object-promotion-${cycle}`],evidence_refs:[`embedding-${cycle}`]};
   if(type==="FamilyMembershipAsserted")return{family_id:familyId,object_id:`object-promotion-${cycle}`,confidence:.77,claim_ref:`family-membership:${familyId}:object-promotion-${cycle}`};
-  if(type==="CollectionCreated")return{collection_id:collectionId,handle:`kept-warm-nocturnes-${cycle}`,parent_collection_id:null,source_claim_ref:`family:${familyId}`};
-  if(type==="CollectionItemAdded")return{collection_id:collectionId,item_ref:{document_id:documentId},position:"a0"};
-  if(type==="CollectionRenamed")return{collection_id:collectionId,new_handle:`night-studies-${cycle}`};
+  if(type==="CollectionCreated"){const ordinal=patternPrefix.filter(([,eventType])=>eventType==="CollectionCreated").length-1;const id=key==="document-evolution"?`collection-${cycle}-${ordinal}`:collectionId;return{collection_id:id,handle:ordinal===1?`archive-${cycle}`:`kept-warm-nocturnes-${cycle}`,parent_collection_id:null,source_claim_ref:`family:${familyId}`,position:`a${ordinal}`};}
+  if(type==="CollectionItemAdded")return{collection_id:key==="document-evolution"?`collection-${cycle}-0`:collectionId,item_ref:{document_id:documentId},position:"a0"};
+  if(type==="CollectionItemMoved")return{from_collection_id:`collection-${cycle}-0`,to_collection_id:`collection-${cycle}-1`,item_ref:{document_id:documentId},position:"a0"};
+  if(type==="CollectionItemRemoved")return{collection_id:`collection-${cycle}-1`,item_ref:{document_id:documentId}};
+  if(type==="CollectionRenamed"||type==="CollectionRemoved"||type==="CollectionRestored")return{collection_id:key==="document-evolution"?`collection-${cycle}-1`:collectionId,...(type==="CollectionRenamed"?{new_handle:`night-studies-${cycle}`}:{reason:type.toLowerCase()})};
   if(type==="TasteModelVersioned")return{version_id:`taste-version-${cycle}`,beliefs:[{beliefId:`belief-${cycle}`,claimRef:`taste:composition-${cycle}`,axis:"composition",value:"too centered",polarity:"forbid",authority:"inferred",confidence:.67,evidenceCount:3,evidenceRefs:[`theory-taste-time-${i}`],validFrom:new Date(Date.UTC(2026,0,5)).toISOString(),recordedAt:new Date(Date.UTC(2026,0,5)).toISOString(),freshness:1}],ranking_policy:{ranking_only:true,half_life_days:60}};
   if(type==="PreferenceAuthored")return{preference_id:preferenceId,axis:"composition",value:"too centered",polarity:"forbid",scope:"account",source_claim_ref:`taste:composition-${cycle}`};
   if(type==="ConditionSet")return{condition_id:conditionId,condition_ref:`condition-content-${cycle}`,trigger_kind:"generation_count",threshold:3,created_sequence:i};
@@ -125,13 +220,27 @@ function payloadFor(type: string, i: number, key: ScenarioKey, cycle: number): R
   if(type==="Resurfaced")return{condition_id:conditionId,condition_ref:`condition-content-${cycle}`,surface:"memory"};
   if(type==="PreferenceRevoked")return{preference_id:preferenceId,reason:"changed-by-user"};
   if(type==="FactRetracted")return{fact_ref:`taste:composition-${cycle}`,reason:"forgotten-by-user"};
+  if(type==="ClaimSuperseded")return{claim_ref:`family-membership:family-${cycle}:object-promotion-${cycle}`,replacement_ref:`family-membership:family-${cycle}:object-corrected-${cycle}`,reason:"human correction"};
   if(type==="IntentDeclared")return{intent_id:`intent-${cycle}`,statement_ref:`intent-content-${cycle}`,surface:"studio"};
   if(type==="AttentionSignalsForgotten")return{scope:"device",episode_count:2,reason:"user-requested"};
+  if(type==="ModelRegistered")return{model_id:"gpt-5.6-terra",provider:"openai",status:"human-gated"};
+  if(type==="AdapterVersioned")return{adapter_id:"openai-responses",version:"v1.4",contract_version:2};
+  if(type==="CapabilityDeclared")return{model_id:"gpt-5.6-terra",capabilities:["structured-context","image-direction","adaptive-structure"]};
+  if(type==="BudgetReserved")return{reservation_id:`reservation-${cycle}`,operation:"generation",reserved_tokens:32000,period:"2026-01"};
+  if(type==="BudgetReleased")return{reservation_id:`reservation-${cycle}`,reserved_tokens:32000,reason:"provider-failed-before-usage"};
+  if(type==="BudgetExceeded")return{operation:"generation",scope:"workspace-month",reason:"hard_cap_reached",reserved_tokens:0};
+  if(type==="GenerationUsageRecorded")return{reservation_id:`reservation-${cycle}`,operation:"generation",input_tokens:4200,output_tokens:980,total_tokens:5180,reserved_tokens:32000,model_id:"gpt-5.6-terra"};
+  if(type==="GenerationFailed")return{generation_id:generationId,model_id:"gpt-5.6-terra",adapter_version:"openai-responses-v1",reason:"provider_timeout",retryable:true};
+  if(type==="AssistantReasoned")return{operation:"adaptive-structure",intent_ref:`intent-content-${cycle}`,content_ref:`assistant-content-${cycle}`,model_id:"gpt-5.6-terra",active_decision_type:"composition",suggested_block_types:["lighting","format"]};
+  if(type==="AttributionComputed")return{object_id:objectId,generation_id:generationId,source_block_versions:[{block_id:`block-${key}-${cycle}-direction`,version:1}],method:"compiler-input-join",causal_claim:false};
+  if(type==="BranchAbandoned")return{branch_id:`branch-${cycle}`,document_id:documentId,reason:"inactive-after-session-boundary",last_active_sequence:i-8};
+  if(type==="ScoutBudgetExhausted")return{run_id:runId,envelope:{max_observations:2,max_generations:1,max_cost_usd:.02},observations:1,generations:1,cost_usd:.02,terminal:"budget-exhausted"};
+  if(type==="RetentionSweepCompleted")return{sweep_id:`retention-${cycle}`,private_content_expired:14,event_receipts_retained:14,cutoff:"2025-12-06T00:00:00.000Z"};
   return {scenario:key,ref_id:`ref-${i}`,scope:"project"};
 }
 
 export function buildScenario(key: ScenarioKey, count: number): CreativeEvent[] {
-  const list = new SignalArray<CreativeEvent>(); const pattern=baseTypes[key]; const start=Date.UTC(2026,0,5,9);
-  for(let i=0;i<count;i++){const [actor,type]=pattern[i%pattern.length];const cycle=Math.floor(i/pattern.length);const at=new Date(start+i*37_000).toISOString();list.push({eventId:`theory-${key}-${i+1}`,streamId:`theory:${key}`,sequence:i+1,occurredAt:at,recordedAt:at,actor,clientId:i%17===0?"web:secondary":"web:primary",correlationId:`corr-${key}-${cycle}`,causationId:i?`theory-${key}-${i}`:null,compensatesEventId:null,schemaVersion:1,type,payload:payloadFor(type,i,key,cycle)});}
+  const list = new SignalArray<CreativeEvent>(); const pattern=baseTypes[key]; let clock=Date.UTC(2026,0,5,9);
+  for(let i=0;i<count;i++){const position=i%pattern.length;const [actor,type]=pattern[position];const cycle=Math.floor(i/pattern.length);if(i){const gap=position===0?43_200_000:type==="SessionOpened"?57_600_000:type==="Resurfaced"?259_200_000:type==="ConditionFired"?86_400_000:type==="RetentionSweepCompleted"?2_592_000_000:type==="BranchAbandoned"?129_600_000:type==="DocumentOpened"?7_200_000:actor.startsWith("worker:")?4_000+(i%5)*900:actor.startsWith("model:")?12_000+(i%4)*1_500:45_000+(i%7)*15_000;clock+=gap;}const at=new Date(clock).toISOString();list.push({eventId:`theory-${key}-${i+1}`,streamId:`theory:${key}`,sequence:i+1,occurredAt:at,recordedAt:at,actor,clientId:i%17===0?"web:secondary":"web:primary",correlationId:`corr-${key}-${cycle}`,causationId:i?`theory-${key}-${i}`:null,compensatesEventId:null,schemaVersion:1,type,payload:payloadFor(type,i,key,cycle)});}
   return Array.from(list);
 }

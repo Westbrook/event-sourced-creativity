@@ -3,6 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import { exportArchive, importArchive } from "../src/model/archive.ts";
 import { buildScenario, explainReplayEvent, SCENARIOS, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
+import { BLOCK_TYPES } from "../src/model/block-types.ts";
 import { foldEvents } from "../src/model/events.ts";
 
 test("uses Lit custom elements and the requested signal packages without React", async () => {
@@ -33,7 +34,7 @@ test("builds and replays theoretical long streams deterministically", () => {
 });
 
 test("keeps every replay fixture current and every mocked event specifically explained", () => {
-  assert.ok(SCENARIOS.length >= 6);
+  assert.ok(SCENARIOS.length >= 8);
   const stories = new Set();
   for (const scenario of SCENARIOS) {
     const events=buildScenario(scenario.key,SCENARIO_EVENT_TYPES.length*3);
@@ -43,6 +44,23 @@ test("keeps every replay fixture current and every mocked event specifically exp
   const taste=buildScenario("taste-time",13); const compile=taste.find((event)=>event.type==="ContextCompiled"); const complete=taste.find((event)=>event.type==="GenerationCompleted"); const critique=taste.find((event)=>event.type==="ObjectCritiqued");
   assert.equal(compile?.payload.generation_id,complete?.payload.generation_id); assert.ok(complete?.payload.object_ids.includes(critique?.payload.object_id)); assert.ok(compile?.payload.source_block_versions.length);
   assert.ok(buildScenario("attention-friction",12).some((event)=>event.type==="AttentionSignalsForgotten"));
+  const timed=buildScenario("taste-time",100);const gaps=timed.slice(1).map((event,index)=>Date.parse(event.occurredAt)-Date.parse(timed[index].occurredAt));
+  assert.ok(new Set(gaps).size>5);assert.ok(Math.max(...gaps)>=86_400_000);const timedStory=explainReplayEvent(timed[1],timed[0]);assert.ok(timedStory.timing.value.length>60);assert.ok(timedStory.timing.gapMs>0);
+});
+
+test("replay narratives cover the complete authorized event and block vocabulary",async()=>{
+  const [worker,admin]=await Promise.all([
+    readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-admin-events.ts",import.meta.url),"utf8"),
+  ]);
+  const permissionSection=worker.match(/const USER_EVENTS[\s\S]*?const COMMUTATIVE/)?.[0]??"";
+  const authorized=new Set([...permissionSection.matchAll(/"([A-Z][A-Za-z]+)"/g)].map((match)=>match[1]));
+  authorized.add("ConditionSet");authorized.add("ObjectCritiqued");
+  assert.deepEqual([...authorized].filter((type)=>!SCENARIO_EVENT_TYPES.includes(type)),[]);
+  assert.deepEqual(SCENARIO_EVENT_TYPES.filter((type)=>!authorized.has(type)),[]);
+  const blockEvents=buildScenario("document-evolution",1000).filter((event)=>event.type==="BlockCreated");
+  assert.deepEqual(new Set(blockEvents.map((event)=>event.payload.type)),new Set(BLOCK_TYPES.map((definition)=>definition.type)));
+  assert.match(admin,/capability-audit/);assert.match(admin,/SCENARIO_EVENT_TYPES\.length/);assert.match(admin,/Why now matters/);assert.match(admin,/scenario span/);
 });
 
 test("round-trips a lossless Forma event archive", () => {
@@ -242,7 +260,7 @@ test("connects the final Library and Studio affordances to explicit destinations
   assert.match(alternatives,/created_from:"context-board"/);assert.match(alternatives,/created_from:"guided-brief"/);assert.match(alternatives,/forma-studio-navigator/);
   assert.match(editorAlternatives,/application\/x-forma-reality/);assert.match(editorAlternatives,/created_from:"reality-layers"/);assert.match(editorAlternatives,/BlockWeightSet/);assert.match(editorAlternatives,/created_from:"adaptive-path"/);assert.match(editorAlternatives,/related_block_ids/);
   assert.match(editorAlternatives,/layer-create-dialog/);assert.match(editorAlternatives,/Save layer/);assert.match(editorAlternatives,/Duplicate/);assert.match(editorAlternatives,/structureAdaptive/);assert.match(eventsApi,/structure_adaptive/);assert.match(adapter,/forma_adaptive_structure/);
-  assert.match(blockTypes,/type:"audience"/);assert.match(blockTypes,/type:"environment"/);assert.match(blockTypes,/type:"accessibility"/);assert.match(workspace,/System-suggested subtype/);
+  assert.match(blockTypes,/type:"audience"/);assert.match(blockTypes,/type:"environment"/);assert.match(blockTypes,/type:"accessibility"/);assert.match(blockTypes,/BLOCK_GROUPS/);assert.match(blockTypes,/Purpose & audience/);assert.match(blockTypes,/Grounding evidence/);assert.match(workspace,/BLOCK_GROUPS\.map/);assert.match(workspace,/block-type-catalog/);assert.match(workspace,/System-suggested subtype/);
   assert.match(shell,/forma-reality-layers/);assert.match(shell,/forma-adaptive-path/);assert.match(styles,/\.reality-editor/);assert.match(styles,/\.adaptive-workspace/);
   assert.doesNotMatch(`${workspace}${library}${styles}`,/studio-sidebar|library-tree/);assert.match(styles,/\.project-rail/);
   assert.match(workspace,/\?disabled=\$\{!canCompare\}/);assert.match(store,/canUndo/);assert.match(store,/canRedo/);assert.match(styles,/\.document-bar \{ position: sticky/);
@@ -264,7 +282,7 @@ test("keeps account, project, document, intelligence, and administration scopes 
   assert.doesNotMatch(contents,/forma-studio-mode-nav|forma-studio-navigator/);assert.match(library,/Project library/);assert.match(collections,/destination==="\/library"/);
   for(const [source,active] of [[sessions,"sessions"],[scout,"scout"],[memory,"memory"]])assert.match(source,new RegExp(`forma-area-navigation area="intelligence" active="${active}"`));
   assert.match(system,/area="administration" active="system"/);assert.match(admin,/area="administration" active="events"/);assert.match(areas,/Creative intelligence/);assert.match(areas,/Administration/);
-  assert.match(styles,/\.rail-dock/);assert.match(styles,/\.area-navigation/);assert.match(styles,/\.studio-breadcrumbs/);assert.doesNotMatch(styles,/global-nav a:nth-child/);
+  assert.match(styles,/\.rail-dock/);assert.match(styles,/\.area-navigation/);assert.match(styles,/\.studio-breadcrumbs/);assert.match(styles,/\.block-type-group/);assert.doesNotMatch(styles,/global-nav a:nth-child/);
   assert.match(review,/Deficiencies found and resolved/);assert.match(review,/Primary navigation/);assert.match(review,/Follow-up evaluation/);
 });
 

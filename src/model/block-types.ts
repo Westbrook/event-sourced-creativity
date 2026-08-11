@@ -10,6 +10,14 @@ export type BlockTypeDefinition = {
   subtypes: readonly string[];
 };
 
+export const BLOCK_GROUPS: readonly { id: BlockGroup; label: string; description: string }[] = [
+  { id:"intent", label:"Purpose & audience", description:"Define what the work should accomplish, communicate, and make people feel." },
+  { id:"scene", label:"Scene & reality", description:"Describe what exists, where it exists, and how it behaves in space." },
+  { id:"craft", label:"Visual craft", description:"Shape the composition, treatment, materials, color, light, and typography." },
+  { id:"constraint", label:"Requirements & limits", description:"Set production, brand, accessibility, and exclusion boundaries." },
+  { id:"evidence", label:"Grounding evidence", description:"Attach owned or licensed references that support creative decisions." },
+];
+
 export type AdaptiveStructure = {
   interpretation: string;
   active_decision: { type: BlockKind; label: string; prompt: string; why: string };
