@@ -1,5 +1,13 @@
 export type BlockGroup = "intent" | "scene" | "craft" | "constraint" | "evidence";
 export type BlockKind = "direction" | "audience" | "message" | "emotion" | "subject" | "environment" | "motion" | "scale" | "composition" | "camera" | "lighting" | "style" | "material" | "palette" | "typography" | "format" | "brand" | "exclusion" | "accessibility" | "reference";
+export type BlockIntent = "include" | "prefer" | "avoid" | "prohibit";
+
+export const BLOCK_INTENTS: readonly { id: BlockIntent; label: string; description: string }[] = [
+  { id:"include", label:"Include", description:"Make this part of the result." },
+  { id:"prefer", label:"Prefer", description:"Favor this when it supports the direction." },
+  { id:"avoid", label:"Avoid", description:"Keep this out unless another explicit requirement overrides it." },
+  { id:"prohibit", label:"Never", description:"Treat this as a hard boundary that must not appear." },
+];
 
 export type BlockTypeDefinition = {
   type: BlockKind;
@@ -51,3 +59,11 @@ export const BLOCK_TYPES: readonly BlockTypeDefinition[] = [
 export const blockTypeDefinition = (type: string) => BLOCK_TYPES.find((definition) => definition.type === type);
 export const isBlockKind = (type: string): type is BlockKind => Boolean(blockTypeDefinition(type));
 export const suggestedSubtype = (type: string) => blockTypeDefinition(type)?.subtypes[0] ?? "General";
+export const isBlockIntent = (intent: string): intent is BlockIntent => BLOCK_INTENTS.some((definition) => definition.id === intent);
+export const blockIntentFor = (type: string, properties: Record<string, unknown>): BlockIntent => {
+  const intent = String(properties.intent ?? "");
+  if (isBlockIntent(intent)) return intent;
+  return type === "exclusion" ? "avoid" : "include";
+};
+export const isNegativeIntent = (intent: BlockIntent) => intent === "avoid" || intent === "prohibit";
+export const blockEffectFor = (type: string, properties: Record<string, unknown>) => isNegativeIntent(blockIntentFor(type, properties)) ? "must_not_include" : "shape_or_include";

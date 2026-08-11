@@ -4,7 +4,7 @@ import { foldEvents, type CreativeEvent, type CreativeProjection, type EventInpu
 import { buildScenario, type ScenarioKey } from "../model/scenarios";
 import type { ImageSample, ReferenceFindingKind } from "../model/extractors";
 import { readAttentionPreference, writeAttentionPreference } from "../model/attention";
-import type { AdaptiveStructure } from "../model/block-types";
+import { blockEffectFor, blockIntentFor, type AdaptiveStructure } from "../model/block-types";
 import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import { normalizeSpatialScope } from "../model/spatial-scope";
 
@@ -163,7 +163,7 @@ export class FormaStore {
   async generate() {
     const projection = this.projection.get(); this.busy.set("generate"); this.notify();
     try {
-      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "generate", expectedSequence: this.head.get(), snapshot: { facts: projection.blocks.map((b) => ({ type: b.type, handle: b.handle, effect: b.type === "exclusion" ? "must_not_include" : "shape_or_include", properties: { ...b.properties, spatial_scope: normalizeSpatialScope(b.properties.spatial_scope) }, authority: b.properties.authority ?? "authored", citations: b.sourceEvents })), pins: projection.outputs.filter((o) => o.pinned).map((o) => o.id), tail: [] }, sourceBlockVersions: projection.blocks.map((b) => ({ block_id: b.id, version: b.sourceEvents.length })) }) });
+      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "generate", expectedSequence: this.head.get(), snapshot: { facts: projection.blocks.map((b) => ({ type: b.type, role: b.type, intent: blockIntentFor(b.type, b.properties), handle: b.handle, effect: blockEffectFor(b.type, b.properties), properties: { ...b.properties, spatial_scope: normalizeSpatialScope(b.properties.spatial_scope) }, authority: b.properties.authority ?? "authored", citations: b.sourceEvents })), pins: projection.outputs.filter((o) => o.pinned).map((o) => o.id), tail: [] }, sourceBlockVersions: projection.blocks.map((b) => ({ block_id: b.id, version: b.sourceEvents.length })) }) });
       const body = await response.json() as { appended?: CreativeEvent[]; content?: Record<string, string>; head?: number; error?: string };
       if (body.appended?.length) { this.events.set([...this.events.get(), ...body.appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(body.appended); }
       if (body.content) this.content.set({ ...this.content.get(), ...body.content });

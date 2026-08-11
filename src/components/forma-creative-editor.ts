@@ -1,6 +1,6 @@
 import { html, nothing } from "lit";
 import type { CreativeBlock, EventInput } from "../model/events";
-import { BLOCK_TYPES, blockTypeDefinition, isBlockKind, suggestedSubtype, type BlockKind } from "../model/block-types";
+import { BLOCK_INTENTS, BLOCK_TYPES, blockIntentFor, blockTypeDefinition, isBlockIntent, isBlockKind, isNegativeIntent, suggestedSubtype, type BlockIntent, type BlockKind } from "../model/block-types";
 import { DEFAULT_REFERENCE_FINDINGS } from "../model/extractors";
 import { sampleImageFile } from "../model/image-sample";
 import { icon } from "./forma-element";
@@ -42,21 +42,29 @@ const FRIENDLY_LABELS: Record<BlockKind, string> = {
   typography: "Type",
   format: "Format",
   brand: "Brand behavior",
-  exclusion: "Avoid",
+  exclusion: "General constraint",
   accessibility: "Accessibility",
   reference: "Reference image",
 };
 
-const QUICK_TOOLS: readonly BlockKind[] = ["direction", "subject", "style", "lighting", "exclusion"];
+const QUICK_TOOLS: readonly { type: BlockKind; intent: BlockIntent; label?: string; description?: string }[] = [
+  { type:"direction", intent:"include" },
+  { type:"subject", intent:"include" },
+  { type:"style", intent:"include" },
+  { type:"lighting", intent:"include" },
+  { type:"subject", intent:"avoid", label:"Avoid", description:"Keep an unwanted subject, mood, color, material, or other reality out." },
+];
 const textFor = (item: CreativeBlock) => String(item.properties.text ?? item.properties.label ?? "Untitled");
 const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 42) || "item";
 const strengthFor = (weight: number) => weight >= .82 ? "lead" : weight >= .5 ? "balanced" : "supporting";
 const weightFor = (strength: string) => strength === "lead" ? .94 : strength === "supporting" ? .34 : .65;
+const intentCopy = (intent: BlockIntent) => intent === "prohibit" ? "Never use" : intent === "avoid" ? "Avoid" : intent === "prefer" ? "Prefer" : "Include";
 
 export class FormaCreativeEditor extends AlternativeStudio {
   #selectedId = "";
   #creating = false;
   #newType: BlockKind = "direction";
+  #newIntent: BlockIntent = "include";
   #newText = "";
   #newStrength = "balanced";
   #pendingReference: File | null = null;
@@ -70,9 +78,10 @@ export class FormaCreativeEditor extends AlternativeStudio {
     if (this.#pendingReference && reference && !reference.open) reference.showModal();
   }
 
-  #openCreate(type: BlockKind = "direction") {
+  #openCreate(type: BlockKind = "direction", intent: BlockIntent = "include") {
     if (type === "reference") return;
     this.#newType = type;
+    this.#newIntent = intent;
     this.#newText = "";
     this.#newStrength = "balanced";
     this.#creating = true;
@@ -155,9 +164,10 @@ export class FormaCreativeEditor extends AlternativeStudio {
           text,
           subtype: suggestedSubtype(this.#newType),
           weight: weightFor(this.#newStrength),
+          intent: this.#newIntent,
           authority: "authored",
           created_from: "creative-editor",
-          ...(this.#newType === "exclusion" ? { semantic_role: "negative_constraint" } : {}),
+          ...(isNegativeIntent(this.#newIntent) ? { semantic_role: "negative_constraint" } : {}),
         },
       },
     });
@@ -175,10 +185,14 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const strength = String(data.get("strength") ?? strengthFor(Number(item.properties.weight ?? .65)));
     const currentText = textFor(item);
     const nextType = String(data.get("item-type") ?? item.type);
+    const currentIntent = blockIntentFor(item.type, item.properties);
+    const nextIntent = String(data.get("item-intent") ?? currentIntent);
+    const storedIntent = String(item.properties.intent ?? "");
     const currentWeight = Number(item.properties.weight ?? .65);
     const nextWeight = weightFor(strength);
     const changes: EventInput[] = [];
     if (isBlockKind(nextType) && nextType !== item.type) changes.push({ type: "BlockPropertyEdited", payload: { block_id: item.id, property_path: "type", old_value: item.type, new_value: nextType, source_surface: "creative-editor-role" } });
+    if (isBlockIntent(nextIntent) && (nextIntent !== currentIntent || (nextType !== item.type && !isBlockIntent(storedIntent)))) changes.push({ type: "BlockPropertyEdited", payload: { block_id: item.id, property_path: "intent", old_value: currentIntent, new_value: nextIntent, source_surface: "creative-editor-intent" } });
     if (text && text !== currentText) changes.push({ type: "BlockPropertyEdited", payload: { block_id: item.id, property_path: item.properties.text === undefined ? "label" : "text", old_value: currentText, new_value: text, source_surface: "creative-editor" } });
     if (nextWeight !== currentWeight) changes.push({ type: "BlockWeightSet", payload: { block_id: item.id, weight: nextWeight, previous_weight: currentWeight, source_surface: "creative-editor" } });
     if (!changes.length) {
@@ -268,23 +282,25 @@ export class FormaCreativeEditor extends AlternativeStudio {
   }
 
   #sectionFor(item: CreativeBlock) {
+    if (isNegativeIntent(blockIntentFor(item.type, item.properties))) return EDITOR_SECTIONS[3];
     return EDITOR_SECTIONS.find((section) => section.types.includes(item.type as BlockKind)) ?? EDITOR_SECTIONS[3];
   }
 
   #itemCard(item: CreativeBlock) {
     const kind = item.type as BlockKind;
-    const negativeConstraint = kind === "exclusion";
+    const intent = blockIntentFor(item.type, item.properties);
+    const negativeConstraint = isNegativeIntent(intent);
     const selected = this.#selectedId === item.id;
     const included = Number(item.properties.weight ?? .65) > 0;
     const image = kind === "reference" ? String(item.properties.media_url ?? "") : "";
-    return html`<article class=${`creative-editor-item ${negativeConstraint ? "negative-constraint" : ""} ${selected ? "selected" : ""} ${included ? "" : "paused"}`} draggable="true"
+    return html`<article class=${`creative-editor-item intent-${intent} ${negativeConstraint ? "negative-constraint" : ""} ${selected ? "selected" : ""} ${included ? "" : "paused"}`} draggable="true"
       @dragstart=${(event: DragEvent) => this.#drag(event, item.id)}
       @dragover=${(event: DragEvent) => event.preventDefault()}
       @drop=${(event: DragEvent) => this.#drop(event, item.id)}>
       <button class="creative-editor-item-main" aria-pressed=${selected} @click=${() => { this.#selectedId = item.id; this.requestUpdate(); }}>
         ${image ? html`<img src=${image} alt=${textFor(item)} loading="lazy">` : html`<span class=${`editor-item-glyph editor-item-glyph--${this.#sectionFor(item).id}`}>${FRIENDLY_LABELS[kind].slice(0, 2)}</span>`}
-        <span><b>${FRIENDLY_LABELS[kind]}</b><small>${negativeConstraint ? `Must not include: ${textFor(item)}` : textFor(item)}</small><small class="creative-editor-item-scope">${spatialScopeLabel(item.properties.spatial_scope)}</small></span>
-        ${item.locked ? html`<em>Protected</em>` : negativeConstraint ? html`<em>Exclude</em>` : nothing}
+        <span><b>${intent === "include" ? FRIENDLY_LABELS[kind] : `${intentCopy(intent)} ${FRIENDLY_LABELS[kind].toLowerCase()}`}</b><small>${negativeConstraint ? `Must not include: ${textFor(item)}` : textFor(item)}</small><small class="creative-editor-item-scope">${spatialScopeLabel(item.properties.spatial_scope)}</small></span>
+        ${item.locked ? html`<em>Protected</em>` : intent !== "include" ? html`<em>${intentCopy(intent)}</em>` : nothing}
       </button>
       <button class="creative-editor-item-toggle" aria-pressed=${included} title=${included ? "Leave out of the next preview" : "Use in the next preview"} @click=${() => this.#toggle(item)}>${included ? "On" : "Off"}</button>
     </article>`;
@@ -293,14 +309,15 @@ export class FormaCreativeEditor extends AlternativeStudio {
   override render() {
     const projection = this.store.projection.get();
     const selected = projection.blocks.find((item) => item.id === this.#selectedId) ?? projection.blocks[0];
-    const selectedIsExclusion = selected?.type === "exclusion";
+    const selectedIntent = selected ? blockIntentFor(selected.type, selected.properties) : "include";
+    const selectedIsExclusion = isNegativeIntent(selectedIntent);
     const latest = projection.outputs[0];
     const blockIds = new Set(projection.blocks.map((item) => item.id));
     const previewOutdated = Boolean(latest && this.store.events.get().some((event) => event.sequence > latest.sequence && /^(BlockCreated|BlockPropertyEdited|BlockWeightSet|BlockRemoved|BlockRestored|ChipEdited)$/.test(event.type) && (event.payload.document_id === projection.documentId || blockIds.has(String(event.payload.block_id ?? "")))));
     const preview = this.#previewCopy();
-    const direction = projection.blocks.find((item) => item.type === "direction" && Number(item.properties.weight ?? .65) > 0);
-    const subject = projection.blocks.find((item) => item.type === "subject" && Number(item.properties.weight ?? .65) > 0);
-    const look = projection.blocks.find((item) => ["style", "lighting", "palette", "material"].includes(item.type) && Number(item.properties.weight ?? .65) > 0);
+    const direction = projection.blocks.find((item) => item.type === "direction" && !isNegativeIntent(blockIntentFor(item.type, item.properties)) && Number(item.properties.weight ?? .65) > 0);
+    const subject = projection.blocks.find((item) => item.type === "subject" && !isNegativeIntent(blockIntentFor(item.type, item.properties)) && Number(item.properties.weight ?? .65) > 0);
+    const look = projection.blocks.find((item) => ["style", "lighting", "palette", "material"].includes(item.type) && !isNegativeIntent(blockIntentFor(item.type, item.properties)) && Number(item.properties.weight ?? .65) > 0);
     const providerReady = Boolean(this.store.session.get()?.provider.configured);
     const body = html`
       <section class="creative-editor" aria-label="Creative document editor">
@@ -318,7 +335,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
           <aside class="creative-editor-tools" aria-label="Add creative material">
             <header><span>Tools</span><h2>Add to the plan</h2><p>Choose what you want to shape. The editor will put it in the right place.</p></header>
             <div class="creative-quick-tools">
-              ${QUICK_TOOLS.map((type) => html`<button @click=${() => this.#openCreate(type)}><span>${FRIENDLY_LABELS[type].slice(0, 2)}</span><b>${FRIENDLY_LABELS[type]}</b><small>${blockTypeDefinition(type)?.description}</small></button>`)}
+              ${QUICK_TOOLS.map((tool) => html`<button @click=${() => this.#openCreate(tool.type, tool.intent)}><span>${(tool.label ?? FRIENDLY_LABELS[tool.type]).slice(0, 2)}</span><b>${tool.label ?? FRIENDLY_LABELS[tool.type]}</b><small>${tool.description ?? blockTypeDefinition(tool.type)?.description}</small></button>`)}
             </div>
             <button class="creative-tool-more" @click=${() => this.#openCreate()}>${icon("plus")} More ways to shape the work</button>
             <label class="creative-reference-tool">${icon("image")}<span><b>Add an image</b><small>Use a visual reference</small></span><input type="file" accept="image/*" @change=${this.#queueReference}></label>
@@ -342,7 +359,10 @@ export class FormaCreativeEditor extends AlternativeStudio {
               <header><div><span>One-page plan</span><h2>Everything shaping the work</h2></div><small>Select anything to edit it. Drag to change the reading order.</small></header>
               <div class="creative-plan-sections">
                 ${EDITOR_SECTIONS.map((section) => {
-                  const items = projection.blocks.filter((item) => section.types.includes(item.type as BlockKind));
+                  const items = projection.blocks.filter((item) => {
+                    const negative = isNegativeIntent(blockIntentFor(item.type, item.properties));
+                    return section.id === "delivery" ? negative || section.types.includes(item.type as BlockKind) : !negative && section.types.includes(item.type as BlockKind);
+                  });
                   return html`<section class=${`creative-plan-section creative-plan-section--${section.id}`}>
                     <header><div><h3>${section.label}</h3><p>${section.description}</p></div><button aria-label=${`Add to ${section.label}`} @click=${() => section.starter === "reference" ? this.querySelector<HTMLInputElement>(".creative-reference-tool input")?.click() : this.#openCreate(section.starter)}>${icon("plus")}</button></header>
                     <div>${items.length ? items.map((item) => this.#itemCard(item)) : html`<button class="creative-section-empty" @click=${() => section.starter === "reference" ? this.querySelector<HTMLInputElement>(".creative-reference-tool input")?.click() : this.#openCreate(section.starter)}>Add ${FRIENDLY_LABELS[section.starter].toLowerCase()}</button>`}</div>
@@ -354,13 +374,15 @@ export class FormaCreativeEditor extends AlternativeStudio {
 
           <aside class=${`creative-editor-inspector ${selectedIsExclusion ? "negative-constraint" : ""}`} aria-label="Selected item settings">
             ${selected ? html`<form @submit=${(event: SubmitEvent) => this.#save(event, selected)}>
-              <header><span>${selectedIsExclusion ? "Guardrail selected" : "Selected"}</span><h2>${FRIENDLY_LABELS[selected.type as BlockKind]}</h2><p>${selectedIsExclusion ? "This is a negative constraint. It tells the preview what must not appear; it never becomes a subject, goal, or positive direction." : "Change the wording and how strongly it should shape the next preview."}</p></header>
+              <header><span>${selectedIsExclusion ? "Guardrail selected" : "Selected"}</span><h2>${selectedIntent === "include" ? FRIENDLY_LABELS[selected.type as BlockKind] : `${intentCopy(selectedIntent)} ${FRIENDLY_LABELS[selected.type as BlockKind].toLowerCase()}`}</h2><p>${selectedIsExclusion ? `This is a negative ${FRIENDLY_LABELS[selected.type as BlockKind].toLowerCase()} constraint. It tells the preview what must not appear; it never becomes a positive focus.` : "Change the role, intent, wording, and influence of this decision."}</p></header>
               ${selected.type === "reference" && selected.properties.media_url ? html`<img class="creative-inspector-image" src=${String(selected.properties.media_url)} alt=${textFor(selected)}>` : nothing}
               <label><span>Role in the plan</span><select name="item-type" ?disabled=${selected.locked}>${BLOCK_TYPES.map((item) => html`<option value=${item.type} ?selected=${item.type === selected.type}>${FRIENDLY_LABELS[item.type]}</option>`)}</select></label>
+              <label><span>Intent</span><select name="item-intent" ?disabled=${selected.locked}>${BLOCK_INTENTS.map((intent) => html`<option value=${intent.id} ?selected=${intent.id === selectedIntent}>${intent.label} · ${intent.description}</option>`)}</select></label>
+              <div class="creative-role-intent-summary"><b>${intentCopy(selectedIntent)} · ${FRIENDLY_LABELS[selected.type as BlockKind]}</b><small>${spatialScopeLabel(selected.properties.spatial_scope)}</small></div>
               <label><span>${selectedIsExclusion ? "What must the work avoid?" : "What should it say?"}</span><textarea name="copy" rows="6" .value=${textFor(selected)} ?disabled=${selected.locked}></textarea></label>
               <fieldset ?disabled=${selected.locked}>
                 <legend>${selectedIsExclusion ? "How strictly should it be excluded?" : "How much should it lead?"}</legend>
-                ${(selectedIsExclusion ? [["supporting", "Prefer avoiding"], ["balanced", "Avoid"], ["lead", "Never include"]] : [["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]]).map(([value, label]) => html`<label><input type="radio" name="strength" value=${value} .checked=${strengthFor(Number(selected.properties.weight ?? .65)) === value}><span>${label}</span></label>`)}
+                ${(selectedIsExclusion ? [["supporting", "Gentle"], ["balanced", "Standard"], ["lead", "Strict"]] : [["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]]).map(([value, label]) => html`<label><input type="radio" name="strength" value=${value} .checked=${strengthFor(Number(selected.properties.weight ?? .65)) === value}><span>${label}</span></label>`)}
               </fieldset>
               <button class="button primary" ?disabled=${selected.locked}>${selectedIsExclusion ? "Save guardrail" : "Save changes"}</button>
               <div class="creative-inspector-order"><button type="button" @click=${() => this.#move(selected, -1)}>↑ Earlier</button><button type="button" @click=${() => this.#move(selected, 1)}>↓ Later</button></div>
@@ -377,10 +399,11 @@ export class FormaCreativeEditor extends AlternativeStudio {
       ${this.#creating ? html`<dialog class="modal creative-add-dialog" closedby="any" aria-labelledby="creative-add-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) this.#closeCreate(); }} @cancel=${(event: Event) => { event.preventDefault(); this.#closeCreate(); }}>
         <form class="modal-card creative-add-card" @submit=${this.#create}>
           <button type="button" class="icon-button modal-close" aria-label="Close" @click=${this.#closeCreate}>${icon("close")}</button>
-          <span class="eyebrow">Add to the plan</span><h2 id="creative-add-title">What do you want to shape?</h2><p>${this.#newType === "exclusion" ? "Name something that must not appear. It will be stored and compiled as a negative guardrail, never as the subject of the work." : "Choose the closest fit and write the instruction in everyday language. You can change it later."}</p>
+          <span class="eyebrow">Add to the plan</span><h2 id="creative-add-title">What should the plan do?</h2><p>${isNegativeIntent(this.#newIntent) ? "Choose what kind of decision this is, then name what must stay out. The role remains explicit while the intent compiles as a negative guardrail." : "Choose what the instruction concerns and how the plan should treat it. You can change both later."}</p>
           <label><span>Role in the plan</span><select @change=${(event: Event) => { this.#newType = (event.target as HTMLSelectElement).value as BlockKind; this.requestUpdate(); }}>${BLOCK_TYPES.filter((item) => item.type !== "reference").map((item) => html`<option value=${item.type} ?selected=${item.type === this.#newType}>${FRIENDLY_LABELS[item.type]}</option>`)}</select></label>
-          <label><span>${this.#newType === "exclusion" ? "What must be excluded?" : "Your instruction"}</span><textarea autofocus required rows="4" placeholder=${this.#newType === "exclusion" ? "For example: people under 20 years old" : blockTypeDefinition(this.#newType)?.prompt} .value=${this.#newText} @input=${(event: InputEvent) => { this.#newText = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea></label>
-          <fieldset><legend>${this.#newType === "exclusion" ? "How strictly should it be excluded?" : "How much should it lead?"}</legend>${(this.#newType === "exclusion" ? [["supporting", "Prefer avoiding"], ["balanced", "Avoid"], ["lead", "Never include"]] : [["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]]).map(([value, label]) => html`<label><input type="radio" name="new-strength" value=${value} .checked=${this.#newStrength === value} @change=${() => { this.#newStrength = value; this.requestUpdate(); }}><span>${label}</span></label>`)}</fieldset>
+          <label><span>Intent</span><select @change=${(event: Event) => { this.#newIntent = (event.target as HTMLSelectElement).value as BlockIntent; this.requestUpdate(); }}>${BLOCK_INTENTS.map((intent) => html`<option value=${intent.id} ?selected=${intent.id === this.#newIntent}>${intent.label} · ${intent.description}</option>`)}</select></label>
+          <label><span>${isNegativeIntent(this.#newIntent) ? `What ${FRIENDLY_LABELS[this.#newType].toLowerCase()} must be excluded?` : "Your instruction"}</span><textarea autofocus required rows="4" placeholder=${isNegativeIntent(this.#newIntent) ? `For example: ${this.#newType === "subject" ? "people under 20 years old" : `an unwanted ${FRIENDLY_LABELS[this.#newType].toLowerCase()}`}` : blockTypeDefinition(this.#newType)?.prompt} .value=${this.#newText} @input=${(event: InputEvent) => { this.#newText = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea></label>
+          <fieldset><legend>${isNegativeIntent(this.#newIntent) ? "How strongly should this guardrail apply?" : "How much should it lead?"}</legend>${(isNegativeIntent(this.#newIntent) ? [["supporting", "Gentle"], ["balanced", "Standard"], ["lead", "Strict"]] : [["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]]).map(([value, label]) => html`<label><input type="radio" name="new-strength" value=${value} .checked=${this.#newStrength === value} @change=${() => { this.#newStrength = value; this.requestUpdate(); }}><span>${label}</span></label>`)}</fieldset>
           <footer><button type="button" class="button ghost" @click=${this.#closeCreate}>Cancel</button><button class="button primary" ?disabled=${!this.#newText.trim()}>Add to plan</button></footer>
         </form>
       </dialog>` : nothing}
