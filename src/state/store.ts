@@ -4,6 +4,7 @@ import { foldEvents, type CreativeEvent, type CreativeProjection, type EventInpu
 import { buildScenario, type ScenarioKey } from "../model/scenarios";
 import type { ImageSample } from "../model/extractors";
 import { readAttentionPreference, writeAttentionPreference } from "../model/attention";
+import type { AdaptiveStructure } from "../model/block-types";
 
 type Listener = () => void;
 export type PilotSession = {
@@ -27,7 +28,7 @@ export class FormaStore {
   readonly session = new Signal.State<PilotSession | null>(null);
   readonly content = new Signal.State<Record<string, string>>({});
   readonly shares = new Signal.State<ShareRecord[]>([]);
-  readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, instrumentation: true, attentionCapture: readAttentionPreference(), attentionPaused: false, selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", libraryView: "all", libraryOutputScope: "recent", search: "", toast: "" });
+  readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, projectRailCollapsed: false, instrumentation: true, attentionCapture: readAttentionPreference(), attentionPaused: false, selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", libraryView: "all", libraryOutputScope: "recent", search: "", toast: "" });
   readonly projection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.events.get(), this.asOf.get()));
   readonly replayProjection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.replayEvents.get(), this.replayAsOf.get()));
   #listeners = new Set<Listener>();
@@ -121,6 +122,11 @@ export class FormaStore {
       await this.refreshSession(); this.toast(`Generated with ${this.session.get()?.provider.model ?? "OpenAI"}; provenance and usage recorded.`);
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
     finally { this.busy.set(""); this.notify(); }
+  }
+
+  async structureAdaptive(prompt:string) {
+    this.busy.set("adaptive-structure");this.notify();
+    try{const response=await fetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"structure_adaptive",prompt,expectedSequence:this.head.get(),clientId:"web:adaptive-path"})});const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;structure?:AdaptiveStructure;error?:string};if(body.appended?.length){this.events.set([...this.events.get(),...body.appended]);this.head.set(body.head??this.head.get());this.#publishAppended(body.appended);}if(body.content)this.content.set({...this.content.get(),...body.content});if(!response.ok)throw new Error(body.error==="provider_not_configured"?"Connect the OpenAI provider before asking Forma to structure this path.":body.error??"Forma could not structure that intent");this.toast("Forma proposed an adaptive structure. Review each suggestion before applying it.");return body.structure??null;}catch(error){this.toast(error instanceof Error?error.message:"Forma could not structure that intent");return null;}finally{this.busy.set("");this.notify();}
   }
 
   async openProject(projectId:string,destination="/") {

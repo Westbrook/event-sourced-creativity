@@ -4,6 +4,7 @@ import "./forma-workspace";
 import "./forma-projects";
 import "./forma-project-contents";
 import "./forma-studio-alternatives";
+import "./forma-studio-editor-alternatives";
 import "./forma-library";
 import "./forma-sessions";
 import "./forma-scout";
@@ -40,6 +41,8 @@ export class FormaShell extends FormaElement {
     if (path.startsWith("/studio/project")) return html`<forma-project-contents></forma-project-contents>`;
     if (path.startsWith("/studio/board")) return html`<forma-context-board></forma-context-board>`;
     if (path.startsWith("/studio/guided")) return html`<forma-guided-brief></forma-guided-brief>`;
+    if (path.startsWith("/studio/layers")) return html`<forma-reality-layers></forma-reality-layers>`;
+    if (path.startsWith("/studio/adaptive")) return html`<forma-adaptive-path></forma-adaptive-path>`;
     if (path.startsWith("/admin/events")) return html`<forma-admin-events></forma-admin-events>`;
     if (path.startsWith("/library")) return html`<forma-library></forma-library>`;
     if (path.startsWith("/sessions")) return html`<forma-sessions></forma-sessions>`;

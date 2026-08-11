@@ -1,21 +1,22 @@
 import { html } from "lit";
 import { FormaElement, icon } from "./forma-element";
 
-type StudioMode = "document" | "project" | "board" | "guided";
+type StudioMode = "document" | "project" | "board" | "guided" | "layers" | "adaptive";
 
 const modes: Array<{ id: StudioMode; label: string; path: string }> = [
   { id: "document", label: "Document", path: "/" },
-  { id: "project", label: "Project contents", path: "/studio/project" },
   { id: "board", label: "Context board", path: "/studio/board" },
   { id: "guided", label: "Guided brief", path: "/studio/guided" },
+  { id: "layers", label: "Reality layers", path: "/studio/layers" },
+  { id: "adaptive", label: "Adaptive path", path: "/studio/adaptive" },
 ];
 
 export class StudioModeNav extends FormaElement {
   override render() {
     const active=(this.getAttribute("active")??"document") as StudioMode;
     return html`<nav class="studio-mode-nav" aria-label="Studio views">
-      <span>Studio view</span>
-      <div>${modes.map((mode)=>html`<a href=${mode.path} class=${active===mode.id?"active":""} aria-current=${active===mode.id?"page":"false"} @click=${(event:MouseEvent)=>{event.preventDefault();this.store.setRoute(mode.path);window.scrollTo({top:0});}}>${mode.label}</a>`)}</div>
+      <a href="/studio/project" class=${`studio-project-overview ${active==="project"?"active":""}`} aria-current=${active==="project"?"page":"false"} @click=${(event:MouseEvent)=>{event.preventDefault();this.store.setRoute("/studio/project");window.scrollTo({top:0});}}>${icon("folder")}<span><small>Project-level</small><b>Project overview</b></span>${icon("arrow")}</a>
+      <div class="document-view-picker"><span>Document view</span><div>${modes.map((mode)=>html`<a href=${mode.path} class=${active===mode.id?"active":""} aria-current=${active===mode.id?"page":"false"} @click=${(event:MouseEvent)=>{event.preventDefault();this.store.setRoute(mode.path);window.scrollTo({top:0});}}>${mode.label}</a>`)}</div></div>
     </nav>`;
   }
 }

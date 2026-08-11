@@ -100,7 +100,7 @@ test("records the accepted provider debt and makes the extractor gate operationa
 });
 
 test("runs the Phase 6 pilot from event-derived sessions instead of brief fixtures", async () => {
-  const [eventsApi, store, sessions, briefModel, contextBlock, workspace, library, referenceImage, palettePicker, classification] = await Promise.all([
+  const [eventsApi, store, sessions, briefModel, contextBlock, workspace, library, referenceImage, palettePicker, classification, blockTypes] = await Promise.all([
     readFile(new URL("../worker/events-api.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/state/store.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-sessions.ts", import.meta.url), "utf8"),
@@ -111,6 +111,7 @@ test("runs the Phase 6 pilot from event-derived sessions instead of brief fixtur
     readFile(new URL("../src/components/reference-image.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/reference-palette-picker.ts", import.meta.url), "utf8"),
     readFile(new URL("../docs/event-classification.csv", import.meta.url), "utf8"),
+    readFile(new URL("../src/model/block-types.ts", import.meta.url), "utf8"),
   ]);
   assert.match(eventsApi, /open_session/); assert.match(eventsApi, /close_session/); assert.match(eventsApi, /compose_brief/); assert.match(eventsApi, /declare_intent/);
   assert.doesNotMatch(eventsApi, /brief-today/);
@@ -122,7 +123,7 @@ test("runs the Phase 6 pilot from event-derived sessions instead of brief fixtur
   assert.match(eventsApi, /DocumentRenamed/); assert.match(classification, /DocumentRenamed,user_content/); assert.match(workspace, /Rename document/);
   assert.match(workspace, /This document is empty/); assert.match(workspace, /New authored block/); assert.match(contextBlock, /block-editor/);
   assert.match(contextBlock, /forma-reference-image/); assert.match(library, /forma-reference-image/); assert.match(referenceImage, /<img/);
-  assert.match(workspace, /upload-rights-modal/); assert.doesNotMatch(workspace, /window\.confirm/); assert.match(workspace, /type:"subject"/); assert.match(workspace, /type:"exclusion"/);
+  assert.match(workspace, /upload-rights-modal/); assert.doesNotMatch(workspace, /window\.confirm/); assert.match(workspace, /BLOCK_TYPES/); assert.match(blockTypes, /type:"subject"/); assert.match(blockTypes, /type:"exclusion"/);
   assert.match(referenceImage, /reference-viewer/); assert.doesNotMatch(referenceImage, /target="_blank"/);
   assert.match(contextBlock, /text\/forma-block-id/); assert.match(contextBlock, /BlockRemoved/); assert.match(contextBlock, /Explore palettes/);
   assert.match(palettePicker, /palette_strategy/); assert.match(palettePicker, /getImageData/); assert.match(palettePicker, /source_reference_block_id/);
@@ -183,7 +184,7 @@ test("makes closeable dialogs light-dismissable with a compatibility fallback", 
 });
 
 test("connects the final Library and Studio affordances to explicit destinations", async()=>{
-  const [library,workspace,collections,projectRail,store,eventsModel,eventsApi,outputCard,styles,shell,system,classification,contents,projects,alternatives,navigation]=await Promise.all([
+  const [library,workspace,collections,projectRail,store,eventsModel,eventsApi,outputCard,styles,shell,system,classification,contents,projects,alternatives,navigation,editorAlternatives,blockTypes,adapter]=await Promise.all([
     readFile(new URL("../src/components/forma-library.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/components/forma-workspace.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/components/collection-tree.ts",import.meta.url),"utf8"),
@@ -200,6 +201,9 @@ test("connects the final Library and Studio affordances to explicit destinations
     readFile(new URL("../src/components/forma-projects.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/components/forma-studio-alternatives.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/components/studio-navigation.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-studio-editor-alternatives.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/model/block-types.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/openai-adapter.ts",import.meta.url),"utf8"),
   ]);
   assert.match(library,/Use in open document/);assert.match(library,/focused preview/i);assert.match(library,/Generated with this block/);assert.match(library,/Open family lightbox/);
   assert.match(library,/Keep for reuse/);assert.match(library,/Recent shows the project trail/);assert.doesNotMatch(library,/Project contents|Open in Studio/);
@@ -209,10 +213,14 @@ test("connects the final Library and Studio affordances to explicit destinations
   assert.match(eventsModel,/DocumentRemoved/);assert.match(eventsApi,/DocumentRemoved/);assert.match(store,/removeDocument/);assert.match(classification,/DocumentRemoved,user_content/);
   assert.match(collections,/File open document/);assert.match(collections,/New nested collection/);assert.match(collections,/collection-dialog/);assert.doesNotMatch(collections,/window\.prompt/);
   assert.match(workspace,/project-settings-dialog/);assert.match(workspace,/type:BlockKind/);assert.match(workspace,/block-composer-dialog/);
-  assert.match(workspace,/forma-project-rail surface="studio"/);assert.match(library,/forma-project-rail surface="library"/);assert.match(projectRail,/Library overview/);assert.match(projectRail,/Project contents/);assert.doesNotMatch(projectRail,/All documents/);assert.match(projectRail,/No auto-filing/);
+  assert.match(workspace,/forma-project-rail surface="studio"/);assert.match(library,/forma-project-rail surface="library"/);assert.match(projectRail,/Library overview/);assert.match(projectRail,/Project overview/);assert.doesNotMatch(projectRail,/All documents/);assert.match(projectRail,/No auto-filing/);assert.match(projectRail,/rail-collapse-toggle/);
   assert.match(workspace,/studio-document-delete-dialog/);assert.match(contents,/project-document-delete-dialog/);assert.match(`${workspace}${contents}`,/Remove document/);
-  assert.match(shell,/this\.#route\("\/projects"\)/);assert.match(projects,/New project/);assert.match(navigation,/Context board/);assert.match(navigation,/Guided brief/);
+  assert.match(shell,/this\.#route\("\/projects"\)/);assert.match(projects,/New project/);assert.match(navigation,/Context board/);assert.match(navigation,/Guided brief/);assert.match(navigation,/Reality layers/);assert.match(navigation,/Adaptive path/);
   assert.match(alternatives,/created_from:"context-board"/);assert.match(alternatives,/created_from:"guided-brief"/);assert.match(alternatives,/forma-studio-navigator/);
+  assert.match(editorAlternatives,/application\/x-forma-reality/);assert.match(editorAlternatives,/created_from:"reality-layers"/);assert.match(editorAlternatives,/BlockWeightSet/);assert.match(editorAlternatives,/created_from:"adaptive-path"/);assert.match(editorAlternatives,/related_block_ids/);
+  assert.match(editorAlternatives,/layer-create-dialog/);assert.match(editorAlternatives,/Save layer/);assert.match(editorAlternatives,/Duplicate/);assert.match(editorAlternatives,/structureAdaptive/);assert.match(eventsApi,/structure_adaptive/);assert.match(adapter,/forma_adaptive_structure/);
+  assert.match(blockTypes,/type:"audience"/);assert.match(blockTypes,/type:"environment"/);assert.match(blockTypes,/type:"accessibility"/);assert.match(workspace,/System-suggested subtype/);
+  assert.match(shell,/forma-reality-layers/);assert.match(shell,/forma-adaptive-path/);assert.match(styles,/\.reality-editor/);assert.match(styles,/\.adaptive-workspace/);
   assert.doesNotMatch(`${workspace}${library}${styles}`,/studio-sidebar|library-tree/);assert.match(styles,/\.project-rail/);
   assert.match(workspace,/\?disabled=\$\{!canCompare\}/);assert.match(store,/canUndo/);assert.match(store,/canRedo/);assert.match(styles,/\.document-bar \{ position: sticky/);
   assert.match(outputCard,/Taste evidence/);assert.match(outputCard,/taste-axis-grid/);assert.match(outputCard,/Record taste evidence/);

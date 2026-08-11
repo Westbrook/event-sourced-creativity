@@ -4,17 +4,14 @@ import { contextDiff, foldEvents, shortEventType, type EventInput } from "../mod
 import { sampleImageFile } from "../model/image-sample";
 import type { ImageSample } from "../model/extractors";
 import { retrieveFewShotExemplars, type RetrievedExemplar } from "../model/indexing";
+import { BLOCK_TYPES, blockTypeDefinition, suggestedSubtype, type BlockKind } from "../model/block-types";
 import "./context-block";
 import "./output-card";
 import "./project-rail";
 import "./studio-navigation";
 
-type BlockKind = "direction"|"subject"|"composition"|"style"|"lighting"|"exclusion"|"palette"|"reference";
-type BlockDraft = { type: BlockKind|""; text: string; colors: string[] };
-const BLOCK_KINDS: Array<{type:BlockKind;label:string;description:string}> = [
-  {type:"direction",label:"Direction",description:"A broad creative intention"},{type:"subject",label:"Subject",description:"What the work depicts"},{type:"composition",label:"Composition",description:"Framing, balance, and spatial structure"},{type:"style",label:"Style",description:"Visual language and treatment"},
-  {type:"lighting",label:"Lighting",description:"Light, atmosphere, and time"},{type:"exclusion",label:"Exclusion",description:"Something the work must avoid"},{type:"palette",label:"Palette",description:"An authored set of colors"},{type:"reference",label:"Reference",description:"An owned or licensed image"},
-];
+type BlockDraft = { type: BlockKind|""; subtype: string; text: string; colors: string[] };
+const BLOCK_KINDS = BLOCK_TYPES;
 
 export class FormaWorkspace extends FormaElement {
   #prompt = "";
@@ -29,13 +26,13 @@ export class FormaWorkspace extends FormaElement {
   }
 
   #beginBlock() {
-    this.#blockDraft = {type:"",text:"",colors:["#27252b","#e9a073","#e8d7bd","#8a6571"]}; this.requestUpdate();
+    this.#blockDraft = {type:"",subtype:"",text:"",colors:["#27252b","#e9a073","#e8d7bd","#8a6571"]}; this.requestUpdate();
   }
   #closeBlock(){this.querySelector<HTMLDialogElement>(".block-composer-dialog")?.close();this.#blockDraft=null;this.requestUpdate();}
   async #addBlock(event: SubmitEvent) {
     event.preventDefault(); const draft = this.#blockDraft; const text = draft?.text.trim(); if (!draft?.type || draft.type === "reference" || !text) return;
     const blockId = crypto.randomUUID(); const slug = text.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"").slice(0,42) || `study-${this.store.head.get()+1}`;
-    const properties = draft.type === "palette" ? {label:text,colors:draft.colors,weight:.64,authority:"authored"} : {text,weight:.64,authority:"authored"};
+    const properties = draft.type === "palette" ? {label:text,colors:draft.colors,subtype:draft.subtype||suggestedSubtype(draft.type),weight:.64,authority:"authored"} : {text,subtype:draft.subtype||suggestedSubtype(draft.type),weight:.64,authority:"authored"};
     const appended = await this.store.append({ type: "BlockCreated", payload: { block_id: blockId, type: draft.type, handle: `${draft.type}/${slug}`, position: `z${String(this.store.head.get()+1).padStart(4,"0")}`, properties } });
     if (appended.length) { this.#closeBlock(); this.store.patchUi({ focusBlockId: blockId }); }
   }
@@ -57,7 +54,7 @@ export class FormaWorkspace extends FormaElement {
       await this.store.appendBatch([
         { type: "ReferenceIngested", payload: { reference_id: ref, source_type: "upload", source_ref: media.url, content_hash: media.key, rights_class: "asserted" } },
         { type: "RightsAsserted", payload: { reference_id: ref, rights_class: "owned_or_licensed", assertion_method: "explicit-upload-confirmation" } },
-        { type: "BlockCreated", payload: { block_id: block, type: "reference", handle: `reference/${file.name.replace(/\W+/g,"-").toLowerCase()}`, position: `z${this.store.head.get()}`, properties: { reference_id: ref, label: file.name, media_url: media.url, weight: .72, authority: "authored", extraction_status: sample ? "pending" : "unavailable" } } },
+        { type: "BlockCreated", payload: { block_id: block, type: "reference", handle: `reference/${file.name.replace(/\W+/g,"-").toLowerCase()}`, position: `z${this.store.head.get()}`, properties: { reference_id: ref, label: file.name, media_url: media.url, subtype: "Mood", weight: .72, authority: "authored", extraction_status: sample ? "pending" : "unavailable" } } },
       ]);
       if (sample) await this.store.extractReference(block, ref, sample); else this.store.toast("Reference stored; deterministic extraction is unavailable in this browser.");
       this.#pendingUpload = null; this.#rightsConfirmed = false; this.#blockDraft = null; this.#resetFileInputs();
@@ -65,10 +62,9 @@ export class FormaWorkspace extends FormaElement {
     this.#uploading = false; this.requestUpdate();
   }
   #blockComposer() {
-    const draft = this.#blockDraft; if (!draft) return nothing; const selected = BLOCK_KINDS.find((option)=>option.type===draft.type);
-    const placeholders:Record<string,string>={direction:"Describe the overall direction…",subject:"What should the work depict?",composition:"Describe the framing or structure…",style:"Describe the visual style…",lighting:"Describe the light and atmosphere…",exclusion:"What should the work avoid?",palette:"Name this palette…"};
+    const draft = this.#blockDraft; if (!draft) return nothing; const selected = blockTypeDefinition(draft.type);
     return html`<dialog class="modal workspace-modal block-composer-dialog" closedby="any" aria-labelledby="block-composer-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeBlock();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeBlock();}} @close=${()=>{if(this.#blockDraft){this.#blockDraft=null;this.requestUpdate();}}}><form class="modal-card wide block-composer" @submit=${this.#addBlock}><button type="button" class="icon-button modal-close" aria-label="Close authored block dialog" @click=${this.#closeBlock}>${icon("close")}</button><header><div><span class="eyebrow">New authored block</span><h3 id="block-composer-title">${selected?selected.label:"Choose a block type"}</h3><p>${selected?.description??"Each type compiles differently and remains independently editable."}</p></div>${selected?html`<button type="button" class="text-button" @click=${()=>{draft.type="";this.requestUpdate();}}>Choose another type</button>`:nothing}</header>
-      ${!draft.type?html`<div class="block-type-grid">${BLOCK_KINDS.map((option)=>html`<button type="button" @click=${()=>{draft.type=option.type;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLElement>(".block-composer textarea,.block-composer input")?.focus());}}><span>${option.label.slice(0,2).toUpperCase()}</span><b>${option.label}</b><small>${option.description}</small></button>`)}</div>`:draft.type==="reference"?html`<div class="reference-choice"><span>${icon("image")}</span><div><b>Choose an image reference</b><small>Its bytes stay in private object storage; rights are confirmed before upload.</small></div><label class="button primary">Choose image<input type="file" accept="image/*" @change=${this.#queueUpload}></label></div>`:draft.type==="palette"?html`<label class="block-draft-copy">Palette name<input maxlength="120" placeholder=${placeholders.palette} .value=${draft.text} @input=${(event:InputEvent)=>{draft.text=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label><div class="draft-palette">${draft.colors.map((color,index)=>html`<label><input type="color" .value=${color} @input=${(event:InputEvent)=>{draft.colors=draft.colors.map((value,position)=>position===index?(event.target as HTMLInputElement).value:value);this.requestUpdate();}}><span style=${`--swatch:${color}`}></span><small>${color}</small></label>`)}</div>`:html`<label class="block-draft-copy">${selected?.label} content<textarea rows="3" placeholder=${placeholders[draft.type]} .value=${draft.text} @input=${(event:InputEvent)=>{draft.text=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}}></textarea></label>`}
+      ${!draft.type?html`<div class="block-type-grid">${BLOCK_KINDS.map((option)=>html`<button type="button" @click=${()=>{draft.type=option.type;draft.subtype=option.subtypes[0];this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLElement>(".block-composer textarea,.block-composer input")?.focus());}}><span>${option.label.slice(0,2).toUpperCase()}</span><b>${option.label}</b><small>${option.description}</small></button>`)}</div>`:html`<fieldset class="subtype-picker"><legend>System-suggested subtype</legend>${selected?.subtypes.map((subtype)=>html`<label><input type="radio" name="block-subtype" .value=${subtype} .checked=${draft.subtype===subtype} @change=${()=>{draft.subtype=subtype;this.requestUpdate();}}><span>${subtype}</span></label>`)}</fieldset>${draft.type==="reference"?html`<div class="reference-choice"><span>${icon("image")}</span><div><b>Choose an image reference</b><small>Its bytes stay in private object storage; rights are confirmed before upload.</small></div><label class="button primary">Choose image<input type="file" accept="image/*" @change=${this.#queueUpload}></label></div>`:draft.type==="palette"?html`<label class="block-draft-copy">Palette name<input maxlength="120" placeholder=${selected?.prompt} .value=${draft.text} @input=${(event:InputEvent)=>{draft.text=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label><div class="draft-palette">${draft.colors.map((color,index)=>html`<label><input type="color" .value=${color} @input=${(event:InputEvent)=>{draft.colors=draft.colors.map((value,position)=>position===index?(event.target as HTMLInputElement).value:value);this.requestUpdate();}}><span style=${`--swatch:${color}`}></span><small>${color}</small></label>`)}</div>`:html`<label class="block-draft-copy">${selected?.label} content<textarea rows="3" placeholder=${selected?.prompt} .value=${draft.text} @input=${(event:InputEvent)=>{draft.text=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}}></textarea></label>`}`}
       <footer><button type="button" class="button ghost" @click=${this.#closeBlock}>Cancel</button>${draft.type&&draft.type!=="reference"?html`<button type="submit" class="button primary" ?disabled=${!draft.text.trim()}>Add ${selected?.label.toLowerCase()}</button>`:nothing}</footer></form></dialog>`;
   }
   #proposedEvents(prompt:string):EventInput[]{
@@ -76,7 +72,7 @@ export class FormaWorkspace extends FormaElement {
     if(/warm|cool|temperature/.test(lower)&&palette)return[{type:"BlockPropertyEdited",payload:{block_id:palette.id,property_path:"temperature",old_value:palette.properties.temperature??"neutral",new_value:/cool/.test(lower)?"cooler":"warmer"}}];
     const type:BlockKind=/avoid|exclude|without|no\s/.test(lower)?"exclusion":/composit|framing|layout|balance/.test(lower)?"composition":/light|shadow|dusk|daylight/.test(lower)?"lighting":/palette|color|colour|hue/.test(lower)?"palette":/subject|depict|show|feature/.test(lower)?"subject":/style|texture|treatment|aesthetic/.test(lower)?"style":"direction";
     const blockId=crypto.randomUUID();const slug=prompt.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"").slice(0,38)||`chat-${this.store.head.get()}`;
-    const properties=type==="palette"?{label:prompt,colors:["#27252b","#e9a073","#e8d7bd","#8a6571"],authority:"authored",weight:.7}:{text:prompt,authority:"authored",weight:.7};
+    const properties=type==="palette"?{label:prompt,colors:["#27252b","#e9a073","#e8d7bd","#8a6571"],subtype:suggestedSubtype(type),authority:"authored",weight:.7}:{text:prompt,subtype:suggestedSubtype(type),authority:"authored",weight:.7};
     return[{type:"BlockCreated",payload:{block_id:blockId,document_id:projection.documentId,type,handle:`${type}/${slug}`,position:`z${this.store.head.get()}`,properties}}];
   }
   async #ask() {
@@ -128,7 +124,7 @@ export class FormaWorkspace extends FormaElement {
   }
 
   override render() {
-    const p = this.store.projection.get(); const output = p.outputs.find((item)=>item.id===this.store.ui.selectedOutputId)??p.outputs[0]; const canCompare=p.outputs.length>=2;
+    const p = this.store.projection.get(); const output = p.outputs.find((item)=>item.id===this.store.ui.selectedOutputId)??p.outputs[0]; const canCompare=p.outputs.length>=2;const contextGroups=new Set(p.blocks.map((block)=>blockTypeDefinition(block.type)?.group).filter(Boolean));const documentInsight=contextGroups.size>=4?`Aha: ${p.blocks.length} independently editable decisions now compile into one output while every source remains inspectable.`:`This document resolves ${contextGroups.size} of 5 context areas. Switch views to discover whether the remaining gaps are intentional.`;
     return html`<section class="workspace-page">
       <forma-project-rail surface="studio" destination="/" @edit-project=${()=>this.#openProjectSettings()}></forma-project-rail>
       <div class="studio-main">
@@ -139,6 +135,7 @@ export class FormaWorkspace extends FormaElement {
             ${p.blocks.length ? html`<div class="block-list">${p.blocks.map((block) => html`<forma-context-block .block=${block}></forma-context-block>`)}</div>` : this.#blockDraft === null ? html`<div class="blank-context"><span>${icon("plus")}</span><h3>This document is empty</h3><p>Add a typed context block, upload a reference, or ask Forma only when you are ready. Nothing is created on your behalf.</p><button class="button primary" @click=${this.#beginBlock}>Add a context block</button></div>` : nothing}
             ${this.#blockComposer()}
             ${this.#blockDraft===null&&p.blocks.length?html`<button class="add-block" @click=${this.#beginBlock}>${icon("plus")} Add context block</button>`:nothing}
+            ${p.blocks.length?html`<div class="document-insight"><span>${icon("branch")}</span><p>${documentInsight}</p><button @click=${()=>this.store.setRoute("/studio/board")}>See spatially ${icon("arrow")}</button></div>`:nothing}
             <div class="compile-bridge"><span>${icon("branch")}</span><div><b>Deterministic context compiler</b><small>${p.latestCompile ? "Snapshot embedded at last generation" : "Ready to compile"} · citations intact</small></div><button @click=${() => this.store.patchUi({ inspectorOpen:true })}>Inspect</button></div>
           </section>
           <section class="output-column" aria-labelledby="output-title"><div class="section-heading"><div><span class="eyebrow">${this.store.session.get()?.provider.configured ? `Live · ${this.store.session.get()?.provider.model}` : "Provider awaiting secure key"}</span><h2 id="output-title">Output</h2></div><button class="text-button" ?disabled=${!canCompare} title=${canCompare?"Compare output history":"Generate one more output to compare"} @click=${this.#compare}>Compare history</button></div>

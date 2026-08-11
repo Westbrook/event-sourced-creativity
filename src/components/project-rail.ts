@@ -27,7 +27,9 @@ export class ProjectRail extends FormaElement {
       { view: "families", label: "Aesthetic families", count: projection.families.filter((family) => !family.superseded).length },
     ];
 
-    return html`<aside class="project-rail" aria-label=${surface === "studio" ? "Studio project navigation" : "Library project navigation"}>
+    const collapsed=Boolean(this.store.ui.projectRailCollapsed);
+    return html`<aside class=${`project-rail ${collapsed?"collapsed":""}`} aria-label=${surface === "studio" ? "Studio project navigation" : "Library project navigation"}>
+      <button class="rail-collapse-toggle" aria-label=${collapsed?"Expand project navigation":"Collapse project navigation"} title=${collapsed?"Expand project navigation":"Give the document more room"} aria-expanded=${!collapsed} @click=${()=>this.store.patchUi({projectRailCollapsed:!collapsed})}>${collapsed?"›":"‹"}</button>
       <header class="rail-project">
         <span class="eyebrow">Current project</span>
         <div class="project-title"><b>${projection.projectName}</b><span class=${`project-status ${projection.projectState}`}>${projection.projectState}</span></div>
@@ -43,7 +45,7 @@ export class ProjectRail extends FormaElement {
 
       <nav class="rail-links" aria-label="Project library">
         <span class="rail-label">Browse</span>
-        <button class=${this.store.route.get().startsWith("/studio/project")?"active":""} aria-current=${this.store.route.get().startsWith("/studio/project")?"page":"false"} @click=${this.#openProjectContents}><span>Project contents</span><small>${projection.documents.length}</small></button>
+        <button class=${this.store.route.get().startsWith("/studio/project")?"active":""} aria-current=${this.store.route.get().startsWith("/studio/project")?"page":"false"} @click=${this.#openProjectContents}><span>Project overview</span><small>${projection.documents.length}</small></button>
         ${links.map((link) => html`<button
           class=${surface === "library" && currentView === link.view ? "active" : ""}
           aria-current=${surface === "library" && currentView === link.view ? "page" : "false"}
