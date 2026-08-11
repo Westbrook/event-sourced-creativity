@@ -268,6 +268,26 @@ test("keeps account, project, document, intelligence, and administration scopes 
   assert.match(review,/Deficiencies found and resolved/);assert.match(review,/Primary navigation/);assert.match(review,/Follow-up evaluation/);
 });
 
+test("never combines a rounded element with an imbalanced CSS border",async()=>{
+  const [styles,review]=await Promise.all([
+    readFile(new URL("../src/styles.css",import.meta.url),"utf8"),
+    readFile(new URL("../docs/information-architecture-review.md",import.meta.url),"utf8"),
+  ]);
+  const rules=[...styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)].flatMap(([,selectorList,body])=>
+    selectorList.split(",").map((selector)=>({selector:selector.trim(),body})),
+  );
+  const rounded=rules.filter(({body})=>/\bborder-radius\s*:/.test(body)).map(({selector})=>selector);
+  const directional=rules.filter(({body})=>/\bborder-(?:top|right|bottom|left)(?:-(?:width|style|color))?\s*:/.test(body));
+  const violations=directional.filter(({selector})=>rounded.some((base)=>
+    selector===base||selector.startsWith(`${base}.`)||selector.startsWith(`${base}:`)||selector.startsWith(`${base}[`),
+  ));
+  assert.deepEqual(violations.map(({selector})=>selector),[]);
+  assert.match(styles,/\.observation-card \{[^}]*box-shadow: inset/);
+  assert.match(styles,/\.belief-card \{[^}]*box-shadow: inset/);
+  assert.match(styles,/\.blame-cluster \{[^}]*box-shadow: inset/);
+  assert.match(review,/never a one-sided or otherwise imbalanced CSS border/);
+});
+
 test("keeps opt-in attention capture visible-only, coarse, bounded, and forgettable",async()=>{
   const [observer,attention,store,shell,system,scout,memory,eventsApi,policy,decisions,classification]=await Promise.all([
     readFile(new URL("../src/components/forma-attention-observer.ts",import.meta.url),"utf8"),

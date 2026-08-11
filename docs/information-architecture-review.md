@@ -75,6 +75,11 @@ The Forma mark also returns to Projects. System & governance and Event operation
 - Administration pages repeat their local nav and preserve role-gated access.
 - Navigation is expressed as links with real URLs wherever the action changes location; mutations remain buttons.
 
+## Visual-system invariant
+
+- A rounded element may use a balanced border on all four sides, but never a one-sided or otherwise imbalanced CSS border.
+- Directional emphasis on a rounded element uses a separate accent layer, such as an inset shadow or pseudo-element, so its geometry remains coherent.
+
 ## Follow-up evaluation
 
 - Observe whether users understand “Re-entry” without first visiting Sessions & re-entry.
