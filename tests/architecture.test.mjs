@@ -137,11 +137,12 @@ test("restores focused Library dialogs from durable URLs", async () => {
 });
 
 test("presents every alternate Studio lens as the same complete durable document", async () => {
-  const [alternatives, editorAlternatives, creativeEditor, navigation] = await Promise.all([
+  const [alternatives, editorAlternatives, creativeEditor, navigation, styles] = await Promise.all([
     readFile(new URL("../src/components/forma-studio-alternatives.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-studio-editor-alternatives.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-creative-editor.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/studio-navigation.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
   ]);
   assert.match(alternatives, /forma-document-continuity/); assert.match(alternatives, /Next useful move/); assert.match(alternatives, /Whole-document check/);
   assert.match(alternatives, /projection\.blocks|projection\.get\(\)\.blocks/); assert.match(alternatives, /BLOCK_GROUPS/);
@@ -152,6 +153,9 @@ test("presents every alternate Studio lens as the same complete durable document
   assert.doesNotMatch(creativeEditor, />Event|>Metadata|>Provenance|Creative history|source events/i);
   assert.match(navigation, /projection\.blocks\.length/); assert.match(navigation, /projection\.outputs\.length/); assert.match(navigation, /Every saved decision and result/);
   assert.match(navigation, /Creative editor/);
+  assert.match(styles, /\.creative-editor \{[^}]*grid-template-rows: auto minmax\(0,1fr\)[^}]*height: clamp\(590px,72dvh,780px\)/);
+  assert.match(styles, /\.creative-editor-layout \{[^}]*min-height: 0;[^}]*overflow: hidden/);
+  assert.match(styles, /\.creative-editor-tools,\.creative-editor-inspector \{[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain/);
 });
 
 test("lets Reference blocks prepare and explicitly adopt multiple image realities", async () => {
