@@ -293,6 +293,8 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const selected = projection.blocks.find((item) => item.id === this.#selectedId) ?? projection.blocks[0];
     const selectedIsExclusion = selected?.type === "exclusion";
     const latest = projection.outputs[0];
+    const blockIds = new Set(projection.blocks.map((item) => item.id));
+    const previewOutdated = Boolean(latest && this.store.events.get().some((event) => event.sequence > latest.sequence && /^(BlockCreated|BlockPropertyEdited|BlockWeightSet|BlockRemoved|BlockRestored|ChipEdited)$/.test(event.type) && (event.payload.document_id === projection.documentId || blockIds.has(String(event.payload.block_id ?? "")))));
     const preview = this.#previewCopy();
     const direction = projection.blocks.find((item) => item.type === "direction" && Number(item.properties.weight ?? .65) > 0);
     const subject = projection.blocks.find((item) => item.type === "subject" && Number(item.properties.weight ?? .65) > 0);
@@ -307,7 +309,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
             <button ?disabled=${!this.store.canRedo()} title="Redo" @click=${() => this.store.redo()}>${icon("redo")}<span>Redo</span></button>
           </div>
           <button class="button secondary compact" @click=${() => this.#openCreate()}>${icon("plus")} Add something</button>
-          <button class="button primary compact" ?disabled=${!providerReady || Boolean(this.store.busy.get())} title=${providerReady ? "Make a fresh preview" : "Preview is not available yet"} @click=${() => this.store.generate()}>${icon("spark")} ${this.store.busy.get() === "generate" ? "Making preview…" : latest ? "Try another" : "Make a preview"}</button>
+          <button class="button primary compact" ?disabled=${!providerReady || Boolean(this.store.busy.get())} title=${providerReady ? "Make a fresh preview" : "Preview is not available yet"} @click=${() => this.store.generate()}>${icon("spark")} ${this.store.busy.get() === "generate" ? "Making preview…" : previewOutdated ? "Update preview" : latest ? "Try another" : "Make a preview"}</button>
         </header>
 
         <div class="creative-editor-layout">
@@ -322,7 +324,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
           </aside>
 
           <main class="creative-editor-canvas">
-            <section class="creative-preview">
+            <section class=${`creative-preview ${previewOutdated ? "preview-outdated" : ""}`}>
               <div class=${`creative-preview-art variant-${latest ? latest.variant % 4 : projection.blocks.length % 4} ${latest ? "has-preview" : ""}`}>
                 <span class="creative-preview-light"></span><span class="creative-preview-frame"></span><span class="creative-preview-subject"></span><span class="creative-preview-ground"></span>
               </div>
@@ -330,7 +332,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
                 <span>Working preview</span>
                 <h2>${preview ? String(preview.title ?? "A direction is taking shape") : direction ? textFor(direction) : "Start with one clear goal"}</h2>
                 <p>${preview ? String(preview.rationale ?? preview.scene ?? "") : subject ? `Centered on ${textFor(subject)}${look ? `, with ${textFor(look).toLowerCase()}` : ""}.` : "Add a goal, subject, or visual reference. You can refine the rest only when it becomes useful."}</p>
-                ${latest ? html`<small>Latest preview · keep editing and try another whenever the plan changes.</small>` : html`<small>No preview yet · the plan remains useful on its own.</small>`}
+                ${previewOutdated ? html`<small>Plan changed since this preview · update it to apply the current guardrails and decisions.</small>` : latest ? html`<small>Latest preview · keep editing and try another whenever the plan changes.</small>` : html`<small>No preview yet · the plan remains useful on its own.</small>`}
               </div>
             </section>
 

@@ -20,4 +20,7 @@ test("keeps Creative Editor exclusions negative from authoring through generatio
   assert.match(adapter, /must_not_include is a negative constraint/);
   assert.match(adapter, /must not become the subject/);
   assert.match(styles, /\.creative-editor-item\.negative-constraint/);
+  assert.match(editor, /previewOutdated/);
+  assert.match(editor, /Plan changed since this preview/);
+  assert.match(editor, /Update preview/);
 });
