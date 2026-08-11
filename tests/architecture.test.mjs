@@ -158,7 +158,9 @@ test("presents every alternate Studio lens as the same complete durable document
   assert.match(styles, /\.creative-editor-layout \{[^}]*min-height: 0;[^}]*overflow: hidden/);
   assert.match(styles, /\.creative-editor-tools,\.creative-editor-inspector \{[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain/);
   assert.match(styles, /html\[data-document-focus\] \.workspace-page \{[^}]*grid-template-columns: minmax\(0,1fr\)/);
+  assert.match(styles, /html\[data-document-focus\] \.workspace-page:has\(> forma-project-rail > \.project-rail\.collapsed\) \{ grid-template-columns: minmax\(0,1fr\); \}/);
   assert.match(styles, /html\[data-document-focus\] \.workspace-page > forma-project-rail \{ display: none; \}/);
+  assert.match(styles, /html\[data-document-focus\] \.workspace-page:has\(> forma-project-rail > \.project-rail\.collapsed\) \.composer-dock \{ left: 0; \}/);
   assert.match(styles, /html\[data-document-focus\] \.creative-editor,[\s\S]*height: calc\(100dvh - 70px\)/);
 });
 

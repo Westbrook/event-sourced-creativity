@@ -898,6 +898,7 @@ forma-project-rail { display: block; min-width: 0; background: #ecece5; border-r
 /* Device-local focus mode gives every document lens the full working viewport. */
 html[data-document-focus] .topbar { display: none; }
 html[data-document-focus] .workspace-page { grid-template-columns: minmax(0,1fr); min-height: 100dvh; padding-bottom: 0; }
+html[data-document-focus] .workspace-page:has(> forma-project-rail > .project-rail.collapsed) { grid-template-columns: minmax(0,1fr); }
 html[data-document-focus] .workspace-page > forma-project-rail { display: none; }
 html[data-document-focus] .studio-main > .page-header--document { display: none; }
 html[data-document-focus] .studio-mode-nav { top: 0; padding: 7px 12px; }
@@ -907,6 +908,7 @@ html[data-document-focus] .studio-subpage-body > forma-studio-navigator,
 html[data-document-focus] .studio-subpage-body > forma-document-continuity,
 html[data-document-focus] .studio-subpage-body > .view-success-hero { display: none; }
 html[data-document-focus] .composer-dock { left: 0; }
+html[data-document-focus] .workspace-page:has(> forma-project-rail > .project-rail.collapsed) .composer-dock { left: 0; }
 html[data-document-focus] .creative-editor,
 html[data-document-focus] .reality-editor { height: calc(100dvh - 70px); max-height: none; }
 .project-contents-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.project-contents-toolbar > span { color: var(--muted); font-size: var(--type-caption); }
