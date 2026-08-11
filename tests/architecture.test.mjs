@@ -118,7 +118,7 @@ test("restores Event operations tabs and Studio documents from URL state", async
   ]);
   assert.match(admin, /\/admin\/events\/stream/); assert.match(admin, /\/admin\/events\/replay/); assert.match(admin, /\/admin\/events\/permissions/);
   assert.match(admin, /adminTabFromPath/); assert.match(admin, /href=\$\{adminTabPath/); assert.match(admin, /store\.setRoute\(adminTabPath\(tab\)\)/);
-  assert.match(routes, /`\/document\/\$\{encodeURIComponent\(documentId\)\}/); assert.match(routes, /documentSlug/); assert.match(routes, /documentIdFromRoute/); assert.match(routes, /isDocumentViewRoute/);
+  assert.match(routes, /`\/document\/\$\{encodeURIComponent\(documentId\)\}/); assert.match(routes, /documentSlug/); assert.match(routes, /documentIdFromRoute/); assert.match(routes, /isDocumentViewRoute/); assert.match(routes, /documentFocusFromRoute/); assert.match(routes, /withDocumentFocusInRoute/);
   assert.match(store, /syncDocumentFromRoute/); assert.match(store, /shared-document-url/); assert.match(store, /replaceState/);
   assert.match(shell, /syncDocumentFromRoute\(path\)/); assert.match(shell, /withDocumentInRoute/);
   assert.match(navigation, /withDocumentInRoute/); assert.match(rail, /withDocumentInRoute/);
@@ -153,7 +153,7 @@ test("presents every alternate Studio lens as the same complete durable document
   assert.doesNotMatch(creativeEditor, />Event|>Metadata|>Provenance|Creative history|source events/i);
   assert.match(navigation, /projection\.blocks\.length/); assert.match(navigation, /projection\.outputs\.length/); assert.match(navigation, /Every saved decision and result/);
   assert.match(navigation, /Creative editor/);
-  assert.match(navigation, /DOCUMENT_FOCUS_KEY/); assert.match(navigation, /data-document-focus/); assert.match(navigation, /Focus view/); assert.match(navigation, /Exit focus/); assert.match(navigation, /event\.key === "Escape"/);
+  assert.match(navigation, /DOCUMENT_FOCUS_KEY/); assert.match(navigation, /data-document-focus/); assert.match(navigation, /Focus view/); assert.match(navigation, /Exit focus/); assert.match(navigation, /event\.key === "Escape"/); assert.match(navigation, /withDocumentFocusInRoute/); assert.match(navigation, /documentFocusFromRoute/);
   assert.match(styles, /\.creative-editor \{[^}]*grid-template-rows: auto minmax\(0,1fr\)[^}]*height: clamp\(590px,72dvh,780px\)/);
   assert.match(styles, /\.creative-editor-layout \{[^}]*min-height: 0;[^}]*overflow: hidden/);
   assert.match(styles, /\.creative-editor-tools,\.creative-editor-inspector \{[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain/);

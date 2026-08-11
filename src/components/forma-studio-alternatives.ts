@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
 import type { CreativeBlock, EventInput } from "../model/events";
 import { BLOCK_GROUPS, BLOCK_TYPES, blockTypeDefinition, suggestedSubtype, type BlockGroup, type BlockKind } from "../model/block-types";
+import { documentFocusFromRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import "./context-block";
 import "./project-rail";
 import "./studio-navigation";
@@ -20,7 +21,7 @@ type AlternativeShellOptions = {
 export abstract class AlternativeStudio extends FormaElement {
   protected shell(active: AlternativeMode, title: string, description: string, body: unknown, options: AlternativeShellOptions = {}) {
     const projection = this.store.projection.get();
-    const destination = `/studio/${active}`;
+    const destination = withDocumentFocusInRoute(withDocumentInRoute(`/studio/${active}`, projection.documentId, projection.documentTitle), documentFocusFromRoute(this.store.route.get()));
     return html`<section class="workspace-page studio-subpage studio-alternative">
       <forma-project-rail surface="studio" destination=${destination} ?quiet=${options.quietRail ?? false}></forma-project-rail>
       <div class="studio-main">

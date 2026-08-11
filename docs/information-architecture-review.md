@@ -55,6 +55,7 @@ System & governance → Event operations
 | Mobile CSS hid primary destinations by ordinal position | Navigation availability changed unpredictably when link order changed | Every primary destination remains available in a horizontally scrollable workspace nav |
 | Page eyebrows used phase or implementation language inconsistently | The same hierarchy was described differently page to page | Headers now consistently state workspace, project/document scope, Creative intelligence, or Administration |
 | `/` depended on whichever document the event projection last opened | A copied or refreshed Studio URL could display a different document than its sender intended | Document views use `/document/{durable-id}/{optional-readable-name}`; alternate lenses add `/view/{lens}`, and the ID—not the slug—selects the projection |
+| Focus view existed only as a device preference | A focused workspace could not be shared, refreshed predictably, or traversed with browser history | Appending `/focus` to any canonical document-view route restores the focused presentation and preserves it across lens or document changes |
 | Event-operation tabs existed only as component state | Refreshing or sharing the page silently returned to the stream table | Durable stream, Replay laboratory, and Permissions use `/admin/events/stream`, `/admin/events/replay`, and `/admin/events/permissions` |
 | Library previews existed only as component-local dialog state | A block, output, or aesthetic family could not be shared, refreshed, or traversed with browser history | Stable previews use `/library/block/{id}/{optional-name}`, `/library/output/{id}`, and `/library/family/{id}/{optional-name}`; archive import remains session-only because browsers cannot restore a local file selection |
 
@@ -74,7 +75,7 @@ The Forma mark also returns to Projects. System & governance and Event operation
 - The project rail owns project scope, project overview, collections, and project-library destinations.
 - The Studio tab row owns only alternate views of the current document.
 - The document context strip owns project, collection scope, and document selection.
-- Focus view temporarily removes global, project, page-introduction, and summary chrome while retaining the document-view row as both orientation and exit control; the preference is local to the device.
+- Focus view temporarily removes global, project, page-introduction, and summary chrome while retaining the document-view row as both orientation and exit control; `/focus` makes that presentation shareable and refresh-safe.
 - Creative-intelligence pages repeat the same three-item local nav so their relationship remains visible after a direct entry.
 - Administration pages repeat their local nav and preserve role-gated access.
 - Navigation is expressed as links with real URLs wherever the action changes location; mutations remain buttons.

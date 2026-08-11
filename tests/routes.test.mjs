@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appEntryPath, documentEntryPath, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentInRoute } from "../src/model/routes.ts";
+import { appEntryPath, documentEntryPath, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentFocusInRoute, withDocumentInRoute } from "../src/model/routes.ts";
 
 test("document views use a readable path for the selected durable document", () => {
   const paths = [["/", "document"], ["/studio/board", "board"], ["/studio/guided", "guided"], ["/studio/layers", "layers"], ["/studio/adaptive", "adaptive"], ["/studio/editor", "editor"]];
@@ -21,11 +21,27 @@ test("document routing preserves unrelated query state and fragments", () => {
   assert.equal(documentIdFromRoute("/library?document=document-42"), null);
 });
 
+test("focus mode is a durable document path state", () => {
+  const editor = withDocumentInRoute("/studio/editor", "document-42", "Evening Atmosphere");
+  const focused = withDocumentFocusInRoute(editor, true);
+  assert.equal(focused, "/document/document-42/evening-atmosphere/view/editor/focus");
+  assert.equal(documentFocusFromRoute(focused), true);
+  assert.equal(documentViewFromRoute(focused), "editor");
+  assert.equal(documentIdFromRoute(focused), "document-42");
+  assert.equal(withDocumentInRoute(focused, "document-84", "New Study"), "/document/document-84/new-study/view/editor/focus");
+  assert.equal(withDocumentFocusInRoute(`${focused}?panel=tools#selected`, false), "/document/document-42/evening-atmosphere/view/editor?panel=tools#selected");
+  assert.equal(withDocumentFocusInRoute("/studio/layers", true), "/studio/layers/focus");
+  assert.equal(documentViewFromRoute("/studio/layers/focus"), "layers");
+  assert.equal(withDocumentInRoute("/document/old/focus/view/document", "new", "Focus"), "/document/new/focus/view/document");
+});
+
 test("dynamic document paths select the smallest matching page entry", () => {
   assert.equal(documentEntryPath("/document/doc-a/name"), "/index.html");
   assert.equal(documentEntryPath("/document/doc-a/name/view/board"), "/studio/board/index.html");
   assert.equal(documentEntryPath("/document/doc-a/view/adaptive"), "/studio/adaptive/index.html");
   assert.equal(documentEntryPath("/document/doc-a/name/view/editor"), "/studio/editor/index.html");
+  assert.equal(documentEntryPath("/document/doc-a/name/view/editor/focus"), "/studio/editor/index.html");
+  assert.equal(documentEntryPath("/document/doc-a/name/focus"), "/index.html");
 });
 
 test("Library focus dialogs have refresh-safe content paths", () => {

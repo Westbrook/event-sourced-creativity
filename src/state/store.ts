@@ -5,7 +5,7 @@ import { buildScenario, type ScenarioKey } from "../model/scenarios";
 import type { ImageSample, ReferenceFindingKind } from "../model/extractors";
 import { readAttentionPreference, writeAttentionPreference } from "../model/attention";
 import type { AdaptiveStructure } from "../model/block-types";
-import { documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, withDocumentInRoute } from "../model/routes";
+import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 
 type Listener = () => void;
 export type PilotSession = {
@@ -48,12 +48,14 @@ export class FormaStore {
   }
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   toast(message: string) { this.ui.toast = message; this.notify(); window.setTimeout(() => { if (this.ui.toast === message) { this.ui.toast = ""; this.notify(); } }, 2800); }
-  setRoute(path: string, options: { replace?: boolean } = {}) {
+  setRoute(path: string, options: { replace?: boolean; documentFocus?: boolean } = {}) {
     const projection = this.projection.get();
-    const requestedDocumentId = documentIdFromRoute(path);
+    const requestedFocus = options.documentFocus ?? (documentFocusFromRoute(path) || documentFocusFromRoute(this.route.get()));
+    const focusAwarePath = isDocumentViewRoute(path) ? withDocumentFocusInRoute(path, requestedFocus) : path;
+    const requestedDocumentId = documentIdFromRoute(focusAwarePath);
     const routeDocumentId = requestedDocumentId || projection.documentId;
     const routeDocumentTitle = projection.documents.find((document) => document.id === routeDocumentId)?.title ?? (routeDocumentId === projection.documentId ? projection.documentTitle : "");
-    const routedPath = isDocumentViewRoute(path) && routeDocumentId ? withDocumentInRoute(path, routeDocumentId, routeDocumentTitle) : path;
+    const routedPath = isDocumentViewRoute(focusAwarePath) && routeDocumentId ? withDocumentInRoute(focusAwarePath, routeDocumentId, routeDocumentTitle) : focusAwarePath;
     const current = `${location.pathname}${location.search}${location.hash}`;
     if (current !== routedPath) {
       if (options.replace) history.replaceState({}, "", routedPath);

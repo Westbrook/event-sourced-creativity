@@ -1,6 +1,6 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
-import { withDocumentInRoute } from "../model/routes";
+import { documentFocusFromRoute, isDocumentViewRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 
 type StudioMode = "document" | "board" | "guided" | "layers" | "adaptive" | "editor";
 
@@ -28,13 +28,17 @@ const readDocumentFocus = () => {
 };
 
 export class StudioModeNav extends FormaElement {
-  #focused = readDocumentFocus();
+  #focused = false;
   #focusKeydown = (event: KeyboardEvent) => {
     if (event.key === "Escape" && this.#focused && !document.querySelector("dialog[open]")) this.#setFocused(false);
   };
 
   override connectedCallback() {
     super.connectedCallback();
+    const route = this.store.route.get();
+    const routeFocused = documentFocusFromRoute(route);
+    this.#focused = routeFocused || readDocumentFocus();
+    if (this.#focused && !routeFocused && isDocumentViewRoute(route)) this.store.setRoute(withDocumentFocusInRoute(route, true), { replace: true, documentFocus: true });
     this.#reflectFocus();
     window.addEventListener("keydown", this.#focusKeydown);
   }
@@ -53,13 +57,20 @@ export class StudioModeNav extends FormaElement {
     this.#focused = focused;
     try { localStorage.setItem(DOCUMENT_FOCUS_KEY, String(focused)); } catch { /* Device preference remains session-only. */ }
     this.#reflectFocus();
+    this.store.setRoute(withDocumentFocusInRoute(this.store.route.get(), focused), { documentFocus: focused });
     this.requestUpdate();
   }
 
   override render() {
     const active=(this.getAttribute("active")??"document") as StudioMode;
     const projection = this.store.projection.get();
-    return html`<nav class="studio-mode-nav" aria-label="Document views"><span>Document views</span><div>${modes.map((mode)=>{const href=withDocumentInRoute(mode.path,projection.documentId,projection.documentTitle);return html`<a href=${href} class=${active===mode.id?"active":""} aria-current=${active===mode.id?"page":nothing} @click=${(event:MouseEvent)=>{event.preventDefault();this.store.setRoute(href);window.scrollTo({top:0});}}>${mode.label}</a>`;})}</div><button class="document-focus-toggle" aria-pressed=${this.#focused} title=${this.#focused ? "Restore project navigation and page context" : "Give this document view the full workspace"} @click=${() => this.#setFocused(!this.#focused)}><span aria-hidden="true">${this.#focused ? "↙" : "↗"}</span>${this.#focused ? "Exit focus" : "Focus view"}</button></nav>`;
+    const routeFocused = documentFocusFromRoute(this.store.route.get());
+    if (routeFocused !== this.#focused) {
+      this.#focused = routeFocused;
+      try { localStorage.setItem(DOCUMENT_FOCUS_KEY, String(routeFocused)); } catch { /* URL state still works without storage. */ }
+      this.#reflectFocus();
+    }
+    return html`<nav class="studio-mode-nav" aria-label="Document views"><span>Document views</span><div>${modes.map((mode)=>{const href=withDocumentFocusInRoute(withDocumentInRoute(mode.path,projection.documentId,projection.documentTitle),this.#focused);return html`<a href=${href} class=${active===mode.id?"active":""} aria-current=${active===mode.id?"page":nothing} @click=${(event:MouseEvent)=>{event.preventDefault();this.store.setRoute(href);window.scrollTo({top:0});}}>${mode.label}</a>`;})}</div><button class="document-focus-toggle" aria-pressed=${this.#focused} title=${this.#focused ? "Restore project navigation and page context" : "Give this document view the full workspace"} @click=${() => this.#setFocused(!this.#focused)}><span aria-hidden="true">${this.#focused ? "↙" : "↗"}</span>${this.#focused ? "Exit focus" : "Focus view"}</button></nav>`;
   }
 }
 

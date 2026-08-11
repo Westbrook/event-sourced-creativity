@@ -23,8 +23,10 @@ export function routePathname(route: string) {
 
 function documentRouteParts(route: string) {
   const url = routeUrl(route);
-  const legacyView = legacyDocumentViews[url.pathname];
-  if (legacyView) return { url, id: url.searchParams.get("document")?.trim() || null, slug: null, view: legacyView };
+  const focused = url.pathname.endsWith("/focus");
+  const legacyPath = focused ? url.pathname.slice(0, -"/focus".length) || "/" : url.pathname;
+  const legacyView = legacyDocumentViews[legacyPath];
+  if (legacyView) return { url, id: url.searchParams.get("document")?.trim() || null, slug: null, view: legacyView, focused };
   const parts = url.pathname.split("/").filter(Boolean);
   if (parts[0] !== "document" || !parts[1]) return null;
   const viewMarker = parts.indexOf("view", 2);
@@ -33,8 +35,9 @@ function documentRouteParts(route: string) {
   return {
     url,
     id: safeDecode(parts[1]),
-    slug: viewMarker === 3 ? parts[2] : viewMarker < 0 ? parts[2] ?? null : null,
+    slug: viewMarker === 3 ? parts[2] : viewMarker < 0 && (!focused || parts.length > 3) ? parts[2] ?? null : null,
     view,
+    focused,
   };
 }
 
@@ -48,6 +51,10 @@ export function isDocumentViewRoute(route: string) {
 
 export function documentIdFromRoute(route: string) {
   return documentRouteParts(route)?.id ?? null;
+}
+
+export function documentFocusFromRoute(route: string) {
+  return documentRouteParts(route)?.focused ?? false;
 }
 
 export function documentSlug(value: string) {
@@ -74,9 +81,17 @@ export function withDocumentInRoute(route: string, documentId: string, documentN
   const parts = documentRouteParts(route);
   if (!parts) return route;
   const slug = documentSlug(documentName);
-  const viewSuffix = parts.view === "document" ? "" : `/view/${parts.view}`;
+  const viewSuffix = parts.view === "document" ? slug === "focus" ? "/view/document" : "" : `/view/${parts.view}`;
+  const focusSuffix = parts.focused ? "/focus" : "";
   parts.url.searchParams.delete("document");
-  const path = `/document/${encodeURIComponent(documentId)}${slug ? `/${slug}` : ""}${viewSuffix}`;
+  const path = `/document/${encodeURIComponent(documentId)}${slug ? `/${slug}` : ""}${viewSuffix}${focusSuffix}`;
+  return `${path}${parts.url.search}${parts.url.hash}`;
+}
+
+export function withDocumentFocusInRoute(route: string, focused: boolean) {
+  const parts = documentRouteParts(route);
+  if (!parts || parts.focused === focused) return route;
+  const path = focused ? `${parts.url.pathname.replace(/\/$/, "")}/focus` : parts.url.pathname.slice(0, -"/focus".length) || "/";
   return `${path}${parts.url.search}${parts.url.hash}`;
 }
 

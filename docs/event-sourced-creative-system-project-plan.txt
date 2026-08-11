@@ -330,7 +330,7 @@ Keep administration distinct:
 - The project rail owns project identity, project overview, collections, library destinations, and creative-history health.
 - The document navigation owns only representations of the open document.
 - The project rail collapses into a functional dock; it does not erase all wayfinding.
-- Every document view offers a device-local focus mode that hides the global header, project rail, page introduction, and summary chrome while keeping the document-view switcher and an obvious exit control available.
+- Every document view offers a URL-addressable focus mode that hides the global header, project rail, page introduction, and summary chrome while keeping the document-view switcher and an obvious exit control available.
 - Its disclosure control is integrated, labeled, exposes expanded state, and works on touch and keyboard.
 - Library and Studio use the same rail component language, header hierarchy, spacing, scope cues, and responsive rules.
 - Library collection filtering changes the Library projection only; it never silently opens a document.
@@ -378,6 +378,7 @@ Adaptive Path additionally begins with open user input to an LLM, returns a prop
 | Project overview | `/studio/project` |
 | Baseline document | `/document/{document-id}/{optional-readable-name}` |
 | Alternate document lens | `/document/{document-id}/{optional-readable-name}/view/{board|guided|layers|adaptive|editor}` |
+| Focused document lens | Append `/focus` to any canonical baseline or alternate document route |
 | Project library | `/library` |
 | Focused Library block | `/library/block/{block-id}/{optional-readable-name}` |
 | Focused output | `/library/output/{output-id}` |
@@ -395,7 +396,7 @@ The ID is authoritative; the readable slug is cosmetic. Rename may update the sl
 
 ### 6.2 Routing acceptance criteria
 
-- Refresh, cold entry, copy/paste, browser back/forward, and alternate lens changes retain the selected document.
+- Refresh, cold entry, copy/paste, browser back/forward, and alternate lens changes retain the selected document and its focused presentation state.
 - Closing a Library focus dialog returns to `/library`.
 - Cross-dialog links between block, output, and family previews update browser history.
 - Unknown or removed focused items return to Library with a clear explanation.
