@@ -52,6 +52,11 @@ test("offers the same durable targeting capability through every document lens",
   assert.match(layersAndAdaptive, /surface="layers"/); assert.match(layersAndAdaptive, /surface="adaptive"/);
   assert.match(creativeEditor, /surface="editor"/);
   assert.match(store, /spatial_scope: normalizeSpatialScope/);
+  assert.match(scopeEditor, /@pointerdown=\$\{this\.#startPreviewGesture\}/);
+  assert.match(scopeEditor, /move-box/);
+  assert.match(scopeEditor, /draw-path/);
+  assert.match(scopeEditor, /#describeArea/);
+  assert.match(scopeEditor, /Or describe it in words/);
 });
 
 test("the replay laboratory demonstrates every spatial target and explains a targeting edit specifically", () => {

@@ -157,6 +157,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
           weight: weightFor(this.#newStrength),
           authority: "authored",
           created_from: "creative-editor",
+          ...(this.#newType === "exclusion" ? { semantic_role: "negative_constraint" } : {}),
         },
       },
     });
@@ -270,17 +271,18 @@ export class FormaCreativeEditor extends AlternativeStudio {
 
   #itemCard(item: CreativeBlock) {
     const kind = item.type as BlockKind;
+    const negativeConstraint = kind === "exclusion";
     const selected = this.#selectedId === item.id;
     const included = Number(item.properties.weight ?? .65) > 0;
     const image = kind === "reference" ? String(item.properties.media_url ?? "") : "";
-    return html`<article class=${`creative-editor-item ${selected ? "selected" : ""} ${included ? "" : "paused"}`} draggable="true"
+    return html`<article class=${`creative-editor-item ${negativeConstraint ? "negative-constraint" : ""} ${selected ? "selected" : ""} ${included ? "" : "paused"}`} draggable="true"
       @dragstart=${(event: DragEvent) => this.#drag(event, item.id)}
       @dragover=${(event: DragEvent) => event.preventDefault()}
       @drop=${(event: DragEvent) => this.#drop(event, item.id)}>
       <button class="creative-editor-item-main" aria-pressed=${selected} @click=${() => { this.#selectedId = item.id; this.requestUpdate(); }}>
         ${image ? html`<img src=${image} alt=${textFor(item)} loading="lazy">` : html`<span class=${`editor-item-glyph editor-item-glyph--${this.#sectionFor(item).id}`}>${FRIENDLY_LABELS[kind].slice(0, 2)}</span>`}
-        <span><b>${FRIENDLY_LABELS[kind]}</b><small>${textFor(item)}</small><small class="creative-editor-item-scope">${spatialScopeLabel(item.properties.spatial_scope)}</small></span>
-        ${item.locked ? html`<em>Protected</em>` : nothing}
+        <span><b>${FRIENDLY_LABELS[kind]}</b><small>${negativeConstraint ? `Must not include: ${textFor(item)}` : textFor(item)}</small><small class="creative-editor-item-scope">${spatialScopeLabel(item.properties.spatial_scope)}</small></span>
+        ${item.locked ? html`<em>Protected</em>` : negativeConstraint ? html`<em>Exclude</em>` : nothing}
       </button>
       <button class="creative-editor-item-toggle" aria-pressed=${included} title=${included ? "Leave out of the next preview" : "Use in the next preview"} @click=${() => this.#toggle(item)}>${included ? "On" : "Off"}</button>
     </article>`;
@@ -289,6 +291,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
   override render() {
     const projection = this.store.projection.get();
     const selected = projection.blocks.find((item) => item.id === this.#selectedId) ?? projection.blocks[0];
+    const selectedIsExclusion = selected?.type === "exclusion";
     const latest = projection.outputs[0];
     const preview = this.#previewCopy();
     const direction = projection.blocks.find((item) => item.type === "direction" && Number(item.properties.weight ?? .65) > 0);
@@ -345,16 +348,16 @@ export class FormaCreativeEditor extends AlternativeStudio {
             </section>
           </main>
 
-          <aside class="creative-editor-inspector" aria-label="Selected item settings">
+          <aside class=${`creative-editor-inspector ${selectedIsExclusion ? "negative-constraint" : ""}`} aria-label="Selected item settings">
             ${selected ? html`<form @submit=${(event: SubmitEvent) => this.#save(event, selected)}>
-              <header><span>Selected</span><h2>${FRIENDLY_LABELS[selected.type as BlockKind]}</h2><p>Change the wording and how strongly it should shape the next preview.</p></header>
+              <header><span>${selectedIsExclusion ? "Guardrail selected" : "Selected"}</span><h2>${FRIENDLY_LABELS[selected.type as BlockKind]}</h2><p>${selectedIsExclusion ? "This is a negative constraint. It tells the preview what must not appear; it never becomes a subject, goal, or positive direction." : "Change the wording and how strongly it should shape the next preview."}</p></header>
               ${selected.type === "reference" && selected.properties.media_url ? html`<img class="creative-inspector-image" src=${String(selected.properties.media_url)} alt=${textFor(selected)}>` : nothing}
-              <label><span>What should it say?</span><textarea name="copy" rows="6" .value=${textFor(selected)} ?disabled=${selected.locked}></textarea></label>
+              <label><span>${selectedIsExclusion ? "What must the work avoid?" : "What should it say?"}</span><textarea name="copy" rows="6" .value=${textFor(selected)} ?disabled=${selected.locked}></textarea></label>
               <fieldset ?disabled=${selected.locked}>
-                <legend>How much should it lead?</legend>
-                ${[["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]].map(([value, label]) => html`<label><input type="radio" name="strength" value=${value} .checked=${strengthFor(Number(selected.properties.weight ?? .65)) === value}><span>${label}</span></label>`)}
+                <legend>${selectedIsExclusion ? "How strictly should it be excluded?" : "How much should it lead?"}</legend>
+                ${(selectedIsExclusion ? [["supporting", "Prefer avoiding"], ["balanced", "Avoid"], ["lead", "Never include"]] : [["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]]).map(([value, label]) => html`<label><input type="radio" name="strength" value=${value} .checked=${strengthFor(Number(selected.properties.weight ?? .65)) === value}><span>${label}</span></label>`)}
               </fieldset>
-              <button class="button primary" ?disabled=${selected.locked}>Save changes</button>
+              <button class="button primary" ?disabled=${selected.locked}>${selectedIsExclusion ? "Save guardrail" : "Save changes"}</button>
               <div class="creative-inspector-order"><button type="button" @click=${() => this.#move(selected, -1)}>↑ Earlier</button><button type="button" @click=${() => this.#move(selected, 1)}>↓ Later</button></div>
               <div class="creative-inspector-actions">
                 <button type="button" @click=${() => this.#protect(selected)}>${selected.locked ? "Allow changes" : "Protect from changes"}</button>
@@ -369,10 +372,10 @@ export class FormaCreativeEditor extends AlternativeStudio {
       ${this.#creating ? html`<dialog class="modal creative-add-dialog" closedby="any" aria-labelledby="creative-add-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) this.#closeCreate(); }} @cancel=${(event: Event) => { event.preventDefault(); this.#closeCreate(); }}>
         <form class="modal-card creative-add-card" @submit=${this.#create}>
           <button type="button" class="icon-button modal-close" aria-label="Close" @click=${this.#closeCreate}>${icon("close")}</button>
-          <span class="eyebrow">Add to the plan</span><h2 id="creative-add-title">What do you want to shape?</h2><p>Choose the closest fit and write the instruction in everyday language. You can change it later.</p>
+          <span class="eyebrow">Add to the plan</span><h2 id="creative-add-title">What do you want to shape?</h2><p>${this.#newType === "exclusion" ? "Name something that must not appear. It will be stored and compiled as a negative guardrail, never as the subject of the work." : "Choose the closest fit and write the instruction in everyday language. You can change it later."}</p>
           <label><span>Area</span><select .value=${this.#newType} @change=${(event: Event) => { this.#newType = (event.target as HTMLSelectElement).value as BlockKind; this.requestUpdate(); }}>${BLOCK_TYPES.filter((item) => item.type !== "reference").map((item) => html`<option value=${item.type}>${FRIENDLY_LABELS[item.type]}</option>`)}</select></label>
-          <label><span>Your instruction</span><textarea autofocus required rows="4" placeholder=${blockTypeDefinition(this.#newType)?.prompt} .value=${this.#newText} @input=${(event: InputEvent) => { this.#newText = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea></label>
-          <fieldset><legend>How much should it lead?</legend>${[["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]].map(([value, label]) => html`<label><input type="radio" name="new-strength" value=${value} .checked=${this.#newStrength === value} @change=${() => { this.#newStrength = value; this.requestUpdate(); }}><span>${label}</span></label>`)}</fieldset>
+          <label><span>${this.#newType === "exclusion" ? "What must be excluded?" : "Your instruction"}</span><textarea autofocus required rows="4" placeholder=${this.#newType === "exclusion" ? "For example: people under 20 years old" : blockTypeDefinition(this.#newType)?.prompt} .value=${this.#newText} @input=${(event: InputEvent) => { this.#newText = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea></label>
+          <fieldset><legend>${this.#newType === "exclusion" ? "How strictly should it be excluded?" : "How much should it lead?"}</legend>${(this.#newType === "exclusion" ? [["supporting", "Prefer avoiding"], ["balanced", "Avoid"], ["lead", "Never include"]] : [["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]]).map(([value, label]) => html`<label><input type="radio" name="new-strength" value=${value} .checked=${this.#newStrength === value} @change=${() => { this.#newStrength = value; this.requestUpdate(); }}><span>${label}</span></label>`)}</fieldset>
           <footer><button type="button" class="button ghost" @click=${this.#closeCreate}>Cancel</button><button class="button primary" ?disabled=${!this.#newText.trim()}>Add to plan</button></footer>
         </form>
       </dialog>` : nothing}

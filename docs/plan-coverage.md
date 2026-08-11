@@ -43,6 +43,8 @@ Creative Editor is the deliberately machinery-free document lens. It represents 
 
 Blocks also support durable spatial targeting. Missing scope means the complete document; local scope can be a familiar or fuzzy named region, normalized AABB, subject-relative area, or normalized clipping polygon, with inside/outside polarity, feather, and hard, soft, or contextual falloff. The baseline Document exposes this as `Affects`; Context Board keeps it on the card; Guided Brief places it beside a saved answer; Reality Layers treats it like a layer mask; Adaptive Path asks where a resolved decision applies; Creative Editor includes it in the selected-item inspector. Every surface appends the same `BlockPropertyEdited` property, and compilation always receives an explicit normalized scope.
 
+The affected-area preview is directly editable: rectangle mode draws a new normalized box and moves an existing box, freeform mode records a normalized clipping polygon, and natural-language entry authors a fuzzy custom region. Coordinate and polygon fields remain precision and accessibility fallbacks. Creative Editor Exclusion items are visibly negative guardrails; strength means exclusion strictness, and compiler facts carry `effect: must_not_include` so prohibited content cannot be reinterpreted as a subject or positive focus.
+
 ## Administrative scenarios
 
 - Creative loop: extraction → authored correction → compile → generate → compare → export.

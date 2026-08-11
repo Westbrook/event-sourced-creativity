@@ -11,12 +11,20 @@ const kinds: Array<{ id: SpatialScopeKind; label: string; help: string }> = [
   { id: "path", label: "Custom shape", help: "Use a user-defined clipping path." },
 ];
 
+type PreviewGesture =
+  | { kind: "draw-box"; pointerId: number; start: { x: number; y: number } }
+  | { kind: "move-box"; pointerId: number; start: { x: number; y: number }; box: NonNullable<SpatialScope["aabb"]> }
+  | { kind: "draw-path"; pointerId: number; points: Array<{ x: number; y: number }> };
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
 export class SpatialScopeEditor extends FormaElement {
   static properties = { block: { attribute: false } };
   block!: CreativeBlock;
   #open = false;
   #draft: SpatialScope = { ...WHOLE_DOCUMENT_SCOPE };
   #pathDraft = "";
+  #directTool: "rectangle" | "freeform" = "rectangle";
+  #gesture: PreviewGesture | null = null;
 
   protected override updated() {
     const dialog = this.querySelector<HTMLDialogElement>(".spatial-scope-dialog");
@@ -27,6 +35,7 @@ export class SpatialScopeEditor extends FormaElement {
     if (this.block.locked) return;
     this.#draft = normalizeSpatialScope(this.block.properties.spatial_scope);
     this.#pathDraft = formatSpatialPath(this.#draft.path);
+    this.#directTool = this.#draft.kind === "path" ? "freeform" : "rectangle";
     this.#open = true;
     this.requestUpdate();
   }
@@ -52,6 +61,62 @@ export class SpatialScopeEditor extends FormaElement {
     };
     this.#draft = normalizeSpatialScope(defaults[kind]);
     this.#pathDraft = kind === "path" ? formatSpatialPath(this.#draft.path) : "";
+    if (kind === "aabb") this.#directTool = "rectangle";
+    if (kind === "path") this.#directTool = "freeform";
+    this.requestUpdate();
+  }
+
+  #previewPoint(event: PointerEvent) {
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    return { x: clamp01((event.clientX - rect.left) / rect.width), y: clamp01((event.clientY - rect.top) / rect.height) };
+  }
+
+  #startPreviewGesture(event: PointerEvent) {
+    if (event.button !== 0) return;
+    const canvas = event.currentTarget as HTMLElement;
+    const point = this.#previewPoint(event);
+    canvas.setPointerCapture(event.pointerId);
+    if (this.#directTool === "freeform") {
+      this.#gesture = { kind: "draw-path", pointerId: event.pointerId, points: [point] };
+      this.#draft = { ...normalizeSpatialScope({ ...this.#draft, kind: "path" }), kind: "path", path: [point] };
+      this.#pathDraft = formatSpatialPath([point]);
+    } else if (this.#draft.kind === "aabb" && (event.target as HTMLElement).closest(".spatial-target-overlay")) {
+      this.#gesture = { kind: "move-box", pointerId: event.pointerId, start: point, box: this.#draft.aabb ?? { x: .2, y: .2, width: .6, height: .6 } };
+    } else {
+      this.#gesture = { kind: "draw-box", pointerId: event.pointerId, start: point };
+      this.#draft = normalizeSpatialScope({ ...this.#draft, kind: "aabb", aabb: { x: point.x, y: point.y, width: 0, height: 0 } });
+    }
+    this.requestUpdate();
+  }
+
+  #movePreviewGesture(event: PointerEvent) {
+    const gesture = this.#gesture;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    const point = this.#previewPoint(event);
+    if (gesture.kind === "draw-box") {
+      this.#draft = normalizeSpatialScope({ ...this.#draft, kind: "aabb", aabb: { x: Math.min(gesture.start.x, point.x), y: Math.min(gesture.start.y, point.y), width: Math.abs(point.x - gesture.start.x), height: Math.abs(point.y - gesture.start.y) } });
+    } else if (gesture.kind === "move-box") {
+      const dx = point.x - gesture.start.x; const dy = point.y - gesture.start.y;
+      this.#draft = normalizeSpatialScope({ ...this.#draft, kind: "aabb", aabb: { ...gesture.box, x: Math.max(0, Math.min(1 - gesture.box.width, gesture.box.x + dx)), y: Math.max(0, Math.min(1 - gesture.box.height, gesture.box.y + dy)) } });
+    } else {
+      const previous = gesture.points.at(-1)!;
+      if (Math.hypot(point.x - previous.x, point.y - previous.y) >= .015) gesture.points.push(point);
+      this.#draft = { ...this.#draft, kind: "path", path: [...gesture.points] };
+      this.#pathDraft = formatSpatialPath(gesture.points);
+    }
+    this.requestUpdate();
+  }
+
+  #endPreviewGesture(event: PointerEvent) {
+    if (!this.#gesture || this.#gesture.pointerId !== event.pointerId) return;
+    const canvas = event.currentTarget as HTMLElement;
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    this.#gesture = null;
+    this.requestUpdate();
+  }
+
+  #describeArea(value: string) {
+    this.#draft = normalizeSpatialScope({ ...this.#draft, kind: "region", region: "custom", instruction: value, falloff: "contextual", feather: Math.max(.2, this.#draft.feather) });
     this.requestUpdate();
   }
 
@@ -98,6 +163,8 @@ export class SpatialScopeEditor extends FormaElement {
     const subjects = this.store.projection.get().blocks.filter((item) => item.type === "subject" && item.id !== this.block.id);
     const label = spatialScopeLabel(scope, this.#subjectLabel(scope.subject_block_id));
     const pathValid = this.#draft.kind !== "path" || parseSpatialPath(this.#pathDraft).length >= 3;
+    const boxValid = this.#draft.kind !== "aabb" || (this.#draft.aabb?.width ?? 0) >= .01 && (this.#draft.aabb?.height ?? 0) >= .01;
+    const targetValid = pathValid && boxValid;
     return html`<div class=${`spatial-scope-control spatial-scope-control--${this.getAttribute("surface") || "default"}`}>
       <button type="button" class="spatial-scope-trigger" ?disabled=${this.block.locked} aria-label=${`Change affected area, currently ${label}`} @click=${this.#openEditor}><span aria-hidden="true">⌗</span><span><small>Affects</small><b>${label}</b></span>${icon("edit")}</button>
       ${this.#open ? html`<dialog class="modal spatial-scope-dialog" closedby="any" aria-labelledby=${`spatial-scope-title-${this.block.id}`} @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) this.#close(); }} @cancel=${(event: Event) => { event.preventDefault(); this.#close(); }}>
@@ -113,9 +180,10 @@ export class SpatialScopeEditor extends FormaElement {
               ${this.#draft.kind === "path" ? html`<div class="spatial-method-fields"><label>Polygon points <small>x,y percentages separated by spaces; use at least three points</small><textarea rows="3" aria-invalid=${pathValid ? "false" : "true"} .value=${this.#pathDraft} @input=${(event: InputEvent) => this.#editPath((event.target as HTMLTextAreaElement).value)}></textarea>${pathValid ? nothing : html`<small class="spatial-path-error">Add at least three valid x,y points before saving.</small>`}</label></div>` : nothing}
               ${this.#draft.kind !== "document" ? html`<fieldset class="spatial-edge-settings"><legend>Edge behavior</legend><label>Apply<select .value=${this.#draft.polarity} @change=${(event: Event) => this.#set({ polarity: (event.target as HTMLSelectElement).value as SpatialScope["polarity"] })}><option value="inside">Inside target</option><option value="outside">Outside target</option></select></label><label>Transition<select .value=${this.#draft.falloff} @change=${(event: Event) => this.#set({ falloff: (event.target as HTMLSelectElement).value as SpatialScope["falloff"] })}><option value="hard">Hard edge</option><option value="soft">Soft edge</option><option value="contextual">Context aware</option></select></label><label>Feather <output>${Math.round(this.#draft.feather * 100)}%</output><input type="range" min="0" max="1" step=".05" .value=${String(this.#draft.feather)} @input=${(event: InputEvent) => this.#set({ feather: Number((event.target as HTMLInputElement).value) })}></label></fieldset>` : nothing}
             </section>
-            <aside class="spatial-scope-preview"><span>Document preview</span><div><i></i><i></i><b class=${this.#draft.polarity === "outside" ? "outside" : ""} style=${this.#previewStyle()}></b></div><strong>${spatialScopeLabel(this.#draft, this.#subjectLabel())}</strong><p>${this.#draft.kind === "document" ? "This decision shapes the complete composition." : `${this.#draft.polarity === "outside" ? "Everything outside" : "Only content inside"} this target receives the decision, with ${this.#draft.falloff} falloff.`}</p></aside>
+            <aside class="spatial-scope-preview"><span>Draw or describe the affected area</span><div class="spatial-direct-tools" role="toolbar" aria-label="Preview drawing tool"><button type="button" aria-pressed=${this.#directTool === "rectangle"} @click=${() => { this.#directTool = "rectangle"; this.requestUpdate(); }}>Rectangle</button><button type="button" aria-pressed=${this.#directTool === "freeform"} @click=${() => { this.#directTool = "freeform"; this.requestUpdate(); }}>Freeform</button></div><div class=${`spatial-preview-canvas ${this.#gesture ? "drawing" : ""}`} aria-label=${this.#directTool === "rectangle" ? "Drag to draw an affected rectangle. Drag the selected rectangle to move it." : "Drag to draw a freeform affected area."} @pointerdown=${this.#startPreviewGesture} @pointermove=${this.#movePreviewGesture} @pointerup=${this.#endPreviewGesture} @pointercancel=${this.#endPreviewGesture}><i></i><i></i><b class=${`spatial-target-overlay ${this.#draft.polarity === "outside" ? "outside" : ""}`} style=${this.#previewStyle()}></b><small>${this.#directTool === "rectangle" ? this.#draft.kind === "aabb" ? "Drag the selection to move it, or drag elsewhere to redraw." : "Drag anywhere to draw a rectangle." : "Drag around the area to draw a clipping shape."}</small></div><label class="spatial-preview-language"><span>Or describe it in words</span><input placeholder="e.g. the quiet space behind the subject" .value=${this.#draft.kind === "region" && this.#draft.region === "custom" ? this.#draft.instruction ?? "" : ""} @input=${(event: InputEvent) => this.#describeArea((event.target as HTMLInputElement).value)}></label><strong>${spatialScopeLabel(this.#draft, this.#subjectLabel())}</strong><p>${this.#draft.kind === "document" ? "This decision shapes the complete composition." : `${this.#draft.polarity === "outside" ? "Everything outside" : "Only content inside"} this target receives the decision, with ${this.#draft.falloff} falloff.`}</p></aside>
           </div>
-          <footer class="spatial-scope-actions"><button type="button" class="button ghost" @click=${this.#close}>Cancel</button><button type="button" class="button primary" ?disabled=${!pathValid} @click=${this.#save}>Save affected area</button></footer>
+          ${boxValid ? nothing : html`<p class="spatial-target-error">Drag a rectangle with visible width and height before saving.</p>`}
+          <footer class="spatial-scope-actions"><button type="button" class="button ghost" @click=${this.#close}>Cancel</button><button type="button" class="button primary" ?disabled=${!targetValid} @click=${this.#save}>Save affected area</button></footer>
         </div>
       </dialog>` : nothing}
     </div>`;

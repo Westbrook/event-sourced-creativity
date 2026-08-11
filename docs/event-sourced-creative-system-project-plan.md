@@ -134,6 +134,8 @@ type SpatialScope = {
 
 Absence normalizes to a whole-document scope. Named regions cover fast and fuzzy intent; AABBs cover exact rectangular placement; subject-relative scopes follow a durable subject block; paths cover authored or subject-derived clipping shapes. Polarity supports exclusions and edge treatments, while feather and falloff state how strongly an effect transitions at its boundary. Scope edits use the ordinary versioned `BlockPropertyEdited` event, participate in Undo/Redo, and compile with the exact block version that produced an output.
 
+The scope editor must make the preview the primary authoring surface: drag to draw or move a normalized rectangle, drag to sketch a freeform clipping shape, or describe a fuzzy area in natural language beside the preview. Numeric coordinates and point lists remain available as accessible precision fallbacks; they are not the only path to authoring a target.
+
 ---
 
 ## 2. Standing invariants
@@ -394,6 +396,8 @@ Spatial targeting appears in the language of each view:
 - **Reality layers:** a mask-style summary in the layer list and an affected-area editor in the selected layer inspector.
 - **Adaptive path:** a `Where this decision applies` step when reviewing a resolved decision, after the user has supplied its content.
 - **Creative editor:** a plain-language affected-area control in the selected-item inspector plus a concise scope summary on the plan item.
+
+Exclusion blocks are signed negative constraints. Every compiler fact includes its block `type` and an explicit effect; Exclusion compiles as `must_not_include`, and its weight means exclusion strictness rather than creative prominence. Creative Editor labels this as a guardrail, uses `Prefer avoiding`, `Avoid`, and `Never include` strength language, and never presents excluded content as a goal, subject, or positive direction.
 
 Reality Layers additionally supports creating customized layers, all 20 block types, suggested subtypes, edit, reorder, remove/restore, duplicate, weight, lock/unlock, and active/inactive state.
 

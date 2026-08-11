@@ -38,7 +38,7 @@ export async function generateCreativeDirection(env: WorkerEnv, userId: string, 
     headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
     body: JSON.stringify({
       model: env.OPENAI_MODEL ?? "gpt-5.6-terra",
-      instructions: "You are Forma's creative-direction adapter. Interpret only the supplied authored and cited context. Return a concrete visual direction, not hidden reasoning. Treat inferred material as suggestive and never claim it was authored.",
+      instructions: "You are Forma's creative-direction adapter. Interpret only the supplied authored and cited context. Return a concrete visual direction, not hidden reasoning. Treat inferred material as suggestive and never claim it was authored. Every fact whose type is exclusion or whose effect is must_not_include is a negative constraint: the named content must not appear, must not become the subject, and must not be positively emphasized in the title, scene, rationale, palette, or next moves. Its weight expresses exclusion strictness, not creative prominence.",
       input: JSON.stringify(snapshot),
       text: { verbosity: "low", format: { type: "json_schema", name: "forma_creative_direction", strict: true, schema: outputSchema } },
       reasoning: { effort: "low" }, max_output_tokens: 1200, store: false,
