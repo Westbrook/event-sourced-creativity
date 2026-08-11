@@ -625,7 +625,7 @@ forma-project-rail { display: block; min-width: 0; background: #ecece5; border-r
 .capability-audit { display: grid; grid-template-columns: repeat(3,minmax(110px,auto)) minmax(260px,1fr); align-items: center; gap: 8px; margin-top: 22px; padding: 12px; color: #dce6df; background: var(--forest); border: 1px solid #43564d; border-radius: 8px; }
 .capability-audit > span { padding: 8px 10px; background: rgba(255,255,255,.07); border-radius: 5px; }.capability-audit b,.capability-audit small { display: block; }.capability-audit b { color: var(--acid); font: 600 var(--type-heading) var(--serif); }.capability-audit small { color: #bdcbc3; font-size: var(--type-micro); text-transform: uppercase; }.capability-audit p { margin: 0; color: #d1ddd6; font-size: var(--type-caption); }
 .scenario-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(230px,100%),1fr)); gap: 10px; margin: 24px 0; }
-.scenario-card { min-height: 190px; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; text-align: left; }
+.scenario-card { display: flex; min-height: 190px; flex-direction: column; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; text-align: left; }
 .scenario-card:hover, .scenario-card.selected { border-color: var(--forest); box-shadow: inset 0 0 0 2px var(--forest); }
 .scenario-card > span { color: var(--orange); font: var(--type-micro) var(--mono); text-transform: uppercase; }
 .scenario-card h3 { margin: 10px 0 6px; font: 600 var(--type-lede) var(--serif); }
