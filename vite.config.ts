@@ -17,7 +17,7 @@ const localBindingConfig = {
   assets: {
     binding: "ASSETS",
     not_found_handling: "single-page-application" as const,
-    run_worker_first: ["/api/*"],
+    run_worker_first: ["/api/*", "/share/*"],
   },
   d1_databases: d1
     ? [
@@ -49,6 +49,7 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    build: { manifest: true },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,

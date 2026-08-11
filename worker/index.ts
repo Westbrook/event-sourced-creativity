@@ -16,6 +16,11 @@ export default {
     if(url.pathname==="/api/media"&&request.method==="POST")return uploadMedia(request,env);
     if(url.pathname.startsWith("/api/media/")&&request.method==="GET")return getMedia(request,decodeURIComponent(url.pathname.slice("/api/media/".length)),env);
     if(url.pathname.startsWith("/api/"))return Response.json({error:"not_found"},{status:404});
-    return env.ASSETS.fetch(request);
+    const asset=await env.ASSETS.fetch(request);if(asset.status!==404)return asset;
+    if((request.method==="GET"||request.method==="HEAD")&&!url.pathname.startsWith("/assets/")){
+      const entryPath=url.pathname.startsWith("/share/")?"/share/index.html":"/index.html";
+      const entryUrl=new URL(entryPath,url);return env.ASSETS.fetch(new Request(entryUrl,request));
+    }
+    return asset;
   },
 };

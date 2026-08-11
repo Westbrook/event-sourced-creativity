@@ -65,6 +65,29 @@ test("packages a responsive SPA and Sites metadata", async () => {
   assert.match(hosting, /appgprj_/);
 });
 
+test("packages first-class HTML entry points for every named application route", async () => {
+  const plugin = await readFile(new URL("../build/sites-vite-plugin.ts", import.meta.url), "utf8");
+  const routeLoader = await readFile(new URL("../src/route-loader.ts", import.meta.url), "utf8");
+  const shell = await readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8");
+  const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
+  const config = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
+  const routes = ["projects","studio/project","studio/board","studio/guided","studio/layers","studio/adaptive","library","sessions","scout","memory","system","admin/events"];
+  for (const route of routes) {
+    assert.match(plugin, new RegExp(`path: "/${route.replaceAll("/", "\\/")}"`));
+    const entry = await readFile(new URL(`../dist/client/${route}/index.html`, import.meta.url), "utf8");
+    const direct = await readFile(new URL(`../dist/client/${route}.html`, import.meta.url), "utf8");
+    assert.match(entry, /<forma-shell><\/forma-shell>/); assert.match(entry, new RegExp(`content="/${route.replaceAll("/", "\\/")}"`));
+    assert.match(entry, new RegExp(`data-forma-route-module="/${route.replaceAll("/", "\\/")}"`));
+    assert.match(direct, /\/assets\/index-/);
+  }
+  const rootEntry = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
+  const shareEntry = await readFile(new URL("../dist/client/share/index.html", import.meta.url), "utf8");
+  assert.match(rootEntry, /data-forma-route-module="\/"/); assert.match(shareEntry, /forma-shared-view-/);
+  assert.match(config, /manifest: true/); assert.match(config, /"\/share\/\*"/); assert.match(worker, /"\/share\/index\.html"/); assert.match(worker, /"\/index\.html"/);
+  assert.match(routeLoader, /import\("\.\/components\/forma-library"\)/); assert.match(routeLoader, /import\("\.\/components\/forma-admin-events"\)/);
+  assert.doesNotMatch(shell, /import "\.\/forma-library"/); assert.doesNotMatch(shell, /import "\.\/forma-admin-events"/);
+});
+
 test("enforces the adopted production-pilot boundaries", async () => {
   const [policy, adapter, shares, media, shell, schema, envExample] = await Promise.all([
     readFile(new URL("../worker/pilot-policy.ts", import.meta.url), "utf8"),
