@@ -135,6 +135,104 @@ const EVENT_STORIES: Record<string,ReplayEventStory> = {
   AssistantReasoned:{action:"Forma produced a private structured interpretation for review.",value:"The reasoning result remains an inspectable, expiring proposal artifact and cannot directly become authored context."},
 };
 
+const EVENT_TRIGGERS: Record<string,string> = {
+  ProjectCreated:"This happens when the user submits the New project form with a name and initial lifecycle state.",
+  DocumentCreated:"This happens when the user chooses to start a document and confirms its initial name.",
+  EmptyCanvasChosen:"This happens when the user explicitly chooses a blank canvas instead of accepting prepared re-entry context.",
+  BlockCreated:"This happens when the user confirms an authored block, adopts a reference-derived decision, or accepts a proposed context addition.",
+  ReferenceIngested:"This happens after the user selects a file and the application stores an addressable private media reference.",
+  RightsAsserted:"This happens only after the uploader explicitly confirms ownership or permission to use the selected reference.",
+  ExtractionRequested:"This happens when a newly ingested reference is eligible for structured palette, light, or composition analysis.",
+  ExtractionCompleted:"This happens when the requested extractor finishes successfully and returns confidence-bearing properties for the reference block.",
+  ChipEdited:"This happens when the user corrects a machine-derived property rather than accepting the extracted value as authored truth.",
+  GenerationRequested:"This happens when the user invokes generation with a valid document version and the required provider prerequisites.",
+  ContextCompiled:"This happens after a generation request passes validation and the compiler freezes the exact blocks and standing constraints to send.",
+  GenerationCompleted:"This happens when the provider returns a successful result for the compiled generation request.",
+  ComparisonOpened:"This happens when at least two outputs are available and the user chooses to evaluate them side by side.",
+  ObjectCritiqued:"This happens when the user records a positive or negative judgment against a named creative axis on an output.",
+  ObjectPinned:"This happens when the user deliberately marks an output as active working context or a preferred comparison result.",
+  AddedToLibrary:"This happens when the user chooses to keep an output for deliberate reuse beyond the recent-results trail.",
+  ObjectExported:"This happens when the user requests a downloadable rendition and the rights and object prerequisites are satisfied.",
+  ProjectOpened:"This happens when the user selects a different existing project from the account-level project list or breadcrumb.",
+  ProjectRenamed:"This happens when the user saves a changed project name from project settings.",
+  ProjectStateChanged:"This happens when the user changes a project between its supported lifecycle states in project settings.",
+  DocumentRenamed:"This happens when the user confirms an edited document title in the document bar.",
+  DocumentOpened:"This happens when the user selects a specific document from project contents, navigation, library, or a re-entry destination.",
+  BlockRenamed:"This happens when the user saves a different readable handle for an existing block.",
+  BlockPropertyEdited:"This happens when the user changes one editable block property or an accepted proposal targets that exact property.",
+  BlockWeightSet:"This happens when the user adjusts a block's influence control in a document view or layer inspector.",
+  BlockLocked:"This happens when the user marks a resolved block as protected from incidental edits.",
+  BlockUnlocked:"This happens when the user deliberately reopens a protected block for revision.",
+  BlockRemoved:"This happens when the user confirms removal of a live block from the current document projection.",
+  BlockRestored:"This happens when Undo or another explicit restoration action compensates for a previous block removal.",
+  RegionPromoted:"This happens when the user selects a meaningful region inside a reference and promotes that region into reusable context.",
+  ExtractionFailed:"This happens when requested analysis cannot produce properties that satisfy the extractor's validity requirements.",
+  ExtractionSuperseded:"This happens when a newer extractor result or version becomes authoritative for the same reference analysis request.",
+  ExtractorEvaluationCompleted:"This happens when the fixed evaluation corpus has run against a named extractor version and produced correction metrics.",
+  ObjectViewed:"This happens when the user deliberately opens an output's focused preview rather than merely scrolling past it.",
+  ObjectSaved:"This happens when the user invokes the output's save action after reviewing the generated result.",
+  ObjectUnpinned:"This happens when the user removes a previously pinned output from active working context.",
+  ObjectRegenerated:"This happens when the user asks for another variation from the context of a specific existing output.",
+  RemovedFromLibrary:"This happens when the user removes a deliberately kept output from the reusable library set.",
+  AnnotationAdded:"This happens when a user or authorized annotator submits a comment attached to an addressable object or region.",
+  AnnotationRetracted:"This happens when the annotation owner or an authorized collaborator retracts an existing comment.",
+  ObjectDiscarded:"This happens when the user explicitly rejects an output from active result views.",
+  CollectionCreated:"This happens when the user confirms a new top-level or nested organizational collection.",
+  CollectionItemAdded:"This happens when the user files an unfiled document, output, or nested collection into a valid collection.",
+  CollectionItemMoved:"This happens when the user moves a filed item to another valid collection without creating a cycle.",
+  CollectionItemRemoved:"This happens when the user removes an item's authored collection membership while keeping the item itself.",
+  CollectionRenamed:"This happens when the user saves a changed collection handle that does not collide with a sibling.",
+  CollectionRemoved:"This happens when the user confirms removal of a collection from the active project tree.",
+  CollectionRestored:"This happens when an explicit restoration action compensates for a previous collection removal.",
+  DocumentForked:"This happens when the user imports or branches a document while retaining its source stream and sequence receipt.",
+  DocumentRemoved:"This happens when the user confirms deletion of a non-final document in the project.",
+  DocumentRestored:"This happens when Undo or another explicit restoration action compensates for a previous document removal.",
+  SessionClosed:"This happens when the user ends a session or the application closes a witnessed work boundary with a final head snapshot.",
+  BriefComposed:"This happens when the re-entry gate is eligible and the brief worker finds unresolved, sufficiently dormant work in closed-session evidence.",
+  BriefItemPresented:"This happens when the application renders an eligible composed brief item to the returning user.",
+  ScoutRunStarted:"This happens when the user requests bounded exploration and the Scout receives an approved report-only envelope.",
+  ScoutObserved:"This happens when a Scout run finds a falsifiable pattern supported by trajectory evidence inside its declared envelope.",
+  ScoutRunCompleted:"This happens when the Scout satisfies its envelope, finishes planned work, or reaches another declared terminal condition.",
+  ObservationJudged:"This happens when the user reviews a Scout observation and submits confirmed, rejected, or unclear.",
+  BriefItemAccepted:"This happens when the user explicitly accepts a presented brief item as useful context for live work.",
+  SessionOpened:"This happens when the user begins a new witnessed work period, including a return after a closed-session boundary.",
+  MutationProposed:"This happens when Forma interprets an open request as typed candidate events but lacks authority to append them directly.",
+  AttentionEpisodeObserved:"This happens when opted-in, visible-page activity reaches a semantic boundary and can be summarized without raw input capture.",
+  ProposalAccepted:"This happens when the user reviews a valid mutation proposal and authorizes its applicable events.",
+  ValidationFailed:"This happens when an attempted event violates producer permissions, sequence expectations, or another append-time invariant.",
+  ProposalRejected:"This happens when the user reviews a proposal and records that its suggested direction is not acceptable.",
+  FamilyDeclared:"This happens when a versioned index rebuild finds a sufficiently coherent cluster of related project outputs.",
+  FamilyAnchorSet:"This happens after a family is declared and the indexer chooses representative evidence that best grounds the grouping.",
+  FamilyMembershipAsserted:"This happens when the indexer scores a specific output strongly enough to propose a correctable family edge.",
+  TasteModelVersioned:"This happens when new critiques or time decay require the taste worker to snapshot a revised ranking-only belief model.",
+  PreferenceAuthored:"This happens when the user promotes a visible taste claim into an explicit standing preference.",
+  ConditionSet:"This happens when the user authors a future trigger for resurfacing a private concern or decision.",
+  ConditionFired:"This happens when the scheduler observes that an authored date or generation-count threshold has been reached.",
+  Resurfaced:"This happens after a condition fires and the application presents the due private concern on an appropriate surface.",
+  PreferenceRevoked:"This happens when the user explicitly withdraws a previously authored standing preference.",
+  FactRetracted:"This happens when the user chooses to forget or correct a currently projected inferred claim.",
+  IntentDeclared:"This happens when the user optionally records what they want to accomplish during the current session.",
+  AttentionSignalsForgotten:"This happens when the user invokes the governance control to erase retained coarse attention episodes.",
+  ModelRegistered:"This happens when an administrator or deployment process introduces a named model identity to the registry.",
+  AdapterVersioned:"This happens when the integration contract for a model adapter changes and is released as a new version.",
+  CapabilityDeclared:"This happens when a registered model-adapter pair publishes the bounded operations it is allowed to support.",
+  BudgetReserved:"This happens after an external operation is authorized but before provider execution can consume shared capacity.",
+  AssistantReasoned:"This happens when an authorized model call returns a private structured interpretation for user review.",
+  GenerationUsageRecorded:"This happens when provider token usage is available and the policy worker can settle it against the reservation.",
+  AttributionComputed:"This happens when an output, its generation, and its compiled source block versions are all available to join.",
+  BudgetReleased:"This happens when a reserved provider operation stops before consuming all or any of its reserved capacity.",
+  BudgetExceeded:"This happens when a requested operation cannot reserve capacity beneath the applicable user or workspace hard cap.",
+  GenerationFailed:"This happens when the provider, adapter, policy layer, or network returns a terminal generation error instead of an object.",
+  BriefItemIgnored:"This happens when the user declines or passes over one presented re-entry item without accepting it.",
+  BriefDismissed:"This happens when the user closes the remaining re-entry brief and chooses to continue without it.",
+  PhaseGateReviewed:"This happens when the agreed evidence floor is available and an authorized human reviewer records a phase decision.",
+  ProposalDeclined:"This happens when the user dismisses a model proposal before authorizing any of its candidate mutations.",
+  BranchAbandoned:"This happens when a branch remains inactive beyond the scheduler's declared dormancy rule after a session boundary.",
+  ScoutBudgetExhausted:"This happens when a Scout run consumes the final observation, generation, cost, or time allowance in its envelope.",
+  ClaimSuperseded:"This happens when stronger evidence or a human correction identifies a replacement for one specific inferred claim.",
+  RetentionSweepCompleted:"This happens on the configured retention schedule after eligible private content passes its expiry cutoff.",
+};
+
 export function formatReplayDuration(milliseconds:number) {
   const seconds=Math.max(0,Math.round(milliseconds/1000));if(seconds<60)return`${seconds}s`;
   const minutes=Math.floor(seconds/60);if(minutes<60)return`${minutes}m ${seconds%60}s`;
@@ -144,6 +242,7 @@ export function formatReplayDuration(milliseconds:number) {
 
 export function explainReplayEvent(event: CreativeEvent, previousEvent?:CreativeEvent) {
   const story=EVENT_STORIES[event.type]??{action:`${event.actor} appended ${event.type}.`,value:"The typed event remains independently inspectable and replayable."};
+  const trigger=EVENT_TRIGGERS[event.type]??(previousEvent?`This happens because the preceding ${previousEvent.type} event satisfied the next typed transition in the workflow.`:"This happens when the workflow's typed preconditions are satisfied.");
   const gapMs=previousEvent?Math.max(0,Date.parse(event.occurredAt)-Date.parse(previousEvent.occurredAt)):0;const elapsed=previousEvent?formatReplayDuration(gapMs):"Scenario start";
   let temporalValue="This timestamp establishes the baseline from which later creative actions, interruptions, and machine responses are measured.";
   if(previousEvent&&event.type==="SessionOpened")temporalValue=`The ${elapsed} gap makes re-entry explicit: Forma can prepare continuity without pretending the user stayed in one uninterrupted session.`;
@@ -153,7 +252,7 @@ export function explainReplayEvent(event: CreativeEvent, previousEvent?:Creative
   else if(previousEvent&&(event.actor.startsWith("worker:")||event.actor.startsWith("model:")))temporalValue=`The ${elapsed} handoff exposes machine latency and causation, so assistance can be evaluated separately from the user action that requested it.`;
   else if(previousEvent&&(previousEvent.actor.startsWith("worker:")||previousEvent.actor.startsWith("model:")))temporalValue=`The user responded ${elapsed} after machine work, preserving a measurable review interval instead of collapsing assistance and acceptance into one step.`;
   else if(previousEvent)temporalValue=`The ${elapsed} interval preserves the pace of the creative decision, helping distinguish rapid manipulation from considered revision.`;
-  return {...story,cause:event.causationId?`Causation points to ${event.causationId}; actor ${event.actor} owns this step.`:`This is the first witnessed step in its scenario; actor ${event.actor} owns it.`,timing:{gapMs,label:elapsed,value:temporalValue}};
+  return {...story,trigger,cause:event.causationId?`Causation points to ${event.causationId}; actor ${event.actor} owns this step.`:`This is the first witnessed step in its scenario; actor ${event.actor} owns it.`,timing:{gapMs,label:elapsed,value:temporalValue}};
 }
 
 function payloadFor(type: string, i: number, key: ScenarioKey, cycle: number): Record<string, unknown> {

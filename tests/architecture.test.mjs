@@ -38,7 +38,7 @@ test("keeps every replay fixture current and every mocked event specifically exp
   const stories = new Set();
   for (const scenario of SCENARIOS) {
     const events=buildScenario(scenario.key,SCENARIO_EVENT_TYPES.length*3);
-    for (const event of events) { const story=explainReplayEvent(event); assert.doesNotMatch(story.action,/ appended /); assert.ok(story.value.length>40); assert.match(story.cause,/actor /); stories.add(`${event.type}:${story.value}`); }
+    events.forEach((event,index)=>{const story=explainReplayEvent(event,index?events[index-1]:undefined);assert.doesNotMatch(story.action,/ appended /);assert.match(story.trigger,/^This happens/);assert.ok(story.trigger.length>70);assert.ok(story.value.length>40);assert.match(story.cause,/actor /);stories.add(`${event.type}:${story.value}`);});
   }
   assert.equal(stories.size,SCENARIO_EVENT_TYPES.length);
   const taste=buildScenario("taste-time",13); const compile=taste.find((event)=>event.type==="ContextCompiled"); const complete=taste.find((event)=>event.type==="GenerationCompleted"); const critique=taste.find((event)=>event.type==="ObjectCritiqued");
@@ -60,7 +60,7 @@ test("replay narratives cover the complete authorized event and block vocabulary
   assert.deepEqual(SCENARIO_EVENT_TYPES.filter((type)=>!authorized.has(type)),[]);
   const blockEvents=buildScenario("document-evolution",1000).filter((event)=>event.type==="BlockCreated");
   assert.deepEqual(new Set(blockEvents.map((event)=>event.payload.type)),new Set(BLOCK_TYPES.map((definition)=>definition.type)));
-  assert.match(admin,/capability-audit/);assert.match(admin,/SCENARIO_EVENT_TYPES\.length/);assert.match(admin,/Why now matters/);assert.match(admin,/scenario span/);
+  assert.match(admin,/capability-audit/);assert.match(admin,/SCENARIO_EVENT_TYPES\.length/);assert.match(admin,/Why this happens/);assert.match(admin,/How this helps/);assert.doesNotMatch(admin,/Why now matters/);assert.match(admin,/scenario span/);
 });
 
 test("round-trips a lossless Forma event archive", () => {
