@@ -234,12 +234,15 @@ test("keeps opt-in attention capture visible-only, coarse, bounded, and forgetta
 });
 
 test("uses one edge rail and one header vocabulary without Library overflow traps", async()=>{
-  const [library,workspace,sessions,scout,memory,system,admin,styles]=await Promise.all([
-    "forma-library.ts","forma-workspace.ts","forma-sessions.ts","forma-scout.ts","forma-memory.ts","forma-system.ts","forma-admin-events.ts",
+  const [library,workspace,sessions,scout,memory,system,admin,contextBlock,styles]=await Promise.all([
+    "forma-library.ts","forma-workspace.ts","forma-sessions.ts","forma-scout.ts","forma-memory.ts","forma-system.ts","forma-admin-events.ts","context-block.ts",
   ].map((file)=>readFile(new URL(`../src/components/${file}`,import.meta.url),"utf8")).concat(readFile(new URL("../src/styles.css",import.meta.url),"utf8")));
   assert.match(library,/library-page"><forma-project-rail surface="library"/);assert.match(workspace,/forma-project-rail surface="studio"/);
   assert.doesNotMatch(library,/library-layout|page-pad/);assert.match(library,/library-main/);assert.match(styles,/\.workspace-page, \.library-page/);
   for(const source of [library,workspace,sessions,scout,memory,system,admin])assert.match(source,/page-header/);
   assert.match(styles,/\.library-main \{ container-type: inline-size/);assert.match(styles,/@container \(max-width: 760px\)/);
   assert.match(styles,/repeat\(auto-fit,minmax\(min\(220px,100%\),1fr\)\)/);assert.match(styles,/\.library-content > section \{ min-width: 0/);
+  assert.match(styles,/\.page-header--library,\.page-header--document \{ position: sticky/);assert.match(styles,/\.page-header--library h1,\.page-header--document h1/);
+  assert.match(styles,/\.context-block \{[^}]*container-type: inline-size/);assert.match(styles,/@container \(max-width: 520px\)/);assert.match(styles,/@container \(max-width: 370px\)/);
+  assert.match(contextBlock,/class="meta-short"/);assert.match(contextBlock,/aria-label="Block influence"/);assert.match(contextBlock,/aria-label="Remove block"/);
 });
