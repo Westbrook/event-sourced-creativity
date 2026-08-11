@@ -5,6 +5,8 @@ import { DEFAULT_REFERENCE_FINDINGS } from "../model/extractors";
 import { sampleImageFile } from "../model/image-sample";
 import { icon } from "./forma-element";
 import { AlternativeStudio } from "./forma-studio-alternatives";
+import { spatialScopeLabel } from "../model/spatial-scope";
+import "./spatial-scope-editor";
 
 type EditorSection = {
   id: "brief" | "picture" | "look" | "delivery" | "references";
@@ -277,7 +279,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
       @drop=${(event: DragEvent) => this.#drop(event, item.id)}>
       <button class="creative-editor-item-main" aria-pressed=${selected} @click=${() => { this.#selectedId = item.id; this.requestUpdate(); }}>
         ${image ? html`<img src=${image} alt=${textFor(item)} loading="lazy">` : html`<span class=${`editor-item-glyph editor-item-glyph--${this.#sectionFor(item).id}`}>${FRIENDLY_LABELS[kind].slice(0, 2)}</span>`}
-        <span><b>${FRIENDLY_LABELS[kind]}</b><small>${textFor(item)}</small></span>
+        <span><b>${FRIENDLY_LABELS[kind]}</b><small>${textFor(item)}</small><small class="creative-editor-item-scope">${spatialScopeLabel(item.properties.spatial_scope)}</small></span>
         ${item.locked ? html`<em>Protected</em>` : nothing}
       </button>
       <button class="creative-editor-item-toggle" aria-pressed=${included} title=${included ? "Leave out of the next preview" : "Use in the next preview"} @click=${() => this.#toggle(item)}>${included ? "On" : "Off"}</button>
@@ -359,7 +361,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
                 <button type="button" @click=${() => this.#duplicate(selected)}>Make a copy</button>
                 <button type="button" class="danger" @click=${() => this.#remove(selected)}>Remove</button>
               </div>
-            </form>` : html`<div class="creative-inspector-empty"><span>✦</span><h2>Start anywhere</h2><p>Add a goal, subject, look, or reference. Select it on the page whenever you want to refine it.</p><button class="button primary" @click=${() => this.#openCreate()}>Add something</button></div>`}
+            </form><forma-spatial-scope-editor .block=${selected} surface="editor"></forma-spatial-scope-editor>` : html`<div class="creative-inspector-empty"><span>✦</span><h2>Start anywhere</h2><p>Add a goal, subject, look, or reference. Select it on the page whenever you want to refine it.</p><button class="button primary" @click=${() => this.#openCreate()}>Add something</button></div>`}
           </aside>
         </div>
       </section>

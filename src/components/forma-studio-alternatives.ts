@@ -7,6 +7,7 @@ import "./context-block";
 import "./project-rail";
 import "./studio-navigation";
 import "./event-inspector";
+import "./spatial-scope-editor";
 
 const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 42) || "untitled";
 
@@ -171,7 +172,7 @@ export class FormaContextBoard extends AlternativeStudio {
               <small>${items.length ? lane.success : "This is still open."}</small>
             </header>
             <div class="board-lane-blocks">
-              ${items.map((block) => html`<forma-context-block .block=${block}></forma-context-block>`)}
+              ${items.map((block) => html`<forma-context-block .block=${block} surface="board"></forma-context-block>`)}
               ${!items.length ? html`<button class="board-empty" @click=${() => this.#prepare(lane.starter)}>Start with ${blockTypeDefinition(lane.starter)?.label ?? lane.starter} ${icon("arrow")}</button>` : nothing}
             </div>
           </section>`;
@@ -329,6 +330,7 @@ export class FormaGuidedBrief extends AlternativeStudio {
               <label class="sr-only" for=${`brief-${field.type}`}>${field.question}</label>
               <textarea id=${`brief-${field.type}`} rows="4" placeholder=${definition.prompt} .value=${this.#drafts[field.type] ?? ""} @input=${(event: InputEvent) => { this.#drafts[field.type] = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea>
               <small class="guided-source">${existing ? "Saving will update this answer everywhere it appears." : "Saving will add this decision to the document."}</small>
+              ${existing ? html`<forma-spatial-scope-editor .block=${existing} surface="guided"></forma-spatial-scope-editor>` : html`<small class="guided-scope-pending">Save this answer, then choose whether it affects everything or one area.</small>`}
             </section>`;
           })}
         </div>

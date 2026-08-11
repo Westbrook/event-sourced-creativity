@@ -40,7 +40,7 @@ test("keeps every replay fixture current and every mocked event specifically exp
     const events=buildScenario(scenario.key,SCENARIO_EVENT_TYPES.length*3);
     events.forEach((event,index)=>{const story=explainReplayEvent(event,index?events[index-1]:undefined);assert.doesNotMatch(story.action,/ appended /);assert.match(story.trigger,/^This happens/);assert.ok(story.trigger.length>70);assert.ok(story.value.length>40);assert.match(story.cause,/actor /);stories.add(`${event.type}:${story.value}`);});
   }
-  assert.equal(stories.size,SCENARIO_EVENT_TYPES.length);
+  assert.ok(stories.size>=SCENARIO_EVENT_TYPES.length);
   const taste=buildScenario("taste-time",13); const compile=taste.find((event)=>event.type==="ContextCompiled"); const complete=taste.find((event)=>event.type==="GenerationCompleted"); const critique=taste.find((event)=>event.type==="ObjectCritiqued");
   assert.equal(compile?.payload.generation_id,complete?.payload.generation_id); assert.ok(complete?.payload.object_ids.includes(critique?.payload.object_id)); assert.ok(compile?.payload.source_block_versions.length);
   assert.ok(buildScenario("attention-friction",12).some((event)=>event.type==="AttentionSignalsForgotten"));

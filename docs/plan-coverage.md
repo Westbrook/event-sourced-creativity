@@ -41,10 +41,12 @@ All visible buttons now do one of three explicit things: perform an event-backed
 
 Creative Editor is the deliberately machinery-free document lens. It represents the complete document as a familiar tool palette, one-page creative plan, working preview, and contextual inspector. The user can add text and image material, edit copy, choose plain-language influence levels, include or pause an item, reorder, protect, duplicate, remove, undo, redo, and generate without seeing event types, IDs, handles, authority labels, provenance controls, sequence counts, or provider metadata. Those actions still use the same durable event vocabulary and projection as every other document view.
 
+Blocks also support durable spatial targeting. Missing scope means the complete document; local scope can be a familiar or fuzzy named region, normalized AABB, subject-relative area, or normalized clipping polygon, with inside/outside polarity, feather, and hard, soft, or contextual falloff. The baseline Document exposes this as `Affects`; Context Board keeps it on the card; Guided Brief places it beside a saved answer; Reality Layers treats it like a layer mask; Adaptive Path asks where a resolved decision applies; Creative Editor includes it in the selected-item inspector. Every surface appends the same `BlockPropertyEdited` property, and compilation always receives an explicit normalized scope.
+
 ## Administrative scenarios
 
 - Creative loop: extraction → authored correction → compile → generate → compare → export.
-- Document evolution: project and document lifecycle → all 20 block types → reversible context, object, annotation, library, and collection changes.
+- Document evolution: project and document lifecycle → all 20 block types and all five spatial-scope methods → reversible context, object, annotation, library, and collection changes.
 - Asynchronous return: session close → brief/scout report space → judgment → user acceptance → document promotion.
 - Concurrent pressure: inert model proposal, commutative actions, stale validation, partial progress, explicit rejection.
 - Family promotion: inferred grouping remains separate from the user-authored collection that keeps it.

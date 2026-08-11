@@ -111,6 +111,29 @@ System & governance → Event operations
 
 These are different objects. Promotion is a user act and an event. Undo restores authority as well as value.
 
+### 1.4 Spatial scope for block effects
+
+Every block defaults to the whole document but may carry a versioned `spatial_scope` property when its instruction applies locally. The property uses document-normalized coordinates so it survives viewport changes, alternate document views, output sizes, and responsive layouts:
+
+```ts
+type SpatialScope = {
+  schema_version: 1;
+  kind: "document" | "region" | "aabb" | "subject" | "path";
+  coordinate_space: "document-normalized";
+  region?: "left" | "right" | "top" | "bottom" | "center" | "foreground" | "background" | "edges" | "custom";
+  instruction?: string; // fuzzy custom region, such as “quiet area behind the subject”
+  aabb?: { x: number; y: number; width: number; height: number }; // each value is 0..1
+  subject_block_id?: string;
+  subject_relation?: "inside" | "around" | "in-front-of" | "behind";
+  path?: Array<{ x: number; y: number }>; // normalized clipping polygon
+  feather: number; // 0..1
+  falloff: "hard" | "soft" | "contextual";
+  polarity: "inside" | "outside";
+};
+```
+
+Absence normalizes to a whole-document scope. Named regions cover fast and fuzzy intent; AABBs cover exact rectangular placement; subject-relative scopes follow a durable subject block; paths cover authored or subject-derived clipping shapes. Polarity supports exclusions and edge treatments, while feather and falloff state how strongly an effect transitions at its boundary. Scope edits use the ordinary versioned `BlockPropertyEdited` event, participate in Undo/Redo, and compile with the exact block version that produced an output.
+
 ---
 
 ## 2. Standing invariants
@@ -361,6 +384,16 @@ Requirements for every alternate view:
 - Preserve Undo, Redo, provenance, generation, Library reuse, and document lifecycle capabilities.
 - Adapt to its own available width; do not require a parent to scroll sideways to reach essential controls.
 - In focus mode, use the full working viewport and keep dense editor overflow inside the relevant tool, canvas, or inspector region; preserve a natural stacked page on narrow screens.
+- Resolve the same `spatial_scope` property and offer a local customization path without creating view-specific targeting state.
+
+Spatial targeting appears in the language of each view:
+
+- **Document:** an `Affects` control on every context block.
+- **Context board:** the same control on each board card so scope remains attached while blocks are spatially related.
+- **Guided brief:** an affected-area step beside each saved answer; unsaved answers explain that scope becomes available after the decision exists.
+- **Reality layers:** a mask-style summary in the layer list and an affected-area editor in the selected layer inspector.
+- **Adaptive path:** a `Where this decision applies` step when reviewing a resolved decision, after the user has supplied its content.
+- **Creative editor:** a plain-language affected-area control in the selected-item inspector plus a concise scope summary on the plan item.
 
 Reality Layers additionally supports creating customized layers, all 20 block types, suggested subtypes, edit, reorder, remove/restore, duplicate, weight, lock/unlock, and active/inactive state.
 
@@ -548,6 +581,7 @@ Include the escape hatches only with strain gauges. `AssistantReasoned` is an au
 6. Make the rail responsive, collapsible into a useful dock, keyboard operable, and structurally shared by Studio and Library.
 7. Implement a semantic list representation alongside any spatial canvas.
 8. Implement roving focus, arrow-key movement, modifier movement, focus-visible treatment, reduced motion, labeled locks, and keyboard-equivalent commands for drag operations.
+9. Implement the shared normalized spatial-scope schema and editor, default every missing scope to the whole document, and compile an explicit normalized scope with every block.
 
 ### 9.5 Administrative observability
 
@@ -568,6 +602,7 @@ Build Event operations outside the main app interface:
 - Complete the flow by keyboard.
 - Open a document through its canonical URL on a cold request.
 - Inspect every resulting event and replay the document to an earlier sequence.
+- Apply different blocks to a named or fuzzy region, normalized rectangle, subject-relative area, and custom clipping path; switch among all document views and confirm they resolve and edit the same scope.
 
 ### Do not
 
