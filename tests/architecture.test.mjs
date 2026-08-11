@@ -250,6 +250,24 @@ test("connects the final Library and Studio affordances to explicit destinations
   assert.match(shell,/system#governance/);assert.match(shell,/Use attention signals to improve Forma/);assert.match(system,/id="governance"/);assert.match(system,/Forget attention data/);
 });
 
+test("keeps account, project, document, intelligence, and administration scopes distinct",async()=>{
+  const [shell,rail,navigation,areas,contents,library,sessions,scout,memory,system,admin,collections,styles,review]=await Promise.all([
+    "forma-shell.ts","project-rail.ts","studio-navigation.ts","area-navigation.ts","forma-project-contents.ts","forma-library.ts","forma-sessions.ts","forma-scout.ts","forma-memory.ts","forma-system.ts","forma-admin-events.ts","collection-tree.ts",
+  ].map((file)=>readFile(new URL(`../src/components/${file}`,import.meta.url),"utf8")).concat([
+    readFile(new URL("../src/styles.css",import.meta.url),"utf8"),
+    readFile(new URL("../docs/information-architecture-review.md",import.meta.url),"utf8"),
+  ]));
+  assert.match(shell,/label: "Projects"/);assert.match(shell,/label: "Studio"/);assert.match(shell,/label: "Re-entry"/);assert.match(shell,/label: "Taste & time"/);
+  assert.doesNotMatch(shell.match(/const routes = \[[\s\S]*?\] as const;/)?.[0]??"",/System|Event admin/);assert.match(shell,/class="account-nav"/);assert.match(shell,/System & governance/);assert.match(shell,/Event operations/);
+  assert.match(rail,/rail-project-card/);assert.match(rail,/rail-dock/);assert.match(rail,/aria-controls="project-rail-content"/);assert.match(rail,/Project destinations/);assert.match(rail,/Project library/);assert.match(rail,/Creative history/);
+  assert.match(navigation,/aria-label="Document views"/);assert.doesNotMatch(navigation,/Project-level|studio-project-overview/);assert.match(navigation,/studio-breadcrumbs/);assert.match(navigation,/Projects/);
+  assert.doesNotMatch(contents,/forma-studio-mode-nav|forma-studio-navigator/);assert.match(library,/Project library/);assert.match(collections,/destination==="\/library"/);
+  for(const [source,active] of [[sessions,"sessions"],[scout,"scout"],[memory,"memory"]])assert.match(source,new RegExp(`forma-area-navigation area="intelligence" active="${active}"`));
+  assert.match(system,/area="administration" active="system"/);assert.match(admin,/area="administration" active="events"/);assert.match(areas,/Creative intelligence/);assert.match(areas,/Administration/);
+  assert.match(styles,/\.rail-dock/);assert.match(styles,/\.area-navigation/);assert.match(styles,/\.studio-breadcrumbs/);assert.doesNotMatch(styles,/global-nav a:nth-child/);
+  assert.match(review,/Deficiencies found and resolved/);assert.match(review,/Primary navigation/);assert.match(review,/Follow-up evaluation/);
+});
+
 test("keeps opt-in attention capture visible-only, coarse, bounded, and forgettable",async()=>{
   const [observer,attention,store,shell,system,scout,memory,eventsApi,policy,decisions,classification]=await Promise.all([
     readFile(new URL("../src/components/forma-attention-observer.ts",import.meta.url),"utf8"),
