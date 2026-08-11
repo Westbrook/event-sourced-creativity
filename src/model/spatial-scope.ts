@@ -36,13 +36,14 @@ export function normalizeSpatialScope(value: unknown): SpatialScope {
   const input = record(value);
   const kind = scopeKinds.has(input.kind as SpatialScopeKind) ? input.kind as SpatialScopeKind : "document";
   const box = record(input.aabb);
+  const boxX = clamp(box.x, .2); const boxY = clamp(box.y, .2);
   const points = Array.isArray(input.path) ? input.path.map(record).map((point) => ({ x: clamp(point.x), y: clamp(point.y) })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)).slice(0, 64) : [];
   return {
     schema_version: 1,
     kind,
     coordinate_space: "document-normalized",
     ...(kind === "region" ? { region: regions.has(input.region as NonNullable<SpatialScope["region"]>) ? input.region as NonNullable<SpatialScope["region"]> : "center", instruction: String(input.instruction ?? "") } : {}),
-    ...(kind === "aabb" ? { aabb: { x: clamp(box.x, .2), y: clamp(box.y, .2), width: clamp(box.width, .6), height: clamp(box.height, .6) } } : {}),
+    ...(kind === "aabb" ? { aabb: { x: boxX, y: boxY, width: Math.min(clamp(box.width, .6), 1 - boxX), height: Math.min(clamp(box.height, .6), 1 - boxY) } } : {}),
     ...(kind === "subject" ? { subject_block_id: String(input.subject_block_id ?? ""), subject_relation: (["inside", "around", "in-front-of", "behind"].includes(String(input.subject_relation)) ? String(input.subject_relation) : "around") as NonNullable<SpatialScope["subject_relation"]> } : {}),
     ...(kind === "path" ? { path: points.length >= 3 ? points : [{ x: .2, y: .2 }, { x: .8, y: .2 }, { x: .7, y: .8 }, { x: .25, y: .72 }] } : {}),
     feather: kind === "document" ? 0 : clamp(input.feather, kind === "region" || kind === "subject" ? .2 : 0),

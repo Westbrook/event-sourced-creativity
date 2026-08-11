@@ -11,6 +11,7 @@ test("normalizes document, fuzzy, rectangular, subject-relative, and clipping-pa
   const box = normalizeSpatialScope({ kind: "aabb", aabb: { x: -.2, y: .1, width: 1.4, height: .5 }, feather: 2 });
   assert.deepEqual(box.aabb, { x: 0, y: .1, width: 1, height: .5 });
   assert.equal(box.feather, 1);
+  assert.deepEqual(normalizeSpatialScope({ kind: "aabb", aabb: { x: .8, y: .7, width: .6, height: .8 } }).aabb, { x: .8, y: .7, width: .19999999999999996, height: .30000000000000004 });
   const subject = normalizeSpatialScope({ kind: "subject", subject_block_id: "block-subject", subject_relation: "behind" });
   assert.equal(subject.subject_block_id, "block-subject");
   assert.equal(spatialScopeLabel(subject, "lead figure"), "behind lead figure");

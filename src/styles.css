@@ -1127,6 +1127,8 @@ forma-project-rail:has(.project-rail.collapsed) { width: 72px; }
 .spatial-method-fields label > small { font-size: var(--type-micro); }
 .spatial-method-fields input,.spatial-method-fields select,.spatial-method-fields textarea,.spatial-edge-settings select { min-width: 0; width: 100%; padding: 8px; color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 5px; }
 .spatial-method-fields textarea { resize: vertical; font-family: var(--mono); }
+.spatial-method-fields textarea[aria-invalid="true"] { border-color: #a44831; }
+.spatial-path-error { color: #8e3825; }
 .spatial-box-fields { grid-template-columns: repeat(4,minmax(90px,1fr)); }
 .spatial-edge-settings { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin: 0; padding: 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; }
 .spatial-edge-settings legend { grid-column: 1/-1; margin: 0; }
