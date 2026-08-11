@@ -4,6 +4,7 @@ import type { CreativeBlock } from "../model/events";
 import { blockTypeDefinition } from "../model/block-types";
 import "./reference-image";
 import "./reference-palette-picker";
+import "./reference-findings";
 
 export class ContextBlock extends FormaElement {
   static properties = { block: { attribute: false } };
@@ -78,6 +79,7 @@ export class ContextBlock extends FormaElement {
           ${dimensions ? html`<b>${String(dimensions.width)} × ${String(dimensions.height)}</b><b>${String(p.dominant_edges ?? "balanced")} edges</b>` : nothing}
           ${extractionStatus === "complete" ? html`<small>${Math.round(confidence * 100)}% confidence · ${String(p.extractor ?? "deterministic suite")}</small>` : nothing}
         </div>` : nothing}
+        ${this.block.type === "reference" ? html`<forma-reference-findings .block=${this.block} @reference-palette-request=${() => { this.#paletteOpen = true; this.requestUpdate(); }}></forma-reference-findings>` : nothing}
         <div class="block-meta">
           <label><span class="meta-long">Influence</span><span class="meta-short" aria-hidden="true">Inf.</span><input aria-label="Block influence" type="range" min="0" max="1" step="0.05" .value=${String(Number(p.weight ?? .5))} @change=${(e: Event) => this.#weight(Number((e.target as HTMLInputElement).value))}><output>${Math.round(Number(p.weight ?? .5) * 100)}%</output></label>
           <span class="authority ${authority}" aria-label=${`${authority} authority`} title=${`${authority} authority`}><span class="meta-long">${authority}</span><span class="meta-short" aria-hidden="true">${authority.slice(0,1).toUpperCase()}</span></span>

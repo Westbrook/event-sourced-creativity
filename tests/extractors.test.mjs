@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { analyzeImageSample, EXTRACTOR_EVAL_FIXTURES, EXTRACTOR_EVAL_THRESHOLD, runExtractorEvaluation } from "../src/model/extractors.ts";
+import { analyzeImageSample, EXTRACTOR_EVAL_FIXTURES, EXTRACTOR_EVAL_THRESHOLD, REFERENCE_FINDING_OPTIONS, runExtractorEvaluation } from "../src/model/extractors.ts";
 
 test("fixed deterministic extractor corpus clears the agreed correction-rate gate", () => {
   const report = runExtractorEvaluation();
@@ -20,6 +20,8 @@ test("extractor evaluation is deterministic and carries usable confidence", () =
     assert.deepEqual(result.palette, fixture.expected.palette);
     assert.equal(result.dominantEdges, fixture.expected.dominantEdges);
     assert.ok(result.confidence.overall >= 0.7 && result.confidence.overall <= 1);
+    assert.deepEqual(new Set(result.findings.map((finding) => finding.kind)), new Set(REFERENCE_FINDING_OPTIONS.map((option) => option.kind)));
+    assert.ok(result.findings.every((finding) => finding.value && finding.basis && finding.confidence >= 0 && finding.confidence <= 1));
   }
 });
 

@@ -2,9 +2,10 @@ import { Signal } from "signal-polyfill";
 import { SignalObject } from "signal-utils/object";
 import { foldEvents, type CreativeEvent, type CreativeProjection, type EventInput } from "../model/events";
 import { buildScenario, type ScenarioKey } from "../model/scenarios";
-import type { ImageSample } from "../model/extractors";
+import type { ImageSample, ReferenceFindingKind } from "../model/extractors";
 import { readAttentionPreference, writeAttentionPreference } from "../model/attention";
 import type { AdaptiveStructure } from "../model/block-types";
+import { documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, withDocumentInRoute } from "../model/routes";
 
 type Listener = () => void;
 export type PilotSession = {
@@ -38,9 +39,52 @@ export class FormaStore {
   subscribe(listener: Listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   notify() { this.#listeners.forEach((listener) => listener()); }
   #publishAppended(events:CreativeEvent[]){if(events.length)window.dispatchEvent(new CustomEvent("forma-events-appended",{detail:{events}}));}
+  #reflectDocumentInRoute() {
+    const currentRoute = this.route.get();
+    if (!isDocumentViewRoute(currentRoute)) return;
+    const projection = this.projection.get();
+    const canonicalRoute = withDocumentInRoute(currentRoute, projection.documentId, projection.documentTitle);
+    if (projection.documentId && canonicalRoute !== currentRoute) this.setRoute(canonicalRoute, { replace: true });
+  }
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   toast(message: string) { this.ui.toast = message; this.notify(); window.setTimeout(() => { if (this.ui.toast === message) { this.ui.toast = ""; this.notify(); } }, 2800); }
-  setRoute(path: string) { const current=`${location.pathname}${location.search}${location.hash}`;if(current!==path)history.pushState({}, "", path); this.route.set(path); this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed",{detail:{path}})); }
+  setRoute(path: string, options: { replace?: boolean } = {}) {
+    const projection = this.projection.get();
+    const requestedDocumentId = documentIdFromRoute(path);
+    const routeDocumentId = requestedDocumentId || projection.documentId;
+    const routeDocumentTitle = projection.documents.find((document) => document.id === routeDocumentId)?.title ?? (routeDocumentId === projection.documentId ? projection.documentTitle : "");
+    const routedPath = isDocumentViewRoute(path) && routeDocumentId ? withDocumentInRoute(path, routeDocumentId, routeDocumentTitle) : path;
+    const current = `${location.pathname}${location.search}${location.hash}`;
+    if (current !== routedPath) {
+      if (options.replace) history.replaceState({}, "", routedPath);
+      else history.pushState({}, "", routedPath);
+    }
+    this.route.set(routedPath); this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath } }));
+  }
+
+  async syncDocumentFromRoute(path = this.route.get()) {
+    if (!isDocumentViewRoute(path) || !this.events.get().length) return;
+    const projection = this.projection.get();
+    const requestedDocumentId = documentIdFromRoute(path);
+    if (!requestedDocumentId) {
+      if (projection.documentId) this.setRoute(withDocumentInRoute(path, projection.documentId, projection.documentTitle), { replace: true });
+      return;
+    }
+    const requestedDocument = projection.documents.find((document) => document.id === requestedDocumentId);
+    if (!requestedDocument) {
+      this.setRoute(withDocumentInRoute(path, projection.documentId, projection.documentTitle), { replace: true });
+      this.toast("That document is unavailable; the current document was opened instead.");
+      return;
+    }
+    if (requestedDocumentId !== projection.documentId) {
+      const opened = await this.openDocument(requestedDocumentId, path, "shared-document-url");
+      if (!opened) this.setRoute(withDocumentInRoute(path, projection.documentId, projection.documentTitle), { replace: true });
+    }
+    else {
+      const canonicalRoute = withDocumentInRoute(path, projection.documentId, projection.documentTitle);
+      if (canonicalRoute !== path) this.setRoute(canonicalRoute, { replace: true });
+    }
+  }
   setAttentionCapture(enabled:boolean){writeAttentionPreference(enabled,this.session.get()?.user.userId??"anonymous");this.patchUi({attentionCapture:enabled,attentionPaused:false});this.toast(enabled?"Attention signals enabled for this account on this device.":"Attention signals disabled; the current episode was closed.");}
   setAttentionPaused(paused:boolean){this.patchUi({attentionPaused:paused});this.toast(paused?"Attention capture paused on this device.":"Attention capture resumed.");}
   async forgetAttentionSignals(){window.dispatchEvent(new Event("forma-attention-forget"));const appended=await this.append({type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:this.head.get(),reason:"user-requested",device_ledger_cleared:true}});if(appended.length)this.toast("Attention episodes were forgotten and excluded from Scout and Memory.");return appended;}
@@ -53,6 +97,7 @@ export class FormaStore {
       if (!response.ok) throw new Error(`Event stream returned ${response.status}`);
       const body = await response.json() as { events: CreativeEvent[]; content?: Record<string, string>; head: number };
       this.events.set(body.events); this.content.set(body.content ?? {}); this.head.set(body.head); this.error.set("");
+      await this.syncDocumentFromRoute(this.route.get());
     } catch (error) { this.error.set(error instanceof Error ? error.message : "Unable to load event stream"); }
     finally { this.loading.set(false); this.notify(); }
   }
@@ -84,6 +129,7 @@ export class FormaStore {
       if (!response.ok) throw new Error(body.error ?? "Append rejected");
       const appended = body.appended ?? [];
       this.events.set([...this.events.get(), ...appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(appended);
+      this.#reflectDocumentInRoute();
       if (options.remember !== false) { this.#undo.push(...appended.filter((e) => e.actor === "user" && !e.compensatesEventId && inverseEvent(e))); this.#redo = []; }
       if (body.rejected?.length) this.toast(`${body.rejected.length} event${body.rejected.length === 1 ? "" : "s"} rejected; valid events still appended.`);
       return appended;
@@ -136,17 +182,18 @@ export class FormaStore {
     if(!appended.length)return false;this.patchUi({focusBlockId:"",focusCollectionId:"",selectedOutputId:"",compareOpen:false});this.setRoute(destination);this.toast(`${target.name} opened in Studio.`);return true;
   }
 
-  async openDocument(documentId: string, destination="/") {
-    const projection=this.projection.get();if(!documentId||documentId===projection.documentId){this.setRoute(destination);return true;}
-    const appended=await this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:projection.documentId,source_surface:destination==="/"?"studio":"studio-alternative"}});
-    if(!appended.length)return false;this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});this.setRoute(destination);this.toast("Document opened.");return true;
+  async openDocument(documentId: string, destination="/", sourceSurface?: string) {
+    const projection=this.projection.get();const target=projection.documents.find((document)=>document.id===documentId);const routedDestination = withDocumentInRoute(destination, documentId, target?.title ?? "");
+    if(!documentId||documentId===projection.documentId){this.setRoute(routedDestination);return true;}
+    const appended=await this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:projection.documentId,source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative")}});
+    if(!appended.length)return false;this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});this.setRoute(routedDestination);this.toast("Document opened.");return true;
   }
 
   async removeDocument(documentId: string) {
     const projection=this.projection.get();const target=projection.documents.find((document)=>document.id===documentId);if(!target){this.toast("That document is no longer available.");return[];}if(projection.documents.length<=1){this.toast("Create another document before removing the project’s final document.");return[];}
     const fallback=projection.documents.find((document)=>document.id!==documentId)!;const wasCurrent=documentId===projection.documentId;
     const appended=await this.append({type:"DocumentRemoved",payload:{document_id:documentId,title:target.title,was_current:wasCurrent,previous_document_id:projection.documentId,fallback_document_id:fallback.id,reason:"removed-by-user"}});
-    if(appended.length){this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});this.toast(wasCurrent?`${target.title} was removed. ${fallback.title} is now open.`:`${target.title} was removed. Undo can restore it.`);}return appended;
+    if(appended.length){this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});if(wasCurrent&&isDocumentViewRoute(this.route.get()))this.setRoute(withDocumentInRoute(this.route.get(),this.projection.get().documentId,this.projection.get().documentTitle),{replace:true});this.toast(wasCurrent?`${target.title} was removed. ${fallback.title} is now open.`:`${target.title} was removed. Undo can restore it.`);}return appended;
   }
 
   async evaluateExtractors() {
@@ -172,13 +219,13 @@ export class FormaStore {
     finally { this.busy.set(""); this.notify(); }
   }
 
-  async extractReference(blockId: string, referenceId: string, sample: ImageSample) {
+  async extractReference(blockId: string, referenceId: string, sample: ImageSample, findingKinds: ReferenceFindingKind[] = []) {
     this.busy.set("extract-reference"); this.notify();
     try {
-      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "extract_reference", expectedSequence: this.head.get(), clientId: "web:lit", blockId, referenceId, sample }) });
+      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "extract_reference", expectedSequence: this.head.get(), clientId: "web:lit", blockId, referenceId, sample, findingKinds }) });
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string };
       if (!response.ok) throw new Error(body.error ?? "Reference extraction failed");
-      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Reference stored and deterministic extraction completed.");
+      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Reference analysis is ready to review.");
     } catch (error) { this.toast(error instanceof Error ? error.message : "Reference extraction failed"); }
     finally { this.busy.set(""); this.notify(); }
   }

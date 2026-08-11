@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
-import { FormaElement } from "./forma-element";
+import { FormaElement, icon } from "./forma-element";
+import { withDocumentInRoute } from "../model/routes";
 
 type StudioMode = "document" | "board" | "guided" | "layers" | "adaptive";
 
@@ -11,10 +12,18 @@ const modes: Array<{ id: StudioMode; label: string; path: string }> = [
   { id: "adaptive", label: "Adaptive path", path: "/studio/adaptive" },
 ];
 
+const lensCopy: Record<Exclude<StudioMode, "document">, string> = {
+  board: "Every decision is placed by the job it performs.",
+  guided: "The interview focuses the next questions without dropping supporting decisions.",
+  layers: "Every decision stays in the stack, including choices with no current influence.",
+  adaptive: "The next-step path changes, while the complete document remains in scope.",
+};
+
 export class StudioModeNav extends FormaElement {
   override render() {
     const active=(this.getAttribute("active")??"document") as StudioMode;
-    return html`<nav class="studio-mode-nav" aria-label="Document views"><span>Document views</span><div>${modes.map((mode)=>html`<a href=${mode.path} class=${active===mode.id?"active":""} aria-current=${active===mode.id?"page":nothing} @click=${(event:MouseEvent)=>{event.preventDefault();this.store.setRoute(mode.path);window.scrollTo({top:0});}}>${mode.label}</a>`)}</div></nav>`;
+    const projection = this.store.projection.get();
+    return html`<nav class="studio-mode-nav" aria-label="Document views"><span>Document views</span><div>${modes.map((mode)=>{const href=withDocumentInRoute(mode.path,projection.documentId,projection.documentTitle);return html`<a href=${href} class=${active===mode.id?"active":""} aria-current=${active===mode.id?"page":nothing} @click=${(event:MouseEvent)=>{event.preventDefault();this.store.setRoute(href);window.scrollTo({top:0});}}>${mode.label}</a>`;})}</div></nav>`;
   }
 }
 
@@ -35,5 +44,30 @@ export class StudioNavigator extends FormaElement {
   }
 }
 
+export class DocumentContinuity extends FormaElement {
+  override render() {
+    const projection = this.store.projection.get();
+    const view = (this.getAttribute("view") ?? "board") as Exclude<StudioMode, "document">;
+    const active = projection.blocks.filter((block) => Number(block.properties.weight ?? .5) > 0).length;
+    const latest = projection.outputs[0];
+    const baselineRoute = withDocumentInRoute("/", projection.documentId, projection.documentTitle);
+    return html`<section class="document-continuity" aria-label="Current document represented in this view">
+      <div class="document-continuity-title">
+        <span class="eyebrow">One document · ${view} lens</span>
+        <strong>${projection.documentTitle}</strong>
+        <small>${lensCopy[view]} Every saved decision and result is still represented here.</small>
+      </div>
+      <dl>
+        <div><dt>Decisions</dt><dd>${projection.blocks.length}</dd></div>
+        <div><dt>Guiding now</dt><dd>${active}</dd></div>
+        <div><dt>Results</dt><dd>${projection.outputs.length}</dd></div>
+        <div><dt>Latest result</dt><dd>${latest ? latest.pinned ? "Pinned" : latest.saved ? "Saved" : `Version ${latest.variant + 1}` : "Not generated"}</dd></div>
+      </dl>
+      <a href=${baselineRoute} @click=${(event: MouseEvent) => { event.preventDefault(); this.store.setRoute(baselineRoute); window.scrollTo({ top: 0 }); }}>Open baseline ${icon("arrow")}</a>
+    </section>`;
+  }
+}
+
 customElements.define("forma-studio-mode-nav",StudioModeNav);
 customElements.define("forma-studio-navigator",StudioNavigator);
+customElements.define("forma-document-continuity", DocumentContinuity);

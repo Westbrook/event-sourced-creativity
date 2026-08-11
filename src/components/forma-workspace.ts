@@ -2,7 +2,7 @@ import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
 import { contextDiff, foldEvents, shortEventType, type EventInput } from "../model/events";
 import { sampleImageFile } from "../model/image-sample";
-import type { ImageSample } from "../model/extractors";
+import { DEFAULT_REFERENCE_FINDINGS, REFERENCE_FINDING_OPTIONS, type ImageSample, type ReferenceFindingKind } from "../model/extractors";
 import { retrieveFewShotExemplars, type RetrievedExemplar } from "../model/indexing";
 import { BLOCK_GROUPS, BLOCK_TYPES, blockTypeDefinition, suggestedSubtype, type BlockKind } from "../model/block-types";
 import "./context-block";
@@ -18,6 +18,7 @@ export class FormaWorkspace extends FormaElement {
   #documentName: string | null = null;
   #proposal: { prompt: string; events: EventInput[]; proposalId?: string; exemplars: RetrievedExemplar[] } | null = null;
   #uploading = false; #pendingUpload: File | null = null; #rightsConfirmed = false;
+  #referenceFindingKinds = new Set<ReferenceFindingKind>(DEFAULT_REFERENCE_FINDINGS);
   #projectSettings=false;#projectName="";#projectState="active";#deleteDocument=false;
 
   protected override updated() {
@@ -37,7 +38,7 @@ export class FormaWorkspace extends FormaElement {
   }
   #queueUpload(event: Event) {
     const input = event.target as HTMLInputElement; const file = input.files?.[0]; if (!file) return;
-    this.#pendingUpload = file; this.#rightsConfirmed = false; this.requestUpdate();
+    this.#pendingUpload = file; this.#rightsConfirmed = false; this.#referenceFindingKinds = new Set(DEFAULT_REFERENCE_FINDINGS); this.requestUpdate();
   }
   #resetFileInputs() { this.querySelectorAll<HTMLInputElement>('input[type="file"]').forEach((input)=>{input.value="";}); }
   #cancelUpload() { this.#pendingUpload = null; this.#rightsConfirmed = false; this.#resetFileInputs(); this.requestUpdate(); }
@@ -50,12 +51,13 @@ export class FormaWorkspace extends FormaElement {
       const form = new FormData(); form.append("file", file); form.append("rightsConfirmed", "true"); const response = await fetch("/api/media", { method: "POST", body: form }); const media = await response.json() as { key?: string; url?: string; error?: string };
       if (!response.ok) throw new Error(media.error ?? "Upload failed");
       const ref = crypto.randomUUID(); const block = crypto.randomUUID();
+      const findingKinds=[...this.#referenceFindingKinds];
       await this.store.appendBatch([
         { type: "ReferenceIngested", payload: { reference_id: ref, source_type: "upload", source_ref: media.url, content_hash: media.key, rights_class: "asserted" } },
         { type: "RightsAsserted", payload: { reference_id: ref, rights_class: "owned_or_licensed", assertion_method: "explicit-upload-confirmation" } },
-        { type: "BlockCreated", payload: { block_id: block, type: "reference", handle: `reference/${file.name.replace(/\W+/g,"-").toLowerCase()}`, position: `z${this.store.head.get()}`, properties: { reference_id: ref, label: file.name, media_url: media.url, subtype: "Mood", weight: .72, authority: "authored", extraction_status: sample ? "pending" : "unavailable" } } },
+        { type: "BlockCreated", payload: { block_id: block, type: "reference", handle: `reference/${file.name.replace(/\W+/g,"-").toLowerCase()}`, position: `z${this.store.head.get()}`, properties: { reference_id: ref, label: file.name, media_url: media.url, subtype: "Mood", weight: .72, authority: "authored", extraction_preferences: findingKinds, extraction_status: sample ? "pending" : "unavailable" } } },
       ]);
-      if (sample) await this.store.extractReference(block, ref, sample); else this.store.toast("Reference stored; deterministic extraction is unavailable in this browser.");
+      if (sample) await this.store.extractReference(block, ref, sample, findingKinds); else this.store.toast("Reference stored; image findings can be analyzed later from the block.");
       this.#pendingUpload = null; this.#rightsConfirmed = false; this.#blockDraft = null; this.#resetFileInputs();
     } catch (error) { this.store.toast(error instanceof Error ? error.message : "Upload failed"); }
     this.#uploading = false; this.requestUpdate();
@@ -152,7 +154,18 @@ export class FormaWorkspace extends FormaElement {
       ${this.store.ui.compareOpen ? this.#comparison() : nothing}
       ${this.#projectSettings?html`<dialog class="modal workspace-modal project-settings-dialog" closedby="any" aria-labelledby="project-settings-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeProjectSettings();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeProjectSettings();}} @close=${()=>{if(this.#projectSettings){this.#projectSettings=false;this.requestUpdate();}}}><form class="modal-card project-settings-form" @submit=${this.#saveProject}><button type="button" class="icon-button modal-close" aria-label="Close project settings" @click=${this.#closeProjectSettings}>${icon("close")}</button><span class="eyebrow">Project settings</span><h2 id="project-settings-title">Edit ${p.projectName}</h2><label>Project name<input maxlength="80" required .value=${this.#projectName} @input=${(event:InputEvent)=>{this.#projectName=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label><label>Project state<select .value=${this.#projectState} @change=${(event:Event)=>{this.#projectState=(event.target as HTMLSelectElement).value;}}><option value="active">Active</option><option value="archived">Archived</option><option value="paused">Paused</option></select><small>State changes are reversible events; they never delete project history.</small></label><footer><button type="button" class="button ghost" @click=${this.#closeProjectSettings}>Cancel</button><button class="button primary" ?disabled=${!this.#projectName.trim()}>Save project</button></footer></form></dialog>`:nothing}
       ${this.#deleteDocument?html`<dialog class="modal workspace-modal document-delete-dialog studio-document-delete-dialog" closedby="any" aria-labelledby="studio-delete-document-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeDeleteDocument();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeDeleteDocument();}} @close=${()=>{if(this.#deleteDocument){this.#deleteDocument=false;this.requestUpdate();}}}><div class="modal-card document-delete-card"><button class="icon-button modal-close" aria-label="Cancel document removal" @click=${this.#closeDeleteDocument}>${icon("close")}</button><span class="eyebrow">Reversible removal · event-sourced</span><h2 id="studio-delete-document-title">Remove “${p.documentTitle}”?</h2><p>The document, its blocks, and its outputs will leave active Studio and Library views. Another document will open automatically, and Undo can restore this one from the durable stream.</p><div class="document-delete-summary"><span>${icon("trash")}</span><div><b>${p.documentTitle}</b><small>${p.documentId}</small></div></div><footer><button class="button ghost" @click=${this.#closeDeleteDocument}>Cancel</button><button class="button danger" @click=${this.#confirmDeleteDocument}>Remove document</button></footer></div></dialog>`:nothing}
-      ${this.#pendingUpload?html`<dialog class="modal workspace-modal upload-rights-modal" closedby="any" aria-modal="true" aria-labelledby="upload-rights-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget&&!this.#uploading)this.#cancelUpload();}} @cancel=${(event:Event)=>{event.preventDefault();if(!this.#uploading)this.#cancelUpload();}} @close=${()=>{if(this.#pendingUpload&&!this.#uploading){this.#pendingUpload=null;this.#rightsConfirmed=false;this.requestUpdate();}}}><div class="modal-card"><button class="icon-button modal-close" aria-label="Cancel upload" ?disabled=${this.#uploading} @click=${this.#cancelUpload}>${icon("close")}</button><span class="eyebrow">Rights checkpoint · before upload</span><h2 id="upload-rights-title">Confirm you may use this image</h2><div class="upload-file-receipt"><span>${icon("image")}</span><div><b>${this.#pendingUpload.name}</b><small>${(this.#pendingUpload.size/1_048_576).toFixed(1)} MB · ${this.#pendingUpload.type||"image"}</small></div></div><p>Forma will store this file privately and may send it to the configured generation provider when it becomes part of compiled context.</p><label class="rights-check"><input type="checkbox" .checked=${this.#rightsConfirmed} @change=${(event:Event)=>{this.#rightsConfirmed=(event.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>I own this image or have a license that permits this use.</b><small>This assertion is recorded alongside the reference. It does not transfer ownership.</small></span></label><footer><button class="button ghost" ?disabled=${this.#uploading} @click=${this.#cancelUpload}>Cancel</button><button class="button primary" ?disabled=${!this.#rightsConfirmed||this.#uploading} @click=${this.#confirmUpload}>${this.#uploading?"Uploading securely…":"Confirm & upload"}</button></footer></div></dialog>`:nothing}
+      ${this.#pendingUpload ? html`<dialog class="modal workspace-modal upload-rights-modal" closedby="any" aria-modal="true" aria-labelledby="upload-rights-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget && !this.#uploading) this.#cancelUpload(); }} @cancel=${(event: Event) => { event.preventDefault(); if (!this.#uploading) this.#cancelUpload(); }} @close=${() => { if (this.#pendingUpload && !this.#uploading) { this.#pendingUpload = null; this.#rightsConfirmed = false; this.requestUpdate(); } }}>
+        <div class="modal-card reference-upload-card">
+          <button class="icon-button modal-close" aria-label="Cancel upload" ?disabled=${this.#uploading} @click=${this.#cancelUpload}>${icon("close")}</button>
+          <span class="eyebrow">Reference setup · before upload</span><h2 id="upload-rights-title">Choose what this image should contribute</h2>
+          <div class="upload-file-receipt"><span>${icon("image")}</span><div><b>${this.#pendingUpload.name}</b><small>${(this.#pendingUpload.size / 1_048_576).toFixed(1)} MB · ${this.#pendingUpload.type || "image"}</small></div></div>
+          <p>Forma can prepare several kinds of visual evidence. They remain suggestions on the Reference block until you explicitly add one as a document decision.</p>
+          <fieldset class="reference-extraction-options"><legend>Prepare findings automatically</legend>${REFERENCE_FINDING_OPTIONS.map((option) => html`<label><input type="checkbox" .checked=${this.#referenceFindingKinds.has(option.kind)} @change=${(event: Event) => { const checked = (event.target as HTMLInputElement).checked; if (checked) this.#referenceFindingKinds.add(option.kind); else this.#referenceFindingKinds.delete(option.kind); this.requestUpdate(); }}><span><b>${option.label}</b><small>${option.description}</small></span></label>`)}</fieldset>
+          <div class="reference-extraction-note"><span>${icon("info")}</span><p>Image analysis uses a small deterministic sample for visual structure; it does not identify people, objects, or meaning. You can change the prepared findings later.</p></div>
+          <label class="rights-check"><input type="checkbox" .checked=${this.#rightsConfirmed} @change=${(event: Event) => { this.#rightsConfirmed = (event.target as HTMLInputElement).checked; this.requestUpdate(); }}><span><b>I own this image or have a license that permits this use.</b><small>This assertion is recorded alongside the reference. It does not transfer ownership.</small></span></label>
+          <footer><button class="button ghost" ?disabled=${this.#uploading} @click=${this.#cancelUpload}>Cancel</button><button class="button primary" ?disabled=${!this.#rightsConfirmed || this.#uploading} @click=${this.#confirmUpload}>${this.#uploading ? "Uploading securely…" : "Confirm & add reference"}</button></footer>
+        </div>
+      </dialog>` : nothing}
     </section>`;
   }
 }

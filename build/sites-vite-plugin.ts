@@ -4,6 +4,7 @@ import type { Plugin } from "vite";
 
 export const SITE_ROUTE_ENTRIES = [
   { path: "/", module: "src/components/forma-workspace.ts", title: "Forma — An event-sourced creative studio", description: "Forma is an event-sourced creative studio with replayable context, provenance, and human-governed agents." },
+  { path: "/document", module: "src/components/forma-workspace.ts", title: "Document — Forma", description: "Open a durable creative document in Forma." },
   { path: "/projects", module: "src/components/forma-projects.ts", title: "Projects — Forma", description: "Open and manage the creative projects in Forma." },
   { path: "/studio/project", module: "src/components/forma-project-contents.ts", title: "Project overview — Forma", description: "Review every collection and document in the current Forma project." },
   { path: "/studio/board", module: "src/components/forma-studio-alternatives.ts", title: "Context board — Forma", description: "Arrange replayable creative context as a spatial working board." },
@@ -16,6 +17,9 @@ export const SITE_ROUTE_ENTRIES = [
   { path: "/memory", module: "src/components/forma-memory.ts", title: "Taste & time — Forma", description: "Review reversible preferences, taste evidence, and time-based memory." },
   { path: "/system", module: "src/components/forma-system.ts", title: "System & governance — Forma", description: "Review governance, evaluation gates, privacy, and system health." },
   { path: "/admin/events", module: "src/components/forma-admin-events.ts", title: "Event administration — Forma", description: "Inspect and replay the durable creative event stream." },
+  { path: "/admin/events/stream", module: "src/components/forma-admin-events.ts", title: "Durable stream — Forma", description: "Inspect the immutable envelopes and payloads in Forma’s durable creative stream." },
+  { path: "/admin/events/replay", module: "src/components/forma-admin-events.ts", title: "Replay laboratory — Forma", description: "Build and replay theoretical long-running creative event streams." },
+  { path: "/admin/events/permissions", module: "src/components/forma-admin-events.ts", title: "Producer permissions — Forma", description: "Review event producer permissions, authority boundaries, and concurrency behavior." },
   { path: "/share", module: "src/components/forma-shared-view.ts", title: "Shared creative context — Forma", description: "Open an expiring, read-only creative context handoff." },
 ] as const;
 

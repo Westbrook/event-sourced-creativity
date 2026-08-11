@@ -50,8 +50,116 @@ export class FormaRealityLayers extends AlternativeStudio {
   async #toggle(block:CreativeBlock){const weight=Number(block.properties.weight??.5);await this.store.append({type:"BlockWeightSet",payload:{block_id:block.id,weight:weight>0?0:.68,previous_weight:weight,source_surface:"reality-layers"}});}
   async #remove(block:CreativeBlock){if(block.locked){this.store.toast("Unlock this layer before removing it.");return;}await this.store.append({type:"BlockRemoved",payload:{block_id:block.id,source_surface:"reality-layers"}});if(this.#selectedBlockId===block.id)this.#selectedBlockId="";}
   async #saveLayer(event:SubmitEvent,block:CreativeBlock){event.preventDefault();if(block.locked)return;const data=new FormData(event.currentTarget as HTMLFormElement);const handle=String(data.get("handle")??"").trim();const text=String(data.get("instructions")??"").trim();const subtype=String(data.get("subtype")??"");const weight=Number(data.get("weight")??block.properties.weight??.5);const events:EventInput[]=[];if(handle&&handle!==block.handle)events.push({type:"BlockRenamed",payload:{block_id:block.id,old_handle:block.handle,new_handle:handle,reason:"reality-layer-inspector"}});const oldText=layerLabel(block);if(text&&text!==oldText)events.push({type:"BlockPropertyEdited",payload:{block_id:block.id,property_path:block.properties.text!==undefined?"text":"label",old_value:oldText,new_value:text,source_surface:"reality-layers"}});const oldSubtype=String(block.properties.subtype??suggestedSubtype(block.type));if(subtype!==oldSubtype)events.push({type:"BlockPropertyEdited",payload:{block_id:block.id,property_path:"subtype",old_value:oldSubtype,new_value:subtype,source_surface:"reality-layers"}});const oldWeight=Number(block.properties.weight??.5);if(weight!==oldWeight)events.push({type:"BlockWeightSet",payload:{block_id:block.id,weight,previous_weight:oldWeight,source_surface:"reality-layers"}});if(!events.length){this.store.toast("Layer already matches those settings.");return;}await this.store.appendBatch(events);}
-  #insight(blocks:CreativeBlock[]){const active=blocks.filter((block)=>Number(block.properties.weight??.5)>0);const groups=new Set(active.map((block)=>blockTypeDefinition(block.type)?.group).filter(Boolean));if(!active.length)return"Activate one reality and the canvas will expose exactly which authored decision changed it.";if(groups.size<3)return`${active.length} active layer${active.length===1?"":"s"} shape the preview. Add another kind of reality to reveal how decisions combine.`;return`Aha: ${active.length} independently editable realities now resolve into one coherent preview without collapsing their provenance.`;}
-  override render(){const p=this.store.projection.get();const presets=this.#category==="all"?REALITIES:REALITIES.filter((item)=>item.category===this.#category);const activeRealityIds=new Set(p.blocks.map((block)=>String(block.properties.reality_id??"")));const projectBlocks=p.libraryBlocks.filter((block)=>block.documentId!==p.documentId).slice(0,8);const selected=p.blocks.find((block)=>block.id===this.#selectedBlockId)??p.blocks.at(-1);const selectedDefinition=selected?blockTypeDefinition(selected.type):undefined;const newDefinition=blockTypeDefinition(this.#newType)!;const body=html`<section class="reality-editor-intro"><div><span class="eyebrow">Interface 03 · layer-based composition</span><h2>Activate realities, then compose their influence</h2><p>Use familiar tools, an asset shelf, a canvas, and a layer stack. Every visual operation remains an ordinary replayable context change.</p></div><span><b>${p.blocks.filter((block)=>Number(block.properties.weight??.5)>0).length}</b> active layers</span></section>
+  #insight(blocks:CreativeBlock[]){const active=blocks.filter((block)=>Number(block.properties.weight??.5)>0);const groups=new Set(active.map((block)=>blockTypeDefinition(block.type)?.group).filter(Boolean));if(!active.length)return"Nothing is guiding the preview yet. Add one clear ingredient to establish a direction.";if(groups.size<3)return`${active.length} decision${active.length===1?"":"s"} shape the preview. Add a different kind of ingredient to see how choices support or compete with one another.`;return`${active.length} decisions across ${groups.size} creative areas now combine into one direction. Select any decision to fine-tune its influence.`;}
+
+  override render() {
+    const projection = this.store.projection.get();
+    const presets = this.#category === "all" ? REALITIES : REALITIES.filter((item) => item.category === this.#category);
+    const activeRealityIds = new Set(projection.blocks.map((block) => String(block.properties.reality_id ?? "")));
+    const projectBlocks = projection.libraryBlocks.filter((block) => block.documentId !== projection.documentId).slice(0, 8);
+    const selected = projection.blocks.find((block) => block.id === this.#selectedBlockId) ?? projection.blocks.at(-1);
+    const selectedDefinition = selected ? blockTypeDefinition(selected.type) : undefined;
+    const newDefinition = blockTypeDefinition(this.#newType)!;
+    const active = projection.blocks.filter((block) => Number(block.properties.weight ?? .5) > 0);
+    const activeGroups = new Set(active.map((block) => blockTypeDefinition(block.type)?.group));
+    const recommendation = REALITIES.find((reality) => !activeRealityIds.has(reality.id) && !activeGroups.has(blockTypeDefinition(reality.type)?.group)) ?? REALITIES.find((reality) => !activeRealityIds.has(reality.id));
+    const body = html`
+      <section class="view-success-hero layers-success">
+        <div class="view-success-copy">
+          <span class="eyebrow">Compose by influence</span>
+          <h2>Shape how the document’s decisions work together</h2>
+          <p>Use the preview to test balance, emphasis, and omissions before asking for another result.</p>
+        </div>
+        <div class="view-readiness" aria-label="Active decisions">
+          <span>Guiding the preview</span>
+          <b>${active.length} of ${projection.blocks.length} decisions</b>
+          <i style=${`--progress:${projection.blocks.length ? active.length / projection.blocks.length : 0}`}></i>
+          <small>Muted decisions remain in the document and can be restored at any time.</small>
+        </div>
+        <aside class="next-best-action">
+          <span>Suggested next ingredient</span>
+          <b>${recommendation?.label ?? "Review the current balance"}</b>
+          <p>${recommendation?.description ?? "Select a decision in the stack and check whether its influence matches its importance."}</p>
+          ${recommendation ? html`<button class="button secondary compact" @click=${() => this.#activate(recommendation, "button")}>Add to preview ${icon("arrow")}</button>` : nothing}
+        </aside>
+      </section>
+
+      <div class="reality-editor">
+        <aside class="reality-shelf" aria-label="Creative ingredients">
+          <header><div><span class="eyebrow">Add to this document</span><h3>Creative ingredients</h3></div><button class="new-layer-button" @click=${() => { this.#creating = true; this.requestUpdate(); }}>${icon("plus")} Create</button></header>
+          <nav class="reality-tools" aria-label="Ingredient categories">
+            ${([ ["all","All"], ["intent","Intent"], ["subject","Subject"], ["space","Space"], ["light","Light"], ["look","Look"], ["delivery","Delivery"], ["rules","Rules"] ] as const).map(([id,label]) => html`<button class=${this.#category === id ? "active" : ""} aria-pressed=${this.#category === id} @click=${() => { this.#category = id; this.requestUpdate(); }}>${label.slice(0,2)}<span>${label}</span></button>`)}
+          </nav>
+          <div class="reality-list">
+            ${presets.map((reality) => {
+              const isActive = activeRealityIds.has(reality.id);
+              return html`<article class=${isActive ? "active" : ""} .draggable=${!isActive} @dragstart=${(event: DragEvent) => this.#dragReality(event, reality)}>
+                <span class=${`reality-glyph ${reality.category}`}>${reality.label.slice(0,2)}</span>
+                <div><b>${reality.label}</b><small>${reality.description}</small></div>
+                <button ?disabled=${isActive} @click=${() => this.#activate(reality, "button")}>${isActive ? "Added" : "Add"}</button>
+              </article>`;
+            })}
+          </div>
+          ${projectBlocks.length ? html`<section class="project-reality-list"><span class="eyebrow">Reuse from this project</span>${projectBlocks.map((block) => html`<article .draggable=${true} @dragstart=${(event: DragEvent) => this.#dragProjectBlock(event, block)}><span class="reality-glyph project">${block.type.slice(0,2)}</span><div><b>${block.handle}</b><small>${String(block.properties.subtype ?? block.type)} · ${layerLabel(block)}</small></div><button @click=${() => this.#copyProjectBlock(block, "button")}>Copy</button></article>`)}</section>` : nothing}
+        </aside>
+
+        <main class="reality-stage">
+          <div class="editor-toolbar" role="toolbar" aria-label="Document perspectives">
+            <button class="active" aria-pressed="true">⌁<span>Preview</span></button>
+            <button @click=${() => this.store.setRoute("/studio/board")}>▦<span>Plan</span></button>
+            <button @click=${() => this.store.setRoute("/")}>✎<span>Write</span></button>
+            <span></span><b>${projection.documentTitle}</b>
+          </div>
+          <div class=${`reality-canvas ${this.#dropActive ? "drop-active" : ""} reality-canvas--${Math.min(5, projection.blocks.length)}`}
+            @dragenter=${(event: DragEvent) => { if (event.dataTransfer?.types.includes("application/x-forma-reality")) { event.preventDefault(); this.#dropActive = true; this.requestUpdate(); } }}
+            @dragover=${(event: DragEvent) => { if (event.dataTransfer?.types.includes("application/x-forma-reality")) { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = "copy"; } }}
+            @dragleave=${(event: DragEvent) => { if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node)) { this.#dropActive = false; this.requestUpdate(); } }}
+            @drop=${this.#dropReality}>
+            <div class="canvas-art"><i class="canvas-light"></i><i class="canvas-frame"></i><i class="canvas-subject"></i><i class="canvas-ground"></i><i class="canvas-grain"></i></div>
+            <div class="canvas-context">${active.slice(0,8).map((block) => html`<button class=${selected?.id === block.id ? "selected" : ""} @click=${() => { this.#selectedBlockId = block.id; this.requestUpdate(); }}>${blockTypeDefinition(block.type)?.label ?? block.type}<span>${String(block.properties.subtype ?? block.handle.split("/").at(-1))}</span></button>`)}</div>
+            <div class="canvas-drop-copy">${icon("plus")}<b>Add an ingredient here</b><span>Drop one from the left or use its Add button</span></div>
+          </div>
+          <footer><span class="canvas-guidance"><b>What this preview tells you</b><small>${this.#insight(projection.blocks)}</small></span><button class="button primary" ?disabled=${!projection.blocks.length} @click=${() => this.store.setRoute("/")}>Review the full document ${icon("arrow")}</button></footer>
+        </main>
+
+        <aside class="layers-panel" aria-label="Active document decisions">
+          <header><div><span class="eyebrow">Complete document</span><h3>Decision stack</h3><small>Every decision is here. Higher items receive earlier attention.</small></div><button class="new-layer-button" @click=${() => { this.#creating = true; this.requestUpdate(); }}>${icon("plus")} Add</button></header>
+          <ol>${[...projection.blocks].reverse().map((block) => {
+            const isActive = Number(block.properties.weight ?? .5) > 0;
+            return html`<li class=${`${isActive ? "" : "muted"} ${selected?.id === block.id ? "selected" : ""}`} .draggable=${!block.locked} @dragstart=${(event: DragEvent) => this.#dragLayer(event, block.id)} @dragover=${(event: DragEvent) => { if (event.dataTransfer?.types.includes("application/x-forma-layer")) event.preventDefault(); }} @drop=${(event: DragEvent) => this.#dropLayer(event, block.id)}>
+              <button class="layer-visibility" aria-label=${isActive ? `Mute ${block.handle}` : `Use ${block.handle} in preview`} aria-pressed=${isActive} @click=${() => this.#toggle(block)}>${isActive ? icon("eye") : "○"}</button>
+              <button class="layer-name" @click=${() => { this.#selectedBlockId = block.id; this.requestUpdate(); }}><b>${block.handle}</b><small>${String(block.properties.subtype ?? block.type)} · ${Math.round(Number(block.properties.weight ?? 0) * 100)}%</small></button>
+              <span class="layer-order"><button aria-label=${`Move ${block.handle} up`} @click=${() => this.#moveLayer(block.id, -1)}>↑</button><button aria-label=${`Move ${block.handle} down`} @click=${() => this.#moveLayer(block.id, 1)}>↓</button></span>
+              <button class="layer-remove" aria-label=${`Remove ${block.handle}`} @click=${() => this.#remove(block)}>${icon("close")}</button>
+            </li>`;
+          })}</ol>
+          ${selected ? html`<form class="layer-inspector" @submit=${(event: SubmitEvent) => this.#saveLayer(event, selected)}>
+            <header><span class="eyebrow">Fine-tune this decision</span><button type="button" @click=${() => this.store.append({ type: selected.locked ? "BlockUnlocked" : "BlockLocked", payload: { block_id: selected.id, locked_by: "user", source_surface: "reality-layers" } })}>${icon(selected.locked ? "lock" : "unlock")} ${selected.locked ? "Unlock" : "Protect"}</button></header>
+            <label>Short name<input name="handle" ?disabled=${selected.locked} .value=${selected.handle}></label>
+            <label>What it should do<textarea name="instructions" rows="4" ?disabled=${selected.locked} .value=${layerLabel(selected)}></textarea></label>
+            <label>Role<select name="subtype" ?disabled=${selected.locked} .value=${String(selected.properties.subtype ?? selectedDefinition?.subtypes[0] ?? "")}>${selectedDefinition?.subtypes.map((subtype) => html`<option value=${subtype}>${subtype}</option>`)}</select></label>
+            <label>Influence on the result <output>${Math.round(Number(selected.properties.weight ?? .5) * 100)}%</output><input name="weight" type="range" min="0" max="1" step=".05" ?disabled=${selected.locked} .value=${String(selected.properties.weight ?? .5)} @input=${(event: InputEvent) => { const output = (event.currentTarget as HTMLInputElement).previousElementSibling as HTMLOutputElement | null; if (output) output.value = `${Math.round(Number((event.target as HTMLInputElement).value) * 100)}%`; }}></label>
+            <footer><button type="button" @click=${() => this.#duplicate(selected)}>Make a copy</button><button class="button primary compact" ?disabled=${selected.locked}>Save decision</button></footer>
+          </form>` : html`<div class="layer-empty">Add or select a decision to shape it here.</div>`}
+        </aside>
+      </div>
+
+      ${this.#creating ? html`<dialog class="modal layer-create-dialog" closedby="any" aria-labelledby="new-layer-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) this.#closeCreate(); }} @cancel=${(event: Event) => { event.preventDefault(); this.#closeCreate(); }} @close=${() => { if (this.#creating) { this.#creating = false; this.requestUpdate(); } }}>
+        <form class="modal-card layer-create-form" @submit=${this.#createLayer}>
+          <button type="button" class="icon-button modal-close" aria-label="Close new decision dialog" @click=${this.#closeCreate}>${icon("close")}</button>
+          <span class="eyebrow">Add your own decision</span><h2 id="new-layer-title">Create a creative ingredient</h2><p>Choose the job this decision performs, then say what it should contribute to the result.</p>
+          <label>Decision type<select .value=${this.#newType} @change=${(event: Event) => { const value = (event.target as HTMLSelectElement).value; if (isBlockKind(value)) { this.#newType = value; this.#newSubtype = suggestedSubtype(value); this.requestUpdate(); } }}>${BLOCK_TYPES.map((definition) => html`<option value=${definition.type}>${definition.label}</option>`)}</select><small>${newDefinition.description}</small></label>
+          <fieldset class="subtype-picker"><legend>Choose a starting role</legend>${newDefinition.subtypes.map((subtype) => html`<label><input type="radio" name="new-layer-subtype" .value=${subtype} .checked=${this.#newSubtype === subtype} @change=${() => { this.#newSubtype = subtype; this.requestUpdate(); }}><span>${subtype}</span></label>`)}</fieldset>
+          <label>What should it do?<textarea required rows="4" placeholder=${newDefinition.prompt} .value=${this.#newText} @input=${(event: InputEvent) => { this.#newText = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea></label>
+          <label>Short name <small>Optional—Forma can derive one.</small><input placeholder=${this.#newType + "/…"} .value=${this.#newHandle} @input=${(event: InputEvent) => { this.#newHandle = (event.target as HTMLInputElement).value; }}></label>
+          <label>Influence on the result <output>${Math.round(this.#newWeight * 100)}%</output><input type="range" min="0" max="1" step=".05" .value=${String(this.#newWeight)} @input=${(event: InputEvent) => { this.#newWeight = Number((event.target as HTMLInputElement).value); this.requestUpdate(); }}></label>
+          <footer><button type="button" class="button ghost" @click=${this.#closeCreate}>Cancel</button><button class="button primary" ?disabled=${!this.#newText.trim()}>Add decision</button></footer>
+        </form>
+      </dialog>` : nothing}`;
+    return this.shell("layers", "Reality layers", "Shape how every decision combines, then preview which choices carry the result.", body);
+  }
+
+  legacyRender(){const p=this.store.projection.get();const presets=this.#category==="all"?REALITIES:REALITIES.filter((item)=>item.category===this.#category);const activeRealityIds=new Set(p.blocks.map((block)=>String(block.properties.reality_id??"")));const projectBlocks=p.libraryBlocks.filter((block)=>block.documentId!==p.documentId).slice(0,8);const selected=p.blocks.find((block)=>block.id===this.#selectedBlockId)??p.blocks.at(-1);const selectedDefinition=selected?blockTypeDefinition(selected.type):undefined;const newDefinition=blockTypeDefinition(this.#newType)!;const body=html`<section class="reality-editor-intro"><div><span class="eyebrow">Interface 03 · layer-based composition</span><h2>Activate realities, then compose their influence</h2><p>Use familiar tools, an asset shelf, a canvas, and a layer stack. Every visual operation remains an ordinary replayable context change.</p></div><span><b>${p.blocks.filter((block)=>Number(block.properties.weight??.5)>0).length}</b> active layers</span></section>
     <div class="reality-editor">
       <aside class="reality-shelf" aria-label="Reality shelf"><header><div><span class="eyebrow">Reality shelf</span><h3>Ingredients</h3></div><button class="new-layer-button" @click=${()=>{this.#creating=true;this.requestUpdate();}}>${icon("plus")} New</button></header><nav class="reality-tools" aria-label="Reality categories">${([ ["all","All"],["intent","Intent"],["subject","Subject"],["space","Space"],["light","Light"],["look","Look"],["delivery","Delivery"],["rules","Rules"]] as const).map(([id,label])=>html`<button class=${this.#category===id?"active":""} aria-pressed=${this.#category===id} @click=${()=>{this.#category=id;this.requestUpdate();}}>${label.slice(0,2)}<span>${label}</span></button>`)}</nav><div class="reality-list">${presets.map((reality)=>{const active=activeRealityIds.has(reality.id);return html`<article class=${active?"active":""} .draggable=${!active} @dragstart=${(event:DragEvent)=>this.#dragReality(event,reality)}><span class=${`reality-glyph ${reality.category}`}>${reality.label.slice(0,2)}</span><div><b>${reality.label}</b><small>${reality.subtype} · ${reality.description}</small></div><button ?disabled=${active} @click=${()=>this.#activate(reality,"button")}>${active?"Active":"Activate"}</button></article>`;})}</div>${projectBlocks.length?html`<section class="project-reality-list"><span class="eyebrow">From this project</span>${projectBlocks.map((block)=>html`<article .draggable=${true} @dragstart=${(event:DragEvent)=>this.#dragProjectBlock(event,block)}><span class="reality-glyph project">${block.type.slice(0,2)}</span><div><b>${block.handle}</b><small>${String(block.properties.subtype??block.type)} · ${layerLabel(block)}</small></div><button @click=${()=>this.#copyProjectBlock(block,"button")}>Copy</button></article>`)}</section>`:nothing}</aside>
       <main class="reality-stage"><div class="editor-toolbar" role="toolbar" aria-label="Canvas tools"><button class="active" aria-pressed="true">⌁<span>Compose</span></button><button @click=${()=>this.store.setRoute("/studio/board")}>▦<span>Arrange</span></button><button @click=${()=>this.store.setRoute("/")}>✎<span>Edit text</span></button><span></span><b>${p.documentTitle}</b></div><div class=${`reality-canvas ${this.#dropActive?"drop-active":""} reality-canvas--${Math.min(5,p.blocks.length)}`} @dragenter=${(event:DragEvent)=>{if(event.dataTransfer?.types.includes("application/x-forma-reality")){event.preventDefault();this.#dropActive=true;this.requestUpdate();}}} @dragover=${(event:DragEvent)=>{if(event.dataTransfer?.types.includes("application/x-forma-reality")){event.preventDefault();if(event.dataTransfer)event.dataTransfer.dropEffect="copy";}}} @dragleave=${(event:DragEvent)=>{if(!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node)){this.#dropActive=false;this.requestUpdate();}}} @drop=${this.#dropReality}><div class="canvas-art"><i class="canvas-light"></i><i class="canvas-frame"></i><i class="canvas-subject"></i><i class="canvas-ground"></i><i class="canvas-grain"></i></div><div class="canvas-context">${p.blocks.filter((block)=>Number(block.properties.weight??.5)>0).slice(0,8).map((block)=>html`<button @click=${()=>{this.#selectedBlockId=block.id;this.requestUpdate();}}>${block.type}<span>${String(block.properties.subtype??block.handle.split("/").at(-1))}</span></button>`)}</div><div class="canvas-drop-copy">${icon("plus")}<b>Drop a reality onto the document</b><span>or activate one from the shelf</span></div></div><footer><span>${this.#insight(p.blocks)}</span><button class="button primary" ?disabled=${!p.blocks.length} @click=${()=>this.store.setRoute("/")}>Continue in document Studio ${icon("arrow")}</button></footer></main>
@@ -80,7 +188,73 @@ export class FormaAdaptivePath extends AlternativeStudio {
   async #commit(type:BlockKind,value:string,subtype=suggestedSubtype(type)){const text=value.trim();if(!text)return;const p=this.store.projection.get();const existing=p.blocks.find((block)=>block.type===type);let events:EventInput[]=[];if(existing){const oldValue=String(existing.properties.text??existing.properties.label??"");if(oldValue!==text)events.push({type:"BlockPropertyEdited",payload:{block_id:existing.id,property_path:existing.properties.text!==undefined?"text":"label",old_value:oldValue,new_value:text,source_surface:"adaptive-path"}});const oldSubtype=String(existing.properties.subtype??suggestedSubtype(type));if(oldSubtype!==subtype)events.push({type:"BlockPropertyEdited",payload:{block_id:existing.id,property_path:"subtype",old_value:oldSubtype,new_value:subtype,source_surface:"adaptive-path"}});}else events=[{type:"BlockCreated",payload:{block_id:crypto.randomUUID(),document_id:p.documentId,type,handle:`${type}/${makeSlug(text)}`,position:`z${String(this.store.head.get()+1).padStart(5,"0")}`,properties:{text,subtype,weight:.7,authority:"authored",created_from:"adaptive-path",related_block_ids:p.blocks.map((block)=>block.id)}}}];if(!events.length){this.store.toast("That decision is already active.");return;}const appended=await this.store.appendBatch(events);if(appended.length){this.#activeType="";this.#custom="";this.requestUpdate();}}
   async #submitCustom(event:SubmitEvent,type:DecisionType){event.preventDefault();await this.#commit(type,this.#custom);}
   async #askForma(event:SubmitEvent){event.preventDefault();const prompt=this.#intentPrompt.trim();if(!prompt)return;const result=await this.store.structureAdaptive(prompt);if(result){this.#structure=result;this.requestUpdate();}}
-  override render(){const p=this.store.projection.get();const completed=DECISIONS.filter((decision)=>p.blocks.some((block)=>block.type===decision.type));const current=this.#currentDecision();const progress=completed.length;const stage=progress<3?"foundation":progress<6?"scene":"resolution";const precedent=current?completed.at(-1):undefined;const body=html`<section class="alternative-intro adaptive-intro"><div><span class="eyebrow">Interface 04 · intent-responsive decision space</span><h2>The interface follows both intent and decisions</h2><p>Describe the broader job in open language. Forma proposes which decisions deserve attention, while every proposed block remains inert until you choose it.</p></div><div class="adaptive-progress"><b>${progress}/${DECISIONS.length}</b><span>${current?`${current.label} is the next useful decision`:"Core context path resolved"}</span><i style=${`--progress:${progress/DECISIONS.length}`}></i></div></section>
+  override render() {
+    const projection = this.store.projection.get();
+    const completed = DECISIONS.filter((decision) => projection.blocks.some((block) => block.type === decision.type));
+    const current = this.#currentDecision();
+    const progress = completed.length;
+    const stage = progress < 3 ? "foundation" : progress < 6 ? "scene" : "resolution";
+    const precedent = current ? completed.at(-1) : undefined;
+    const pathBlocks = DECISIONS.map((decision) => projection.blocks.find((block) => block.type === decision.type)).filter((block): block is CreativeBlock => Boolean(block));
+    const pathBlockIds = new Set(pathBlocks.map((block) => block.id));
+    const supportingBlocks = projection.blocks.filter((block) => !pathBlockIds.has(block.id));
+    const unlocks: Record<DecisionType, string> = {
+      direction: "A standard for judging every later choice.", audience: "A real use context for message and tone.", subject: "A concrete scene instead of a generic idea.", environment: "Physical and cultural cues around the subject.", composition: "A clear reading order for the frame.", style: "A shared visual language for craft decisions.", lighting: "Believable atmosphere, depth, and focus.", exclusion: "A boundary that protects the direction during iteration.",
+    };
+    const body = html`
+      <section class="view-success-hero adaptive-success">
+        <div class="view-success-copy">
+          <span class="eyebrow">A path shaped by your intent</span>
+          <h2>Resolve the decision that will unlock the most progress</h2>
+          <p>Forma uses what is already in the document to narrow the next question. You remain the author of every answer.</p>
+        </div>
+        <div class="view-readiness" aria-label="Decision path progress">
+          <span>Core path</span><b>${progress} of ${DECISIONS.length} resolved</b><i style=${`--progress:${progress / DECISIONS.length}`}></i>
+          <small>${current ? `${current.label} is the next useful decision.` : "The core path is ready for review or generation."}</small>
+        </div>
+        <aside class="next-best-action"><span>What success looks like next</span><b>${current ? unlocks[current.type] : "Generate, compare, and revise with a clear basis."}</b><p>${current ? current.why : "All core decisions are present; supporting decisions still remain visible alongside them."}</p></aside>
+      </section>
+
+      <form class="adaptive-intent" @submit=${this.#askForma}>
+        <div><label for="adaptive-intent-prompt">Describe the outcome—or the uncertainty slowing you down</label><textarea id="adaptive-intent-prompt" rows="3" placeholder="For example: We need this to feel credible to design leaders, but the current direction is polished without feeling human…" .value=${this.#intentPrompt} @input=${(event: InputEvent) => { this.#intentPrompt = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea><small>Forma can suggest a route through the decisions. Nothing changes until you choose a suggestion.</small></div>
+        <button class="button primary" ?disabled=${!this.#intentPrompt.trim() || !this.store.session.get()?.provider.configured || !!this.store.busy.get()}>${icon("spark")} ${this.store.busy.get() === "adaptive-structure" ? "Finding a useful path…" : "Plan my next decisions"}</button>
+      </form>
+
+      ${this.#structure ? html`<section class="adaptive-model-plan">
+        <header><div><span class="eyebrow">A suggested route · review before applying</span><h3>${this.#structure.interpretation}</h3></div><button @click=${() => { this.#structure = null; this.requestUpdate(); }}>Not now</button></header>
+        <div class="adaptive-model-suggestions">${this.#structure.suggested_blocks.map((suggestion) => html`<article><span>${blockTypeDefinition(suggestion.type)?.label ?? suggestion.type} · ${suggestion.subtype}</span><h4>${suggestion.label}</h4><p>${suggestion.instruction}</p><small><b>Why it helps:</b> ${suggestion.reason}${suggestion.relationship_to ? ` · Builds on ${suggestion.relationship_to}` : ""}</small><button class="button secondary compact" @click=${() => this.#commit(suggestion.type, suggestion.instruction, suggestion.subtype)}>${projection.blocks.some((block) => block.type === suggestion.type) ? "Update this decision" : "Use this suggestion"} ${icon("arrow")}</button></article>`)}</div>
+        ${this.#structure.hidden_until_later.length ? html`<footer><b>Not needed yet</b><span>${this.#structure.hidden_until_later.join(" · ")}</span></footer>` : nothing}
+      </section>` : nothing}
+
+      <div class=${`adaptive-workspace adaptive-stage--${stage}`}>
+        <nav class="decision-spine" aria-label="Creative decision path"><span class="eyebrow">Your decision path</span>${DECISIONS.map((decision, index) => {
+          const block = projection.blocks.find((item) => item.type === decision.type);
+          const isActive = current?.type === decision.type;
+          const available = Boolean(block) || isActive;
+          return html`<button class=${`${block ? "complete" : ""} ${isActive ? "active" : ""}`} ?disabled=${!available} @click=${() => { if (block) { this.#activeType = decision.type; this.#custom = layerLabel(block); this.requestUpdate(); } }}><i>${block ? icon("check") : String(index + 1).padStart(2, "0")}</i><span><b>${decision.label}</b><small>${block ? String(block.properties.subtype ?? layerLabel(block)) : isActive ? "Useful now" : "Waits for context"}</small></span>${block ? html`<em>Review</em>` : nothing}</button>`;
+        })}</nav>
+
+        <main class="adaptive-focus">${current ? html`
+          <header><span class="eyebrow">${precedent ? `Next, because “${precedent.label}” is clear` : "Start with the purpose"}</span><h3>${current.prompt}</h3><p>${this.#structure?.active_decision.type === current.type ? this.#structure.active_decision.why : current.why}</p></header>
+          <div class="decision-impact"><div><span>Why this is next</span><b>${current.why}</b></div><div><span>What this unlocks</span><b>${unlocks[current.type]}</b></div></div>
+          <div class="adaptive-choices">${this.#options(current.type).map((option, index) => html`<button @click=${() => this.#commit(current.type, option)}><i>${String.fromCharCode(65 + index)}</i><span><b>${option}</b><small>Use as ${current.label.toLowerCase()} · ${suggestedSubtype(current.type)}</small></span>${icon("arrow")}</button>`)}</div>
+          <form class="adaptive-custom" @submit=${(event: SubmitEvent) => this.#submitCustom(event, current.type)}><label for="adaptive-custom">Or write the answer in your own words</label><div><textarea id="adaptive-custom" rows="2" placeholder=${`Describe the ${current.label.toLowerCase()} precisely`} .value=${this.#custom} @input=${(event: InputEvent) => { this.#custom = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea><button class="button primary" ?disabled=${!this.#custom.trim()}>Use my answer ${icon("arrow")}</button></div></form>
+        ` : html`<section class="adaptive-ready"><span>${icon("check")}</span><div><span class="eyebrow">Core path resolved</span><h3>The document has enough structure to move forward</h3><p>Generate when you want evidence, or review any decision without losing the path that led here.</p></div><button class="button secondary" @click=${() => this.store.setRoute("/")}>Review full document</button><button class="button primary" ?disabled=${!this.store.session.get()?.provider.configured || !!this.store.busy.get()} @click=${() => this.store.generate()}>${icon("spark")} Generate</button></section>`}</main>
+
+        <aside class="adaptive-relations">
+          <span class="eyebrow">Everything in this document</span>
+          <div class="relationship-map">${DECISIONS.map((decision, index) => {
+            const block = projection.blocks.find((item) => item.type === decision.type);
+            return html`<div class=${block ? "resolved" : current?.type === decision.type ? "active" : "future"}><i>${block ? icon("check") : index + 1}</i><span><b>${decision.label}</b><small>${block ? String(block.properties.subtype ?? block.handle) : current?.type === decision.type ? "Open now" : "Not yet needed"}</small></span></div>`;
+          })}</div>
+          ${supportingBlocks.length ? html`<section class="adaptive-supporting"><header><b>Supporting decisions</b><span>${supportingBlocks.length}</span></header><p>These remain part of the same document even though they do not control the next-question path.</p><ul>${supportingBlocks.map((block) => html`<li><button @click=${() => this.store.setRoute("/")}><span><b>${blockTypeDefinition(block.type)?.label ?? block.type}</b><small>${String(block.properties.subtype ?? block.handle)}</small></span><em>${layerLabel(block)}</em>${icon("arrow")}</button></li>`)}</ul></section>` : nothing}
+          ${progress >= 2 ? html`<section class="emergent-preview"><span class="eyebrow">What has become clearer</span><div class=${`adaptive-mini-art stage-${stage}`}><i></i><i></i><i></i></div><p>${progress < 6 ? "Purpose and scene choices are specific enough to expose meaningful tensions." : "The document now connects intention, reality, expression, and boundary."}</p></section>` : nothing}
+        </aside>
+      </div>`;
+    return this.shell("adaptive", "Adaptive path", "Let the document determine which decision deserves attention next—without hiding anything already decided.", body);
+  }
+
+  legacyRender(){const p=this.store.projection.get();const completed=DECISIONS.filter((decision)=>p.blocks.some((block)=>block.type===decision.type));const current=this.#currentDecision();const progress=completed.length;const stage=progress<3?"foundation":progress<6?"scene":"resolution";const precedent=current?completed.at(-1):undefined;const body=html`<section class="alternative-intro adaptive-intro"><div><span class="eyebrow">Interface 04 · intent-responsive decision space</span><h2>The interface follows both intent and decisions</h2><p>Describe the broader job in open language. Forma proposes which decisions deserve attention, while every proposed block remains inert until you choose it.</p></div><div class="adaptive-progress"><b>${progress}/${DECISIONS.length}</b><span>${current?`${current.label} is the next useful decision`:"Core context path resolved"}</span><i style=${`--progress:${progress/DECISIONS.length}`}></i></div></section>
     <form class="adaptive-intent" @submit=${this.#askForma}><div><label for="adaptive-intent-prompt">What are you trying to make—or where are you stuck?</label><textarea id="adaptive-intent-prompt" rows="3" placeholder="Describe the outcome, audience, constraints, uncertainty, or a tension you need the document to resolve…" .value=${this.#intentPrompt} @input=${(event:InputEvent)=>{this.#intentPrompt=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}}></textarea><small>The model proposes structure; it cannot add or edit blocks until you apply a suggestion.</small></div><button class="button primary" ?disabled=${!this.#intentPrompt.trim()||!this.store.session.get()?.provider.configured||!!this.store.busy.get()}>${icon("spark")} ${this.store.busy.get()==="adaptive-structure"?"Structuring…":"Structure with Forma"}</button></form>
     ${this.#structure?html`<section class="adaptive-model-plan"><header><div><span class="eyebrow">Forma’s proposed structure · review first</span><h3>${this.#structure.interpretation}</h3></div><button @click=${()=>{this.#structure=null;this.requestUpdate();}}>Dismiss</button></header><div class="adaptive-model-suggestions">${this.#structure.suggested_blocks.map((suggestion)=>html`<article><span>${blockTypeDefinition(suggestion.type)?.label??suggestion.type} · ${suggestion.subtype}</span><h4>${suggestion.label}</h4><p>${suggestion.instruction}</p><small>${suggestion.reason}${suggestion.relationship_to?` · Relates to ${suggestion.relationship_to}`:""}</small><button class="button secondary compact" @click=${()=>this.#commit(suggestion.type,suggestion.instruction,suggestion.subtype)}>${p.blocks.some((block)=>block.type===suggestion.type)?"Update decision":"Add to path"} ${icon("arrow")}</button></article>`)}</div>${this.#structure.hidden_until_later.length?html`<footer><b>Kept quiet for now</b><span>${this.#structure.hidden_until_later.join(" · ")}</span></footer>`:nothing}</section>`:nothing}
     <div class=${`adaptive-workspace adaptive-stage--${stage}`}>

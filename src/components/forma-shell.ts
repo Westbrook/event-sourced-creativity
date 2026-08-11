@@ -1,6 +1,7 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon, downloadJson } from "./forma-element";
 import { loadRouteComponent } from "../route-loader";
+import { documentViewFromRoute, isDocumentViewRoute, routePathname, withDocumentInRoute } from "../model/routes";
 import "./forma-attention-observer";
 
 const routes = [
@@ -23,6 +24,7 @@ export class FormaShell extends FormaElement {
   #routeChanged = (event: Event) => {
     const path = (event as CustomEvent<{ path?: string }>).detail?.path ?? `${location.pathname}${location.search}${location.hash}`;
     void loadRouteComponent(path);
+    if (!this.store.loading.get()) void this.store.syncDocumentFromRoute(path);
   };
   #pop = () => { this.store.setRoute(`${location.pathname}${location.search}${location.hash}`); };
 
@@ -36,12 +38,13 @@ export class FormaShell extends FormaElement {
   #route(path: string) { this.store.patchUi({ commandOpen: false, accountOpen: false }); this.store.setRoute(path); const hash=path.includes("#")?path.slice(path.indexOf("#")+1):"";if(hash)window.setTimeout(()=>{const target=document.getElementById(hash);target?.scrollIntoView({behavior:"smooth",block:"center"});target?.focus({preventScroll:true});},0);else window.scrollTo({ top: 0 }); }
   #page() {
     const path = this.store.route.get();
+    const documentView = documentViewFromRoute(path);
     if (path.startsWith("/projects")) return html`<forma-projects></forma-projects>`;
     if (path.startsWith("/studio/project")) return html`<forma-project-contents></forma-project-contents>`;
-    if (path.startsWith("/studio/board")) return html`<forma-context-board></forma-context-board>`;
-    if (path.startsWith("/studio/guided")) return html`<forma-guided-brief></forma-guided-brief>`;
-    if (path.startsWith("/studio/layers")) return html`<forma-reality-layers></forma-reality-layers>`;
-    if (path.startsWith("/studio/adaptive")) return html`<forma-adaptive-path></forma-adaptive-path>`;
+    if (documentView === "board") return html`<forma-context-board></forma-context-board>`;
+    if (documentView === "guided") return html`<forma-guided-brief></forma-guided-brief>`;
+    if (documentView === "layers") return html`<forma-reality-layers></forma-reality-layers>`;
+    if (documentView === "adaptive") return html`<forma-adaptive-path></forma-adaptive-path>`;
     if (path.startsWith("/admin/events")) return html`<forma-admin-events></forma-admin-events>`;
     if (path.startsWith("/library")) return html`<forma-library></forma-library>`;
     if (path.startsWith("/sessions")) return html`<forma-sessions></forma-sessions>`;
@@ -95,14 +98,14 @@ export class FormaShell extends FormaElement {
   }
 
   override render() {
-    const path = this.store.route.get(); const isAdmin = path.startsWith("/admin");
+    const path = this.store.route.get(); const pathname = routePathname(path); const isAdmin = pathname.startsWith("/admin");
     if(path.startsWith("/share/"))return html`<forma-shared-view .token=${decodeURIComponent(path.slice("/share/".length))}></forma-shared-view>`;
     const session=this.store.session.get();
-    const routeActive=(href:string)=>href==="/projects"?(path.startsWith("/projects")||path.startsWith("/studio/project")):href==="/"?(path==="/"||(path.startsWith("/studio/")&&!path.startsWith("/studio/project"))):(path===href||path.startsWith(`${href}/`));
+    const routeActive=(href:string)=>href==="/projects"?(pathname.startsWith("/projects")||pathname.startsWith("/studio/project")):href==="/"?isDocumentViewRoute(path):(pathname===href||pathname.startsWith(`${href}/`));
     return html`<div class="app-shell ${isAdmin ? "admin-shell" : ""}">
       <header class="topbar">
         <button class="brand" @click=${() => this.#route("/projects")} aria-label="Open all Forma projects"><span class="brand-mark">F</span><span>Forma</span></button>
-        <nav class="global-nav" aria-label="Creative workspace">${routes.map(({href,label,description}) => html`<a href=${href} title=${description} class=${routeActive(href)?"active":""} aria-current=${routeActive(href)?"page":nothing} @click=${(e: MouseEvent) => { e.preventDefault(); this.#route(href); }}>${label}</a>`)}</nav>
+        <nav class="global-nav" aria-label="Creative workspace">${routes.map(({href,label,description}) => {const projection=this.store.projection.get();const routedHref=href==="/"?withDocumentInRoute(href,projection.documentId,projection.documentTitle):href;return html`<a href=${routedHref} title=${description} class=${routeActive(href)?"active":""} aria-current=${routeActive(href)?"page":nothing} @click=${(e: MouseEvent) => { e.preventDefault(); this.#route(routedHref); }}>${label}</a>`;})}</nav>
         <div class="top-actions">
           <button class="command-trigger" @click=${() => this.store.patchUi({ commandOpen: true })}><span>${icon("search")}</span><span class="command-label">Search or command</span><kbd>⌘ K</kbd></button>
           ${!isAdmin ? html`<button class="button secondary compact" @click=${() => {void this.store.loadShares();this.store.patchUi({ shareOpen: true });}}>${icon("share")} Share</button>` : nothing}

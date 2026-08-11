@@ -54,6 +54,8 @@ System & governance → Event operations
 | The collapse affordance was a floating unlabeled chevron | Its purpose and state were unclear, especially on touch devices | It is now an integrated labeled control with expanded state, a persistent toolbar, and mobile disclosure behavior |
 | Mobile CSS hid primary destinations by ordinal position | Navigation availability changed unpredictably when link order changed | Every primary destination remains available in a horizontally scrollable workspace nav |
 | Page eyebrows used phase or implementation language inconsistently | The same hierarchy was described differently page to page | Headers now consistently state workspace, project/document scope, Creative intelligence, or Administration |
+| `/` depended on whichever document the event projection last opened | A copied or refreshed Studio URL could display a different document than its sender intended | Document views use `/document/{durable-id}/{optional-readable-name}`; alternate lenses add `/view/{lens}`, and the ID—not the slug—selects the projection |
+| Event-operation tabs existed only as component state | Refreshing or sharing the page silently returned to the stream table | Durable stream, Replay laboratory, and Permissions use `/admin/events/stream`, `/admin/events/replay`, and `/admin/events/permissions` |
 
 ## Primary navigation
 
@@ -74,6 +76,7 @@ The Forma mark also returns to Projects. System & governance and Event operation
 - Creative-intelligence pages repeat the same three-item local nav so their relationship remains visible after a direct entry.
 - Administration pages repeat their local nav and preserve role-gated access.
 - Navigation is expressed as links with real URLs wherever the action changes location; mutations remain buttons.
+- A document URL carries durable document identity. Readable name segments may change after a rename without changing which document is opened.
 
 ## Visual-system invariant
 

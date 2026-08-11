@@ -1,3 +1,5 @@
+import { documentViewFromRoute } from "./model/routes";
+
 type RouteModule = Promise<unknown>;
 
 /**
@@ -5,11 +7,12 @@ type RouteModule = Promise<unknown>;
  * explicit import below into a separately cacheable route chunk.
  */
 export function loadRouteComponent(path: string): RouteModule {
+  const documentView = documentViewFromRoute(path);
   if (path.startsWith("/share/")) return import("./components/forma-shared-view");
   if (path.startsWith("/projects")) return import("./components/forma-projects");
   if (path.startsWith("/studio/project")) return import("./components/forma-project-contents");
-  if (path.startsWith("/studio/board") || path.startsWith("/studio/guided")) return import("./components/forma-studio-alternatives");
-  if (path.startsWith("/studio/layers") || path.startsWith("/studio/adaptive")) return import("./components/forma-studio-editor-alternatives");
+  if (documentView === "board" || documentView === "guided") return import("./components/forma-studio-alternatives");
+  if (documentView === "layers" || documentView === "adaptive") return import("./components/forma-studio-editor-alternatives");
   if (path.startsWith("/admin/events")) return import("./components/forma-admin-events");
   if (path.startsWith("/library")) return import("./components/forma-library");
   if (path.startsWith("/sessions")) return import("./components/forma-sessions");

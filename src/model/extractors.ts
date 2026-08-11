@@ -8,11 +8,36 @@ export type ImageSample = {
   pixels: RGB[];
 };
 
+export type ReferenceFindingKind = "palette" | "mood" | "composition" | "material" | "lighting" | "spatial";
+
+export type ReferenceFinding = {
+  kind: ReferenceFindingKind;
+  blockType: "palette" | "emotion" | "composition" | "material" | "lighting" | "environment";
+  subtype: string;
+  label: string;
+  value: string;
+  basis: string;
+  confidence: number;
+  colors?: string[];
+};
+
+export const REFERENCE_FINDING_OPTIONS: ReadonlyArray<{ kind: ReferenceFindingKind; label: string; description: string }> = [
+  { kind: "palette", label: "Palette", description: "Dominant colors and tonal relationships" },
+  { kind: "mood", label: "Mood", description: "Emotional energy suggested by light and color" },
+  { kind: "composition", label: "Composition", description: "Dominant structure, division, and reading direction" },
+  { kind: "material", label: "Material character", description: "Surface variation, smoothness, and texture cues" },
+  { kind: "lighting", label: "Lighting", description: "Brightness, contrast, direction, and temperature" },
+  { kind: "spatial", label: "Spatial character", description: "Depth, planes, and the way space is organized" },
+] as const;
+
+export const DEFAULT_REFERENCE_FINDINGS: ReferenceFindingKind[] = REFERENCE_FINDING_OPTIONS.map((option) => option.kind);
+
 export type ExtractedImageFacts = {
   dimensions: { width: number; height: number; aspectRatio: number; orientation: "landscape" | "portrait" | "square" };
   palette: string[];
   dominantEdges: "vertical" | "horizontal" | "balanced";
-  confidence: { dimensions: number; palette: number; dominantEdges: number; overall: number };
+  findings: ReferenceFinding[];
+  confidence: { dimensions: number; palette: number; dominantEdges: number; findings: number; overall: number };
 };
 
 export type ExtractorEvaluationResult = {
@@ -90,6 +115,10 @@ const hex = ([r, g, b]: RGB) => `#${[r, g, b].map((value) => clampChannel(value)
 const distance = (a: RGB, b: RGB) => Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2);
 const luminance = ([r, g, b]: RGB) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 const round = (value: number, precision = 4) => Number(value.toFixed(precision));
+const saturation = ([r, g, b]: RGB) => {
+  const maximum = Math.max(r, g, b); const minimum = Math.min(r, g, b);
+  return maximum ? (maximum - minimum) / maximum : 0;
+};
 
 function validateSample(sample: ImageSample) {
   const sizes = [sample.sourceWidth, sample.sourceHeight, sample.gridWidth, sample.gridHeight];
@@ -135,14 +164,69 @@ function dominantEdges(sample: ImageSample) {
   return { value: value as ExtractedImageFacts["dominantEdges"], confidence: round(value === "balanced" ? 1 - difference : 0.58 + difference * 0.4) };
 }
 
+function imageCharacter(sample: ImageSample, palette: string[], edges: ExtractedImageFacts["dominantEdges"]): ReferenceFinding[] {
+  const luminances = sample.pixels.map(luminance);
+  const average = luminances.reduce((sum, value) => sum + value, 0) / luminances.length;
+  const contrast = (Math.max(...luminances) - Math.min(...luminances)) / 255;
+  const deviation = Math.sqrt(luminances.reduce((sum, value) => sum + (value - average) ** 2, 0) / luminances.length) / 128;
+  const averageSaturation = sample.pixels.reduce((sum, pixel) => sum + saturation(pixel), 0) / sample.pixels.length;
+  const warmth = sample.pixels.reduce((sum, [red,,blue]) => sum + (red - blue) / 255, 0) / sample.pixels.length;
+  const at = (x: number, y: number) => sample.pixels[y * sample.gridWidth + x];
+  let localVariation = 0; let comparisons = 0;
+  for (let y = 0; y < sample.gridHeight; y += 1) for (let x = 0; x < sample.gridWidth; x += 1) {
+    if (x > 0) { localVariation += distance(at(x, y), at(x - 1, y)) / 441.67; comparisons += 1; }
+    if (y > 0) { localVariation += distance(at(x, y), at(x, y - 1)) / 441.67; comparisons += 1; }
+  }
+  localVariation /= Math.max(1, comparisons);
+
+  const mood = average < 80 ? ["Quiet and nocturnal", "Carry a quiet, nocturnal mood with restrained energy and protected shadows."]
+    : average > 188 && averageSaturation < .24 ? ["Airy and restrained", "Keep the mood airy and restrained, with light values and little visual noise."]
+    : averageSaturation > .48 && contrast > .42 ? ["Energetic and vivid", "Use vivid color and strong contrast to create an energetic, immediate mood."]
+    : warmth > .09 ? ["Warm and inviting", "Build a warm, inviting mood without losing the image’s quieter tonal relationships."]
+    : warmth < -.09 ? ["Cool and contemplative", "Carry a cool, contemplative mood with measured emotional distance."]
+    : ["Balanced and contemplative", "Keep the mood balanced and contemplative, letting tonal structure lead over saturation."];
+
+  const composition = edges === "vertical" ? ["Vertical division", "Use vertical divisions and side-to-side contrast to organize the frame.", "Focal hierarchy"]
+    : edges === "horizontal" ? ["Horizon-led structure", "Use horizontal bands and a clear horizon-like division to establish reading order.", "Grid"]
+    : ["Balanced visual rhythm", "Distribute visual weight through a balanced rhythm rather than one dominant directional split.", "Focal hierarchy"];
+
+  const material = localVariation > .19 ? ["Tactile surface variation", "Favor tactile, visibly varied surfaces with grain, wear, or hand-made irregularity."]
+    : localVariation < .075 ? ["Smooth graphic finish", "Favor smooth, controlled surfaces with minimal visible grain or material interruption."]
+    : ["Natural material variation", "Preserve moderate surface variation so materials feel physical without becoming noisy."];
+
+  const lighting = contrast > .55 ? ["Directional high-contrast light", "Use directional light with decisive highlight-to-shadow separation."]
+    : average > 182 ? ["Soft high-key light", "Use soft, high-key illumination with open shadows and gentle falloff."]
+    : average < 82 ? ["Low-key atmosphere", "Use low-key lighting with protected darkness and selective illumination."]
+    : warmth > .07 ? ["Warm ambient light", "Use warm ambient light with moderate contrast and believable falloff."]
+    : warmth < -.07 ? ["Cool ambient light", "Use cool ambient light with measured contrast and neutral shadow detail."]
+    : ["Neutral shaped light", "Use neutral light shaped enough to clarify form without dominating the image."];
+
+  const spatial = contrast > .5 && localVariation > .12 ? ["Layered depth", "Build depth through overlapping planes, tonal separation, and foreground-to-background variation."]
+    : edges === "vertical" ? ["Side-by-side planes", "Organize space as adjacent planes with a clear lateral relationship."]
+    : edges === "horizontal" ? ["Stacked depth bands", "Organize space through stacked foreground, middle-ground, and background bands."]
+    : ["Shallow graphic space", "Keep space relatively shallow and let proportion and rhythm carry the composition."];
+
+  const commonBasis = `Measured from a ${sample.gridWidth} × ${sample.gridHeight} image sample; these are suggestions, not claims about depicted content.`;
+  return [
+    { kind: "palette", blockType: "palette", subtype: "Extracted", label: "Dominant palette", value: `Use the dominant color family from this reference.`, colors: palette, basis: commonBasis, confidence: round(.7 + Math.min(.25, palette.length * .04)) },
+    { kind: "mood", blockType: "emotion", subtype: "Primary affect", label: mood[0], value: mood[1], basis: `Inferred from average brightness, saturation, contrast, and color temperature. ${commonBasis}`, confidence: round(.58 + Math.min(.25, Math.abs(warmth) + contrast * .18 + Math.abs(average - 128) / 512)) },
+    { kind: "composition", blockType: "composition", subtype: composition[2], label: composition[0], value: composition[1], basis: `Inferred from ${edges} edge energy and ${sample.sourceWidth >= sample.sourceHeight ? "wide" : "tall"} image proportions. ${commonBasis}`, confidence: round(.64 + Math.min(.25, contrast * .18 + deviation * .12)) },
+    { kind: "material", blockType: "material", subtype: "Texture", label: material[0], value: material[1], basis: `Inferred from local color and luminance variation; confirm against the visible image. ${commonBasis}`, confidence: round(.52 + Math.min(.24, localVariation * .7 + deviation * .08)) },
+    { kind: "lighting", blockType: "lighting", subtype: contrast > .55 ? "Direction" : "Quality", label: lighting[0], value: lighting[1], basis: `Inferred from brightness range, contrast, and warm/cool balance. ${commonBasis}`, confidence: round(.6 + Math.min(.27, contrast * .24 + Math.abs(warmth) * .3)) },
+    { kind: "spatial", blockType: "environment", subtype: "Abstract space", label: spatial[0], value: spatial[1], basis: `Inferred from edge direction, contrast, and local variation—not object recognition. ${commonBasis}`, confidence: round(.5 + Math.min(.25, contrast * .16 + localVariation * .45)) },
+  ];
+}
+
 export function analyzeImageSample(sample: ImageSample): ExtractedImageFacts {
   validateSample(sample);
   const aspectRatio = round(sample.sourceWidth / sample.sourceHeight);
   const dimensions = { width: sample.sourceWidth, height: sample.sourceHeight, aspectRatio, orientation: (Math.abs(aspectRatio - 1) < 0.03 ? "square" : aspectRatio > 1 ? "landscape" : "portrait") as ExtractedImageFacts["dimensions"]["orientation"] };
   const palette = paletteKMeans(sample.pixels);
   const edges = dominantEdges(sample);
-  const confidence = { dimensions: 1, palette: palette.confidence, dominantEdges: edges.confidence, overall: round((1 + palette.confidence + edges.confidence) / 3) };
-  return { dimensions, palette: palette.colors, dominantEdges: edges.value, confidence };
+  const findings = imageCharacter(sample, palette.colors, edges.value);
+  const findingsConfidence = round(findings.reduce((sum, finding) => sum + finding.confidence, 0) / findings.length);
+  const confidence = { dimensions: 1, palette: palette.confidence, dominantEdges: edges.confidence, findings: findingsConfidence, overall: round((1 + palette.confidence + edges.confidence + findingsConfidence) / 4) };
+  return { dimensions, palette: palette.colors, dominantEdges: edges.value, findings, confidence };
 }
 
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);

@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
+import { isDocumentViewRoute, routePathname, withDocumentInRoute } from "../model/routes";
 import "./collection-tree";
 
 type RailSurface = "studio" | "library";
@@ -29,8 +30,10 @@ export class ProjectRail extends FormaElement {
     const surface = (this.getAttribute("surface") === "library" ? "library" : "studio") as RailSurface;
     const currentView = String(this.store.ui.libraryView);
     const collapsed = Boolean(this.store.ui.projectRailCollapsed);
-    const projectActive = route.startsWith("/studio/project");
-    const documentActive = route === "/" || (route.startsWith("/studio/") && !projectActive);
+    const pathname = routePathname(route);
+    const documentRoute = withDocumentInRoute("/", projection.documentId, projection.documentTitle);
+    const projectActive = pathname.startsWith("/studio/project");
+    const documentActive = isDocumentViewRoute(route);
     const libraryLinks: Array<{ view: LibraryView; label: string; count?: number; glyph: string }> = [
       { view: "all", label: "Library overview", glyph: "⌂" },
       { view: "blocks", label: "Reusable blocks", count: projection.libraryBlocks.length, glyph: "▦" },
@@ -49,20 +52,20 @@ export class ProjectRail extends FormaElement {
       ${collapsed ? html`<nav class="rail-dock" aria-label="Project shortcuts">
         <a href="/projects" title="All projects" @click=${(event:MouseEvent)=>this.#go(event,"/projects")}><span>${projection.projectName.slice(0,1).toUpperCase() || "P"}</span><small>Projects</small></a>
         <a href="/studio/project" class=${projectActive?"active":""} aria-current=${projectActive?"page":nothing} title="Project overview" @click=${(event:MouseEvent)=>this.#go(event,"/studio/project")}>${icon("folder")}<small>Overview</small></a>
-        <a href="/" class=${documentActive?"active":""} aria-current=${documentActive?"page":nothing} title=${`Open ${projection.documentTitle}`} @click=${(event:MouseEvent)=>this.#go(event,"/")}>▤<small>Document</small></a>
+        <a href=${documentRoute} class=${documentActive?"active":""} aria-current=${documentActive?"page":nothing} title=${`Open ${projection.documentTitle}`} @click=${(event:MouseEvent)=>this.#go(event,documentRoute)}>▤<small>Document</small></a>
         <a href="/library" class=${surface==="library"?"active":""} aria-current=${surface==="library"?"page":nothing} title="Project library" @click=${(event:MouseEvent)=>this.#openLibrary(event,"all")}>▦<small>Library</small></a>
         ${this.store.session.get()?.user.role==="admin"?html`<a href="/admin/events" title="Event operations" @click=${(event:MouseEvent)=>this.#go(event,"/admin/events")}>${icon("replay")}<small>Events</small></a>`:nothing}
       </nav>` : html`<div id="project-rail-content" class="rail-content">
         <section class="rail-project-card" aria-labelledby="rail-project-name">
           <div class="rail-project-heading"><span class="project-monogram">${projection.projectName.slice(0,1).toUpperCase() || "P"}</span><div><span class="eyebrow">Current project</span><h2 id="rail-project-name">${projection.projectName}</h2></div><span class=${`project-status ${projection.projectState}`}>${projection.projectState}</span></div>
           <div class="rail-project-meta"><span><b>${projection.documents.length}</b> document${projection.documents.length===1?"":"s"}</span><span><b>${projection.collections.length}</b> collection${projection.collections.length===1?"":"s"}</span></div>
-          <div class="rail-project-actions"><a href="/projects" @click=${(event:MouseEvent)=>this.#go(event,"/projects")}>All projects</a>${surface==="studio"&&route==="/"?html`<button @click=${this.#editProject}>${icon("edit")} Edit project</button>`:nothing}</div>
+          <div class="rail-project-actions"><a href="/projects" @click=${(event:MouseEvent)=>this.#go(event,"/projects")}>All projects</a>${surface==="studio"&&pathname==="/"?html`<button @click=${this.#editProject}>${icon("edit")} Edit project</button>`:nothing}</div>
         </section>
 
         <nav class="rail-links rail-destinations" aria-label="Project destinations">
           <span class="rail-label">Project</span>
           <a href="/studio/project" class=${projectActive?"active":""} aria-current=${projectActive?"page":nothing} @click=${(event:MouseEvent)=>this.#go(event,"/studio/project")}><span><i>${icon("folder")}</i> Project overview</span><small>${projection.documents.length}</small></a>
-          <a href="/" class=${documentActive?"active":""} aria-current=${documentActive?"page":nothing} @click=${(event:MouseEvent)=>this.#go(event,"/")}><span><i>▤</i> Current document</span><small>${icon("arrow")}</small></a>
+          <a href=${documentRoute} class=${documentActive?"active":""} aria-current=${documentActive?"page":nothing} @click=${(event:MouseEvent)=>this.#go(event,documentRoute)}><span><i>▤</i> Current document</span><small>${icon("arrow")}</small></a>
         </nav>
 
         <section class="rail-collections" aria-label="Authored collections">
