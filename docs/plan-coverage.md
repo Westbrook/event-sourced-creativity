@@ -45,6 +45,8 @@ Blocks also support durable spatial targeting. Missing scope means the complete 
 
 The affected-area preview is directly editable: rectangle mode draws a new normalized box and moves an existing box, freeform mode records a normalized clipping polygon, and natural-language entry authors a fuzzy custom region. Coordinate and polygon fields remain precision and accessibility fallbacks. Creative Editor Exclusion items are visibly negative guardrails; strength means exclusion strictness, and compiler facts carry `effect: must_not_include` so prohibited content cannot be reinterpreted as a subject or positive focus.
 
+Creative Editor quick tools visibly preselect the role they open. Every selected plan item also has a `Role in the plan` control, allowing a wrongly classified Subject, Goal, or other block to be corrected into Avoid (or another closed type) through replayable state without deleting its content.
+
 ## Administrative scenarios
 
 - Creative loop: extraction → authored correction → compile → generate → compare → export.

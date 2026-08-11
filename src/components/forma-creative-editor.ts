@@ -1,6 +1,6 @@
 import { html, nothing } from "lit";
 import type { CreativeBlock, EventInput } from "../model/events";
-import { BLOCK_TYPES, blockTypeDefinition, suggestedSubtype, type BlockKind } from "../model/block-types";
+import { BLOCK_TYPES, blockTypeDefinition, isBlockKind, suggestedSubtype, type BlockKind } from "../model/block-types";
 import { DEFAULT_REFERENCE_FINDINGS } from "../model/extractors";
 import { sampleImageFile } from "../model/image-sample";
 import { icon } from "./forma-element";
@@ -174,9 +174,11 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const text = String(data.get("copy") ?? "").trim();
     const strength = String(data.get("strength") ?? strengthFor(Number(item.properties.weight ?? .65)));
     const currentText = textFor(item);
+    const nextType = String(data.get("item-type") ?? item.type);
     const currentWeight = Number(item.properties.weight ?? .65);
     const nextWeight = weightFor(strength);
     const changes: EventInput[] = [];
+    if (isBlockKind(nextType) && nextType !== item.type) changes.push({ type: "BlockPropertyEdited", payload: { block_id: item.id, property_path: "type", old_value: item.type, new_value: nextType, source_surface: "creative-editor-role" } });
     if (text && text !== currentText) changes.push({ type: "BlockPropertyEdited", payload: { block_id: item.id, property_path: item.properties.text === undefined ? "label" : "text", old_value: currentText, new_value: text, source_surface: "creative-editor" } });
     if (nextWeight !== currentWeight) changes.push({ type: "BlockWeightSet", payload: { block_id: item.id, weight: nextWeight, previous_weight: currentWeight, source_surface: "creative-editor" } });
     if (!changes.length) {
@@ -354,6 +356,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
             ${selected ? html`<form @submit=${(event: SubmitEvent) => this.#save(event, selected)}>
               <header><span>${selectedIsExclusion ? "Guardrail selected" : "Selected"}</span><h2>${FRIENDLY_LABELS[selected.type as BlockKind]}</h2><p>${selectedIsExclusion ? "This is a negative constraint. It tells the preview what must not appear; it never becomes a subject, goal, or positive direction." : "Change the wording and how strongly it should shape the next preview."}</p></header>
               ${selected.type === "reference" && selected.properties.media_url ? html`<img class="creative-inspector-image" src=${String(selected.properties.media_url)} alt=${textFor(selected)}>` : nothing}
+              <label><span>Role in the plan</span><select name="item-type" ?disabled=${selected.locked}>${BLOCK_TYPES.map((item) => html`<option value=${item.type} ?selected=${item.type === selected.type}>${FRIENDLY_LABELS[item.type]}</option>`)}</select></label>
               <label><span>${selectedIsExclusion ? "What must the work avoid?" : "What should it say?"}</span><textarea name="copy" rows="6" .value=${textFor(selected)} ?disabled=${selected.locked}></textarea></label>
               <fieldset ?disabled=${selected.locked}>
                 <legend>${selectedIsExclusion ? "How strictly should it be excluded?" : "How much should it lead?"}</legend>
@@ -375,7 +378,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
         <form class="modal-card creative-add-card" @submit=${this.#create}>
           <button type="button" class="icon-button modal-close" aria-label="Close" @click=${this.#closeCreate}>${icon("close")}</button>
           <span class="eyebrow">Add to the plan</span><h2 id="creative-add-title">What do you want to shape?</h2><p>${this.#newType === "exclusion" ? "Name something that must not appear. It will be stored and compiled as a negative guardrail, never as the subject of the work." : "Choose the closest fit and write the instruction in everyday language. You can change it later."}</p>
-          <label><span>Area</span><select .value=${this.#newType} @change=${(event: Event) => { this.#newType = (event.target as HTMLSelectElement).value as BlockKind; this.requestUpdate(); }}>${BLOCK_TYPES.filter((item) => item.type !== "reference").map((item) => html`<option value=${item.type}>${FRIENDLY_LABELS[item.type]}</option>`)}</select></label>
+          <label><span>Role in the plan</span><select @change=${(event: Event) => { this.#newType = (event.target as HTMLSelectElement).value as BlockKind; this.requestUpdate(); }}>${BLOCK_TYPES.filter((item) => item.type !== "reference").map((item) => html`<option value=${item.type} ?selected=${item.type === this.#newType}>${FRIENDLY_LABELS[item.type]}</option>`)}</select></label>
           <label><span>${this.#newType === "exclusion" ? "What must be excluded?" : "Your instruction"}</span><textarea autofocus required rows="4" placeholder=${this.#newType === "exclusion" ? "For example: people under 20 years old" : blockTypeDefinition(this.#newType)?.prompt} .value=${this.#newText} @input=${(event: InputEvent) => { this.#newText = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea></label>
           <fieldset><legend>${this.#newType === "exclusion" ? "How strictly should it be excluded?" : "How much should it lead?"}</legend>${(this.#newType === "exclusion" ? [["supporting", "Prefer avoiding"], ["balanced", "Avoid"], ["lead", "Never include"]] : [["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]]).map(([value, label]) => html`<label><input type="radio" name="new-strength" value=${value} .checked=${this.#newStrength === value} @change=${() => { this.#newStrength = value; this.requestUpdate(); }}><span>${label}</span></label>`)}</fieldset>
           <footer><button type="button" class="button ghost" @click=${this.#closeCreate}>Cancel</button><button class="button primary" ?disabled=${!this.#newText.trim()}>Add to plan</button></footer>

@@ -179,6 +179,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "BlockPropertyEdited": {
         const b = blocks.get(String(p.block_id)); const path = String(p.property_path ?? "");
         if (b && path === "position") b.position = String(p.new_value ?? b.position);
+        else if (b && path === "type") b.type = String(p.new_value ?? b.type);
         else if (b && path) b.properties[path] = p.new_value;
         if (b) b.sourceEvents.push(event.eventId);
         break;

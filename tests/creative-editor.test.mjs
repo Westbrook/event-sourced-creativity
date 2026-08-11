@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { foldEvents } from "../src/model/events.ts";
 
 test("keeps Creative Editor exclusions negative from authoring through generation", async () => {
   const [editor, store, adapter, styles] = await Promise.all([
@@ -23,4 +24,18 @@ test("keeps Creative Editor exclusions negative from authoring through generatio
   assert.match(editor, /previewOutdated/);
   assert.match(editor, /Plan changed since this preview/);
   assert.match(editor, /Update preview/);
+  assert.match(editor, /Role in the plan/);
+  assert.match(editor, /\?selected=\$\{item\.type === this\.#newType\}/);
+  assert.match(editor, /property_path: "type"/);
+});
+
+test("replays correction of a misclassified Subject into an Avoid guardrail", () => {
+  const base = { streamId: "s", occurredAt: "2026-08-11T12:00:00.000Z", recordedAt: "2026-08-11T12:00:00.000Z", actor: "user", clientId: "web:test", correlationId: "c", causationId: null, compensatesEventId: null, schemaVersion: 1 };
+  const projection = foldEvents([
+    { ...base, eventId: "e1", sequence: 1, type: "DocumentCreated", payload: { document_id: "d", title: "Study" } },
+    { ...base, eventId: "e2", sequence: 2, type: "BlockCreated", payload: { block_id: "b", document_id: "d", type: "subject", handle: "subject/people-under-20", position: "a0", properties: { text: "people under 20 years old" } } },
+    { ...base, eventId: "e3", sequence: 3, type: "BlockPropertyEdited", payload: { block_id: "b", property_path: "type", old_value: "subject", new_value: "exclusion" } },
+  ]);
+  assert.equal(projection.blocks[0].type, "exclusion");
+  assert.equal(projection.blocks[0].properties.text, "people under 20 years old");
 });

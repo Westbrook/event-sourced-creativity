@@ -399,6 +399,8 @@ Spatial targeting appears in the language of each view:
 
 Exclusion blocks are signed negative constraints. Every compiler fact includes its block `type` and an explicit effect; Exclusion compiles as `must_not_include`, and its weight means exclusion strictness rather than creative prominence. Creative Editor labels this as a guardrail, uses `Prefer avoiding`, `Avoid`, and `Never include` strength language, and never presents excluded content as a goal, subject, or positive direction.
 
+Quick-add tools must visibly select the requested role in the authored-block dialog rather than relying on hidden component state. Creative Editor also exposes `Role in the plan` in the selected-item inspector; correcting a misclassified item appends a replayable type-property edit so its content and identity remain intact while every document view and future compile resolves the corrected block type.
+
 Reality Layers additionally supports creating customized layers, all 20 block types, suggested subtypes, edit, reorder, remove/restore, duplicate, weight, lock/unlock, and active/inactive state.
 
 Adaptive Path additionally begins with open user input to an LLM, returns a proposed structure with interpretation and rationale, and changes the UI only after explicit adoption.
