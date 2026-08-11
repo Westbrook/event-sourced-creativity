@@ -7,6 +7,7 @@ import { icon } from "./forma-element";
 import { AlternativeStudio } from "./forma-studio-alternatives";
 import { spatialScopeLabel } from "../model/spatial-scope";
 import "./spatial-scope-editor";
+import "./output-visual";
 
 type EditorSection = {
   id: "brief" | "picture" | "look" | "delivery" | "references";
@@ -328,7 +329,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
             <button ?disabled=${!this.store.canRedo()} title="Redo" @click=${() => this.store.redo()}>${icon("redo")}<span>Redo</span></button>
           </div>
           <button class="button secondary compact" @click=${() => this.#openCreate()}>${icon("plus")} Add something</button>
-          <button class="button primary compact" ?disabled=${!providerReady || Boolean(this.store.busy.get())} title=${providerReady ? "Make a fresh preview" : "Preview is not available yet"} @click=${() => this.store.generate()}>${icon("spark")} ${this.store.busy.get() === "generate" ? "Making preview…" : previewOutdated ? "Update preview" : latest ? "Try another" : "Make a preview"}</button>
+          <button class="button primary compact" ?disabled=${!providerReady || Boolean(this.store.busy.get())} title=${providerReady ? "Generate a fresh image" : "Image generation is not available yet"} @click=${() => this.store.generate()}>${icon("spark")} ${this.store.busy.get() === "generate" ? "Generating image…" : previewOutdated ? "Update image" : latest ? "Try another" : "Generate image"}</button>
         </header>
 
         <div class="creative-editor-layout">
@@ -344,14 +345,12 @@ export class FormaCreativeEditor extends AlternativeStudio {
 
           <main class="creative-editor-canvas">
             <section class=${`creative-preview ${previewOutdated ? "preview-outdated" : ""}`}>
-              <div class=${`creative-preview-art variant-${latest ? latest.variant % 4 : projection.blocks.length % 4} ${latest ? "has-preview" : ""}`}>
-                <span class="creative-preview-light"></span><span class="creative-preview-frame"></span><span class="creative-preview-subject"></span><span class="creative-preview-ground"></span>
-              </div>
+              <div class=${`creative-preview-art ${latest?.mediaUrl ? "has-preview" : ""}`}><forma-output-visual .output=${latest}></forma-output-visual></div>
               <div class="creative-preview-copy">
                 <span>Working preview</span>
                 <h2>${preview ? String(preview.title ?? "A direction is taking shape") : direction ? textFor(direction) : "Start with one clear goal"}</h2>
                 <p>${preview ? String(preview.rationale ?? preview.scene ?? "") : subject ? `Centered on ${textFor(subject)}${look ? `, with ${textFor(look).toLowerCase()}` : ""}.` : "Add a goal, subject, or visual reference. You can refine the rest only when it becomes useful."}</p>
-                ${previewOutdated ? html`<small>Plan changed since this preview · update it to apply the current guardrails and decisions.</small>` : latest ? html`<small>Latest preview · keep editing and try another whenever the plan changes.</small>` : html`<small>No preview yet · the plan remains useful on its own.</small>`}
+                ${previewOutdated ? html`<small>Plan changed since this image · update it to apply the current guardrails and decisions.</small>` : latest?.mediaUrl ? html`<small>Latest generated image · keep editing and try another whenever the plan changes.</small>` : html`<small>No generated image yet · the plan remains useful on its own.</small>`}
               </div>
             </section>
 

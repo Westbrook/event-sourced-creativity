@@ -1,7 +1,7 @@
 import { handleEvents, type WorkerEnv } from "./events-api";
 import { getMedia, uploadMedia } from "./media-api";
 import { handleAdminUsers, handleSession } from "./pilot-policy";
-import { handleShares, handleSharedView } from "./shares-api";
+import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
 import { appEntryPath } from "../src/model/routes";
 
 export default {
@@ -13,7 +13,7 @@ export default {
     if(url.pathname==="/api/events/hot")return handleEvents(request,env,true);
     if(url.pathname==="/api/shares")return handleShares(request,env);
     if(url.pathname.startsWith("/api/shares/")&&request.method==="DELETE")return handleShares(request,env,decodeURIComponent(url.pathname.slice("/api/shares/".length)));
-    if(url.pathname.startsWith("/api/shared/")&&request.method==="GET")return handleSharedView(request,env,decodeURIComponent(url.pathname.slice("/api/shared/".length)));
+    if(url.pathname.startsWith("/api/shared/")&&request.method==="GET"){const rest=url.pathname.slice("/api/shared/".length);const marker=rest.indexOf("/media/");if(marker>=0)return handleSharedMedia(request,env,decodeURIComponent(rest.slice(0,marker)),decodeURIComponent(rest.slice(marker+"/media/".length)));return handleSharedView(request,env,decodeURIComponent(rest));}
     if(url.pathname==="/api/media"&&request.method==="POST")return uploadMedia(request,env);
     if(url.pathname.startsWith("/api/media/")&&request.method==="GET")return getMedia(request,decodeURIComponent(url.pathname.slice("/api/media/".length)),env);
     if(url.pathname.startsWith("/api/"))return Response.json({error:"not_found"},{status:404});

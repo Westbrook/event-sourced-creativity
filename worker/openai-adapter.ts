@@ -1,7 +1,8 @@
-import type { WorkerEnv } from "./runtime";
-import { BLOCK_TYPES, type AdaptiveStructure } from "../src/model/block-types";
+import type { WorkerEnv } from "./runtime.ts";
+import { BLOCK_TYPES, type AdaptiveStructure } from "../src/model/block-types.ts";
 
 type OpenAIResponse = { id?: string; model?: string; output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: { message?: string } };
+type OpenAIImageResponse = { created?: number; data?: Array<{ b64_json?: string; revised_prompt?: string }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: { message?: string } };
 
 const outputSchema = {
   type: "object",
@@ -51,6 +52,27 @@ export async function generateCreativeDirection(env: WorkerEnv, userId: string, 
   if (!text) throw new Error("provider_returned_no_output");
   let parsed: Record<string, unknown>; try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error("provider_returned_invalid_json"); }
   return { responseId: body.id ?? "", model: body.model ?? env.OPENAI_MODEL ?? "gpt-5.6-terra", output: parsed, raw: text, latencyMs: Date.now() - started, usage: { inputTokens: Number(body.usage?.input_tokens ?? 0), outputTokens: Number(body.usage?.output_tokens ?? 0), totalTokens: Number(body.usage?.total_tokens ?? 0) } };
+}
+
+export function buildCreativeImagePrompt(snapshot:Record<string,unknown>,direction:Record<string,unknown>) {
+  return [
+    "Create one polished landscape image that realizes the supplied creative direction.",
+    "Use the document context as binding art direction. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.",
+    "Any fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.",
+    "Do not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.",
+    `Creative direction:\n${JSON.stringify(direction)}`,
+    `Durable document context:\n${JSON.stringify(snapshot)}`,
+  ].join("\n\n");
+}
+
+export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot:Record<string,unknown>,direction:Record<string,unknown>) {
+  if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
+  const model=env.OPENAI_IMAGE_MODEL??"gpt-image-2";const prompt=buildCreativeImagePrompt(snapshot,direction);const started=Date.now();
+  const response=await fetch("https://api.openai.com/v1/images/generations",{method:"POST",headers:{authorization:`Bearer ${env.OPENAI_API_KEY}`,"content-type":"application/json"},body:JSON.stringify({model,prompt,n:1,size:"1536x1024",quality:"medium",user:await safetyIdentifier(userId)})});
+  const body=await response.json() as OpenAIImageResponse;if(!response.ok)throw new Error(body.error?.message??`openai_image_${response.status}`);
+  const encoded=body.data?.[0]?.b64_json;if(!encoded)throw new Error("provider_returned_no_image");
+  let bytes:Uint8Array;try{const binary=atob(encoded);bytes=Uint8Array.from(binary,(character)=>character.charCodeAt(0));}catch{throw new Error("provider_returned_invalid_image");}
+  return{model,prompt,bytes,revisedPrompt:body.data?.[0]?.revised_prompt??null,createdAt:body.created??null,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)},width:1536,height:1024,mimeType:"image/png"};
 }
 
 export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input:{intent:string;documentTitle:string;blocks:Array<Record<string,unknown>>}) {

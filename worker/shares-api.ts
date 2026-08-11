@@ -8,6 +8,7 @@ const token = () => {
 };
 const hashToken = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 const serializeShare = (row: Record<string, unknown>) => ({ shareId: String(row.share_id), expiresAt: String(row.expires_at), revokedAt: row.revoked_at ? String(row.revoked_at) : null, createdAt: String(row.created_at), active: !row.revoked_at && String(row.expires_at) > new Date().toISOString() });
+const activeShare = async (env:WorkerEnv,rawToken:string) => env.DB.prepare("SELECT * FROM shares WHERE token_hash=? AND revoked_at IS NULL AND expires_at>?").bind(await hashToken(rawToken),new Date().toISOString()).first<Record<string,unknown>>();
 
 export async function handleShares(request: Request, env: WorkerEnv, shareId = "") {
   const auth = await requireUser(request, env, request.method === "GET" ? "viewer" : "creator"); if (auth.response || !auth.user) return auth.response!; const user = auth.user;
@@ -32,8 +33,13 @@ export async function handleShares(request: Request, env: WorkerEnv, shareId = "
 
 export async function handleSharedView(request: Request, env: WorkerEnv, rawToken: string) {
   await ensureSchema(env); if (request.method !== "GET") return new Response("Method not allowed", { status: 405 });
-  const row = await env.DB.prepare("SELECT * FROM shares WHERE token_hash=? AND revoked_at IS NULL AND expires_at>?").bind(await hashToken(rawToken), new Date().toISOString()).first<Record<string, unknown>>();
+  const row = await activeShare(env,rawToken);
   if (!row) return Response.json({ error: "share_expired_or_revoked" }, { status: 404 });
   const events = await readEvents(env, String(row.stream_id)); const projection = foldEvents(events);
-  return Response.json({ share: serializeShare(row), projection: { projectName: projection.projectName, documentTitle: projection.documentTitle, blocks: projection.blocks, outputs: projection.outputs.map(({ id, modelId, variant, sequence }) => ({ id, modelId, variant, sequence })), latestCompile: projection.latestCompile } });
+  return Response.json({ share: serializeShare(row), projection: { projectName: projection.projectName, documentTitle: projection.documentTitle, blocks: projection.blocks, outputs: projection.outputs.map(({ id, modelId, variant, sequence, mediaUrl, width, height }) => {const key=mediaUrl?.startsWith("/api/media/")?decodeURIComponent(mediaUrl.slice("/api/media/".length)):"";return{id,modelId,variant,sequence,width,height,mediaUrl:key?`/api/shared/${encodeURIComponent(rawToken)}/media/${encodeURIComponent(key)}`:null};}), latestCompile: projection.latestCompile } });
+}
+
+export async function handleSharedMedia(request:Request,env:WorkerEnv,rawToken:string,key:string){
+  await ensureSchema(env);if(request.method!=="GET")return new Response("Method not allowed",{status:405});const row=await activeShare(env,rawToken);if(!row)return new Response("Not found",{status:404});
+  const owner=String(row.owner_id).replace(/[^a-zA-Z0-9._-]/g,"-");if(!key.startsWith(`${owner}/`))return new Response("Forbidden",{status:403});const object=await env.MEDIA.get(key);if(!object)return new Response("Not found",{status:404});const headers=new Headers();object.writeHttpMetadata(headers);headers.set("etag",object.httpEtag);headers.set("cache-control","private, max-age=3600");return new Response(object.body,{headers});
 }

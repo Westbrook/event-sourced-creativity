@@ -193,7 +193,9 @@ The following decisions are inputs to the build, not questions for each implemen
 | Reactive state | `signal-polyfill` and `signal-utils` isolated behind `ApplicationStore` so proposal changes do not leak into component contracts |
 | Pilot persistence | D1 for durable event storage and R2 for media |
 | Production persistence | Postgres 17, pgvector/HNSW, TimescaleDB, and object storage |
-| First live provider | OpenAI Responses API with `gpt-5.6-terra`, structured output, `store: false`, and a privacy-preserving safety identifier |
+| Planning provider | OpenAI Responses API with `gpt-5.6-terra`, structured output, `store: false`, and a privacy-preserving safety identifier |
+| Image provider | OpenAI Image API with `gpt-image-2`; use the structured direction plus the immutable document snapshot as the image prompt |
+| Generated media | Store generated image bytes in private R2; immutable events keep authenticated asset references, dimensions, MIME type, models, usage, and timings—not base64 payloads |
 | Provider diversity | Permit one live adapter for the private pilot; add a second adapter and run same-context comparison before Phase 7 production rollout or general availability |
 | Workflow engines | Keep workers pure `(input) → Event[]`; the engine owns trigger, retry, and scheduling only |
 | High-volume signals | Use a lightweight append path and consume aggregates rather than routing raw signal volume through workflow orchestration |
@@ -631,8 +633,10 @@ Build Event operations outside the main app interface:
 8. Reserve user/workspace budget before provider work, settle against reported usage, release unused budget, and fail closed after exhaustion.
 9. Record request, completion, failure, usage, latency, provider, model, and adapter change-points.
 10. Implement download-class export with an event receipt.
-11. Drive the first private pilot through the OpenAI Responses adapter.
-12. Keep the second adapter as a release gate: add it and run same-context comparison before production Phase 7 or general availability.
+11. Drive the first private pilot through a two-stage OpenAI workflow: produce a bounded structured direction with the Responses API, then generate the actual artifact through the Image API with `gpt-image-2`.
+12. Persist generated image bytes in private object storage and append only authenticated asset references plus model, adapter, usage, dimension, MIME, and latency receipts.
+13. Render the same stored image in the active document, Creative Editor, comparison, history, project overview, Library, export, and revocable shared views; do not substitute decorative CSS art for generated output.
+14. Keep the second provider adapter as a release gate: add it and run same-context comparison before production Phase 7 or general availability.
 
 ### Done when
 
@@ -640,13 +644,15 @@ Build Event operations outside the main app interface:
 - Every compiled fragment opens its source block.
 - An adapter version change appears as a queryable generation-metric change-point.
 - Budget exhaustion prevents paid work without losing the user’s request history.
-- A generated object can be downloaded and the export appears in the stream.
+- A generated image can be viewed across every output surface, downloaded as an image, and the export appears in the stream.
+- Image bytes are absent from D1 events and private-content rows; replay resolves them through an authenticated R2 asset reference.
 - The compiler contract can drive a second adapter without changing document or event semantics.
 
 ### Do not
 
 - Put a model-specific string outside an adapter.
 - Treat the single-provider pilot exception as provider-diversity completion.
+- Embed base64 image payloads in immutable events or use a CSS illustration as if it were a provider result.
 
 ---
 
@@ -762,7 +768,7 @@ Build Context Board, Guided Brief, Reality Layers, Adaptive Path, and Creative E
 - Let each view adapt to its delivery width.
 - Make the experience outcome-led rather than event-machinery-led.
 - Ensure every alternate representation includes all durable decisions and results.
-- Build Creative Editor as the machinery-free lens: translate the complete projection into a tool palette, one-page plan, visual preview, and contextual inspector; keep stream counts, IDs, handles, authority labels, provenance controls, and event terminology outside its working surface.
+- Build Creative Editor as the machinery-free lens: translate the complete projection into a tool palette, one-page plan, generated-image preview, and contextual inspector; keep stream counts, IDs, handles, authority labels, provenance controls, and event terminology outside its working surface.
 
 ### Done when
 
@@ -1233,5 +1239,6 @@ An implementation team beginning at zero should receive:
 - the eight Replay laboratory narratives;
 - accessibility, responsive, dialog, typography, and rounded-edge invariant tests;
 - provider, budget, rights, retention, and deployment configuration separated by pilot and production environment.
+- direct Image API contract tests, private generated-asset storage tests, and cross-surface image-projection tests.
 
 The agent begins with Agent Bootstrap, proceeds to Phase 0, and advances only through the gates in this document. The result must be one coherent event-sourced creative system, not a set of pages that merely share a visual theme.

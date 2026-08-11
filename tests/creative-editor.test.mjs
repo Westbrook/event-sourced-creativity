@@ -27,8 +27,8 @@ test("keeps Creative Editor role and intent independent through generation", asy
   assert.match(adapter, /apply the prohibition to its named role/);
   assert.match(styles, /\.creative-editor-item\.negative-constraint/);
   assert.match(editor, /previewOutdated/);
-  assert.match(editor, /Plan changed since this preview/);
-  assert.match(editor, /Update preview/);
+  assert.match(editor, /Plan changed since this image/);
+  assert.match(editor, /Update image/);
   assert.match(editor, /\?selected=\$\{item\.type === this\.#newType\}/);
   assert.match(editor, /property_path: "type"/);
   assert.match(editor, /property_path: "intent"/);

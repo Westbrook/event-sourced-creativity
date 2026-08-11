@@ -12,7 +12,7 @@ type Listener = () => void;
 export type PilotSession = {
   user: { userId: string; email: string; displayName: string; role: "admin" | "creator" | "agent" | "viewer"; consentVersion: string | null; consentedAt: string | null };
   policy: { version: string; accepted: boolean; passiveCapture: false; attentionCapture?: { available: boolean; defaultOn: false; retentionDays: number; rawInputCapture: false }; externalAssetsRequireAssertion: true; retentionDays: number; sharing: string };
-  provider: { name: string; model: string; configured: boolean };
+  provider: { name: string; model: string; plannerModel?: string; configured: boolean };
   budgets: { period: string; user: { used: number; reserved: number; limit: number }; workspace: { used: number; reserved: number; limit: number } };
 };
 export type ShareRecord = { shareId: string; token?: string; expiresAt: string; revokedAt?: string | null; createdAt?: string; active: boolean };
@@ -168,7 +168,7 @@ export class FormaStore {
       if (body.appended?.length) { this.events.set([...this.events.get(), ...body.appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(body.appended); }
       if (body.content) this.content.set({ ...this.content.get(), ...body.content });
       if (!response.ok) throw new Error(body.error === "provider_not_configured" ? "OpenAI is ready but its production key has not been connected." : body.error ?? "Generation failed");
-      await this.refreshSession(); this.toast(documentViewFromRoute(this.route.get()) === "editor" ? "Preview ready." : `Generated with ${this.session.get()?.provider.model ?? "OpenAI"}; provenance and usage recorded.`);
+      await this.refreshSession(); this.toast(documentViewFromRoute(this.route.get()) === "editor" ? "Image ready." : `Image generated with ${this.session.get()?.provider.model ?? "OpenAI"}; provenance and usage recorded.`);
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
     finally { this.busy.set(""); this.notify(); }
   }
