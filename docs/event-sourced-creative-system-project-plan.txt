@@ -330,6 +330,7 @@ Keep administration distinct:
 - The project rail owns project identity, project overview, collections, library destinations, and creative-history health.
 - The document navigation owns only representations of the open document.
 - The project rail collapses into a functional dock; it does not erase all wayfinding.
+- Every document view offers a device-local focus mode that hides the global header, project rail, page introduction, and summary chrome while keeping the document-view switcher and an obvious exit control available.
 - Its disclosure control is integrated, labeled, exposes expanded state, and works on touch and keyboard.
 - Library and Studio use the same rail component language, header hierarchy, spacing, scope cues, and responsive rules.
 - Library collection filtering changes the Library projection only; it never silently opens a document.
@@ -359,6 +360,7 @@ Requirements for every alternate view:
 - Make all mutations through the shared event vocabulary.
 - Preserve Undo, Redo, provenance, generation, Library reuse, and document lifecycle capabilities.
 - Adapt to its own available width; do not require a parent to scroll sideways to reach essential controls.
+- In focus mode, use the full working viewport and keep dense editor overflow inside the relevant tool, canvas, or inspector region; preserve a natural stacked page on narrow screens.
 
 Reality Layers additionally supports creating customized layers, all 20 block types, suggested subtypes, edit, reorder, remove/restore, duplicate, weight, lock/unlock, and active/inactive state.
 

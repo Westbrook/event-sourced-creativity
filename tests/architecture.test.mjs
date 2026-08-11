@@ -153,9 +153,13 @@ test("presents every alternate Studio lens as the same complete durable document
   assert.doesNotMatch(creativeEditor, />Event|>Metadata|>Provenance|Creative history|source events/i);
   assert.match(navigation, /projection\.blocks\.length/); assert.match(navigation, /projection\.outputs\.length/); assert.match(navigation, /Every saved decision and result/);
   assert.match(navigation, /Creative editor/);
+  assert.match(navigation, /DOCUMENT_FOCUS_KEY/); assert.match(navigation, /data-document-focus/); assert.match(navigation, /Focus view/); assert.match(navigation, /Exit focus/); assert.match(navigation, /event\.key === "Escape"/);
   assert.match(styles, /\.creative-editor \{[^}]*grid-template-rows: auto minmax\(0,1fr\)[^}]*height: clamp\(590px,72dvh,780px\)/);
   assert.match(styles, /\.creative-editor-layout \{[^}]*min-height: 0;[^}]*overflow: hidden/);
   assert.match(styles, /\.creative-editor-tools,\.creative-editor-inspector \{[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain/);
+  assert.match(styles, /html\[data-document-focus\] \.workspace-page \{[^}]*grid-template-columns: minmax\(0,1fr\)/);
+  assert.match(styles, /html\[data-document-focus\] \.workspace-page > forma-project-rail \{ display: none; \}/);
+  assert.match(styles, /html\[data-document-focus\] \.creative-editor,[\s\S]*height: calc\(100dvh - 70px\)/);
 });
 
 test("lets Reference blocks prepare and explicitly adopt multiple image realities", async () => {

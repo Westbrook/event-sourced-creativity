@@ -21,11 +21,45 @@ const lensCopy: Record<Exclude<StudioMode, "document">, string> = {
   editor: "The creative plan stays complete while the machinery stays out of sight.",
 };
 
+const DOCUMENT_FOCUS_KEY = "forma:document-focus";
+const readDocumentFocus = () => {
+  try { return localStorage.getItem(DOCUMENT_FOCUS_KEY) === "true"; }
+  catch { return false; }
+};
+
 export class StudioModeNav extends FormaElement {
+  #focused = readDocumentFocus();
+  #focusKeydown = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && this.#focused && !document.querySelector("dialog[open]")) this.#setFocused(false);
+  };
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this.#reflectFocus();
+    window.addEventListener("keydown", this.#focusKeydown);
+  }
+
+  override disconnectedCallback() {
+    window.removeEventListener("keydown", this.#focusKeydown);
+    document.documentElement.removeAttribute("data-document-focus");
+    super.disconnectedCallback();
+  }
+
+  #reflectFocus() {
+    document.documentElement.toggleAttribute("data-document-focus", this.#focused);
+  }
+
+  #setFocused(focused: boolean) {
+    this.#focused = focused;
+    try { localStorage.setItem(DOCUMENT_FOCUS_KEY, String(focused)); } catch { /* Device preference remains session-only. */ }
+    this.#reflectFocus();
+    this.requestUpdate();
+  }
+
   override render() {
     const active=(this.getAttribute("active")??"document") as StudioMode;
     const projection = this.store.projection.get();
-    return html`<nav class="studio-mode-nav" aria-label="Document views"><span>Document views</span><div>${modes.map((mode)=>{const href=withDocumentInRoute(mode.path,projection.documentId,projection.documentTitle);return html`<a href=${href} class=${active===mode.id?"active":""} aria-current=${active===mode.id?"page":nothing} @click=${(event:MouseEvent)=>{event.preventDefault();this.store.setRoute(href);window.scrollTo({top:0});}}>${mode.label}</a>`;})}</div></nav>`;
+    return html`<nav class="studio-mode-nav" aria-label="Document views"><span>Document views</span><div>${modes.map((mode)=>{const href=withDocumentInRoute(mode.path,projection.documentId,projection.documentTitle);return html`<a href=${href} class=${active===mode.id?"active":""} aria-current=${active===mode.id?"page":nothing} @click=${(event:MouseEvent)=>{event.preventDefault();this.store.setRoute(href);window.scrollTo({top:0});}}>${mode.label}</a>`;})}</div><button class="document-focus-toggle" aria-pressed=${this.#focused} title=${this.#focused ? "Restore project navigation and page context" : "Give this document view the full workspace"} @click=${() => this.#setFocused(!this.#focused)}><span aria-hidden="true">${this.#focused ? "↙" : "↗"}</span>${this.#focused ? "Exit focus" : "Focus view"}</button></nav>`;
   }
 }
 

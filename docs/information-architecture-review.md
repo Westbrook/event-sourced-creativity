@@ -74,6 +74,7 @@ The Forma mark also returns to Projects. System & governance and Event operation
 - The project rail owns project scope, project overview, collections, and project-library destinations.
 - The Studio tab row owns only alternate views of the current document.
 - The document context strip owns project, collection scope, and document selection.
+- Focus view temporarily removes global, project, page-introduction, and summary chrome while retaining the document-view row as both orientation and exit control; the preference is local to the device.
 - Creative-intelligence pages repeat the same three-item local nav so their relationship remains visible after a direct entry.
 - Administration pages repeat their local nav and preserve role-gated access.
 - Navigation is expressed as links with real URLs wherever the action changes location; mutations remain buttons.
