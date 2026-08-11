@@ -103,6 +103,7 @@ test("packages first-class HTML entry points for every named application route",
   assert.match(rootEntry, /data-forma-route-module="\/"/); assert.match(shareEntry, /forma-shared-view-/);
   assert.match(config, /manifest: true/); assert.match(config, /"\/share\/\*"/); assert.match(worker, /"\/share\/index\.html"/); assert.match(worker, /"\/index\.html"/);
   assert.match(routeLoader, /import\("\.\/components\/forma-library"\)/); assert.match(routeLoader, /import\("\.\/components\/forma-admin-events"\)/);
+  assert.match(shell, /addEventListener\("forma-route-changed", this\.#routeChanged\)/); assert.match(shell, /loadRouteComponent\(path\)/);
   assert.doesNotMatch(shell, /import "\.\/forma-library"/); assert.doesNotMatch(shell, /import "\.\/forma-admin-events"/);
 });
 

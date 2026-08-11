@@ -20,16 +20,20 @@ export class FormaShell extends FormaElement {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); if (event.shiftKey) void this.store.redo(); else void this.store.undo(); }
     if (event.key === "Escape") this.store.patchUi({ commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false });
   };
-  #pop = () => { void loadRouteComponent(location.pathname); this.store.setRoute(`${location.pathname}${location.search}${location.hash}`); };
+  #routeChanged = (event: Event) => {
+    const path = (event as CustomEvent<{ path?: string }>).detail?.path ?? `${location.pathname}${location.search}${location.hash}`;
+    void loadRouteComponent(path);
+  };
+  #pop = () => { this.store.setRoute(`${location.pathname}${location.search}${location.hash}`); };
 
   override connectedCallback() {
-    super.connectedCallback(); window.addEventListener("keydown", this.#keydown); window.addEventListener("popstate", this.#pop);
+    super.connectedCallback(); window.addEventListener("keydown", this.#keydown); window.addEventListener("popstate", this.#pop); window.addEventListener("forma-route-changed", this.#routeChanged);
     void loadRouteComponent(location.pathname);
     if (!this.store.events.get().length) void this.store.load();
   }
-  override disconnectedCallback() { window.removeEventListener("keydown", this.#keydown); window.removeEventListener("popstate", this.#pop); super.disconnectedCallback(); }
+  override disconnectedCallback() { window.removeEventListener("keydown", this.#keydown); window.removeEventListener("popstate", this.#pop); window.removeEventListener("forma-route-changed", this.#routeChanged); super.disconnectedCallback(); }
 
-  #route(path: string) { this.store.patchUi({ commandOpen: false, accountOpen: false }); void loadRouteComponent(path); this.store.setRoute(path); const hash=path.includes("#")?path.slice(path.indexOf("#")+1):"";if(hash)window.setTimeout(()=>{const target=document.getElementById(hash);target?.scrollIntoView({behavior:"smooth",block:"center"});target?.focus({preventScroll:true});},0);else window.scrollTo({ top: 0 }); }
+  #route(path: string) { this.store.patchUi({ commandOpen: false, accountOpen: false }); this.store.setRoute(path); const hash=path.includes("#")?path.slice(path.indexOf("#")+1):"";if(hash)window.setTimeout(()=>{const target=document.getElementById(hash);target?.scrollIntoView({behavior:"smooth",block:"center"});target?.focus({preventScroll:true});},0);else window.scrollTo({ top: 0 }); }
   #page() {
     const path = this.store.route.get();
     if (path.startsWith("/projects")) return html`<forma-projects></forma-projects>`;
