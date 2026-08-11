@@ -2,7 +2,7 @@ import { handleEvents, type WorkerEnv } from "./events-api";
 import { getMedia, uploadMedia } from "./media-api";
 import { handleAdminUsers, handleSession } from "./pilot-policy";
 import { handleShares, handleSharedView } from "./shares-api";
-import { documentEntryPath } from "../src/model/routes";
+import { appEntryPath } from "../src/model/routes";
 
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
@@ -19,7 +19,7 @@ export default {
     if(url.pathname.startsWith("/api/"))return Response.json({error:"not_found"},{status:404});
     const asset=await env.ASSETS.fetch(request);if(asset.status!==404)return asset;
     if((request.method==="GET"||request.method==="HEAD")&&!url.pathname.startsWith("/assets/")){
-      const entryPath=url.pathname.startsWith("/share/")?"/share/index.html":documentEntryPath(url.pathname);
+      const entryPath=url.pathname.startsWith("/share/")?"/share/index.html":appEntryPath(url.pathname);
       const entryUrl=new URL(entryPath,url);return env.ASSETS.fetch(new Request(entryUrl,request));
     }
     return asset;

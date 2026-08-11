@@ -56,6 +56,7 @@ System & governance → Event operations
 | Page eyebrows used phase or implementation language inconsistently | The same hierarchy was described differently page to page | Headers now consistently state workspace, project/document scope, Creative intelligence, or Administration |
 | `/` depended on whichever document the event projection last opened | A copied or refreshed Studio URL could display a different document than its sender intended | Document views use `/document/{durable-id}/{optional-readable-name}`; alternate lenses add `/view/{lens}`, and the ID—not the slug—selects the projection |
 | Event-operation tabs existed only as component state | Refreshing or sharing the page silently returned to the stream table | Durable stream, Replay laboratory, and Permissions use `/admin/events/stream`, `/admin/events/replay`, and `/admin/events/permissions` |
+| Library previews existed only as component-local dialog state | A block, output, or aesthetic family could not be shared, refreshed, or traversed with browser history | Stable previews use `/library/block/{id}/{optional-name}`, `/library/output/{id}`, and `/library/family/{id}/{optional-name}`; archive import remains session-only because browsers cannot restore a local file selection |
 
 ## Primary navigation
 

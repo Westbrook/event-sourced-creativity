@@ -101,7 +101,7 @@ test("packages first-class HTML entry points for every named application route",
   const rootEntry = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
   const shareEntry = await readFile(new URL("../dist/client/share/index.html", import.meta.url), "utf8");
   assert.match(rootEntry, /data-forma-route-module="\/"/); assert.match(shareEntry, /forma-shared-view-/);
-  assert.match(config, /manifest: true/); assert.match(config, /"\/share\/\*"/); assert.match(worker, /"\/share\/index\.html"/); assert.match(worker, /documentEntryPath/);
+  assert.match(config, /manifest: true/); assert.match(config, /"\/share\/\*"/); assert.match(worker, /"\/share\/index\.html"/); assert.match(worker, /appEntryPath/);
   assert.match(routeLoader, /import\("\.\/components\/forma-library"\)/); assert.match(routeLoader, /import\("\.\/components\/forma-admin-events"\)/);
   assert.match(shell, /addEventListener\("forma-route-changed", this\.#routeChanged\)/); assert.match(shell, /loadRouteComponent\(path\)/);
   assert.doesNotMatch(shell, /import "\.\/forma-library"/); assert.doesNotMatch(shell, /import "\.\/forma-admin-events"/);
@@ -122,6 +122,18 @@ test("restores Event operations tabs and Studio documents from URL state", async
   assert.match(store, /syncDocumentFromRoute/); assert.match(store, /shared-document-url/); assert.match(store, /replaceState/);
   assert.match(shell, /syncDocumentFromRoute\(path\)/); assert.match(shell, /withDocumentInRoute/);
   assert.match(navigation, /withDocumentInRoute/); assert.match(rail, /withDocumentInRoute/);
+});
+
+test("restores focused Library dialogs from durable URLs", async () => {
+  const [library, routes, worker] = await Promise.all([
+    readFile(new URL("../src/components/forma-library.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/model/routes.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(routes, /LibraryFocusKind/); assert.match(routes, /\/library\/\$\{kind\}\/\$\{encodeURIComponent\(id\)\}/); assert.match(routes, /libraryFocusFromRoute/);
+  assert.match(library, /libraryFocusRoute\("block"/); assert.match(library, /libraryFocusRoute\("output"/); assert.match(library, /libraryFocusRoute\("family"/);
+  assert.match(library, /libraryRootRoute/); assert.match(library, /replace:true/); assert.doesNotMatch(library, /#focused(?:Block|Output|Family)Id/);
+  assert.match(worker, /appEntryPath/); assert.match(routes, /"\/library\/index\.html"/);
 });
 
 test("presents every alternate Studio lens as the same complete durable document", async () => {

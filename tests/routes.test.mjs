@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { documentEntryPath, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, routePathname, withDocumentInRoute } from "../src/model/routes.ts";
+import { appEntryPath, documentEntryPath, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentInRoute } from "../src/model/routes.ts";
 
 test("document views use a readable path for the selected durable document", () => {
   const paths = [["/", "document"], ["/studio/board", "board"], ["/studio/guided", "guided"], ["/studio/layers", "layers"], ["/studio/adaptive", "adaptive"]];
@@ -25,4 +25,14 @@ test("dynamic document paths select the smallest matching page entry", () => {
   assert.equal(documentEntryPath("/document/doc-a/name"), "/index.html");
   assert.equal(documentEntryPath("/document/doc-a/name/view/board"), "/studio/board/index.html");
   assert.equal(documentEntryPath("/document/doc-a/view/adaptive"), "/studio/adaptive/index.html");
+});
+
+test("Library focus dialogs have refresh-safe content paths", () => {
+  assert.equal(libraryFocusRoute("block", "block/42", "Direction / Quiet confidence"), "/library/block/block%2F42/direction-quiet-confidence");
+  assert.deepEqual(libraryFocusFromRoute("/library/block/block%2F42/direction-quiet-confidence"), { kind: "block", id: "block/42" });
+  assert.deepEqual(libraryFocusFromRoute("/library/output/output-7"), { kind: "output", id: "output-7" });
+  assert.deepEqual(libraryFocusFromRoute("/library/family/family-9/warm-nocturnes"), { kind: "family", id: "family-9" });
+  assert.equal(libraryFocusFromRoute("/library"), null);
+  assert.equal(libraryRootRoute("/library/output/output-7?scope=kept#preview"), "/library?scope=kept#preview");
+  assert.equal(appEntryPath("/library/output/output-7"), "/library/index.html");
 });

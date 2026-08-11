@@ -1,4 +1,6 @@
 export type DocumentView = "document" | "board" | "guided" | "layers" | "adaptive";
+export type LibraryFocusKind = "block" | "output" | "family";
+export type LibraryFocus = { kind: LibraryFocusKind; id: string };
 
 const legacyDocumentViews: Record<string, DocumentView> = {
   "/": "document",
@@ -11,6 +13,8 @@ const legacyDocumentViews: Record<string, DocumentView> = {
 
 const routeUrl = (route: string) => new URL(route, "https://forma.local");
 const documentViews = new Set<DocumentView>(["document", "board", "guided", "layers", "adaptive"]);
+const libraryFocusKinds = new Set<LibraryFocusKind>(["block", "output", "family"]);
+const safeDecode = (value: string) => { try { return decodeURIComponent(value); } catch { return value; } };
 
 export function routePathname(route: string) {
   return routeUrl(route).pathname;
@@ -27,7 +31,7 @@ function documentRouteParts(route: string) {
   const view = documentViews.has(candidateView as DocumentView) ? candidateView as DocumentView : "document";
   return {
     url,
-    id: (() => { try { return decodeURIComponent(parts[1]); } catch { return parts[1]; } })(),
+    id: safeDecode(parts[1]),
     slug: viewMarker === 3 ? parts[2] : viewMarker < 0 ? parts[2] ?? null : null,
     view,
   };
@@ -49,6 +53,22 @@ export function documentSlug(value: string) {
   return value.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 64);
 }
 
+export function libraryFocusFromRoute(route: string): LibraryFocus | null {
+  const parts = routePathname(route).split("/").filter(Boolean);
+  if (parts[0] !== "library" || !libraryFocusKinds.has(parts[1] as LibraryFocusKind) || !parts[2]) return null;
+  return { kind: parts[1] as LibraryFocusKind, id: safeDecode(parts[2]) };
+}
+
+export function libraryFocusRoute(kind: LibraryFocusKind, id: string, label = "") {
+  const slug = documentSlug(label);
+  return `/library/${kind}/${encodeURIComponent(id)}${slug ? `/${slug}` : ""}`;
+}
+
+export function libraryRootRoute(route: string) {
+  const url = routeUrl(route);
+  return `/library${url.search}${url.hash}`;
+}
+
 export function withDocumentInRoute(route: string, documentId: string, documentName = "") {
   const parts = documentRouteParts(route);
   if (!parts) return route;
@@ -63,4 +83,10 @@ export function documentEntryPath(route: string) {
   const view = documentViewFromRoute(route);
   if (!view || view === "document") return "/index.html";
   return `/studio/${view}/index.html`;
+}
+
+export function appEntryPath(route: string) {
+  const pathname = routePathname(route);
+  if (pathname.startsWith("/library/")) return "/library/index.html";
+  return documentEntryPath(route);
 }
