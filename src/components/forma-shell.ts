@@ -1,6 +1,9 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon, downloadJson } from "./forma-element";
 import "./forma-workspace";
+import "./forma-projects";
+import "./forma-project-contents";
+import "./forma-studio-alternatives";
 import "./forma-library";
 import "./forma-sessions";
 import "./forma-scout";
@@ -33,6 +36,10 @@ export class FormaShell extends FormaElement {
   #route(path: string) { this.store.patchUi({ commandOpen: false, accountOpen: false }); this.store.setRoute(path); const hash=path.includes("#")?path.slice(path.indexOf("#")+1):"";if(hash)window.setTimeout(()=>{const target=document.getElementById(hash);target?.scrollIntoView({behavior:"smooth",block:"center"});target?.focus({preventScroll:true});},0);else window.scrollTo({ top: 0 }); }
   #page() {
     const path = this.store.route.get();
+    if (path.startsWith("/projects")) return html`<forma-projects></forma-projects>`;
+    if (path.startsWith("/studio/project")) return html`<forma-project-contents></forma-project-contents>`;
+    if (path.startsWith("/studio/board")) return html`<forma-context-board></forma-context-board>`;
+    if (path.startsWith("/studio/guided")) return html`<forma-guided-brief></forma-guided-brief>`;
     if (path.startsWith("/admin/events")) return html`<forma-admin-events></forma-admin-events>`;
     if (path.startsWith("/library")) return html`<forma-library></forma-library>`;
     if (path.startsWith("/sessions")) return html`<forma-sessions></forma-sessions>`;
@@ -91,8 +98,8 @@ export class FormaShell extends FormaElement {
     const session=this.store.session.get();const visibleRoutes=routes.filter(([href])=>href!=="/admin/events"||session?.user.role==="admin");
     return html`<div class="app-shell ${isAdmin ? "admin-shell" : ""}">
       <header class="topbar">
-        <button class="brand" @click=${() => this.#route("/")} aria-label="Open Forma studio"><span class="brand-mark">F</span><span>Forma</span></button>
-        <nav class="global-nav" aria-label="Primary">${visibleRoutes.map(([href, label]) => html`<a href=${href} class=${path === href || (href !== "/" && path.startsWith(href)) ? "active" : ""} @click=${(e: MouseEvent) => { e.preventDefault(); this.#route(href); }}>${label}</a>`)}</nav>
+        <button class="brand" @click=${() => this.#route("/projects")} aria-label="Open all Forma projects"><span class="brand-mark">F</span><span>Forma</span></button>
+        <nav class="global-nav" aria-label="Primary">${visibleRoutes.map(([href, label]) => html`<a href=${href} class=${(href==="/"?(path==="/"||path.startsWith("/studio")):(path===href||path.startsWith(href)))?"active":""} @click=${(e: MouseEvent) => { e.preventDefault(); this.#route(href); }}>${label}</a>`)}</nav>
         <div class="top-actions">
           <button class="command-trigger" @click=${() => this.store.patchUi({ commandOpen: true })}><span>${icon("search")}</span><span class="command-label">Search or command</span><kbd>⌘ K</kbd></button>
           ${!isAdmin ? html`<button class="button secondary compact" @click=${() => {void this.store.loadShares();this.store.patchUi({ shareOpen: true });}}>${icon("share")} Share</button>` : nothing}

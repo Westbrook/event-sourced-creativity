@@ -22,6 +22,21 @@ test("projects every document and opens a prior document without copying it",()=
   assert.deepEqual(projection.outputs.map((output)=>output.id),["output-a"]);
 });
 
+test("switches project projections without copying cross-project documents",()=>{
+  const events=[
+    event(1,"ProjectCreated",{project_id:"project-a",name:"First project"}),
+    event(2,"DocumentCreated",{document_id:"doc-a",title:"First document"}),
+    event(3,"BlockCreated",{block_id:"block-a",document_id:"doc-a",type:"direction",handle:"direction/a",position:"a0",properties:{text:"First"}}),
+    event(4,"ProjectCreated",{project_id:"project-b",name:"Second project"}),
+    event(5,"DocumentCreated",{document_id:"doc-b",title:"Second document"}),
+    event(6,"ProjectOpened",{project_id:"project-a",previous_project_id:"project-b"}),
+  ];
+  const projection=foldEvents(events);
+  assert.equal(projection.projectId,"project-a");assert.equal(projection.projectName,"First project");
+  assert.deepEqual(projection.documents.map((document)=>document.id),["doc-a"]);assert.deepEqual(projection.blocks.map((block)=>block.id),["block-a"]);
+  assert.deepEqual(projection.projects.map((project)=>project.id),["project-a","project-b"]);
+});
+
 test("replays a compensated document-open event back to the previous document",()=>{
   const events=[event(1,"DocumentCreated",{document_id:"doc-a",title:"A"}),event(2,"DocumentCreated",{document_id:"doc-b",title:"B"}),event(3,"DocumentOpened",{document_id:"doc-a",previous_document_id:"doc-b"}),event(4,"DocumentOpened",{document_id:"doc-b",previous_document_id:"doc-a"},"user","event-3")];
   assert.equal(foldEvents(events).documentId,"doc-b");

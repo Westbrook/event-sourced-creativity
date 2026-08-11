@@ -183,7 +183,7 @@ test("makes closeable dialogs light-dismissable with a compatibility fallback", 
 });
 
 test("connects the final Library and Studio affordances to explicit destinations", async()=>{
-  const [library,workspace,collections,projectRail,store,eventsModel,eventsApi,outputCard,styles,shell,system,classification]=await Promise.all([
+  const [library,workspace,collections,projectRail,store,eventsModel,eventsApi,outputCard,styles,shell,system,classification,contents,projects,alternatives,navigation]=await Promise.all([
     readFile(new URL("../src/components/forma-library.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/components/forma-workspace.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/components/collection-tree.ts",import.meta.url),"utf8"),
@@ -196,15 +196,23 @@ test("connects the final Library and Studio affordances to explicit destinations
     readFile(new URL("../src/components/forma-shell.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/components/forma-system.ts",import.meta.url),"utf8"),
     readFile(new URL("../docs/event-classification.csv",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-project-contents.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-projects.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-studio-alternatives.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/studio-navigation.ts",import.meta.url),"utf8"),
   ]);
   assert.match(library,/Use in open document/);assert.match(library,/focused preview/i);assert.match(library,/Generated with this block/);assert.match(library,/Open family lightbox/);
-  assert.match(library,/Keep for reuse/);assert.match(library,/Recent shows the project trail/);assert.match(library,/Project contents/);assert.match(library,/openDocument/);
+  assert.match(library,/Keep for reuse/);assert.match(library,/Recent shows the project trail/);assert.doesNotMatch(library,/Project contents|Open in Studio/);
+  assert.match(contents,/Project contents/);assert.match(contents,/>Open \$\{icon\("arrow"\)\}/);assert.match(contents,/openDocument/);
   assert.match(eventsModel,/DocumentOpened/);assert.match(eventsApi,/DocumentOpened/);assert.match(store,/openDocument/);assert.match(classification,/DocumentOpened,behavioral/);
+  assert.match(eventsModel,/ProjectOpened/);assert.match(eventsApi,/ProjectOpened/);assert.match(store,/openProject/);assert.match(classification,/ProjectOpened,behavioral/);
   assert.match(eventsModel,/DocumentRemoved/);assert.match(eventsApi,/DocumentRemoved/);assert.match(store,/removeDocument/);assert.match(classification,/DocumentRemoved,user_content/);
   assert.match(collections,/File open document/);assert.match(collections,/New nested collection/);assert.match(collections,/collection-dialog/);assert.doesNotMatch(collections,/window\.prompt/);
   assert.match(workspace,/project-settings-dialog/);assert.match(workspace,/type:BlockKind/);assert.match(workspace,/block-composer-dialog/);
-  assert.match(workspace,/forma-project-rail surface="studio"/);assert.match(library,/forma-project-rail surface="library"/);assert.match(projectRail,/Library overview/);assert.match(projectRail,/All documents/);assert.match(projectRail,/No auto-filing/);
-  assert.match(workspace,/studio-document-delete-dialog/);assert.match(library,/document-delete-dialog/);assert.match(`${workspace}${library}`,/Remove document/);
+  assert.match(workspace,/forma-project-rail surface="studio"/);assert.match(library,/forma-project-rail surface="library"/);assert.match(projectRail,/Library overview/);assert.match(projectRail,/Project contents/);assert.doesNotMatch(projectRail,/All documents/);assert.match(projectRail,/No auto-filing/);
+  assert.match(workspace,/studio-document-delete-dialog/);assert.match(contents,/project-document-delete-dialog/);assert.match(`${workspace}${contents}`,/Remove document/);
+  assert.match(shell,/this\.#route\("\/projects"\)/);assert.match(projects,/New project/);assert.match(navigation,/Context board/);assert.match(navigation,/Guided brief/);
+  assert.match(alternatives,/created_from:"context-board"/);assert.match(alternatives,/created_from:"guided-brief"/);assert.match(alternatives,/forma-studio-navigator/);
   assert.doesNotMatch(`${workspace}${library}${styles}`,/studio-sidebar|library-tree/);assert.match(styles,/\.project-rail/);
   assert.match(workspace,/\?disabled=\$\{!canCompare\}/);assert.match(store,/canUndo/);assert.match(store,/canRedo/);assert.match(styles,/\.document-bar \{ position: sticky/);
   assert.match(outputCard,/Taste evidence/);assert.match(outputCard,/taste-axis-grid/);assert.match(outputCard,/Record taste evidence/);

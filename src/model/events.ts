@@ -34,8 +34,21 @@ export type CreativeBlock = {
   sourceEvents: string[];
 };
 
+export type CreativeProject = {
+  id: string;
+  name: string;
+  state: string;
+  createdSequence: number;
+  lastSequence: number;
+  documentCount: number;
+  collectionCount: number;
+  blockCount: number;
+  outputCount: number;
+};
+
 export type CreativeCollection = {
   id: string;
+  projectId: string;
   handle: string;
   parentId: string | null;
   removed: boolean;
@@ -45,6 +58,7 @@ export type CreativeCollection = {
 
 export type CreativeDocument = {
   id: string;
+  projectId: string;
   title: string;
   handle: string;
   removed: boolean;
@@ -72,6 +86,7 @@ export type CreativeProjection = {
   projectId: string;
   projectName: string;
   projectState: string;
+  projects: CreativeProject[];
   documentId: string;
   documentTitle: string;
   documents: CreativeDocument[];
@@ -104,6 +119,7 @@ const itemId = (value: unknown) => {
 };
 
 export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFINITY): CreativeProjection {
+  const projects = new Map<string, Omit<CreativeProject, "documentCount" | "collectionCount" | "blockCount" | "outputCount">>();
   const blocks = new Map<string, CreativeBlock>();
   const documents = new Map<string, CreativeDocument>();
   const collections = new Map<string, CreativeCollection>();
@@ -119,7 +135,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
     projectState: "active",
     documentId: "",
     documentTitle: "Untitled document",
-    documents: [], blocks: [], libraryBlocks: [], collections: [], membership, outputs: [], libraryOutputs: [],
+    projects: [], documents: [], blocks: [], libraryBlocks: [], collections: [], membership, outputs: [], libraryOutputs: [],
     latestCompile: null, brief: null, presentedBriefItems: new Set(),
     annotations: [], families: [], preferences: [], conditions: [], lastSession: null, currentSessionId: null, sessionOpen: false,
   };
@@ -128,19 +144,25 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
     if (event.sequence > asOf) break;
     const p = event.payload;
     switch (event.type) {
-      case "ProjectCreated": state.projectId = String(p.project_id ?? ""); state.projectName = String(p.name ?? state.projectName); break;
-      case "ProjectRenamed": state.projectName = String(p.new_name ?? state.projectName); break;
-      case "ProjectStateChanged": state.projectState = String(p.state ?? state.projectState); break;
+      case "ProjectCreated": {
+        const id=String(p.project_id??"");const name=String(p.name??"Untitled project");const projectState=String(p.state??"active");
+        projects.set(id,{id,name,state:projectState,createdSequence:event.sequence,lastSequence:event.sequence});state.projectId=id;state.projectName=name;state.projectState=projectState;state.latestCompile=null;break;
+      }
+      case "ProjectOpened": {
+        const project=projects.get(String(p.project_id??""));if(project){state.projectId=project.id;state.projectName=project.name;state.projectState=project.state;state.latestCompile=null;project.lastSequence=event.sequence;const latest=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed).sort((a,b)=>b.createdSequence-a.createdSequence)[0];state.documentId=latest?.id??"";state.documentTitle=latest?.title??"No document open";}break;
+      }
+      case "ProjectRenamed": { const project=projects.get(String(p.project_id??state.projectId));if(project){project.name=String(p.new_name??project.name);project.lastSequence=event.sequence;if(project.id===state.projectId)state.projectName=project.name;}break; }
+      case "ProjectStateChanged": { const project=projects.get(String(p.project_id??state.projectId));if(project){project.state=String(p.state??project.state);project.lastSequence=event.sequence;if(project.id===state.projectId)state.projectState=project.state;}break; }
       case "DocumentCreated": {
         const id=String(p.document_id??"");const title=String(p.title??state.documentTitle);state.documentId=id;state.documentTitle=title;state.latestCompile=null;
-        documents.set(id,{id,title,handle:String(p.handle??`document-${id.slice(0,8)}`),removed:false,createdSequence:event.sequence,sourceEvents:[event.eventId]});break;
+        documents.set(id,{id,projectId:String(p.project_id??state.projectId),title,handle:String(p.handle??`document-${id.slice(0,8)}`),removed:false,createdSequence:event.sequence,sourceEvents:[event.eventId]});break;
       }
       case "DocumentRenamed": {
         const id=String(p.document_id??state.documentId);const document=documents.get(id);if(document){document.title=String(p.new_title??document.title);document.sourceEvents.push(event.eventId);}if(id===state.documentId)state.documentTitle=String(p.new_title??state.documentTitle);break;
       }
       case "DocumentForked": {
         const id=String(p.document_id??state.documentId);const title=String(p.title??"Imported document fork");state.documentId=id;state.documentTitle=title;state.latestCompile=null;
-        documents.set(id,{id,title,handle:String(p.handle??`fork-${id.slice(0,8)}`),removed:false,createdSequence:event.sequence,sourceEvents:[event.eventId]});break;
+        documents.set(id,{id,projectId:String(p.project_id??state.projectId),title,handle:String(p.handle??`fork-${id.slice(0,8)}`),removed:false,createdSequence:event.sequence,sourceEvents:[event.eventId]});break;
       }
       case "DocumentOpened": {
         const document=documents.get(String(p.document_id??""));if(document&&!document.removed){state.documentId=document.id;state.documentTitle=document.title;state.latestCompile=null;document.sourceEvents.push(event.eventId);}break;
@@ -176,7 +198,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
         break;
       }
       case "ExtractionFailed": { const b = blocks.get(String(p.block_id)); if (b) { b.properties.extraction_status = "failed"; b.sourceEvents.push(event.eventId); } break; }
-      case "CollectionCreated": { const id = String(p.collection_id); collections.set(id, { id, handle: String(p.handle ?? "untitled"), parentId: p.parent_collection_id ? String(p.parent_collection_id) : null, removed: false, position: String(p.position ?? "a0"), sourceClaimRef: p.source_claim_ref ? String(p.source_claim_ref) : null }); break; }
+      case "CollectionCreated": { const id = String(p.collection_id); collections.set(id, { id, projectId: String(p.project_id??state.projectId), handle: String(p.handle ?? "untitled"), parentId: p.parent_collection_id ? String(p.parent_collection_id) : null, removed: false, position: String(p.position ?? "a0"), sourceClaimRef: p.source_claim_ref ? String(p.source_claim_ref) : null }); break; }
       case "CollectionRenamed": { const c = collections.get(String(p.collection_id)); if (c) c.handle = String(p.new_handle ?? c.handle); break; }
       case "CollectionRemoved": case "CollectionRestored": { const c = collections.get(String(p.collection_id)); if (c) c.removed = event.type === "CollectionRemoved"; break; }
       case "CollectionItemAdded": { const id = itemId(p.item_ref); if (id) membership[id] = { collectionId: String(p.collection_id), position: String(p.position ?? "a0") }; break; }
@@ -227,16 +249,18 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ConditionFired": { const c = conditions.get(String(p.condition_id)); if (c) c.fired = true; break; }
     }
   }
-  const visibleDocuments=[...documents.values()].filter((document)=>!document.removed).sort((a,b)=>b.createdSequence-a.createdSequence);const visibleDocumentIds=new Set(visibleDocuments.map((document)=>document.id));
+  const visibleDocuments=[...documents.values()].filter((document)=>!document.removed&&document.projectId===state.projectId).sort((a,b)=>b.createdSequence-a.createdSequence);const visibleDocumentIds=new Set(visibleDocuments.map((document)=>document.id));
   for(const id of Object.keys(membership))if(documents.has(id)&&!visibleDocumentIds.has(id))delete membership[id];
   state.libraryBlocks = [...blocks.values()].filter((b) => !b.removed&&(!documents.has(b.documentId)||visibleDocumentIds.has(b.documentId))).sort((a, b) => a.position.localeCompare(b.position));
   state.documents = visibleDocuments;
   if(!visibleDocumentIds.has(state.documentId)){const fallback=visibleDocuments[0];state.documentId=fallback?.id??"";state.documentTitle=fallback?.title??"No document open";state.latestCompile=null;}
   state.blocks = state.libraryBlocks.filter((block) => block.documentId === state.documentId);
-  state.collections = [...collections.values()].filter((c) => !c.removed).sort((a, b) => a.position.localeCompare(b.position) || a.handle.localeCompare(b.handle));
+  state.collections = [...collections.values()].filter((c) => !c.removed&&c.projectId===state.projectId).sort((a, b) => a.position.localeCompare(b.position) || a.handle.localeCompare(b.handle));
   state.libraryOutputs = [...outputs.values()].filter((o) => !o.discarded&&(!documents.has(o.documentId)||visibleDocumentIds.has(o.documentId))).sort((a, b) => b.sequence - a.sequence);
   state.outputs = state.libraryOutputs.filter((output) => output.documentId === state.documentId);
   state.annotations = [...annotations.values()]; state.families = [...families.values()]; state.preferences = [...preferences.values()]; state.conditions = [...conditions.values()];
+  state.projects=[...projects.values()].map((project)=>{const projectDocuments=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed);const documentIds=new Set(projectDocuments.map((document)=>document.id));return{...project,documentCount:projectDocuments.length,collectionCount:[...collections.values()].filter((collection)=>collection.projectId===project.id&&!collection.removed).length,blockCount:[...blocks.values()].filter((block)=>documentIds.has(block.documentId)&&!block.removed).length,outputCount:[...outputs.values()].filter((output)=>documentIds.has(output.documentId)&&!output.discarded).length};}).sort((a,b)=>a.id===state.projectId?-1:b.id===state.projectId?1:b.lastSequence-a.lastSequence);
+  if(!state.projects.length&&state.projectId)state.projects=[{id:state.projectId,name:state.projectName,state:state.projectState,createdSequence:0,lastSequence:0,documentCount:state.documents.length,collectionCount:state.collections.length,blockCount:state.libraryBlocks.length,outputCount:state.libraryOutputs.length}];
   return state;
 }
 

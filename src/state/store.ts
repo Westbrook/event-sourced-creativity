@@ -123,10 +123,17 @@ export class FormaStore {
     finally { this.busy.set(""); this.notify(); }
   }
 
-  async openDocument(documentId: string) {
-    const projection=this.projection.get();if(!documentId||documentId===projection.documentId){this.setRoute("/");return true;}
-    const appended=await this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:projection.documentId,source_surface:"library"}});
-    if(!appended.length)return false;this.patchUi({focusBlockId:"",focusCollectionId:"",selectedOutputId:"",compareOpen:false});this.setRoute("/");this.toast("Document opened in Studio.");return true;
+  async openProject(projectId:string,destination="/") {
+    const projection=this.projection.get();if(!projectId||projectId===projection.projectId){this.setRoute(destination);return true;}
+    const target=projection.projects.find((project)=>project.id===projectId);if(!target){this.toast("That project is no longer available.");return false;}
+    const appended=await this.append({type:"ProjectOpened",payload:{project_id:projectId,previous_project_id:projection.projectId,source_surface:"projects"}});
+    if(!appended.length)return false;this.patchUi({focusBlockId:"",focusCollectionId:"",selectedOutputId:"",compareOpen:false});this.setRoute(destination);this.toast(`${target.name} opened in Studio.`);return true;
+  }
+
+  async openDocument(documentId: string, destination="/") {
+    const projection=this.projection.get();if(!documentId||documentId===projection.documentId){this.setRoute(destination);return true;}
+    const appended=await this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:projection.documentId,source_surface:destination==="/"?"studio":"studio-alternative"}});
+    if(!appended.length)return false;this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});this.setRoute(destination);this.toast("Document opened.");return true;
   }
 
   async removeDocument(documentId: string) {
@@ -302,6 +309,7 @@ function inverseEvent(event: CreativeEvent): EventInput | null {
   if (event.type === "CollectionRenamed") return { type: event.type, payload: { ...p, old_handle: p.new_handle, new_handle: p.old_handle } };
   if (event.type === "ProjectRenamed") return { type: event.type, payload: { ...p, old_name: p.new_name, new_name: p.old_name } };
   if (event.type === "ProjectStateChanged") return { type: event.type, payload: { ...p, state: p.previous_state, previous_state: p.state } };
+  if (event.type === "ProjectOpened") return { type: event.type, payload: { ...p, project_id: p.previous_project_id, previous_project_id: p.project_id } };
   if (event.type === "DocumentOpened") return { type: event.type, payload: { ...p, document_id: p.previous_document_id, previous_document_id: p.document_id } };
   if (event.type === "CollectionItemAdded") return { type: "CollectionItemRemoved", payload: p };
   if (event.type === "CollectionItemRemoved") return { type: "CollectionItemAdded", payload: p };

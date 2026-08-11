@@ -1,5 +1,6 @@
 event_type,pii_class,free_text_policy,legal_actor,retention_note
 ProjectCreated,user_content,structured_only,user,immutable
+ProjectOpened,behavioral,structured_only,user,immutable
 ProjectRenamed,user_content,structured_only,user,immutable
 ProjectStateChanged,non_pii,structured_only,user,immutable
 DocumentCreated,user_content,structured_only,user,immutable
