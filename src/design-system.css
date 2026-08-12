@@ -849,11 +849,14 @@ forma-project-rail {
 
 .studio-grid { grid-template-columns: minmax(24rem, .78fr) minmax(30rem, 1.22fr); }
 
-.context-column,
-.output-column { padding: clamp(1.5rem, 3.5vw, 3.5rem); }
-
 .context-column { border-right: 1px solid var(--line); }
 .output-column { background: #efefec; }
+
+.context-column > .section-heading,
+.output-column > .section-heading {
+  margin: 0;
+  padding: 1.5rem var(--page-gutter);
+}
 
 .block-list { gap: 0; }
 
@@ -944,7 +947,6 @@ forma-project-rail {
   align-content: start;
   gap: 0;
   margin-inline: auto;
-  padding: clamp(2rem, 4vw, 4rem) var(--page-gutter) var(--page-bottom-space);
 }
 
 .studio-subpage-body > * { min-width: 0; }
@@ -1785,7 +1787,6 @@ html[data-document-focus] .studio-subpage-body {
   max-width: none;
   gap: 0;
   margin: 0;
-  padding: 0;
 }
 
 html[data-document-focus] .studio-subpage-body > * {

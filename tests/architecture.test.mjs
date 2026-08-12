@@ -124,6 +124,19 @@ test("treats context block hover as a stable row instead of a new container", as
   }
 });
 
+test("keeps Studio composition wrappers free of redundant page padding", async () => {
+  const [styles, design] = await Promise.all([
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/design-system.css", import.meta.url), "utf8"),
+  ]);
+  for (const sheet of [styles, design]) {
+    const wrappers = [...sheet.matchAll(/(?:\.context-column\s*,\s*\.output-column|(?:html\[data-document-focus\]\s+)?\.studio-subpage-body)\s*\{[^}]*\}/g)].map((match) => match[0]);
+    assert.ok(wrappers.length > 0);
+    for (const rule of wrappers) assert.doesNotMatch(rule, /padding/);
+  }
+  assert.match(design, /\.context-column > \.section-heading,[\s\S]*?\.output-column > \.section-heading\s*\{[^}]*padding:/);
+});
+
 test("packages first-class HTML entry points for every named application route", async () => {
   const plugin = await readFile(new URL("../build/sites-vite-plugin.ts", import.meta.url), "utf8");
   const routeLoader = await readFile(new URL("../src/route-loader.ts", import.meta.url), "utf8");
@@ -228,7 +241,7 @@ test("presents every alternate Studio lens as the same complete durable document
   assert.match(styles, /html\[data-document-focus\] \.workspace-page:has\(> forma-project-rail > \.project-rail\.collapsed\) \{ grid-template-columns: minmax\(0,1fr\); \}/);
   assert.match(styles, /html\[data-document-focus\] \.workspace-page > forma-project-rail \{ display: none; \}/);
   assert.match(styles, /html\[data-document-focus\] \.workspace-page:has\(> forma-project-rail > \.project-rail\.collapsed\) \.composer-dock \{ left: 0; \}/);
-  assert.match(styles, /html\[data-document-focus\] \.studio-subpage-body \{[^}]*padding: 0/);
+  assert.match(styles, /html\[data-document-focus\] \.studio-subpage-body \{[^}]*max-width: none;[^}]*margin: 0/);
   assert.match(styles, /html\[data-document-focus\] \.studio-subpage-body > \* \{ border-radius: 0; \}/);
   assert.match(styles, /html\[data-document-focus\] \.studio-subpage-body > \.creative-editor,[\s\S]*\.studio-subpage-body > \.chat-workspace \{ border: 0; box-shadow: none; \}/);
   assert.match(styles, /html\[data-document-focus\] \.creative-editor,[\s\S]*height: calc\(100dvh - 70px\)/);
