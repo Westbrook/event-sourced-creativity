@@ -176,14 +176,14 @@ forma-project-rail { display: block; min-width: 0; background: #ecece5; border-r
 .section-heading > span { color: var(--muted); font: var(--type-caption) var(--mono); }
 .health-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; color: var(--forest-2); background: var(--mint); border-radius: 20px; font: var(--type-micro) var(--mono); }
 .health-pill i { width: 5px; height: 5px; background: #52835d; border-radius: 50%; }
-.block-list { display: grid; gap: 8px; }
-.context-block { position: relative; display: grid; grid-template-columns: 32px minmax(0,1fr); container-type: inline-size; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; transition: border-color .15s, transform .15s; }
-.context-block:hover { border-color: var(--line-strong); transform: translateY(-1px); }
-.context-block.brief-focus { border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-soft); }
+.block-list { display: grid; gap: 0; }
+.context-block { position: relative; display: grid; grid-template-columns: 32px minmax(0,1fr); container-type: inline-size; background: transparent; border: 0; border-bottom: 1px solid var(--line); transition: background .15s ease,border-bottom-color .15s ease; }
+.context-block:hover { background: color-mix(in srgb,var(--panel) 58%,transparent); border-bottom-color: var(--line-strong); }
+.context-block.brief-focus { background: var(--orange-soft); border-bottom-color: var(--orange); box-shadow: none; }
 .context-block.drop-before::before, .context-block.drop-after::after { position: absolute; z-index: 3; right: 5px; left: 5px; height: 3px; content: ""; background: var(--orange); border-radius: 3px; }
 .context-block.drop-before::before { top: -6px; }
 .context-block.drop-after::after { bottom: -6px; }
-.block-rail { display: flex; flex-direction: column; align-items: center; padding-top: 12px; border-right: 1px solid var(--line); }
+.block-rail { display: flex; flex-direction: column; align-items: center; padding-top: 1.25rem; border-right: 0; }
 .drag-handle { display: grid; width: 27px; height: 28px; place-items: center; padding: 0; color: #92988e; border-radius: 4px; font-size: var(--type-body); cursor: grab; }
 .drag-handle:hover { color: var(--forest); background: var(--mint); }
 .drag-handle:active { cursor: grabbing; }
@@ -202,7 +202,7 @@ forma-project-rail { display: block; min-width: 0; background: #ecece5; border-r
 .reference-pixel-policy.compact { margin: .5rem 0; padding: .625rem; }
 .layers-panel > forma-reference-pixel-policy,.layer-inspector + forma-reference-pixel-policy { margin: .5rem .5rem 0; color: var(--ink); background: var(--panel); }
 .reorder-buttons button { width: 22px; height: 19px; color: var(--muted); font-size: var(--type-caption); }
-.block-body { min-width: 0; padding: 13px 15px 12px; }
+.block-body { min-width: 0; padding: 1.25rem 1rem; }
 .block-body > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .block-type { color: var(--orange); font: 500 var(--type-micro) var(--mono); letter-spacing: .09em; text-transform: uppercase; }
 .handle { display: block; max-width: 260px; overflow: hidden; padding: 3px 0 0; color: var(--muted); font: var(--type-micro) var(--mono); text-overflow: ellipsis; white-space: nowrap; }

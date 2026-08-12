@@ -110,6 +110,20 @@ test("codifies and applies a gallery-first accessible design system", async () =
   assert.match(generations, /Collapse images/);
 });
 
+test("treats context block hover as a stable row instead of a new container", async () => {
+  const [styles, design] = await Promise.all([
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/design-system.css", import.meta.url), "utf8"),
+  ]);
+  for (const sheet of [styles, design]) {
+    assert.match(sheet, /\.block-list\s*\{[^}]*gap:\s*0/);
+    const contextRule = sheet.match(/\.context-block\s*\{[^}]*\}/)?.[0] ?? "";
+    assert.match(contextRule, /border:\s*0;[^}]*border-bottom:\s*1px solid var\(--line\)/);
+    assert.doesNotMatch(contextRule, /border-radius/);
+    assert.match(sheet, /\.context-block:hover\s*\{[^}]*background:[^}]*border-bottom-color:\s*var\(--line-strong\)/);
+  }
+});
+
 test("packages first-class HTML entry points for every named application route", async () => {
   const plugin = await readFile(new URL("../build/sites-vite-plugin.ts", import.meta.url), "utf8");
   const routeLoader = await readFile(new URL("../src/route-loader.ts", import.meta.url), "utf8");

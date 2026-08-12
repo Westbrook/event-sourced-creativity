@@ -855,25 +855,26 @@ forma-project-rail {
 .context-column { border-right: 1px solid var(--line); }
 .output-column { background: #efefec; }
 
+.block-list { gap: 0; }
+
 .context-block {
   grid-template-columns: 2.25rem minmax(0, 1fr);
   background: transparent;
-  border: 1px solid transparent;
-  border-bottom-color: var(--line);
-  border-radius: 0;
-  transition: background .15s ease, border-color .15s ease;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  transition: background .15s ease, border-bottom-color .15s ease;
 }
 
-.context-block:hover { background: color-mix(in srgb, var(--panel) 58%, transparent); border-color: var(--line); }
+.context-block:hover { background: color-mix(in srgb, var(--panel) 58%, transparent); border-bottom-color: var(--line-strong); }
 
 .context-block.brief-focus {
   background: var(--orange-soft);
-  border-color: var(--orange);
+  border-bottom-color: var(--orange);
   box-shadow: none;
 }
 
-.block-rail { border-right: 0; }
-.block-body { padding: 1.15rem .75rem 1.15rem 1rem; }
+.block-rail { padding-top: 1.25rem; border-right: 0; }
+.block-body { padding: 1.25rem 1rem; }
 .block-type { color: var(--muted); font-family: var(--sans); letter-spacing: 0; text-transform: none; }
 .block-copy { padding-block: 1rem; font-family: var(--sans); font-size: var(--type-body); }
 .block-meta { border-top-color: var(--line); }
