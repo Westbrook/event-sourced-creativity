@@ -11,6 +11,7 @@ export class CollectionTree extends FormaElement {
   itemLabel="";
   #dialog: CollectionDialog | null = null;
   #handle = "";
+  #openMenuId = "";
 
   protected override updated() {
     const dialog=this.querySelector<HTMLDialogElement>(".collection-dialog");if(dialog&&!dialog.open)dialog.showModal();
@@ -25,6 +26,24 @@ export class CollectionTree extends FormaElement {
     void this.updateComplete.then(()=>this.querySelector<HTMLInputElement>(".collection-dialog input")?.select());
   }
   #dismiss() { this.querySelector<HTMLDialogElement>(".collection-dialog")?.close();this.#dialog=null;this.requestUpdate(); }
+  #menuId(id: string) { return `collection-menu-${id.replace(/[^a-zA-Z0-9_-]/g,"-")}`; }
+  #closeMenu(id: string) {
+    const menu=this.querySelector<HTMLElement>(`#${this.#menuId(id)}`);
+    if(menu?.matches(":popover-open"))menu.hidePopover();
+    if(this.#openMenuId===id){this.#openMenuId="";this.requestUpdate();}
+  }
+  #toggleMenu(event: MouseEvent,id: string) {
+    const trigger=event.currentTarget as HTMLButtonElement;const menu=this.querySelector<HTMLElement>(`#${this.#menuId(id)}`);if(!menu)return;
+    if(menu.matches(":popover-open")){this.#closeMenu(id);return;}
+    const rect=trigger.getBoundingClientRect();const width=Math.min(208,window.innerWidth-16);const left=Math.max(8,Math.min(rect.right-width,window.innerWidth-width-8));
+    menu.style.setProperty("--collection-menu-top",`${rect.bottom+4}px`);menu.style.setProperty("--collection-menu-left",`${left}px`);menu.showPopover();this.#openMenuId=id;this.requestUpdate();
+  }
+  #menuToggle(event: Event,id: string) {
+    const state=(event as Event&{newState?:string}).newState;
+    if(state==="open")this.#openMenuId=id;else if(this.#openMenuId===id)this.#openMenuId="";
+    this.requestUpdate();
+  }
+  #fromMenu(id: string,action:()=>void) { this.#closeMenu(id);action(); }
   async #save(event: SubmitEvent) {
     event.preventDefault();const dialog=this.#dialog;const handle=this.#handle.trim();if(!dialog||!handle)return;
     const input=dialog.mode==="create"
@@ -44,9 +63,14 @@ export class CollectionTree extends FormaElement {
   override render() {
     const p=this.store.projection.get();const roots=p.collections.filter((collection)=>!collection.parentId);const children=(id:string)=>p.collections.filter((collection)=>collection.parentId===id);const subjectId=this.itemKind==="block"?this.itemId:p.documentId;const currentMembership=subjectId?p.membership[subjectId]:undefined;const subjectName=this.itemKind==="block"?(this.itemLabel||"this block"):"the open document";const fileLabel=this.itemKind==="block"?"File this block":"File open document";
     const node=(collection:typeof p.collections[number],level:number):TemplateResult=>html`<li role="treeitem" aria-level=${level} aria-expanded=${children(collection.id).length?"true":undefined} aria-current=${this.store.ui.focusCollectionId===collection.id?"true":undefined} class=${this.store.ui.focusCollectionId===collection.id?"brief-focus":""} data-collection-id=${collection.id} tabindex="0">
-      <div class="tree-row"><span>${icon("folder")}</span><button class="tree-name" title=${`Open project items filed in ${collection.handle}`} @click=${()=>{void this.#openCollection(collection.id);}}>${collection.handle}</button><span class="tree-count">${Object.values(p.membership).filter((membership)=>membership.collectionId===collection.id).length}</span><button class="tree-more" aria-label=${`Edit ${collection.handle}`} title="Rename collection" @click=${()=>this.#openRename(collection.id,collection.handle)}>•••</button></div>
+      <div class="tree-row"><span>${icon("folder")}</span><button class="tree-name" title=${`Open project items filed in ${collection.handle}`} @click=${()=>{void this.#openCollection(collection.id);}}>${collection.handle}</button><span class="tree-count">${Object.values(p.membership).filter((membership)=>membership.collectionId===collection.id).length}</span><button class="tree-more" aria-label=${`Open actions for ${collection.handle}`} title="Collection actions" aria-haspopup="menu" aria-controls=${this.#menuId(collection.id)} aria-expanded=${this.#openMenuId===collection.id} @click=${(event:MouseEvent)=>this.#toggleMenu(event,collection.id)}>•••</button></div>
+      <div id=${this.#menuId(collection.id)} class="tree-menu" popover="auto" role="menu" aria-label=${`${collection.handle} actions`} @toggle=${(event:Event)=>this.#menuToggle(event,collection.id)}>
+        <button role="menuitem" @click=${()=>this.#fromMenu(collection.id,()=>this.#openRename(collection.id,collection.handle))}>${icon("edit")} Rename</button>
+        <button role="menuitem" @click=${()=>this.#fromMenu(collection.id,()=>this.#openCreate(collection.id))}>${icon("plus")} New nested collection</button>
+        <hr>
+        <button role="menuitem" ?disabled=${!subjectId||currentMembership?.collectionId===collection.id} title=${!subjectId?`Save ${subjectName} before filing`:currentMembership?.collectionId===collection.id?`${this.itemKind==="block"?"Block":"Document"} is already filed here`:`Place ${subjectName} in this collection`} @click=${()=>this.#fromMenu(collection.id,()=>{void this.#moveItem(collection.id);})}>${icon("folder")} ${fileLabel}</button>
+      </div>
       ${children(collection.id).length?html`<ul role="group">${children(collection.id).map((child)=>node(child,level+1))}</ul>`:nothing}
-      <div class="tree-actions"><button ?disabled=${!subjectId||currentMembership?.collectionId===collection.id} title=${`Place ${subjectName} in this collection`} @click=${()=>this.#moveItem(collection.id)}>${!subjectId?"Save before filing":currentMembership?.collectionId===collection.id?`${this.itemKind==="block"?"Block":"Document"} filed here`:fileLabel}</button><button title="Create a child collection inside this one" @click=${()=>this.#openCreate(collection.id)}>New nested collection</button></div>
     </li>`;
     const parent=this.#dialog?.parentId?p.collections.find((collection)=>collection.id===this.#dialog?.parentId):null;
     return html`<div class="tree-heading"><span>Collections</span><button class="icon-button" aria-label="Create top-level collection" title="Create top-level collection" @click=${()=>this.#openCreate()}>${icon("plus")}</button></div><ul class="collection-tree" role="tree" aria-label="Collections">${roots.length?roots.map((collection)=>node(collection,1)):html`<li class="tree-empty">No collections yet</li>`}</ul>

@@ -362,19 +362,6 @@ forma-project-rail {
 .tree-row:hover .tree-more,
 .tree-more:focus { opacity: 1; }
 
-.tree-actions {
-  display: flex;
-  min-height: 1.7rem;
-  visibility: hidden;
-  opacity: 0;
-}
-
-.collection-tree li:focus-within > .tree-actions,
-.collection-tree li:hover > .tree-actions {
-  visibility: visible;
-  opacity: 1;
-}
-
 .rail-note,
 .rail-stream {
   padding: .8rem 0;

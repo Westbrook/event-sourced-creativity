@@ -129,10 +129,13 @@ forma-project-rail { display: block; min-width: 0; background: #ecece5; border-r
 .tree-count { color: var(--muted); font: var(--type-micro) var(--mono); }
 .tree-more { display: none; padding: 0 2px; color: var(--muted); font-size: var(--type-micro); }
 .tree-row:hover .tree-more, .tree-more:focus { display: block; }
-.tree-actions { display: none; padding: 0 0 7px 20px; gap: 9px; flex-wrap: wrap; }
-.collection-tree li:focus-within > .tree-actions, .collection-tree li:hover > .tree-actions { display: flex; }
-.tree-actions button { color: var(--forest-2); font-size: var(--type-micro); text-decoration: underline; }
-.tree-actions button:disabled { text-decoration: none; }.tree-empty { padding: 8px 4px; color: var(--muted); font-size: var(--type-micro); }
+.tree-menu[popover] { position: fixed; z-index: 80; top: var(--collection-menu-top); left: var(--collection-menu-left); width: min(208px,calc(100vw - 16px)); margin: 0; padding: 5px; color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 7px; box-shadow: var(--shadow); }
+.tree-menu button { display: flex; width: 100%; min-height: 34px; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 4px; font-size: var(--type-caption); text-align: left; }
+.tree-menu button:hover:not(:disabled),.tree-menu button:focus-visible { color: var(--forest); background: var(--mint); }
+.tree-menu button:disabled { color: var(--muted); cursor: not-allowed; opacity: .55; }
+.tree-menu button svg { width: 14px; height: 14px; }
+.tree-menu hr { margin: 4px 7px; border: 0; border-top: 1px solid var(--line); }
+.tree-empty { padding: 8px 4px; color: var(--muted); font-size: var(--type-micro); }
 .rail-links { display: grid; gap: 3px; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--line-strong); }
 .rail-destinations { margin-top: 14px; }
 .rail-label { padding: 0 4px 5px; color: var(--muted); font: 500 var(--type-micro) var(--mono); letter-spacing: .1em; text-transform: uppercase; }
@@ -949,7 +952,7 @@ forma-output-visual { position: absolute; inset: 0; display: grid; min-width: 0;
   .tree-heading { padding-top: 8px; }
   .collection-tree { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 3px; }
   .collection-tree > li { min-width: 150px; }
-  .collection-tree ul, .tree-actions { display: none !important; }
+  .collection-tree ul { display: none !important; }
   .rail-links { display: flex; overflow-x: auto; margin-top: 8px; padding-top: 8px; }
   .rail-label { display: none; }
   .rail-links a { min-width: 140px; }
