@@ -1,6 +1,7 @@
 import type { WorkerEnv } from "./runtime.ts";
 import { BLOCK_TYPES, type AdaptiveStructure, type BlockKind } from "../src/model/block-types.ts";
 import { normalizeSpatialScope } from "../src/model/spatial-scope.ts";
+import type { LiveReplayPlan } from "../src/model/live-replay.ts";
 
 type OpenAIResponse = { id?: string; model?: string; output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: { message?: string } };
 type OpenAIImageResponse = { created?: number; data?: Array<{ b64_json?: string; revised_prompt?: string }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: { message?: string } };
@@ -46,6 +47,20 @@ const creativeChatSchema = {
   },
 };
 
+const replayDirectionSchema={type:"object",additionalProperties:false,required:["title","rationale","scene","palette","next_moves"],properties:{title:{type:"string"},rationale:{type:"string"},scene:{type:"string"},palette:{type:"array",minItems:3,maxItems:6,items:{type:"string"}},next_moves:{type:"array",minItems:2,maxItems:4,items:{type:"string"}}}};
+const liveReplayPlanSchema={
+  type:"object",additionalProperties:false,required:["title","summary","user_goal","project_name","document_title","reference","chat","blocks","draft","final","critique","collection","memory"],properties:{
+    title:{type:"string"},summary:{type:"string"},user_goal:{type:"string"},project_name:{type:"string"},document_title:{type:"string"},
+    reference:{type:"object",additionalProperties:false,required:["label","description","mood","composition","materials","lighting","spatial","palette"],properties:{label:{type:"string"},description:{type:"string"},mood:{type:"string"},composition:{type:"string"},materials:{type:"string"},lighting:{type:"string"},spatial:{type:"string"},palette:{type:"array",minItems:4,maxItems:6,items:{type:"string"}}}},
+    chat:{type:"object",additionalProperties:false,required:["user_message","assistant_reply","resolved_change"],properties:{user_message:{type:"string"},assistant_reply:{type:"string"},resolved_change:{type:"string"}}},
+    blocks:{type:"array",minItems:BLOCK_TYPES.length,maxItems:BLOCK_TYPES.length,items:{type:"object",additionalProperties:false,required:["type","subtype","label","instruction","intent","applies_to","weight"],properties:{type:{type:"string",enum:BLOCK_TYPES.map((item)=>item.type)},subtype:{type:"string"},label:{type:"string"},instruction:{type:"string"},intent:{type:"string",enum:["include","prefer","avoid","prohibit"]},applies_to:{type:"string",enum:["document","left","right","top","bottom","foreground","background"]},weight:{type:"number",minimum:0,maximum:1}}}},
+    draft:replayDirectionSchema,final:replayDirectionSchema,
+    critique:{type:"object",additionalProperties:false,required:["axis","polarity","value","note"],properties:{axis:{type:"string"},polarity:{type:"string",enum:["positive","negative"]},value:{type:"string"},note:{type:"string"}}},
+    collection:{type:"object",additionalProperties:false,required:["name","reason"],properties:{name:{type:"string"},reason:{type:"string"}}},
+    memory:{type:"object",additionalProperties:false,required:["preference","resurface_condition"],properties:{preference:{type:"string"},resurface_condition:{type:"string"}}},
+  },
+};
+
 async function safetyIdentifier(userId: string) {
   const bytes = new TextEncoder().encode(userId); const hash = await crypto.subtle.digest("SHA-256", bytes);
   return `forma_${Array.from(new Uint8Array(hash)).map((value) => value.toString(16).padStart(2, "0")).join("").slice(0, 32)}`;
@@ -60,6 +75,20 @@ function openAIAuthHeaders(env: WorkerEnv) {
 function openAIHeaders(env: WorkerEnv) { return { ...openAIAuthHeaders(env), "content-type": "application/json" }; }
 
 const responseText=(body:OpenAIResponse)=>body.output_text||body.output?.flatMap((item)=>item.content??[]).find((item)=>item.type==="output_text")?.text||"";
+
+export async function generateLiveReplayPlan(env:WorkerEnv,userId:string,seed:string){
+  if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");const started=Date.now();
+  const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({
+    model:env.OPENAI_MODEL??"gpt-5.6-terra",
+    instructions:"Create a realistic, coherent, fully populated creative-workflow mock for an event-sourced image application. This is synthetic evaluation data, not a description of implementation. Make every field specific and user-readable. Supply exactly one block for every provided block type, with no duplicates; choose a useful supported subtype. Include positive direction, role-specific avoid/prohibit constraints, and several local spatial targets so image generation exercises the full document compiler. The draft should be fast and exploratory. The final direction should clearly refine the draft. The chat turn must explain an ordinary user request and a concise assistant response. Use valid CSS hex colors. Do not mention events, schemas, APIs, tests, or internal metadata.",
+    input:JSON.stringify({seed:seed.trim()||"Develop a richly art-directed editorial image through conversation, reference analysis, local constraints, iteration, memory, and re-entry.",required_block_types:BLOCK_TYPES.map((item)=>({type:item.type,subtypes:item.subtypes,description:item.description}))}),
+    text:{verbosity:"medium",format:{type:"json_schema",name:"live_replay_plan",strict:true,schema:liveReplayPlanSchema}},reasoning:{effort:"medium"},max_output_tokens:6000,store:false,safety_identifier:await safetyIdentifier(userId),
+  })});
+  const body=await response.json() as OpenAIResponse;if(!response.ok)throw new Error(body.error?.message??`openai_${response.status}`);const raw=responseText(body);if(!raw)throw new Error("provider_returned_no_output");
+  let output:LiveReplayPlan;try{output=JSON.parse(raw) as LiveReplayPlan;}catch{throw new Error("provider_returned_invalid_json");}
+  const supplied=new Set(output.blocks.map((block)=>block.type));if(output.blocks.length!==BLOCK_TYPES.length||BLOCK_TYPES.some((definition)=>!supplied.has(definition.type)))throw new Error("provider_returned_incomplete_replay_plan");
+  return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output,raw,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
+}
 
 export async function generateCreativeDirection(env: WorkerEnv, userId: string, snapshot: Record<string, unknown>) {
   if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");

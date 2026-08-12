@@ -10,6 +10,7 @@ export interface WorkerEnv {
   FORMA_RETENTION_DAYS?: string;
   FORMA_USER_TOKEN_LIMIT?: string;
   FORMA_WORKSPACE_TOKEN_LIMIT?: string;
+  FORMA_LIVE_REPLAY_ENABLED?: string;
 }
 
 export type EventRow = {
@@ -51,6 +52,10 @@ export async function ensureSchema(env: WorkerEnv) {
     env.DB.prepare("CREATE TABLE IF NOT EXISTS shares (share_id TEXT PRIMARY KEY NOT NULL, token_hash TEXT NOT NULL, owner_id TEXT NOT NULL, stream_id TEXT NOT NULL, expires_at TEXT NOT NULL, revoked_at TEXT, created_at TEXT NOT NULL)"),
     env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_token_hash ON shares(token_hash)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares(owner_id, created_at)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS replay_approvals (approval_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, confirmation_version TEXT NOT NULL, seed TEXT NOT NULL, requested_at TEXT NOT NULL, expires_at TEXT NOT NULL, consumed_at TEXT)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_replay_approvals_owner_expiry ON replay_approvals(owner_id, expires_at)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS replay_sessions (session_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, status TEXT NOT NULL, title TEXT NOT NULL, summary TEXT NOT NULL, seed TEXT NOT NULL, event_count INTEGER NOT NULL DEFAULT 0, image_count INTEGER NOT NULL DEFAULT 0, preview_media_url TEXT, final_media_url TEXT, events_json TEXT, plan_json TEXT, usage_json TEXT, planner_model TEXT, image_model TEXT, error_message TEXT, created_at TEXT NOT NULL, completed_at TEXT)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_replay_sessions_owner_created ON replay_sessions(owner_id, created_at)"),
   ]);
 }
 

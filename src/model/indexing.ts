@@ -1,4 +1,5 @@
 import { foldEvents, type CreativeEvent } from "./events.ts";
+import { generationPromotionSignals } from "./generation-signals.ts";
 
 export const EMBEDDING_MODEL_ID = "forma-hash-embedding-v1";
 export const EMBEDDING_VERSION = 1;
@@ -111,6 +112,7 @@ function engagementFor(events: CreativeEvent[], objectId: string) {
 
 export function buildVectorIndex(events: CreativeEvent[]): VectorItem[] {
   const projection = foldEvents(events);
+  const promotedDraftIds=new Set(generationPromotionSignals(events).map((signal)=>signal.draftObjectId));
   const blocks: VectorItem[] = projection.libraryBlocks.map((block) => {
     const sources = events.filter((event) => relevantBlockEvent(event, block.id));
     return {
@@ -130,7 +132,7 @@ export function buildVectorIndex(events: CreativeEvent[]): VectorItem[] {
     const completed = events.find((event) => event.type === "GenerationCompleted" && list(event.payload.object_ids).map(String).includes(output.id));
     const compiled = generationContext(events, output.generationId);
     const engagement = engagementFor(events, output.id);
-    const accepted = engagement.some((event) => /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary)$/.test(event.type));
+    const accepted = promotedDraftIds.has(output.id)||engagement.some((event) => /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary)$/.test(event.type));
     const context = asRecord(compiled?.payload.compiled_snapshot);
     return {
       id: output.id,
@@ -150,6 +152,7 @@ export function buildVectorIndex(events: CreativeEvent[]): VectorItem[] {
 
 export function buildFewShotCorpus(events: CreativeEvent[], content: Record<string, string> = {}): FewShotExemplar[] {
   const projection = foldEvents(events);
+  const promotions=generationPromotionSignals(events);
   const exemplars: FewShotExemplar[] = [];
   for (const event of events.filter((item) => item.type === "MutationProposed")) {
     const accepted = events.find((item) => item.type === "ProposalAccepted" && String(item.payload.proposal_event_id ?? "") === event.eventId);
@@ -187,8 +190,8 @@ export function buildFewShotCorpus(events: CreativeEvent[], content: Record<stri
   for (const event of events.filter((item) => item.type === "GenerationCompleted")) {
     const generationId = String(event.payload.generation_id ?? "");
     const objectIds = list(event.payload.object_ids).map(String);
-    const engagement = events.filter((item) => item.sequence > event.sequence && objectIds.some((id) => String(item.payload.object_id ?? "") === id) && /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary)$/.test(item.type));
-    if (!engagement.length) continue;
+    const engagement = events.filter((item) => item.sequence > event.sequence && objectIds.some((id) => String(item.payload.object_id ?? "") === id) && /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary)$/.test(item.type));const promotion=promotions.find((signal)=>signal.status==="completed"&&signal.fullGenerationId===generationId);
+    if (!engagement.length&&!promotion) continue;
     const compiled = generationContext(events, generationId);
     const context = asRecord(compiled?.payload.compiled_snapshot);
     exemplars.push({
@@ -196,10 +199,10 @@ export function buildFewShotCorpus(events: CreativeEvent[], content: Record<stri
       kind: "kept-generation",
       label: `Kept generation · ${objectIds[0] ?? generationId}`,
       summary: list(context.facts).map(String).join(" · ") || "Accepted generation context",
-      citations: [compiled?.eventId, event.eventId, engagement[0].eventId].filter((value): value is string => Boolean(value)),
-      sourceSequence: engagement[0].sequence,
+      citations: [compiled?.eventId,event.eventId,engagement[0]?.eventId,...(promotion?.evidenceRefs??[])].filter((value,index,items): value is string => Boolean(value)&&items.indexOf(value)===index),
+      sourceSequence: engagement[0]?.sequence??event.sequence,
       collectionIds: collectionIdsFor(events, objectIds[0] ?? "", projection.documentId),
-      vector: embedText({ context, outcomes: engagement.map((item) => item.type) }),
+      vector: embedText({ context, outcomes: [...engagement.map((item) => item.type),...(promotion?["IdeationPromoted"]:[])] }),
     });
   }
   return exemplars.sort((left, right) => right.sourceSequence - left.sourceSequence);

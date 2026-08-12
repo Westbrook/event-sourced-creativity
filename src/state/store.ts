@@ -47,6 +47,13 @@ export class FormaStore {
     const canonicalRoute = withDocumentInRoute(currentRoute, projection.documentId, projection.documentTitle);
     if (projection.documentId && canonicalRoute !== currentRoute) this.setRoute(canonicalRoute, { replace: true });
   }
+  #generationContext() {
+    const projection=this.projection.get();
+    return {
+      snapshot:{facts:projection.blocks.map((b)=>({block_id:b.id,document_id:b.documentId,type: b.type,role:b.type,intent: blockIntentFor(b.type, b.properties),handle:b.handle,position:b.position,locked:b.locked,active:Number(b.properties.weight??.5)>0,effect: blockEffectFor(b.type, b.properties),properties:{...b.properties,spatial_scope: normalizeSpatialScope(b.properties.spatial_scope)},authority:b.properties.authority??"authored",source_event_refs:b.sourceEvents})),pins:projection.outputs.filter((o)=>o.pinned).map((o)=>o.id),tail:[]},
+      sourceBlockVersions:projection.blocks.map((b)=>({block_id:b.id,version:b.sourceEvents.length})),
+    };
+  }
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   toast(message: string) { this.ui.toast = message; this.notify(); window.setTimeout(() => { if (this.ui.toast === message) { this.ui.toast = ""; this.notify(); } }, 2800); }
   setRoute(path: string, options: { replace?: boolean; documentFocus?: boolean } = {}) {
@@ -160,15 +167,29 @@ export class FormaStore {
     } finally { this.busy.set(""); this.notify(); }
   }
 
-  async generate(sourceSurface?: string) {
-    const projection = this.projection.get(); this.busy.set("generate"); this.notify();
+  async preview(sourceSurface?: string) {
+    this.busy.set("preview");this.notify();
+    try{
+      const response=await fetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"preview",sourceSurface,expectedSequence:this.head.get(),...this.#generationContext()})});
+      const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};
+      if(body.appended?.length){this.events.set([...this.events.get(),...body.appended]);this.head.set(body.head??this.head.get());this.#publishAppended(body.appended);}
+      if(body.content)this.content.set({...this.content.get(),...body.content});
+      if(!response.ok)throw new Error(body.error==="provider_not_configured"?"OpenAI is ready but its production key has not been connected.":body.error??"Draft generation failed");
+      await this.refreshSession();this.toast("Draft ready. Use it to explore, or generate it at full quality when the direction holds.");
+    }catch(error){this.toast(error instanceof Error?error.message:"Draft generation failed");}
+    finally{this.busy.set("");this.notify();}
+  }
+
+  async generate(options?: string | { sourceSurface?: string; sourcePreviewId?: string }) {
+    const sourceSurface=typeof options==="string"?options:options?.sourceSurface;const sourcePreviewId=typeof options==="string"?undefined:options?.sourcePreviewId;
+    this.busy.set("generate"); this.notify();
     try {
-      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "generate", sourceSurface, expectedSequence: this.head.get(), snapshot: { facts: projection.blocks.map((b) => ({ block_id: b.id, document_id: b.documentId, type: b.type, role: b.type, intent: blockIntentFor(b.type, b.properties), handle: b.handle, position: b.position, locked: b.locked, active: Number(b.properties.weight ?? .5) > 0, effect: blockEffectFor(b.type, b.properties), properties: { ...b.properties, spatial_scope: normalizeSpatialScope(b.properties.spatial_scope) }, authority: b.properties.authority ?? "authored", source_event_refs: b.sourceEvents })), pins: projection.outputs.filter((o) => o.pinned).map((o) => o.id), tail: [] }, sourceBlockVersions: projection.blocks.map((b) => ({ block_id: b.id, version: b.sourceEvents.length })) }) });
-      const body = await response.json() as { appended?: CreativeEvent[]; content?: Record<string, string>; head?: number; error?: string };
+      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "generate", sourceSurface, sourcePreviewId, expectedSequence: this.head.get(), ...this.#generationContext() }) });
+      const body = await response.json() as { appended?: CreativeEvent[]; content?: Record<string, string>; head?: number; error?: string; promoted?: boolean };
       if (body.appended?.length) { this.events.set([...this.events.get(), ...body.appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(body.appended); }
       if (body.content) this.content.set({ ...this.content.get(), ...body.content });
       if (!response.ok) throw new Error(body.error === "provider_not_configured" ? "OpenAI is ready but its production key has not been connected." : body.error ?? "Generation failed");
-      await this.refreshSession(); this.toast(documentViewFromRoute(this.route.get()) === "editor" ? "Image ready." : `Image generated with ${this.session.get()?.provider.model ?? "OpenAI"}; provenance and usage recorded.`);
+      await this.refreshSession(); this.toast(body.promoted?"Full-quality image completed from the selected draft. That promotion is now durable success evidence.":documentViewFromRoute(this.route.get()) === "editor" ? "Full-quality image ready." : `Full-quality image generated with ${this.session.get()?.provider.model ?? "OpenAI"}; provenance and usage recorded.`);
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
     finally { this.busy.set(""); this.notify(); }
   }

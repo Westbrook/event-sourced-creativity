@@ -1,6 +1,7 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
 import { documentFocusFromRoute, isDocumentViewRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
+import { generationMix, outputQualityLabel } from "../model/events";
 
 type StudioMode = "document" | "board" | "guided" | "layers" | "adaptive" | "editor" | "chat";
 
@@ -99,6 +100,7 @@ export class DocumentContinuity extends FormaElement {
     const view = (this.getAttribute("view") ?? "board") as Exclude<StudioMode, "document">;
     const active = projection.blocks.filter((block) => Number(block.properties.weight ?? .5) > 0).length;
     const latest = projection.outputs[0];
+    const generationCount=projection.outputs.length;const mix=generationMix(projection.outputs);
     const baselineRoute = withDocumentInRoute("/", projection.documentId, projection.documentTitle);
     return html`<section class="document-continuity" aria-label="Current document represented in this view">
       <div class="document-continuity-title">
@@ -109,8 +111,9 @@ export class DocumentContinuity extends FormaElement {
       <dl>
         <div><dt>Decisions</dt><dd>${projection.blocks.length}</dd></div>
         <div><dt>Guiding now</dt><dd>${active}</dd></div>
-        <div><dt>Results</dt><dd>${projection.outputs.length}</dd></div>
-        <div><dt>Latest result</dt><dd>${latest ? latest.pinned ? "Pinned" : latest.saved ? "Saved" : `Version ${latest.variant + 1}` : "Not generated"}</dd></div>
+        <div><dt>Generations</dt><dd>${generationCount}</dd></div>
+        <div><dt>Draft / full</dt><dd>${mix.drafts} / ${mix.full}</dd></div>
+        <div><dt>Latest</dt><dd>${latest ? outputQualityLabel(latest) : "Not generated"}</dd></div>
       </dl>
       <a href=${baselineRoute} @click=${(event: MouseEvent) => { event.preventDefault(); this.store.setRoute(baselineRoute); window.scrollTo({ top: 0 }); }}>Open baseline ${icon("arrow")}</a>
     </section>`;

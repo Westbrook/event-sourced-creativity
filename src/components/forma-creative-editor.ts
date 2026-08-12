@@ -1,5 +1,5 @@
 import { html, nothing } from "lit";
-import type { CreativeBlock, EventInput } from "../model/events";
+import { isDraftOutput, outputQualityLabel, type CreativeBlock, type EventInput } from "../model/events";
 import { BLOCK_INTENTS, BLOCK_TYPES, blockIntentFor, blockTypeDefinition, isBlockIntent, isBlockKind, isNegativeIntent, suggestedSubtype, type BlockIntent, type BlockKind } from "../model/block-types";
 import { DEFAULT_REFERENCE_FINDINGS } from "../model/extractors";
 import { sampleImageFile } from "../model/image-sample";
@@ -9,6 +9,7 @@ import { spatialScopeLabel } from "../model/spatial-scope";
 import "./spatial-scope-editor";
 import "./output-visual";
 import "./reference-image";
+import "./generation-actions";
 
 type EditorSection = {
   id: "brief" | "picture" | "look" | "delivery" | "references";
@@ -324,7 +325,6 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const direction = projection.blocks.find((item) => item.type === "direction" && !isNegativeIntent(blockIntentFor(item.type, item.properties)) && Number(item.properties.weight ?? .65) > 0);
     const subject = projection.blocks.find((item) => item.type === "subject" && !isNegativeIntent(blockIntentFor(item.type, item.properties)) && Number(item.properties.weight ?? .65) > 0);
     const look = projection.blocks.find((item) => ["style", "lighting", "palette", "material"].includes(item.type) && !isNegativeIntent(blockIntentFor(item.type, item.properties)) && Number(item.properties.weight ?? .65) > 0);
-    const providerReady = Boolean(this.store.session.get()?.provider.configured);
     const body = html`
       <section class="creative-editor" aria-label="Creative document editor">
         <header class="creative-editor-toolbar">
@@ -334,7 +334,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
             <button ?disabled=${!this.store.canRedo()} title="Redo" @click=${() => this.store.redo()}>${icon("redo")}<span>Redo</span></button>
           </div>
           <button class="button secondary compact" @click=${() => this.#openCreate()}>${icon("plus")} Add something</button>
-          <button class="button primary compact" ?disabled=${!providerReady || Boolean(this.store.busy.get())} title=${providerReady ? "Generate a fresh image" : "Image generation is not available yet"} @click=${() => this.store.generate()}>${icon("spark")} ${this.store.busy.get() === "generate" ? "Generating image…" : previewOutdated ? "Update image" : latest ? "Try another" : "Generate image"}</button>
+          <forma-generation-actions source="editor" .selected=${latest??null} compact></forma-generation-actions>
         </header>
 
         <div class="creative-editor-layout">
@@ -352,13 +352,13 @@ export class FormaCreativeEditor extends AlternativeStudio {
             <section class=${`creative-preview ${previewOutdated ? "preview-outdated" : ""}`}>
               <div class="creative-preview-stage">
                 <div class=${`creative-preview-art ${latest?.mediaUrl ? "has-preview" : ""}`}><forma-output-visual .output=${latest} .interactive=${true}></forma-output-visual></div>
-                ${projection.outputs.length>1?html`<div class="creative-preview-filmstrip" aria-label="All generations from this document">${projection.outputs.map((output,index)=>html`<button class=${output.id===latest?.id?"selected":""} aria-pressed=${output.id===latest?.id} aria-label=${`Show ${index===0?"latest generation":`generation ${index+1}`}`} @click=${()=>this.#selectOutput(output.id)}><forma-output-visual .output=${output} .compact=${true}></forma-output-visual><span>${index===0?"Latest":`#${projection.outputs.length-index}`}</span></button>`)}</div>`:nothing}
+                ${projection.outputs.length>1?html`<div class="creative-preview-filmstrip" aria-label="All generations from this document">${projection.outputs.map((output,index)=>html`<button class=${output.id===latest?.id?"selected":""} aria-pressed=${output.id===latest?.id} aria-label=${`Show ${outputQualityLabel(output).toLowerCase()} ${index+1}`} @click=${()=>this.#selectOutput(output.id)}><forma-output-visual .output=${output} .compact=${true}></forma-output-visual><span>${isDraftOutput(output)?"Draft":"Full"}${index===0?" · Latest":` · #${projection.outputs.length-index}`}</span></button>`)}</div>`:nothing}
               </div>
               <div class="creative-preview-copy">
-                <span>Working preview</span>
+                <span>${latest?outputQualityLabel(latest):"Working preview"}</span>
                 <h2>${preview ? String(preview.title ?? "A direction is taking shape") : direction ? textFor(direction) : "Start with one clear goal"}</h2>
                 <p>${preview ? String(preview.rationale ?? preview.scene ?? "") : subject ? `Centered on ${textFor(subject)}${look ? `, with ${textFor(look).toLowerCase()}` : ""}.` : "Add a goal, subject, or visual reference. You can refine the rest only when it becomes useful."}</p>
-                ${previewOutdated ? html`<small>Plan changed since this image · update it to apply the current guardrails and decisions.</small>` : latest?.mediaUrl ? html`<small>Latest generated image · keep editing and try another whenever the plan changes.</small>` : html`<small>No generated image yet · the plan remains useful on its own.</small>`}
+                ${previewOutdated ? html`<small>Plan changed since this image · Preview draft or Update image at full quality.</small>` : latest?.mediaUrl ? html`<small>${isDraftOutput(latest)?"Fast draft for exploration · generate it at full quality when it holds.":latest.promotedFromId?"Full-quality result refined from a selected draft.":"Full-quality generated image."}</small>` : html`<small>No generated image yet · the plan remains useful on its own.</small>`}
               </div>
             </section>
 

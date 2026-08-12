@@ -146,9 +146,10 @@ export function tasteMetrics(events: CreativeEvent[]) {
   const critiques=events.filter((event)=>event.type==="ObjectCritiqued");
   const axisLedger=CREATOR_AXES.map((axis)=>({axis,positive:critiques.filter((event)=>event.payload.axis_ref===axis&&event.payload.polarity==="positive").length,negative:critiques.filter((event)=>event.payload.axis_ref===axis&&event.payload.polarity!=="positive").length}));
   const compilerBlame=compilerBlameLedger(events);
-  return {versions:versions.length,inferred,activeAuthored:standingConstraints(events).length,promoted,promotionRate:inferred?round(Math.min(1,promoted/inferred)):0,axisLedger,compilerBlame,attributedCritiques:compilerBlame.filter((cluster)=>cluster.attributed).reduce((total,cluster)=>total+cluster.critiqueCount,0)};
+  const generationPromotions=events.filter((event)=>event.type==="IdeationPromoted");const completedGenerationPromotions=generationPromotions.filter((promotion)=>events.some((event)=>event.type==="GenerationCompleted"&&String(event.payload.promotion_id??"")===String(promotion.payload.promotion_id??promotion.eventId))).length;
+  return {versions:versions.length,inferred,activeAuthored:standingConstraints(events).length,promoted,promotionRate:inferred?round(Math.min(1,promoted/inferred)):0,generationPromotions:generationPromotions.length,completedGenerationPromotions,generationPromotionSuccessRate:generationPromotions.length?round(completedGenerationPromotions/generationPromotions.length):0,axisLedger,compilerBlame,attributedCritiques:compilerBlame.filter((cluster)=>cluster.attributed).reduce((total,cluster)=>total+cluster.critiqueCount,0)};
 }
 
 export function beliefHistory(events: CreativeEvent[]) {
-  return events.filter((event)=>/^(TasteModelVersioned|PreferenceAuthored|PreferenceRevoked|FactRetracted|ClaimSuperseded)$/.test(event.type)).map((event)=>({eventId:event.eventId,sequence:event.sequence,type:event.type,occurredAt:event.occurredAt,recordedAt:event.recordedAt,payload:event.payload})).reverse();
+  return events.filter((event)=>/^(TasteModelVersioned|PreferenceAuthored|PreferenceRevoked|FactRetracted|ClaimSuperseded|IdeationPromoted)$/.test(event.type)).map((event)=>({eventId:event.eventId,sequence:event.sequence,type:event.type,occurredAt:event.occurredAt,recordedAt:event.recordedAt,payload:event.payload})).reverse();
 }

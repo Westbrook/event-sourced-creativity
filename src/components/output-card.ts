@@ -1,6 +1,6 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon, downloadJson } from "./forma-element";
-import type { CreativeOutput } from "../model/events";
+import { isDraftOutput, outputQualityLabel, type CreativeOutput } from "../model/events";
 import { CREATOR_AXES } from "../model/taste";
 import "./output-visual";
 
@@ -17,7 +17,8 @@ export class OutputCard extends FormaElement {
     return html`<article class="output-card ${this.primary ? "primary" : ""} ${this.store.ui.selectedOutputId === out.id ? "selected" : ""}" data-output-id=${out.id}>
       <button class="output-art" aria-label="Select generated output ${out.id}" aria-pressed=${this.store.ui.selectedOutputId === out.id} @click=${() => { this.store.patchUi({ selectedOutputId: out.id }); if (this.store.ui.instrumentation) void this.store.hot({ type: "ObjectViewed", payload: { object_id: out.id } }); }}><forma-output-visual .output=${out}></forma-output-visual></button>
       ${direction ? html`<div class="provider-direction"><span class="eyebrow">Private provider output · retained 30 days</span><h3>${String(direction.title ?? "Creative direction")}</h3><p>${String(direction.rationale ?? direction.scene ?? "")}</p>${Array.isArray(direction.palette) ? html`<div>${direction.palette.map((color) => html`<span>${String(color)}</span>`)}</div>` : ""}</div>` : ""}
-      <div class="output-info"><div><b>${direction ? String(direction.title ?? "Creative direction") : `Quiet nocturne ${out.variant + 1}`}</b><small>${out.provider} · ${out.modelId} · ${(out.latency / 1000).toFixed(1)}s</small></div><div class="output-actions">
+      <div class="output-info"><div><span class=${`output-quality ${isDraftOutput(out)?"draft":"full"}`}>${outputQualityLabel(out)}</span><b>${direction ? String(direction.title ?? "Creative direction") : isDraftOutput(out)?`Working draft ${out.variant+1}`:`Quiet nocturne ${out.variant + 1}`}</b><small>${out.provider} · ${out.modelId} · ${(out.latency / 1000).toFixed(1)}s${out.promotedFromId?` · refined from ${out.promotedFromId}`:""}</small></div><div class="output-actions">
+        ${isDraftOutput(out)?html`<button class="promote" ?disabled=${Boolean(this.store.busy.get())} @click=${()=>this.store.generate({sourceSurface:"output-card",sourcePreviewId:out.id})}>${icon("spark")} Generate full</button>`:nothing}
         <button aria-pressed=${out.pinned} @click=${() => this.store.append({ type: out.pinned ? "ObjectUnpinned" : "ObjectPinned", payload: { object_id: out.id, scope: "project" } })}>${icon("pin")} ${out.pinned ? "Pinned" : "Pin"}</button>
         <button aria-pressed=${out.saved} @click=${() => this.store.append({ type: "ObjectSaved", payload: { object_id: out.id } })}>${icon("check")} ${out.saved ? "Saved" : "Save"}</button>
         <button aria-expanded=${this.#critiqueOpen} @click=${()=>{this.#critiqueOpen=!this.#critiqueOpen;this.requestUpdate();}}>${icon("edit")} Taste evidence</button>

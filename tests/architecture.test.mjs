@@ -175,9 +175,9 @@ test("keeps the Chat document view conversational while resolving durable change
     readFile(new URL("../worker/openai-adapter.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/model/routes.ts",import.meta.url),"utf8"),
   ]);
-  assert.match(chat,/Chat with Forma/);assert.match(chat,/forma-output-visual/);assert.match(chat,/store\.chat\(message\)/);assert.match(chat,/store\.generate\("chat"\)/);
+  assert.match(chat,/Chat with Forma/);assert.match(chat,/forma-output-visual/);assert.match(chat,/store\.chat\(message\)/);assert.match(chat,/forma-generation-actions/);assert.match(chat,/outputQualityLabel/);
   assert.doesNotMatch(chat,/forma-context-block|forma-event-inspector|forma-document-continuity|projection\.blocks/);
-  assert.match(store,/action:"chat"/);assert.match(eventsApi,/body\.action==="chat"/);assert.match(eventsApi,/creativeChatMutationEvents/);assert.match(eventsApi,/IdeationPreviewCompleted/);assert.match(eventsApi,/reference_preview_event_id/);
+  assert.match(store,/action:"chat"/);assert.match(store,/action:"preview"/);assert.match(store,/sourcePreviewId/);assert.match(eventsApi,/body\.action==="chat"/);assert.match(eventsApi,/body\.action==="preview"/);assert.match(eventsApi,/creativeChatMutationEvents/);assert.match(eventsApi,/IdeationPreviewCompleted/);assert.match(eventsApi,/IdeationPromoted/);assert.match(eventsApi,/reference_preview_event_id/);
   assert.match(adapter,/quality=options\.quality\?\?"high"/);assert.match(adapter,/images\/edits/);assert.match(adapter,/latest-ideation-preview\.png/);assert.match(routes,/"chat"/);
 });
 

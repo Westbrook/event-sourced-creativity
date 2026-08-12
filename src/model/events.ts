@@ -85,7 +85,25 @@ export type CreativeOutput = {
   width: number | null;
   height: number | null;
   plannerModelId: string | null;
+  quality: "low" | "medium" | "high";
+  purpose: "ideate" | "final";
+  sourceEventId: string;
+  sourceSurface: string | null;
+  promotionId: string | null;
+  promotedFromId: string | null;
+  promotedFromEventId: string | null;
 };
+
+export const isDraftOutput = (output: CreativeOutput | null | undefined) =>
+  Boolean(output && (output.purpose === "ideate" || output.quality === "low"));
+
+export const outputQualityLabel = (output: CreativeOutput | null | undefined) =>
+  isDraftOutput(output) ? "Draft" : "Full quality";
+
+export function generationMix(outputs: CreativeOutput[]) {
+  const drafts = outputs.filter(isDraftOutput).length;
+  return { total: outputs.length, drafts, full: outputs.length - drafts };
+}
 
 export type CreativeProjection = {
   projectId: string;
@@ -130,6 +148,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   const collections = new Map<string, CreativeCollection>();
   const membership: Record<string, { collectionId: string; position: string }> = {};
   const outputs = new Map<string, CreativeOutput>();
+  const previewOutputByEvent = new Map<string, string>();
   const annotations = new Map<string, Record<string, unknown>>();
   const families = new Map<string, Record<string, unknown>>();
   const preferences = new Map<string, Record<string, unknown>>();
@@ -211,10 +230,16 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "CollectionItemRemoved": delete membership[itemId(p.item_ref)]; break;
       case "CollectionItemMoved": { const id = itemId(p.item_ref); if (id) membership[id] = { collectionId: String(p.to_collection_id), position: String(p.position ?? "a0") }; break; }
       case "ContextCompiled": state.latestCompile = p; break;
+      case "IdeationPreviewCompleted": {
+        const id=String(p.object_id??(Array.isArray(p.object_ids)?p.object_ids[0]:"")??"")||`draft-${String(p.generation_id??event.eventId)}`;
+        previewOutputByEvent.set(event.eventId,id);
+        outputs.set(id,{id,documentId:String(p.document_id??state.documentId),generationId:String(p.generation_id??""),modelId:String(p.model_id??"gpt-image-2"),variant:Number(p.variant??outputs.size%4),latency:Number(p.latency_ms??0),sequence:event.sequence,pinned:false,saved:false,discarded:false,library:false,contentRef:p.output_ref?String(p.output_ref):null,provider:String(p.provider??"openai"),mediaUrl:p.media_url?String(p.media_url):null,mediaType:p.media_type?String(p.media_type):null,width:p.image_width?Number(p.image_width):null,height:p.image_height?Number(p.image_height):null,plannerModelId:p.planner_model_id?String(p.planner_model_id):null,quality:"low",purpose:"ideate",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):p.source_chat_turn_id?"chat":null,promotionId:null,promotedFromId:null,promotedFromEventId:null});
+        break;
+      }
       case "GenerationCompleted": {
         if (p.report_space === "scout") break;
         const ids = Array.isArray(p.object_ids) ? p.object_ids : [];
-        ids.forEach((value) => { const id = String(value); outputs.set(id, { id, documentId: String(p.document_id ?? state.documentId), generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")), mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null, width: p.image_width ? Number(p.image_width) : null, height: p.image_height ? Number(p.image_height) : null, plannerModelId: p.planner_model_id ? String(p.planner_model_id) : null }); });
+        ids.forEach((value) => { const id = String(value); const promotedFromEventId=p.reference_preview_event_id?String(p.reference_preview_event_id):null; outputs.set(id, { id, documentId: String(p.document_id ?? state.documentId), generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")), mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null, width: p.image_width ? Number(p.image_width) : null, height: p.image_height ? Number(p.image_height) : null, plannerModelId: p.planner_model_id ? String(p.planner_model_id) : null, quality:p.quality==="low"?"low":p.quality==="medium"?"medium":"high",purpose:p.purpose==="ideate"?"ideate":"final",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):null,promotionId:p.promotion_id?String(p.promotion_id):null,promotedFromId:p.promoted_from_object_id?String(p.promoted_from_object_id):promotedFromEventId?previewOutputByEvent.get(promotedFromEventId)??null:null,promotedFromEventId }); });
         break;
       }
       case "ObjectPinned": case "ObjectUnpinned": { const o = outputs.get(String(p.object_id)); if (o) o.pinned = event.type === "ObjectPinned"; break; }
@@ -274,7 +299,7 @@ export const shortEventType = (type: string) => type.replace(/([a-z])([A-Z])/g, 
 export function eventCategory(type: string) {
   if (/^(Block|Document|Project)/.test(type)) return "document";
   if (type.startsWith("Collection")) return "collection";
-  if (/Generation|ContextCompiled|Model|Adapter|Capability/.test(type)) return "generation";
+  if (/Generation|Ideation|ContextCompiled|Model|Adapter|Capability/.test(type)) return "generation";
   if (/Extraction|Chip|Fact|Claim/.test(type)) return "reflection";
   if (/Brief|Session|PhaseGate|Deferred|Condition|Resurfaced/.test(type)) return "session";
   if (/Proposal|Mutation|Assistant/.test(type)) return "conversation";

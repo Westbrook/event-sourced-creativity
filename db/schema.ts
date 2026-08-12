@@ -99,3 +99,25 @@ export const shares = sqliteTable(
   },
   (table) => [uniqueIndex("idx_shares_token_hash").on(table.tokenHash), index("idx_shares_owner").on(table.ownerId, table.createdAt)],
 );
+
+/** Short-lived, one-use proof that a human admin explicitly accepted a paid replay run. */
+export const replayApprovals = sqliteTable(
+  "replay_approvals",
+  {
+    approvalId: text("approval_id").primaryKey(), ownerId: text("owner_id").notNull(), confirmationVersion: text("confirmation_version").notNull(),
+    seed: text("seed").notNull(), requestedAt: text("requested_at").notNull(), expiresAt: text("expires_at").notNull(), consumedAt: text("consumed_at"),
+  },
+  (table) => [index("idx_replay_approvals_owner_expiry").on(table.ownerId, table.expiresAt)],
+);
+
+/** Paid provider-backed mocks are durable fixtures so their events and images can be replayed without paying again. */
+export const replaySessions = sqliteTable(
+  "replay_sessions",
+  {
+    sessionId: text("session_id").primaryKey(), ownerId: text("owner_id").notNull(), status: text("status").notNull(), title: text("title").notNull(), summary: text("summary").notNull(), seed: text("seed").notNull(),
+    eventCount: integer("event_count").notNull().default(0), imageCount: integer("image_count").notNull().default(0), previewMediaUrl: text("preview_media_url"), finalMediaUrl: text("final_media_url"),
+    eventsJson: text("events_json"), planJson: text("plan_json"), usageJson: text("usage_json"), plannerModel: text("planner_model"), imageModel: text("image_model"), errorMessage: text("error_message"),
+    createdAt: text("created_at").notNull(), completedAt: text("completed_at"),
+  },
+  (table) => [index("idx_replay_sessions_owner_created").on(table.ownerId, table.createdAt)],
+);

@@ -1,8 +1,9 @@
 import { buildPhase7Index, cosineSimilarity } from "./indexing.ts";
 import { foldEvents, type CreativeEvent } from "./events.ts";
 import { attentionEvents } from "./attention.ts";
+import { generationPromotionSignals } from "./generation-signals.ts";
 
-export type ScoutObservationType = "convergence" | "divergence" | "stall" | "adjacency";
+export type ScoutObservationType = "convergence" | "divergence" | "stall" | "adjacency" | "promotion";
 
 export type ScoutTrajectorySlice = {
   sliceId: string;
@@ -61,6 +62,7 @@ export function buildScoutTrajectory(events: CreativeEvent[]): ScoutTrajectorySl
   const evidenceRefs = recent.flatMap((item) => item.sourceEventIds).slice(-10).map((id) => `event:${id}`);
   const headRange = `${recent.at(0)?.sourceSequence ?? 0}-${recent.at(-1)?.sourceSequence ?? events.at(-1)?.sequence ?? 0}`;
   const slices: ScoutTrajectorySlice[] = [];
+  const promotions=generationPromotionSignals(events);
 
   if (recent.length >= 2 && meanSimilarity >= .72) {
     const signature = `convergence:${headRange}:${round(meanSimilarity,2)}`;
@@ -82,7 +84,12 @@ export function buildScoutTrajectory(events: CreativeEvent[]): ScoutTrajectorySl
     });
   }
 
-  const progression = Math.max(engagementEvents.length, outputs.filter((item) => item.accepted).length);
+  for(const signal of promotions.slice(0,2)){
+    const seconds=Math.round(signal.elapsedToIntentMs/1000);const edits=signal.documentChangeCount;const signature=`promotion:${signal.promotionId}:${signal.status}`;
+    slices.push({sliceId:`trajectory:${signal.promotionId}:promotion`,type:"promotion",label:signal.status==="completed"?"A working draft earned full-quality generation":"A working draft was deliberately advanced",summary:signal.status==="completed"?`The user selected a specific draft and completed a full-quality refinement${edits?` after ${edits} document change${edits===1?"":"s"}`:""}. This is direct evidence that the exploratory loop produced something worth advancing.`:signal.status==="failed"?"The user selected a specific draft for full-quality refinement, but the provider failed. Intent succeeded; system delivery did not.":"The user selected a specific draft for full-quality refinement. This is strong intent evidence while the system outcome remains pending.",confidence:signal.status==="completed"?.99:.96,evidenceRefs:signal.evidenceRefs.map((id)=>`event:${id}`),signature,metrics:{intent_weight:signal.intentWeight,success_weight:signal.successWeight??"pending",elapsed_to_intent_seconds:seconds,intervening_events:signal.interveningEventCount,document_changes:edits,conversation_turns:signal.conversationTurnCount,context_changed:String(signal.contextChanged),source_surface:signal.sourceSurface}});
+  }
+
+  const progression = Math.max(engagementEvents.length+promotions.filter((signal)=>signal.status==="completed").length, outputs.filter((item) => item.accepted).length);
   const attempts = Math.max(requestEvents.length, generationEvents.length);
   if (attempts >= 3 && progression / attempts < .34) {
     const recentRequests = requestEvents.slice(-6); const signature = `stall:${recentRequests.at(0)?.sequence ?? 0}-${recentRequests.at(-1)?.sequence ?? events.at(-1)?.sequence ?? 0}`;
@@ -139,7 +146,7 @@ export function scoutPrecisionLedger(events: CreativeEvent[]) {
   for (const judgment of judgments) { const verdict = String(judgment.payload.verdict) as keyof typeof counts; if (verdict in counts) counts[verdict] += 1; }
   const costUsd = events.filter((event) => event.type === "ScoutRunCompleted").reduce((sum, event) => sum + Number(event.payload.cost_usd ?? 0), 0);
   const meanConfidence = observations.length ? observations.reduce((sum, event) => sum + Number(event.payload.confidence ?? 0), 0) / observations.length : 0;
-  const byType = (["convergence","divergence","stall","adjacency"] as ScoutObservationType[]).map((type) => {
+  const byType = (["convergence","divergence","stall","adjacency","promotion"] as ScoutObservationType[]).map((type) => {
     const ids = new Set(observations.filter((event) => event.payload.type === type).map((event) => String(event.payload.observation_id)));
     const judged = judgments.filter((event) => ids.has(String(event.payload.observation_id)));
     return { type, observations: ids.size, judged: judged.length, confirmed: judged.filter((event) => event.payload.verdict === "confirmed").length };

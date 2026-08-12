@@ -3,12 +3,16 @@ import { getMedia, uploadMedia } from "./media-api";
 import { handleAdminUsers, handleSession } from "./pilot-policy";
 import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
 import { appEntryPath, isDocumentViewRoute, libraryFocusFromRoute } from "../src/model/routes";
+import { handleReplayApproval, handleReplaySessions } from "./replay-sessions-api";
 
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
     const url=new URL(request.url);
     if(url.pathname==="/api/session")return handleSession(request,env);
     if(url.pathname==="/api/admin/users")return handleAdminUsers(request,env);
+    if(url.pathname==="/api/replay-sessions/approval")return handleReplayApproval(request,env);
+    if(url.pathname==="/api/replay-sessions")return handleReplaySessions(request,env);
+    if(url.pathname.startsWith("/api/replay-sessions/"))return handleReplaySessions(request,env,decodeURIComponent(url.pathname.slice("/api/replay-sessions/".length)));
     if(url.pathname==="/api/events")return handleEvents(request,env);
     if(url.pathname==="/api/events/hot")return handleEvents(request,env,true);
     if(url.pathname==="/api/shares")return handleShares(request,env);

@@ -1,10 +1,11 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
-import type { CreativeEvent, CreativeOutput } from "../model/events";
+import { isDraftOutput, outputQualityLabel } from "../model/events";
 import { documentFocusFromRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import "./project-rail";
 import "./studio-navigation";
 import "./output-visual";
+import "./generation-actions";
 
 type ChatLine={id:string;role:"user"|"assistant";text:string;sequence:number};
 
@@ -21,16 +22,12 @@ export class FormaChatStudio extends FormaElement {
     return lines;
   }
 
-  #preview(documentId:string){return [...this.store.events.get()].reverse().find((event)=>event.type==="IdeationPreviewCompleted"&&String(event.payload.document_id??"")===documentId);}
-
-  #previewOutput(event:CreativeEvent):CreativeOutput{return{id:`preview-${String(event.payload.generation_id??event.eventId)}`,documentId:String(event.payload.document_id??""),generationId:String(event.payload.generation_id??""),modelId:String(event.payload.model_id??"gpt-image-2"),variant:0,latency:Number(event.payload.latency_ms??0),sequence:event.sequence,pinned:false,saved:false,discarded:false,library:false,contentRef:null,provider:String(event.payload.provider??"openai"),mediaUrl:event.payload.media_url?String(event.payload.media_url):null,mediaType:event.payload.media_type?String(event.payload.media_type):null,width:Number(event.payload.image_width??1024),height:Number(event.payload.image_height??1024),plannerModelId:null};}
-
   async #send(event:SubmitEvent){event.preventDefault();const message=this.#draft.trim();if(!message||this.store.busy.get())return;this.#draft="";this.requestUpdate();await this.store.chat(message);await this.updateComplete;this.querySelector(".chat-thread-end")?.scrollIntoView({behavior:"smooth",block:"end"});}
 
   #keydown(event:KeyboardEvent){if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();this.querySelector<HTMLFormElement>(".chat-composer")?.requestSubmit();}}
 
   override render(){
-    const projection=this.store.projection.get();const lines=this.#lines(projection.documentId);const previewEvent=this.#preview(projection.documentId);const preview=previewEvent?this.#previewOutput(previewEvent):null;const final=projection.outputs[0]??null;const current=preview&&(!final||preview.sequence>final.sequence)?preview:final;const working=current===preview;const busy=this.store.busy.get();
+    const projection=this.store.projection.get();const lines=this.#lines(projection.documentId);const current=projection.outputs.find((output)=>output.id===this.store.ui.selectedOutputId)??projection.outputs[0]??null;const working=isDraftOutput(current);const busy=this.store.busy.get();
     const destination=withDocumentFocusInRoute(withDocumentInRoute("/studio/chat",projection.documentId,projection.documentTitle),documentFocusFromRoute(this.store.route.get()));
     return html`<section class="workspace-page studio-subpage chat-view-page">
       <forma-project-rail surface="studio" destination=${destination} quiet></forma-project-rail>
@@ -42,7 +39,8 @@ export class FormaChatStudio extends FormaElement {
             <div class="chat-generation-stage">
               ${current?html`<forma-output-visual .output=${current} interactive></forma-output-visual>`:html`<div class="chat-generation-empty">${icon("image")}<b>Your image will appear here</b><span>Tell Forma what you want to make. A quick working preview will follow the conversation.</span></div>`}
             </div>
-            <footer><p>${working?"This quick preview keeps pace with your ideas. Generate when the direction feels ready.":"This is the latest full-quality image. Keep talking to explore a new direction."}</p><button class="button primary chat-generate" ?disabled=${Boolean(busy)} @click=${()=>this.store.generate("chat")}>${busy==="generate"?"Generating full image…":html`${icon("spark")} Generate`}</button></footer>
+            ${projection.outputs.length>1?html`<div class="chat-generation-history" role="list" aria-label="Generation history">${projection.outputs.map((output,index)=>html`<button role="listitem" class=${output.id===current?.id?"selected":""} aria-pressed=${output.id===current?.id} @click=${()=>this.store.patchUi({selectedOutputId:output.id})}><forma-output-visual .output=${output} compact></forma-output-visual><span>${outputQualityLabel(output)}</span><small>${index===0?"Latest":`#${projection.outputs.length-index}`}</small></button>`)}</div>`:nothing}
+            <footer><p>${working?"This fast draft keeps pace with your ideas. Generating it at full quality records a deliberate promotion and preserves the visual handoff.":"This is a full-quality image. Preview another direction quickly, or keep talking to reshape the plan."}</p><forma-generation-actions source="chat" .selected=${current}></forma-generation-actions></footer>
           </section>
 
           <section class="chat-conversation" aria-labelledby="chat-thread-title">
