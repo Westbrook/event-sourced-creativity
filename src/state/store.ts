@@ -9,6 +9,7 @@ import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isD
 import { normalizeSpatialScope } from "../model/spatial-scope";
 import { normalizeImageFocalPoint } from "../model/focal-point";
 import { resolveImageFocalAnalysis } from "../model/image-focus";
+import { documentJobIsStale, type DocumentJob, type DocumentJobKind } from "../model/document-jobs";
 
 type Listener = () => void;
 export type PilotSession = {
@@ -18,12 +19,6 @@ export type PilotSession = {
   budgets: { period: string; user: { used: number; reserved: number; limit: number }; workspace: { used: number; reserved: number; limit: number } };
 };
 export type ShareRecord = { shareId: string; token?: string; expiresAt: string; revokedAt?: string | null; createdAt?: string; active: boolean };
-export type DocumentJobKind = "preview" | "generate" | "chat" | "structure_adaptive" | "extract_reference";
-export type DocumentJob = {
-  jobId: string; documentId: string; kind: DocumentJobKind; status: "queued" | "running" | "completed" | "failed"; sourceSurface: string;
-  requestedSequence: number; result: Record<string, unknown> | null; error: string | null; attemptCount: number;
-  requestedAt: string; startedAt: string | null; completedAt: string | null; notifiedAt: string | null;
-};
 
 export class FormaStore {
   readonly events = new Signal.State<CreativeEvent[]>([]);
@@ -50,6 +45,9 @@ export class FormaStore {
   #focalAppendQueue: Promise<void> = Promise.resolve();
   #jobPollTimer = 0;
   #jobsSyncing = false;
+  #jobPollFailures = 0;
+  #jobPollIssueNotified = false;
+  #jobsDriving = new Set<string>();
   #pendingJobNotices: DocumentJob[] = [];
 
   constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){this.#flushPendingJobNotices();void this.syncDocumentJobs();}});}
@@ -77,22 +75,25 @@ export class FormaStore {
       sourceBlockVersions:projection.blocks.map((b)=>({block_id:b.id,version:b.sourceEvents.length})),documentId:projection.documentId,
     };
   }
+  documentJob(kind:DocumentJobKind,documentId=this.projection.get().documentId){return this.documentJobs.get().find((job)=>job.documentId===documentId&&job.kind===kind&&(job.status==="queued"||job.status==="running"));}
   documentJobActive(kind?:DocumentJobKind,documentId=this.projection.get().documentId){return this.documentJobs.get().some((job)=>job.documentId===documentId&&(!kind||job.kind===kind)&&(job.status==="queued"||job.status==="running"));}
   documentPreviewProgress(documentId=this.projection.get().documentId){const job=this.documentJobs.get().find((item)=>item.documentId===documentId&&item.kind==="preview"&&item.status==="running"&&item.result?.partialMediaUrl);if(!job)return null;return{jobId:job.jobId,mediaUrl:String(job.result!.partialMediaUrl),mediaType:String(job.result!.partialMediaType??"image/jpeg"),width:Number(job.result!.partialWidth??816),height:Number(job.result!.partialHeight??816),index:Number(job.result!.partialIndex??0),sourceSurface:job.sourceSurface};}
   adaptiveStructureFor(documentId=this.projection.get().documentId){return this.adaptiveStructures.get()[documentId]??null;}
   dismissAdaptiveStructure(documentId=this.projection.get().documentId){const next={...this.adaptiveStructures.get()};delete next[documentId];this.adaptiveStructures.set(next);this.notify();}
   #jobResultVisible(job:DocumentJob){if(document.visibilityState!=="visible"||!isDocumentViewRoute(this.route.get())||documentIdFromRoute(this.route.get())!==job.documentId)return false;const view=documentViewFromRoute(this.route.get());if(job.kind==="chat")return view==="chat";if(job.kind==="structure_adaptive")return view==="adaptive";return true;}
-  #jobNotice(job:DocumentJob){const title=this.projection.get().documents.find((document)=>document.id===job.documentId)?.title??"your document";if(job.status==="failed"){const labels:Record<DocumentJobKind,string>={preview:"Draft generation",generate:"Full-quality generation",chat:"Creative chat",structure_adaptive:"Adaptive planning",extract_reference:"Reference analysis"};return`${labels[job.kind]} could not finish for ${title}. Open the document to retry.`;}const labels:Record<DocumentJobKind,string>={preview:"A draft image is ready",generate:"A full-quality image is ready",chat:"A chat response is ready",structure_adaptive:"An adaptive plan is ready",extract_reference:"Reference analysis is ready"};return`${labels[job.kind]} in ${title}.`;}
+  #jobNotice(job:DocumentJob){const title=this.projection.get().documents.find((document)=>document.id===job.documentId)?.title??"your document";if(job.status==="failed"){const labels:Record<DocumentJobKind,string>={preview:"Draft generation",generate:"Full-quality generation",chat:"Creative chat",structure_adaptive:"Adaptive planning",extract_reference:"Reference analysis"};const reason=job.error==="execution_interrupted"?"The server connection ended before the allowed recovery could finish.":job.error==="document_job_lease_lost"?"Another runner took over the operation.":"The provider or server returned an error.";return`${labels[job.kind]} could not finish for ${title}. ${reason} Open the document to retry.`;}const labels:Record<DocumentJobKind,string>={preview:"A draft image is ready",generate:"A full-quality image is ready",chat:"A chat response is ready",structure_adaptive:"An adaptive plan is ready",extract_reference:"Reference analysis is ready"};return`${labels[job.kind]} in ${title}.`;}
   async #ackJob(jobId:string){try{await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/ack`,{method:"POST"});}catch{/* A later poll can offer the notice again. */}}
   #flushPendingJobNotices(){if(document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;const jobs=this.#pendingJobNotices.splice(0);this.toast(jobs.length===1?this.#jobNotice(jobs[0]):`${jobs.length} background document operations finished.`);for(const job of jobs)void this.#ackJob(job.jobId);}
   async #refreshEvents(){const response=await fetch("/api/events");if(!response.ok)throw new Error(`Event stream returned ${response.status}`);const body=await response.json() as {events:CreativeEvent[];content?:Record<string,string>;head:number};const known=new Set(this.events.get().map((event)=>event.eventId));this.events.set(body.events);this.content.set(body.content??{});this.head.set(body.head);this.#publishAppended(body.events.filter((event)=>!known.has(event.eventId)));}
   #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);this.#jobPollTimer=window.setTimeout(()=>void this.syncDocumentJobs(),delay);}
-  async syncDocumentJobs(){if(this.#jobsSyncing)return;this.#jobsSyncing=true;try{const response=await fetch("/api/document-jobs");if(!response.ok)return;const body=await response.json() as {jobs?:DocumentJob[]};const previous=new Map(this.documentJobs.get().map((job)=>[job.jobId,job]));const jobs=body.jobs??[];this.documentJobs.set(jobs);
+  #driveDocumentJobs(jobs:DocumentJob[]){const next=[...jobs].filter((job)=>job.status==="queued"||job.status==="running").sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId))[0];if(next&&(next.status==="queued"||documentJobIsStale(next))&&!this.#jobsDriving.has(next.jobId))void this.#driveDocumentJob(next);}
+  async #driveDocumentJob(job:DocumentJob){this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}
+  async syncDocumentJobs(){if(this.#jobsSyncing)return;this.#jobsSyncing=true;try{const response=await fetch("/api/document-jobs");if(!response.ok)throw new Error(`Job status returned ${response.status}`);const body=await response.json() as {jobs?:DocumentJob[]};const previous=new Map(this.documentJobs.get().map((job)=>[job.jobId,job]));const jobs=body.jobs??[];this.documentJobs.set(jobs);this.#jobPollFailures=0;this.#jobPollIssueNotified=false;
       const completed=jobs.filter((job)=>!job.notifiedAt&&(job.status==="completed"||job.status==="failed")&&(previous.get(job.jobId)?.status!==job.status||!previous.has(job.jobId)));if(completed.length)await Promise.all([this.#refreshEvents(),this.refreshSession()]);
       for(const job of completed){if(job.kind==="structure_adaptive"&&job.status==="completed"&&job.result?.structure)this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId);continue;}if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);}
-      this.notify();this.#scheduleJobPoll(jobs.some((job)=>job.status==="queued"||job.status==="running")?1_500:10_000);
-    }catch{/* Job polling is advisory; the durable stream remains authoritative. */this.#scheduleJobPoll(5_000);}finally{this.#jobsSyncing=false;}}
-  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string){const documentId=this.projection.get().documentId;const response=await fetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})});const body=await response.json() as {job?:DocumentJob;error?:string;reused?:boolean};if(!response.ok||!body.job)throw new Error(body.error??"Document operation could not be started");const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);this.notify();this.#scheduleJobPoll(800);return body.job;}
+      this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(jobs.some((job)=>job.status==="queued"||job.status==="running")?1_500:10_000);
+    }catch{this.#jobPollFailures+=1;if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}this.#scheduleJobPoll(5_000);}finally{this.#jobsSyncing=false;}}
+  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string){const documentId=this.projection.get().documentId;const response=await fetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})});const body=await response.json() as {job?:DocumentJob;error?:string;reused?:boolean};if(!response.ok||!body.job)throw new Error(body.error??"Document operation could not be started");const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);return body.job;}
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   toast(message: string) { this.ui.toast = message; this.notify(); window.setTimeout(() => { if (this.ui.toast === message) { this.ui.toast = ""; this.notify(); } }, 2800); }
   setRoute(path: string, options: { replace?: boolean; documentFocus?: boolean } = {}) {
@@ -219,13 +220,13 @@ export class FormaStore {
   }
 
   async preview(sourceSurface?: string) {
-    try{await this.#startDocumentJob("preview",{...this.#generationContext()},sourceSurface??"studio");this.toast("Draft started. It will keep running if you leave or refresh.");}catch(error){this.toast(error instanceof Error?error.message:"Draft generation failed");}
+    try{await this.#startDocumentJob("preview",{...this.#generationContext()},sourceSurface??"studio");this.toast("Draft queued. The server will recover it if the connection changes.");}catch(error){this.toast(error instanceof Error?error.message:"Draft generation failed");}
   }
 
   async generate(options?: string | { sourceSurface?: string; sourcePreviewId?: string }) {
     const sourceSurface=typeof options==="string"?options:options?.sourceSurface;const sourcePreviewId=typeof options==="string"?undefined:options?.sourcePreviewId;
     try {
-      await this.#startDocumentJob("generate",{sourcePreviewId,...this.#generationContext()},sourceSurface??"studio");this.toast("Full-quality generation started. It is safe to leave or refresh.");
+      await this.#startDocumentJob("generate",{sourcePreviewId,...this.#generationContext()},sourceSurface??"studio");this.toast("Full-quality generation queued. The server will recover it if the connection changes.");
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
   }
 

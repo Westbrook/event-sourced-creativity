@@ -32,7 +32,7 @@ const baseTypes: Record<ScenarioKey, Array<[string, string]>> = {
   promotion: [["worker:indexer","FamilyDeclared"],["worker:indexer","FamilyAnchorSet"],["worker:indexer","FamilyMembershipAsserted"],["model:forma-chat","MutationProposed"],["user","ProposalAccepted"],["user","CollectionCreated"],["user","CollectionItemAdded"],["user","CollectionRenamed"]],
   "taste-time": [["user","DocumentCreated"],["user","BlockCreated"],["user","GenerationRequested"],["worker:compiler","ContextCompiled"],["worker:generator","GenerationCompleted"],["user","ObjectCritiqued"],["worker:taste","TasteModelVersioned"],["user","PreferenceAuthored"],["user","ConditionSet"],["worker:scheduler","ConditionFired"],["worker:scheduler","Resurfaced"],["user","PreferenceRevoked"],["user","FactRetracted"]],
   "attention-friction": [["user","SessionOpened"],["user","DocumentCreated"],["user","IntentDeclared"],["user","AttentionEpisodeObserved"],["user","GenerationRequested"],["worker:compiler","ContextCompiled"],["worker:generator","GenerationCompleted"],["user","ComparisonOpened"],["user","ObjectPinned"],["user","AttentionEpisodeObserved"],["user","AttentionSignalsForgotten"],["user","SessionClosed"]],
-  "operational-safety": [["worker:registry","ModelRegistered"],["worker:registry","AdapterVersioned"],["worker:registry","CapabilityDeclared"],["worker:policy","BudgetReserved"],["model:forma-chat","AssistantReasoned"],["worker:policy","GenerationUsageRecorded"],["worker:attribution","AttributionComputed"],["worker:policy","BudgetReleased"],["worker:policy","BudgetExceeded"],["worker:generator","GenerationFailed"],["worker:extractor","ExtractionFailed"],["worker:extractor","ExtractionSuperseded"],["worker:extractor","ExtractorEvaluationCompleted"],["user","BriefItemIgnored"],["user","BriefDismissed"],["user","PhaseGateReviewed"],["user","ProposalDeclined"],["worker:scheduler","BranchAbandoned"],["worker:scout","ScoutBudgetExhausted"],["user","ClaimSuperseded"],["worker:policy","RetentionSweepCompleted"]],
+  "operational-safety": [["worker:registry","ModelRegistered"],["worker:registry","AdapterVersioned"],["worker:registry","CapabilityDeclared"],["worker:policy","BudgetReserved"],["worker:scheduler","JobAttemptInterrupted"],["model:forma-chat","AssistantReasoned"],["worker:policy","GenerationUsageRecorded"],["worker:attribution","AttributionComputed"],["worker:policy","BudgetReleased"],["worker:policy","BudgetExceeded"],["worker:generator","GenerationFailed"],["worker:extractor","ExtractionFailed"],["worker:extractor","ExtractionSuperseded"],["worker:extractor","ExtractorEvaluationCompleted"],["user","BriefItemIgnored"],["user","BriefDismissed"],["user","PhaseGateReviewed"],["user","ProposalDeclined"],["worker:scheduler","BranchAbandoned"],["worker:scout","ScoutBudgetExhausted"],["user","ClaimSuperseded"],["worker:policy","RetentionSweepCompleted"]],
 };
 
 export const SCENARIO_EVENT_TYPES = [...new Set(Object.values(baseTypes).flat().map(([,type])=>type))];
@@ -53,7 +53,7 @@ export const REPLAY_CAPABILITIES = [
   { key:"attention-friction", label:"Visible, bounded, low-weight attention evidence", evidence:["AttentionEpisodeObserved","AttentionSignalsForgotten"] },
   { key:"session-reentry", label:"Session return, briefs, and human acceptance", evidence:["SessionClosed","BriefComposed","BriefItemAccepted","SessionOpened"] },
   { key:"bounded-agency", label:"Scout report space and human judgment", evidence:["ScoutRunStarted","ScoutObserved","ObservationJudged","ScoutBudgetExhausted"] },
-  { key:"operations", label:"Provider, budget, validation, and retention receipts", evidence:["ModelRegistered","BudgetReserved","ValidationFailed","RetentionSweepCompleted"] },
+  { key:"operations", label:"Provider, retry, budget, validation, and retention receipts", evidence:["ModelRegistered","BudgetReserved","JobAttemptInterrupted","BudgetReleased","ValidationFailed","RetentionSweepCompleted"] },
 ] as const;
 
 export const scenarioEventCount = (key:ScenarioKey) => baseTypes[key].length;
@@ -166,6 +166,7 @@ const EVENT_STORIES: Record<string,ReplayEventStory> = {
   BranchAbandoned:{action:"The scheduler marked an inactive exploration branch abandoned.",value:"Re-entry can avoid stale paths while preserving the evidence that explains why the branch stopped receiving attention."},
   AttributionComputed:{action:"The attribution worker joined an output to contributing inputs and receipts.",value:"Critique can point to likely sources without overstating statistical association as singular creative causation."},
   BudgetReserved:{action:"The policy worker reserved capacity before provider execution.",value:"Concurrent requests cannot overspend a shared hard cap simply because their final token receipts arrive later."},
+  JobAttemptInterrupted:{action:"The scheduler recorded that a connected job runner ended before its terminal write.",value:"The durable job can recover without pretending the attempt succeeded, while budget cleanup and bounded retry remain attributable."},
   BudgetReleased:{action:"The policy worker returned an unused reservation after a stopped operation.",value:"Failed or cancelled work does not strand capacity, and the release remains auditable against its original reservation."},
   BudgetExceeded:{action:"The policy worker denied work at a declared hard cap.",value:"The application fails before external spend while presenting a predictable operational reason rather than a broken canvas."},
   GenerationUsageRecorded:{action:"The policy worker settled actual token usage against the reservation.",value:"Cost and capacity reports reflect provider receipts while preserving the safety of pre-execution reservation."},
@@ -262,6 +263,7 @@ const EVENT_TRIGGERS: Record<string,string> = {
   AdapterVersioned:"This happens when the integration contract for a model adapter changes and is released as a new version.",
   CapabilityDeclared:"This happens when a registered model-adapter pair publishes the bounded operations it is allowed to support.",
   BudgetReserved:"This happens after an external operation is authorized but before provider execution can consume shared capacity.",
+  JobAttemptInterrupted:"This happens when a running document operation stops heartbeating beyond its lease and the server begins its permitted recovery or records a terminal interruption.",
   AssistantReasoned:"This happens when an authorized model call returns a private structured interpretation for user review.",
   GenerationUsageRecorded:"This happens when provider token usage is available and the policy worker can settle it against the reservation.",
   AttributionComputed:"This happens when an output, its generation, and its compiled source block versions are all available to join.",
@@ -394,6 +396,7 @@ function payloadFor(type: string, i: number, key: ScenarioKey, cycle: number): R
   if(type==="AdapterVersioned")return{adapter_id:"openai-image",version:"v4",contract_version:6,reference_handoff:true,multiple_image_input:true,block_level_reference_policy:true};
   if(type==="CapabilityDeclared")return{model_id:"gpt-image-2",capabilities:["image-generation","image-editing","private-asset-output","context-snapshot","reference-pixel-input","multiple-image-input"]};
   if(type==="BudgetReserved")return{reservation_id:`reservation-${cycle}`,operation:"generation",reserved_tokens:32000,period:"2026-01"};
+  if(type==="JobAttemptInterrupted")return{job_id:`job-${cycle}`,document_id:documentId,kind:"generate",attempt:1,reason:"execution_interrupted_retrying",released_reservation_count:1};
   if(type==="BudgetReleased")return{reservation_id:`reservation-${cycle}`,reserved_tokens:32000,reason:"provider-failed-before-usage"};
   if(type==="BudgetExceeded")return{operation:"generation",scope:"workspace-month",reason:"hard_cap_reached",reserved_tokens:0};
   if(type==="GenerationUsageRecorded")return{reservation_id:`reservation-${cycle}`,operation:"generation",input_tokens:4200,output_tokens:4980,total_tokens:9180,planner_tokens:5180,image_tokens:4000,reserved_tokens:32000,model_ids:["gpt-5.6-terra","gpt-image-2"]};
