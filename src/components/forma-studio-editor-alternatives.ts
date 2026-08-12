@@ -5,6 +5,7 @@ import { icon } from "./forma-element";
 import { AlternativeStudio } from "./forma-studio-alternatives";
 import { spatialScopeLabel } from "../model/spatial-scope";
 import "./spatial-scope-editor";
+import "./document-generations";
 
 type RealityCategory="intent"|"subject"|"space"|"light"|"look"|"delivery"|"rules";
 type Reality={id:string;category:RealityCategory;type:BlockKind;subtype:string;label:string;description:string;text:string};
@@ -117,7 +118,7 @@ export class FormaRealityLayers extends AlternativeStudio {
             @dragover=${(event: DragEvent) => { if (event.dataTransfer?.types.includes("application/x-forma-reality")) { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = "copy"; } }}
             @dragleave=${(event: DragEvent) => { if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node)) { this.#dropActive = false; this.requestUpdate(); } }}
             @drop=${this.#dropReality}>
-            <div class="canvas-art"><i class="canvas-light"></i><i class="canvas-frame"></i><i class="canvas-subject"></i><i class="canvas-ground"></i><i class="canvas-grain"></i></div>
+            <forma-document-generations view="layers" presentation="canvas"></forma-document-generations>
             <div class="canvas-context">${active.slice(0,8).map((block) => html`<button class=${selected?.id === block.id ? "selected" : ""} @click=${() => { this.#selectedBlockId = block.id; this.requestUpdate(); }}>${blockTypeDefinition(block.type)?.label ?? block.type}<span>${String(block.properties.subtype ?? block.handle.split("/").at(-1))}</span></button>`)}</div>
             <div class="canvas-drop-copy">${icon("plus")}<b>Add an ingredient here</b><span>Drop one from the left or use its Add button</span></div>
           </div>
@@ -252,7 +253,7 @@ export class FormaAdaptivePath extends AlternativeStudio {
             return html`<div class=${block ? "resolved" : current?.type === decision.type ? "active" : "future"}><i>${block ? icon("check") : index + 1}</i><span><b>${decision.label}</b><small>${block ? String(block.properties.subtype ?? block.handle) : current?.type === decision.type ? "Open now" : "Not yet needed"}</small></span></div>`;
           })}</div>
           ${supportingBlocks.length ? html`<section class="adaptive-supporting"><header><b>Supporting decisions</b><span>${supportingBlocks.length}</span></header><p>These remain part of the same document even though they do not control the next-question path.</p><ul>${supportingBlocks.map((block) => html`<li><button @click=${() => this.store.setRoute("/")}><span><b>${blockTypeDefinition(block.type)?.label ?? block.type}</b><small>${String(block.properties.subtype ?? block.handle)}</small></span><em>${layerLabel(block)}</em>${icon("arrow")}</button></li>`)}</ul></section>` : nothing}
-          ${progress >= 2 ? html`<section class="emergent-preview"><span class="eyebrow">What has become clearer</span><div class=${`adaptive-mini-art stage-${stage}`}><i></i><i></i><i></i></div><p>${progress < 6 ? "Purpose and scene choices are specific enough to expose meaningful tensions." : "The document now connects intention, reality, expression, and boundary."}</p></section>` : nothing}
+          ${projection.outputs.length || progress >= 2 ? html`<section class="emergent-preview"><span class="eyebrow">What has become clearer</span><forma-document-generations view="adaptive" presentation="rail"></forma-document-generations><p>${progress < 6 ? "Purpose and scene choices are specific enough to expose meaningful tensions." : "The document now connects intention, reality, expression, and boundary."}</p></section>` : nothing}
         </aside>
       </div>`;
     return this.shell("adaptive", "Adaptive path", "Let the document determine which decision deserves attention next—without hiding anything already decided.", body);

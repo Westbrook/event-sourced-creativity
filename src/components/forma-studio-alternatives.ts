@@ -38,7 +38,7 @@ export abstract class AlternativeStudio extends FormaElement {
         <div class="studio-subpage-body">
           <forma-studio-navigator destination=${destination}></forma-studio-navigator>
           ${options.continuity === false ? nothing : html`<forma-document-continuity view=${active}></forma-document-continuity>`}
-          ${active === "editor" ? nothing : html`<forma-document-generations view=${active}></forma-document-generations>`}
+          ${active === "board" ? html`<forma-document-generations view=${active}></forma-document-generations>` : nothing}
           ${body}
         </div>
       </div>
@@ -297,6 +297,8 @@ export class FormaGuidedBrief extends AlternativeStudio {
           <p>${activeAnswered}/${section.fields.length} answers are ready to save.</p>
         </aside>
       </section>
+
+      <forma-document-generations view="guided" presentation="compact"></forma-document-generations>
 
       <nav class="guided-step-nav" aria-label="Brief sections">
         ${BRIEF_SECTIONS.map((item, index) => {

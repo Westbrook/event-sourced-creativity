@@ -145,16 +145,17 @@ test("presents every alternate Studio lens as the same complete durable document
     readFile(new URL("../src/components/document-generations.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
   ]);
-  assert.match(alternatives, /forma-document-continuity/); assert.match(alternatives, /forma-document-generations/); assert.match(alternatives, /Next useful move/); assert.match(alternatives, /Whole-document check/);
+  assert.match(alternatives, /forma-document-continuity/); assert.match(alternatives, /forma-document-generations/); assert.match(alternatives, /view="guided" presentation="compact"/); assert.match(alternatives, /Next useful move/); assert.match(alternatives, /Whole-document check/);
   assert.match(alternatives, /projection\.blocks|projection\.get\(\)\.blocks/); assert.match(alternatives, /BLOCK_GROUPS/);
   assert.match(editorAlternatives, /Everything in this document/); assert.match(editorAlternatives, /supportingBlocks/); assert.match(editorAlternatives, /Why this is next/); assert.match(editorAlternatives, /What this unlocks/);
+  assert.match(editorAlternatives, /view="layers" presentation="canvas"/); assert.match(editorAlternatives, /view="adaptive" presentation="rail"/);
   assert.match(creativeEditor, /projection\.blocks/); assert.match(creativeEditor, /Everything shaping the work/); assert.match(creativeEditor, /continuity: false/); assert.match(creativeEditor, /inspector: false/); assert.match(creativeEditor, /quietRail: true/);
   assert.match(creativeEditor, /BlockCreated/); assert.match(creativeEditor, /BlockPropertyEdited/); assert.match(creativeEditor, /BlockWeightSet/); assert.match(creativeEditor, /BlockRemoved/);
   assert.match(creativeEditor, /The brief/); assert.match(creativeEditor, /The picture/); assert.match(creativeEditor, /The look/); assert.match(creativeEditor, /The guardrails/); assert.match(creativeEditor, /Visual references/);
   assert.doesNotMatch(creativeEditor, />Event|>Metadata|>Provenance|Creative history|source events/i);
   assert.match(navigation, /projection\.blocks\.length/); assert.match(navigation, /projection\.outputs\.length/); assert.match(navigation, /Every saved decision and result/);
   assert.match(navigation, /Creative editor/);
-  assert.match(generations, /projection\.get\(\)\.outputs/); assert.match(generations, /Results from this document/); assert.match(generations, /interactive/);
+  assert.match(generations, /projection\.get\(\)\.outputs/); assert.match(generations, /Results from this document/); assert.match(generations, /"full"\|"compact"\|"canvas"\|"rail"/); assert.match(generations, /interactive/);
   assert.match(navigation, /DOCUMENT_FOCUS_KEY/); assert.match(navigation, /data-document-focus/); assert.match(navigation, /Focus view/); assert.match(navigation, /Exit focus/); assert.match(navigation, /event\.key === "Escape"/); assert.match(navigation, /withDocumentFocusInRoute/); assert.match(navigation, /documentFocusFromRoute/);
   assert.match(styles, /\.creative-editor \{[^}]*grid-template-rows: auto minmax\(0,1fr\)[^}]*height: clamp\(590px,72dvh,780px\)/);
   assert.match(styles, /\.creative-editor-layout \{[^}]*min-height: 0;[^}]*overflow: hidden/);
