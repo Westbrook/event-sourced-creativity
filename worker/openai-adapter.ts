@@ -1,5 +1,6 @@
 import type { WorkerEnv } from "./runtime.ts";
 import { BLOCK_TYPES, type AdaptiveStructure } from "../src/model/block-types.ts";
+import { normalizeSpatialScope } from "../src/model/spatial-scope.ts";
 
 type OpenAIResponse = { id?: string; model?: string; output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: { message?: string } };
 type OpenAIImageResponse = { created?: number; data?: Array<{ b64_json?: string; revised_prompt?: string }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: { message?: string } };
@@ -47,7 +48,7 @@ export async function generateCreativeDirection(env: WorkerEnv, userId: string, 
     headers: openAIHeaders(env),
     body: JSON.stringify({
       model: env.OPENAI_MODEL ?? "gpt-5.6-terra",
-      instructions: "You are Forma's creative-direction adapter. Interpret only the supplied authored and cited context. Return a concrete visual direction, not hidden reasoning. Treat inferred material as suggestive and never claim it was authored. Each fact has an independent semantic role and intent. Every fact whose intent is avoid or prohibit, whose effect is must_not_include, or whose legacy type is exclusion is a negative constraint: apply the prohibition to its named role, and never let the named content become a positive focus in the title, scene, rationale, palette, or next moves. Prohibit is a hard boundary; avoid is a strong negative preference. Weight expresses the constraint's influence, not creative prominence. Prefer facts are positive preferences, while include facts are ordinary positive instructions.",
+      instructions: "You are Forma's creative-direction adapter. Interpret every field of the supplied authored and cited context. Return a concrete visual direction, not hidden reasoning. Treat inferred material as suggestive and never claim it was authored. Each fact has an independent semantic role and intent. Ignore facts whose active field is false; they remain present only for provenance. Every active fact whose intent is avoid or prohibit, whose effect is must_not_include, or whose legacy type is exclusion is a negative constraint: apply the prohibition to its named role, and never let the named content become a positive focus in the title, scene, rationale, palette, or next moves. Prohibit is a hard boundary; avoid is a strong negative preference. Weight expresses the constraint's influence, not creative prominence. Prefer facts are positive preferences, while include facts are ordinary positive instructions. A fact's properties.spatial_scope limits where that fact applies. Preserve its named region, rectangle, subject relationship, or custom path in the scene and rationale; do not silently promote a local decision into a whole-image instruction.",
       input: JSON.stringify(snapshot),
       text: { verbosity: "low", format: { type: "json_schema", name: "forma_creative_direction", strict: true, schema: outputSchema } },
       reasoning: { effort: "low" }, max_output_tokens: 1200, store: false,
@@ -62,12 +63,35 @@ export async function generateCreativeDirection(env: WorkerEnv, userId: string, 
   return { responseId: body.id ?? "", model: body.model ?? env.OPENAI_MODEL ?? "gpt-5.6-terra", output: parsed, raw: text, latencyMs: Date.now() - started, usage: { inputTokens: Number(body.usage?.input_tokens ?? 0), outputTokens: Number(body.usage?.output_tokens ?? 0), totalTokens: Number(body.usage?.total_tokens ?? 0) } };
 }
 
+const record=(value:unknown)=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};
+const percent=(value:number)=>`${Math.round(value*100)}%`;
+
+export function buildSpatialDirectives(snapshot:Record<string,unknown>){
+  const facts=Array.isArray(snapshot.facts)?snapshot.facts.map(record):[];
+  const labelFor=(fact:Record<string,unknown>)=>{const properties=record(fact.properties);return String(properties.text??properties.label??fact.handle??fact.type??"decision");};
+  const subjectFor=(id:string)=>labelFor(facts.find((fact)=>String(fact.block_id??"")===id)??{});
+  return facts.map((fact)=>{
+    const properties=record(fact.properties);const scope=normalizeSpatialScope(properties.spatial_scope);const decision=`${String(fact.role??fact.type??"decision")} “${labelFor(fact)}”`;
+    if(fact.active===false)return `- Do not apply ${decision}; this block is inactive and is included only for provenance.`;
+    let target="across the entire image";
+    if(scope.kind==="region")target=scope.region==="custom"?`in the implied area described as “${scope.instruction||"custom area"}”`:`in the ${scope.region} area`;
+    if(scope.kind==="aabb"&&scope.aabb)target=`inside the document-relative rectangle at left ${percent(scope.aabb.x)}, top ${percent(scope.aabb.y)}, width ${percent(scope.aabb.width)}, height ${percent(scope.aabb.height)}`;
+    if(scope.kind==="subject")target=`${scope.subject_relation?.replaceAll("-"," ")} the subject “${subjectFor(scope.subject_block_id??"")}”`;
+    if(scope.kind==="path")target=`inside the document-relative clipping path ${JSON.stringify(scope.path??[])}`;
+    if(scope.polarity==="outside"&&scope.kind!=="document")target=`everywhere outside ${target.replace(/^inside /,"").replace(/^in /,"")}`;
+    return `- Apply ${decision} ${target}; use a ${scope.falloff} transition with ${percent(scope.feather)} feather. Intent: ${String(fact.intent??"include")}; influence: ${percent(Number(properties.weight??.5))}.`;
+  });
+}
+
 export function buildCreativeImagePrompt(snapshot:Record<string,unknown>,direction:Record<string,unknown>) {
+  const spatialDirectives=buildSpatialDirectives(snapshot);
   return [
     "Create one polished landscape image that realizes the supplied creative direction.",
-    "Use the document context as binding art direction. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.",
+    "Use every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, and spatial scope. Ignore blocks marked active false. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.",
     "Any fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.",
+    "Spatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.",
     "Do not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.",
+    `Spatial application map:\n${spatialDirectives.length?spatialDirectives.join("\n"):"- No active block decisions were supplied."}`,
     `Creative direction:\n${JSON.stringify(direction)}`,
     `Durable document context:\n${JSON.stringify(snapshot)}`,
   ].join("\n\n");

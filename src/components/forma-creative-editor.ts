@@ -8,6 +8,7 @@ import { AlternativeStudio } from "./forma-studio-alternatives";
 import { spatialScopeLabel } from "../model/spatial-scope";
 import "./spatial-scope-editor";
 import "./output-visual";
+import "./reference-image";
 
 type EditorSection = {
   id: "brief" | "picture" | "look" | "delivery" | "references";
@@ -274,12 +275,16 @@ export class FormaCreativeEditor extends AlternativeStudio {
     await this.#reorder(item.id, ordered[target].id);
   }
 
-  #previewCopy() {
-    const output = this.store.projection.get().outputs[0];
+  #previewCopy(output=this.store.projection.get().outputs[0]) {
     if (!output?.contentRef) return null;
     const raw = this.store.content.get()[output.contentRef];
     if (!raw) return null;
     try { return JSON.parse(raw) as Record<string, unknown>; } catch { return { rationale: raw }; }
+  }
+
+  #selectOutput(id:string){
+    this.store.patchUi({selectedOutputId:id});
+    if(this.store.ui.instrumentation)void this.store.hot({type:"ObjectViewed",payload:{object_id:id,source_surface:"creative-editor-preview"}});
   }
 
   #sectionFor(item: CreativeBlock) {
@@ -312,10 +317,10 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const selected = projection.blocks.find((item) => item.id === this.#selectedId) ?? projection.blocks[0];
     const selectedIntent = selected ? blockIntentFor(selected.type, selected.properties) : "include";
     const selectedIsExclusion = isNegativeIntent(selectedIntent);
-    const latest = projection.outputs[0];
+    const latest = projection.outputs.find((output)=>output.id===this.store.ui.selectedOutputId)??projection.outputs[0];
     const blockIds = new Set(projection.blocks.map((item) => item.id));
     const previewOutdated = Boolean(latest && this.store.events.get().some((event) => event.sequence > latest.sequence && /^(BlockCreated|BlockPropertyEdited|BlockWeightSet|BlockRemoved|BlockRestored|ChipEdited)$/.test(event.type) && (event.payload.document_id === projection.documentId || blockIds.has(String(event.payload.block_id ?? "")))));
-    const preview = this.#previewCopy();
+    const preview = this.#previewCopy(latest);
     const direction = projection.blocks.find((item) => item.type === "direction" && !isNegativeIntent(blockIntentFor(item.type, item.properties)) && Number(item.properties.weight ?? .65) > 0);
     const subject = projection.blocks.find((item) => item.type === "subject" && !isNegativeIntent(blockIntentFor(item.type, item.properties)) && Number(item.properties.weight ?? .65) > 0);
     const look = projection.blocks.find((item) => ["style", "lighting", "palette", "material"].includes(item.type) && !isNegativeIntent(blockIntentFor(item.type, item.properties)) && Number(item.properties.weight ?? .65) > 0);
@@ -345,7 +350,10 @@ export class FormaCreativeEditor extends AlternativeStudio {
 
           <main class="creative-editor-canvas">
             <section class=${`creative-preview ${previewOutdated ? "preview-outdated" : ""}`}>
-              <div class=${`creative-preview-art ${latest?.mediaUrl ? "has-preview" : ""}`}><forma-output-visual .output=${latest}></forma-output-visual></div>
+              <div class="creative-preview-stage">
+                <div class=${`creative-preview-art ${latest?.mediaUrl ? "has-preview" : ""}`}><forma-output-visual .output=${latest} .interactive=${true}></forma-output-visual></div>
+                ${projection.outputs.length>1?html`<div class="creative-preview-filmstrip" aria-label="All generations from this document">${projection.outputs.map((output,index)=>html`<button class=${output.id===latest?.id?"selected":""} aria-pressed=${output.id===latest?.id} aria-label=${`Show ${index===0?"latest generation":`generation ${index+1}`}`} @click=${()=>this.#selectOutput(output.id)}><forma-output-visual .output=${output} .compact=${true}></forma-output-visual><span>${index===0?"Latest":`#${projection.outputs.length-index}`}</span></button>`)}</div>`:nothing}
+              </div>
               <div class="creative-preview-copy">
                 <span>Working preview</span>
                 <h2>${preview ? String(preview.title ?? "A direction is taking shape") : direction ? textFor(direction) : "Start with one clear goal"}</h2>
@@ -374,7 +382,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
           <aside class=${`creative-editor-inspector ${selectedIsExclusion ? "negative-constraint" : ""}`} aria-label="Selected item settings">
             ${selected ? html`<form @submit=${(event: SubmitEvent) => this.#save(event, selected)}>
               <header><span>${selectedIsExclusion ? "Guardrail selected" : "Selected"}</span><h2>${selectedIntent === "include" ? FRIENDLY_LABELS[selected.type as BlockKind] : `${intentCopy(selectedIntent)} ${FRIENDLY_LABELS[selected.type as BlockKind].toLowerCase()}`}</h2><p>${selectedIsExclusion ? `This is a negative ${FRIENDLY_LABELS[selected.type as BlockKind].toLowerCase()} constraint. It tells the preview what must not appear; it never becomes a positive focus.` : "Change the role, intent, wording, and influence of this decision."}</p></header>
-              ${selected.type === "reference" && selected.properties.media_url ? html`<img class="creative-inspector-image" src=${String(selected.properties.media_url)} alt=${textFor(selected)}>` : nothing}
+              ${selected.type === "reference" && selected.properties.media_url ? html`<forma-reference-image class="creative-inspector-image" .src=${String(selected.properties.media_url)} .alt=${textFor(selected)}></forma-reference-image>` : nothing}
               <label><span>Role in the plan</span><select name="item-type" ?disabled=${selected.locked}>${BLOCK_TYPES.map((item) => html`<option value=${item.type} ?selected=${item.type === selected.type}>${FRIENDLY_LABELS[item.type]}</option>`)}</select></label>
               <label><span>Intent</span><select name="item-intent" ?disabled=${selected.locked}>${BLOCK_INTENTS.map((intent) => html`<option value=${intent.id} ?selected=${intent.id === selectedIntent}>${intent.label} · ${intent.description}</option>`)}</select></label>
               <div class="creative-role-intent-summary"><b>${intentCopy(selectedIntent)} · ${FRIENDLY_LABELS[selected.type as BlockKind]}</b><small>${spatialScopeLabel(selected.properties.spatial_scope)}</small></div>

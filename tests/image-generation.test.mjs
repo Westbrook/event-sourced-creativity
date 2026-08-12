@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { buildCreativeImagePrompt, generateCreativeImage } from "../worker/openai-adapter.ts";
+import { buildCreativeImagePrompt, buildSpatialDirectives, generateCreativeImage } from "../worker/openai-adapter.ts";
 import { foldEvents } from "../src/model/events.ts";
 
 test("builds a GPT Image prompt that preserves role, intent, and negative constraints",()=>{
@@ -10,6 +10,25 @@ test("builds a GPT Image prompt that preserves role, intent, and negative constr
   assert.match(prompt,/effect must_not_include/);
   assert.match(prompt,/people under 20 years old/);
   assert.match(prompt,/Never promote that content/);
+});
+
+test("turns every spatial block scope into an explicit image-generation directive",()=>{
+  const snapshot={facts:[
+    {block_id:"subject-1",role:"subject",intent:"include",properties:{text:"glass vessel",weight:.8,spatial_scope:{kind:"aabb",aabb:{x:.62,y:.18,width:.28,height:.54},falloff:"hard"}}},
+    {block_id:"light-1",role:"lighting",intent:"prefer",properties:{text:"warm rim light",weight:.65,spatial_scope:{kind:"subject",subject_block_id:"subject-1",subject_relation:"around",falloff:"soft",feather:.25}}},
+    {block_id:"quiet-1",role:"composition",intent:"include",properties:{text:"negative space",weight:.5,spatial_scope:{kind:"region",region:"custom",instruction:"quiet upper-left field",polarity:"inside",falloff:"contextual"}}},
+    {block_id:"paused-1",role:"material",intent:"include",active:false,properties:{text:"polished chrome",weight:0}},
+  ]};
+  const directives=buildSpatialDirectives(snapshot);
+  assert.equal(directives.length,4);
+  assert.match(directives[0],/left 62%, top 18%, width 28%, height 54%/);
+  assert.match(directives[1],/around the subject “glass vessel”/);
+  assert.match(directives[2],/quiet upper-left field/);
+  assert.match(directives[3],/Do not apply material “polished chrome”/);
+  const prompt=buildCreativeImagePrompt(snapshot,{title:"Spatial study"});
+  assert.match(prompt,/Spatial application map/);
+  assert.match(prompt,/spatial scope.*requirements/i);
+  assert.match(prompt,/quiet upper-left field/);
 });
 
 test("calls the direct Image API with gpt-image-2, project attribution, and decodes one private image",async()=>{

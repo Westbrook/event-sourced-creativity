@@ -101,7 +101,7 @@ test("packages first-class HTML entry points for every named application route",
   const rootEntry = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
   const shareEntry = await readFile(new URL("../dist/client/share/index.html", import.meta.url), "utf8");
   assert.match(rootEntry, /data-forma-route-module="\/"/); assert.match(shareEntry, /forma-shared-view-/);
-  assert.match(config, /manifest: true/); assert.match(config, /"\/share\/\*"/); assert.match(worker, /"\/share\/index\.html"/); assert.match(worker, /appEntryPath/);
+  assert.match(config, /manifest: true/); assert.match(config, /"\/share\/\*"/); assert.match(config, /"\/document\/\*"/); assert.match(config, /"\/library\/\*"/); assert.match(worker, /"\/share\/index\.html"/); assert.match(worker, /isDocumentViewRoute\(url\.pathname\)/); assert.match(worker, /appEntryPath/);
   assert.match(routeLoader, /import\("\.\/components\/forma-library"\)/); assert.match(routeLoader, /import\("\.\/components\/forma-admin-events"\)/);
   assert.match(shell, /addEventListener\("forma-route-changed", this\.#routeChanged\)/); assert.match(shell, /loadRouteComponent\(path\)/);
   assert.doesNotMatch(shell, /import "\.\/forma-library"/); assert.doesNotMatch(shell, /import "\.\/forma-admin-events"/);
@@ -137,14 +137,15 @@ test("restores focused Library dialogs from durable URLs", async () => {
 });
 
 test("presents every alternate Studio lens as the same complete durable document", async () => {
-  const [alternatives, editorAlternatives, creativeEditor, navigation, styles] = await Promise.all([
+  const [alternatives, editorAlternatives, creativeEditor, navigation, generations, styles] = await Promise.all([
     readFile(new URL("../src/components/forma-studio-alternatives.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-studio-editor-alternatives.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-creative-editor.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/studio-navigation.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/document-generations.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
   ]);
-  assert.match(alternatives, /forma-document-continuity/); assert.match(alternatives, /Next useful move/); assert.match(alternatives, /Whole-document check/);
+  assert.match(alternatives, /forma-document-continuity/); assert.match(alternatives, /forma-document-generations/); assert.match(alternatives, /Next useful move/); assert.match(alternatives, /Whole-document check/);
   assert.match(alternatives, /projection\.blocks|projection\.get\(\)\.blocks/); assert.match(alternatives, /BLOCK_GROUPS/);
   assert.match(editorAlternatives, /Everything in this document/); assert.match(editorAlternatives, /supportingBlocks/); assert.match(editorAlternatives, /Why this is next/); assert.match(editorAlternatives, /What this unlocks/);
   assert.match(creativeEditor, /projection\.blocks/); assert.match(creativeEditor, /Everything shaping the work/); assert.match(creativeEditor, /continuity: false/); assert.match(creativeEditor, /inspector: false/); assert.match(creativeEditor, /quietRail: true/);
@@ -153,6 +154,7 @@ test("presents every alternate Studio lens as the same complete durable document
   assert.doesNotMatch(creativeEditor, />Event|>Metadata|>Provenance|Creative history|source events/i);
   assert.match(navigation, /projection\.blocks\.length/); assert.match(navigation, /projection\.outputs\.length/); assert.match(navigation, /Every saved decision and result/);
   assert.match(navigation, /Creative editor/);
+  assert.match(generations, /projection\.get\(\)\.outputs/); assert.match(generations, /Results from this document/); assert.match(generations, /interactive/);
   assert.match(navigation, /DOCUMENT_FOCUS_KEY/); assert.match(navigation, /data-document-focus/); assert.match(navigation, /Focus view/); assert.match(navigation, /Exit focus/); assert.match(navigation, /event\.key === "Escape"/); assert.match(navigation, /withDocumentFocusInRoute/); assert.match(navigation, /documentFocusFromRoute/);
   assert.match(styles, /\.creative-editor \{[^}]*grid-template-rows: auto minmax\(0,1fr\)[^}]*height: clamp\(590px,72dvh,780px\)/);
   assert.match(styles, /\.creative-editor-layout \{[^}]*min-height: 0;[^}]*overflow: hidden/);
@@ -162,6 +164,30 @@ test("presents every alternate Studio lens as the same complete durable document
   assert.match(styles, /html\[data-document-focus\] \.workspace-page > forma-project-rail \{ display: none; \}/);
   assert.match(styles, /html\[data-document-focus\] \.workspace-page:has\(> forma-project-rail > \.project-rail\.collapsed\) \.composer-dock \{ left: 0; \}/);
   assert.match(styles, /html\[data-document-focus\] \.creative-editor,[\s\S]*height: calc\(100dvh - 70px\)/);
+});
+
+test("opens otherwise passive generation and reference images in contained dialogs",async()=>{
+  const [visual,reference,creative,projectContents,shared]=await Promise.all([
+    readFile(new URL("../src/components/output-visual.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/reference-image.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-creative-editor.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-project-contents.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-shared-view.ts",import.meta.url),"utf8"),
+  ]);
+  assert.match(visual,/interactive/);assert.match(visual,/generated-image-viewer/);assert.match(visual,/showModal\(\)/);assert.match(visual,/closedby="any"/);
+  assert.match(reference,/reference-viewer/);assert.match(reference,/closedby="any"/);
+  assert.match(creative,/\.interactive=\$\{true\}/);assert.match(creative,/forma-reference-image/);
+  assert.match(projectContents,/\.interactive=\$\{true\}/);assert.match(shared,/\.interactive=\$\{true\}/);
+});
+
+test("keeps toast feedback above open modal dialogs",async()=>{
+  const shell=await readFile(new URL("../src/components/forma-shell.ts",import.meta.url),"utf8");
+  assert.match(shell,/popover="manual"/);assert.match(shell,/showPopover\(\)/);assert.match(shell,/MutationObserver/);
+});
+
+test("explains comparison changes as creative actions instead of block ids",async()=>{
+  const workspace=await readFile(new URL("../src/components/forma-workspace.ts",import.meta.url),"utf8");
+  assert.match(workspace,/Creative decisions between these results/);assert.match(workspace,/affected area moved from/);assert.match(workspace,/intent changed from/);assert.doesNotMatch(workspace,/<b>\$\{d\.id\}<\/b>/);
 });
 
 test("lets Reference blocks prepare and explicitly adopt multiple image realities", async () => {

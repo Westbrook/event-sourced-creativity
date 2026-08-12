@@ -16,6 +16,7 @@ const routes = [
 export class FormaShell extends FormaElement {
   #commandIndex = 0;
   #shareHours = 24; #freshShareUrl = ""; #termsOwnership = false; #termsProvider = false;
+  #dialogObserver?: MutationObserver;
   #keydown = (event: KeyboardEvent) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); this.store.patchUi({ commandOpen: !this.store.ui.commandOpen }); }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); if (event.shiftKey) void this.store.redo(); else void this.store.undo(); }
@@ -30,10 +31,26 @@ export class FormaShell extends FormaElement {
 
   override connectedCallback() {
     super.connectedCallback(); window.addEventListener("keydown", this.#keydown); window.addEventListener("popstate", this.#pop); window.addEventListener("forma-route-changed", this.#routeChanged);
+    this.#dialogObserver = new MutationObserver((records) => {
+      const dialogChanged = records.some((record) => record.type === "attributes" || [...record.addedNodes].some((node) => node instanceof Element && (node.matches("dialog") || node.querySelector("dialog"))));
+      if (dialogChanged) queueMicrotask(() => this.#raiseToast());
+    });
+    this.#dialogObserver.observe(this, { subtree: true, childList: true, attributes: true, attributeFilter: ["open"] });
     void loadRouteComponent(location.pathname);
     if (!this.store.events.get().length) void this.store.load();
   }
-  override disconnectedCallback() { window.removeEventListener("keydown", this.#keydown); window.removeEventListener("popstate", this.#pop); window.removeEventListener("forma-route-changed", this.#routeChanged); super.disconnectedCallback(); }
+  override disconnectedCallback() { this.#dialogObserver?.disconnect(); window.removeEventListener("keydown", this.#keydown); window.removeEventListener("popstate", this.#pop); window.removeEventListener("forma-route-changed", this.#routeChanged); super.disconnectedCallback(); }
+
+  #raiseToast() {
+    const toast = this.querySelector<HTMLElement>(".toast[popover]");
+    if (!toast || typeof toast.showPopover !== "function") return;
+    try {
+      if (toast.matches(":popover-open")) toast.hidePopover();
+      toast.showPopover();
+    } catch { /* The toast remains a fixed fallback when popovers are unavailable. */ }
+  }
+
+  protected override updated() { this.#raiseToast(); }
 
   #route(path: string) { this.store.patchUi({ commandOpen: false, accountOpen: false }); this.store.setRoute(path); const hash=path.includes("#")?path.slice(path.indexOf("#")+1):"";if(hash)window.setTimeout(()=>{const target=document.getElementById(hash);target?.scrollIntoView({behavior:"smooth",block:"center"});target?.focus({preventScroll:true});},0);else window.scrollTo({ top: 0 }); }
   #page() {
@@ -130,7 +147,7 @@ export class FormaShell extends FormaElement {
       </header>
       ${this.store.error.get() ? html`<div class="error-banner" role="alert"><b>${simplifiedEditor ? "Your work could not be loaded." : "Durable stream unavailable."}</b> ${this.store.error.get()} <button @click=${() => this.store.load()}>Retry</button></div>` : nothing}
       <main id="main-content">${this.#page()}</main>
-      ${this.store.ui.toast ? html`<div class="toast" role="status">${icon("check")} ${this.store.ui.toast}</div>` : nothing}
+      ${this.store.ui.toast ? html`<div class="toast" role="status" aria-live="polite" popover="manual">${icon("check")} ${this.store.ui.toast}</div>` : nothing}
       ${this.store.ui.commandOpen ? this.#commands() : nothing}
       ${this.store.ui.shareOpen ? this.#share() : nothing}
       ${session&&!session.policy.accepted?this.#terms():nothing}

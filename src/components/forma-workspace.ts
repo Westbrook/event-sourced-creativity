@@ -1,10 +1,11 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
-import { contextDiff, foldEvents, shortEventType, type EventInput } from "../model/events";
+import { contextDiff, foldEvents, shortEventType, type CreativeBlock, type EventInput } from "../model/events";
 import { sampleImageFile } from "../model/image-sample";
 import { DEFAULT_REFERENCE_FINDINGS, REFERENCE_FINDING_OPTIONS, type ImageSample, type ReferenceFindingKind } from "../model/extractors";
 import { retrieveFewShotExemplars, type RetrievedExemplar } from "../model/indexing";
-import { BLOCK_GROUPS, BLOCK_TYPES, blockTypeDefinition, suggestedSubtype, type BlockKind } from "../model/block-types";
+import { BLOCK_GROUPS, BLOCK_TYPES, blockIntentFor, blockTypeDefinition, suggestedSubtype, type BlockKind } from "../model/block-types";
+import { spatialScopeLabel } from "../model/spatial-scope";
 import "./context-block";
 import "./output-card";
 import "./project-rail";
@@ -111,12 +112,44 @@ export class FormaWorkspace extends FormaElement {
     const ids = out.map((o) => o.id); void this.store.append({ type: "ComparisonOpened", payload: { object_ids: ids, source_surface: "studio" } }); this.store.patchUi({ compareOpen: true, comparisonOutputIds: ids.join("|") });
   }
 
+  #decisionText(block:CreativeBlock|undefined){
+    if(!block)return "this decision";
+    const value=String(block.properties.text??block.properties.label??block.handle).trim();
+    return value.length>110?`${value.slice(0,107)}…`:value;
+  }
+
+  #comparisonChange(change:ReturnType<typeof contextDiff>[number]){
+    const block=change.after??change.before;
+    if(!block)return{title:"Document decision updated",detail:"A decision changed between these two results.",scope:""};
+    const label=blockTypeDefinition(block.type)?.label??shortEventType(block.type);
+    const text=this.#decisionText(block);
+    const scope=spatialScopeLabel(block.properties.spatial_scope);
+    if(change.status==="added")return{title:`${label} added`,detail:`Added “${text}” before generating the current result.`,scope:`Applies to ${scope.toLowerCase()}`};
+    if(change.status==="removed")return{title:`${label} removed`,detail:`Removed “${text}” before generating the current result.`,scope:`Previously applied to ${scope.toLowerCase()}`};
+    const before=change.before!;const after=change.after!;const actions:string[]=[];
+    const beforeText=this.#decisionText(before);const afterText=this.#decisionText(after);
+    if(beforeText!==afterText)actions.push(`wording changed from “${beforeText}” to “${afterText}”`);
+    const beforeIntent=blockIntentFor(before.type,before.properties);const afterIntent=blockIntentFor(after.type,after.properties);
+    if(beforeIntent!==afterIntent)actions.push(`intent changed from ${beforeIntent} to ${afterIntent}`);
+    const beforeWeight=Number(before.properties.weight??.5);const afterWeight=Number(after.properties.weight??.5);
+    if(beforeWeight!==afterWeight)actions.push(`influence changed from ${Math.round(beforeWeight*100)}% to ${Math.round(afterWeight*100)}%`);
+    const beforeScope=spatialScopeLabel(before.properties.spatial_scope);const afterScope=spatialScopeLabel(after.properties.spatial_scope);
+    if(beforeScope!==afterScope)actions.push(`affected area moved from ${beforeScope.toLowerCase()} to ${afterScope.toLowerCase()}`);
+    const beforeSubtype=String(before.properties.subtype??"");const afterSubtype=String(after.properties.subtype??"");
+    if(beforeSubtype!==afterSubtype&&afterSubtype)actions.push(`starting point changed from ${beforeSubtype||"unspecified"} to ${afterSubtype}`);
+    if(JSON.stringify(before.properties.colors??[])!==JSON.stringify(after.properties.colors??[]))actions.push("its color palette changed");
+    if(before.locked!==after.locked)actions.push(after.locked?"the decision was protected from changes":"the decision was made editable");
+    if(before.position!==after.position)actions.push("its order in the plan changed");
+    if(before.handle!==after.handle)actions.push(`its name changed from ${before.handle} to ${after.handle}`);
+    return{title:`${label} updated`,detail:actions.length?`${actions.join("; ")}.`:`Updated “${text}” before generating the current result.`,scope:`Now applies to ${afterScope.toLowerCase()}`};
+  }
+
   #comparison() {
     const events = this.store.events.get(); const ids = this.store.ui.comparisonOutputIds.split("|").filter(Boolean); const all = this.store.projection.get().libraryOutputs;
     const requested = ids.map((id) => all.find((output) => output.id === id)).filter((output): output is NonNullable<typeof output> => Boolean(output)); const outputs = requested.length >= 2 ? requested : all.slice(0,2);
     const completed = events.filter((event) => event.type === "GenerationCompleted" && (!outputs.length || outputs.some((output) => Array.isArray(event.payload.object_ids) && event.payload.object_ids.map(String).includes(output.id)))); const rightSeq = completed.at(-1)?.sequence ?? this.store.head.get(); const leftSeq = completed.at(-2)?.sequence ?? Math.max(1, rightSeq - 3);
     const left = foldEvents(events, leftSeq); const right = foldEvents(events, rightSeq); const diff = contextDiff(left, right);
-    return html`<dialog class="modal workspace-modal comparison-modal" tabindex="-1" closedby="any" aria-labelledby="compare-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.store.patchUi({compareOpen:false});}} @cancel=${(event:Event)=>{event.preventDefault();this.store.patchUi({compareOpen:false});}} @close=${()=>{if(this.store.ui.compareOpen)this.store.patchUi({compareOpen:false});}}><div class="modal-card wide"><button class="icon-button modal-close" aria-label="Close comparison" @click=${() => this.store.patchUi({ compareOpen:false })}>${icon("close")}</button><span class="eyebrow">Decision frontier · witnessed</span><h2 id="compare-title">Compare two event-derived states</h2><div class="comparison-grid">${outputs.map((o,i) => html`<div><div class="output-art"><forma-output-visual .output=${o}></forma-output-visual></div><b>${i ? "Previous" : "Current"} · ${o.id}</b></div>`)}</div><div class="diff-list"><h3>Context diff</h3>${diff.length ? diff.map((d) => html`<div><span class="status-dot ${d.status}"></span><b>${d.id}</b><span>${d.status}</span></div>`) : html`<p>No block changes — this comparison isolates generator variance.</p>`}</div></div></dialog>`;
+    return html`<dialog class="modal workspace-modal comparison-modal" tabindex="-1" closedby="any" aria-labelledby="compare-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.store.patchUi({compareOpen:false});}} @cancel=${(event:Event)=>{event.preventDefault();this.store.patchUi({compareOpen:false});}} @close=${()=>{if(this.store.ui.compareOpen)this.store.patchUi({compareOpen:false});}}><div class="modal-card wide comparison-card"><button class="icon-button modal-close" aria-label="Close comparison" @click=${() => this.store.patchUi({ compareOpen:false })}>${icon("close")}</button><span class="eyebrow">Decision frontier · witnessed</span><h2 id="compare-title">Compare two creative results</h2><p>See the exact creative decisions that changed between the previous result and the current one.</p><div class="comparison-grid">${outputs.map((o,i) => html`<div><div class="output-art"><forma-output-visual .output=${o} .interactive=${true}></forma-output-visual></div><b>${i ? "Previous result" : "Current result"}</b><small>${o.modelId} · generation event #${o.sequence}</small></div>`)}</div><section class="diff-list" aria-labelledby="comparison-changes-title"><header><div><span class="eyebrow">What changed</span><h3 id="comparison-changes-title">Creative decisions between these results</h3></div><strong>${diff.length} change${diff.length===1?"":"s"}</strong></header>${diff.length ? diff.map((change) => {const description=this.#comparisonChange(change);return html`<article class=${`diff-change ${change.status}`}><span class=${`status-dot ${change.status}`} aria-hidden="true"></span><div><b>${description.title}</b><p>${description.detail}</p><small>${description.scope}</small></div><em>${change.status}</em></article>`;}) : html`<p>No creative decisions changed. This comparison isolates image-model variation from the same plan.</p>`}</section></div></dialog>`;
   }
   #inspector() {
     const event = this.store.events.get().find((e) => e.eventId === this.store.ui.selectedEventId) ?? this.store.events.get().at(-1);

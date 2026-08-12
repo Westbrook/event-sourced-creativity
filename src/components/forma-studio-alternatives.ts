@@ -8,6 +8,7 @@ import "./project-rail";
 import "./studio-navigation";
 import "./event-inspector";
 import "./spatial-scope-editor";
+import "./document-generations";
 
 const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 42) || "untitled";
 
@@ -37,6 +38,7 @@ export abstract class AlternativeStudio extends FormaElement {
         <div class="studio-subpage-body">
           <forma-studio-navigator destination=${destination}></forma-studio-navigator>
           ${options.continuity === false ? nothing : html`<forma-document-continuity view=${active}></forma-document-continuity>`}
+          ${active === "editor" ? nothing : html`<forma-document-generations view=${active}></forma-document-generations>`}
           ${body}
         </div>
       </div>

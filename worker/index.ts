@@ -2,7 +2,7 @@ import { handleEvents, type WorkerEnv } from "./events-api";
 import { getMedia, uploadMedia } from "./media-api";
 import { handleAdminUsers, handleSession } from "./pilot-policy";
 import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
-import { appEntryPath } from "../src/model/routes";
+import { appEntryPath, isDocumentViewRoute, libraryFocusFromRoute } from "../src/model/routes";
 
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
@@ -17,6 +17,10 @@ export default {
     if(url.pathname==="/api/media"&&request.method==="POST")return uploadMedia(request,env);
     if(url.pathname.startsWith("/api/media/")&&request.method==="GET")return getMedia(request,decodeURIComponent(url.pathname.slice("/api/media/".length)),env);
     if(url.pathname.startsWith("/api/"))return Response.json({error:"not_found"},{status:404});
+    if((request.method==="GET"||request.method==="HEAD")&&(isDocumentViewRoute(url.pathname)||libraryFocusFromRoute(url.pathname))){
+      const entryUrl=new URL(appEntryPath(url.pathname),url);
+      return env.ASSETS.fetch(new Request(entryUrl,request));
+    }
     const asset=await env.ASSETS.fetch(request);if(asset.status!==404)return asset;
     if((request.method==="GET"||request.method==="HEAD")&&!url.pathname.startsWith("/assets/")){
       const entryPath=url.pathname.startsWith("/share/")?"/share/index.html":appEntryPath(url.pathname);
