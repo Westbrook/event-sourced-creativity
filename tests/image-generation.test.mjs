@@ -5,11 +5,12 @@ import { buildCreativeImagePrompt, buildPixelReferenceDirectives, buildSpatialDi
 import { foldEvents } from "../src/model/events.ts";
 
 test("builds a GPT Image prompt that preserves role, intent, and negative constraints",()=>{
-  const prompt=buildCreativeImagePrompt({facts:[{role:"subject",intent:"avoid",effect:"must_not_include",properties:{text:"people under 20 years old"}}]},{title:"Quiet interior",scene:"A still room after dusk"});
+  const prompt=buildCreativeImagePrompt({facts:[{block_id:"subject",role:"subject",intent:"avoid",effect:"must_not_include",properties:{text:"people under 20 years old"}},{block_id:"reference",role:"reference",intent:"include",properties:{label:"Casting reference"}}],relationships:[{relation_id:"relation",from_block_id:"subject",to_block_id:"reference",kind:"subject_reference"}]},{title:"Quiet interior",scene:"A still room after dusk"});
   assert.match(prompt,/Create one polished landscape image/);
   assert.match(prompt,/effect must_not_include/);
   assert.match(prompt,/people under 20 years old/);
   assert.match(prompt,/Never promote that content/);
+  assert.match(prompt,/subject_reference/);assert.match(prompt,/target block supports the source block/);
 });
 
 test("turns every spatial block scope into an explicit image-generation directive",()=>{

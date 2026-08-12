@@ -96,3 +96,24 @@ test("keeps project-scoped reusable blocks out of other project projections",()=
   ];
   assert.deepEqual(foldEvents(events).libraryBlocks.map((block)=>block.id),["block-a"]);
 });
+
+test("projects typed block relationships by project and document without merging either block",()=>{
+  const events=[
+    event(1,"ProjectCreated",{project_id:"project-a",name:"Connected context"}),
+    event(2,"DocumentCreated",{project_id:"project-a",document_id:"doc-a",title:"A"}),
+    event(3,"BlockCreated",{block_id:"subject-doc",document_id:"doc-a",type:"subject",handle:"subject/person",properties:{text:"A quiet portrait"}}),
+    event(4,"BlockCreated",{block_id:"reference-doc",document_id:"doc-a",type:"reference",handle:"reference/person",properties:{label:"Portrait reference"}}),
+    event(5,"BlockRelationAdded",{relation_id:"relation-doc",project_id:"project-a",document_id:"doc-a",from_block_id:"subject-doc",to_block_id:"reference-doc",kind:"subject_reference",properties:{purpose:"creative-reference"}}),
+    event(6,"BlockCreated",{block_id:"style-library",project_id:"project-a",scope:"library",type:"style",handle:"style/editorial",properties:{text:"Restrained editorial finish"}}),
+    event(7,"BlockCreated",{block_id:"reference-library",project_id:"project-a",scope:"library",type:"reference",handle:"reference/material",properties:{label:"Material reference"}}),
+    event(8,"BlockRelationAdded",{relation_id:"relation-library",project_id:"project-a",from_block_id:"style-library",to_block_id:"reference-library",kind:"material_reference"}),
+  ];
+  const active=foldEvents(events);
+  assert.deepEqual(active.blockRelations.map((relation)=>relation.id),["relation-doc"]);
+  assert.deepEqual(active.libraryBlockRelations.map((relation)=>relation.id),["relation-doc","relation-library"]);
+  assert.equal(active.libraryBlockRelations[0].kind,"subject_reference");
+  const removed=foldEvents([...events,event(9,"BlockRelationRemoved",events[4].payload)]);
+  assert.deepEqual(removed.blockRelations,[]);assert.deepEqual(removed.libraryBlockRelations.map((relation)=>relation.id),["relation-library"]);
+  const restored=foldEvents([...events,event(9,"BlockRelationRemoved",events[4].payload),event(10,"BlockRelationAdded",events[4].payload,"user","event-9")]);
+  assert.deepEqual(restored.blockRelations.map((relation)=>relation.id),["relation-doc"]);
+});

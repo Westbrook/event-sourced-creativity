@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
 import { documentFocusFromRoute, isDocumentViewRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import { generationMix, outputQualityLabel } from "../model/events";
+import "./reference-image";
 
 type StudioMode = "document" | "board" | "guided" | "layers" | "adaptive" | "editor" | "chat";
 
@@ -32,6 +33,7 @@ const readDocumentFocus = () => {
 
 export class StudioModeNav extends FormaElement {
   #focused = false;
+  #contextPickerOpen = false;
   #focusKeydown = (event: KeyboardEvent) => {
     if (event.key === "Escape" && this.#focused && !document.querySelector("dialog[open]")) this.#setFocused(false);
   };
@@ -52,6 +54,8 @@ export class StudioModeNav extends FormaElement {
     super.disconnectedCallback();
   }
 
+  protected override updated(){const dialog=this.querySelector<HTMLDialogElement>(".context-set-picker-dialog");if(dialog&&!dialog.open)dialog.showModal();}
+
   #reflectFocus() {
     document.documentElement.toggleAttribute("data-document-focus", this.#focused);
   }
@@ -64,6 +68,10 @@ export class StudioModeNav extends FormaElement {
     this.requestUpdate();
   }
 
+  #closeContextPicker(){this.querySelector<HTMLDialogElement>(".context-set-picker-dialog")?.close();this.#contextPickerOpen=false;this.requestUpdate();}
+  #connectedIds(rootId:string){const projection=this.store.projection.get();const ids=new Set([rootId]);let changed=true;while(changed&&ids.size<24){changed=false;for(const relation of projection.libraryBlockRelations)if(ids.has(relation.fromBlockId)&&!ids.has(relation.toBlockId)){ids.add(relation.toBlockId);changed=true;}}return ids;}
+  async #addContextSet(rootId:string){const result=await this.store.copyLibraryBlockSet(rootId,undefined,"document-view-context-picker");if(result)this.#closeContextPicker();}
+
   override render() {
     const active=(this.getAttribute("active")??"document") as StudioMode;
     const projection = this.store.projection.get();
@@ -73,7 +81,8 @@ export class StudioModeNav extends FormaElement {
       try { localStorage.setItem(DOCUMENT_FOCUS_KEY, String(routeFocused)); } catch { /* URL state still works without storage. */ }
       this.#reflectFocus();
     }
-    return html`<nav class="studio-mode-nav" aria-label="Document views"><span>Document views</span><div>${modes.map((mode)=>{const href=withDocumentFocusInRoute(withDocumentInRoute(mode.path,projection.documentId,projection.documentTitle),this.#focused);return html`<a href=${href} class=${active===mode.id?"active":""} aria-current=${active===mode.id?"page":nothing} @click=${(event:MouseEvent)=>{event.preventDefault();this.store.setRoute(href);window.scrollTo({top:0});}}>${mode.label}</a>`;})}</div><button class="document-focus-toggle" aria-pressed=${this.#focused} title=${this.#focused ? "Restore project navigation and page context" : "Give this document view the full workspace"} @click=${() => this.#setFocused(!this.#focused)}><span aria-hidden="true">${this.#focused ? "↙" : "↗"}</span>${this.#focused ? "Exit focus" : "Focus view"}</button></nav>`;
+    const standalone=projection.libraryBlocks.filter((block)=>block.scope==="library");const targeted=new Set(projection.libraryBlockRelations.map((relation)=>relation.toBlockId));const roots=standalone.filter((block)=>block.type!=="reference"||!targeted.has(block.id));
+    return html`<nav class="studio-mode-nav" aria-label="Document views"><span>Document views</span><div>${modes.map((mode)=>{const href=withDocumentFocusInRoute(withDocumentInRoute(mode.path,projection.documentId,projection.documentTitle),this.#focused);return html`<a href=${href} class=${active===mode.id?"active":""} aria-current=${active===mode.id?"page":nothing} @click=${(event:MouseEvent)=>{event.preventDefault();this.store.setRoute(href);window.scrollTo({top:0});}}>${mode.label}</a>`;})}</div><button class="context-set-trigger" @click=${()=>{this.#contextPickerOpen=true;this.requestUpdate();}}>${icon("plus")} Add context</button><button class="document-focus-toggle" aria-pressed=${this.#focused} title=${this.#focused ? "Restore project navigation and page context" : "Give this document view the full workspace"} @click=${() => this.#setFocused(!this.#focused)}><span aria-hidden="true">${this.#focused ? "↙" : "↗"}</span>${this.#focused ? "Exit focus" : "Focus view"}</button>${this.#contextPickerOpen?html`<dialog class="modal context-set-picker-dialog" closedby="any" aria-labelledby="context-set-picker-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeContextPicker();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeContextPicker();}}><section class="context-set-picker-panel"><button class="icon-button modal-close" aria-label="Close reusable context picker" @click=${this.#closeContextPicker}>${icon("close")}</button><header><span class="eyebrow">${projection.projectName} / Reusable context</span><h2 id="context-set-picker-title">Add a complete idea</h2><p>Choose once to add the root decision and every related reference image. The blocks stay independently editable after they enter this document.</p></header>${roots.length?html`<div class="context-set-picker-list">${roots.map((block)=>{const connected=this.#connectedIds(block.id);const connectedBlocks=projection.libraryBlocks.filter((item)=>connected.has(item.id));const references=connectedBlocks.filter((item)=>item.type==="reference");return html`<article><div class="context-set-preview">${references.slice(0,3).map((reference)=>html`<forma-reference-image .src=${String(reference.properties.media_url??"")} .alt=${String(reference.properties.label??reference.handle)} .compact=${true} .targetId=${reference.id} .referenceId=${String(reference.properties.reference_id??"")} .focalPoint=${reference.properties.focal_point}></forma-reference-image>`)}${!references.length?html`<span>${block.type.slice(0,2).toUpperCase()}</span>`:nothing}</div><div><span>${block.type} · ${connectedBlocks.length===1?"single block":`${connectedBlocks.length} connected blocks`}</span><h3>${block.handle}</h3><p>${String(block.properties.text??block.properties.label??"Reusable creative context")}</p>${references.length?html`<small>${references.map((reference)=>String(reference.properties.label??reference.handle)).join(" · ")}</small>`:html`<small>No related reference image</small>`}</div><button class="button primary" @click=${()=>this.#addContextSet(block.id)}>${connectedBlocks.length===1?"Add block":"Add context set"}</button></article>`;})}</div>`:html`<div class="context-set-picker-empty"><b>No reusable context yet</b><p>Create blocks and connect their reference images in the Library Block editor.</p><a href="/library/blocks/editor/new" @click=${(event:MouseEvent)=>{event.preventDefault();this.#closeContextPicker();this.store.setRoute("/library/blocks/editor/new");}}>Open Block editor ${icon("arrow")}</a></div>`}</section></dialog>`:nothing}</nav>`;
   }
 }
 

@@ -44,6 +44,7 @@ test("keeps every replay fixture current and every mocked event specifically exp
   const taste=buildScenario("taste-time",13); const compile=taste.find((event)=>event.type==="ContextCompiled"); const complete=taste.find((event)=>event.type==="GenerationCompleted"); const critique=taste.find((event)=>event.type==="ObjectCritiqued");
   assert.equal(compile?.payload.generation_id,complete?.payload.generation_id); assert.ok(complete?.payload.object_ids.includes(critique?.payload.object_id)); assert.ok(compile?.payload.source_block_versions.length);
   assert.ok(buildScenario("attention-friction",12).some((event)=>event.type==="AttentionSignalsForgotten"));
+  const evolution=buildScenario("document-evolution",SCENARIO_EVENT_TYPES.length*3);const evolutionProjection=foldEvents(evolution);assert.ok(evolution.some((event)=>event.type==="BlockRelationAdded"));assert.ok(evolution.some((event)=>event.type==="BlockRelationRemoved"));assert.ok(evolutionProjection.libraryBlockRelations.some((relation)=>relation.kind==="style_reference"));assert.ok(evolutionProjection.libraryBlockRelations.some((relation)=>relation.kind==="subject_reference"));
   const timed=buildScenario("taste-time",100);const gaps=timed.slice(1).map((event,index)=>Date.parse(event.occurredAt)-Date.parse(timed[index].occurredAt));
   assert.ok(new Set(gaps).size>5);assert.ok(Math.max(...gaps)>=86_400_000);const timedStory=explainReplayEvent(timed[1],timed[0]);assert.ok(timedStory.timing.value.length>60);assert.ok(timedStory.timing.gapMs>0);
 });
@@ -148,11 +149,13 @@ test("edits project-scoped reusable blocks through the Library and shared projec
   ]);
   assert.match(editor,/scope:"library"/);assert.match(editor,/project_id:p\.projectId/);assert.match(editor,/forked_from_block_id/);
   assert.match(editor,/BlockPropertyEdited/);assert.match(editor,/BlockWeightSet/);assert.match(editor,/BlockRemoved/);assert.match(editor,/BlockLocked/);
+  assert.match(editor,/Related reference images/);assert.match(editor,/BlockRelationAdded/);assert.match(editor,/BlockRelationRemoved/);assert.match(editor,/subject_reference/);assert.doesNotMatch(editor,/<legend>Block identity|<legend>Reusable content/);
   assert.match(editor,/CollectionItemAdded/);assert.match(editor,/item_ref:\{block_id:id\}/);assert.match(editor,/forma-collection-tree/);
   assert.match(library,/forma-library-block-editor/);assert.match(library,/New reusable block/);assert.match(library,/Fork & edit/);
   assert.match(tree,/itemKind/);assert.match(tree,/block_id:id/);assert.match(worker,/ref\.block_id/);
   assert.match(projects,/Independent project context/);assert.match(projects,/block\.scope==="library"/);
   assert.match(events,/scope: "document" \| "library"/);assert.match(events,/b\.projectId===state\.projectId/);
+  assert.match(events,/libraryBlockRelations/);assert.match(worker,/BlockRelationAdded/);assert.match(worker,/BlockRelationRemoved/);
   assert.match(routes,/libraryBlockEditorFromRoute/);assert.match(routes,/libraryBlockEditorRoute/);
 });
 
@@ -175,6 +178,7 @@ test("presents every alternate Studio lens as the same complete durable document
   assert.doesNotMatch(creativeEditor, />Event|>Metadata|>Provenance|Creative history|source events/i);
   assert.match(navigation, /projection\.blocks\.length/); assert.match(navigation, /projection\.outputs\.length/); assert.match(navigation, /Every saved decision and result/);
   assert.match(navigation, /Creative editor/);
+  assert.match(navigation, /Add context/);assert.match(navigation, /copyLibraryBlockSet/);assert.match(navigation, /Add context set/);
   assert.match(generations, /projection\.get\(\)\.outputs/); assert.match(generations, /Results from this document/); assert.match(generations, /"full"\|"compact"\|"canvas"\|"rail"/); assert.match(generations, /interactive/);
   assert.match(navigation, /DOCUMENT_FOCUS_KEY/); assert.match(navigation, /data-document-focus/); assert.match(navigation, /Focus view/); assert.match(navigation, /Exit focus/); assert.match(navigation, /event\.key === "Escape"/); assert.match(navigation, /withDocumentFocusInRoute/); assert.match(navigation, /documentFocusFromRoute/);
   assert.match(styles, /\.creative-editor \{[^}]*grid-template-rows: auto minmax\(0,1fr\)[^}]*height: clamp\(590px,72dvh,780px\)/);

@@ -166,11 +166,12 @@ export function buildCreativeImagePrompt(snapshot:Record<string,unknown>,directi
     authority:fact.authority,
     properties:fact.properties,
   }));
-  const compactContext={facts:activeFacts,pins:Array.isArray(snapshot.pins)?snapshot.pins:[],standing_constraints:Array.isArray(snapshot.standing_constraints)?snapshot.standing_constraints:[],document:snapshot.document};
+  const activeIds=new Set(activeFacts.map((fact)=>String(fact.block_id??"")));const relationships=(Array.isArray(snapshot.relationships)?snapshot.relationships.map(record):[]).filter((relation)=>activeIds.has(String(relation.from_block_id??""))&&activeIds.has(String(relation.to_block_id??""))).map((relation)=>({relation_id:relation.relation_id,from_block_id:relation.from_block_id,to_block_id:relation.to_block_id,kind:relation.kind,properties:relation.properties}));
+  const compactContext={facts:activeFacts,relationships,pins:Array.isArray(snapshot.pins)?snapshot.pins:[],standing_constraints:Array.isArray(snapshot.standing_constraints)?snapshot.standing_constraints:[],document:snapshot.document};
   const spatialDirectives=buildSpatialDirectives(snapshot);
   return [
     "Create one polished landscape image that realizes the supplied creative direction.",
-    "Use every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, and spatial scope. Ignore blocks marked active false. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.",
+    "Use every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.",
     "Any fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.",
     "Spatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.",
     "Do not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.",

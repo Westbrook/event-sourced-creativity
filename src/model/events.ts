@@ -38,6 +38,18 @@ export type CreativeBlock = {
   sourceEvents: string[];
 };
 
+export type CreativeBlockRelation = {
+  id: string;
+  projectId: string;
+  documentId: string;
+  fromBlockId: string;
+  toBlockId: string;
+  kind: string;
+  removed: boolean;
+  properties: Record<string, unknown>;
+  sourceEvents: string[];
+};
+
 export type CreativeProject = {
   id: string;
   name: string;
@@ -120,6 +132,8 @@ export type CreativeProjection = {
   documents: CreativeDocument[];
   blocks: CreativeBlock[];
   libraryBlocks: CreativeBlock[];
+  blockRelations: CreativeBlockRelation[];
+  libraryBlockRelations: CreativeBlockRelation[];
   collections: CreativeCollection[];
   membership: Record<string, { collectionId: string; position: string }>;
   outputs: CreativeOutput[];
@@ -149,6 +163,7 @@ const itemId = (value: unknown) => {
 export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFINITY, selectedDocumentId = ""): CreativeProjection {
   const projects = new Map<string, Omit<CreativeProject, "documentCount" | "collectionCount" | "blockCount" | "outputCount">>();
   const blocks = new Map<string, CreativeBlock>();
+  const blockRelations = new Map<string, CreativeBlockRelation>();
   const documents = new Map<string, CreativeDocument>();
   const collections = new Map<string, CreativeCollection>();
   const membership: Record<string, { collectionId: string; position: string }> = {};
@@ -164,7 +179,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
     projectState: "active",
     documentId: "",
     documentTitle: "Untitled document",
-    projects: [], documents: [], blocks: [], libraryBlocks: [], collections: [], membership, outputs: [], libraryOutputs: [],
+    projects: [], documents: [], blocks: [], libraryBlocks: [], blockRelations: [], libraryBlockRelations: [], collections: [], membership, outputs: [], libraryOutputs: [],
     latestCompile: null, brief: null, presentedBriefItems: new Set(),
     annotations: [], families: [], preferences: [], conditions: [], lastSession: null, currentSessionId: null, sessionOpen: false,
   };
@@ -219,6 +234,12 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "BlockWeightSet": { const b = blocks.get(String(p.block_id)); if (b) b.properties.weight = Number(p.weight ?? .5); break; }
       case "BlockLocked": case "BlockUnlocked": { const b = blocks.get(String(p.block_id)); if (b) b.locked = event.type === "BlockLocked"; break; }
       case "BlockRemoved": case "BlockRestored": { const b = blocks.get(String(p.block_id)); if (b) b.removed = event.type === "BlockRemoved"; break; }
+      case "BlockRelationAdded": {
+        const id=String(p.relation_id??"");const fromBlockId=String(p.from_block_id??"");const toBlockId=String(p.to_block_id??"");if(!id||!fromBlockId||!toBlockId||fromBlockId===toBlockId)break;
+        const from=blocks.get(fromBlockId);const to=blocks.get(toBlockId);const existing=blockRelations.get(id);const documentId=String(p.document_id??(from?.documentId&&from.documentId===to?.documentId?from.documentId:"")??"");const projectId=String(p.project_id??from?.projectId??to?.projectId??state.projectId);
+        blockRelations.set(id,{id,projectId,documentId,fromBlockId,toBlockId,kind:String(p.kind??existing?.kind??"visual_evidence"),removed:false,properties:{...(existing?.properties??{}),...asRecord(p.properties)},sourceEvents:[...(existing?.sourceEvents??[]),event.eventId]});break;
+      }
+      case "BlockRelationRemoved": { const relation=blockRelations.get(String(p.relation_id??""));if(relation){relation.removed=true;relation.sourceEvents.push(event.eventId);}break; }
       case "ChipEdited": { const b = blocks.get(String(p.block_id)); if (b) { b.properties[String(p.property ?? "value")] = p.new_value; b.properties.authority = event.compensatesEventId ? "inferred" : "authored"; b.sourceEvents.push(event.eventId); } break; }
       case "ExtractionRequested": { const b = blocks.get(String(p.block_id)); if (b) { b.properties.extraction_status = "pending"; b.sourceEvents.push(event.eventId); } break; }
       case "ExtractionCompleted": {
@@ -306,6 +327,9 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   if(selectedDocument){state.documentId=selectedDocument.id;state.documentTitle=selectedDocument.title;}
   else if(!visibleDocumentIds.has(state.documentId)){const fallback=visibleDocuments[0];state.documentId=fallback?.id??"";state.documentTitle=fallback?.title??"No document open";state.latestCompile=null;}
   state.blocks = state.libraryBlocks.filter((block) => block.scope==="document"&&block.documentId === state.documentId);
+  const visibleBlockIds=new Set(state.libraryBlocks.map((block)=>block.id));const documentBlockIds=new Set(state.blocks.map((block)=>block.id));
+  state.libraryBlockRelations=[...blockRelations.values()].filter((relation)=>!relation.removed&&relation.projectId===state.projectId&&visibleBlockIds.has(relation.fromBlockId)&&visibleBlockIds.has(relation.toBlockId));
+  state.blockRelations=state.libraryBlockRelations.filter((relation)=>documentBlockIds.has(relation.fromBlockId)&&documentBlockIds.has(relation.toBlockId));
   state.collections = [...collections.values()].filter((c) => !c.removed&&c.projectId===state.projectId).sort((a, b) => a.position.localeCompare(b.position) || a.handle.localeCompare(b.handle));
   state.libraryOutputs = [...outputs.values()].filter((o) => !o.discarded&&(!documents.has(o.documentId)||visibleDocumentIds.has(o.documentId))).sort((a, b) => b.sequence - a.sequence);
   state.outputs = state.libraryOutputs.filter((output) => output.documentId === state.documentId);

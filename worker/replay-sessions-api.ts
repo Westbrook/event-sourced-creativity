@@ -45,7 +45,7 @@ async function grantApproval(request:Request,env:WorkerEnv){
   return Response.json({approvalId,expiresAt:expiresAt.toISOString(),reservedTokenCeiling:RESERVED_TOKENS});
 }
 
-const snapshotFor=(plan:LiveReplayPlan)=>({
+const snapshotFor=(plan:LiveReplayPlan)=>{const referenceIndex=plan.blocks.findIndex((block)=>block.type==="reference");const relationKind:Record<string,string>={subject:"subject_reference",style:"style_reference",composition:"composition_reference",material:"material_reference",lighting:"lighting_reference",palette:"palette_reference",emotion:"mood_reference",environment:"mood_reference"};return{
   document_title:plan.document_title,user_goal:plan.user_goal,reference:plan.reference,
   facts:plan.blocks.map((block,index)=>({
     block_id:`live-block-${index+1}`,type:block.type,role:block.type,handle:`${block.type}/${block.label}`,intent:block.intent,
@@ -56,9 +56,9 @@ const snapshotFor=(plan:LiveReplayPlan)=>({
         ? {schema_version:1,kind:"document",coordinate_space:"document-normalized",feather:0,falloff:"hard",polarity:"inside"}
         : {schema_version:1,kind:"region",coordinate_space:"document-normalized",region:block.applies_to,instruction:`the ${block.applies_to} portion of the composition`,feather:.14,falloff:"contextual",polarity:"inside"},
     },
-  })),
+  })),relationships:referenceIndex<0?[]:plan.blocks.flatMap((block,index)=>relationKind[block.type]?[{relation_id:`live-relation-${index+1}`,from_block_id:`live-block-${index+1}`,to_block_id:`live-block-${referenceIndex+1}`,kind:relationKind[block.type],properties:{purpose:"creative-reference"}}]:[]),
   standing_constraints:[plan.memory.preference],as_of:{source:"provider-backed-replay",complete:true},
-});
+};};
 
 async function createSession(request:Request,env:WorkerEnv){
   const auth=await requireUser(request,env,"admin");if(auth.response||!auth.user)return auth.response!;const consent=requireConsent(auth.user);if(consent)return consent;
