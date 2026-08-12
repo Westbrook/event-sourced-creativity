@@ -3,6 +3,7 @@ export interface WorkerEnv {
   DB: D1Database;
   MEDIA: R2Bucket;
   OPENAI_API_KEY?: string;
+  OPENAI_PROJECT?: string;
   OPENAI_MODEL?: string;
   OPENAI_IMAGE_MODEL?: string;
   FORMA_ADMIN_EMAILS?: string;

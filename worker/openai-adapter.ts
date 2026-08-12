@@ -31,12 +31,20 @@ async function safetyIdentifier(userId: string) {
   return `forma_${Array.from(new Uint8Array(hash)).map((value) => value.toString(16).padStart(2, "0")).join("").slice(0, 32)}`;
 }
 
+function openAIHeaders(env: WorkerEnv) {
+  return {
+    authorization: `Bearer ${env.OPENAI_API_KEY}`,
+    "content-type": "application/json",
+    ...(env.OPENAI_PROJECT ? { "OpenAI-Project": env.OPENAI_PROJECT } : {}),
+  };
+}
+
 export async function generateCreativeDirection(env: WorkerEnv, userId: string, snapshot: Record<string, unknown>) {
   if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
   const started = Date.now();
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
-    headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
+    headers: openAIHeaders(env),
     body: JSON.stringify({
       model: env.OPENAI_MODEL ?? "gpt-5.6-terra",
       instructions: "You are Forma's creative-direction adapter. Interpret only the supplied authored and cited context. Return a concrete visual direction, not hidden reasoning. Treat inferred material as suggestive and never claim it was authored. Each fact has an independent semantic role and intent. Every fact whose intent is avoid or prohibit, whose effect is must_not_include, or whose legacy type is exclusion is a negative constraint: apply the prohibition to its named role, and never let the named content become a positive focus in the title, scene, rationale, palette, or next moves. Prohibit is a hard boundary; avoid is a strong negative preference. Weight expresses the constraint's influence, not creative prominence. Prefer facts are positive preferences, while include facts are ordinary positive instructions.",
@@ -68,7 +76,7 @@ export function buildCreativeImagePrompt(snapshot:Record<string,unknown>,directi
 export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot:Record<string,unknown>,direction:Record<string,unknown>) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const model=env.OPENAI_IMAGE_MODEL??"gpt-image-2";const prompt=buildCreativeImagePrompt(snapshot,direction);const started=Date.now();
-  const response=await fetch("https://api.openai.com/v1/images/generations",{method:"POST",headers:{authorization:`Bearer ${env.OPENAI_API_KEY}`,"content-type":"application/json"},body:JSON.stringify({model,prompt,n:1,size:"1536x1024",quality:"medium",user:await safetyIdentifier(userId)})});
+  const response=await fetch("https://api.openai.com/v1/images/generations",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({model,prompt,n:1,size:"1536x1024",quality:"medium",user:await safetyIdentifier(userId)})});
   const body=await response.json() as OpenAIImageResponse;if(!response.ok)throw new Error(body.error?.message??`openai_image_${response.status}`);
   const encoded=body.data?.[0]?.b64_json;if(!encoded)throw new Error("provider_returned_no_image");
   let bytes:Uint8Array;try{const binary=atob(encoded);bytes=Uint8Array.from(binary,(character)=>character.charCodeAt(0));}catch{throw new Error("provider_returned_invalid_image");}
@@ -78,7 +86,7 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
 export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input:{intent:string;documentTitle:string;blocks:Array<Record<string,unknown>>}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
-  const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{authorization:`Bearer ${env.OPENAI_API_KEY}`,"content-type":"application/json"},body:JSON.stringify({
+  const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({
     model:env.OPENAI_MODEL??"gpt-5.6-terra",
     instructions:"You structure an adaptive creative-context interface. Interpret the user's broad intent together with the currently authored blocks. Propose the next useful decision and 2–6 concise context blocks across intent, scene, craft, evidence, or constraints. Use only the supplied block type vocabulary. Subtypes should match the system suggestions when practical. Explain product-facing reasons, never hidden chain-of-thought. Do not claim proposals were authored and do not mutate anything.",
     input:JSON.stringify({...input,block_vocabulary:BLOCK_TYPES.map((item)=>({type:item.type,description:item.description,subtypes:item.subtypes}))}),
