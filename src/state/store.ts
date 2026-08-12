@@ -218,9 +218,9 @@ export class FormaStore {
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
   }
 
-  async chat(message:string) {
+  async chat(message:string,livePreview=true) {
     try{
-      await this.#startDocumentJob("chat",{message,documentId:this.projection.get().documentId},"chat");return[];
+      await this.#startDocumentJob("chat",{message,livePreview,documentId:this.projection.get().documentId},"chat");return[];
     }catch(error){this.toast(error instanceof Error?error.message:"Forma could not respond");return[];}
   }
 

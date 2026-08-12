@@ -1299,6 +1299,12 @@ forma-project-rail:has(.project-rail.collapsed) { width: 72px; }
 .chat-composer textarea { display: block; width: 100%; min-height: 76px; max-height: 180px; resize: vertical; padding: 11px 12px; background: #fff; border: 1px solid var(--line-strong); border-radius: 8px; font-size: var(--type-small); line-height: 1.45; }
 .chat-composer > div { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 9px; }
 .chat-composer small { color: var(--muted); font-size: var(--type-micro); }
+.chat-composer-help { margin: 7px 2px 0; color: var(--muted); font-size: var(--type-micro); }
+.chat-live-preview { display: flex; min-width: 0; align-items: center; gap: 9px; cursor: pointer; }
+.chat-live-preview input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--forest); }
+.chat-live-preview span { display: grid; min-width: 0; gap: 1px; }
+.chat-live-preview b { color: var(--ink); font-size: var(--type-caption); }
+.chat-live-preview small { line-height: 1.25; }
 html[data-document-focus] .chat-workspace { height: calc(100dvh - 51px); min-height: 0; }
 html[data-document-focus] .chat-view-page .studio-mode-nav { top: 0; }
 

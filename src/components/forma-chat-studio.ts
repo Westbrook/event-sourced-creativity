@@ -11,6 +11,7 @@ type ChatLine={id:string;role:"user"|"assistant";text:string;sequence:number};
 
 export class FormaChatStudio extends FormaElement {
   #draft="";
+  #livePreview=true;
 
   #lines(documentId:string){
     const content=this.store.content.get();const lines:ChatLine[]=[];
@@ -22,7 +23,7 @@ export class FormaChatStudio extends FormaElement {
     return lines;
   }
 
-  async #send(event:SubmitEvent){event.preventDefault();const message=this.#draft.trim();if(!message||this.store.busy.get()||this.store.documentJobActive("chat"))return;this.#draft="";this.requestUpdate();await this.store.chat(message);await this.updateComplete;this.querySelector(".chat-thread-end")?.scrollIntoView({behavior:"smooth",block:"end"});}
+  async #send(event:SubmitEvent){event.preventDefault();const message=this.#draft.trim();if(!message||this.store.busy.get()||this.store.documentJobActive("chat"))return;this.#draft="";this.requestUpdate();await this.store.chat(message,this.#livePreview);await this.updateComplete;this.querySelector(".chat-thread-end")?.scrollIntoView({behavior:"smooth",block:"end"});}
 
   #keydown(event:KeyboardEvent){if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();this.querySelector<HTMLFormElement>(".chat-composer")?.requestSubmit();}}
 
@@ -54,7 +55,8 @@ export class FormaChatStudio extends FormaElement {
             <form class="chat-composer" @submit=${this.#send}>
               <label for="creative-chat-message" class="sr-only">Message Forma</label>
               <textarea id="creative-chat-message" rows="3" maxlength="4000" placeholder="Describe what to create or change…" .value=${this.#draft} @input=${(event:InputEvent)=>{this.#draft=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}} @keydown=${this.#keydown}></textarea>
-              <div><small>A fast working preview updates after useful changes. Shift + Enter adds a line.</small><button class="button primary" ?disabled=${!this.#draft.trim()||Boolean(busy)||chatActive}>${chatActive?"Forma is thinking safely…":html`Send ${icon("arrow")}`}</button></div>
+              <p class="chat-composer-help">Shift + Enter adds a line. Your message still updates the creative plan when previewing is paused.</p>
+              <div><label class="chat-live-preview"><input type="checkbox" .checked=${this.#livePreview} @change=${(event:Event)=>{this.#livePreview=(event.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>Live preview</b><small>${this.#livePreview?"Make a fast image after useful visual changes.":"Keep chatting without generating an image."}</small></span></label><button class="button primary" ?disabled=${!this.#draft.trim()||Boolean(busy)||chatActive}>${chatActive?"Forma is thinking safely…":html`Send ${icon("arrow")}`}</button></div>
             </form>
           </section>
         </main>

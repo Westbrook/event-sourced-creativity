@@ -55,7 +55,7 @@ function safeResult(body: Record<string, unknown>, correlatedEventIds: string[] 
   return {
     head: Number(body.head ?? 0),
     appendedEventIds: appended.map((event) => String(event.eventId ?? "")).filter(Boolean).concat(correlatedEventIds),
-    previewed: Boolean(body.previewed), promoted: Boolean(body.promoted), quality: body.quality ? String(body.quality) : undefined,
+    previewed: Boolean(body.previewed), previewSuppressed: Boolean(body.previewSuppressed), promoted: Boolean(body.promoted), quality: body.quality ? String(body.quality) : undefined,
     structure: body.structure && typeof body.structure === "object" ? body.structure : undefined,
   };
 }
