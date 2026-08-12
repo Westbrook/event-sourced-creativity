@@ -160,10 +160,10 @@ export class FormaStore {
     } finally { this.busy.set(""); this.notify(); }
   }
 
-  async generate() {
+  async generate(sourceSurface?: string) {
     const projection = this.projection.get(); this.busy.set("generate"); this.notify();
     try {
-      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "generate", expectedSequence: this.head.get(), snapshot: { facts: projection.blocks.map((b) => ({ block_id: b.id, document_id: b.documentId, type: b.type, role: b.type, intent: blockIntentFor(b.type, b.properties), handle: b.handle, position: b.position, locked: b.locked, active: Number(b.properties.weight ?? .5) > 0, effect: blockEffectFor(b.type, b.properties), properties: { ...b.properties, spatial_scope: normalizeSpatialScope(b.properties.spatial_scope) }, authority: b.properties.authority ?? "authored", source_event_refs: b.sourceEvents })), pins: projection.outputs.filter((o) => o.pinned).map((o) => o.id), tail: [] }, sourceBlockVersions: projection.blocks.map((b) => ({ block_id: b.id, version: b.sourceEvents.length })) }) });
+      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "generate", sourceSurface, expectedSequence: this.head.get(), snapshot: { facts: projection.blocks.map((b) => ({ block_id: b.id, document_id: b.documentId, type: b.type, role: b.type, intent: blockIntentFor(b.type, b.properties), handle: b.handle, position: b.position, locked: b.locked, active: Number(b.properties.weight ?? .5) > 0, effect: blockEffectFor(b.type, b.properties), properties: { ...b.properties, spatial_scope: normalizeSpatialScope(b.properties.spatial_scope) }, authority: b.properties.authority ?? "authored", source_event_refs: b.sourceEvents })), pins: projection.outputs.filter((o) => o.pinned).map((o) => o.id), tail: [] }, sourceBlockVersions: projection.blocks.map((b) => ({ block_id: b.id, version: b.sourceEvents.length })) }) });
       const body = await response.json() as { appended?: CreativeEvent[]; content?: Record<string, string>; head?: number; error?: string };
       if (body.appended?.length) { this.events.set([...this.events.get(), ...body.appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(body.appended); }
       if (body.content) this.content.set({ ...this.content.get(), ...body.content });
@@ -171,6 +171,18 @@ export class FormaStore {
       await this.refreshSession(); this.toast(documentViewFromRoute(this.route.get()) === "editor" ? "Image ready." : `Image generated with ${this.session.get()?.provider.model ?? "OpenAI"}; provenance and usage recorded.`);
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
     finally { this.busy.set(""); this.notify(); }
+  }
+
+  async chat(message:string) {
+    this.busy.set("chat");this.notify();
+    try{
+      const response=await fetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"chat",message,expectedSequence:this.head.get(),clientId:"web:chat-view"})});
+      const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;previewed?:boolean;error?:string};const appended=body.appended??[];
+      if(appended.length){this.events.set([...this.events.get(),...appended]);this.head.set(body.head??this.head.get());this.#publishAppended(appended);}if(body.content)this.content.set({...this.content.get(),...body.content});
+      if(!response.ok)throw new Error(body.error==="provider_not_configured"?"Connect the OpenAI provider before chatting with Forma.":body.error??"Forma could not respond");
+      this.toast(body.previewed?"Working preview updated.":"Conversation saved.");return appended;
+    }catch(error){this.toast(error instanceof Error?error.message:"Forma could not respond");return[];}
+    finally{this.busy.set("");this.notify();}
   }
 
   async structureAdaptive(prompt:string) {

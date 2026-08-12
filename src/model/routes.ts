@@ -1,4 +1,4 @@
-export type DocumentView = "document" | "board" | "guided" | "layers" | "adaptive" | "editor";
+export type DocumentView = "document" | "board" | "guided" | "layers" | "adaptive" | "editor" | "chat";
 export type LibraryFocusKind = "block" | "output" | "family";
 export type LibraryFocus = { kind: LibraryFocusKind; id: string };
 
@@ -10,10 +10,11 @@ const legacyDocumentViews: Record<string, DocumentView> = {
   "/studio/layers": "layers",
   "/studio/adaptive": "adaptive",
   "/studio/editor": "editor",
+  "/studio/chat": "chat",
 };
 
 const routeUrl = (route: string) => new URL(route, "https://forma.local");
-const documentViews = new Set<DocumentView>(["document", "board", "guided", "layers", "adaptive", "editor"]);
+const documentViews = new Set<DocumentView>(["document", "board", "guided", "layers", "adaptive", "editor", "chat"]);
 const libraryFocusKinds = new Set<LibraryFocusKind>(["block", "output", "family"]);
 const safeDecode = (value: string) => { try { return decodeURIComponent(value); } catch { return value; } };
 

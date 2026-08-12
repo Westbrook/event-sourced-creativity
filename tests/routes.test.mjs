@@ -3,7 +3,7 @@ import test from "node:test";
 import { appEntryPath, documentEntryPath, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentFocusInRoute, withDocumentInRoute } from "../src/model/routes.ts";
 
 test("document views use a readable path for the selected durable document", () => {
-  const paths = [["/", "document"], ["/studio/board", "board"], ["/studio/guided", "guided"], ["/studio/layers", "layers"], ["/studio/adaptive", "adaptive"], ["/studio/editor", "editor"]];
+  const paths = [["/", "document"], ["/studio/board", "board"], ["/studio/guided", "guided"], ["/studio/layers", "layers"], ["/studio/adaptive", "adaptive"], ["/studio/editor", "editor"], ["/studio/chat", "chat"]];
   for (const [path, view] of paths) {
     const routed = withDocumentInRoute(path, "document-42", "Evening Atmosphere");
     assert.equal(documentIdFromRoute(routed), "document-42");
@@ -41,6 +41,7 @@ test("dynamic document paths select the smallest matching page entry", () => {
   assert.equal(documentEntryPath("/document/doc-a/view/adaptive"), "/studio/adaptive/");
   assert.equal(documentEntryPath("/document/doc-a/name/view/editor"), "/studio/editor/");
   assert.equal(documentEntryPath("/document/doc-a/name/view/editor/focus"), "/studio/editor/");
+  assert.equal(documentEntryPath("/document/doc-a/name/view/chat/focus"), "/studio/chat/");
   assert.equal(documentEntryPath("/document/doc-a/name/focus"), "/");
   assert.equal(documentViewFromRoute("/document/doc-a/name/view/board/"), "board");
   assert.equal(documentViewFromRoute("/studio/board/"), "board");

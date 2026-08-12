@@ -63,6 +63,7 @@ export class FormaShell extends FormaElement {
     if (documentView === "layers") return html`<forma-reality-layers></forma-reality-layers>`;
     if (documentView === "adaptive") return html`<forma-adaptive-path></forma-adaptive-path>`;
     if (documentView === "editor") return html`<forma-creative-editor></forma-creative-editor>`;
+    if (documentView === "chat") return html`<forma-chat-studio></forma-chat-studio>`;
     if (path.startsWith("/admin/events")) return html`<forma-admin-events></forma-admin-events>`;
     if (path.startsWith("/library")) return html`<forma-library></forma-library>`;
     if (path.startsWith("/sessions")) return html`<forma-sessions></forma-sessions>`;

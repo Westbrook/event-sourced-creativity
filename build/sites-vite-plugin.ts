@@ -12,6 +12,7 @@ export const SITE_ROUTE_ENTRIES = [
   { path: "/studio/layers", module: "src/components/forma-studio-editor-alternatives.ts", title: "Reality layers — Forma", description: "Compose and edit creative context as independently controlled reality layers." },
   { path: "/studio/adaptive", module: "src/components/forma-studio-editor-alternatives.ts", title: "Adaptive path — Forma", description: "Build creative context through an interface that responds to intent and prior decisions." },
   { path: "/studio/editor", module: "src/components/forma-creative-editor.ts", title: "Creative editor — Forma", description: "Shape a complete creative document through a focused editor that keeps system machinery out of the way." },
+  { path: "/studio/chat", module: "src/components/forma-chat-studio.ts", title: "Chat — Forma", description: "Shape a complete creative document through a conversation with Forma and generate visual results." },
   { path: "/library", module: "src/components/forma-library.ts", title: "Project library — Forma", description: "Review reusable context, recent outputs, and aesthetic families in the current project." },
   { path: "/sessions", module: "src/components/forma-sessions.ts", title: "Re-entry — Forma", description: "Resume witnessed work through event-derived sessions and re-entry briefs." },
   { path: "/scout", module: "src/components/forma-scout.ts", title: "Scout — Forma", description: "Run bounded creative research and inspect its evidence." },

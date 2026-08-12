@@ -9,6 +9,15 @@ export async function storeGeneratedImage(env:WorkerEnv,ownerId:string,generatio
   return{key,url:`/api/media/${encodeURIComponent(key)}`,mimeType:"image/png"};
 }
 
+export async function readGeneratedImageReference(env:WorkerEnv,ownerId:string,mediaUrl:unknown) {
+  const value=String(mediaUrl??"");const prefix="/api/media/";if(!value.startsWith(prefix))return null;
+  let key="";try{key=decodeURIComponent(value.slice(prefix.length));}catch{return null;}
+  if(!key.startsWith(`${ownerPrefix(ownerId)}/`))return null;
+  const object=await env.MEDIA.get(key);if(!object)return null;
+  const headers=new Headers();object.writeHttpMetadata(headers);
+  return{bytes:new Uint8Array(await new Response(object.body).arrayBuffer()),mimeType:headers.get("content-type")??"image/png"};
+}
+
 export async function uploadMedia(request: Request, env: WorkerEnv) {
   const auth=await requireUser(request,env,"creator");if(auth.response||!auth.user)return auth.response!;const consent=requireConsent(auth.user);if(consent)return consent;
   const form=await request.formData();const file=form.get("file");

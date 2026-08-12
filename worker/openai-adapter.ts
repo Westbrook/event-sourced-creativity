@@ -1,9 +1,13 @@
 import type { WorkerEnv } from "./runtime.ts";
-import { BLOCK_TYPES, type AdaptiveStructure } from "../src/model/block-types.ts";
+import { BLOCK_TYPES, type AdaptiveStructure, type BlockKind } from "../src/model/block-types.ts";
 import { normalizeSpatialScope } from "../src/model/spatial-scope.ts";
 
 type OpenAIResponse = { id?: string; model?: string; output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: { message?: string } };
 type OpenAIImageResponse = { created?: number; data?: Array<{ b64_json?: string; revised_prompt?: string }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: { message?: string } };
+export type CreativeChatMutation = { operation: "create" | "edit" | "remove"; target_block_id: string | null; type: BlockKind; subtype: string; instruction: string; handle: string };
+export type CreativeChatResponse = { reply: string; mutations: CreativeChatMutation[]; preview_direction: string; preview_worthy: boolean };
+export type ImageReference = { bytes: Uint8Array; mimeType: string };
+export type CreativeImageOptions = { quality?: "low" | "medium" | "high"; size?: "1024x1024" | "1536x1024" | "1024x1536"; reference?: ImageReference };
 
 const outputSchema = {
   type: "object",
@@ -27,18 +31,35 @@ const adaptiveStructureSchema = {
   },
 };
 
+const creativeChatSchema = {
+  type:"object", additionalProperties:false,
+  required:["reply","mutations","preview_direction","preview_worthy"],
+  properties:{
+    reply:{type:"string"},
+    mutations:{type:"array",maxItems:8,items:{type:"object",additionalProperties:false,required:["operation","target_block_id","type","subtype","instruction","handle"],properties:{
+      operation:{type:"string",enum:["create","edit","remove"]},
+      target_block_id:{type:["string","null"]},
+      type:{type:"string",enum:BLOCK_TYPES.map((item)=>item.type)},
+      subtype:{type:"string"},instruction:{type:"string"},handle:{type:"string"},
+    }}},
+    preview_direction:{type:"string"},preview_worthy:{type:"boolean"},
+  },
+};
+
 async function safetyIdentifier(userId: string) {
   const bytes = new TextEncoder().encode(userId); const hash = await crypto.subtle.digest("SHA-256", bytes);
   return `forma_${Array.from(new Uint8Array(hash)).map((value) => value.toString(16).padStart(2, "0")).join("").slice(0, 32)}`;
 }
 
-function openAIHeaders(env: WorkerEnv) {
+function openAIAuthHeaders(env: WorkerEnv) {
   return {
     authorization: `Bearer ${env.OPENAI_API_KEY}`,
-    "content-type": "application/json",
     ...(env.OPENAI_PROJECT ? { "OpenAI-Project": env.OPENAI_PROJECT } : {}),
   };
 }
+function openAIHeaders(env: WorkerEnv) { return { ...openAIAuthHeaders(env), "content-type": "application/json" }; }
+
+const responseText=(body:OpenAIResponse)=>body.output_text||body.output?.flatMap((item)=>item.content??[]).find((item)=>item.type==="output_text")?.text||"";
 
 export async function generateCreativeDirection(env: WorkerEnv, userId: string, snapshot: Record<string, unknown>) {
   if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
@@ -57,7 +78,7 @@ export async function generateCreativeDirection(env: WorkerEnv, userId: string, 
   });
   const body = await response.json() as OpenAIResponse;
   if (!response.ok) throw new Error(body.error?.message ?? `openai_${response.status}`);
-  const text = body.output_text || body.output?.flatMap((item) => item.content ?? []).find((item) => item.type === "output_text")?.text || "";
+  const text = responseText(body);
   if (!text) throw new Error("provider_returned_no_output");
   let parsed: Record<string, unknown>; try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error("provider_returned_invalid_json"); }
   return { responseId: body.id ?? "", model: body.model ?? env.OPENAI_MODEL ?? "gpt-5.6-terra", output: parsed, raw: text, latencyMs: Date.now() - started, usage: { inputTokens: Number(body.usage?.input_tokens ?? 0), outputTokens: Number(body.usage?.output_tokens ?? 0), totalTokens: Number(body.usage?.total_tokens ?? 0) } };
@@ -97,14 +118,37 @@ export function buildCreativeImagePrompt(snapshot:Record<string,unknown>,directi
   ].join("\n\n");
 }
 
-export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot:Record<string,unknown>,direction:Record<string,unknown>) {
+export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot:Record<string,unknown>,direction:Record<string,unknown>,options:CreativeImageOptions={}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const model=env.OPENAI_IMAGE_MODEL??"gpt-image-2";const prompt=buildCreativeImagePrompt(snapshot,direction);const started=Date.now();
-  const response=await fetch("https://api.openai.com/v1/images/generations",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({model,prompt,n:1,size:"1536x1024",quality:"medium",user:await safetyIdentifier(userId)})});
+  const quality=options.quality??"high";const size=options.size??"1536x1024";const user=await safetyIdentifier(userId);
+  let response:Response;
+  if(options.reference){
+    const form=new FormData();const buffer=options.reference.bytes.buffer.slice(options.reference.bytes.byteOffset,options.reference.bytes.byteOffset+options.reference.bytes.byteLength) as ArrayBuffer;form.set("model",model);form.set("prompt",prompt);form.set("n","1");form.set("size",size);form.set("quality",quality);form.set("user",user);form.append("image[]",new Blob([buffer],{type:options.reference.mimeType}),"latest-ideation-preview.png");
+    response=await fetch("https://api.openai.com/v1/images/edits",{method:"POST",headers:openAIAuthHeaders(env),body:form});
+  }else{
+    response=await fetch("https://api.openai.com/v1/images/generations",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({model,prompt,n:1,size,quality,user})});
+  }
   const body=await response.json() as OpenAIImageResponse;if(!response.ok)throw new Error(body.error?.message??`openai_image_${response.status}`);
   const encoded=body.data?.[0]?.b64_json;if(!encoded)throw new Error("provider_returned_no_image");
   let bytes:Uint8Array;try{const binary=atob(encoded);bytes=Uint8Array.from(binary,(character)=>character.charCodeAt(0));}catch{throw new Error("provider_returned_invalid_image");}
-  return{model,prompt,bytes,revisedPrompt:body.data?.[0]?.revised_prompt??null,createdAt:body.created??null,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)},width:1536,height:1024,mimeType:"image/png"};
+  const [width,height]=size.split("x").map(Number);
+  return{model,prompt,bytes,revisedPrompt:body.data?.[0]?.revised_prompt??null,createdAt:body.created??null,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)},width,height,mimeType:"image/png",quality,usedReference:Boolean(options.reference)};
+}
+
+export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{documentTitle:string;blocks:Array<Record<string,unknown>>;history:Array<{role:"user"|"assistant";text:string}>;message:string}) {
+  if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
+  const started=Date.now();
+  const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({
+    model:env.OPENAI_MODEL??"gpt-5.6-terra",
+    instructions:"You are Forma, a concise creative collaborator inside a chat-only document view. Speak about the user's creative plan and intended image, never about blocks, events, schemas, metadata, adapters, or hidden machinery. Interpret the newest message against the existing plan and recent conversation. Return a helpful reply plus the smallest accurate set of plan mutations. Create adds a new durable decision; edit changes one existing decision and must name its target_block_id; remove deletes one existing decision and must name its target_block_id. Never target a missing item. For create, target_block_id is null. For unused mutation fields return sensible empty strings, but type must always be a valid vocabulary value. If the creative image meaningfully changes, preview_worthy is true and preview_direction is a standalone visual instruction incorporating the whole current intention after your proposed changes. If the user is only asking a question or chatting without changing visual intent, do not mutate and set preview_worthy false.",
+    input:JSON.stringify({...input,block_vocabulary:BLOCK_TYPES.map((item)=>({type:item.type,subtypes:item.subtypes})),mutation_rules:{create:"target_block_id must be null",edit:"target_block_id must match an existing id",remove:"target_block_id must match an existing id"}}),
+    text:{verbosity:"low",format:{type:"json_schema",name:"forma_creative_chat",strict:true,schema:creativeChatSchema}},reasoning:{effort:"low"},max_output_tokens:1600,store:false,safety_identifier:await safetyIdentifier(userId),
+  })});
+  const body=await response.json() as OpenAIResponse;if(!response.ok)throw new Error(body.error?.message??`openai_${response.status}`);
+  const text=responseText(body);if(!text)throw new Error("provider_returned_no_output");
+  let parsed:CreativeChatResponse;try{parsed=JSON.parse(text) as CreativeChatResponse;}catch{throw new Error("provider_returned_invalid_json");}
+  return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output:parsed,raw:text,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
 export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input:{intent:string;documentTitle:string;blocks:Array<Record<string,unknown>>}) {
@@ -117,7 +161,7 @@ export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input
     text:{verbosity:"low",format:{type:"json_schema",name:"forma_adaptive_structure",strict:true,schema:adaptiveStructureSchema}},reasoning:{effort:"low"},max_output_tokens:1400,store:false,safety_identifier:await safetyIdentifier(userId),
   })});
   const body=await response.json() as OpenAIResponse;if(!response.ok)throw new Error(body.error?.message??`openai_${response.status}`);
-  const text=body.output_text||body.output?.flatMap((item)=>item.content??[]).find((item)=>item.type==="output_text")?.text||"";if(!text)throw new Error("provider_returned_no_output");
+  const text=responseText(body);if(!text)throw new Error("provider_returned_no_output");
   let parsed:AdaptiveStructure;try{parsed=JSON.parse(text) as AdaptiveStructure;}catch{throw new Error("provider_returned_invalid_json");}
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output:parsed,raw:text,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }

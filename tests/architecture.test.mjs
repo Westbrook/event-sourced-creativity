@@ -89,7 +89,7 @@ test("packages first-class HTML entry points for every named application route",
   const shell = await readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8");
   const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
   const config = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
-  const routes = ["document","projects","studio/project","studio/board","studio/guided","studio/layers","studio/adaptive","studio/editor","library","sessions","scout","memory","system","admin/events","admin/events/stream","admin/events/replay","admin/events/permissions"];
+  const routes = ["document","projects","studio/project","studio/board","studio/guided","studio/layers","studio/adaptive","studio/editor","studio/chat","library","sessions","scout","memory","system","admin/events","admin/events/stream","admin/events/replay","admin/events/permissions"];
   for (const route of routes) {
     assert.match(plugin, new RegExp(`path: "/${route.replaceAll("/", "\\/")}"`));
     const entry = await readFile(new URL(`../dist/client/${route}/index.html`, import.meta.url), "utf8");
@@ -165,6 +165,20 @@ test("presents every alternate Studio lens as the same complete durable document
   assert.match(styles, /html\[data-document-focus\] \.workspace-page > forma-project-rail \{ display: none; \}/);
   assert.match(styles, /html\[data-document-focus\] \.workspace-page:has\(> forma-project-rail > \.project-rail\.collapsed\) \.composer-dock \{ left: 0; \}/);
   assert.match(styles, /html\[data-document-focus\] \.creative-editor,[\s\S]*height: calc\(100dvh - 70px\)/);
+});
+
+test("keeps the Chat document view conversational while resolving durable changes and two-stage images",async()=>{
+  const [chat,store,eventsApi,adapter,routes]=await Promise.all([
+    readFile(new URL("../src/components/forma-chat-studio.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/openai-adapter.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/model/routes.ts",import.meta.url),"utf8"),
+  ]);
+  assert.match(chat,/Chat with Forma/);assert.match(chat,/forma-output-visual/);assert.match(chat,/store\.chat\(message\)/);assert.match(chat,/store\.generate\("chat"\)/);
+  assert.doesNotMatch(chat,/forma-context-block|forma-event-inspector|forma-document-continuity|projection\.blocks/);
+  assert.match(store,/action:"chat"/);assert.match(eventsApi,/body\.action==="chat"/);assert.match(eventsApi,/creativeChatMutationEvents/);assert.match(eventsApi,/IdeationPreviewCompleted/);assert.match(eventsApi,/reference_preview_event_id/);
+  assert.match(adapter,/quality=options\.quality\?\?"high"/);assert.match(adapter,/images\/edits/);assert.match(adapter,/latest-ideation-preview\.png/);assert.match(routes,/"chat"/);
 });
 
 test("opens otherwise passive generation and reference images in contained dialogs",async()=>{
