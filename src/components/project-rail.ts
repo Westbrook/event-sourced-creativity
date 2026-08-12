@@ -1,6 +1,6 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
-import { isDocumentViewRoute, routePathname, withDocumentInRoute } from "../model/routes";
+import { isDocumentViewRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, routePathname, withDocumentInRoute } from "../model/routes";
 import "./collection-tree";
 
 type RailSurface = "studio" | "library";
@@ -20,6 +20,10 @@ export class ProjectRail extends FormaElement {
     window.scrollTo({ top: 0 });
   }
 
+  #openBlockEditor(event:MouseEvent) {
+    event.preventDefault();this.store.patchUi({libraryView:"blocks",focusCollectionId:""});this.store.setRoute(libraryBlockEditorRoute());window.scrollTo({top:0});
+  }
+
   #editProject() {
     this.dispatchEvent(new CustomEvent("edit-project", { bubbles: true, composed: true }));
   }
@@ -35,6 +39,7 @@ export class ProjectRail extends FormaElement {
     const documentRoute = withDocumentInRoute("/", projection.documentId, projection.documentTitle);
     const projectActive = pathname.startsWith("/studio/project");
     const documentActive = isDocumentViewRoute(route);
+    const blockEditorActive = Boolean(libraryBlockEditorFromRoute(route));
    const libraryLinks: Array<{ view: LibraryView; label: string; count?: number; glyph: string }> = [
      { view: "all", label: "Library overview", glyph: "⌂" },
       { view: "blocks", label: quiet ? "Reusable ideas" : "Reusable blocks", count: projection.libraryBlocks.length, glyph: "▦" },
@@ -75,7 +80,8 @@ export class ProjectRail extends FormaElement {
 
         <nav class="rail-links rail-library-links" aria-label="Project library">
           <span class="rail-label">Library</span>
-          ${libraryLinks.map((link) => html`<a href="/library" class=${surface === "library" && currentView === link.view ? "active" : ""} aria-current=${surface === "library" && currentView === link.view ? "page" : nothing} @click=${(event:MouseEvent)=>this.#openLibrary(event,link.view)}><span><i>${link.glyph}</i> ${link.label}</span>${link.count === undefined ? html`<small>${icon("arrow")}</small>` : html`<small>${link.count}</small>`}</a>`)}
+          ${libraryLinks.map((link) => {const active=surface === "library" && !blockEditorActive && currentView === link.view;return html`<a href="/library" class=${active ? "active" : ""} aria-current=${active ? "page" : nothing} @click=${(event:MouseEvent)=>this.#openLibrary(event,link.view)}><span><i>${link.glyph}</i> ${link.label}</span>${link.count === undefined ? html`<small>${icon("arrow")}</small>` : html`<small>${link.count}</small>`}</a>`;})}
+          <a href=${libraryBlockEditorRoute()} class=${surface==="library"&&blockEditorActive?"active":""} aria-current=${surface==="library"&&blockEditorActive?"page":nothing} @click=${this.#openBlockEditor}><span><i>${icon("edit")}</i> Block editor</span><small>${projection.libraryBlocks.filter((block)=>block.scope==="library").length}</small></a>
         </nav>
 
         ${quiet?nothing:html`<div class="rail-note"><span>${icon("info")}</span><p><b>No auto-filing.</b> Collections are deliberate. Search and aesthetic families remain derived views.</p></div>`}

@@ -136,6 +136,26 @@ test("restores focused Library dialogs from durable URLs", async () => {
   assert.match(worker, /appEntryPath/); assert.match(routes, /"\/library\/"/); assert.doesNotMatch(routes, /documentEntryPath[\s\S]*?index\.html/);
 });
 
+test("edits project-scoped reusable blocks through the Library and shared project folders",async()=>{
+  const [editor,library,tree,projects,events,routes,worker]=await Promise.all([
+    readFile(new URL("../src/components/library-block-editor.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-library.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/collection-tree.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-project-contents.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/model/events.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/model/routes.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),
+  ]);
+  assert.match(editor,/scope:"library"/);assert.match(editor,/project_id:p\.projectId/);assert.match(editor,/forked_from_block_id/);
+  assert.match(editor,/BlockPropertyEdited/);assert.match(editor,/BlockWeightSet/);assert.match(editor,/BlockRemoved/);assert.match(editor,/BlockLocked/);
+  assert.match(editor,/CollectionItemAdded/);assert.match(editor,/item_ref:\{block_id:id\}/);assert.match(editor,/forma-collection-tree/);
+  assert.match(library,/forma-library-block-editor/);assert.match(library,/New reusable block/);assert.match(library,/Fork & edit/);
+  assert.match(tree,/itemKind/);assert.match(tree,/block_id:id/);assert.match(worker,/ref\.block_id/);
+  assert.match(projects,/Independent project context/);assert.match(projects,/block\.scope==="library"/);
+  assert.match(events,/scope: "document" \| "library"/);assert.match(events,/b\.projectId===state\.projectId/);
+  assert.match(routes,/libraryBlockEditorFromRoute/);assert.match(routes,/libraryBlockEditorRoute/);
+});
+
 test("presents every alternate Studio lens as the same complete durable document", async () => {
   const [alternatives, editorAlternatives, creativeEditor, navigation, generations, styles] = await Promise.all([
     readFile(new URL("../src/components/forma-studio-alternatives.ts", import.meta.url), "utf8"),

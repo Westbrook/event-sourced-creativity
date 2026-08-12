@@ -63,3 +63,36 @@ test("removes a document from active projections and restores it without erasing
   assert.deepEqual(restored.blocks.map((block)=>block.id),["block-a"]);assert.deepEqual(restored.outputs.map((output)=>output.id),["output-a"]);
   assert.equal(restored.membership["doc-a"].collectionId,"collection-a");
 });
+
+test("projects independent blocks beside documents and files both in the same collections",()=>{
+  const events=[
+    event(1,"ProjectCreated",{project_id:"project-a",name:"Shared project"}),
+    event(2,"DocumentCreated",{project_id:"project-a",document_id:"doc-a",title:"Document A"}),
+    event(3,"BlockCreated",{block_id:"doc-block",document_id:"doc-a",type:"direction",handle:"direction/document",properties:{text:"Document context"}}),
+    event(4,"BlockCreated",{block_id:"library-block",project_id:"project-a",scope:"library",type:"style",handle:"style/reusable",properties:{text:"Reusable context",forked_from_block_id:"doc-block"}}),
+    event(5,"CollectionCreated",{collection_id:"collection-a",project_id:"project-a",handle:"Shared folder"}),
+    event(6,"CollectionItemAdded",{collection_id:"collection-a",item_ref:{document_id:"doc-a"},position:"a0"}),
+    event(7,"CollectionItemAdded",{collection_id:"collection-a",item_ref:{block_id:"library-block"},position:"a1"}),
+  ];
+  const projection=foldEvents(events);
+  assert.deepEqual(projection.blocks.map((block)=>block.id),["doc-block"]);
+  assert.deepEqual(projection.libraryBlocks.map((block)=>block.id),["doc-block","library-block"]);
+  const reusable=projection.libraryBlocks.find((block)=>block.id==="library-block");
+  assert.equal(reusable.scope,"library");assert.equal(reusable.projectId,"project-a");assert.equal(reusable.documentId,"");
+  assert.equal(projection.membership["doc-a"].collectionId,"collection-a");
+  assert.equal(projection.membership["library-block"].collectionId,"collection-a");
+  assert.equal(projection.projects[0].blockCount,2);
+});
+
+test("keeps project-scoped reusable blocks out of other project projections",()=>{
+  const events=[
+    event(1,"ProjectCreated",{project_id:"project-a",name:"A"}),
+    event(2,"DocumentCreated",{project_id:"project-a",document_id:"doc-a",title:"A"}),
+    event(3,"BlockCreated",{block_id:"block-a",project_id:"project-a",scope:"library",type:"style",handle:"style/a",properties:{text:"A"}}),
+    event(4,"ProjectCreated",{project_id:"project-b",name:"B"}),
+    event(5,"DocumentCreated",{project_id:"project-b",document_id:"doc-b",title:"B"}),
+    event(6,"BlockCreated",{block_id:"block-b",project_id:"project-b",scope:"library",type:"style",handle:"style/b",properties:{text:"B"}}),
+    event(7,"ProjectOpened",{project_id:"project-a"}),
+  ];
+  assert.deepEqual(foldEvents(events).libraryBlocks.map((block)=>block.id),["block-a"]);
+});

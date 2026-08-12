@@ -27,6 +27,8 @@ export type EventInput = {
 export type CreativeBlock = {
   id: string;
   documentId: string;
+  projectId: string;
+  scope: "document" | "library";
   type: string;
   handle: string;
   position: string;
@@ -141,7 +143,7 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 
 const itemId = (value: unknown) => {
   const ref = asRecord(value);
-  return String(ref.document_id ?? ref.collection_id ?? ref.object_id ?? "");
+  return String(ref.document_id ?? ref.block_id ?? ref.collection_id ?? ref.object_id ?? "");
 };
 
 export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFINITY, selectedDocumentId = ""): CreativeProjection {
@@ -199,7 +201,10 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       }
       case "BlockCreated": {
         const id = String(p.block_id);
-        blocks.set(id, { id, documentId: String(p.document_id ?? state.documentId), type: String(p.type ?? "text"), handle: String(p.handle ?? id), position: String(p.position ?? "a0"), removed: false, locked: false, properties: { ...asRecord(p.properties) }, sourceEvents: [event.eventId] });
+        const scope = p.scope === "library" || p.library_block === true ? "library" : "document";
+        const documentId = scope === "library" ? "" : String(p.document_id ?? state.documentId);
+        const projectId = String(p.project_id ?? (documentId ? documents.get(documentId)?.projectId : state.projectId) ?? state.projectId);
+        blocks.set(id, { id, documentId, projectId, scope, type: String(p.type ?? "text"), handle: String(p.handle ?? id), position: String(p.position ?? "a0"), removed: false, locked: false, properties: { ...asRecord(p.properties) }, sourceEvents: [event.eventId] });
         break;
       }
       case "BlockRenamed": { const b = blocks.get(String(p.block_id)); if (b) { b.handle = String(p.new_handle ?? b.handle); b.sourceEvents.push(event.eventId); } break; }
@@ -290,18 +295,22 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
     }
   }
   const visibleDocuments=[...documents.values()].filter((document)=>!document.removed&&document.projectId===state.projectId).sort((a,b)=>b.createdSequence-a.createdSequence);const visibleDocumentIds=new Set(visibleDocuments.map((document)=>document.id));
-  for(const id of Object.keys(membership))if(documents.has(id)&&!visibleDocumentIds.has(id))delete membership[id];
-  state.libraryBlocks = [...blocks.values()].filter((b) => !b.removed&&(!documents.has(b.documentId)||visibleDocumentIds.has(b.documentId))).sort((a, b) => a.position.localeCompare(b.position));
+  const visibleCollections=new Set([...collections.values()].filter((collection)=>!collection.removed&&collection.projectId===state.projectId).map((collection)=>collection.id));
+  for(const [id,filed] of Object.entries(membership)){
+    const itemProjectId=documents.get(id)?.projectId??blocks.get(id)?.projectId??collections.get(id)?.projectId??(outputs.get(id)?.documentId?documents.get(outputs.get(id)!.documentId)?.projectId:undefined);
+    if(!visibleCollections.has(filed.collectionId)||(documents.has(id)&&!visibleDocumentIds.has(id))||(blocks.has(id)&&blocks.get(id)!.removed)||(itemProjectId&&itemProjectId!==state.projectId))delete membership[id];
+  }
+  state.libraryBlocks = [...blocks.values()].filter((b) => !b.removed&&b.projectId===state.projectId&&(b.scope==="library"||visibleDocumentIds.has(b.documentId))).sort((a, b) => a.position.localeCompare(b.position));
   state.documents = visibleDocuments;
   const selectedDocument=selectedDocumentId?visibleDocuments.find((document)=>document.id===selectedDocumentId):undefined;
   if(selectedDocument){state.documentId=selectedDocument.id;state.documentTitle=selectedDocument.title;}
   else if(!visibleDocumentIds.has(state.documentId)){const fallback=visibleDocuments[0];state.documentId=fallback?.id??"";state.documentTitle=fallback?.title??"No document open";state.latestCompile=null;}
-  state.blocks = state.libraryBlocks.filter((block) => block.documentId === state.documentId);
+  state.blocks = state.libraryBlocks.filter((block) => block.scope==="document"&&block.documentId === state.documentId);
   state.collections = [...collections.values()].filter((c) => !c.removed&&c.projectId===state.projectId).sort((a, b) => a.position.localeCompare(b.position) || a.handle.localeCompare(b.handle));
   state.libraryOutputs = [...outputs.values()].filter((o) => !o.discarded&&(!documents.has(o.documentId)||visibleDocumentIds.has(o.documentId))).sort((a, b) => b.sequence - a.sequence);
   state.outputs = state.libraryOutputs.filter((output) => output.documentId === state.documentId);
   state.annotations = [...annotations.values()]; state.families = [...families.values()]; state.preferences = [...preferences.values()]; state.conditions = [...conditions.values()];
-  state.projects=[...projects.values()].map((project)=>{const projectDocuments=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed);const documentIds=new Set(projectDocuments.map((document)=>document.id));return{...project,documentCount:projectDocuments.length,collectionCount:[...collections.values()].filter((collection)=>collection.projectId===project.id&&!collection.removed).length,blockCount:[...blocks.values()].filter((block)=>documentIds.has(block.documentId)&&!block.removed).length,outputCount:[...outputs.values()].filter((output)=>documentIds.has(output.documentId)&&!output.discarded).length};}).sort((a,b)=>a.id===state.projectId?-1:b.id===state.projectId?1:b.lastSequence-a.lastSequence);
+  state.projects=[...projects.values()].map((project)=>{const projectDocuments=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed);const documentIds=new Set(projectDocuments.map((document)=>document.id));return{...project,documentCount:projectDocuments.length,collectionCount:[...collections.values()].filter((collection)=>collection.projectId===project.id&&!collection.removed).length,blockCount:[...blocks.values()].filter((block)=>block.projectId===project.id&&!block.removed&&(block.scope==="library"||documentIds.has(block.documentId))).length,outputCount:[...outputs.values()].filter((output)=>documentIds.has(output.documentId)&&!output.discarded).length};}).sort((a,b)=>a.id===state.projectId?-1:b.id===state.projectId?1:b.lastSequence-a.lastSequence);
   if(!state.projects.length&&state.projectId)state.projects=[{id:state.projectId,name:state.projectName,state:state.projectState,createdSequence:0,lastSequence:0,documentCount:state.documents.length,collectionCount:state.collections.length,blockCount:state.libraryBlocks.length,outputCount:state.libraryOutputs.length}];
   return state;
 }

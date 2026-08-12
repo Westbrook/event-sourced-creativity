@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appEntryPath, documentEntryPath, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentFocusInRoute, withDocumentInRoute } from "../src/model/routes.ts";
+import { appEntryPath, documentEntryPath, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentFocusInRoute, withDocumentInRoute } from "../src/model/routes.ts";
 
 test("document views use a readable path for the selected durable document", () => {
   const paths = [["/", "document"], ["/studio/board", "board"], ["/studio/guided", "guided"], ["/studio/layers", "layers"], ["/studio/adaptive", "adaptive"], ["/studio/editor", "editor"], ["/studio/chat", "chat"]];
@@ -56,4 +56,13 @@ test("Library focus dialogs have refresh-safe content paths", () => {
   assert.equal(libraryFocusFromRoute("/library"), null);
   assert.equal(libraryRootRoute("/library/output/output-7?scope=kept#preview"), "/library?scope=kept#preview");
   assert.equal(appEntryPath("/library/output/output-7"), "/library/");
+});
+
+test("Library Block editor targets are durable refresh-safe paths",()=>{
+  assert.equal(libraryBlockEditorRoute(),"/library/blocks/editor/new");
+  assert.equal(libraryBlockEditorRoute("block/42"),"/library/blocks/editor/block%2F42");
+  assert.deepEqual(libraryBlockEditorFromRoute("/library/blocks/editor/new"),{blockId:null});
+  assert.deepEqual(libraryBlockEditorFromRoute("/library/blocks/editor/block%2F42"),{blockId:"block/42"});
+  assert.equal(libraryBlockEditorFromRoute("/library/block/block-42"),null);
+  assert.equal(appEntryPath("/library/blocks/editor/block-42"),"/library/");
 });

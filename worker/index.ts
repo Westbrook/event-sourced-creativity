@@ -2,7 +2,7 @@ import { handleEvents, type WorkerEnv } from "./events-api";
 import { getMedia, uploadMedia } from "./media-api";
 import { handleAdminUsers, handleSession } from "./pilot-policy";
 import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
-import { appEntryPath, isDocumentViewRoute, libraryFocusFromRoute } from "../src/model/routes";
+import { appEntryPath, isDocumentViewRoute, libraryBlockEditorFromRoute, libraryFocusFromRoute } from "../src/model/routes";
 import { handleReplayApproval, handleReplaySessions } from "./replay-sessions-api";
 import { handleDocumentJobs, type WorkerExecutionContext } from "./document-jobs-api";
 
@@ -24,7 +24,7 @@ export default {
     if(url.pathname==="/api/media"&&request.method==="POST")return uploadMedia(request,env);
     if(url.pathname.startsWith("/api/media/")&&request.method==="GET")return getMedia(request,decodeURIComponent(url.pathname.slice("/api/media/".length)),env);
     if(url.pathname.startsWith("/api/"))return Response.json({error:"not_found"},{status:404});
-    if((request.method==="GET"||request.method==="HEAD")&&(isDocumentViewRoute(url.pathname)||libraryFocusFromRoute(url.pathname))){
+    if((request.method==="GET"||request.method==="HEAD")&&(isDocumentViewRoute(url.pathname)||libraryFocusFromRoute(url.pathname)||libraryBlockEditorFromRoute(url.pathname))){
       const entryUrl=new URL(appEntryPath(url.pathname),url);
       return env.ASSETS.fetch(new Request(entryUrl,request));
     }

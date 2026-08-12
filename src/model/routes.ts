@@ -1,6 +1,7 @@
 export type DocumentView = "document" | "board" | "guided" | "layers" | "adaptive" | "editor" | "chat";
 export type LibraryFocusKind = "block" | "output" | "family";
 export type LibraryFocus = { kind: LibraryFocusKind; id: string };
+export type LibraryBlockEditorTarget = { blockId: string | null };
 
 const legacyDocumentViews: Record<string, DocumentView> = {
   "/": "document",
@@ -72,6 +73,17 @@ export function libraryFocusFromRoute(route: string): LibraryFocus | null {
 export function libraryFocusRoute(kind: LibraryFocusKind, id: string, label = "") {
   const slug = documentSlug(label);
   return `/library/${kind}/${encodeURIComponent(id)}${slug ? `/${slug}` : ""}`;
+}
+
+export function libraryBlockEditorFromRoute(route: string): LibraryBlockEditorTarget | null {
+  const parts = routePathname(route).split("/").filter(Boolean);
+  if (parts[0] !== "library" || parts[1] !== "blocks" || parts[2] !== "editor") return null;
+  const blockId = parts[3] && parts[3] !== "new" ? safeDecode(parts[3]) : null;
+  return { blockId };
+}
+
+export function libraryBlockEditorRoute(blockId = "") {
+  return `/library/blocks/editor/${blockId ? encodeURIComponent(blockId) : "new"}`;
 }
 
 export function libraryRootRoute(route: string) {
