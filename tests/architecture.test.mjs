@@ -84,6 +84,32 @@ test("packages a responsive SPA and Sites metadata", async () => {
   assert.match(hosting, /appgprj_/);
 });
 
+test("codifies and applies a gallery-first accessible design system", async () => {
+  const [design, main, system, editor, generations] = await Promise.all([
+    readFile(new URL("../DESIGN.md", import.meta.url), "utf8"),
+    readFile(new URL("../src/main.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/design-system.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/library-block-editor.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/document-generations.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(design, /quiet creative instrument/i);
+  assert.match(design, /White space is the primary container/);
+  assert.match(design, /No layout-affecting hover reveal/);
+  assert.match(design, /No text below 10px/);
+  assert.match(design, /No imbalanced border on a rounded element/);
+  assert.match(main, /import "\.\/design-system\.css"/);
+  assert.match(system, /Gallery-first interface system/);
+  assert.match(system, /font-family: var\(--sans\)/);
+  assert.match(system, /\.asset-focus-trigger \.reference-image img/);
+  assert.doesNotMatch(system, /box-shadow:\s*inset/);
+  assert.doesNotMatch(system, /:hover[^{}]*\{[^}]*transform:\s*(?:translate|scale)/s);
+  assert.match(editor, /context-collapsed/);
+  assert.match(editor, /filing-collapsed/);
+  assert.match(editor, /aria-label="Collapse project context"/);
+  assert.match(generations, /document-generation-collapse/);
+  assert.match(generations, /Collapse images/);
+});
+
 test("packages first-class HTML entry points for every named application route", async () => {
   const plugin = await readFile(new URL("../build/sites-vite-plugin.ts", import.meta.url), "utf8");
   const routeLoader = await readFile(new URL("../src/route-loader.ts", import.meta.url), "utf8");
