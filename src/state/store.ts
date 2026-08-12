@@ -18,6 +18,12 @@ export type PilotSession = {
   budgets: { period: string; user: { used: number; reserved: number; limit: number }; workspace: { used: number; reserved: number; limit: number } };
 };
 export type ShareRecord = { shareId: string; token?: string; expiresAt: string; revokedAt?: string | null; createdAt?: string; active: boolean };
+export type DocumentJobKind = "preview" | "generate" | "chat" | "structure_adaptive" | "extract_reference";
+export type DocumentJob = {
+  jobId: string; documentId: string; kind: DocumentJobKind; status: "queued" | "running" | "completed" | "failed"; sourceSurface: string;
+  requestedSequence: number; result: Record<string, unknown> | null; error: string | null; attemptCount: number;
+  requestedAt: string; startedAt: string | null; completedAt: string | null; notifiedAt: string | null;
+};
 
 export class FormaStore {
   readonly events = new Signal.State<CreativeEvent[]>([]);
@@ -32,6 +38,8 @@ export class FormaStore {
   readonly session = new Signal.State<PilotSession | null>(null);
   readonly content = new Signal.State<Record<string, string>>({});
   readonly shares = new Signal.State<ShareRecord[]>([]);
+  readonly documentJobs = new Signal.State<DocumentJob[]>([]);
+  readonly adaptiveStructures = new Signal.State<Record<string,AdaptiveStructure>>({});
   readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, projectRailCollapsed: false, instrumentation: true, attentionCapture: readAttentionPreference(), attentionPaused: false, selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", libraryView: "all", libraryOutputScope: "recent", search: "", toast: "" });
   readonly projection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.events.get(), this.asOf.get()));
   readonly replayProjection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.replayEvents.get(), this.replayAsOf.get()));
@@ -40,6 +48,11 @@ export class FormaStore {
   #redo: CreativeEvent[] = [];
   #focalInFlight = new Set<string>();
   #focalAppendQueue: Promise<void> = Promise.resolve();
+  #jobPollTimer = 0;
+  #jobsSyncing = false;
+  #pendingJobNotices: DocumentJob[] = [];
+
+  constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){this.#flushPendingJobNotices();void this.syncDocumentJobs();}});}
 
   subscribe(listener: Listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   notify() { this.#listeners.forEach((listener) => listener()); }
@@ -61,9 +74,24 @@ export class FormaStore {
     const projection=this.projection.get();
     return {
       snapshot:{facts:projection.blocks.map((b)=>({block_id:b.id,document_id:b.documentId,type: b.type,role:b.type,intent: blockIntentFor(b.type, b.properties),handle:b.handle,position:b.position,locked:b.locked,active:Number(b.properties.weight??.5)>0,effect: blockEffectFor(b.type, b.properties),properties:{...b.properties,spatial_scope: normalizeSpatialScope(b.properties.spatial_scope)},authority:b.properties.authority??"authored",source_event_refs:b.sourceEvents})),pins:projection.outputs.filter((o)=>o.pinned).map((o)=>o.id),tail:[]},
-      sourceBlockVersions:projection.blocks.map((b)=>({block_id:b.id,version:b.sourceEvents.length})),
+      sourceBlockVersions:projection.blocks.map((b)=>({block_id:b.id,version:b.sourceEvents.length})),documentId:projection.documentId,
     };
   }
+  documentJobActive(kind?:DocumentJobKind,documentId=this.projection.get().documentId){return this.documentJobs.get().some((job)=>job.documentId===documentId&&(!kind||job.kind===kind)&&(job.status==="queued"||job.status==="running"));}
+  adaptiveStructureFor(documentId=this.projection.get().documentId){return this.adaptiveStructures.get()[documentId]??null;}
+  dismissAdaptiveStructure(documentId=this.projection.get().documentId){const next={...this.adaptiveStructures.get()};delete next[documentId];this.adaptiveStructures.set(next);this.notify();}
+  #jobResultVisible(job:DocumentJob){if(document.visibilityState!=="visible"||!isDocumentViewRoute(this.route.get())||documentIdFromRoute(this.route.get())!==job.documentId)return false;const view=documentViewFromRoute(this.route.get());if(job.kind==="chat")return view==="chat";if(job.kind==="structure_adaptive")return view==="adaptive";return true;}
+  #jobNotice(job:DocumentJob){const title=this.projection.get().documents.find((document)=>document.id===job.documentId)?.title??"your document";if(job.status==="failed"){const labels:Record<DocumentJobKind,string>={preview:"Draft generation",generate:"Full-quality generation",chat:"Creative chat",structure_adaptive:"Adaptive planning",extract_reference:"Reference analysis"};return`${labels[job.kind]} could not finish for ${title}. Open the document to retry.`;}const labels:Record<DocumentJobKind,string>={preview:"A draft image is ready",generate:"A full-quality image is ready",chat:"A chat response is ready",structure_adaptive:"An adaptive plan is ready",extract_reference:"Reference analysis is ready"};return`${labels[job.kind]} in ${title}.`;}
+  async #ackJob(jobId:string){try{await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/ack`,{method:"POST"});}catch{/* A later poll can offer the notice again. */}}
+  #flushPendingJobNotices(){if(document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;const jobs=this.#pendingJobNotices.splice(0);this.toast(jobs.length===1?this.#jobNotice(jobs[0]):`${jobs.length} background document operations finished.`);for(const job of jobs)void this.#ackJob(job.jobId);}
+  async #refreshEvents(){const response=await fetch("/api/events");if(!response.ok)throw new Error(`Event stream returned ${response.status}`);const body=await response.json() as {events:CreativeEvent[];content?:Record<string,string>;head:number};const known=new Set(this.events.get().map((event)=>event.eventId));this.events.set(body.events);this.content.set(body.content??{});this.head.set(body.head);this.#publishAppended(body.events.filter((event)=>!known.has(event.eventId)));}
+  #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);this.#jobPollTimer=window.setTimeout(()=>void this.syncDocumentJobs(),delay);}
+  async syncDocumentJobs(){if(this.#jobsSyncing)return;this.#jobsSyncing=true;try{const response=await fetch("/api/document-jobs");if(!response.ok)return;const body=await response.json() as {jobs?:DocumentJob[]};const previous=new Map(this.documentJobs.get().map((job)=>[job.jobId,job]));const jobs=body.jobs??[];this.documentJobs.set(jobs);
+      const completed=jobs.filter((job)=>!job.notifiedAt&&(job.status==="completed"||job.status==="failed")&&(previous.get(job.jobId)?.status!==job.status||!previous.has(job.jobId)));if(completed.length)await Promise.all([this.#refreshEvents(),this.refreshSession()]);
+      for(const job of completed){if(job.kind==="structure_adaptive"&&job.status==="completed"&&job.result?.structure)this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId);continue;}if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);}
+      this.notify();this.#scheduleJobPoll(jobs.some((job)=>job.status==="queued"||job.status==="running")?1_500:10_000);
+    }catch{/* Job polling is advisory; the durable stream remains authoritative. */this.#scheduleJobPoll(5_000);}finally{this.#jobsSyncing=false;}}
+  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string){const documentId=this.projection.get().documentId;const response=await fetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})});const body=await response.json() as {job?:DocumentJob;error?:string;reused?:boolean};if(!response.ok||!body.job)throw new Error(body.error??"Document operation could not be started");const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);this.notify();this.#scheduleJobPoll(800);return body.job;}
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   toast(message: string) { this.ui.toast = message; this.notify(); window.setTimeout(() => { if (this.ui.toast === message) { this.ui.toast = ""; this.notify(); } }, 2800); }
   setRoute(path: string, options: { replace?: boolean; documentFocus?: boolean } = {}) {
@@ -118,6 +146,7 @@ export class FormaStore {
       const body = await response.json() as { events: CreativeEvent[]; content?: Record<string, string>; head: number };
       this.events.set(body.events); this.content.set(body.content ?? {}); this.head.set(body.head); this.error.set("");
       await this.syncDocumentFromRoute(this.route.get());
+      await this.syncDocumentJobs();
       queueMicrotask(()=>this.#backfillImageFocalPoints());
     } catch (error) { this.error.set(error instanceof Error ? error.message : "Unable to load event stream"); }
     finally { this.loading.set(false); this.notify(); }
@@ -179,47 +208,24 @@ export class FormaStore {
   }
 
   async preview(sourceSurface?: string) {
-    this.busy.set("preview");this.notify();
-    try{
-      const response=await fetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"preview",sourceSurface,expectedSequence:this.head.get(),...this.#generationContext()})});
-      const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};
-      if(body.appended?.length){this.events.set([...this.events.get(),...body.appended]);this.head.set(body.head??this.head.get());this.#publishAppended(body.appended);}
-      if(body.content)this.content.set({...this.content.get(),...body.content});
-      if(!response.ok)throw new Error(body.error==="provider_not_configured"?"OpenAI is ready but its production key has not been connected.":body.error??"Draft generation failed");
-      await this.refreshSession();this.toast("Draft ready. Use it to explore, or generate it at full quality when the direction holds.");
-    }catch(error){this.toast(error instanceof Error?error.message:"Draft generation failed");}
-    finally{this.busy.set("");this.notify();}
+    try{await this.#startDocumentJob("preview",{...this.#generationContext()},sourceSurface??"studio");this.toast("Draft started. It will keep running if you leave or refresh.");}catch(error){this.toast(error instanceof Error?error.message:"Draft generation failed");}
   }
 
   async generate(options?: string | { sourceSurface?: string; sourcePreviewId?: string }) {
     const sourceSurface=typeof options==="string"?options:options?.sourceSurface;const sourcePreviewId=typeof options==="string"?undefined:options?.sourcePreviewId;
-    this.busy.set("generate"); this.notify();
     try {
-      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "generate", sourceSurface, sourcePreviewId, expectedSequence: this.head.get(), ...this.#generationContext() }) });
-      const body = await response.json() as { appended?: CreativeEvent[]; content?: Record<string, string>; head?: number; error?: string; promoted?: boolean };
-      if (body.appended?.length) { this.events.set([...this.events.get(), ...body.appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(body.appended); }
-      if (body.content) this.content.set({ ...this.content.get(), ...body.content });
-      if (!response.ok) throw new Error(body.error === "provider_not_configured" ? "OpenAI is ready but its production key has not been connected." : body.error ?? "Generation failed");
-      await this.refreshSession(); this.toast(body.promoted?"Full-quality image completed from the selected draft. That promotion is now durable success evidence.":documentViewFromRoute(this.route.get()) === "editor" ? "Full-quality image ready." : `Full-quality image generated with ${this.session.get()?.provider.model ?? "OpenAI"}; provenance and usage recorded.`);
+      await this.#startDocumentJob("generate",{sourcePreviewId,...this.#generationContext()},sourceSurface??"studio");this.toast("Full-quality generation started. It is safe to leave or refresh.");
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
-    finally { this.busy.set(""); this.notify(); }
   }
 
   async chat(message:string) {
-    this.busy.set("chat");this.notify();
     try{
-      const response=await fetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"chat",message,expectedSequence:this.head.get(),clientId:"web:chat-view"})});
-      const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;previewed?:boolean;error?:string};const appended=body.appended??[];
-      if(appended.length){this.events.set([...this.events.get(),...appended]);this.head.set(body.head??this.head.get());this.#publishAppended(appended);}if(body.content)this.content.set({...this.content.get(),...body.content});
-      if(!response.ok)throw new Error(body.error==="provider_not_configured"?"Connect the OpenAI provider before chatting with Forma.":body.error??"Forma could not respond");
-      this.toast(body.previewed?"Working preview updated.":"Conversation saved.");return appended;
+      await this.#startDocumentJob("chat",{message,documentId:this.projection.get().documentId},"chat");return[];
     }catch(error){this.toast(error instanceof Error?error.message:"Forma could not respond");return[];}
-    finally{this.busy.set("");this.notify();}
   }
 
   async structureAdaptive(prompt:string) {
-    this.busy.set("adaptive-structure");this.notify();
-    try{const response=await fetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"structure_adaptive",prompt,expectedSequence:this.head.get(),clientId:"web:adaptive-path"})});const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;structure?:AdaptiveStructure;error?:string};if(body.appended?.length){this.events.set([...this.events.get(),...body.appended]);this.head.set(body.head??this.head.get());this.#publishAppended(body.appended);}if(body.content)this.content.set({...this.content.get(),...body.content});if(!response.ok)throw new Error(body.error==="provider_not_configured"?"Connect the OpenAI provider before asking Forma to structure this path.":body.error??"Forma could not structure that intent");this.toast("Forma proposed an adaptive structure. Review each suggestion before applying it.");return body.structure??null;}catch(error){this.toast(error instanceof Error?error.message:"Forma could not structure that intent");return null;}finally{this.busy.set("");this.notify();}
+    try{this.dismissAdaptiveStructure();await this.#startDocumentJob("structure_adaptive",{prompt,documentId:this.projection.get().documentId},"adaptive");this.toast("Adaptive planning started. You can continue working while it runs.");return null;}catch(error){this.toast(error instanceof Error?error.message:"Forma could not structure that intent");return null;}
   }
 
   async openProject(projectId:string,destination="/") {
@@ -267,14 +273,9 @@ export class FormaStore {
   }
 
   async extractReference(blockId: string, referenceId: string, sample: ImageSample, findingKinds: ReferenceFindingKind[] = []) {
-    this.busy.set("extract-reference"); this.notify();
     try {
-      const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "extract_reference", expectedSequence: this.head.get(), clientId: "web:lit", blockId, referenceId, sample, findingKinds }) });
-      const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Reference extraction failed");
-      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(body.appended??[]);this.toast("Reference analysis and crop focus are ready to review.");
+      await this.#startDocumentJob("extract_reference",{blockId,referenceId,sample,findingKinds,documentId:this.projection.get().documentId},"reference");this.toast("Reference analysis started and will finish in the background.");
     } catch (error) { this.toast(error instanceof Error ? error.message : "Reference extraction failed"); }
-    finally { this.busy.set(""); this.notify(); }
   }
 
   async calculateImageFocalPoint(input:{targetKind:"generation"|"reference";targetId:string;mediaUrl:string;referenceId?:string;sample?:ImageSample}){

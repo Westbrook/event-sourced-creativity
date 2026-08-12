@@ -121,3 +121,34 @@ export const replaySessions = sqliteTable(
   },
   (table) => [index("idx_replay_sessions_owner_created").on(table.ownerId, table.createdAt)],
 );
+
+/** Durable, mutable execution records for document work that must outlive a browser request. */
+export const documentJobs = sqliteTable(
+  "document_jobs",
+  {
+    jobId: text("job_id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    streamId: text("stream_id").notNull(),
+    documentId: text("document_id").notNull(),
+    kind: text("kind").notNull(),
+    status: text("status").notNull(),
+    sourceSurface: text("source_surface").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    requestedSequence: integer("requested_sequence").notNull(),
+    requestJson: text("request_json").notNull(),
+    resultJson: text("result_json"),
+    errorMessage: text("error_message"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    requestedAt: text("requested_at").notNull(),
+    startedAt: text("started_at"),
+    completedAt: text("completed_at"),
+    leaseExpiresAt: text("lease_expires_at"),
+    notifiedAt: text("notified_at"),
+    expiresAt: text("expires_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_document_jobs_owner_status").on(table.ownerId, table.status, table.requestedAt),
+    index("idx_document_jobs_stream_document").on(table.streamId, table.documentId, table.requestedAt),
+  ],
+);

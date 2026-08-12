@@ -77,14 +77,14 @@ export class ReferenceFindings extends FormaElement {
 
   override render() {
     if (!this.block) return nothing;
-    const findings = this.#findings();
+    const findings = this.#findings();const jobActive=this.store.documentJobActive("extract_reference");
     const preferences = new Set(this.#preferences());
     const projection = this.store.projection.get();
     const adoptedKinds = new Set(projection.blocks.filter((block) => block.properties.source_reference_block_id === this.block.id).map((block) => String(block.properties.source_finding_kind)));
     return html`<section class="reference-findings" aria-labelledby=${`reference-findings-${this.block.id}`}>
       <header>
         <div><span class="eyebrow">Image findings · optional</span><h3 id=${`reference-findings-${this.block.id}`}>Use what this image teaches</h3><p>Choose what to prepare, then add only the findings that should guide this document.</p></div>
-        <button class="button secondary compact" ?disabled=${this.#analyzing} @click=${this.#analyze}>${icon("spark")} ${this.#analyzing ? "Analyzing…" : findings.length ? "Analyze again" : "Analyze image"}</button>
+        <button class="button secondary compact" ?disabled=${this.#analyzing||jobActive} @click=${this.#analyze}>${icon("spark")} ${this.#analyzing||jobActive ? "Analyzing safely…" : findings.length ? "Analyze again" : "Analyze image"}</button>
       </header>
       <fieldset class="reference-finding-preferences"><legend>Prepare from this reference</legend>${REFERENCE_FINDING_OPTIONS.map((option) => html`<label><input type="checkbox" .checked=${preferences.has(option.kind)} @change=${(event: Event) => void this.#setPreference(option.kind, (event.target as HTMLInputElement).checked)}><span><b>${option.label}</b><small>${option.description}</small></span></label>`)}</fieldset>
       ${findings.length ? html`<div class="reference-finding-grid">${findings.filter((finding) => preferences.has(finding.kind)).map((finding) => {

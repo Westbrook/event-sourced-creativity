@@ -22,12 +22,12 @@ export class FormaChatStudio extends FormaElement {
     return lines;
   }
 
-  async #send(event:SubmitEvent){event.preventDefault();const message=this.#draft.trim();if(!message||this.store.busy.get())return;this.#draft="";this.requestUpdate();await this.store.chat(message);await this.updateComplete;this.querySelector(".chat-thread-end")?.scrollIntoView({behavior:"smooth",block:"end"});}
+  async #send(event:SubmitEvent){event.preventDefault();const message=this.#draft.trim();if(!message||this.store.busy.get()||this.store.documentJobActive("chat"))return;this.#draft="";this.requestUpdate();await this.store.chat(message);await this.updateComplete;this.querySelector(".chat-thread-end")?.scrollIntoView({behavior:"smooth",block:"end"});}
 
   #keydown(event:KeyboardEvent){if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();this.querySelector<HTMLFormElement>(".chat-composer")?.requestSubmit();}}
 
   override render(){
-    const projection=this.store.projection.get();const lines=this.#lines(projection.documentId);const current=projection.outputs.find((output)=>output.id===this.store.ui.selectedOutputId)??projection.outputs[0]??null;const working=isDraftOutput(current);const busy=this.store.busy.get();
+    const projection=this.store.projection.get();const lines=this.#lines(projection.documentId);const current=projection.outputs.find((output)=>output.id===this.store.ui.selectedOutputId)??projection.outputs[0]??null;const working=isDraftOutput(current);const busy=this.store.busy.get();const chatActive=this.store.documentJobActive("chat");
     const destination=withDocumentFocusInRoute(withDocumentInRoute("/studio/chat",projection.documentId,projection.documentTitle),documentFocusFromRoute(this.store.route.get()));
     return html`<section class="workspace-page studio-subpage chat-view-page">
       <forma-project-rail surface="studio" destination=${destination} quiet></forma-project-rail>
@@ -45,16 +45,16 @@ export class FormaChatStudio extends FormaElement {
 
           <section class="chat-conversation" aria-labelledby="chat-thread-title">
             <header><div><span class="eyebrow">Creative conversation</span><h2 id="chat-thread-title">Chat with Forma</h2></div><p>Describe the image, revise an idea, or remove something that no longer belongs. Forma keeps the plan organized for you.</p></header>
-            <div class="chat-thread" role="log" aria-live="polite" aria-busy=${busy==="chat"}>
+            <div class="chat-thread" role="log" aria-live="polite" aria-busy=${chatActive}>
               ${!lines.length?html`<article class="chat-line assistant"><span>Forma</span><p>What would you like to make? Start with the subject, feeling, setting, or simply the outcome you have in mind.</p></article>`:nothing}
               ${lines.map((line)=>html`<article class=${`chat-line ${line.role}`}><span>${line.role==="user"?"You":"Forma"}</span><p>${line.text}</p></article>`)}
-              ${busy==="chat"?html`<article class="chat-line assistant thinking"><span>Forma</span><p>Working through that idea…</p></article>`:nothing}
+              ${chatActive?html`<article class="chat-line assistant thinking"><span>Forma</span><p>Working through that idea on the server… You can refresh or leave this view safely.</p></article>`:nothing}
               <span class="chat-thread-end" aria-hidden="true"></span>
             </div>
             <form class="chat-composer" @submit=${this.#send}>
               <label for="creative-chat-message" class="sr-only">Message Forma</label>
               <textarea id="creative-chat-message" rows="3" maxlength="4000" placeholder="Describe what to create or change…" .value=${this.#draft} @input=${(event:InputEvent)=>{this.#draft=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}} @keydown=${this.#keydown}></textarea>
-              <div><small>A fast working preview updates after useful changes. Shift + Enter adds a line.</small><button class="button primary" ?disabled=${!this.#draft.trim()||Boolean(busy)}>${busy==="chat"?"Forma is thinking…":html`Send ${icon("arrow")}`}</button></div>
+              <div><small>A fast working preview updates after useful changes. Shift + Enter adds a line.</small><button class="button primary" ?disabled=${!this.#draft.trim()||Boolean(busy)||chatActive}>${chatActive?"Forma is thinking safely…":html`Send ${icon("arrow")}`}</button></div>
             </form>
           </section>
         </main>

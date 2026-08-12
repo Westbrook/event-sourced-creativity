@@ -168,17 +168,34 @@ test("presents every alternate Studio lens as the same complete durable document
 });
 
 test("keeps the Chat document view conversational while resolving durable changes and two-stage images",async()=>{
-  const [chat,store,eventsApi,adapter,routes]=await Promise.all([
+  const [chat,store,jobsApi,eventsApi,adapter,routes]=await Promise.all([
     readFile(new URL("../src/components/forma-chat-studio.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/openai-adapter.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/model/routes.ts",import.meta.url),"utf8"),
   ]);
   assert.match(chat,/Chat with Forma/);assert.match(chat,/forma-output-visual/);assert.match(chat,/store\.chat\(message\)/);assert.match(chat,/forma-generation-actions/);assert.match(chat,/outputQualityLabel/);
   assert.doesNotMatch(chat,/forma-context-block|forma-event-inspector|forma-document-continuity|projection\.blocks/);
-  assert.match(store,/action:"chat"/);assert.match(store,/action:"preview"/);assert.match(store,/sourcePreviewId/);assert.match(eventsApi,/body\.action==="chat"/);assert.match(eventsApi,/body\.action==="preview"/);assert.match(eventsApi,/creativeChatMutationEvents/);assert.match(eventsApi,/IdeationPreviewCompleted/);assert.match(eventsApi,/IdeationPromoted/);assert.match(eventsApi,/reference_preview_event_id/);
+  assert.match(store,/#startDocumentJob\("chat"/);assert.match(store,/#startDocumentJob\("preview"/);assert.match(store,/sourcePreviewId/);assert.match(jobsApi,/ctx\.waitUntil\(runDocumentJob/);assert.match(jobsApi,/status='running'/);assert.match(jobsApi,/sourceSurface/);assert.match(eventsApi,/body\.action==="chat"/);assert.match(eventsApi,/body\.action==="preview"/);assert.match(eventsApi,/creativeChatMutationEvents/);assert.match(eventsApi,/IdeationPreviewCompleted/);assert.match(eventsApi,/IdeationPromoted/);assert.match(eventsApi,/reference_preview_event_id/);
   assert.match(adapter,/quality=options\.quality\?\?"high"/);assert.match(adapter,/images\/edits/);assert.match(adapter,/latest-ideation-preview\.png/);assert.match(routes,/"chat"/);
+});
+
+test("runs document async work as durable reconnectable server jobs",async()=>{
+  const [schema,runtime,worker,jobs,store,actions]=await Promise.all([
+    readFile(new URL("../db/schema.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/runtime.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/index.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/generation-actions.ts",import.meta.url),"utf8"),
+  ]);
+  for(const source of [schema,runtime])assert.match(source,/document_jobs/);
+  assert.match(worker,/\/api\/document-jobs/);assert.match(worker,/ctx: WorkerExecutionContext/);
+  assert.match(jobs,/"queued" \| "running" \| "completed" \| "failed"/);assert.match(jobs,/lease_expires_at/);assert.match(jobs,/ctx\.waitUntil/);assert.match(jobs,/runNextDocumentJob/);assert.match(jobs,/correlationId/);assert.match(jobs,/notified_at/);
+  for(const kind of ["preview","generate","chat","structure_adaptive","extract_reference"])assert.match(store,new RegExp(`#startDocumentJob\\("${kind}"`));
+  assert.match(store,/visibilitychange/);assert.match(store,/#jobResultVisible/);assert.match(store,/#pendingJobNotices/);assert.match(store,/\/ack/);assert.match(actions,/documentJobActive/);
 });
 
 test("opens otherwise passive generation and reference images in contained dialogs",async()=>{

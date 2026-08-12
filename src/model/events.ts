@@ -144,7 +144,7 @@ const itemId = (value: unknown) => {
   return String(ref.document_id ?? ref.collection_id ?? ref.object_id ?? "");
 };
 
-export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFINITY): CreativeProjection {
+export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFINITY, selectedDocumentId = ""): CreativeProjection {
   const projects = new Map<string, Omit<CreativeProject, "documentCount" | "collectionCount" | "blockCount" | "outputCount">>();
   const blocks = new Map<string, CreativeBlock>();
   const documents = new Map<string, CreativeDocument>();
@@ -293,7 +293,9 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   for(const id of Object.keys(membership))if(documents.has(id)&&!visibleDocumentIds.has(id))delete membership[id];
   state.libraryBlocks = [...blocks.values()].filter((b) => !b.removed&&(!documents.has(b.documentId)||visibleDocumentIds.has(b.documentId))).sort((a, b) => a.position.localeCompare(b.position));
   state.documents = visibleDocuments;
-  if(!visibleDocumentIds.has(state.documentId)){const fallback=visibleDocuments[0];state.documentId=fallback?.id??"";state.documentTitle=fallback?.title??"No document open";state.latestCompile=null;}
+  const selectedDocument=selectedDocumentId?visibleDocuments.find((document)=>document.id===selectedDocumentId):undefined;
+  if(selectedDocument){state.documentId=selectedDocument.id;state.documentTitle=selectedDocument.title;}
+  else if(!visibleDocumentIds.has(state.documentId)){const fallback=visibleDocuments[0];state.documentId=fallback?.id??"";state.documentTitle=fallback?.title??"No document open";state.latestCompile=null;}
   state.blocks = state.libraryBlocks.filter((block) => block.documentId === state.documentId);
   state.collections = [...collections.values()].filter((c) => !c.removed&&c.projectId===state.projectId).sort((a, b) => a.position.localeCompare(b.position) || a.handle.localeCompare(b.handle));
   state.libraryOutputs = [...outputs.values()].filter((o) => !o.discarded&&(!documents.has(o.documentId)||visibleDocumentIds.has(o.documentId))).sort((a, b) => b.sequence - a.sequence);

@@ -153,7 +153,7 @@ export class FormaShell extends FormaElement {
       ${this.store.ui.shareOpen ? this.#share() : nothing}
       ${session&&!session.policy.accepted?this.#terms():nothing}
       <forma-attention-observer></forma-attention-observer>
-      <span class="sr-only" aria-live="polite">${this.store.busy.get() ? `Working: ${this.store.busy.get()}` : "Ready"}</span>
+      <span class="sr-only" aria-live="polite">${this.store.busy.get() ? `Working: ${this.store.busy.get()}` : this.store.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running") ? "Background document work is running safely on the server" : "Ready"}</span>
     </div>`;
   }
 }
