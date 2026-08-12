@@ -1,7 +1,7 @@
 import { html, LitElement } from "lit";
 import "./output-visual";
 
-type SharedProjection = { projectName: string; documentTitle: string; blocks: Array<{ id: string; type: string; handle: string; properties: Record<string, unknown> }>; outputs: Array<{ id: string; modelId: string; variant: number; sequence: number; mediaUrl:string|null; width:number|null; height:number|null }> };
+type SharedProjection = { projectName: string; documentTitle: string; blocks: Array<{ id: string; type: string; handle: string; properties: Record<string, unknown> }>; outputs: Array<{ id: string; modelId: string; variant: number; sequence: number; mediaUrl:string|null; width:number|null; height:number|null; focalPoint?:unknown }> };
 
 export class FormaSharedView extends LitElement {
   static properties = { token: { type: String } };

@@ -7,6 +7,8 @@ import { readAttentionPreference, writeAttentionPreference } from "../model/atte
 import { blockEffectFor, blockIntentFor, type AdaptiveStructure } from "../model/block-types";
 import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import { normalizeSpatialScope } from "../model/spatial-scope";
+import { normalizeImageFocalPoint } from "../model/focal-point";
+import { resolveImageFocalAnalysis } from "../model/image-focus";
 
 type Listener = () => void;
 export type PilotSession = {
@@ -36,10 +38,18 @@ export class FormaStore {
   #listeners = new Set<Listener>();
   #undo: CreativeEvent[] = [];
   #redo: CreativeEvent[] = [];
+  #focalInFlight = new Set<string>();
+  #focalAppendQueue: Promise<void> = Promise.resolve();
 
   subscribe(listener: Listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   notify() { this.#listeners.forEach((listener) => listener()); }
-  #publishAppended(events:CreativeEvent[]){if(events.length)window.dispatchEvent(new CustomEvent("forma-events-appended",{detail:{events}}));}
+  #publishAppended(events:CreativeEvent[]){if(events.length){window.dispatchEvent(new CustomEvent("forma-events-appended",{detail:{events}}));queueMicrotask(()=>this.#backfillImageFocalPoints());}}
+  #hasFocalPoint(targetKind:"generation"|"reference",targetId:string){const projection=this.projection.get();return targetKind==="generation"?Boolean(projection.libraryOutputs.find((output)=>output.id===targetId)?.focalPoint??projection.outputs.find((output)=>output.id===targetId)?.focalPoint):Boolean(normalizeImageFocalPoint(projection.libraryBlocks.find((block)=>block.id===targetId)?.properties.focal_point??projection.blocks.find((block)=>block.id===targetId)?.properties.focal_point));}
+  #backfillImageFocalPoints(){
+    const projection=this.projection.get();const seen=new Set<string>();
+    for(const output of [...projection.outputs,...projection.libraryOutputs])if(output.mediaUrl&&!output.focalPoint&&!seen.has(`generation:${output.id}`)){seen.add(`generation:${output.id}`);void this.calculateImageFocalPoint({targetKind:"generation",targetId:output.id,mediaUrl:output.mediaUrl});}
+    for(const block of [...projection.blocks,...projection.libraryBlocks]){const mediaUrl=String(block.properties.media_url??"");if(block.type!=="reference"||!mediaUrl||block.properties.extraction_status==="pending"||normalizeImageFocalPoint(block.properties.focal_point)||seen.has(`reference:${block.id}`))continue;seen.add(`reference:${block.id}`);void this.calculateImageFocalPoint({targetKind:"reference",targetId:block.id,referenceId:String(block.properties.reference_id??""),mediaUrl});}
+  }
   #reflectDocumentInRoute() {
     const currentRoute = this.route.get();
     if (!isDocumentViewRoute(currentRoute)) return;
@@ -108,6 +118,7 @@ export class FormaStore {
       const body = await response.json() as { events: CreativeEvent[]; content?: Record<string, string>; head: number };
       this.events.set(body.events); this.content.set(body.content ?? {}); this.head.set(body.head); this.error.set("");
       await this.syncDocumentFromRoute(this.route.get());
+      queueMicrotask(()=>this.#backfillImageFocalPoints());
     } catch (error) { this.error.set(error instanceof Error ? error.message : "Unable to load event stream"); }
     finally { this.loading.set(false); this.notify(); }
   }
@@ -261,9 +272,19 @@ export class FormaStore {
       const response = await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "extract_reference", expectedSequence: this.head.get(), clientId: "web:lit", blockId, referenceId, sample, findingKinds }) });
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string };
       if (!response.ok) throw new Error(body.error ?? "Reference extraction failed");
-      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Reference analysis is ready to review.");
+      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(body.appended??[]);this.toast("Reference analysis and crop focus are ready to review.");
     } catch (error) { this.toast(error instanceof Error ? error.message : "Reference extraction failed"); }
     finally { this.busy.set(""); this.notify(); }
+  }
+
+  async calculateImageFocalPoint(input:{targetKind:"generation"|"reference";targetId:string;mediaUrl:string;referenceId?:string;sample?:ImageSample}){
+    const key=`${input.targetKind}:${input.targetId}:${input.mediaUrl}`;if(!input.mediaUrl||this.#focalInFlight.has(key)||this.#hasFocalPoint(input.targetKind,input.targetId))return null;this.#focalInFlight.add(key);
+    try{
+      const sample=input.sample??(await resolveImageFocalAnalysis(input.mediaUrl)).sample;
+      let resolved:unknown=null;
+      const append=async()=>{if(this.#hasFocalPoint(input.targetKind,input.targetId))return;const response=await fetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"calculate_focal_point",clientId:"web:focal-extractor",targetKind:input.targetKind,targetId:input.targetId,referenceId:input.referenceId,mediaUrl:input.mediaUrl,sample})});const body=await response.json() as {appended?:CreativeEvent[];head?:number;focalPoint?:unknown;error?:string};if(!response.ok)throw new Error(body.error??"focal_point_calculation_failed");const appended=body.appended??[];if(appended.length){this.events.set([...this.events.get(),...appended]);this.head.set(body.head??this.head.get());this.#publishAppended(appended);this.notify();}resolved=body.focalPoint??null;};
+      const task=this.#focalAppendQueue.then(append);this.#focalAppendQueue=task.catch(()=>{});await task;return normalizeImageFocalPoint(resolved);
+    }catch{return null;}finally{this.#focalInFlight.delete(key);}
   }
 
   async closeSession() {

@@ -1,6 +1,8 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
 import type { CreativeOutput } from "../model/events";
+import { focalPointCss } from "../model/focal-point";
+import { positionImageAtFocalPoint } from "../model/image-focus";
 
 export class OutputVisual extends FormaElement {
   static properties={output:{attribute:false},compact:{type:Boolean},interactive:{type:Boolean}};
@@ -13,7 +15,7 @@ export class OutputVisual extends FormaElement {
 
   #close(){this.querySelector<HTMLDialogElement>(".generated-image-viewer")?.close();this.#open=false;this.requestUpdate();}
 
-  #image(output:CreativeOutput){return html`<img class="generated-output-image" src=${output.mediaUrl!} alt=${`Generated image ${output.id}`} width=${output.width??1536} height=${output.height??1024} loading=${this.compact?"lazy":"eager"}>`;}
+  #image(output:CreativeOutput){return html`<img class="generated-output-image" src=${output.mediaUrl!} alt=${`Generated image ${output.id}`} width=${output.width??1536} height=${output.height??1024} loading=${this.compact?"lazy":"eager"} style=${focalPointCss(output.focalPoint)} @load=${(event:Event)=>positionImageAtFocalPoint(event.currentTarget as HTMLImageElement,output.focalPoint)}>`;}
 
   override render(){
     const output=this.output;

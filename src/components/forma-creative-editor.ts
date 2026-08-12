@@ -3,6 +3,8 @@ import { isDraftOutput, outputQualityLabel, type CreativeBlock, type EventInput 
 import { BLOCK_INTENTS, BLOCK_TYPES, blockIntentFor, blockTypeDefinition, isBlockIntent, isBlockKind, isNegativeIntent, suggestedSubtype, type BlockIntent, type BlockKind } from "../model/block-types";
 import { DEFAULT_REFERENCE_FINDINGS } from "../model/extractors";
 import { sampleImageFile } from "../model/image-sample";
+import { focalPointCss } from "../model/focal-point";
+import { positionImageAtFocalPoint } from "../model/image-focus";
 import { icon } from "./forma-element";
 import { AlternativeStudio } from "./forma-studio-alternatives";
 import { spatialScopeLabel } from "../model/spatial-scope";
@@ -305,7 +307,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
       @dragover=${(event: DragEvent) => event.preventDefault()}
       @drop=${(event: DragEvent) => this.#drop(event, item.id)}>
       <button class="creative-editor-item-main" aria-pressed=${selected} @click=${() => { this.#selectedId = item.id; this.requestUpdate(); }}>
-        ${image ? html`<img src=${image} alt=${textFor(item)} loading="lazy">` : html`<span class=${`editor-item-glyph editor-item-glyph--${this.#sectionFor(item).id}`}>${FRIENDLY_LABELS[kind].slice(0, 2)}</span>`}
+        ${image ? html`<img src=${image} alt=${textFor(item)} loading="lazy" style=${focalPointCss(item.properties.focal_point)} @load=${(event:Event)=>positionImageAtFocalPoint(event.currentTarget as HTMLImageElement,item.properties.focal_point)}>` : html`<span class=${`editor-item-glyph editor-item-glyph--${this.#sectionFor(item).id}`}>${FRIENDLY_LABELS[kind].slice(0, 2)}</span>`}
         <span><b>${intent === "include" ? FRIENDLY_LABELS[kind] : `${intentCopy(intent)} ${FRIENDLY_LABELS[kind].toLowerCase()}`}</b><small>${negativeConstraint ? `Must not include: ${textFor(item)}` : textFor(item)}</small><small class="creative-editor-item-scope">${spatialScopeLabel(item.properties.spatial_scope)}</small></span>
         ${item.locked ? html`<em>Protected</em>` : intent !== "include" ? html`<em>${intentCopy(intent)}</em>` : nothing}
       </button>
@@ -382,7 +384,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
           <aside class=${`creative-editor-inspector ${selectedIsExclusion ? "negative-constraint" : ""}`} aria-label="Selected item settings">
             ${selected ? html`<form @submit=${(event: SubmitEvent) => this.#save(event, selected)}>
               <header><span>${selectedIsExclusion ? "Guardrail selected" : "Selected"}</span><h2>${selectedIntent === "include" ? FRIENDLY_LABELS[selected.type as BlockKind] : `${intentCopy(selectedIntent)} ${FRIENDLY_LABELS[selected.type as BlockKind].toLowerCase()}`}</h2><p>${selectedIsExclusion ? `This is a negative ${FRIENDLY_LABELS[selected.type as BlockKind].toLowerCase()} constraint. It tells the preview what must not appear; it never becomes a positive focus.` : "Change the role, intent, wording, and influence of this decision."}</p></header>
-              ${selected.type === "reference" && selected.properties.media_url ? html`<forma-reference-image class="creative-inspector-image" .src=${String(selected.properties.media_url)} .alt=${textFor(selected)}></forma-reference-image>` : nothing}
+              ${selected.type === "reference" && selected.properties.media_url ? html`<forma-reference-image class="creative-inspector-image" .src=${String(selected.properties.media_url)} .alt=${textFor(selected)} .targetId=${selected.id} .referenceId=${String(selected.properties.reference_id??"")} .focalPoint=${selected.properties.focal_point}></forma-reference-image>` : nothing}
               <label><span>Role in the plan</span><select name="item-type" ?disabled=${selected.locked}>${BLOCK_TYPES.map((item) => html`<option value=${item.type} ?selected=${item.type === selected.type}>${FRIENDLY_LABELS[item.type]}</option>`)}</select></label>
               <label><span>Intent</span><select name="item-intent" ?disabled=${selected.locked}>${BLOCK_INTENTS.map((intent) => html`<option value=${intent.id} ?selected=${intent.id === selectedIntent}>${intent.label} · ${intent.description}</option>`)}</select></label>
               <div class="creative-role-intent-summary"><b>${intentCopy(selectedIntent)} · ${FRIENDLY_LABELS[selected.type as BlockKind]}</b><small>${spatialScopeLabel(selected.properties.spatial_scope)}</small></div>

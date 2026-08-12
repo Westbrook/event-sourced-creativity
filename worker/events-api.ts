@@ -11,6 +11,7 @@ import { buildPhase7Index } from "../src/model/indexing";
 import { buildScoutEnvelope, buildScoutTrajectory } from "../src/model/scout";
 import { CREATOR_AXES, inferTasteBeliefs, standingConstraints } from "../src/model/taste";
 import { buildAttentionEpisode } from "../src/model/attention";
+import { calculateImageFocalPoint } from "../src/model/focal-point";
 
 export type { WorkerEnv } from "./runtime";
 
@@ -22,7 +23,7 @@ const USER_EVENTS = new Set([
 const PRODUCER_EVENTS: Record<string, Set<string>> = {
   "worker:compiler": new Set(["ContextCompiled"]),
   "worker:generator": new Set(["GenerationCompleted","GenerationFailed","IdeationPreviewCompleted"]),
-  "worker:extractor": new Set(["ExtractionCompleted","ExtractionFailed","ExtractionSuperseded","ExtractorEvaluationCompleted"]),
+  "worker:extractor": new Set(["ExtractionCompleted","ExtractionFailed","ExtractionSuperseded","ExtractorEvaluationCompleted","ImageFocalPointCalculated"]),
   "worker:brief": new Set(["BriefComposed"]),
   "worker:taste": new Set(["TasteModelVersioned"]),
   "worker:validator": new Set(["ValidationFailed"]),
@@ -103,7 +104,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false):Prom
     if(request.method==="GET"){const events=await readEvents(env,streamId);return Response.json({events,content:await loadPrivateContent(env,ownerId),head:events.at(-1)?.sequence??0,permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});}
     if(request.method!=="POST")return new Response("Method not allowed",{status:405});
     const consent=requireConsent(auth.user);if(consent)return consent;
-    const body=await request.json() as {action?:"append"|"batch"|"propose"|"preview"|"generate"|"chat"|"structure_adaptive"|"hot"|"evaluate_extractors"|"rebuild_index"|"extract_reference"|"open_session"|"close_session"|"compose_brief"|"declare_intent"|"run_scout"|"refresh_taste_model"|"set_condition"|"check_conditions"|"critique_object";event?:EventInput;events?:EventInput[];expectedSequence?:number;clientId?:string;correlationId?:string;prompt?:string;message?:string;sourceSurface?:string;sourcePreviewId?:string;exemplarRefs?:Array<Record<string,unknown>>;snapshot?:Record<string,unknown>;sourceBlockVersions?:Array<Record<string,unknown>>;blockId?:string;referenceId?:string;sample?:ImageSample;findingKinds?:ReferenceFindingKind[];statement?:string;deadline?:string|null;maxObservations?:number;condition?:string;triggerKind?:"generation_count"|"on_date";threshold?:number;onDate?:string;objectId?:string;axis?:string;polarity?:"positive"|"negative";value?:string;note?:string};
+    const body=await request.json() as {action?:"append"|"batch"|"propose"|"preview"|"generate"|"chat"|"structure_adaptive"|"hot"|"evaluate_extractors"|"rebuild_index"|"extract_reference"|"calculate_focal_point"|"open_session"|"close_session"|"compose_brief"|"declare_intent"|"run_scout"|"refresh_taste_model"|"set_condition"|"check_conditions"|"critique_object";event?:EventInput;events?:EventInput[];expectedSequence?:number;clientId?:string;correlationId?:string;prompt?:string;message?:string;sourceSurface?:string;sourcePreviewId?:string;exemplarRefs?:Array<Record<string,unknown>>;snapshot?:Record<string,unknown>;sourceBlockVersions?:Array<Record<string,unknown>>;blockId?:string;referenceId?:string;targetKind?:"generation"|"reference";targetId?:string;mediaUrl?:string;sample?:ImageSample;findingKinds?:ReferenceFindingKind[];statement?:string;deadline?:string|null;maxObservations?:number;condition?:string;triggerKind?:"generation_count"|"on_date";threshold?:number;onDate?:string;objectId?:string;axis?:string;polarity?:"positive"|"negative";value?:string;note?:string};
     const current=await streamHead(env,streamId),client=body.clientId||"web:lit",corr=body.correlationId||uuidV7();const requested=body.action==="batch"||hot?body.events??(body.event?[body.event]:[]):body.event?[body.event]:[];
     if(hot&&!requested.every(e=>HOT_EVENTS.has(e.type??"")))return Response.json({error:"hot_path_accepts_commutative_engagement_only"},{status:400});
     const commutative=requested.length>0&&requested.every(e=>COMMUTATIVE.has(e.type??""));
@@ -199,10 +200,25 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false):Prom
     if(body.action==="extract_reference"){
       if(!body.blockId||!body.referenceId||!body.sample)return Response.json({error:"block_reference_and_sample_required"},{status:400});
       const facts=analyzeImageSample(body.sample);
+      const focalPoint=calculateImageFocalPoint(body.sample);
       const findingKinds=Array.isArray(body.findingKinds)?body.findingKinds:[];
       const requestedAt=makeEvent(streamId,current+1,"user",client,corr,"ExtractionRequested",{block_id:body.blockId,reference_id:body.referenceId,extractors:["dimensions-v1","palette-kmeans-v1","dominant-edges-v1","image-character-v1"],requested_findings:findingKinds});
       const completed=makeEvent(streamId,current+2,"worker:extractor",client,corr,"ExtractionCompleted",{block_id:body.blockId,reference_id:body.referenceId,extractor_name:"deterministic-image-suite-v2",extractor_versions:["dimensions-v1","palette-kmeans-v1","dominant-edges-v1","image-character-v1"],chips:[{chip_id:`chip-${body.blockId}-dimensions`,property:"dimensions",value:facts.dimensions,confidence:facts.confidence.dimensions},{chip_id:`chip-${body.blockId}-palette`,property:"colors",value:facts.palette,confidence:facts.confidence.palette},{chip_id:`chip-${body.blockId}-edges`,property:"dominant_edges",value:facts.dominantEdges,confidence:facts.confidence.dominantEdges},{chip_id:`chip-${body.blockId}-findings`,property:"reference_findings",value:facts.findings,confidence:facts.confidence.findings}],overall_confidence:facts.confidence.overall,sample_grid:{width:body.sample.gridWidth,height:body.sample.gridHeight},requested_findings:findingKinds},{causationId:requestedAt.eventId});
-      await env.DB.batch([requestedAt,completed].map(event=>insertEvent(env,event)));return Response.json({appended:[requestedAt,completed],rejected:[],head:completed.sequence});
+      const focal=makeEvent(streamId,current+3,"worker:extractor",client,corr,"ImageFocalPointCalculated",{target_kind:"reference",target_id:body.blockId,block_id:body.blockId,reference_id:body.referenceId,document_id:foldEvents(await readEvents(env,streamId)).documentId,focal_point:focalPoint,sample_grid:{width:body.sample.gridWidth,height:body.sample.gridHeight},extractor_name:"saliency-grid-v1",cost_class:"local-free"},{causationId:completed.eventId});
+      await env.DB.batch([requestedAt,completed,focal].map(event=>insertEvent(env,event)));return Response.json({appended:[requestedAt,completed,focal],rejected:[],head:focal.sequence});
+    }
+    if(body.action==="calculate_focal_point"){
+      if(!body.targetKind||!body.targetId||!body.mediaUrl||!body.sample)return Response.json({error:"focal_target_media_and_sample_required"},{status:400});
+      const events=await readEvents(env,streamId);const projection=foldEvents(events);let blockId:string|null=null;let referenceId:string|null=null;let documentId="";let causationId:string|null=null;
+      if(body.targetKind==="generation"){
+        const output=projection.libraryOutputs.find((item)=>item.id===body.targetId);if(!output||output.mediaUrl!==body.mediaUrl)return Response.json({error:"generation_media_target_not_found"},{status:404});documentId=output.documentId;causationId=output.sourceEventId;
+      }else{
+        const block=projection.libraryBlocks.find((item)=>item.id===body.targetId&&item.type==="reference");if(!block||String(block.properties.media_url??"")!==body.mediaUrl)return Response.json({error:"reference_media_target_not_found"},{status:404});blockId=block.id;referenceId=String(block.properties.reference_id??body.referenceId??"")||null;documentId=block.documentId;causationId=block.sourceEvents.at(-1)??null;
+      }
+      const existing=events.find((event)=>event.type==="ImageFocalPointCalculated"&&event.payload.target_kind===body.targetKind&&String(event.payload.target_id??"")===body.targetId&&String(event.payload.media_url??body.mediaUrl)===body.mediaUrl);
+      if(existing)return Response.json({appended:[],rejected:[],head:current,focalPoint:existing.payload.focal_point,cached:true});
+      const focalPoint=calculateImageFocalPoint(body.sample);const focal=makeEvent(streamId,current+1,"worker:extractor",client,corr,"ImageFocalPointCalculated",{target_kind:body.targetKind,target_id:body.targetId,block_id:blockId,reference_id:referenceId,document_id:documentId,media_url:body.mediaUrl,focal_point:focalPoint,sample_grid:{width:body.sample.gridWidth,height:body.sample.gridHeight},extractor_name:"saliency-grid-v1",cost_class:"local-free"},{causationId});
+      await insertEvent(env,focal).run();return Response.json({appended:[focal],rejected:[],head:focal.sequence,focalPoint,cached:false});
     }
     if(body.action==="close_session"){
       const events=await readEvents(env,streamId);const projection=foldEvents(events);
