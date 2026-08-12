@@ -179,9 +179,9 @@ test("keeps the Chat document view conversational while resolving durable change
   assert.match(chat,/Chat with Forma/);assert.match(chat,/forma-output-visual/);assert.match(chat,/store\.chat\(message,this\.#livePreview\)/);assert.match(chat,/forma-generation-actions/);assert.match(chat,/outputQualityLabel/);
   assert.match(chat,/#livePreview=true/);assert.match(chat,/type="checkbox"/);assert.match(chat,/>Live preview</);assert.match(chat,/Keep chatting without generating an image/);
   assert.doesNotMatch(chat,/forma-context-block|forma-event-inspector|forma-document-continuity|projection\.blocks/);
-  assert.match(store,/#startDocumentJob\("chat"/);assert.match(store,/\{message,livePreview,documentId/);assert.match(store,/#startDocumentJob\("preview"/);assert.match(store,/sourcePreviewId/);assert.match(jobsApi,/ctx\.waitUntil\(runDocumentJob/);assert.match(jobsApi,/status='running'/);assert.match(jobsApi,/sourceSurface/);assert.match(eventsApi,/body\.action==="chat"/);assert.match(eventsApi,/body\.action==="preview"/);assert.match(eventsApi,/livePreview=body\.livePreview!==false/);assert.match(eventsApi,/if\(livePreview&&generated\.output\.preview_worthy\)/);assert.match(eventsApi,/preview_suppressed:previewSuppressed/);assert.match(eventsApi,/creativeChatMutationEvents/);assert.match(eventsApi,/IdeationPreviewCompleted/);assert.match(eventsApi,/IdeationPromoted/);assert.match(eventsApi,/reference_preview_event_id/);
-  assert.ok(eventsApi.indexOf("creativeChatMutationEvents")<eventsApi.indexOf("if(livePreview&&generated.output.preview_worthy)"),"Chat mutations must remain outside the optional image-preview gate");
-  assert.match(adapter,/quality=options\.quality\?\?"high"/);assert.match(adapter,/images\/edits/);assert.match(adapter,/latest-ideation-preview\.png/);assert.match(routes,/"chat"/);
+  assert.match(store,/#startDocumentJob\("chat"/);assert.match(store,/\{message,livePreview,documentId/);assert.match(store,/#startDocumentJob\("preview"/);assert.match(store,/sourcePreviewId/);assert.match(store,/documentPreviewProgress/);assert.match(jobsApi,/ctx\.waitUntil\(runDocumentJob/);assert.match(jobsApi,/status='running'/);assert.match(jobsApi,/queueFollowupPreview/);assert.match(eventsApi,/body\.action==="chat"/);assert.match(eventsApi,/body\.action==="preview"/);assert.match(eventsApi,/livePreview=body\.livePreview!==false/);assert.match(eventsApi,/previewQueued=livePreview&&generated\.output\.preview_worthy/);assert.match(eventsApi,/followupJob:directionStored/);assert.match(eventsApi,/creativeChatMutationEvents/);assert.match(eventsApi,/IdeationPreviewCompleted/);assert.match(eventsApi,/IdeationPromoted/);assert.match(eventsApi,/reference_preview_event_id/);
+  assert.ok(eventsApi.indexOf("creativeChatMutationEvents")<eventsApi.indexOf("followupJob:directionStored"),"Chat mutations must commit before the optional image follow-up is queued");
+  assert.match(adapter,/quality=options\.quality\?\?"high"/);assert.match(adapter,/images\/edits/);assert.match(adapter,/partial_images/);assert.match(adapter,/output_compression/);assert.match(routes,/"chat"/);
 });
 
 test("runs document async work as durable reconnectable server jobs",async()=>{
@@ -224,19 +224,21 @@ test("explains comparison changes as creative actions instead of block ids",asyn
   assert.match(workspace,/Creative decisions between these results/);assert.match(workspace,/affected area moved from/);assert.match(workspace,/intent changed from/);assert.doesNotMatch(workspace,/<b>\$\{d\.id\}<\/b>/);
 });
 
-test("lets Reference blocks prepare and explicitly adopt multiple image realities", async () => {
-  const [extractors, workspace, contextBlock, findings, eventsApi, scenarios] = await Promise.all([
+test("lets Reference blocks prepare, adopt, and opt pixels into image generation", async () => {
+  const [extractors, workspace, contextBlock, pixelPolicy, findings, eventsApi, adapter, scenarios] = await Promise.all([
     readFile(new URL("../src/model/extractors.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-workspace.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/context-block.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/reference-pixel-policy.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/reference-findings.ts", import.meta.url), "utf8"),
     readFile(new URL("../worker/events-api.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/openai-adapter.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/model/scenarios.ts", import.meta.url), "utf8"),
   ]);
   for (const kind of ["palette", "mood", "composition", "material", "lighting", "spatial"]) assert.match(extractors, new RegExp(`kind: "${kind}"`));
   assert.match(workspace, /extraction_preferences/); assert.match(workspace, /REFERENCE_FINDING_OPTIONS/); assert.match(workspace, /Choose what this image should contribute/);
-  assert.match(contextBlock, /forma-reference-findings/); assert.match(findings, /Add as decision/); assert.match(findings, /source_reference_block_id/); assert.match(findings, /source_finding_kind/); assert.match(findings, /sampleImageUrl/);
-  assert.match(eventsApi, /deterministic-image-suite-v2/); assert.match(eventsApi, /reference_findings/); assert.match(scenarios, /palette, mood, composition, material, lighting, and spatial findings/);
+  assert.match(contextBlock, /forma-reference-findings/);assert.match(contextBlock,/forma-reference-pixel-policy/);assert.match(pixelPolicy,/pixel_reference_mode/);assert.match(pixelPolicy,/Original pixels/); assert.match(findings, /Add as decision/); assert.match(findings, /source_reference_block_id/); assert.match(findings, /source_finding_kind/); assert.match(findings, /sampleImageUrl/);
+  assert.match(eventsApi, /deterministic-image-suite-v2/); assert.match(eventsApi, /uploadedPixelReferences/);assert.match(eventsApi,/reference_pixel_rights_required/);assert.match(adapter,/Never create a reference item through chat/);assert.match(adapter,/multiple-image-input|image\[\]/); assert.match(scenarios, /palette, mood, composition, material, lighting, and spatial findings/);assert.match(scenarios,/reference-pixel-handoff/);
 });
 
 test("enforces the adopted production-pilot boundaries", async () => {

@@ -11,6 +11,7 @@ import { spatialScopeLabel } from "../model/spatial-scope";
 import "./spatial-scope-editor";
 import "./output-visual";
 import "./reference-image";
+import "./reference-pixel-policy";
 import "./generation-actions";
 
 type EditorSection = {
@@ -136,7 +137,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
       const appended = await this.store.appendBatch([
         { type: "ReferenceIngested", payload: { reference_id: referenceId, source_type: "upload", source_ref: media.url, content_hash: media.key, rights_class: "asserted" } },
         { type: "RightsAsserted", payload: { reference_id: referenceId, rights_class: "owned_or_licensed", assertion_method: "explicit-upload-confirmation" } },
-        { type: "BlockCreated", payload: { block_id: itemId, document_id: projection.documentId, type: "reference", handle: `reference/${slug(file.name)}`, position: `e${String(this.store.head.get() + 1).padStart(6, "0")}`, properties: { reference_id: referenceId, label: file.name, media_url: media.url, subtype: "Mood", weight: .72, authority: "authored", extraction_preferences: DEFAULT_REFERENCE_FINDINGS, extraction_status: sample ? "pending" : "unavailable", created_from: "creative-editor" } } },
+        { type: "BlockCreated", payload: { block_id: itemId, document_id: projection.documentId, type: "reference", handle: `reference/${slug(file.name)}`, position: `e${String(this.store.head.get() + 1).padStart(6, "0")}`, properties: { reference_id: referenceId, label: file.name, media_url: media.url, subtype: "Mood", weight: .72, authority: "authored", pixel_reference_mode: "context_only", extraction_preferences: DEFAULT_REFERENCE_FINDINGS, extraction_status: sample ? "pending" : "unavailable", created_from: "creative-editor" } } },
       ]);
       if (appended.length) {
         this.#selectedId = itemId;
@@ -320,7 +321,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const selected = projection.blocks.find((item) => item.id === this.#selectedId) ?? projection.blocks[0];
     const selectedIntent = selected ? blockIntentFor(selected.type, selected.properties) : "include";
     const selectedIsExclusion = isNegativeIntent(selectedIntent);
-    const latest = projection.outputs.find((output)=>output.id===this.store.ui.selectedOutputId)??projection.outputs[0];
+    const latest = projection.outputs.find((output)=>output.id===this.store.ui.selectedOutputId)??projection.outputs[0];const previewProgress=this.store.documentPreviewProgress(projection.documentId);
     const blockIds = new Set(projection.blocks.map((item) => item.id));
     const previewOutdated = Boolean(latest && this.store.events.get().some((event) => event.sequence > latest.sequence && /^(BlockCreated|BlockPropertyEdited|BlockWeightSet|BlockRemoved|BlockRestored|ChipEdited)$/.test(event.type) && (event.payload.document_id === projection.documentId || blockIds.has(String(event.payload.block_id ?? "")))));
     const preview = this.#previewCopy(latest);
@@ -353,14 +354,14 @@ export class FormaCreativeEditor extends AlternativeStudio {
           <main class="creative-editor-canvas">
             <section class=${`creative-preview ${previewOutdated ? "preview-outdated" : ""}`}>
               <div class="creative-preview-stage">
-                <div class=${`creative-preview-art ${latest?.mediaUrl ? "has-preview" : ""}`}><forma-output-visual .output=${latest} .interactive=${true}></forma-output-visual></div>
+                <div class=${`creative-preview-art ${latest?.mediaUrl||previewProgress ? "has-preview" : ""}`}>${previewProgress?html`<div class="streaming-preview"><img class="streaming-preview-image" src=${previewProgress.mediaUrl} width=${previewProgress.width} height=${previewProgress.height} alt="Early image preview still being refined"><span>Early preview · finalizing</span></div>`:html`<forma-output-visual .output=${latest} .interactive=${true}></forma-output-visual>`}</div>
                 ${projection.outputs.length>1?html`<div class="creative-preview-filmstrip" aria-label="All generations from this document">${projection.outputs.map((output,index)=>html`<button class=${output.id===latest?.id?"selected":""} aria-pressed=${output.id===latest?.id} aria-label=${`Show ${outputQualityLabel(output).toLowerCase()} ${index+1}`} @click=${()=>this.#selectOutput(output.id)}><forma-output-visual .output=${output} .compact=${true}></forma-output-visual><span>${isDraftOutput(output)?"Draft":"Full"}${index===0?" · Latest":` · #${projection.outputs.length-index}`}</span></button>`)}</div>`:nothing}
               </div>
               <div class="creative-preview-copy">
-                <span>${latest?outputQualityLabel(latest):"Working preview"}</span>
-                <h2>${preview ? String(preview.title ?? "A direction is taking shape") : direction ? textFor(direction) : "Start with one clear goal"}</h2>
-                <p>${preview ? String(preview.rationale ?? preview.scene ?? "") : subject ? `Centered on ${textFor(subject)}${look ? `, with ${textFor(look).toLowerCase()}` : ""}.` : "Add a goal, subject, or visual reference. You can refine the rest only when it becomes useful."}</p>
-                ${previewOutdated ? html`<small>Plan changed since this image · Preview draft or Update image at full quality.</small>` : latest?.mediaUrl ? html`<small>${isDraftOutput(latest)?"Fast draft for exploration · generate it at full quality when it holds.":latest.promotedFromId?"Full-quality result refined from a selected draft.":"Full-quality generated image."}</small>` : html`<small>No generated image yet · the plan remains useful on its own.</small>`}
+                <span>${previewProgress?"Image arriving":latest?outputQualityLabel(latest):"Working preview"}</span>
+                <h2>${previewProgress?"The plan is becoming visible":preview ? String(preview.title ?? "A direction is taking shape") : direction ? textFor(direction) : "Start with one clear goal"}</h2>
+                <p>${previewProgress?"Use this early pass to orient yourself while the completed draft is finalized.":preview ? String(preview.rationale ?? preview.scene ?? "") : subject ? `Centered on ${textFor(subject)}${look ? `, with ${textFor(look).toLowerCase()}` : ""}.` : "Add a goal, subject, or visual reference. You can refine the rest only when it becomes useful."}</p>
+                ${previewProgress?html`<small>The durable draft will replace this streamed image automatically.</small>`:previewOutdated ? html`<small>Plan changed since this image · Preview draft or Update image at full quality.</small>` : latest?.mediaUrl ? html`<small>${isDraftOutput(latest)?"Fast draft for exploration · generate it at full quality when it holds.":latest.promotedFromId?"Full-quality result refined from a selected draft.":"Full-quality generated image."}</small>` : html`<small>No generated image yet · the plan remains useful on its own.</small>`}
               </div>
             </section>
 
@@ -385,6 +386,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
             ${selected ? html`<form @submit=${(event: SubmitEvent) => this.#save(event, selected)}>
               <header><span>${selectedIsExclusion ? "Guardrail selected" : "Selected"}</span><h2>${selectedIntent === "include" ? FRIENDLY_LABELS[selected.type as BlockKind] : `${intentCopy(selectedIntent)} ${FRIENDLY_LABELS[selected.type as BlockKind].toLowerCase()}`}</h2><p>${selectedIsExclusion ? `This is a negative ${FRIENDLY_LABELS[selected.type as BlockKind].toLowerCase()} constraint. It tells the preview what must not appear; it never becomes a positive focus.` : "Change the role, intent, wording, and influence of this decision."}</p></header>
               ${selected.type === "reference" && selected.properties.media_url ? html`<forma-reference-image class="creative-inspector-image" .src=${String(selected.properties.media_url)} .alt=${textFor(selected)} .targetId=${selected.id} .referenceId=${String(selected.properties.reference_id??"")} .focalPoint=${selected.properties.focal_point}></forma-reference-image>` : nothing}
+              ${selected.type === "reference" ? html`<forma-reference-pixel-policy .block=${selected} surface="editor" compact></forma-reference-pixel-policy>` : nothing}
               <label><span>Role in the plan</span><select name="item-type" ?disabled=${selected.locked}>${BLOCK_TYPES.map((item) => html`<option value=${item.type} ?selected=${item.type === selected.type}>${FRIENDLY_LABELS[item.type]}</option>`)}</select></label>
               <label><span>Intent</span><select name="item-intent" ?disabled=${selected.locked}>${BLOCK_INTENTS.map((intent) => html`<option value=${intent.id} ?selected=${intent.id === selectedIntent}>${intent.label} · ${intent.description}</option>`)}</select></label>
               <div class="creative-role-intent-summary"><b>${intentCopy(selectedIntent)} · ${FRIENDLY_LABELS[selected.type as BlockKind]}</b><small>${spatialScopeLabel(selected.properties.spatial_scope)}</small></div>

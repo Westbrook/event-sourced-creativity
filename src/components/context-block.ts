@@ -6,6 +6,7 @@ import "./reference-image";
 import "./reference-palette-picker";
 import "./reference-findings";
 import "./spatial-scope-editor";
+import "./reference-pixel-policy";
 
 export class ContextBlock extends FormaElement {
   static properties = { block: { attribute: false }, surface: { type: String } };
@@ -84,6 +85,7 @@ export class ContextBlock extends FormaElement {
           ${extractionStatus === "complete" ? html`<small>${Math.round(confidence * 100)}% confidence · ${String(p.extractor ?? "deterministic suite")}</small>` : nothing}
         </div>` : nothing}
         ${this.block.type === "reference" ? html`<forma-reference-findings .block=${this.block} @reference-palette-request=${() => { this.#paletteOpen = true; this.requestUpdate(); }}></forma-reference-findings>` : nothing}
+        ${this.block.type === "reference" ? html`<forma-reference-pixel-policy .block=${this.block} surface=${this.surface}></forma-reference-pixel-policy>` : nothing}
         <forma-spatial-scope-editor .block=${this.block} surface=${this.surface}></forma-spatial-scope-editor>
         <div class="block-meta">
           <label><span class="meta-long">Influence</span><span class="meta-short" aria-hidden="true">Inf.</span><input aria-label="Block influence" type="range" min="0" max="1" step="0.05" .value=${String(Number(p.weight ?? .5))} @change=${(e: Event) => this.#weight(Number((e.target as HTMLInputElement).value))}><output>${Math.round(Number(p.weight ?? .5) * 100)}%</output></label>

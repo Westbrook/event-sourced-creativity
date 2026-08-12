@@ -1,6 +1,19 @@
 export type BlockGroup = "intent" | "scene" | "craft" | "constraint" | "evidence";
 export type BlockKind = "direction" | "audience" | "message" | "emotion" | "subject" | "environment" | "motion" | "scale" | "composition" | "camera" | "lighting" | "style" | "material" | "palette" | "typography" | "format" | "brand" | "exclusion" | "accessibility" | "reference";
 export type BlockIntent = "include" | "prefer" | "avoid" | "prohibit";
+export type ReferencePixelMode = "context_only" | "inspiration" | "preserve_composition" | "preserve_subject" | "preserve_style";
+
+export const REFERENCE_PIXEL_MODES: readonly { id: ReferencePixelMode; label: string; description: string; promptDirective: string }[] = [
+  { id:"context_only", label:"Describe only", description:"Use extracted findings and authored notes, but do not send the original pixels.", promptDirective:"Use only the text context derived from this reference; no source pixels are attached." },
+  { id:"inspiration", label:"Visual inspiration", description:"Send the original image as flexible visual inspiration.", promptDirective:"Use this image as flexible visual inspiration without copying it literally." },
+  { id:"preserve_composition", label:"Preserve composition", description:"Send the image and retain its framing, balance, and spatial relationships.", promptDirective:"Preserve the reference image's composition, framing, balance, and spatial relationships while applying the authored plan." },
+  { id:"preserve_subject", label:"Preserve subject", description:"Send the image and keep its principal subject recognizable and structurally consistent.", promptDirective:"Preserve the principal subject's recognizable form and structural identity while applying the authored plan." },
+  { id:"preserve_style", label:"Preserve look & materials", description:"Send the image and carry forward its visual treatment, surfaces, and material character.", promptDirective:"Preserve the reference image's visual treatment, surface character, and material language while applying the authored plan." },
+];
+
+export const referencePixelMode = (value: unknown): ReferencePixelMode => REFERENCE_PIXEL_MODES.some((option)=>option.id===value) ? value as ReferencePixelMode : "context_only";
+export const referencePixelModeDefinition = (value: unknown) => REFERENCE_PIXEL_MODES.find((option)=>option.id===referencePixelMode(value))!;
+export const sendsReferencePixels = (value: unknown) => referencePixelMode(value) !== "context_only";
 
 export const BLOCK_INTENTS: readonly { id: BlockIntent; label: string; description: string }[] = [
   { id:"include", label:"Include", description:"Make this part of the result." },

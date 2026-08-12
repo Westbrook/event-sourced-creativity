@@ -5,6 +5,7 @@ import { icon } from "./forma-element";
 import { AlternativeStudio } from "./forma-studio-alternatives";
 import { spatialScopeLabel } from "../model/spatial-scope";
 import "./spatial-scope-editor";
+import "./reference-pixel-policy";
 import "./document-generations";
 import "./generation-actions";
 
@@ -144,7 +145,7 @@ export class FormaRealityLayers extends AlternativeStudio {
             <label>Role<select name="subtype" ?disabled=${selected.locked} .value=${String(selected.properties.subtype ?? selectedDefinition?.subtypes[0] ?? "")}>${selectedDefinition?.subtypes.map((subtype) => html`<option value=${subtype}>${subtype}</option>`)}</select></label>
             <label>Influence on the result <output>${Math.round(Number(selected.properties.weight ?? .5) * 100)}%</output><input name="weight" type="range" min="0" max="1" step=".05" ?disabled=${selected.locked} .value=${String(selected.properties.weight ?? .5)} @input=${(event: InputEvent) => { const output = (event.currentTarget as HTMLInputElement).previousElementSibling as HTMLOutputElement | null; if (output) output.value = `${Math.round(Number((event.target as HTMLInputElement).value) * 100)}%`; }}></label>
             <footer><button type="button" @click=${() => this.#duplicate(selected)}>Make a copy</button><button class="button primary compact" ?disabled=${selected.locked}>Save decision</button></footer>
-          </form>` : html`<div class="layer-empty">Add or select a decision to shape it here.</div>`}
+          </form>${selected.type === "reference" ? html`<forma-reference-pixel-policy .block=${selected} surface="layers" compact></forma-reference-pixel-policy>` : nothing}<forma-spatial-scope-editor .block=${selected} surface="layers"></forma-spatial-scope-editor>` : html`<div class="layer-empty">Add or select a decision to shape it here.</div>`}
         </aside>
       </div>
 

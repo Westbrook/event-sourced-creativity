@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { buildCreativeImagePrompt, buildSpatialDirectives, generateCreativeImage } from "../worker/openai-adapter.ts";
+import { buildCreativeImagePrompt, buildPixelReferenceDirectives, buildSpatialDirectives, generateCreativeImage } from "../worker/openai-adapter.ts";
 import { foldEvents } from "../src/model/events.ts";
 
 test("builds a GPT Image prompt that preserves role, intent, and negative constraints",()=>{
@@ -48,14 +48,29 @@ test("documents project attribution for every direct OpenAI request",async()=>{
   assert.match(adapter,/headers:openAIAuthHeaders\(env\)/);
 });
 
-test("uses low-quality GPT Image drafts and hands the latest draft to the high-quality edit request",async()=>{
+test("uses the small compressed preview profile and hands multiple policy-labelled images to the high-quality edit request",async()=>{
   const originalFetch=globalThis.fetch;const calls=[];
   globalThis.fetch=async(url,init)=>{calls.push({url,init});return Response.json({data:[{b64_json:btoa("image")}],usage:{total_tokens:12}});};
   try{
-    await generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Draft"},{quality:"low",size:"1024x1024"});
-    const draftBody=JSON.parse(String(calls[0].init.body));assert.equal(calls[0].url,"https://api.openai.com/v1/images/generations");assert.equal(draftBody.quality,"low");assert.equal(draftBody.size,"1024x1024");
-    const reference=new TextEncoder().encode("draft-image");await generateCreativeImage({OPENAI_API_KEY:"test-only",OPENAI_PROJECT:"proj_test"},"user-1",{facts:[]},{title:"Final"},{quality:"high",size:"1536x1024",reference:{bytes:reference,mimeType:"image/png"}});
-    assert.equal(calls[1].url,"https://api.openai.com/v1/images/edits");assert.ok(calls[1].init.body instanceof FormData);assert.equal(calls[1].init.body.get("quality"),"high");assert.equal(calls[1].init.body.get("size"),"1536x1024");assert.ok(calls[1].init.body.get("image[]") instanceof Blob);assert.equal(new Headers(calls[1].init.headers).get("OpenAI-Project"),"proj_test");assert.equal(new Headers(calls[1].init.headers).has("content-type"),false);
+    await generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Draft"},{quality:"low",size:"816x816",outputFormat:"jpeg",outputCompression:70});
+    const draftBody=JSON.parse(String(calls[0].init.body));assert.equal(calls[0].url,"https://api.openai.com/v1/images/generations");assert.equal(draftBody.quality,"low");assert.equal(draftBody.size,"816x816");assert.equal(draftBody.output_format,"jpeg");assert.equal(draftBody.output_compression,70);
+    const reference=new TextEncoder().encode("draft-image");const uploaded=new TextEncoder().encode("uploaded-image");await generateCreativeImage({OPENAI_API_KEY:"test-only",OPENAI_PROJECT:"proj_test"},"user-1",{facts:[]},{title:"Final"},{quality:"high",size:"1536x1024",references:[{bytes:reference,mimeType:"image/png",label:"Selected draft",source:"ideation-preview"},{bytes:uploaded,mimeType:"image/jpeg",label:"Amber window",blockId:"reference-1",mode:"preserve_composition",source:"uploaded-reference"}]});
+    assert.equal(calls[1].url,"https://api.openai.com/v1/images/edits");assert.ok(calls[1].init.body instanceof FormData);assert.equal(calls[1].init.body.get("quality"),"high");assert.equal(calls[1].init.body.get("size"),"1536x1024");assert.equal(calls[1].init.body.getAll("image[]").length,2);assert.ok(calls[1].init.body.getAll("image[]").every((value)=>value instanceof Blob));assert.match(String(calls[1].init.body.get("prompt")),/Image 1 is the selected working draft/);assert.match(String(calls[1].init.body.get("prompt")),/preserve the reference image's composition/i);assert.equal(new Headers(calls[1].init.headers).get("OpenAI-Project"),"proj_test");assert.equal(new Headers(calls[1].init.headers).has("content-type"),false);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("explains reference pixel policy without attaching context-only images",()=>{
+  const directives=buildPixelReferenceDirectives([{bytes:new Uint8Array([1]),mimeType:"image/jpeg",label:"Texture study",mode:"preserve_style",source:"uploaded-reference"}]);
+  assert.match(directives,/Image 1/);assert.match(directives,/Texture study/);assert.match(directives,/material language/);
+  assert.match(buildPixelReferenceDirectives([]),/No source-image pixels are attached/);
+});
+
+test("streams one early GPT Image preview before returning the completed JPEG",async()=>{
+  const originalFetch=globalThis.fetch;const partials=[];let requestBody;
+  globalThis.fetch=async(_url,init)=>{requestBody=JSON.parse(String(init.body));const events=[{type:"image_generation.partial_image",b64_json:btoa("partial-jpeg"),created_at:1,size:"816x816",quality:"low",output_format:"jpeg",partial_image_index:0},{type:"image_generation.completed",b64_json:btoa("final-jpeg"),created_at:2,size:"816x816",quality:"low",output_format:"jpeg",usage:{input_tokens:20,output_tokens:196,total_tokens:216}}];return new Response(events.map((event)=>`data: ${JSON.stringify(event)}\n\n`).join(""),{headers:{"content-type":"text/event-stream"}});};
+  try{
+    const result=await generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Draft"},{quality:"low",size:"816x816",outputFormat:"jpeg",outputCompression:70,partialImages:1,onPartial:(partial)=>partials.push(partial)});
+    assert.equal(requestBody.stream,true);assert.equal(requestBody.partial_images,1);assert.equal(requestBody.output_format,"jpeg");assert.equal(partials.length,1);assert.equal(new TextDecoder().decode(partials[0].bytes),"partial-jpeg");assert.equal(partials[0].mimeType,"image/jpeg");assert.equal(new TextDecoder().decode(result.bytes),"final-jpeg");assert.equal(result.mimeType,"image/jpeg");assert.equal(result.partialCount,1);assert.equal(result.usage.totalTokens,216);
   }finally{globalThis.fetch=originalFetch;}
 });
 

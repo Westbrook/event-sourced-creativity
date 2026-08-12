@@ -55,9 +55,16 @@ function safeResult(body: Record<string, unknown>, correlatedEventIds: string[] 
   return {
     head: Number(body.head ?? 0),
     appendedEventIds: appended.map((event) => String(event.eventId ?? "")).filter(Boolean).concat(correlatedEventIds),
-    previewed: Boolean(body.previewed), previewSuppressed: Boolean(body.previewSuppressed), promoted: Boolean(body.promoted), quality: body.quality ? String(body.quality) : undefined,
+    previewed: Boolean(body.previewed), previewQueued: Boolean(body.previewQueued), previewSuppressed: Boolean(body.previewSuppressed), followupJobId: body.followupJobId ? String(body.followupJobId) : undefined, promoted: Boolean(body.promoted), quality: body.quality ? String(body.quality) : undefined,
     structure: body.structure && typeof body.structure === "object" ? body.structure : undefined,
   };
+}
+
+async function queueFollowupPreview(env:WorkerEnv,user:PilotUser,parent:DocumentJobRow,spec:Record<string,unknown>){
+  if(spec.kind!=="preview"||String(spec.documentId??"")!==parent.document_id)return null;const payload=spec.payload&&typeof spec.payload==="object"?spec.payload as Record<string,unknown>:{};if(!payload.directionRef||JSON.stringify(payload).length>MAX_PAYLOAD_BYTES)return null;
+  const requestedAt=new Date();const now=requestedAt.toISOString();const configuredRetention=Number(env.FORMA_RETENTION_DAYS??30);const retentionDays=Number.isFinite(configuredRetention)&&configuredRetention>0?configuredRetention:30;const expiresAt=new Date(requestedAt.getTime()+retentionDays*86_400_000).toISOString();const jobId=uuidV7();const sourceSurface=String(spec.sourceSurface??"chat").slice(0,80)||"chat";const requestedSequence=await streamHead(env,user.streamId);
+  await env.DB.prepare("UPDATE document_jobs SET status='failed',error_message='superseded_by_newer_chat_preview',completed_at=?,notified_at=?,updated_at=? WHERE owner_id=? AND document_id=? AND kind='preview' AND source_surface='chat' AND status='queued'").bind(now,now,now,user.userId,parent.document_id).run();
+  await env.DB.prepare("INSERT INTO document_jobs (job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at) VALUES (?,?,?,?,?,'queued',?,?,?,?,NULL,NULL,0,?,NULL,NULL,NULL,NULL,?,?)").bind(jobId,user.userId,user.streamId,parent.document_id,"preview",sourceSurface,jobId,requestedSequence,JSON.stringify(payload),now,expiresAt,now).run();return readJob(env,user.userId,jobId);
 }
 
 export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: string) {
@@ -70,8 +77,9 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   const existingEvents = await readEvents(env, user.streamId);
   const finished = operationFinished(existingEvents, row);
   if (finished) {
-    const now = new Date().toISOString(); const status: DocumentJobStatus = finished.failed ? "failed" : "completed";
-    await env.DB.prepare("UPDATE document_jobs SET status=?,result_json=?,error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=?").bind(status, JSON.stringify(safeResult({ head: existingEvents.at(-1)?.sequence ?? 0 }, finished.correlated.map((event) => event.eventId))), finished.failed ? "operation_failed" : null, now, now, jobId, user.userId).run();
+    const now = new Date().toISOString(); const status: DocumentJobStatus = finished.failed ? "failed" : "completed";let followup:DocumentJobRow|null=null;
+    if(!finished.failed&&row.kind==="chat"){const reasoned=finished.correlated.find((event)=>event.type==="AssistantReasoned"&&event.payload.preview_queued&&event.payload.preview_direction_ref);if(reasoned)followup=await queueFollowupPreview(env,user,row,{kind:"preview",documentId:row.document_id,sourceSurface:"chat",payload:{directionRef:reasoned.payload.preview_direction_ref,directionModel:reasoned.payload.model_id,sourceChatTurnId:reasoned.payload.turn_id}});}
+    await env.DB.prepare("UPDATE document_jobs SET status=?,result_json=?,error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=?").bind(status, JSON.stringify(safeResult({ head: existingEvents.at(-1)?.sequence ?? 0,previewQueued:Boolean(followup),followupJobId:followup?.job_id }, finished.correlated.map((event) => event.eventId))), finished.failed ? "operation_failed" : null, now, now, jobId, user.userId).run();
     await runNextDocumentJob(env, user);
     return;
   }
@@ -94,8 +102,8 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     payload.action = row.kind; payload.documentId = row.document_id; payload.sourceSurface = row.source_surface;
     payload.correlationId = row.correlation_id; payload.clientId = `server:document-job:${row.kind}`;
     const response = await handleEvents(new Request("http://document-job.local/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }), env, false, user);
-    const body = await response.json() as Record<string, unknown>; const completedAt = new Date().toISOString();
-    await env.DB.prepare("UPDATE document_jobs SET status=?,result_json=?,error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=?").bind(response.ok ? "completed" : "failed", JSON.stringify(safeResult(body)), response.ok ? null : String(body.error ?? "document_job_failed"), completedAt, completedAt, jobId, user.userId).run();
+    const body = await response.json() as Record<string, unknown>;let followup:DocumentJobRow|null=null;if(response.ok&&body.followupJob&&typeof body.followupJob==="object")followup=await queueFollowupPreview(env,user,row,body.followupJob as Record<string,unknown>);const completedAt = new Date().toISOString();
+    await env.DB.prepare("UPDATE document_jobs SET status=?,result_json=?,error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=?").bind(response.ok ? "completed" : "failed", JSON.stringify(safeResult({...body,followupJobId:followup?.job_id})), response.ok ? null : String(body.error ?? "document_job_failed"), completedAt, completedAt, jobId, user.userId).run();
   } catch (error) {
     const completedAt = new Date().toISOString(); const message = error instanceof Error ? error.message : "document_job_failed";
     await env.DB.prepare("UPDATE document_jobs SET status='failed',error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=?").bind(message, completedAt, completedAt, jobId, user.userId).run();

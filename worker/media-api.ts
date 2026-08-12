@@ -3,10 +3,10 @@ import type { WorkerEnv } from "./runtime";
 
 const ownerPrefix = (ownerId:string) => ownerId.replace(/[^a-zA-Z0-9._-]/g,"-");
 
-export async function storeGeneratedImage(env:WorkerEnv,ownerId:string,generationId:string,bytes:Uint8Array,model:string) {
-  const key=`${ownerPrefix(ownerId)}/generated/${generationId}.png`;
-  await env.MEDIA.put(key,bytes.buffer as ArrayBuffer,{httpMetadata:{contentType:"image/png"},customMetadata:{ownerId,generationId,model,source:"openai-image-api"}});
-  return{key,url:`/api/media/${encodeURIComponent(key)}`,mimeType:"image/png"};
+export async function storeGeneratedImage(env:WorkerEnv,ownerId:string,generationId:string,bytes:Uint8Array,model:string,mimeType="image/png") {
+  const extension=mimeType==="image/jpeg"?"jpg":mimeType==="image/webp"?"webp":"png";const key=`${ownerPrefix(ownerId)}/generated/${generationId}.${extension}`;
+  await env.MEDIA.put(key,bytes.buffer as ArrayBuffer,{httpMetadata:{contentType:mimeType},customMetadata:{ownerId,generationId,model,source:"openai-image-api"}});
+  return{key,url:`/api/media/${encodeURIComponent(key)}`,mimeType};
 }
 
 export async function readGeneratedImageReference(env:WorkerEnv,ownerId:string,mediaUrl:unknown) {
@@ -14,8 +14,8 @@ export async function readGeneratedImageReference(env:WorkerEnv,ownerId:string,m
   let key="";try{key=decodeURIComponent(value.slice(prefix.length));}catch{return null;}
   if(!key.startsWith(`${ownerPrefix(ownerId)}/`))return null;
   const object=await env.MEDIA.get(key);if(!object)return null;
-  const headers=new Headers();object.writeHttpMetadata(headers);
-  return{bytes:new Uint8Array(await new Response(object.body).arrayBuffer()),mimeType:headers.get("content-type")??"image/png"};
+  const headers=new Headers();object.writeHttpMetadata(headers);const mimeType=headers.get("content-type")??"image/png";if(!mimeType.startsWith("image/"))return null;
+  return{bytes:new Uint8Array(await new Response(object.body).arrayBuffer()),mimeType};
 }
 
 export async function uploadMedia(request: Request, env: WorkerEnv) {

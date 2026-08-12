@@ -1,14 +1,26 @@
 import type { WorkerEnv } from "./runtime.ts";
-import { BLOCK_TYPES, type AdaptiveStructure, type BlockKind } from "../src/model/block-types.ts";
+import { BLOCK_TYPES, referencePixelModeDefinition, type AdaptiveStructure, type BlockKind, type ReferencePixelMode } from "../src/model/block-types.ts";
 import { normalizeSpatialScope } from "../src/model/spatial-scope.ts";
 import type { LiveReplayPlan } from "../src/model/live-replay.ts";
 
 type OpenAIResponse = { id?: string; model?: string; output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: { message?: string } };
-type OpenAIImageResponse = { created?: number; data?: Array<{ b64_json?: string; revised_prompt?: string }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: { message?: string } };
-export type CreativeChatMutation = { operation: "create" | "edit" | "remove"; target_block_id: string | null; type: BlockKind; subtype: string; instruction: string; handle: string };
+type OpenAIImageUsage = { input_tokens?: number; output_tokens?: number; total_tokens?: number };
+type OpenAIImageResponse = { created?: number; data?: Array<{ b64_json?: string; revised_prompt?: string }>; usage?: OpenAIImageUsage; error?: { message?: string } };
+type OpenAIImageStreamEvent = { type?: string; b64_json?: string; created_at?: number; size?: string; output_format?: ImageOutputFormat; partial_image_index?: number; usage?: OpenAIImageUsage; error?: { message?: string } };
+export type CreativeChatMutation = { operation: "create" | "edit" | "remove"; target_block_id: string | null; type: BlockKind; subtype: string; instruction: string; handle: string; reference_pixel_mode: ReferencePixelMode | "unchanged" };
 export type CreativeChatResponse = { reply: string; mutations: CreativeChatMutation[]; preview_direction: string; preview_worthy: boolean };
-export type ImageReference = { bytes: Uint8Array; mimeType: string };
-export type CreativeImageOptions = { quality?: "low" | "medium" | "high"; size?: "1024x1024" | "1536x1024" | "1024x1536"; reference?: ImageReference };
+export type ImageReference = { bytes: Uint8Array; mimeType: string; blockId?: string; referenceId?: string; label?: string; mode?: ReferencePixelMode; source: "uploaded-reference" | "ideation-preview" };
+export type ImageOutputFormat = "png" | "jpeg" | "webp";
+export type CreativeImagePartial = { bytes: Uint8Array; index: number; mimeType: string; width: number; height: number };
+export type CreativeImageOptions = {
+  quality?: "low" | "medium" | "high";
+  size?: `${number}x${number}`;
+  outputFormat?: ImageOutputFormat;
+  outputCompression?: number;
+  partialImages?: 0 | 1 | 2 | 3;
+  onPartial?: (partial: CreativeImagePartial) => void | Promise<void>;
+  references?: ImageReference[];
+};
 
 const outputSchema = {
   type: "object",
@@ -37,11 +49,11 @@ const creativeChatSchema = {
   required:["reply","mutations","preview_direction","preview_worthy"],
   properties:{
     reply:{type:"string"},
-    mutations:{type:"array",maxItems:8,items:{type:"object",additionalProperties:false,required:["operation","target_block_id","type","subtype","instruction","handle"],properties:{
+    mutations:{type:"array",maxItems:8,items:{type:"object",additionalProperties:false,required:["operation","target_block_id","type","subtype","instruction","handle","reference_pixel_mode"],properties:{
       operation:{type:"string",enum:["create","edit","remove"]},
       target_block_id:{type:["string","null"]},
       type:{type:"string",enum:BLOCK_TYPES.map((item)=>item.type)},
-      subtype:{type:"string"},instruction:{type:"string"},handle:{type:"string"},
+      subtype:{type:"string"},instruction:{type:"string"},handle:{type:"string"},reference_pixel_mode:{type:"string",enum:["unchanged","context_only","inspiration","preserve_composition","preserve_subject","preserve_style"]},
     }}},
     preview_direction:{type:"string"},preview_worthy:{type:"boolean"},
   },
@@ -133,7 +145,28 @@ export function buildSpatialDirectives(snapshot:Record<string,unknown>){
   });
 }
 
-export function buildCreativeImagePrompt(snapshot:Record<string,unknown>,direction:Record<string,unknown>) {
+export function buildPixelReferenceDirectives(references:ImageReference[]) {
+  if (!references.length) return "No source-image pixels are attached. Use only the compiled text context.";
+  return references.map((reference,index)=>{
+    if(reference.source==="ideation-preview")return `- Image ${index+1} is the selected working draft. Refine it into the requested result while preserving the creative progress it represents.`;
+    const policy=referencePixelModeDefinition(reference.mode);const label=reference.label||reference.referenceId||reference.blockId||"uploaded reference";
+    return `- Image ${index+1}, “${label}”, is an opted-in uploaded reference. ${policy.promptDirective}`;
+  }).join("\n");
+}
+
+export function buildCreativeImagePrompt(snapshot:Record<string,unknown>,direction:Record<string,unknown>,references:ImageReference[] = []) {
+  const sourceFacts=Array.isArray(snapshot.facts)?snapshot.facts.map(record):[];
+  const activeFacts=sourceFacts.filter((fact)=>fact.active!==false).map((fact)=>({
+    block_id:fact.block_id,
+    type:fact.type,
+    role:fact.role,
+    intent:fact.intent,
+    effect:fact.effect,
+    handle:fact.handle,
+    authority:fact.authority,
+    properties:fact.properties,
+  }));
+  const compactContext={facts:activeFacts,pins:Array.isArray(snapshot.pins)?snapshot.pins:[],standing_constraints:Array.isArray(snapshot.standing_constraints)?snapshot.standing_constraints:[],document:snapshot.document};
   const spatialDirectives=buildSpatialDirectives(snapshot);
   return [
     "Create one polished landscape image that realizes the supplied creative direction.",
@@ -141,28 +174,50 @@ export function buildCreativeImagePrompt(snapshot:Record<string,unknown>,directi
     "Any fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.",
     "Spatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.",
     "Do not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.",
+    `Attached source-image policy:\n${buildPixelReferenceDirectives(references)}`,
     `Spatial application map:\n${spatialDirectives.length?spatialDirectives.join("\n"):"- No active block decisions were supplied."}`,
     `Creative direction:\n${JSON.stringify(direction)}`,
-    `Durable document context:\n${JSON.stringify(snapshot)}`,
+    `Active creative context:\n${JSON.stringify(compactContext)}`,
   ].join("\n\n");
+}
+
+const imageMimeType=(format:ImageOutputFormat)=>format==="jpeg"?"image/jpeg":format==="webp"?"image/webp":"image/png";
+const decodeBase64Image=(encoded:string)=>{try{const binary=atob(encoded);return Uint8Array.from(binary,(character)=>character.charCodeAt(0));}catch{throw new Error("provider_returned_invalid_image");}};
+
+async function readImageStream(response:Response,onEvent:(event:OpenAIImageStreamEvent)=>Promise<void>){
+  if(!response.body)throw new Error("provider_returned_no_stream");
+  const reader=response.body.getReader();const decoder=new TextDecoder();let buffer="";
+  const consume=async(final=false)=>{
+    buffer=buffer.replaceAll("\r\n","\n");
+    let boundary=buffer.indexOf("\n\n");
+    while(boundary>=0){const block=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);const data=block.split("\n").filter((line)=>line.startsWith("data:")).map((line)=>line.slice(5).trimStart()).join("\n");if(data&&data!=="[DONE]"){let event:OpenAIImageStreamEvent;try{event=JSON.parse(data) as OpenAIImageStreamEvent;}catch{throw new Error("provider_returned_invalid_stream_event");}await onEvent(event);}boundary=buffer.indexOf("\n\n");}
+    if(final&&buffer.trim()){const data=buffer.split("\n").filter((line)=>line.startsWith("data:")).map((line)=>line.slice(5).trimStart()).join("\n");if(data&&data!=="[DONE]"){let event:OpenAIImageStreamEvent;try{event=JSON.parse(data) as OpenAIImageStreamEvent;}catch{throw new Error("provider_returned_invalid_stream_event");}await onEvent(event);}buffer="";}
+  };
+  while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});await consume();}
+  buffer+=decoder.decode();await consume(true);
 }
 
 export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot:Record<string,unknown>,direction:Record<string,unknown>,options:CreativeImageOptions={}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
-  const model=env.OPENAI_IMAGE_MODEL??"gpt-image-2";const prompt=buildCreativeImagePrompt(snapshot,direction);const started=Date.now();
-  const quality=options.quality??"high";const size=options.size??"1536x1024";const user=await safetyIdentifier(userId);
+  const model=env.OPENAI_IMAGE_MODEL??"gpt-image-2";const references=(options.references??[]).filter((reference)=>reference.bytes.byteLength>0);const prompt=buildCreativeImagePrompt(snapshot,direction,references);const started=Date.now();
+  const quality=options.quality??"high";const size=options.size??"1536x1024";const outputFormat=options.outputFormat??"png";const outputCompression=Math.max(0,Math.min(100,Math.round(options.outputCompression??100)));const partialImages=options.partialImages??0;const user=await safetyIdentifier(userId);
   let response:Response;
-  if(options.reference){
-    const form=new FormData();const buffer=options.reference.bytes.buffer.slice(options.reference.bytes.byteOffset,options.reference.bytes.byteOffset+options.reference.bytes.byteLength) as ArrayBuffer;form.set("model",model);form.set("prompt",prompt);form.set("n","1");form.set("size",size);form.set("quality",quality);form.set("user",user);form.append("image[]",new Blob([buffer],{type:options.reference.mimeType}),"latest-ideation-preview.png");
+  if(references.length){
+    const form=new FormData();form.set("model",model);form.set("prompt",prompt);form.set("n","1");form.set("size",size);form.set("quality",quality);form.set("output_format",outputFormat);if(outputFormat!=="png")form.set("output_compression",String(outputCompression));if(partialImages){form.set("stream","true");form.set("partial_images",String(partialImages));}form.set("user",user);
+    references.forEach((reference,index)=>{const buffer=reference.bytes.buffer.slice(reference.bytes.byteOffset,reference.bytes.byteOffset+reference.bytes.byteLength) as ArrayBuffer;const extension=reference.mimeType==="image/jpeg"?"jpg":reference.mimeType==="image/webp"?"webp":"png";form.append("image[]",new Blob([buffer],{type:reference.mimeType}),`${reference.source}-${index+1}.${extension}`);});
     response=await fetch("https://api.openai.com/v1/images/edits",{method:"POST",headers:openAIAuthHeaders(env),body:form});
   }else{
-    response=await fetch("https://api.openai.com/v1/images/generations",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({model,prompt,n:1,size,quality,user})});
+    response=await fetch("https://api.openai.com/v1/images/generations",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({model,prompt,n:1,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user})});
   }
-  const body=await response.json() as OpenAIImageResponse;if(!response.ok)throw new Error(body.error?.message??`openai_image_${response.status}`);
-  const encoded=body.data?.[0]?.b64_json;if(!encoded)throw new Error("provider_returned_no_image");
-  let bytes:Uint8Array;try{const binary=atob(encoded);bytes=Uint8Array.from(binary,(character)=>character.charCodeAt(0));}catch{throw new Error("provider_returned_invalid_image");}
-  const [width,height]=size.split("x").map(Number);
-  return{model,prompt,bytes,revisedPrompt:body.data?.[0]?.revised_prompt??null,createdAt:body.created??null,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)},width,height,mimeType:"image/png",quality,usedReference:Boolean(options.reference)};
+  if(!response.ok){let error:OpenAIImageResponse={};try{error=await response.json() as OpenAIImageResponse;}catch{/* Preserve the provider status when no JSON error body is available. */}throw new Error(error.error?.message??`openai_image_${response.status}`);}
+  const [requestedWidth,requestedHeight]=size.split("x").map(Number);let encoded="";let revisedPrompt:string|null=null;let createdAt:number|null=null;let usage:OpenAIImageUsage={};let completedSize:string=size;let completedFormat=outputFormat;let partialCount=0;
+  if(partialImages){
+    await readImageStream(response,async(event)=>{if(event.error?.message)throw new Error(event.error.message);if(event.type?.endsWith(".partial_image")&&event.b64_json){partialCount+=1;const eventSize=event.size??size;const [width,height]=eventSize.split("x").map(Number);await options.onPartial?.({bytes:decodeBase64Image(event.b64_json),index:Number(event.partial_image_index??partialCount-1),mimeType:imageMimeType(event.output_format??outputFormat),width,height});}if(event.type?.endsWith(".completed")&&event.b64_json){encoded=event.b64_json;createdAt=event.created_at??null;usage=event.usage??{};completedSize=event.size??size;completedFormat=event.output_format??outputFormat;}});
+  }else{
+    const body=await response.json() as OpenAIImageResponse;encoded=body.data?.[0]?.b64_json??"";revisedPrompt=body.data?.[0]?.revised_prompt??null;createdAt=body.created??null;usage=body.usage??{};
+  }
+  if(!encoded)throw new Error("provider_returned_no_image");const bytes=decodeBase64Image(encoded);const [width,height]=completedSize.split("x").map(Number);
+  return{model,prompt,bytes,revisedPrompt,createdAt,latencyMs:Date.now()-started,usage:{inputTokens:Number(usage.input_tokens??0),outputTokens:Number(usage.output_tokens??0),totalTokens:Number(usage.total_tokens??0)},width:Number.isFinite(width)?width:requestedWidth,height:Number.isFinite(height)?height:requestedHeight,mimeType:imageMimeType(completedFormat),quality,usedReference:references.length>0,referenceCount:references.length,referenceInputs:references.map((reference)=>({source:reference.source,blockId:reference.blockId??null,referenceId:reference.referenceId??null,label:reference.label??null,mode:reference.mode??null})),partialCount,outputFormat:completedFormat,outputCompression:completedFormat==="png"?null:outputCompression};
 }
 
 export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{documentTitle:string;blocks:Array<Record<string,unknown>>;history:Array<{role:"user"|"assistant";text:string}>;message:string}) {
@@ -170,7 +225,7 @@ export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{d
   const started=Date.now();
   const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({
     model:env.OPENAI_MODEL??"gpt-5.6-terra",
-    instructions:"You are Forma, a concise creative collaborator inside a chat-only document view. Speak about the user's creative plan and intended image, never about blocks, events, schemas, metadata, adapters, or hidden machinery. Interpret the newest message against the existing plan and recent conversation. Return a helpful reply plus the smallest accurate set of plan mutations. Create adds a new durable decision; edit changes one existing decision and must name its target_block_id; remove deletes one existing decision and must name its target_block_id. Never target a missing item. For create, target_block_id is null. For unused mutation fields return sensible empty strings, but type must always be a valid vocabulary value. If the creative image meaningfully changes, preview_worthy is true and preview_direction is a standalone visual instruction incorporating the whole current intention after your proposed changes. If the user is only asking a question or chatting without changing visual intent, do not mutate and set preview_worthy false.",
+    instructions:"You are Forma, a concise creative collaborator inside a chat-only document view. Speak about the user's creative plan and intended image, never about blocks, events, schemas, metadata, adapters, or hidden machinery. Interpret the newest message against the existing plan and recent conversation. Return a helpful reply plus the smallest accurate set of plan mutations. Create adds a new durable decision; edit changes one existing decision and must name its target_block_id; remove deletes one existing decision and must name its target_block_id. Never target a missing item. For create, target_block_id is null. Never create a reference item through chat because an actual uploaded image is required. The reference_pixel_mode field is unchanged for ordinary mutations. When the user says to use a named existing reference image, edit the matching reference and choose inspiration unless they explicitly ask to preserve its composition, subject, or visual style. Choose context_only when they say not to send or use its pixels. Never change reference_pixel_mode on a non-reference item. For unused mutation fields return sensible empty strings, but type must always be a valid vocabulary value. If the creative image meaningfully changes, preview_worthy is true and preview_direction is a standalone visual instruction incorporating the whole current intention after your proposed changes. If the user is only asking a question or chatting without changing visual intent, do not mutate and set preview_worthy false.",
     input:JSON.stringify({...input,block_vocabulary:BLOCK_TYPES.map((item)=>({type:item.type,subtypes:item.subtypes})),mutation_rules:{create:"target_block_id must be null",edit:"target_block_id must match an existing id",remove:"target_block_id must match an existing id"}}),
     text:{verbosity:"low",format:{type:"json_schema",name:"forma_creative_chat",strict:true,schema:creativeChatSchema}},reasoning:{effort:"low"},max_output_tokens:1600,store:false,safety_identifier:await safetyIdentifier(userId),
   })});

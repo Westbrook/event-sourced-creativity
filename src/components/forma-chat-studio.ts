@@ -28,7 +28,7 @@ export class FormaChatStudio extends FormaElement {
   #keydown(event:KeyboardEvent){if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();this.querySelector<HTMLFormElement>(".chat-composer")?.requestSubmit();}}
 
   override render(){
-    const projection=this.store.projection.get();const lines=this.#lines(projection.documentId);const current=projection.outputs.find((output)=>output.id===this.store.ui.selectedOutputId)??projection.outputs[0]??null;const working=isDraftOutput(current);const busy=this.store.busy.get();const chatActive=this.store.documentJobActive("chat");
+    const projection=this.store.projection.get();const lines=this.#lines(projection.documentId);const current=projection.outputs.find((output)=>output.id===this.store.ui.selectedOutputId)??projection.outputs[0]??null;const previewProgress=this.store.documentPreviewProgress(projection.documentId);const previewActive=this.store.documentJobActive("preview",projection.documentId);const working=Boolean(previewProgress)||isDraftOutput(current);const busy=this.store.busy.get();const chatActive=this.store.documentJobActive("chat");
     const destination=withDocumentFocusInRoute(withDocumentInRoute("/studio/chat",projection.documentId,projection.documentTitle),documentFocusFromRoute(this.store.route.get()));
     return html`<section class="workspace-page studio-subpage chat-view-page">
       <forma-project-rail surface="studio" destination=${destination} quiet></forma-project-rail>
@@ -37,11 +37,11 @@ export class FormaChatStudio extends FormaElement {
         <main class="chat-workspace" aria-label="Chat document view">
           <section class="chat-generation" aria-labelledby="chat-generation-title">
             <header><div><span class="eyebrow">${working?"Working preview":"Current generation"}</span><h1 id="chat-generation-title">${projection.documentTitle}</h1></div><span class=${`chat-image-status ${working?"working":"final"}`}>${working?"Following the conversation":"Full quality"}</span></header>
-            <div class="chat-generation-stage">
-              ${current?html`<forma-output-visual .output=${current} interactive></forma-output-visual>`:html`<div class="chat-generation-empty">${icon("image")}<b>Your image will appear here</b><span>Tell Forma what you want to make. A quick working preview will follow the conversation.</span></div>`}
+            <div class="chat-generation-stage" aria-busy=${previewActive}>
+              ${previewProgress?html`<div class="streaming-preview"><img class="streaming-preview-image" src=${previewProgress.mediaUrl} width=${previewProgress.width} height=${previewProgress.height} alt="Early image preview still being refined"><span>Early preview · finalizing</span></div>`:current?html`<forma-output-visual .output=${current} interactive></forma-output-visual>`:html`<div class="chat-generation-empty">${icon("image")}<b>${previewActive?"Preparing the first image…":"Your image will appear here"}</b><span>${previewActive?"The server is resolving the latest creative plan. An early image will appear before the completed draft.":"Tell Forma what you want to make. A quick working preview will follow the conversation."}</span></div>`}
             </div>
             ${projection.outputs.length>1?html`<div class="chat-generation-history" role="list" aria-label="Generation history">${projection.outputs.map((output,index)=>html`<button role="listitem" class=${output.id===current?.id?"selected":""} aria-pressed=${output.id===current?.id} @click=${()=>this.store.patchUi({selectedOutputId:output.id})}><forma-output-visual .output=${output} compact></forma-output-visual><span>${outputQualityLabel(output)}</span><small>${index===0?"Latest":`#${projection.outputs.length-index}`}</small></button>`)}</div>`:nothing}
-            <footer><p>${working?"This fast draft keeps pace with your ideas. Generating it at full quality records a deliberate promotion and preserves the visual handoff.":"This is a full-quality image. Preview another direction quickly, or keep talking to reshape the plan."}</p><forma-generation-actions source="chat" .selected=${current}></forma-generation-actions></footer>
+            <footer><p>${previewProgress?"This early image is usable for orientation while GPT Image finishes the durable draft.":working?"This fast draft keeps pace with your ideas. Generating it at full quality records a deliberate promotion and preserves the visual handoff.":"This is a full-quality image. Preview another direction quickly, or keep talking to reshape the plan."}</p><forma-generation-actions source="chat" .selected=${current}></forma-generation-actions></footer>
           </section>
 
           <section class="chat-conversation" aria-labelledby="chat-thread-title">
@@ -49,7 +49,7 @@ export class FormaChatStudio extends FormaElement {
             <div class="chat-thread" role="log" aria-live="polite" aria-busy=${chatActive}>
               ${!lines.length?html`<article class="chat-line assistant"><span>Forma</span><p>What would you like to make? Start with the subject, feeling, setting, or simply the outcome you have in mind.</p></article>`:nothing}
               ${lines.map((line)=>html`<article class=${`chat-line ${line.role}`}><span>${line.role==="user"?"You":"Forma"}</span><p>${line.text}</p></article>`)}
-              ${chatActive?html`<article class="chat-line assistant thinking"><span>Forma</span><p>Working through that idea on the server… You can refresh or leave this view safely.</p></article>`:nothing}
+              ${chatActive?html`<article class="chat-line assistant thinking"><span>Forma</span><p>Working through that idea on the server… You can refresh or leave this view safely.</p></article>`:previewActive?html`<article class="chat-line assistant thinking previewing"><span>Forma</span><p>The plan is updated. I’m drawing its working preview separately, so the conversation is available before the image finishes.</p></article>`:nothing}
               <span class="chat-thread-end" aria-hidden="true"></span>
             </div>
             <form class="chat-composer" @submit=${this.#send}>
