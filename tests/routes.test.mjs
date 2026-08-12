@@ -36,12 +36,15 @@ test("focus mode is a durable document path state", () => {
 });
 
 test("dynamic document paths select the smallest matching page entry", () => {
-  assert.equal(documentEntryPath("/document/doc-a/name"), "/index.html");
-  assert.equal(documentEntryPath("/document/doc-a/name/view/board"), "/studio/board/index.html");
-  assert.equal(documentEntryPath("/document/doc-a/view/adaptive"), "/studio/adaptive/index.html");
-  assert.equal(documentEntryPath("/document/doc-a/name/view/editor"), "/studio/editor/index.html");
-  assert.equal(documentEntryPath("/document/doc-a/name/view/editor/focus"), "/studio/editor/index.html");
-  assert.equal(documentEntryPath("/document/doc-a/name/focus"), "/index.html");
+  assert.equal(documentEntryPath("/document/doc-a/name"), "/");
+  assert.equal(documentEntryPath("/document/doc-a/name/view/board"), "/studio/board/");
+  assert.equal(documentEntryPath("/document/doc-a/view/adaptive"), "/studio/adaptive/");
+  assert.equal(documentEntryPath("/document/doc-a/name/view/editor"), "/studio/editor/");
+  assert.equal(documentEntryPath("/document/doc-a/name/view/editor/focus"), "/studio/editor/");
+  assert.equal(documentEntryPath("/document/doc-a/name/focus"), "/");
+  assert.equal(documentViewFromRoute("/document/doc-a/name/view/board/"), "board");
+  assert.equal(documentViewFromRoute("/studio/board/"), "board");
+  assert.equal(withDocumentInRoute("/studio/board/", "doc-a", "Name"), "/document/doc-a/name/view/board");
 });
 
 test("Library focus dialogs have refresh-safe content paths", () => {
@@ -51,5 +54,5 @@ test("Library focus dialogs have refresh-safe content paths", () => {
   assert.deepEqual(libraryFocusFromRoute("/library/family/family-9/warm-nocturnes"), { kind: "family", id: "family-9" });
   assert.equal(libraryFocusFromRoute("/library"), null);
   assert.equal(libraryRootRoute("/library/output/output-7?scope=kept#preview"), "/library?scope=kept#preview");
-  assert.equal(appEntryPath("/library/output/output-7"), "/library/index.html");
+  assert.equal(appEntryPath("/library/output/output-7"), "/library/");
 });

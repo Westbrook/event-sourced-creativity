@@ -23,7 +23,7 @@ export default {
     }
     const asset=await env.ASSETS.fetch(request);if(asset.status!==404)return asset;
     if((request.method==="GET"||request.method==="HEAD")&&!url.pathname.startsWith("/assets/")){
-      const entryPath=url.pathname.startsWith("/share/")?"/share/index.html":appEntryPath(url.pathname);
+      const entryPath=url.pathname.startsWith("/share/")?"/share/":appEntryPath(url.pathname);
       const entryUrl=new URL(entryPath,url);return env.ASSETS.fetch(new Request(entryUrl,request));
     }
     return asset;

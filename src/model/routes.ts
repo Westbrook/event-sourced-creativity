@@ -23,11 +23,12 @@ export function routePathname(route: string) {
 
 function documentRouteParts(route: string) {
   const url = routeUrl(route);
-  const focused = url.pathname.endsWith("/focus");
-  const legacyPath = focused ? url.pathname.slice(0, -"/focus".length) || "/" : url.pathname;
+  const normalizedPath = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, "") : url.pathname;
+  const focused = normalizedPath.endsWith("/focus");
+  const legacyPath = focused ? normalizedPath.slice(0, -"/focus".length) || "/" : normalizedPath;
   const legacyView = legacyDocumentViews[legacyPath];
   if (legacyView) return { url, id: url.searchParams.get("document")?.trim() || null, slug: null, view: legacyView, focused };
-  const parts = url.pathname.split("/").filter(Boolean);
+  const parts = normalizedPath.split("/").filter(Boolean);
   if (parts[0] !== "document" || !parts[1]) return null;
   const viewMarker = parts.indexOf("view", 2);
   const candidateView = viewMarker >= 0 ? parts[viewMarker + 1] : "document";
@@ -97,12 +98,12 @@ export function withDocumentFocusInRoute(route: string, focused: boolean) {
 
 export function documentEntryPath(route: string) {
   const view = documentViewFromRoute(route);
-  if (!view || view === "document") return "/index.html";
-  return `/studio/${view}/index.html`;
+  if (!view || view === "document") return "/";
+  return `/studio/${view}/`;
 }
 
 export function appEntryPath(route: string) {
   const pathname = routePathname(route);
-  if (pathname.startsWith("/library/")) return "/library/index.html";
+  if (pathname.startsWith("/library/")) return "/library/";
   return documentEntryPath(route);
 }
