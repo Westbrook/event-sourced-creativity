@@ -214,6 +214,9 @@ test("presents every alternate Studio lens as the same complete durable document
   assert.match(styles, /html\[data-document-focus\] \.workspace-page:has\(> forma-project-rail > \.project-rail\.collapsed\) \{ grid-template-columns: minmax\(0,1fr\); \}/);
   assert.match(styles, /html\[data-document-focus\] \.workspace-page > forma-project-rail \{ display: none; \}/);
   assert.match(styles, /html\[data-document-focus\] \.workspace-page:has\(> forma-project-rail > \.project-rail\.collapsed\) \.composer-dock \{ left: 0; \}/);
+  assert.match(styles, /html\[data-document-focus\] \.studio-subpage-body \{[^}]*padding: 0/);
+  assert.match(styles, /html\[data-document-focus\] \.studio-subpage-body > \* \{ border-radius: 0; \}/);
+  assert.match(styles, /html\[data-document-focus\] \.studio-subpage-body > \.creative-editor,[\s\S]*\.studio-subpage-body > \.chat-workspace \{ border: 0; box-shadow: none; \}/);
   assert.match(styles, /html\[data-document-focus\] \.creative-editor,[\s\S]*height: calc\(100dvh - 70px\)/);
 });
 
@@ -226,7 +229,7 @@ test("keeps the Chat document view conversational while resolving durable change
     readFile(new URL("../worker/openai-adapter.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/model/routes.ts",import.meta.url),"utf8"),
   ]);
-  assert.match(chat,/Chat with Forma/);assert.match(chat,/forma-output-visual/);assert.match(chat,/store\.chat\(message,this\.#livePreview\)/);assert.match(chat,/forma-generation-actions/);assert.match(chat,/outputQualityLabel/);
+  assert.match(chat,/Chat with Forma/);assert.match(chat,/page-header--document/);assert.match(chat,/studio-subpage-body--chat/);assert.match(chat,/forma-output-visual/);assert.match(chat,/store\.chat\(message,this\.#livePreview\)/);assert.match(chat,/forma-generation-actions/);assert.match(chat,/outputQualityLabel/);
   assert.match(chat,/#livePreview=true/);assert.match(chat,/type="checkbox"/);assert.match(chat,/>Live preview</);assert.match(chat,/Keep chatting without generating an image/);
   assert.doesNotMatch(chat,/forma-context-block|forma-event-inspector|forma-document-continuity|projection\.blocks/);
   assert.match(store,/#startDocumentJob\("chat"/);assert.match(store,/\{message,livePreview,documentId/);assert.match(store,/#startDocumentJob\("preview"/);assert.match(store,/sourcePreviewId/);assert.match(store,/documentPreviewProgress/);assert.match(jobsApi,/ctx\.waitUntil\(runDocumentJob/);assert.match(jobsApi,/status='running'/);assert.match(jobsApi,/queueFollowupPreview/);assert.match(eventsApi,/body\.action==="chat"/);assert.match(eventsApi,/body\.action==="preview"/);assert.match(eventsApi,/livePreview=body\.livePreview!==false/);assert.match(eventsApi,/previewQueued=livePreview&&generated\.output\.preview_worthy/);assert.match(eventsApi,/followupJob:directionStored/);assert.match(eventsApi,/creativeChatMutationEvents/);assert.match(eventsApi,/IdeationPreviewCompleted/);assert.match(eventsApi,/IdeationPromoted/);assert.match(eventsApi,/reference_preview_event_id/);

@@ -33,8 +33,15 @@ export class FormaChatStudio extends FormaElement {
     return html`<section class="workspace-page studio-subpage chat-view-page">
       <forma-project-rail surface="studio" destination=${destination} quiet></forma-project-rail>
       <div class="studio-main chat-view-main">
+        <header class="page-header page-header--document">
+          <div class="page-header-copy">
+            <span class="eyebrow">${projection.projectName} / ${projection.documentTitle} / Document view</span>
+            <h1>Chat</h1>
+            <p>Shape the same durable document through conversation while the creative plan stays out of the way.</p>
+          </div>
+        </header>
         <forma-studio-mode-nav active="chat"></forma-studio-mode-nav>
-        <main class="chat-workspace" aria-label="Chat document view">
+        <div class="studio-subpage-body studio-subpage-body--chat"><main class="chat-workspace" aria-label="Chat document view">
           <section class="chat-generation" aria-labelledby="chat-generation-title">
             <header><div><span class="eyebrow">${working?"Working preview":"Current generation"}</span><h1 id="chat-generation-title">${projection.documentTitle}</h1></div><span class=${`chat-image-status ${working?"working":"final"}`}>${working?"Following the conversation":"Full quality"}</span></header>
             <div class="chat-generation-stage" aria-busy=${previewActive}>
@@ -59,7 +66,7 @@ export class FormaChatStudio extends FormaElement {
               <div><label class="chat-live-preview"><input type="checkbox" .checked=${this.#livePreview} @change=${(event:Event)=>{this.#livePreview=(event.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>Live preview</b><small>${this.#livePreview?"Make a fast image after useful visual changes.":"Keep chatting without generating an image."}</small></span></label><button class="button primary" ?disabled=${!this.#draft.trim()||Boolean(busy)||chatActive}>${chatActive?"Forma is thinking safely…":html`Send ${icon("arrow")}`}</button></div>
             </form>
           </section>
-        </main>
+        </main></div>
       </div>
     </section>`;
   }

@@ -167,6 +167,9 @@ Do not repeat the same concept in the context line, title, and description.
 - Tools and inspectors should be collapsible and independently scrollable only when the viewport requires it.
 - Avoid scrolling a parent merely to reach a child tool panel.
 - Alternate document views must represent the same durable document while optimizing the experience for their specific mode.
+- Use one shared page gutter and one shared major-section rhythm across every document view. A view can change its interaction model without inventing a new outer alignment.
+- Separate neighboring sections with structured whitespace owned by the page flow. Do not combine outer-page padding, inner-card padding, and a delayed border merely to express one level of hierarchy.
+- In focus mode, remove the shared body gutter. The direct work surface runs edge to edge, has square outer corners, and does not keep a decorative outer border or shadow; controls and genuinely independent objects inside it may retain their own shapes.
 
 ### Administrative surfaces
 

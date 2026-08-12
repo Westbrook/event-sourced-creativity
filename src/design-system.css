@@ -392,7 +392,7 @@ forma-project-rail {
 
 /* Page hierarchy */
 
-.page-pad { padding: clamp(3rem, 7vw, 7rem) clamp(1rem, 5vw, 4.5rem) 7rem; }
+.page-pad { padding: clamp(3rem, 7vw, 7rem) var(--page-gutter) var(--page-bottom-space); }
 
 .page-header {
   align-items: flex-end;
@@ -420,7 +420,7 @@ forma-project-rail {
 .page-header--document {
   top: 64px;
   min-height: 0;
-  padding: 1.15rem clamp(1rem, 4vw, 4rem);
+  padding: 1.15rem var(--page-gutter);
   background: color-mix(in srgb, var(--paper) 92%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
   backdrop-filter: blur(22px);
@@ -526,7 +526,7 @@ forma-project-rail {
 /* Library: artwork and reusable context before system machinery */
 
 .library-body {
-  padding: clamp(2rem, 5vw, 5rem) clamp(1rem, 4vw, 4rem) 8rem;
+  padding: clamp(2rem, 5vw, 5rem) var(--page-gutter) var(--page-bottom-space);
 }
 
 .library-toolbar,
@@ -706,7 +706,7 @@ forma-project-rail {
 
 /* Reusable block editor: three calm tools, each able to give space back */
 
-.library-block-editor { padding: clamp(2rem, 5vw, 5rem) clamp(1rem, 4vw, 4rem) 8rem; }
+.library-block-editor { padding: clamp(2rem, 5vw, 5rem) var(--page-gutter) var(--page-bottom-space); }
 
 .library-block-editor-header {
   max-width: 100rem;
@@ -923,7 +923,7 @@ forma-project-rail {
 .studio-mode-nav {
   top: 152px;
   min-height: 3.25rem;
-  padding: .5rem clamp(1rem, 4vw, 4rem);
+  padding: .5rem var(--page-gutter);
   background: color-mix(in srgb, var(--paper) 92%, transparent);
   border-bottom-color: var(--line);
   backdrop-filter: blur(22px);
@@ -951,11 +951,25 @@ forma-project-rail {
 }
 
 .studio-subpage-body {
-  max-width: 110rem;
-  gap: clamp(3rem, 6vw, 6rem);
+  width: 100%;
+  max-width: var(--page-content-max);
+  align-content: start;
+  gap: 0;
   margin-inline: auto;
-  padding: clamp(2rem, 4vw, 4rem) clamp(1rem, 4vw, 4rem) 8rem;
+  padding: clamp(2rem, 4vw, 4rem) var(--page-gutter) var(--page-bottom-space);
 }
+
+.studio-subpage-body > * { min-width: 0; }
+
+.studio-subpage-body > * + * { margin-block-start: var(--page-section-space); }
+
+forma-studio-navigator,
+forma-document-continuity,
+forma-document-generations { display: block; min-width: 0; }
+
+.studio-subpage-body--chat { max-width: none; }
+
+.chat-view-page .studio-mode-nav { top: 152px; }
 
 .studio-navigator {
   padding: 0 0 1.5rem;
@@ -1542,7 +1556,7 @@ forma-project-rail {
 .admin-page > .area-navigation a:hover { color: #fff; background: #242424; }
 .admin-page > .area-navigation a.active { color: #fff; background: var(--orange); }
 
-.admin-content { padding: clamp(2rem, 5vw, 5rem) clamp(1rem, 5vw, 4.5rem) 8rem; }
+.admin-content { padding: clamp(2rem, 5vw, 5rem) var(--page-gutter) var(--page-bottom-space); }
 
 .admin-health {
   color: var(--ink);
@@ -1775,6 +1789,28 @@ forma-project-rail {
   .preference-author { grid-template-columns: minmax(0, 1fr); }
   .whole-document-groups { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Focus is an edge-to-edge working state. The shared body contributes no
+   second gutter and its direct work surfaces do not carry page-like corners. */
+html[data-document-focus] .studio-subpage-body {
+  width: 100%;
+  max-width: none;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+}
+
+html[data-document-focus] .studio-subpage-body > * {
+  margin-block-start: 0;
+  border-radius: 0;
+}
+
+html[data-document-focus] .studio-subpage-body > :is(.creative-editor, .reality-editor, .chat-workspace) {
+  border: 0;
+  box-shadow: none;
+}
+
+html[data-document-focus] .chat-view-page .studio-mode-nav { top: 0; }
 
 @media (max-width: 520px) {
   .page-pad { padding-inline: 1rem; }

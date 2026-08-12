@@ -36,6 +36,10 @@
   --type-display-xl: 6rem;
   --leading-tight: 1.08;
   --leading-copy: 1.6;
+  --page-gutter: clamp(1rem, 4vw, 4.5rem);
+  --page-content-max: 110rem;
+  --page-section-space: clamp(3rem, 6vw, 6rem);
+  --page-bottom-space: 8rem;
 }
 
 * { box-sizing: border-box; }
@@ -1046,10 +1050,14 @@ html[data-document-focus] .workspace-page > forma-project-rail { display: none; 
 html[data-document-focus] .studio-main > .page-header--document { display: none; }
 html[data-document-focus] .studio-mode-nav { top: 0; padding: 7px 12px; }
 html[data-document-focus] .studio-mode-nav > span { display: none; }
-html[data-document-focus] .studio-subpage-body { gap: 12px; padding: 12px; }
+html[data-document-focus] .studio-subpage-body { gap: 0; max-width: none; margin: 0; padding: 0; }
 html[data-document-focus] .studio-subpage-body > forma-studio-navigator,
 html[data-document-focus] .studio-subpage-body > forma-document-continuity,
 html[data-document-focus] .studio-subpage-body > .view-success-hero { display: none; }
+html[data-document-focus] .studio-subpage-body > * { border-radius: 0; }
+html[data-document-focus] .studio-subpage-body > .creative-editor,
+html[data-document-focus] .studio-subpage-body > .reality-editor,
+html[data-document-focus] .studio-subpage-body > .chat-workspace { border: 0; box-shadow: none; }
 html[data-document-focus] .composer-dock { left: 0; }
 html[data-document-focus] .workspace-page:has(> forma-project-rail > .project-rail.collapsed) .composer-dock { left: 0; }
 html[data-document-focus] .creative-editor,
