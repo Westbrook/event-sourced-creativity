@@ -1,6 +1,6 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
-import { generationHistoryItemIsDraft, generationHistoryItems, isDraftOutput, outputQualityLabel } from "../model/events";
+import { generationHistoryItemIsDraft, generationHistoryItems, outputQualityLabel } from "../model/events";
 import { documentFocusFromRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import "./project-rail";
 import "./studio-navigation";

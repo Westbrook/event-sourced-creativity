@@ -1,4 +1,5 @@
-export type DocumentJobKind = "preview" | "generate" | "chat" | "structure_adaptive" | "extract_reference";
+export const DOCUMENT_JOB_KINDS = ["preview", "generate", "chat", "structure_adaptive", "extract_reference"] as const;
+export type DocumentJobKind = typeof DOCUMENT_JOB_KINDS[number];
 export type DocumentJobStatus = "queued" | "running" | "completed" | "failed";
 
 export type DocumentJob = {

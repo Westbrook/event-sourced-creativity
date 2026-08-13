@@ -347,7 +347,7 @@ test("explains comparison changes as creative actions instead of block ids",asyn
 });
 
 test("lets Reference blocks prepare, adopt, and opt pixels into image generation", async () => {
-  const [extractors, workspace, contextBlock, pixelPolicy, findings, eventsApi, adapter, scenarios] = await Promise.all([
+  const [extractors, workspace, contextBlock, pixelPolicy, findings, eventsApi, adapter, scenarios, replayCoverage] = await Promise.all([
     readFile(new URL("../src/model/extractors.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-workspace.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/context-block.ts", import.meta.url), "utf8"),
@@ -356,11 +356,12 @@ test("lets Reference blocks prepare, adopt, and opt pixels into image generation
     readFile(new URL("../worker/events-api.ts", import.meta.url), "utf8"),
     readFile(new URL("../worker/openai-adapter.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/model/scenarios.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/model/replay-coverage.ts", import.meta.url), "utf8"),
   ]);
   for (const kind of ["palette", "mood", "composition", "material", "lighting", "spatial"]) assert.match(extractors, new RegExp(`kind: "${kind}"`));
   assert.match(workspace, /extraction_preferences/); assert.match(workspace, /REFERENCE_FINDING_OPTIONS/); assert.match(workspace, /Choose what this image should contribute/);
   assert.match(contextBlock, /forma-reference-findings/);assert.match(contextBlock,/forma-reference-pixel-policy/);assert.match(pixelPolicy,/pixel_reference_mode/);assert.match(pixelPolicy,/Original pixels/); assert.match(findings, /Add as decision/); assert.match(findings, /source_reference_block_id/); assert.match(findings, /source_finding_kind/); assert.match(findings, /sampleImageUrl/);
-  assert.match(eventsApi, /deterministic-image-suite-v2/); assert.match(eventsApi, /uploadedPixelReferences/);assert.match(eventsApi,/reference_pixel_rights_required/);assert.match(adapter,/Never create a reference item through chat/);assert.match(adapter,/multiple-image-input|image\[\]/); assert.match(scenarios, /palette, mood, composition, material, lighting, and spatial findings/);assert.match(scenarios,/reference-pixel-handoff/);
+  assert.match(eventsApi, /deterministic-image-suite-v2/); assert.match(eventsApi, /uploadedPixelReferences/);assert.match(eventsApi,/reference_pixel_rights_required/);assert.match(adapter,/Never create a reference item through chat/);assert.match(adapter,/multiple-image-input|image\[\]/); assert.match(scenarios, /palette, mood, composition, material, lighting, and spatial findings/);assert.match(replayCoverage,/reference-pixel-handoff/);
 });
 
 test("enforces the adopted production-pilot boundaries", async () => {
