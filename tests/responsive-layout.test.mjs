@@ -89,9 +89,10 @@ test("keeps every prompt-fan image and its controls inside bounded generation su
 });
 
 test("keeps the affected-area editor and its image controls inside the dialog", async () => {
-  const [styles, design] = await Promise.all([
+  const [styles, design, editor] = await Promise.all([
     read("../src/styles.css"),
     read("../src/design-system.css"),
+    read("../src/components/spatial-scope-editor.ts"),
   ]);
 
   assert.match(design, /\.modal-card\.spatial-scope-card\s*\{[^}]*width:\s*min\(67\.5rem, calc\(100% - 1rem\)\);[^}]*margin:\s*\.5rem auto;[^}]*padding:\s*clamp\(1\.25rem, 3vw, 2\.125rem\)/);
@@ -99,6 +100,11 @@ test("keeps the affected-area editor and its image controls inside the dialog", 
   assert.match(styles, /\.spatial-scope-preview\s*\{[^}]*min-width:\s*0/);
   assert.match(styles, /\.spatial-direct-tools button\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere/);
   assert.match(styles, /@media \(max-width: 780px\)[\s\S]*?\.spatial-scope-layout\s*\{\s*grid-template-columns:\s*1fr/);
+  assert.match(styles, /\.spatial-scope-card\s*\{[^}]*display:\s*grid;[^}]*grid-template-rows:\s*auto minmax\(0,1fr\) auto;[^}]*overflow:\s*hidden/);
+  assert.match(styles, /\.spatial-scope-scroll\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto/);
+  assert.match(styles, /\.spatial-scope-actions\s*\{[^}]*margin-top:\s*0;[^}]*border-top:\s*1px solid var\(--line\)/);
+  assert.doesNotMatch(styles, /\.spatial-scope-actions\s*\{[^}]*position:\s*sticky/);
+  assert.match(editor, /class="spatial-scope-scroll"><div class="spatial-scope-layout"/);
 });
 
 test("stacks document headers without seams and reserves composer space inside Studio", async () => {
