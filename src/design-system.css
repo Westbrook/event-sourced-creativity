@@ -475,6 +475,7 @@ forma-project-rail {
 
 .modal-card.wide { width: min(78rem, calc(100% - 2rem)); }
 .modal-card.prompt-fan-card { width: min(90rem, calc(100% - 1rem)); margin: .5rem auto; padding: 0; }
+.modal-card.spatial-scope-card { width: min(67.5rem, calc(100% - 1rem)); margin: .5rem auto; padding: clamp(1.25rem, 3vw, 2.125rem); }
 .modal-card > .eyebrow { display: none; }
 .modal-card h2 { font-size: clamp(1.65rem, 3vw, 2.75rem); }
 .modal-close { top: 1rem; right: 1rem; }

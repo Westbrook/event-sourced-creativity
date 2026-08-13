@@ -88,6 +88,19 @@ test("keeps every prompt-fan image and its controls inside bounded generation su
   }
 });
 
+test("keeps the affected-area editor and its image controls inside the dialog", async () => {
+  const [styles, design] = await Promise.all([
+    read("../src/styles.css"),
+    read("../src/design-system.css"),
+  ]);
+
+  assert.match(design, /\.modal-card\.spatial-scope-card\s*\{[^}]*width:\s*min\(67\.5rem, calc\(100% - 1rem\)\);[^}]*margin:\s*\.5rem auto;[^}]*padding:\s*clamp\(1\.25rem, 3vw, 2\.125rem\)/);
+  assert.doesNotMatch(styles, /\.spatial-scope-card\s*\{[^}]*overflow-x:\s*hidden/);
+  assert.match(styles, /\.spatial-scope-preview\s*\{[^}]*min-width:\s*0/);
+  assert.match(styles, /\.spatial-direct-tools button\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(styles, /@media \(max-width: 780px\)[\s\S]*?\.spatial-scope-layout\s*\{\s*grid-template-columns:\s*1fr/);
+});
+
 test("stacks document headers without seams and reserves composer space inside Studio", async () => {
   const [styles, design, workspace, alternatives, chat] = await Promise.all([
     read("../src/styles.css"),
