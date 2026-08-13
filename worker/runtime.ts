@@ -15,6 +15,8 @@ export interface WorkerEnv {
   FORMA_LIVE_REPLAY_ENABLED?: string;
 }
 
+export interface WorkerExecutionContext { waitUntil(promise: Promise<unknown>): void; }
+
 export type EventRow = {
   eventId: string; streamId: string; sequence: number; occurredAt: string; recordedAt: string;
   actor: string; clientId: string; correlationId: string; causationId: string | null;
@@ -73,6 +75,30 @@ export function makeEvent(streamId: string, sequence: number, actor: string, cli
 
 export const insertEvent = (env: WorkerEnv, event: EventRow) => env.DB.prepare(`INSERT INTO events (event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(event.eventId, event.streamId, event.sequence, event.occurredAt, event.recordedAt, event.actor, event.clientId, event.correlationId, event.causationId, event.compensatesEventId, event.schemaVersion, event.type, JSON.stringify(event.payload));
 
+const insertEventAtHead = (env: WorkerEnv, event: EventRow, expectedHead: number) => env.DB.prepare(`INSERT INTO events (event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload)
+  SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?
+  WHERE (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?`).bind(event.eventId, event.streamId, event.sequence, event.occurredAt, event.recordedAt, event.actor, event.clientId, event.correlationId, event.causationId, event.compensatesEventId, event.schemaVersion, event.type, JSON.stringify(event.payload), event.streamId, expectedHead);
+
+export class StaleSequenceError extends Error {
+  constructor(readonly expected: number, readonly head: number) { super("stale_sequence"); this.name = "StaleSequenceError"; }
+}
+
+/** Reserve and append one contiguous event range in a single D1 batch. */
+export async function appendEvents(env: WorkerEnv, events: EventRow[], options: { expectedHead?: number; retries?: number } = {}) {
+  if (!events.length) return events;
+  const streamId = events[0].streamId; if (!events.every((event) => event.streamId === streamId)) throw new Error("mixed_event_stream_batch");
+  const retries = options.expectedHead === undefined ? Math.max(1, options.retries ?? 4) : 1;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    const head = options.expectedHead ?? await streamHead(env, streamId);
+    events.forEach((event, index) => { event.sequence = head + index + 1; });
+    const results = await env.DB.batch(events.map((event, index) => insertEventAtHead(env, event, head + index)));
+    if (results.every((result) => Number(result.meta.changes ?? 0) === 1)) return events;
+    const current = await streamHead(env, streamId);
+    if (options.expectedHead !== undefined) throw new StaleSequenceError(options.expectedHead, current);
+  }
+  throw new Error("event_append_contention");
+}
+
 export async function streamHead(env: WorkerEnv, streamId: string) {
   const row = await env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(streamId).first<{ head: number }>();
   return Number(row?.head ?? 0);
@@ -88,9 +114,6 @@ export async function readEvents(env: WorkerEnv, streamId: string, limit = 2000)
 }
 
 export async function appendAuditEvent(env: WorkerEnv, streamId: string, actor: string, type: string, payload: Record<string, unknown>, correlationId = uuidV7()) {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const event = makeEvent(streamId, (await streamHead(env, streamId)) + 1, actor, "server:policy", correlationId, type, payload);
-    try { await insertEvent(env, event).run(); return event; } catch (error) { if (attempt === 1) throw error; }
-  }
-  throw new Error("audit_append_failed");
+  const event = makeEvent(streamId, 0, actor, "server:policy", correlationId, type, payload);
+  await appendEvents(env, [event]); return event;
 }

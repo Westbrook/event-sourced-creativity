@@ -1,6 +1,6 @@
 import { handleEvents } from "./events-api";
 import { loadPrivateContent, releaseBudget, requireConsent, requireUser, storePrivateContent, type PilotUser } from "./pilot-policy";
-import { appendAuditEvent, ensureSchema, readEvents, streamHead, uuidV7, type WorkerEnv } from "./runtime";
+import { appendAuditEvent, ensureSchema, readEvents, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { foldEvents } from "../src/model/events";
 import {
   DOCUMENT_JOB_HEARTBEAT_MS,
@@ -8,11 +8,14 @@ import {
   DOCUMENT_JOB_STALE_AFTER_MS,
   documentGenerationRequestKey,
   documentGenerationRevision,
+  documentJobTerminal,
   documentJobMaxAttempts,
+  type DocumentJobError,
   type DocumentJobKind,
   type DocumentJobStatus,
 } from "../src/model/document-jobs";
-import { normalizePromptTechnique } from "../src/model/prompt-structures";
+import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "../src/model/prompt-structures";
+import { classifyProviderFailure, publicFailureDetail, type ProviderFailureDetail } from "./provider-errors";
 
 type DocumentJobRow = {
   job_id: string; owner_id: string; stream_id: string; document_id: string; kind: DocumentJobKind; status: DocumentJobStatus;
@@ -21,7 +24,7 @@ type DocumentJobRow = {
   lease_expires_at: string | null; notified_at: string | null; expires_at: string; updated_at: string;
 };
 
-const KINDS = new Set<DocumentJobKind>(["preview", "generate", "chat", "structure_adaptive", "extract_reference"]);
+const KINDS = new Set<DocumentJobKind>(["preview", "generate", "prompt_fan", "chat", "structure_adaptive", "extract_reference"]);
 const MAX_PAYLOAD_BYTES = 750_000;
 
 function parseResult(row: Pick<DocumentJobRow, "result_json">) {
@@ -40,19 +43,64 @@ function generationRequestIdentity(kind: DocumentJobKind, request: Record<string
   const documentRevision = generationRevisionFromRequest(request, documentId);
   const sourcePreviewId = typeof request.sourcePreviewId === "string" && request.sourcePreviewId ? request.sourcePreviewId : null;
   const promptTechnique = normalizePromptTechnique(request.promptTechnique); const promptFanId = typeof request.promptFanId === "string" && request.promptFanId ? request.promptFanId : null;
-  const requestKey = kind === "preview" || kind === "generate" ? String(request.requestKey || documentGenerationRequestKey(kind, documentRevision, sourcePreviewId, promptTechnique, promptFanId)) : "";
+  const requestKey = kind === "preview" || kind === "generate" ? String(request.requestKey || documentGenerationRequestKey(kind, documentRevision, sourcePreviewId, promptTechnique, promptFanId)) : kind === "prompt_fan" ? String(request.requestKey ?? "") : "";
   return { documentRevision, requestKey, sourcePreviewId, promptTechnique, promptFanId };
 }
 
+function parentJobIdFromRequest(request: Record<string, unknown>) {
+  return typeof request.parentJobId === "string" && request.parentJobId ? request.parentJobId : null;
+}
+
+function fanKindFromRequest(request: Record<string, unknown>): "preview" | "generate" | null {
+  return request.fanKind === "preview" || request.fanKind === "generate" ? request.fanKind : null;
+}
+
+function errorDetailFromResult(result: Record<string, unknown>): DocumentJobError | null {
+  const value = result.errorDetail;
+  if (!value || typeof value !== "object") return null;
+  const detail = value as Record<string, unknown>;
+  return {
+    code: String(detail.code ?? "operation_failed"), category: String(detail.category ?? "unknown") as DocumentJobError["category"],
+    message: String(detail.message ?? "The operation failed."), retryable: Boolean(detail.retryable),
+    requestId: detail.requestId ? String(detail.requestId) : null, httpStatus: Number.isFinite(Number(detail.httpStatus)) ? Number(detail.httpStatus) : null,
+  };
+}
+
 function serializeJob(row: DocumentJobRow) {
-  const parsed = parseResult(row); const result = row.result_json ? parsed : null; const identity = generationRequestIdentity(row.kind, parseRequest(row), row.document_id);
+  const parsed = parseResult(row); const result = row.result_json ? parsed : null; const request = parseRequest(row); const identity = generationRequestIdentity(row.kind, request, row.document_id);
+  const members = Array.isArray(parsed.members) ? parsed.members : [];
   return {
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
-    requestedSequence: Number(row.requested_sequence), documentRevision: identity.documentRevision, requestKey: identity.requestKey, sourcePreviewId: identity.sourcePreviewId, promptTechnique: identity.promptTechnique, promptFanId: identity.promptFanId, result, error: row.error_message, attemptCount: Number(row.attempt_count),
+    requestedSequence: Number(row.requested_sequence), documentRevision: identity.documentRevision, requestKey: identity.requestKey, sourcePreviewId: identity.sourcePreviewId, promptTechnique: identity.promptTechnique, promptFanId: identity.promptFanId,
+    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result, error: row.error_message, errorDetail: errorDetailFromResult(parsed), attemptCount: Number(row.attempt_count),
     requestedAt: row.requested_at, startedAt: row.started_at, completedAt: row.completed_at, notifiedAt: row.notified_at,
     leaseExpiresAt: row.lease_expires_at, updatedAt: row.updated_at,
     stage: String(parsed.stage ?? row.status), progressMessage: String(parsed.progressMessage ?? ""),
   };
+}
+
+async function reconcilePromptFanParent(env: WorkerEnv, ownerId: string, parentId: string) {
+  const parent = await readJob(env, ownerId, parentId); if (!parent || parent.kind !== "prompt_fan") return parent;
+  const request = parseRequest(parent); const childIds = Array.isArray(request.childJobIds) ? request.childJobIds.map(String).filter(Boolean).slice(0, 4) : [];
+  const children = (await Promise.all(childIds.map((jobId) => readJob(env, ownerId, jobId)))).filter((row): row is DocumentJobRow => Boolean(row));
+  const members = children.map((child) => {
+    const childRequest = parseRequest(child); const childResult = parseResult(child);
+    return { jobId: child.job_id, promptTechnique: normalizePromptTechnique(childRequest.promptTechnique), status: child.status, error: errorDetailFromResult(childResult), attemptCount: Number(child.attempt_count), updatedAt: child.updated_at };
+  });
+  const terminal = children.filter((child) => child.status === "completed" || child.status === "failed"); const succeeded = terminal.filter((child) => child.status === "completed").length; const failed = terminal.length - succeeded;
+  const status: DocumentJobStatus = terminal.length === childIds.length && childIds.length > 0 ? failed === 0 ? "completed" : succeeded > 0 ? "partial" : "failed" : children.some((child) => child.status === "running") || terminal.length > 0 ? "running" : "queued";
+  const now = new Date().toISOString(); const completedAt = documentJobTerminal({ status }) ? parent.completed_at ?? now : null;
+  const progressMessage = status === "completed" ? "All four prompt approaches finished." : status === "partial" ? `${succeeded} of 4 images finished; ${failed} failed.` : status === "failed" ? "All four prompt approaches failed." : `${terminal.length} of 4 prompt approaches finished.`;
+  const result = { ...parseResult(parent), stage: status, progressMessage, members, completedCount: succeeded, failedCount: failed, totalCount: childIds.length };
+  const resultJson = JSON.stringify(result); const errorMessage = status === "partial" ? "prompt_fan_partial_failure" : status === "failed" ? "prompt_fan_failed" : null;
+  if (parent.status === status && parent.result_json === resultJson && parent.error_message === errorMessage && parent.completed_at === completedAt) return parent;
+  await env.DB.prepare("UPDATE document_jobs SET status=?,result_json=?,error_message=?,completed_at=?,updated_at=? WHERE job_id=? AND owner_id=?").bind(status, resultJson, errorMessage, completedAt, now, parentId, ownerId).run();
+  return readJob(env, ownerId, parentId);
+}
+
+async function reconcileParentForChild(env: WorkerEnv, row: DocumentJobRow) {
+  const parentId = parentJobIdFromRequest(parseRequest(row));
+  if (parentId) await reconcilePromptFanParent(env, row.owner_id, parentId);
 }
 
 async function readJob(env: WorkerEnv, ownerId: string, jobId: string) {
@@ -102,8 +150,10 @@ async function releaseInterruptedAttempt(env: WorkerEnv, user: PilotUser, row: D
 
 async function failStaleJob(env: WorkerEnv, user: PilotUser, row: DocumentJobRow) {
   const now = new Date().toISOString();
-  const result = await env.DB.prepare("UPDATE document_jobs SET status='failed',error_message='execution_interrupted',completed_at=?,lease_expires_at=NULL,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND status='running' AND correlation_id=?").bind(now, JSON.stringify({ ...parseResult(row), stage: "failed", progressMessage: "The server lost contact with this operation before it finished." }), now, row.job_id, user.userId, row.correlation_id).run();
-  if (Number(result.meta.changes ?? 0) === 1) await releaseInterruptedAttempt(env, user, row, "execution_interrupted");
+  const errorDetail = { code: "execution_interrupted", category: "server", message: "The server lost contact with this operation before it finished.", retryable: false, requestId: null, httpStatus: null };
+  const parentId = parentJobIdFromRequest(parseRequest(row));
+  const result = await env.DB.prepare("UPDATE document_jobs SET status='failed',error_message='execution_interrupted',completed_at=?,lease_expires_at=NULL,result_json=?,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND status='running' AND correlation_id=?").bind(now, JSON.stringify({ ...parseResult(row), errorDetail, stage: "failed", progressMessage: errorDetail.message }), parentId, now, now, row.job_id, user.userId, row.correlation_id).run();
+  if (Number(result.meta.changes ?? 0) === 1) { await releaseInterruptedAttempt(env, user, row, "execution_interrupted"); await reconcileParentForChild(env, row); }
 }
 
 function operationFinished(events: Awaited<ReturnType<typeof readEvents>>, row: DocumentJobRow) {
@@ -139,19 +189,24 @@ async function queueFollowupPreview(env:WorkerEnv,user:PilotUser,parent:Document
 
 export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: string) {
   await ensureSchema(env);
-  let row = await readJob(env, user.userId, jobId); if (!row || row.status === "completed" || row.status === "failed") return row;
+  let row = await readJob(env, user.userId, jobId); if (!row) return row;
+  if (row.kind === "prompt_fan") return reconcilePromptFanParent(env, user.userId, row.job_id);
+  if (documentJobTerminal({ status: row.status })) return row;
 
   const existingEvents = await readEvents(env, user.streamId);
   const finished = operationFinished(existingEvents, row);
   if (finished) {
     const now = new Date().toISOString(); const status: DocumentJobStatus = finished.failed ? "failed" : "completed";let followup:DocumentJobRow|null=null;
     if(!finished.failed&&row.kind==="chat"){const reasoned=finished.correlated.find((event)=>event.type==="AssistantReasoned"&&event.payload.preview_queued&&event.payload.preview_direction_ref);if(reasoned)followup=await queueFollowupPreview(env,user,row,{kind:"preview",documentId:row.document_id,sourceSurface:"chat",payload:{directionRef:reasoned.payload.preview_direction_ref,directionModel:reasoned.payload.model_id,sourceChatTurnId:reasoned.payload.turn_id}});}
-    const result = { ...safeResult({ head: existingEvents.at(-1)?.sequence ?? 0,previewQueued:Boolean(followup),followupJobId:followup?.job_id }, finished.correlated.map((event) => event.eventId)), stage: status, progressMessage: finished.failed ? "The operation failed." : "The operation finished." };
-    await env.DB.prepare("UPDATE document_jobs SET status=?,result_json=?,error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=?").bind(status, JSON.stringify(result), finished.failed ? "operation_failed" : null, now, now, jobId, user.userId, row.correlation_id).run();
+    const failureEvent = finished.failed ? [...finished.correlated].reverse().find((event) => event.type === "GenerationFailed" || event.type === "ExtractionFailed") : undefined;
+    const failureDetail = failureEvent ? { code: String(failureEvent.payload.error_code ?? failureEvent.payload.error_class ?? "operation_failed"), category: String(failureEvent.payload.error_category ?? "unknown"), message: String(failureEvent.payload.error_message ?? "The operation failed."), retryable: Boolean(failureEvent.payload.retryable), requestId: failureEvent.payload.provider_request_id ? String(failureEvent.payload.provider_request_id) : null, httpStatus: Number.isFinite(Number(failureEvent.payload.http_status)) ? Number(failureEvent.payload.http_status) : null } : null;
+    const result = { ...safeResult({ head: existingEvents.at(-1)?.sequence ?? 0,previewQueued:Boolean(followup),followupJobId:followup?.job_id }, finished.correlated.map((event) => event.eventId)), ...(failureDetail ? { errorDetail: failureDetail } : {}), stage: status, progressMessage: finished.failed ? "The operation failed." : "The operation finished." };
+    await env.DB.prepare("UPDATE document_jobs SET status=?,result_json=?,error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=?").bind(status, JSON.stringify(result), failureDetail?.message ?? (finished.failed ? "operation_failed" : null), parentJobIdFromRequest(parseRequest(row)), now, now, jobId, user.userId, row.correlation_id).run();
+    await reconcileParentForChild(env, row);
     return readJob(env, user.userId, jobId);
   }
 
-  const blocker = await env.DB.prepare("SELECT job_id FROM document_jobs WHERE owner_id=? AND stream_id=? AND status IN ('queued','running') AND (requested_at<? OR (requested_at=? AND job_id<?)) ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId, row.requested_at, row.requested_at, row.job_id).first<{ job_id: string }>();
+  const blocker = await env.DB.prepare("SELECT job_id FROM document_jobs WHERE owner_id=? AND stream_id=? AND kind!='prompt_fan' AND status IN ('queued','running') AND (requested_at<? OR (requested_at=? AND job_id<?)) ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId, row.requested_at, row.requested_at, row.job_id).first<{ job_id: string }>();
   if (blocker) return row;
   if (row.status === "running" && !rowIsStale(row)) return row;
   if (row.status === "running" && row.attempt_count >= documentJobMaxAttempts(row.kind)) { await failStaleJob(env, user, row); return readJob(env, user.userId, jobId); }
@@ -179,23 +234,39 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     await updateJobProgress(env, row, "processing", row.kind === "preview" || row.kind === "generate" ? "Planning and rendering from the current document." : "Processing the requested document change.");
     const response = await runWithHeartbeat(env, row, () => handleEvents(new Request("http://document-job.local/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }), env, false, user));
     const body = await response.json() as Record<string, unknown>;let followup:DocumentJobRow|null=null;if(response.ok&&body.followupJob&&typeof body.followupJob==="object")followup=await queueFollowupPreview(env,user,row,body.followupJob as Record<string,unknown>);const completedAt = new Date().toISOString();
-    const terminalResult = { ...safeResult({...body,followupJobId:followup?.job_id}), stage: response.ok ? "completed" : "failed", progressMessage: response.ok ? "The operation finished." : "The operation failed." };
-    await env.DB.prepare("UPDATE document_jobs SET status=?,result_json=?,error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=?").bind(response.ok ? "completed" : "failed", JSON.stringify(terminalResult), response.ok ? null : String(body.error ?? "document_job_failed"), completedAt, completedAt, jobId, user.userId, row.correlation_id).run();
+    const detail = !response.ok && body.errorDetail && typeof body.errorDetail === "object" ? body.errorDetail as ProviderFailureDetail : null;
+    const terminalResult = { ...safeResult({...body,followupJobId:followup?.job_id}), ...(detail ? { errorDetail: publicFailureDetail(detail) } : {}), stage: response.ok ? "completed" : "failed", progressMessage: response.ok ? "The operation finished." : detail?.category === "safety" ? "OpenAI's safety system rejected this request." : "The operation failed." };
+    const parentId = parentJobIdFromRequest(parseRequest(row));
+    await env.DB.prepare("UPDATE document_jobs SET status=?,result_json=?,error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=?").bind(response.ok ? "completed" : "failed", JSON.stringify(terminalResult), response.ok ? null : detail?.message ?? String(body.error ?? "document_job_failed"), parentId, completedAt, completedAt, jobId, user.userId, row.correlation_id).run();
   } catch (error) {
-    const completedAt = new Date().toISOString(); const message = error instanceof Error ? error.message : "document_job_failed";
-    await env.DB.prepare("UPDATE document_jobs SET status='failed',error_message=?,completed_at=?,lease_expires_at=NULL,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=?").bind(message, completedAt, JSON.stringify({ ...parseResult(row), stage: "failed", progressMessage: "The operation failed." }), completedAt, jobId, user.userId, row.correlation_id).run();
+    const completedAt = new Date().toISOString(); const detail = classifyProviderFailure(error); const parentId = parentJobIdFromRequest(parseRequest(row));
+    await env.DB.prepare("UPDATE document_jobs SET status='failed',error_message=?,completed_at=?,lease_expires_at=NULL,result_json=?,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=?").bind(detail.message, completedAt, JSON.stringify({ ...parseResult(row), errorDetail: publicFailureDetail(detail), stage: "failed", progressMessage: detail.category === "safety" ? "OpenAI's safety system rejected this request." : "The operation failed." }), parentId, completedAt, completedAt, jobId, user.userId, row.correlation_id).run();
   }
-  return readJob(env, user.userId, jobId);
+  const finishedRow = await readJob(env, user.userId, jobId); if (finishedRow) await reconcileParentForChild(env, finishedRow); return finishedRow;
 }
 
-export async function handleDocumentJobs(request: Request, env: WorkerEnv, path = "") {
+async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
+  for (let count = 0; count < 50; count += 1) {
+    const running = await env.DB.prepare("SELECT job_id FROM document_jobs WHERE owner_id=? AND stream_id=? AND kind!='prompt_fan' AND status='running' ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId).first<{ job_id: string }>();
+    if (running) return;
+    const next = await env.DB.prepare("SELECT job_id FROM document_jobs WHERE owner_id=? AND stream_id=? AND kind!='prompt_fan' AND status='queued' ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId).first<{ job_id: string }>();
+    if (!next) return;
+    const job = await runDocumentJob(env, user, next.job_id);
+    if (!job || job.status === "queued" || job.status === "running") return;
+  }
+}
+
+export async function handleDocumentJobs(request: Request, env: WorkerEnv, path = "", context?: WorkerExecutionContext) {
   await ensureSchema(env); const auth = await requireUser(request, env, request.method === "GET" ? "viewer" : "creator"); if (auth.response || !auth.user) return auth.response!; const user = auth.user;
   const now = new Date().toISOString();
   await env.DB.prepare("UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)").bind(now, user.userId, now).run();
 
   if (path.endsWith("/ack") && request.method === "POST") {
     const jobId = decodeURIComponent(path.slice(0, -4).replace(/\/$/, ""));
-    const result = await env.DB.prepare("UPDATE document_jobs SET notified_at=COALESCE(notified_at,?),updated_at=? WHERE job_id=? AND owner_id=?").bind(now, now, jobId, user.userId).run();
+    const target = await readJob(env, user.userId, jobId); if (!target) return Response.json({ error: "job_not_found" }, { status: 404 });
+    const request = parseRequest(target); const childIds = target.kind === "prompt_fan" && Array.isArray(request.childJobIds) ? request.childJobIds.map(String).filter(Boolean) : [];
+    const statements = [jobId, ...childIds].map((id) => env.DB.prepare("UPDATE document_jobs SET notified_at=COALESCE(notified_at,?),updated_at=? WHERE job_id=? AND owner_id=?").bind(now, now, id, user.userId));
+    const results = await env.DB.batch(statements); const result = results[0];
     return Number(result.meta.changes ?? 0) === 1 ? Response.json({ ok: true }) : Response.json({ error: "job_not_found" }, { status: 404 });
   }
 
@@ -203,18 +274,29 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const consent = requireConsent(user); if (consent) return consent;
     const jobId = decodeURIComponent(path.slice(0, -4).replace(/\/$/, "")); const existing = await readJob(env, user.userId, jobId);
     if (!existing) return Response.json({ error: "job_not_found" }, { status: 404 });
+    if (existing.kind === "prompt_fan") {
+      const job = await reconcilePromptFanParent(env, user.userId, jobId); if (!job) return Response.json({ error: "job_not_found" }, { status: 404 });
+      context?.waitUntil(driveDocumentQueue(env, user));
+      return Response.json({ job: serializeJob(job) }, { status: documentJobTerminal({ status: job.status }) ? 200 : 202 });
+    }
+    if (context) {
+      context.waitUntil(driveDocumentQueue(env, user));
+      return Response.json({ job: serializeJob(existing), accepted: true }, { status: 202 });
+    }
     const job = await runDocumentJob(env, user, jobId); if (!job) return Response.json({ error: "job_not_found" }, { status: 404 });
-    return Response.json({ job: serializeJob(job) }, { status: job.status === "completed" || job.status === "failed" ? 200 : 202 });
+    return Response.json({ job: serializeJob(job) }, { status: documentJobTerminal({ status: job.status }) ? 200 : 202 });
   }
 
   if (request.method === "GET") {
     const requestedJob = path ? await readJob(env, user.userId, decodeURIComponent(path)) : null;
-    let rows = path ? requestedJob ? [requestedJob] : [] : (await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND (status IN ('queued','running') OR notified_at IS NULL) ORDER BY requested_at DESC LIMIT 50").bind(user.userId).all<DocumentJobRow>()).results;
-    let reconciled = false;
+    let rows = path ? requestedJob ? [requestedJob] : [] : (await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND (status IN ('queued','running') OR notified_at IS NULL) ORDER BY requested_at DESC LIMIT 80").bind(user.userId).all<DocumentJobRow>()).results;
+    const parents = rows.filter((row) => row.kind === "prompt_fan");
+    for (const parent of parents) await reconcilePromptFanParent(env, user.userId, parent.job_id);
+    let reconciled = parents.length > 0;
     for (const row of rows) if (rowIsStale(row) && row.attempt_count >= documentJobMaxAttempts(row.kind)) { await failStaleJob(env, user, row); reconciled = true; }
     if (reconciled) {
       const refreshed = path ? await readJob(env, user.userId, decodeURIComponent(path)) : null;
-      rows = path ? refreshed ? [refreshed] : [] : (await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND (status IN ('queued','running') OR notified_at IS NULL) ORDER BY requested_at DESC LIMIT 50").bind(user.userId).all<DocumentJobRow>()).results;
+      rows = path ? refreshed ? [refreshed] : [] : (await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND (status IN ('queued','running') OR notified_at IS NULL) ORDER BY requested_at DESC LIMIT 80").bind(user.userId).all<DocumentJobRow>()).results;
     }
     if (path && !rows.length) return Response.json({ error: "job_not_found" }, { status: 404 });
     return Response.json(path ? { job: serializeJob(rows[0]) } : { jobs: rows.map(serializeJob) });
@@ -230,6 +312,25 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const events = await readEvents(env, user.streamId); const projection = foldEvents(events, Number.POSITIVE_INFINITY, input.documentId);
   const documentId = String(input.documentId ?? projection.documentId); const documentRecord = projection.documents.find((document) => document.id === documentId);
   if (!documentRecord) return Response.json({ error: "document_not_found" }, { status: 404 });
+
+  if (kind === "prompt_fan") {
+    const fanKind = fanKindFromRequest(payload); if (!fanKind) return Response.json({ error: "prompt_fan_kind_required" }, { status: 400 });
+    const promptFanId = typeof payload.promptFanId === "string" && payload.promptFanId ? payload.promptFanId : uuidV7();
+    const documentRevision = generationRevisionFromRequest(payload, documentId); const sourcePreviewId = typeof payload.sourcePreviewId === "string" && payload.sourcePreviewId ? payload.sourcePreviewId : null;
+    const parentRequestKey = String(payload.requestKey || `prompt-fan:${fanKind}:${documentRevision}:${sourcePreviewId || "document"}`);
+    const activeParents = (await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND document_id=? AND kind='prompt_fan' AND status IN ('queued','running') ORDER BY requested_at DESC LIMIT 20").bind(user.userId, documentId).all<DocumentJobRow>()).results;
+    const duplicate = activeParents.find((candidate) => String(parseRequest(candidate).requestKey ?? "") === parentRequestKey);
+    if (duplicate) return Response.json({ job: serializeJob(await reconcilePromptFanParent(env, user.userId, duplicate.job_id) ?? duplicate), reused: true }, { status: 202 });
+    const requestedAt = new Date(); const requestedAtIso = requestedAt.toISOString(); const configuredRetention = Number(env.FORMA_RETENTION_DAYS ?? 30); const retentionDays = Number.isFinite(configuredRetention) && configuredRetention > 0 ? configuredRetention : 30; const expiresAt = new Date(requestedAt.getTime() + retentionDays * 86_400_000).toISOString();
+    const sourceSurface = String(input.sourceSurface ?? payload.sourceSurface ?? "studio").slice(0, 80) || "studio"; const requestedSequence = await streamHead(env, user.streamId); const parentId = uuidV7(); const childIds = PROMPT_TECHNIQUES.map(() => uuidV7());
+    const shared = { ...payload, fanKind: undefined, requestKey: undefined, promptTechnique: undefined, promptFanId, documentRevision, sourcePreviewId };
+    const parentRequest = { fanKind, promptFanId, documentRevision, sourcePreviewId, requestKey: parentRequestKey, childJobIds: childIds };
+    const insert = (jobId: string, jobKind: DocumentJobKind, requestJson: Record<string, unknown>, resultJson: Record<string, unknown> | null = null) => env.DB.prepare("INSERT INTO document_jobs (job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at) VALUES (?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?)").bind(jobId, user.userId, user.streamId, documentId, jobKind, sourceSurface, jobId, requestedSequence, JSON.stringify(requestJson), resultJson ? JSON.stringify(resultJson) : null, requestedAtIso, expiresAt, requestedAtIso);
+    const members = PROMPT_TECHNIQUES.map((technique, index) => ({ jobId: childIds[index], promptTechnique: technique, status: "queued", error: null, attemptCount: 0, updatedAt: requestedAtIso }));
+    const statements = [insert(parentId, "prompt_fan", parentRequest, { stage: "queued", progressMessage: "Four prompt approaches are queued as one generation.", members, completedCount: 0, failedCount: 0, totalCount: 4 }), ...PROMPT_TECHNIQUES.map((technique: PromptTechnique, index: number) => insert(childIds[index], fanKind, { ...shared, parentJobId: parentId, promptTechnique: technique, requestKey: documentGenerationRequestKey(fanKind, documentRevision, sourcePreviewId, technique, promptFanId) }))];
+    await env.DB.batch(statements); const parent = await readJob(env, user.userId, parentId); context?.waitUntil(driveDocumentQueue(env, user));
+    return Response.json({ job: serializeJob(parent!), accepted: true }, { status: 202 });
+  }
 
   let active:DocumentJobRow|null=null;
   if(kind!=="extract_reference"){
@@ -252,5 +353,6 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const sourceSurface = String(input.sourceSurface ?? payload.sourceSurface ?? "studio").slice(0, 80) || "studio"; const requestedSequence = await streamHead(env, user.streamId);
   await env.DB.prepare("INSERT INTO document_jobs (job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at) VALUES (?,?,?,?,?,'queued',?,?,?,?,NULL,NULL,0,?,NULL,NULL,NULL,NULL,?,?)").bind(jobId, user.userId, user.streamId, documentId, kind, sourceSurface, jobId, requestedSequence, JSON.stringify(payload), requestedAt.toISOString(), expiresAt, requestedAt.toISOString()).run();
   const job = await readJob(env, user.userId, jobId);
-  return Response.json({ job: serializeJob(job!) }, { status: 202 });
+  context?.waitUntil(driveDocumentQueue(env, user));
+  return Response.json({ job: serializeJob(job!), accepted: true }, { status: 202 });
 }

@@ -27,7 +27,10 @@ export class PromptFanReview extends FormaElement {
       if (!output.promptFanId) continue;
       groups.set(output.promptFanId, [...(groups.get(output.promptFanId) ?? []), output]);
     }
-    return [...groups.entries()].sort(([, left], [, right]) => Math.max(...right.map((output) => output.sequence)) - Math.max(...left.map((output) => output.sequence)));
+    for (const job of this.store.documentJobs.get()) if (job.promptFanId) groups.set(job.promptFanId, groups.get(job.promptFanId) ?? []);
+    for (const event of this.store.events.get()) if (event.type === "GenerationFailed" && event.payload.prompt_fan_id) { const id=String(event.payload.prompt_fan_id);groups.set(id,groups.get(id)??[]); }
+    const recency=(id:string,outputs:CreativeOutput[])=>Math.max(0,...outputs.map((output)=>output.sequence),...this.store.events.get().filter((event)=>event.payload.prompt_fan_id===id).map((event)=>event.sequence));
+    return [...groups.entries()].sort(([rightId, right], [leftId, left]) => recency(leftId,left)-recency(rightId,right));
   }
 
   #fan() {
@@ -47,15 +50,19 @@ export class PromptFanReview extends FormaElement {
     if (!fan) return nothing;
     const [fanId, fanOutputs] = fan;
     const byTechnique = new Map(fanOutputs.map((output) => [output.promptTechnique, output]));
-    const activeJobs = this.store.documentGenerationJobs().filter((job) => job.promptFanId === fanId);
-    const complete = PROMPT_TECHNIQUE_DEFINITIONS.filter((definition) => byTechnique.has(definition.id)).length;
+    const fanJob = this.store.documentJobs.get().find((job) => job.kind === "prompt_fan" && job.promptFanId === fanId);
+    const memberByTechnique = new Map(fanJob?.members.map((member)=>[member.promptTechnique,member])??[]);
+    const failedEvents = new Map(this.store.events.get().filter((event)=>event.type==="GenerationFailed"&&event.payload.prompt_fan_id===fanId&&event.payload.prompt_technique).map((event)=>[String(event.payload.prompt_technique),event]));
+    const failedTechniques = new Set(PROMPT_TECHNIQUE_DEFINITIONS.filter((definition)=>memberByTechnique.get(definition.id)?.status==="failed"||failedEvents.has(definition.id)).map((definition)=>definition.id));
+    const complete = PROMPT_TECHNIQUE_DEFINITIONS.filter((definition) => byTechnique.has(definition.id)||failedTechniques.has(definition.id)).length;
+    const failed = failedTechniques.size;
     const standalone = fanOutputs.filter((output) => output.standalone).length;
-    const quality = fanOutputs[0] ? outputQualityLabel(fanOutputs[0]) : activeJobs[0]?.kind === "preview" ? "Draft" : "Full quality";
+    const quality = fanOutputs[0] ? outputQualityLabel(fanOutputs[0]) : fanJob?.fanKind === "preview" ? "Draft" : "Full quality";
     const projection = this.store.projection.get();
     const folder = projection.membership[projection.documentId]?.collectionId;
     const preference = this.store.promptTechniquePreference();
     const promotable = fanOutputs.filter((output) => !output.standalone);
-    return html`<div class="prompt-fan-review-trigger-wrap"><button class="prompt-fan-review-trigger" aria-haspopup="dialog" @click=${() => this.#show(fanId, fanOutputs)}>${icon("compare")}<span>Compare & promote</span><small>${complete} of 4 ready${standalone ? ` · ${standalone} standalone` : ""}</small></button></div>
+    return html`<div class="prompt-fan-review-trigger-wrap"><button class="prompt-fan-review-trigger" aria-haspopup="dialog" @click=${() => this.#show(fanId, fanOutputs)}>${icon("compare")}<span>Compare & promote</span><small>${fanOutputs.length} ready${failed ? ` · ${failed} failed` : complete<4?` · ${4-complete} running`:""}${standalone ? ` · ${standalone} standalone` : ""}</small></button></div>
       ${this.#open ? html`<dialog class="modal prompt-fan-dialog" closedby="any" aria-labelledby="prompt-fan-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) this.#close(); }} @cancel=${(event: Event) => { event.preventDefault(); this.#close(); }} @close=${() => { if (this.#open) { this.#open = false; this.requestUpdate(); } }}>
         <section class="modal-card prompt-fan-card">
           <button class="icon-button modal-close" aria-label="Close prompt fan comparison" @click=${this.#close}>${icon("close")}</button>
@@ -65,14 +72,15 @@ export class PromptFanReview extends FormaElement {
             const output = byTechnique.get(definition.id);
             const preferred = preference.technique === definition.id && Boolean(preference.preference);
             const prompt = output?.promptRef ? this.store.content.get()[output.promptRef] : "";
+            const member=memberByTechnique.get(definition.id);const failedEvent=failedEvents.get(definition.id);const failure=member?.error;const failedHere=member?.status==="failed"||Boolean(failedEvent);const failureCategory=failure?.category??String(failedEvent?.payload.error_category??"unknown");const failureRequestId=failure?.requestId??(failedEvent?.payload.provider_request_id?String(failedEvent.payload.provider_request_id):null);
             return html`<article class=${`prompt-fan-option ${preferred ? "preferred" : ""} ${output?.standalone ? "standalone" : ""}`}>
               <header><div><span>${definition.shortLabel} prompt process</span><h3>${definition.label}</h3></div><div class="prompt-fan-statuses">${output?.standalone ? html`<em>${icon("check")} Standalone</em>` : nothing}${preferred ? html`<em>${icon("check")} Default</em>` : nothing}</div></header>
               <p>${definition.description}</p>
-              <div class="prompt-fan-image">${output ? html`<forma-output-visual .output=${output} .interactive=${true}></forma-output-visual>` : html`<div class="prompt-fan-pending">${icon("clock")}<span>${activeJobs.some((job) => job.promptTechnique === definition.id) ? "Queued on the server" : "Awaiting this result"}</span></div>`}</div>
+              <div class="prompt-fan-image">${output ? html`<forma-output-visual .output=${output} .interactive=${true}></forma-output-visual>` : failedHere ? html`<div class="prompt-fan-pending failed">${icon("close")}<span><b>${failureCategory==="safety"?"Safety rejected":"Generation failed"}</b><small>${failure?.message??(failureCategory==="safety"?"OpenAI's safety system rejected this prompt structure.":"This prompt structure did not produce an image.")}${failureRequestId?` Request ${failureRequestId}.`:""}</small></span></div>` : html`<div class="prompt-fan-pending">${icon("clock")}<span>${member?.status==="running"?"Generating on the server":member?.status==="queued"||fanJob?"Queued on the server":"No recorded result"}</span></div>`}</div>
               ${output ? html`<footer><span><b>${outputQualityLabel(output)}</b><small>${output.modelId} · ${Math.max(0, Math.round(output.latency / 100) / 10)}s</small></span><div class="prompt-fan-output-actions"><button class="button secondary compact" ?disabled=${output.standalone} @click=${() => this.store.promotePromptFanOutputs(fanId, [output.id])}>${output.standalone ? "Promoted" : "Promote image"}</button><button class="button ghost compact" @click=${() => this.store.preferPromptTechnique(definition.id as PromptTechnique, this.#scope, { fanId, outputId: output.id })}>${preferred ? "Keep as default" : "Use as default"}</button></div></footer>${prompt ? html`<details><summary>Inspect prepared ${definition.shortLabel.toLowerCase()} prompt</summary><pre>${prompt}</pre></details>` : nothing}` : nothing}
             </article>`;
           })}</div>
-          <footer><p>${complete === 4 ? `${standalone || "No"} image${standalone === 1 ? "" : "s"} promoted. The complete fan remains one comparison in history.` : `${complete} result${complete === 1 ? " is" : "s are"} ready. Remaining jobs continue if this dialog or page closes.`}</p><div><button class="button primary" ?disabled=${!promotable.length} @click=${() => this.store.promotePromptFanOutputs(fanId, promotable.map((output) => output.id))}>${promotable.length ? `Promote all ${promotable.length}` : "All promoted"}</button><button class="button secondary" @click=${this.#close}>Done</button></div></footer>
+          <footer><p>${complete === 4 ? failed ? `${fanOutputs.length} image${fanOutputs.length===1?"":"s"} ready and ${failed} failed. Failures are terminal and remain part of this comparison receipt.` : `${standalone || "No"} image${standalone === 1 ? "" : "s"} promoted. The complete fan remains one comparison in history.` : `${complete} of 4 prompt processes finished. Remaining jobs continue if this dialog or page closes.`}</p><div><button class="button primary" ?disabled=${!promotable.length} @click=${() => this.store.promotePromptFanOutputs(fanId, promotable.map((output) => output.id))}>${promotable.length ? `Promote all ${promotable.length}` : "No images to promote"}</button><button class="button secondary" @click=${this.#close}>Done</button></div></footer>
         </section>
       </dialog>` : nothing}`;
   }

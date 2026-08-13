@@ -5,7 +5,7 @@ import type { CreativeEvent } from "./events.ts";
 import { PROMPT_TECHNIQUES } from "./prompt-structures.ts";
 import { normalizeSpatialScope } from "./spatial-scope.ts";
 
-export const REPLAY_COVERAGE_CONTRACT_VERSION = 2;
+export const REPLAY_COVERAGE_CONTRACT_VERSION = 3;
 
 export const REPLAY_CAPABILITIES = [
   { key:"event-vocabulary", label:"Every admitted event family is rehearsed", evidence:["event registry"] },
@@ -92,8 +92,10 @@ export function evaluateReplayCoverage(events: CreativeEvent[], expectedEventTyp
   const relationshipsCompiled = compiled.some((event) => list(record(event.payload.compiled_snapshot).relationships).length > 0);
   const pixelCompiled = compiled.some((event) => event.payload.used_uploaded_reference_pixels === true);
   const jobKinds = new Set(events.flatMap((event) => {
-    const explicit = text(event.payload.job_kind); if (explicit) return [explicit];
-    if (event.type === "GenerationRequested") return [event.payload.quality === "low" ? "preview" : "generate"];
+    const explicit = text(event.payload.job_kind); const kinds = explicit ? [explicit] : [];
+    if (event.type === "GenerationRequested") kinds.push(event.payload.quality === "low" ? "preview" : "generate");
+    if (text(event.payload.prompt_fan_id)) kinds.push("prompt_fan");
+    if (kinds.length) return kinds;
     return [];
   }));
   const providerBacked = events.some((event) => event.payload.mock_data_source === "openai-provider");

@@ -2,10 +2,12 @@ import type { WorkerEnv } from "./runtime.ts";
 import { BLOCK_TYPES, type AdaptiveStructure, type BlockKind, type ReferencePixelMode } from "../src/model/block-types.ts";
 import type { LiveReplayPlan } from "../src/model/live-replay.ts";
 import { buildPromptRepresentation, buildReferencePromptDirectives, buildSpatialPromptDirectives, normalizePromptTechnique, type PromptReferenceDescriptor, type PromptTechnique } from "../src/model/prompt-structures.ts";
+import { providerErrorFromResponse } from "./provider-errors.ts";
 
-type OpenAIResponse = { id?: string; model?: string; output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: { message?: string } };
+type OpenAIError = { message?: string; type?: string; code?: string | null; param?: string | null };
+type OpenAIResponse = { id?: string; model?: string; output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: OpenAIError };
 type OpenAIImageUsage = { input_tokens?: number; output_tokens?: number; total_tokens?: number; input_tokens_details?: { text_tokens?: number; image_tokens?: number } };
-type OpenAIImageResponse = { created?: number; data?: Array<{ b64_json?: string; revised_prompt?: string }>; usage?: OpenAIImageUsage; error?: { message?: string } };
+type OpenAIImageResponse = { created?: number; data?: Array<{ b64_json?: string; revised_prompt?: string }>; usage?: OpenAIImageUsage; error?: OpenAIError };
 type OpenAIImageStreamEvent = { type?: string; b64_json?: string; created_at?: number; size?: string; output_format?: ImageOutputFormat; partial_image_index?: number; usage?: OpenAIImageUsage; error?: { message?: string } };
 export type CreativeChatMutation = { operation: "create" | "edit" | "remove"; target_block_id: string | null; type: BlockKind; subtype: string; instruction: string; handle: string; reference_pixel_mode: ReferencePixelMode | "unchanged" };
 export type CreativeChatResponse = { reply: string; mutations: CreativeChatMutation[]; preview_direction: string; preview_worthy: boolean };
@@ -99,7 +101,7 @@ export async function generateLiveReplayPlan(env:WorkerEnv,userId:string,seed:st
     input:JSON.stringify({seed:seed.trim()||"Develop a richly art-directed editorial image through conversation, reference analysis, local constraints, iteration, memory, and re-entry.",required_block_types:BLOCK_TYPES.map((item)=>({type:item.type,subtypes:item.subtypes,description:item.description}))}),
     text:{verbosity:"medium",format:{type:"json_schema",name:"live_replay_plan",strict:true,schema:liveReplayPlanSchema}},reasoning:{effort:"medium"},max_output_tokens:6000,store:false,safety_identifier:await safetyIdentifier(userId),
   })});
-  const body=await response.json() as OpenAIResponse;if(!response.ok)throw new Error(body.error?.message??`openai_${response.status}`);const raw=responseText(body);if(!raw)throw new Error("provider_returned_no_output");
+  const body=await response.json() as OpenAIResponse;if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`);const raw=responseText(body);if(!raw)throw new Error("provider_returned_no_output");
   let output:LiveReplayPlan;try{output=JSON.parse(raw) as LiveReplayPlan;}catch{throw new Error("provider_returned_invalid_json");}
   const supplied=new Set(output.blocks.map((block)=>block.type));const spatialMethods=new Set(output.blocks.map((block)=>block.spatial_method));if(output.blocks.length!==BLOCK_TYPES.length||BLOCK_TYPES.some((definition)=>!supplied.has(definition.type))||["document","region","aabb","subject","path"].some((method)=>!spatialMethods.has(method as LiveReplayPlan["blocks"][number]["spatial_method"])))throw new Error("provider_returned_incomplete_replay_plan");
   if(output.chat_turns.length<3||!output.chat_turns.some((turn)=>turn.live_preview)||!output.chat_turns.some((turn)=>!turn.live_preview))throw new Error("provider_returned_incomplete_chat_rehearsal");
@@ -122,7 +124,7 @@ export async function generateCreativeDirection(env: WorkerEnv, userId: string, 
     }),
   });
   const body = await response.json() as OpenAIResponse;
-  if (!response.ok) throw new Error(body.error?.message ?? `openai_${response.status}`);
+  if (!response.ok) throw providerErrorFromResponse(response, body, `openai_${response.status}`);
   const text = responseText(body);
   if (!text) throw new Error("provider_returned_no_output");
   let parsed: Record<string, unknown>; try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error("provider_returned_invalid_json"); }
@@ -163,7 +165,7 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
   }else{
     response=await fetch("https://api.openai.com/v1/images/generations",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({model,prompt,n:1,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user})});
   }
-  if(!response.ok){let error:OpenAIImageResponse={};try{error=await response.json() as OpenAIImageResponse;}catch{/* Preserve the provider status when no JSON error body is available. */}throw new Error(error.error?.message??`openai_image_${response.status}`);}
+  if(!response.ok){let error:OpenAIImageResponse={};try{error=await response.json() as OpenAIImageResponse;}catch{/* Preserve the provider status when no JSON error body is available. */}throw providerErrorFromResponse(response,error,`openai_image_${response.status}`);}
   const [requestedWidth,requestedHeight]=size.split("x").map(Number);let encoded="";let revisedPrompt:string|null=null;let createdAt:number|null=null;let usage:OpenAIImageUsage={};let completedSize:string=size;let completedFormat=outputFormat;let partialCount=0;
   if(partialImages){
     await readImageStream(response,async(event)=>{if(event.error?.message)throw new Error(event.error.message);if(event.type?.endsWith(".partial_image")&&event.b64_json){partialCount+=1;const eventSize=event.size??size;const [width,height]=eventSize.split("x").map(Number);await options.onPartial?.({bytes:decodeBase64Image(event.b64_json),index:Number(event.partial_image_index??partialCount-1),mimeType:imageMimeType(event.output_format??outputFormat),width,height});}if(event.type?.endsWith(".completed")&&event.b64_json){encoded=event.b64_json;createdAt=event.created_at??null;usage=event.usage??{};completedSize=event.size??size;completedFormat=event.output_format??outputFormat;}});
@@ -183,7 +185,7 @@ export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{d
     input:JSON.stringify({...input,block_vocabulary:BLOCK_TYPES.map((item)=>({type:item.type,subtypes:item.subtypes})),mutation_rules:{create:"target_block_id must be null",edit:"target_block_id must match an existing id",remove:"target_block_id must match an existing id"}}),
     text:{verbosity:"low",format:{type:"json_schema",name:"forma_creative_chat",strict:true,schema:creativeChatSchema}},reasoning:{effort:"low"},max_output_tokens:1600,store:false,safety_identifier:await safetyIdentifier(userId),
   })});
-  const body=await response.json() as OpenAIResponse;if(!response.ok)throw new Error(body.error?.message??`openai_${response.status}`);
+  const body=await response.json() as OpenAIResponse;if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`);
   const text=responseText(body);if(!text)throw new Error("provider_returned_no_output");
   let parsed:CreativeChatResponse;try{parsed=JSON.parse(text) as CreativeChatResponse;}catch{throw new Error("provider_returned_invalid_json");}
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output:parsed,raw:text,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
@@ -198,7 +200,7 @@ export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input
     input:JSON.stringify({...input,block_vocabulary:BLOCK_TYPES.map((item)=>({type:item.type,description:item.description,subtypes:item.subtypes}))}),
     text:{verbosity:"low",format:{type:"json_schema",name:"forma_adaptive_structure",strict:true,schema:adaptiveStructureSchema}},reasoning:{effort:"low"},max_output_tokens:1400,store:false,safety_identifier:await safetyIdentifier(userId),
   })});
-  const body=await response.json() as OpenAIResponse;if(!response.ok)throw new Error(body.error?.message??`openai_${response.status}`);
+  const body=await response.json() as OpenAIResponse;if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`);
   const text=responseText(body);if(!text)throw new Error("provider_returned_no_output");
   let parsed:AdaptiveStructure;try{parsed=JSON.parse(text) as AdaptiveStructure;}catch{throw new Error("provider_returned_invalid_json");}
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output:parsed,raw:text,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};

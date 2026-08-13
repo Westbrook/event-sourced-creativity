@@ -198,7 +198,7 @@ test("packages first-class HTML entry points for every named application route",
   const rootEntry = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
   const shareEntry = await readFile(new URL("../dist/client/share/index.html", import.meta.url), "utf8");
   assert.match(rootEntry, /data-forma-route-module="\/"/); assert.match(shareEntry, /data-forma-application="creative"/);
-  assert.match(config, /manifest: true/); assert.match(config, /"\/share\/\*"/); assert.match(config, /"\/document\/\*"/); assert.match(config, /"\/library\/\*"/); assert.match(config, /"\/creative\/\*"/); assert.match(config, /"\/operations\/\*"/); assert.match(config, /"\/laboratory\/\*"/); assert.match(worker, /"\/share\/"/); assert.doesNotMatch(worker, /entryPath=.*index\.html/); assert.match(worker, /isDocumentViewRoute\(url\.pathname\)/); assert.match(worker, /applicationEntryPath/);
+  assert.match(config, /manifest: true/); assert.match(config, /run_worker_first: \["\/\*"\]/); assert.match(worker, /resolveServerRoute\(url\.pathname\)/); assert.match(worker, /x-forma-route-family/); assert.doesNotMatch(worker, /entryPath=.*index\.html/); assert.match(applications,/resolveServerRoute/);assert.match(applications,/\/document\\\/\[\^\/\]\+/);assert.match(applications,/\/library\\\//);
   assert.match(plugin,/SITE_ROUTE_ENTRIES/);assert.match(routeLoader,/\.\/apps\/creative\/entry/);assert.match(routeLoader,/\.\/apps\/operations\/entry/);assert.match(routeLoader,/\.\/apps\/laboratory\/entry/);
   assert.match(shell, /addEventListener\("forma-route-changed", this\.#routeChanged\)/); assert.match(shell, /loadRouteComponent\(path\)/);
   assert.match(shell,/forma-creative-application/);assert.match(shell,/forma-operations-application/);assert.match(shell,/forma-laboratory-application/);
@@ -232,7 +232,7 @@ test("restores focused Library dialogs from durable URLs", async () => {
   assert.match(routes, /LibraryFocusKind/); assert.match(routes, /\/library\/\$\{kind\}\/\$\{encodeURIComponent\(id\)\}/); assert.match(routes, /libraryFocusFromRoute/);
   assert.match(library, /libraryFocusRoute\("block"/); assert.match(library, /libraryFocusRoute\("output"/); assert.match(library, /libraryFocusRoute\("family"/);
   assert.match(library, /libraryRootRoute/); assert.match(library, /replace:true/); assert.doesNotMatch(library, /#focused(?:Block|Output|Family)Id/);
-  assert.match(worker, /applicationEntryPath/); assert.match(applications, /route\("\/library"/); assert.doesNotMatch(routes, /documentEntryPath[\s\S]*?index\.html/);
+  assert.match(worker, /resolveServerRoute/); assert.match(applications, /route\("\/library"/);assert.match(applications,/canonicalFamily: "\/library\/:focus\/:id"/); assert.doesNotMatch(routes, /documentEntryPath[\s\S]*?index\.html/);
 });
 
 test("edits project-scoped reusable blocks through the Library and shared project folders",async()=>{
@@ -319,9 +319,9 @@ test("runs document async work as durable reconnectable server jobs",async()=>{
     readFile(new URL("../src/components/generation-actions.ts",import.meta.url),"utf8"),
   ]);
   for(const source of [schema,runtime])assert.match(source,/document_jobs/);
-  assert.match(worker,/\/api\/document-jobs/);assert.doesNotMatch(worker,/WorkerExecutionContext/);
-  assert.match(jobs,/lease_expires_at/);assert.match(jobs,/\/run/);assert.match(jobs,/runWithHeartbeat/);assert.match(jobs,/renewJobLease/);assert.match(jobs,/documentJobMaxAttempts/);assert.match(jobs,/failStaleJob/);assert.match(jobs,/releaseInterruptedAttempt/);assert.match(jobs,/correlationId/);assert.match(jobs,/notified_at/);assert.doesNotMatch(jobs,/ctx\.waitUntil/);assert.doesNotMatch(jobs,/runNextDocumentJob/);
-  for(const kind of ["preview","generate","chat","structure_adaptive","extract_reference"])assert.match(store,new RegExp(`#startDocumentJob\\("${kind}"`));
+  assert.match(worker,/\/api\/document-jobs/);assert.match(worker,/WorkerExecutionContext/);assert.match(worker,/context/);
+  assert.match(jobs,/lease_expires_at/);assert.match(jobs,/\/run/);assert.match(jobs,/runWithHeartbeat/);assert.match(jobs,/renewJobLease/);assert.match(jobs,/documentJobMaxAttempts/);assert.match(jobs,/failStaleJob/);assert.match(jobs,/releaseInterruptedAttempt/);assert.match(jobs,/correlationId/);assert.match(jobs,/notified_at/);assert.match(jobs,/context\?\.waitUntil\(driveDocumentQueue/);assert.match(jobs,/reconcilePromptFanParent/);
+  for(const kind of ["preview","generate","prompt_fan","chat","structure_adaptive","extract_reference"])assert.match(store,new RegExp(`#startDocumentJob\\("${kind}"`));
   assert.match(store,/visibilitychange/);assert.match(store,/#jobResultVisible/);assert.match(store,/#pendingJobNotices/);assert.match(store,/#driveDocumentJobs/);assert.match(store,/documentJobIsStale/);assert.match(store,/documentGenerationRevision/);assert.match(store,/documentJobForRequest/);assert.match(store,/\/ack/);
   assert.match(jobs,/generationRequestIdentity/);assert.match(jobs,/requestKey/);assert.match(jobs,/candidates\.find/);
   assert.match(actions,/documentJobActionLabel/);assert.match(actions,/documentJobForRequest/);assert.match(actions,/Images in progress/);assert.match(actions,/Current document state/);assert.match(actions,/Earlier document state/);assert.match(actions,/closedby="any"/);

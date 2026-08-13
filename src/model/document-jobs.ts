@@ -1,6 +1,9 @@
-export const DOCUMENT_JOB_KINDS = ["preview", "generate", "chat", "structure_adaptive", "extract_reference"] as const;
+export const DOCUMENT_JOB_KINDS = ["preview", "generate", "prompt_fan", "chat", "structure_adaptive", "extract_reference"] as const;
 export type DocumentJobKind = typeof DOCUMENT_JOB_KINDS[number];
-export type DocumentJobStatus = "queued" | "running" | "completed" | "failed";
+export type DocumentJobStatus = "queued" | "running" | "completed" | "partial" | "failed";
+export type ProviderFailureCategory = "safety" | "authentication" | "access" | "quota" | "rate_limit" | "network" | "canceled" | "provider" | "server" | "unknown";
+export type DocumentJobError = { code: string; category: ProviderFailureCategory; message: string; retryable: boolean; requestId: string | null; httpStatus: number | null };
+export type PromptFanMember = { jobId: string; promptTechnique: "prose" | "bullets" | "json" | "xml"; status: Exclude<DocumentJobStatus, "partial">; error: DocumentJobError | null; attemptCount: number; updatedAt: string };
 
 export type DocumentJob = {
   jobId: string;
@@ -14,8 +17,12 @@ export type DocumentJob = {
   sourcePreviewId: string | null;
   promptTechnique: "prose" | "bullets" | "json" | "xml";
   promptFanId: string | null;
+  parentJobId: string | null;
+  fanKind: "preview" | "generate" | null;
+  members: PromptFanMember[];
   result: Record<string, unknown> | null;
   error: string | null;
+  errorDetail: DocumentJobError | null;
   attemptCount: number;
   requestedAt: string;
   startedAt: string | null;
@@ -55,6 +62,8 @@ export const DOCUMENT_JOB_STALE_AFTER_MS = 45_000;
 
 export const documentJobMaxAttempts = (kind: DocumentJobKind) =>
   kind === "preview" || kind === "generate" || kind === "extract_reference" ? 2 : 1;
+
+export const documentJobTerminal = (job: Pick<DocumentJob, "status">) => job.status === "completed" || job.status === "partial" || job.status === "failed";
 
 export function documentJobIsStale(job: Pick<DocumentJob, "status" | "leaseExpiresAt" | "updatedAt">, now = Date.now()) {
   if (job.status !== "running") return false;

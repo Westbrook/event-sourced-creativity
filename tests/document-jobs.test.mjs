@@ -19,8 +19,12 @@ const job = (patch = {}) => ({
   documentRevision: "rev-one",
   requestKey: "preview:rev-one",
   sourcePreviewId: null,
+  parentJobId: null,
+  fanKind: null,
+  members: [],
   result: null,
   error: null,
+  errorDetail: null,
   attemptCount: 0,
   requestedAt: "2026-08-12T00:00:00.000Z",
   startedAt: null,
@@ -37,6 +41,7 @@ test("bounds automatic retries for costly image work and avoids replaying chat t
   assert.equal(documentJobMaxAttempts("preview"), 2);
   assert.equal(documentJobMaxAttempts("generate"), 2);
   assert.equal(documentJobMaxAttempts("extract_reference"), 2);
+  assert.equal(documentJobMaxAttempts("prompt_fan"), 1);
   assert.equal(documentJobMaxAttempts("chat"), 1);
   assert.equal(documentJobMaxAttempts("structure_adaptive"), 1);
 });

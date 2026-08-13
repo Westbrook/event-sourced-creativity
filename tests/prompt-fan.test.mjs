@@ -1,9 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { foldEvents, generationHistoryItems, generationHistoryMix } from "../src/model/events.ts";
+import { readFile } from "node:fs/promises";
 
 const event = (sequence, type, payload, actor = "worker:generator") => ({
   eventId: `e${sequence}`, streamId: "s", sequence, occurredAt: new Date(sequence * 1000).toISOString(), recordedAt: new Date(sequence * 1000).toISOString(), actor, clientId: "test", correlationId: "c", causationId: null, compensatesEventId: null, schemaVersion: 1, type, payload,
+});
+
+test("fan generation is accepted once and retains explicit failed member states",async()=>{
+  const store=await readFile(new URL("../src/state/store.ts",import.meta.url),"utf8");
+  const api=await readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8");
+  const review=await readFile(new URL("../src/components/prompt-fan-review.ts",import.meta.url),"utf8");
+  const method=store.slice(store.indexOf("async generatePromptFan"),store.indexOf("async preferPromptTechnique"));
+  assert.equal((method.match(/#startDocumentJob\(/g)??[]).length,1);
+  assert.match(method,/#startDocumentJob\("prompt_fan"/);
+  assert.match(api,/childJobIds/);
+  assert.match(api,/status === "partial"/);
+  assert.match(review,/Safety rejected/);
+  assert.doesNotMatch(review,/Awaiting this result/);
 });
 
 const events = [

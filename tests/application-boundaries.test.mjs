@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
-import { APPLICATIONS, CREATE_ROUTE_PREFIX, SITE_ROUTE_ENTRIES, applicationEntryPath, applicationIdFromRoute } from "../src/platform/applications.ts";
+import { APPLICATIONS, CREATE_ROUTE_PREFIX, SITE_ROUTE_ENTRIES, applicationEntryPath, applicationIdFromRoute, resolveServerRoute } from "../src/platform/applications.ts";
 
 const sourceFiles=async(directory)=>{
   const entries=await readdir(directory,{withFileTypes:true});
@@ -21,6 +21,28 @@ test("declares three route-owning applications over one shared platform",()=>{
   assert.equal(applicationIdFromRoute("/creative/create/conversational"),"creative");
   assert.equal(applicationEntryPath("/operations/events"),"/operations/");
   assert.equal(applicationEntryPath("/laboratory/replay"),"/laboratory/");
+});
+
+test("the server resolves every shareable deep-link family before SPA hydration",()=>{
+  const cases=[
+    ["/projects","/projects/","creative"],
+    ["/projects/project-42","/projects/","creative"],
+    ["/document/doc-42/study","/","creative"],
+    ["/document/doc-42/study/focus","/","creative"],
+    ["/document/doc-42/study/view/chat/focus","/studio/chat/","creative"],
+    ["/document/doc-42/view/board","/studio/board/","creative"],
+    ["/studio/editor/focus","/studio/editor/","creative"],
+    ["/library/output/object-1/final","/library/","creative"],
+    ["/library/blocks/editor/block-1","/library/","creative"],
+    ["/share/private-token","/share/","creative"],
+    ["/operations/events/permissions","/operations/events/permissions/","operations"],
+    ["/laboratory/replay","/laboratory/replay/","laboratory"],
+    ["/creative/create/conversational","/creative/create/","creative"],
+  ];
+  for(const [path,entryPath,application] of cases){
+    assert.deepEqual(resolveServerRoute(path),{application,entryPath,canonicalFamily:resolveServerRoute(path)?.canonicalFamily},path);
+  }
+  assert.equal(resolveServerRoute("/not-a-real-surface"),null);
 });
 
 test("application entries do not import sibling applications",async()=>{

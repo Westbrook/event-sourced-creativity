@@ -17,7 +17,10 @@ const localBindingConfig = {
   assets: {
     binding: "ASSETS",
     not_found_handling: "single-page-application" as const,
-    run_worker_first: ["/api/*", "/share/*", "/document/*", "/library/*", "/creative/*", "/operations/*", "/laboratory/*"],
+    // Every navigation is classified by the Worker before an asset or SPA
+    // fallback is considered. This keeps refreshes and copied deep links on the
+    // same application entry point as client-side navigation.
+    run_worker_first: ["/*"],
   },
   d1_databases: d1
     ? [

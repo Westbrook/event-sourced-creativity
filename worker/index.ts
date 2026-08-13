@@ -2,13 +2,13 @@ import { handleEvents, type WorkerEnv } from "./events-api";
 import { getMedia, uploadMedia } from "./media-api";
 import { handleAdminUsers, handleSession } from "./pilot-policy";
 import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
-import { isDocumentViewRoute, libraryBlockEditorFromRoute, libraryFocusFromRoute } from "../src/model/routes";
-import { SITE_ROUTE_ENTRIES, applicationEntryPath } from "../src/platform/applications";
+import { resolveServerRoute } from "../src/platform/applications";
 import { handleReplayApproval, handleReplayEstimate, handleReplaySessions } from "./replay-sessions-api";
 import { handleDocumentJobs } from "./document-jobs-api";
+import type { WorkerExecutionContext } from "./runtime";
 
 export default {
-  async fetch(request: Request, env: WorkerEnv): Promise<Response> {
+  async fetch(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const url=new URL(request.url);
     if(url.pathname==="/api/session")return handleSession(request,env);
     if(url.pathname==="/api/admin/users")return handleAdminUsers(request,env);
@@ -16,8 +16,8 @@ export default {
     if(url.pathname==="/api/replay-sessions/estimate")return handleReplayEstimate(request,env);
     if(url.pathname==="/api/replay-sessions")return handleReplaySessions(request,env);
     if(url.pathname.startsWith("/api/replay-sessions/"))return handleReplaySessions(request,env,decodeURIComponent(url.pathname.slice("/api/replay-sessions/".length)));
-    if(url.pathname==="/api/document-jobs")return handleDocumentJobs(request,env);
-    if(url.pathname.startsWith("/api/document-jobs/"))return handleDocumentJobs(request,env,url.pathname.slice("/api/document-jobs/".length));
+    if(url.pathname==="/api/document-jobs")return handleDocumentJobs(request,env,"",context);
+    if(url.pathname.startsWith("/api/document-jobs/"))return handleDocumentJobs(request,env,url.pathname.slice("/api/document-jobs/".length),context);
     if(url.pathname==="/api/events")return handleEvents(request,env);
     if(url.pathname==="/api/events/hot")return handleEvents(request,env,true);
     if(url.pathname==="/api/shares")return handleShares(request,env);
@@ -26,22 +26,20 @@ export default {
     if(url.pathname==="/api/media"&&request.method==="POST")return uploadMedia(request,env);
     if(url.pathname.startsWith("/api/media/")&&request.method==="GET")return getMedia(request,decodeURIComponent(url.pathname.slice("/api/media/".length)),env);
     if(url.pathname.startsWith("/api/"))return Response.json({error:"not_found"},{status:404});
-    if((request.method==="GET"||request.method==="HEAD")&&(isDocumentViewRoute(url.pathname)||libraryFocusFromRoute(url.pathname)||libraryBlockEditorFromRoute(url.pathname))){
-      const entryUrl=new URL(applicationEntryPath(url.pathname),url);
-      return env.ASSETS.fetch(new Request(entryUrl,request));
+    if(request.method==="GET"||request.method==="HEAD"){
+      const route=resolveServerRoute(url.pathname);
+      if(route){
+        const entryUrl=new URL(route.entryPath,url);
+        const response=await env.ASSETS.fetch(new Request(entryUrl,request));
+        const headers=new Headers(response.headers);
+        headers.set("x-forma-route-family",route.canonicalFamily);
+        headers.set("x-forma-application",route.application);
+        return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
+      }
     }
-    const normalizedPath=url.pathname.replace(/\/+$/,"")||"/";
-    const applicationNamespace=/^\/(?:creative|operations|laboratory)(?:\/|$)/.test(normalizedPath);
-    const namedEntry=SITE_ROUTE_ENTRIES.some((entry)=>entry.path===normalizedPath);
-    if((request.method==="GET"||request.method==="HEAD")&&applicationNamespace&&!namedEntry){
-      const entryUrl=new URL(applicationEntryPath(normalizedPath),url);
-      return env.ASSETS.fetch(new Request(entryUrl,request));
-    }
-    const asset=await env.ASSETS.fetch(request);if(asset.status!==404)return asset;
-    if((request.method==="GET"||request.method==="HEAD")&&!url.pathname.startsWith("/assets/")){
-      const entryPath=url.pathname.startsWith("/share/")?"/share/":applicationEntryPath(url.pathname);
-      const entryUrl=new URL(entryPath,url);return env.ASSETS.fetch(new Request(entryUrl,request));
-    }
-    return asset;
+    const assetRequest=/^\/(?:assets\/|og\.png$|favicon\.|robots\.txt$)|\.[a-z0-9]{2,8}$/i.test(url.pathname);
+    if(assetRequest)return env.ASSETS.fetch(request);
+    if(request.method!=="GET"&&request.method!=="HEAD")return new Response("Method not allowed",{status:405});
+    return new Response("Page not found",{status:404,headers:{"content-type":"text/plain; charset=utf-8"}});
   },
 };

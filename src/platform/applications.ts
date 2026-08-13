@@ -137,3 +137,44 @@ export const SITE_ROUTE_ENTRIES: readonly SiteRouteEntry[] = [
   route("/system/focal-points", "laboratory", "Focal-point laboratory — Forma", "Compare focal-point calculations and image containment."),
   route("/admin/events/replay", "laboratory", "Replay laboratory — Forma", "Build and replay theoretical and provider-backed creative event streams."),
 ] as const;
+
+export type ServerRouteResolution = {
+  application: ApplicationId;
+  entryPath: string;
+  canonicalFamily: string;
+};
+
+const directoryEntry = (path: string) => path === "/" ? "/" : `${path.replace(/\/+$/, "")}/`;
+
+/**
+ * The server owns the complete public navigation vocabulary. Dynamic IDs and
+ * optional slugs select a prebuilt application/view entry before the client
+ * router hydrates; unknown paths are not silently treated as SPA pages.
+ */
+export function resolveServerRoute(routeValue: string): ServerRouteResolution | null {
+  const path = new URL(routeValue, "https://forma.local").pathname.replace(/\/+$/, "") || "/";
+  const named = SITE_ROUTE_ENTRIES.find((entry) => entry.path === path);
+  if (named) return { application: named.application, entryPath: directoryEntry(named.path), canonicalFamily: named.path };
+
+  const documentMatch = path.match(/^\/document\/[^/]+(?:\/[^/]+)?(?:\/view\/(document|board|guided|layers|adaptive|editor|chat))?(?:\/focus)?$/);
+  if (documentMatch) {
+    const view = documentMatch[1] ?? "document";
+    const entryPath = view === "document" ? "/" : `/studio/${view}/`;
+    return { application: "creative", entryPath, canonicalFamily: `/document/:document${view === "document" ? "" : `/view/${view}`}` };
+  }
+
+  const legacyDocumentMatch = path.match(/^\/studio\/(board|guided|layers|adaptive|editor|chat)\/focus$/);
+  if (legacyDocumentMatch) return { application: "creative", entryPath: `/studio/${legacyDocumentMatch[1]}/`, canonicalFamily: `/studio/${legacyDocumentMatch[1]}/focus` };
+
+  if (/^\/share\/[^/]+$/.test(path)) return { application: "creative", entryPath: "/share/", canonicalFamily: "/share/:token" };
+  if (/^\/library\/(?:block|output|family)\/[^/]+(?:\/[^/]+)?$/.test(path)) return { application: "creative", entryPath: "/library/", canonicalFamily: "/library/:focus/:id" };
+  if (/^\/library\/blocks\/editor\/(?:new|[^/]+)$/.test(path)) return { application: "creative", entryPath: "/library/", canonicalFamily: "/library/blocks/editor/:id" };
+  if (/^\/creative\/create(?:\/[^/]+)*$/.test(path)) return { application: "creative", entryPath: "/creative/create/", canonicalFamily: "/creative/create/*" };
+  if (/^\/projects(?:\/[^/]+)*$/.test(path)) return { application: "creative", entryPath: "/projects/", canonicalFamily: "/projects/*" };
+  if (/^\/studio\/project(?:\/[^/]+)*$/.test(path)) return { application: "creative", entryPath: "/studio/project/", canonicalFamily: "/studio/project/*" };
+  if (/^\/(?:operations|laboratory)(?:\/[^/]+)*$/.test(path)) {
+    const application = path.startsWith("/operations") ? "operations" : "laboratory";
+    return { application, entryPath: applicationEntryPath(path), canonicalFamily: `/${application}/*` };
+  }
+  return null;
+}

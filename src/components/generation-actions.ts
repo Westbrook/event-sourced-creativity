@@ -27,7 +27,7 @@ export class GenerationActions extends FormaElement {
   #closeQueue(){this.querySelector<HTMLDialogElement>(".generation-queue-dialog")?.close();this.#queueOpen=false;this.requestUpdate();}
 
   #queueItem(job:DocumentJob,index:number,currentRevision:string){
-    const current=job.documentRevision===currentRevision;const technique=promptTechniqueDefinition(job.promptTechnique);const title=`${job.kind==="preview"?"Draft":"Full-quality"} · ${technique.shortLabel}`;const status=job.status==="running"?"Running now":`Waiting · ${index+1} in the image queue`;const requested=new Date(job.requestedAt);
+    const current=job.documentRevision===currentRevision;const technique=promptTechniqueDefinition(job.promptTechnique);const isFan=job.kind==="prompt_fan";const finished=isFan?job.members.filter((member)=>member.status==="completed"||member.status==="failed").length:0;const failed=isFan?job.members.filter((member)=>member.status==="failed").length:0;const title=isFan?`${job.fanKind==="preview"?"Draft":"Full-quality"} fan · four prompt processes`:`${job.kind==="preview"?"Draft":"Full-quality"} · ${technique.shortLabel}`;const status=job.status==="running"?isFan?`${finished} of 4 finished${failed?` · ${failed} failed`:""}`:"Running now":`Waiting · ${index+1} in the image queue`;const requested=new Date(job.requestedAt);
     return html`<li class=${`generation-queue-item ${job.status}`}>
       <span class="generation-queue-order" aria-hidden="true">${job.status==="running"?icon("spark"):index+1}</span>
       <div>
