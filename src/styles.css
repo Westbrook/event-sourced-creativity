@@ -1442,7 +1442,7 @@ forma-project-rail:has(.project-rail.collapsed) { width: 72px; }
 .chat-generation-stage forma-output-visual,.chat-generation-stage .generated-output-trigger { display: block; width: 100%; height: 100%; }
 .chat-generation-stage .generated-output-image { display: block; width: 100%; height: 100%; object-fit: contain; }
 .chat-prompt-fan { display: grid; width: 100%; height: 100%; min-height: 0; grid-template-rows: minmax(0,1fr) auto; }
-.chat-prompt-fan > .prompt-fan-visual { min-height: 0; overflow: auto; }
+.chat-prompt-fan > .prompt-fan-visual { width: 100%; height: 100%; min-height: 0; overflow: hidden; aspect-ratio: auto; }
 .chat-prompt-fan > .prompt-fan-review-trigger-wrap { padding: 8px 16px; background: #191919; }
 .streaming-preview { position: relative; display: grid; width: 100%; height: 100%; min-height: 0; place-items: center; overflow: hidden; background: #0d120f; }
 .streaming-preview-image { display: block; width: 100%; height: 100%; min-height: 0; object-fit: contain; }
@@ -1551,15 +1551,19 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .prompt-fan-review-trigger { display: inline-flex; min-height: 30px; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 7px; padding: 4px 0; color: var(--muted); background: transparent; border: 0; font: 650 var(--type-micro) var(--sans); }
 .prompt-fan-review-trigger:hover { color: var(--ink); }
 .prompt-fan-review-trigger small { flex-basis: 100%; color: var(--muted); font-size: var(--type-micro); text-align: right; }
-.prompt-fan-visual { display: grid; min-width: 0; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1px; background: var(--line); }
+.prompt-fan-visual { display: grid; width: 100%; min-width: 0; overflow: hidden; aspect-ratio: 3 / 2; grid-template-columns: repeat(2,minmax(0,1fr)); grid-template-rows: repeat(2,minmax(0,1fr)); gap: 1px; background: var(--line); }
 .prompt-fan-visual figure { display: grid; min-width: 0; grid-template-rows: minmax(0,1fr) auto; overflow: hidden; margin: 0; background: var(--panel); }
-.prompt-fan-visual figure > div { position: relative; display: grid; min-height: 0; aspect-ratio: 1 / 1; overflow: hidden; place-items: center; background: var(--panel-2); }
+.prompt-fan-visual figure > div { position: relative; display: grid; min-height: 0; overflow: hidden; place-items: center; background: #101412; }
 .prompt-fan-visual forma-output-visual,.prompt-fan-visual .output-visual { position: static; inset: auto; width: 100%; height: 100%; }
-.prompt-fan-visual img { width: 100%; height: 100%; object-fit: cover; object-position: var(--focal-x,50%) var(--focal-y,50%); }
+.prompt-fan-visual img { width: 100%; height: 100%; object-fit: contain; object-position: var(--focal-x,50%) var(--focal-y,50%); }
 .prompt-fan-visual figcaption { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; }
 .prompt-fan-visual figcaption b { overflow: hidden; font-size: var(--type-micro); text-overflow: ellipsis; white-space: nowrap; }
 .prompt-fan-visual figcaption small { color: var(--muted); font-size: var(--type-micro); white-space: nowrap; }
-.prompt-fan-visual.compact figcaption { padding: 4px 6px; }
+.prompt-fan-visual.compact { height: 100%; aspect-ratio: auto; }
+.prompt-fan-visual.compact figure { position: relative; display: block; }
+.prompt-fan-visual.compact figure > div { width: 100%; height: 100%; }
+.prompt-fan-visual.compact figcaption { position: absolute; right: 0; bottom: 0; left: 0; padding: 2px 4px; color: #fff; background: linear-gradient(transparent,rgba(0,0,0,.82)); }
+.prompt-fan-visual.compact figcaption b { font-size: .625rem; line-height: 1.2; }
 .prompt-fan-visual.compact figcaption small { display: none; }
 .prompt-fan-output-card > .prompt-fan-review-trigger-wrap { padding: 0 14px 12px; }
 .library-prompt-fan { display: flex; min-width: 0; flex-direction: column; }
@@ -1577,7 +1581,7 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .prompt-fan-preference-bar small { color: var(--muted); font-size: var(--type-micro); }
 .prompt-fan-preference-bar label { display: flex; flex: none; align-items: center; gap: 10px; color: var(--muted); font: 650 var(--type-micro) var(--sans); }
 .prompt-fan-preference-bar select { min-width: 180px; }
-.prompt-fan-grid { display: grid; min-height: 0; overflow: auto; grid-template-columns: repeat(4,minmax(240px,1fr)); background: var(--line); gap: 1px; }
+.prompt-fan-grid { display: grid; min-height: 0; overflow: auto; grid-template-columns: repeat(4,minmax(0,1fr)); background: var(--line); gap: 1px; }
 .prompt-fan-option { display: flex; min-width: 0; flex-direction: column; padding: 20px; background: var(--panel); }
 .prompt-fan-option.preferred { background: color-mix(in srgb,var(--acid) 9%,var(--panel)); }
 .prompt-fan-option > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -1586,9 +1590,9 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .prompt-fan-option > header em { display: inline-flex; flex: none; align-items: center; gap: 4px; color: var(--forest); font: 700 var(--type-micro) var(--sans); font-style: normal; }
 .prompt-fan-statuses { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px 9px; }
 .prompt-fan-option > p { min-height: 3.8em; margin: 10px 0 16px; color: var(--muted); font-size: var(--type-caption); }
-.prompt-fan-image { min-height: 260px; aspect-ratio: 1 / 1; overflow: hidden; background: var(--panel-2); }
-.prompt-fan-image forma-output-visual,.prompt-fan-image .output-visual { width: 100%; height: 100%; }
-.prompt-fan-image img { width: 100%; height: 100%; object-fit: cover; object-position: var(--focal-x,50%) var(--focal-y,50%); }
+.prompt-fan-image { position: relative; min-height: 0; aspect-ratio: 3 / 2; overflow: hidden; background: #101412; }
+.prompt-fan-image forma-output-visual,.prompt-fan-image .output-visual { position: static; inset: auto; display: block; width: 100%; height: 100%; }
+.prompt-fan-image img { width: 100%; height: 100%; object-fit: contain; object-position: var(--focal-x,50%) var(--focal-y,50%); }
 .prompt-fan-pending { display: grid; height: 100%; place-content: center; gap: 8px; color: var(--muted); text-align: center; font-size: var(--type-caption); }
 .prompt-fan-pending:first-child { font-size: var(--type-heading); }
 .prompt-fan-option > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
@@ -1638,6 +1642,7 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .document-generation-embedded-media { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #171d1a; }
 .document-generation-embedded-media forma-output-visual,.document-generation-embedded-media .generated-output-trigger,.document-generation-embedded-media .generated-output-image { display: block; width: 100%; height: 100%; }
 .document-generation-embedded-media .generated-output-image { object-fit: contain; }
+.document-generation-embedded-media > .prompt-fan-visual { height: 100%; aspect-ratio: auto; }
 .document-generation-embedded-copy { display: grid; min-width: 0; align-content: center; gap: 9px; padding: 13px; }
 .document-generation-embedded-copy h3 { margin: 3px 0 4px; font: 600 var(--type-lede) var(--serif); }
 .document-generation-embedded-copy p { margin: 0; color: var(--muted); font-size: var(--type-caption); }
@@ -1704,6 +1709,7 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .creative-preview-art forma-output-visual,.creative-preview-art .generated-output-trigger { display: block; width: 100%; height: 100%; }
 .creative-preview-art .generated-output-image { width: 100%; height: 100%; object-fit: contain; }
 .creative-preview-art.fan { min-height: 0; overflow: visible; aspect-ratio: auto; }
+.creative-preview-art.fan .prompt-fan-visual { aspect-ratio: 3 / 2; }
 .creative-preview-art.fan .prompt-fan-visual .generated-output-image { object-fit: contain; }
 .creative-prompt-fan-actions { padding: 7px 12px; background: #181818; }
 .creative-preview-filmstrip { display: flex; gap: 6px; padding: 8px; overflow-x: auto; background: #202824; }
@@ -1726,6 +1732,9 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
   .document-generation-list { grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); max-height: none; }
   .creative-preview-copy { display: grid; grid-template-columns: minmax(0,1fr); }
   .creative-preview-copy > span,.creative-preview-copy > h2,.creative-preview-copy > p,.creative-preview-copy > small { grid-column: 1; grid-row: auto; }
+}
+@media (max-width: 1100px) and (min-width: 621px) {
+  .prompt-fan-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 @media (max-width: 620px) {
   .document-generations > header { align-items: stretch; flex-direction: column; }

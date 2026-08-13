@@ -474,6 +474,7 @@ forma-project-rail {
 }
 
 .modal-card.wide { width: min(78rem, calc(100% - 2rem)); }
+.modal-card.prompt-fan-card { width: min(90rem, calc(100% - 1rem)); margin: .5rem auto; padding: 0; }
 .modal-card > .eyebrow { display: none; }
 .modal-card h2 { font-size: clamp(1.65rem, 3vw, 2.75rem); }
 .modal-close { top: 1rem; right: 1rem; }
@@ -1110,9 +1111,9 @@ forma-document-generations { display: block; min-width: 0; }
 
 .document-generation-feature forma-output-visual { min-height: clamp(30rem, 58vw, 55rem); }
 .document-generation-feature .generated-output-image { object-fit: contain; }
-.document-generation-feature.fan .prompt-fan-visual { min-height: clamp(30rem, 58vw, 55rem); }
+.document-generation-feature.fan .prompt-fan-visual { min-height: 0; aspect-ratio: 3 / 2; }
 .document-generation-feature.fan .prompt-fan-visual forma-output-visual { min-height: 0; }
-.document-generation-feature.fan .prompt-fan-visual .generated-output-image { object-fit: cover; }
+.document-generation-feature.fan .prompt-fan-visual .generated-output-image { object-fit: contain; }
 .document-generation-feature.fan > .prompt-fan-review-trigger-wrap { padding: 0 1rem 1rem; }
 .document-generation-feature.fan .prompt-fan-review-trigger { color: #d8dfda; }
 

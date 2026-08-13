@@ -61,6 +61,33 @@ test("preserves usable controls when document navigation and editors get narrow"
   assert.match(navigation, /scroller\.scrollLeft \+= activeBounds\.(?:left|right)/);
 });
 
+test("keeps every prompt-fan image and its controls inside bounded generation surfaces", async () => {
+  const [styles, design, chat, editor, generations, library, workspace] = await Promise.all([
+    read("../src/styles.css"),
+    read("../src/design-system.css"),
+    read("../src/components/forma-chat-studio.ts"),
+    read("../src/components/forma-creative-editor.ts"),
+    read("../src/components/document-generations.ts"),
+    read("../src/components/forma-library.ts"),
+    read("../src/components/forma-workspace.ts"),
+  ]);
+
+  assert.match(styles, /\.prompt-fan-visual\s*\{[^}]*aspect-ratio:\s*3 \/ 2;[^}]*grid-template-rows:\s*repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(styles, /\.prompt-fan-visual img\s*\{[^}]*object-fit:\s*contain/);
+  assert.match(styles, /\.chat-prompt-fan > \.prompt-fan-visual\s*\{[^}]*height:\s*100%;[^}]*overflow:\s*hidden;[^}]*aspect-ratio:\s*auto/);
+  assert.match(styles, /\.document-generation-embedded-media > \.prompt-fan-visual\s*\{[^}]*height:\s*100%;[^}]*aspect-ratio:\s*auto/);
+  assert.match(styles, /\.prompt-fan-visual\.compact\s*\{[^}]*height:\s*100%;[^}]*aspect-ratio:\s*auto/);
+  assert.match(styles, /\.prompt-fan-image\s*\{[^}]*position:\s*relative;[^}]*aspect-ratio:\s*3 \/ 2/);
+  assert.match(styles, /\.prompt-fan-image forma-output-visual,[^}]*\{[^}]*position:\s*static;[^}]*inset:\s*auto;[^}]*display:\s*block/);
+  assert.match(styles, /@media \(max-width: 1100px\) and \(min-width: 621px\)[\s\S]*?\.prompt-fan-grid\s*\{\s*grid-template-columns:\s*repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(design, /\.document-generation-feature\.fan \.prompt-fan-visual\s*\{[^}]*min-height:\s*0;[^}]*aspect-ratio:\s*3 \/ 2/);
+  assert.match(design, /\.modal-card\.prompt-fan-card\s*\{[^}]*width:\s*min\(90rem, calc\(100% - 1rem\)\);[^}]*padding:\s*0/);
+  for (const surface of [chat, editor, generations, library, workspace]) {
+    assert.match(surface, /forma-prompt-fan-visual/);
+    assert.match(surface, /forma-prompt-fan-review/);
+  }
+});
+
 test("stacks document headers without seams and reserves composer space inside Studio", async () => {
   const [styles, design, workspace, alternatives, chat] = await Promise.all([
     read("../src/styles.css"),
