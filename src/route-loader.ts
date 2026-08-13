@@ -1,4 +1,4 @@
-import { documentViewFromRoute } from "./model/routes";
+import { applicationIdFromRoute } from "./platform/applications";
 
 type RouteModule = Promise<unknown>;
 
@@ -7,20 +7,8 @@ type RouteModule = Promise<unknown>;
  * explicit import below into a separately cacheable route chunk.
  */
 export function loadRouteComponent(path: string): RouteModule {
-  const documentView = documentViewFromRoute(path);
-  if (path.startsWith("/share/")) return import("./components/forma-shared-view");
-  if (path.startsWith("/projects")) return import("./components/forma-projects");
-  if (path.startsWith("/studio/project")) return import("./components/forma-project-contents");
-  if (documentView === "board" || documentView === "guided") return import("./components/forma-studio-alternatives");
-  if (documentView === "layers" || documentView === "adaptive") return import("./components/forma-studio-editor-alternatives");
-  if (documentView === "editor") return import("./components/forma-creative-editor");
-  if (documentView === "chat") return import("./components/forma-chat-studio");
-  if (path.startsWith("/admin/events")) return import("./components/forma-admin-events");
-  if (path.startsWith("/library")) return import("./components/forma-library");
-  if (path.startsWith("/sessions")) return import("./components/forma-sessions");
-  if (path.startsWith("/scout")) return import("./components/forma-scout");
-  if (path.startsWith("/memory")) return import("./components/forma-memory");
-  if (path.startsWith("/system/focal-points")) return import("./components/forma-focal-point-lab");
-  if (path.startsWith("/system")) return import("./components/forma-system");
-  return import("./components/forma-workspace");
+  const application=applicationIdFromRoute(path);
+  if(application==="operations")return import("./apps/operations/entry").then((module)=>module.loadOperationsRoute(path));
+  if(application==="laboratory")return import("./apps/laboratory/entry").then((module)=>module.loadLaboratoryRoute(path));
+  return import("./apps/creative/entry").then((module)=>module.loadCreativeRoute(path));
 }

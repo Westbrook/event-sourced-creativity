@@ -5,6 +5,7 @@ import { exportArchive, importArchive } from "../src/model/archive.ts";
 import { buildScenario, explainReplayEvent, SCENARIOS, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
 import { BLOCK_TYPES } from "../src/model/block-types.ts";
 import { foldEvents } from "../src/model/events.ts";
+import { applicationIdFromRoute } from "../src/platform/applications.ts";
 
 test("uses Lit custom elements and the requested signal packages without React", async () => {
   const [pkg, main, shell, store, admin, files] = await Promise.all([
@@ -94,7 +95,7 @@ test("packages a responsive SPA and Sites metadata", async () => {
     readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
     readFile(new URL("../dist/.openai/hosting.json", import.meta.url), "utf8"),
   ]);
-  assert.match(html, /Forma — An event-sourced creative studio/);
+  assert.match(html, /<title>Create — Forma<\/title>/);
   assert.match(html, /forma-shell/);
   assert.match(css, /@media \(max-width: 760px\)/);
   assert.match(hosting, /appgprj_/);
@@ -179,26 +180,29 @@ test("keeps Studio composition wrappers free of redundant page padding", async (
 
 test("packages first-class HTML entry points for every named application route", async () => {
   const plugin = await readFile(new URL("../build/sites-vite-plugin.ts", import.meta.url), "utf8");
+  const applications = await readFile(new URL("../src/platform/applications.ts", import.meta.url), "utf8");
   const routeLoader = await readFile(new URL("../src/route-loader.ts", import.meta.url), "utf8");
   const shell = await readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8");
   const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
   const config = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
-  const routes = ["document","projects","studio/project","studio/board","studio/guided","studio/layers","studio/adaptive","studio/editor","studio/chat","library","sessions","scout","memory","system","system/focal-points","admin/events","admin/events/stream","admin/events/replay","admin/events/permissions"];
+  const routes = ["creative","creative/create","document","projects","studio/project","studio/board","studio/guided","studio/layers","studio/adaptive","studio/editor","studio/chat","library","sessions","scout","memory","operations","operations/events","operations/events/permissions","laboratory","laboratory/replay","laboratory/focal-points","system","system/focal-points","admin/events","admin/events/stream","admin/events/replay","admin/events/permissions"];
   for (const route of routes) {
-    assert.match(plugin, new RegExp(`path: "/${route.replaceAll("/", "\\/")}"`));
+    assert.match(applications, new RegExp(`route\\("/${route.replaceAll("/", "\\/")}"`));
     const entry = await readFile(new URL(`../dist/client/${route}/index.html`, import.meta.url), "utf8");
     const direct = await readFile(new URL(`../dist/client/${route}.html`, import.meta.url), "utf8");
     assert.match(entry, /<forma-shell><\/forma-shell>/); assert.match(entry, new RegExp(`content="/${route.replaceAll("/", "\\/")}"`));
     assert.match(entry, new RegExp(`data-forma-route-module="/${route.replaceAll("/", "\\/")}"`));
-    assert.match(direct, /\/assets\/index-/);
+    assert.match(entry,new RegExp(`data-forma-application="${applicationIdFromRoute(`/${route}`)}"`));
+    assert.match(direct, /\/assets\/entry-[^"/]+\.js/);
   }
   const rootEntry = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
   const shareEntry = await readFile(new URL("../dist/client/share/index.html", import.meta.url), "utf8");
-  assert.match(rootEntry, /data-forma-route-module="\/"/); assert.match(shareEntry, /forma-shared-view-/);
-  assert.match(config, /manifest: true/); assert.match(config, /"\/share\/\*"/); assert.match(config, /"\/document\/\*"/); assert.match(config, /"\/library\/\*"/); assert.match(worker, /"\/share\/"/); assert.doesNotMatch(worker, /entryPath=.*index\.html/); assert.match(worker, /isDocumentViewRoute\(url\.pathname\)/); assert.match(worker, /appEntryPath/);
-  assert.match(routeLoader, /import\("\.\/components\/forma-library"\)/); assert.match(routeLoader, /import\("\.\/components\/forma-admin-events"\)/);
+  assert.match(rootEntry, /data-forma-route-module="\/"/); assert.match(shareEntry, /data-forma-application="creative"/);
+  assert.match(config, /manifest: true/); assert.match(config, /"\/share\/\*"/); assert.match(config, /"\/document\/\*"/); assert.match(config, /"\/library\/\*"/); assert.match(config, /"\/creative\/\*"/); assert.match(config, /"\/operations\/\*"/); assert.match(config, /"\/laboratory\/\*"/); assert.match(worker, /"\/share\/"/); assert.doesNotMatch(worker, /entryPath=.*index\.html/); assert.match(worker, /isDocumentViewRoute\(url\.pathname\)/); assert.match(worker, /applicationEntryPath/);
+  assert.match(plugin,/SITE_ROUTE_ENTRIES/);assert.match(routeLoader,/\.\/apps\/creative\/entry/);assert.match(routeLoader,/\.\/apps\/operations\/entry/);assert.match(routeLoader,/\.\/apps\/laboratory\/entry/);
   assert.match(shell, /addEventListener\("forma-route-changed", this\.#routeChanged\)/); assert.match(shell, /loadRouteComponent\(path\)/);
-  assert.doesNotMatch(shell, /import "\.\/forma-library"/); assert.doesNotMatch(shell, /import "\.\/forma-admin-events"/);
+  assert.match(shell,/forma-creative-application/);assert.match(shell,/forma-operations-application/);assert.match(shell,/forma-laboratory-application/);
+  assert.doesNotMatch(shell, /<forma-library|<forma-admin-events|<forma-system|<forma-focal-point-lab/);
 });
 
 test("restores Event operations tabs and Studio documents from URL state", async () => {
@@ -210,7 +214,7 @@ test("restores Event operations tabs and Studio documents from URL state", async
     readFile(new URL("../src/components/studio-navigation.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/project-rail.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(admin, /\/admin\/events\/stream/); assert.match(admin, /\/admin\/events\/replay/); assert.match(admin, /\/admin\/events\/permissions/);
+  assert.match(admin, /\/operations\/events/); assert.match(admin, /\/laboratory\/replay/); assert.match(admin, /\/operations\/events\/permissions/);
   assert.match(admin, /adminTabFromPath/); assert.match(admin, /href=\$\{adminTabPath/); assert.match(admin, /store\.setRoute\(adminTabPath\(tab\)\)/);
   assert.match(routes, /`\/document\/\$\{encodeURIComponent\(documentId\)\}/); assert.match(routes, /documentSlug/); assert.match(routes, /documentIdFromRoute/); assert.match(routes, /isDocumentViewRoute/); assert.match(routes, /documentFocusFromRoute/); assert.match(routes, /withDocumentFocusInRoute/);
   assert.match(store, /syncDocumentFromRoute/); assert.match(store, /shared-document-url/); assert.match(store, /replaceState/);
@@ -219,15 +223,16 @@ test("restores Event operations tabs and Studio documents from URL state", async
 });
 
 test("restores focused Library dialogs from durable URLs", async () => {
-  const [library, routes, worker] = await Promise.all([
+  const [library, routes, worker, applications] = await Promise.all([
     readFile(new URL("../src/components/forma-library.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/model/routes.ts", import.meta.url), "utf8"),
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/platform/applications.ts", import.meta.url), "utf8"),
   ]);
   assert.match(routes, /LibraryFocusKind/); assert.match(routes, /\/library\/\$\{kind\}\/\$\{encodeURIComponent\(id\)\}/); assert.match(routes, /libraryFocusFromRoute/);
   assert.match(library, /libraryFocusRoute\("block"/); assert.match(library, /libraryFocusRoute\("output"/); assert.match(library, /libraryFocusRoute\("family"/);
   assert.match(library, /libraryRootRoute/); assert.match(library, /replace:true/); assert.doesNotMatch(library, /#focused(?:Block|Output|Family)Id/);
-  assert.match(worker, /appEntryPath/); assert.match(routes, /"\/library\/"/); assert.doesNotMatch(routes, /documentEntryPath[\s\S]*?index\.html/);
+  assert.match(worker, /applicationEntryPath/); assert.match(applications, /route\("\/library"/); assert.doesNotMatch(routes, /documentEntryPath[\s\S]*?index\.html/);
 });
 
 test("edits project-scoped reusable blocks through the Library and shared project folders",async()=>{
@@ -448,10 +453,11 @@ test("runs the Phase 7 private-pilot index as a correctable derived projection",
 });
 
 test("operationalizes bounded Scout and reversible ranking-only taste memory", async () => {
-  const [eventsApi, store, shell, scoutPage, memoryPage, scoutModel, tasteModel, outputCard, coverage, classification] = await Promise.all([
+  const [eventsApi, store, creativeEntry, applications, scoutPage, memoryPage, scoutModel, tasteModel, outputCard, coverage, classification] = await Promise.all([
     readFile(new URL("../worker/events-api.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/state/store.ts", import.meta.url), "utf8"),
-    readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/apps/creative/entry.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/platform/applications.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-scout.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-memory.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/model/scout.ts", import.meta.url), "utf8"),
@@ -460,7 +466,7 @@ test("operationalizes bounded Scout and reversible ranking-only taste memory", a
     readFile(new URL("../docs/plan-coverage.md", import.meta.url), "utf8"),
     readFile(new URL("../docs/event-classification.csv", import.meta.url), "utf8"),
   ]);
-  assert.match(shell, /forma-scout/); assert.match(shell, /forma-memory/); assert.match(shell, /"\/scout"/); assert.match(shell, /"\/memory"/);
+  assert.match(creativeEntry, /forma-scout/); assert.match(creativeEntry, /forma-memory/); assert.match(applications, /"\/scout"/); assert.match(applications, /"\/memory"/);
   assert.match(eventsApi, /run_scout/); assert.match(eventsApi, /ScoutBudgetExhausted/); assert.match(eventsApi, /report_space:"scout"/);
   assert.doesNotMatch(`${eventsApi}${scoutModel}${scoutPage}`, /DirectionChosen/);
   assert.match(scoutModel, /convergence/); assert.match(scoutModel, /divergence/); assert.match(scoutModel, /stall/); assert.match(scoutModel, /adjacency/);
@@ -539,27 +545,28 @@ test("connects the final Library and Studio affordances to explicit destinations
   assert.match(editorAlternatives,/application\/x-forma-reality/);assert.match(editorAlternatives,/created_from:"reality-layers"/);assert.match(editorAlternatives,/BlockWeightSet/);assert.match(editorAlternatives,/created_from:"adaptive-path"/);assert.match(editorAlternatives,/related_block_ids/);
   assert.match(editorAlternatives,/layer-create-dialog/);assert.match(editorAlternatives,/Save layer/);assert.match(editorAlternatives,/Duplicate/);assert.match(editorAlternatives,/structureAdaptive/);assert.match(eventsApi,/structure_adaptive/);assert.match(adapter,/forma_adaptive_structure/);
   assert.match(blockTypes,/type:"audience"/);assert.match(blockTypes,/type:"environment"/);assert.match(blockTypes,/type:"accessibility"/);assert.match(blockTypes,/BLOCK_GROUPS/);assert.match(blockTypes,/Purpose & audience/);assert.match(blockTypes,/Grounding evidence/);assert.match(workspace,/BLOCK_GROUPS\.map/);assert.match(workspace,/block-type-catalog/);assert.match(workspace,/System-suggested subtype/);
-  assert.match(shell,/forma-reality-layers/);assert.match(shell,/forma-adaptive-path/);assert.match(styles,/\.reality-editor/);assert.match(styles,/\.adaptive-workspace/);
+  assert.match(editorAlternatives,/forma-reality-layers/);assert.match(editorAlternatives,/forma-adaptive-path/);assert.match(styles,/\.reality-editor/);assert.match(styles,/\.adaptive-workspace/);
   assert.doesNotMatch(`${workspace}${library}${styles}`,/studio-sidebar|library-tree/);assert.match(styles,/\.project-rail/);
   assert.match(workspace,/\?disabled=\$\{!canCompare\}/);assert.match(store,/canUndo/);assert.match(store,/canRedo/);assert.match(styles,/\.document-bar \{ position: sticky/);
   assert.match(outputCard,/Taste evidence/);assert.match(outputCard,/taste-axis-grid/);assert.match(outputCard,/Record taste evidence/);
-  assert.match(shell,/system#governance/);assert.match(shell,/Use attention signals to improve Forma/);assert.match(system,/id="governance"/);assert.match(system,/Forget attention data/);
+  assert.match(shell,/operations#governance/);assert.match(shell,/Use attention signals to improve Forma/);assert.match(system,/id="governance"/);assert.match(system,/Forget attention data/);
 });
 
-test("keeps account, project, document, intelligence, and administration scopes distinct",async()=>{
-  const [shell,rail,navigation,areas,contents,library,sessions,scout,memory,system,admin,collections,styles,review]=await Promise.all([
+test("keeps account, project, document, intelligence, operations, and laboratory scopes distinct",async()=>{
+  const [shell,rail,navigation,areas,contents,library,sessions,scout,memory,system,admin,collections,styles,review,applications]=await Promise.all([
     "forma-shell.ts","project-rail.ts","studio-navigation.ts","area-navigation.ts","forma-project-contents.ts","forma-library.ts","forma-sessions.ts","forma-scout.ts","forma-memory.ts","forma-system.ts","forma-admin-events.ts","collection-tree.ts",
   ].map((file)=>readFile(new URL(`../src/components/${file}`,import.meta.url),"utf8")).concat([
     readFile(new URL("../src/styles.css",import.meta.url),"utf8"),
     readFile(new URL("../docs/information-architecture-review.md",import.meta.url),"utf8"),
+    readFile(new URL("../src/platform/applications.ts",import.meta.url),"utf8"),
   ]));
-  assert.match(shell,/label: "Projects"/);assert.match(shell,/label: "Studio"/);assert.match(shell,/label: "Re-entry"/);assert.match(shell,/label: "Taste & time"/);
-  assert.doesNotMatch(shell.match(/const routes = \[[\s\S]*?\] as const;/)?.[0]??"",/System|Event admin/);assert.match(shell,/class="account-nav"/);assert.match(shell,/System & governance/);assert.match(shell,/Event operations/);
+  assert.match(applications,/label: "Creative"/);assert.match(applications,/label: "Operations"/);assert.match(applications,/label: "Laboratory"/);assert.match(applications,/label: "Projects"/);assert.match(applications,/label: "Create"/);assert.match(applications,/label: "Re-entry"/);assert.match(applications,/label: "Taste & time"/);
+  assert.match(shell,/class="account-nav"/);assert.match(shell,/application-switcher/);assert.match(shell,/Durable stream/);assert.match(shell,/Laboratory/);
   assert.match(rail,/rail-project-card/);assert.match(rail,/rail-dock/);assert.match(rail,/aria-controls="project-rail-content"/);assert.match(rail,/Project destinations/);assert.match(rail,/Project library/);assert.match(rail,/Creative history/);
   assert.match(navigation,/aria-label="Document views"/);assert.doesNotMatch(navigation,/Project-level|studio-project-overview/);assert.match(navigation,/studio-breadcrumbs/);assert.match(navigation,/Projects/);
   assert.doesNotMatch(contents,/forma-studio-mode-nav|forma-studio-navigator/);assert.match(library,/Project library/);assert.match(collections,/destination==="\/library"/);
   for(const [source,active] of [[sessions,"sessions"],[scout,"scout"],[memory,"memory"]])assert.match(source,new RegExp(`forma-area-navigation area="intelligence" active="${active}"`));
-  assert.match(system,/area="administration" active="system"/);assert.match(admin,/area="administration" active="events"/);assert.match(areas,/Creative intelligence/);assert.match(areas,/Administration/);
+  assert.match(system,/area="operations" active="system"/);assert.match(admin,/laboratory\?"laboratory":"operations"/);assert.match(areas,/Creative intelligence/);assert.match(areas,/Operations/);assert.match(areas,/Laboratory/);
   assert.match(styles,/\.rail-dock/);assert.match(styles,/\.area-navigation/);assert.match(styles,/\.studio-breadcrumbs/);assert.match(styles,/\.block-type-group/);assert.doesNotMatch(styles,/global-nav a:nth-child/);
   assert.match(review,/Deficiencies found and resolved/);assert.match(review,/Primary navigation/);assert.match(review,/Follow-up evaluation/);
 });

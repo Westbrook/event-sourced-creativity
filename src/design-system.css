@@ -210,6 +210,15 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orange); }
 .global-nav a.active { color: var(--ink); font-weight: 650; }
 .global-nav a.active::after { background: var(--orange); }
 
+.application-switcher {
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  border-color: var(--line);
+}
+
+.application-switcher a { font-size: var(--type-small); font-weight: 500; }
+.application-switcher a.active { color: var(--on-strong); background: var(--ink); font-weight: 650; }
+.application-context b { color: var(--ink); }
+
 .command-trigger {
   min-width: min(15rem, 22vw);
   min-height: 2.5rem;
@@ -1655,17 +1664,17 @@ forma-document-generations { display: block; min-width: 0; }
 .page-header--admin h1 { font-size: clamp(2.75rem, 7vw, 6.5rem); }
 .page-header--admin p { color: #bdbdb8; }
 
-.area-navigation--administration {
+.area-navigation--operations {
   background: var(--admin-chrome);
   border-color: var(--admin-chrome-line);
 }
 
-.area-navigation--administration > span { color: var(--admin-chrome-subtle); }
-.area-navigation--administration a { color: var(--admin-chrome-muted); }
-.area-navigation--administration a:hover { color: var(--on-dark); background: var(--admin-chrome-hover); }
-.area-navigation--administration a.active { color: var(--on-accent); background: var(--orange); }
+.area-navigation--operations > span { color: var(--admin-chrome-subtle); }
+.area-navigation--operations a { color: var(--admin-chrome-muted); }
+.area-navigation--operations a:hover { color: var(--on-dark); background: var(--admin-chrome-hover); }
+.area-navigation--operations a.active { color: var(--on-accent); background: var(--orange); }
 
-.admin-page > forma-area-navigation .area-navigation--administration {
+.admin-page > forma-area-navigation :is(.area-navigation--operations, .area-navigation--laboratory) {
   max-width: none;
   margin: 0;
   border-width: 0 0 1px;
@@ -1890,11 +1899,21 @@ forma-document-generations { display: block; min-width: 0; }
 .area-navigation a:hover { color: var(--ink); background: var(--panel-2); }
 .area-navigation a.active { color: var(--on-strong); background: var(--ink); }
 
-.area-navigation--administration { background: var(--admin-chrome); border-color: var(--admin-chrome-line); }
-.area-navigation--administration > span { color: var(--admin-chrome-subtle); }
-.area-navigation--administration a { color: var(--admin-chrome-muted); }
-.area-navigation--administration a:hover { color: var(--on-dark); background: var(--admin-chrome-hover); }
-.area-navigation--administration a.active { color: var(--on-accent); background: var(--orange); }
+.area-navigation--operations { background: var(--admin-chrome); border-color: var(--admin-chrome-line); }
+.area-navigation--operations > span { color: var(--admin-chrome-subtle); }
+.area-navigation--operations a { color: var(--admin-chrome-muted); }
+.area-navigation--operations a:hover { color: var(--on-dark); background: var(--admin-chrome-hover); }
+.area-navigation--operations a.active { color: var(--on-accent); background: var(--orange); }
+
+.area-navigation--laboratory {
+  background: color-mix(in srgb, var(--panel) 88%, var(--orange));
+  border-color: color-mix(in srgb, var(--line) 70%, var(--orange));
+}
+
+.area-navigation--laboratory > span,
+.area-navigation--laboratory a { color: var(--muted); }
+.area-navigation--laboratory a:hover { color: var(--ink); background: var(--panel-2); }
+.area-navigation--laboratory a.active { color: var(--on-strong); background: var(--ink); }
 
 :where(
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
@@ -2396,6 +2415,9 @@ forma-shell,
   min-width: 0;
   max-width: 100%;
 }
+
+.application-switcher,
+.application-context { min-width: 0; max-width: 100%; }
 
 #main-content,
 .workspace-page,

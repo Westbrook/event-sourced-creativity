@@ -2,7 +2,8 @@ import { handleEvents, type WorkerEnv } from "./events-api";
 import { getMedia, uploadMedia } from "./media-api";
 import { handleAdminUsers, handleSession } from "./pilot-policy";
 import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
-import { appEntryPath, isDocumentViewRoute, libraryBlockEditorFromRoute, libraryFocusFromRoute } from "../src/model/routes";
+import { isDocumentViewRoute, libraryBlockEditorFromRoute, libraryFocusFromRoute } from "../src/model/routes";
+import { SITE_ROUTE_ENTRIES, applicationEntryPath } from "../src/platform/applications";
 import { handleReplayApproval, handleReplayEstimate, handleReplaySessions } from "./replay-sessions-api";
 import { handleDocumentJobs } from "./document-jobs-api";
 
@@ -26,12 +27,19 @@ export default {
     if(url.pathname.startsWith("/api/media/")&&request.method==="GET")return getMedia(request,decodeURIComponent(url.pathname.slice("/api/media/".length)),env);
     if(url.pathname.startsWith("/api/"))return Response.json({error:"not_found"},{status:404});
     if((request.method==="GET"||request.method==="HEAD")&&(isDocumentViewRoute(url.pathname)||libraryFocusFromRoute(url.pathname)||libraryBlockEditorFromRoute(url.pathname))){
-      const entryUrl=new URL(appEntryPath(url.pathname),url);
+      const entryUrl=new URL(applicationEntryPath(url.pathname),url);
+      return env.ASSETS.fetch(new Request(entryUrl,request));
+    }
+    const normalizedPath=url.pathname.replace(/\/+$/,"")||"/";
+    const applicationNamespace=/^\/(?:creative|operations|laboratory)(?:\/|$)/.test(normalizedPath);
+    const namedEntry=SITE_ROUTE_ENTRIES.some((entry)=>entry.path===normalizedPath);
+    if((request.method==="GET"||request.method==="HEAD")&&applicationNamespace&&!namedEntry){
+      const entryUrl=new URL(applicationEntryPath(normalizedPath),url);
       return env.ASSETS.fetch(new Request(entryUrl,request));
     }
     const asset=await env.ASSETS.fetch(request);if(asset.status!==404)return asset;
     if((request.method==="GET"||request.method==="HEAD")&&!url.pathname.startsWith("/assets/")){
-      const entryPath=url.pathname.startsWith("/share/")?"/share/":appEntryPath(url.pathname);
+      const entryPath=url.pathname.startsWith("/share/")?"/share/":applicationEntryPath(url.pathname);
       const entryUrl=new URL(entryPath,url);return env.ASSETS.fetch(new Request(entryUrl,request));
     }
     return asset;

@@ -4,6 +4,18 @@ Forma is an event-sourced creative studio. A context document, provenance graph,
 authored collections, generations, and re-entry brief are all rebuildable
 projections over one append-only event stream.
 
+## Applications
+
+The platform has three independently loaded applications over that shared data:
+
+- **Creative** owns projects, Create, documents, the Library, Re-entry, Scout, and Taste & time.
+- **Operations** owns governance, health, producer permissions, and durable-stream inspection.
+- **Laboratory** owns controlled replay, focal-point comparisons, and future experiments.
+
+Canonical application routes begin with `/creative`, `/operations`, and `/laboratory`. Existing creative URLs remain stable, while historical `/system` and `/admin/events` URLs are compatibility aliases. Future alternative Create experiences belong under `/creative/create/...` and must reuse the same document stream, jobs, generations, and projections.
+
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for ownership and dependency rules.
+
 ## Product slice
 
 - context blocks with authored/inferred/constraint authority
@@ -15,7 +27,7 @@ projections over one append-only event stream.
 - authored collection tree with cycle and duplicate-membership validation
 - chat proposals previewed before user acceptance
 - provenance lineage and filterable event stream
-- standalone event administration with projection inspection and as-of replay
+- standalone Operations stream inspection and isolated Laboratory replay
 - deterministic 1k/10k/50k theoretical interaction streams
 - personal library plus lossless graph import/export
 - durable D1 event storage and R2 reference uploads
@@ -59,7 +71,7 @@ versioned vectors, worker-owned family claims, and a cited corpus from the
 stream; correcting a family supersedes one inferred edge without deleting the
 family, and promotion still requires an authored collection event.
 
-The Event admin page can export a theoretical replay fixture. Rebuild it from
+The Replay laboratory can export a theoretical fixture. Rebuild it from
 the command line with:
 
 ```bash

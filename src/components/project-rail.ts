@@ -61,7 +61,7 @@ export class ProjectRail extends FormaElement {
         <a href="/studio/project" class=${projectActive?"active":""} aria-current=${projectActive?"page":nothing} title="Project overview" @click=${(event:MouseEvent)=>this.#go(event,"/studio/project")}>${icon("folder")}<small>Overview</small></a>
         <a href=${documentRoute} class=${documentActive?"active":""} aria-current=${documentActive?"page":nothing} title=${`Open ${projection.documentTitle}`} @click=${(event:MouseEvent)=>this.#go(event,documentRoute)}>▤<small>Document</small></a>
         <a href="/library" class=${surface==="library"?"active":""} aria-current=${surface==="library"?"page":nothing} title="Project library" @click=${(event:MouseEvent)=>this.#openLibrary(event,"all")}>▦<small>Library</small></a>
-        ${!quiet&&this.store.session.get()?.user.role==="admin"?html`<a href="/admin/events" title="Event operations" @click=${(event:MouseEvent)=>this.#go(event,"/admin/events")}>${icon("replay")}<small>Events</small></a>`:nothing}
+        ${!quiet&&this.store.session.get()?.user.role==="admin"?html`<a href="/operations/events" title="Durable stream" @click=${(event:MouseEvent)=>this.#go(event,"/operations/events")}>${icon("replay")}<small>Events</small></a>`:nothing}
       </nav>` : html`<div id="project-rail-content" class="rail-content">
         <section class="rail-project-card" aria-labelledby="rail-project-name">
           <div class="rail-project-heading"><span class="project-monogram">${projection.projectName.slice(0,1).toUpperCase() || "P"}</span><div><span class="eyebrow">Current project</span><h2 id="rail-project-name">${projection.projectName}</h2></div>${quiet?nothing:html`<span class=${`project-status ${projection.projectState}`}>${projection.projectState}</span>`}</div>
@@ -87,7 +87,7 @@ export class ProjectRail extends FormaElement {
 
         ${quiet?nothing:html`<div class="rail-note"><span>${icon("info")}</span><p><b>No auto-filing.</b> Collections are deliberate. Search and aesthetic families remain derived views.</p></div>`}
 
-        ${quiet?nothing:html`<footer class="rail-stream"><span class="rail-live-dot"></span><div><b>Creative history</b><small>#${this.store.head.get()} · ${this.store.loading.get() ? "syncing" : "caught up"}</small></div>${this.store.session.get()?.user.role==="admin"?html`<a href="/admin/events" @click=${(event:MouseEvent)=>this.#go(event,"/admin/events")}>Review</a>`:nothing}</footer>`}
+        ${quiet?nothing:html`<footer class="rail-stream"><span class="rail-live-dot"></span><div><b>Creative history</b><small>#${this.store.head.get()} · ${this.store.loading.get() ? "syncing" : "caught up"}</small></div>${this.store.session.get()?.user.role==="admin"?html`<a href="/operations/events" @click=${(event:MouseEvent)=>this.#go(event,"/operations/events")}>Review</a>`:nothing}</footer>`}
       </div>`}
     </aside>`;
   }

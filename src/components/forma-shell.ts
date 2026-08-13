@@ -1,17 +1,9 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon, downloadJson } from "./forma-element";
 import { loadRouteComponent } from "../route-loader";
-import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, routePathname, withDocumentInRoute } from "../model/routes";
+import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, withDocumentInRoute } from "../model/routes";
+import { APPLICATIONS, applicationDefinition, applicationIdFromRoute, navigationItemActive } from "../platform/applications";
 import "./forma-attention-observer";
-
-const routes = [
-  { href: "/projects", label: "Projects", description: "Choose a creative workspace" },
-  { href: "/", label: "Studio", description: "Work in the current document" },
-  { href: "/library", label: "Library", description: "Reuse project context and outputs" },
-  { href: "/sessions", label: "Re-entry", description: "Resume witnessed work" },
-  { href: "/scout", label: "Scout", description: "Investigate creative trajectories" },
-  { href: "/memory", label: "Taste & time", description: "Manage preferences and resurfacing" },
-] as const;
 
 export class FormaShell extends FormaElement {
   #commandIndex = 0;
@@ -20,7 +12,7 @@ export class FormaShell extends FormaElement {
   #lastObservedDocumentView = "";
   #keydown = (event: KeyboardEvent) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); this.store.patchUi({ commandOpen: !this.store.ui.commandOpen }); }
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); if (event.shiftKey) void this.store.redo(); else void this.store.undo(); }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z" && applicationIdFromRoute(this.store.route.get()) === "creative") { event.preventDefault(); if (event.shiftKey) void this.store.redo(); else void this.store.undo(); }
     if (event.key === "Escape") this.store.patchUi({ commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false });
   };
   #routeChanged = (event: Event) => {
@@ -70,24 +62,10 @@ export class FormaShell extends FormaElement {
 
   #route(path: string) { this.store.patchUi({ commandOpen: false, accountOpen: false }); this.store.setRoute(path); const hash=path.includes("#")?path.slice(path.indexOf("#")+1):"";if(hash)window.setTimeout(()=>{const target=document.getElementById(hash);target?.scrollIntoView({behavior:"smooth",block:"center"});target?.focus({preventScroll:true});},0);else window.scrollTo({ top: 0 }); }
   #page() {
-    const path = this.store.route.get();
-    const documentView = documentViewFromRoute(path);
-    if (path.startsWith("/projects")) return html`<forma-projects></forma-projects>`;
-    if (path.startsWith("/studio/project")) return html`<forma-project-contents></forma-project-contents>`;
-    if (documentView === "board") return html`<forma-context-board></forma-context-board>`;
-    if (documentView === "guided") return html`<forma-guided-brief></forma-guided-brief>`;
-    if (documentView === "layers") return html`<forma-reality-layers></forma-reality-layers>`;
-    if (documentView === "adaptive") return html`<forma-adaptive-path></forma-adaptive-path>`;
-    if (documentView === "editor") return html`<forma-creative-editor></forma-creative-editor>`;
-    if (documentView === "chat") return html`<forma-chat-studio></forma-chat-studio>`;
-    if (path.startsWith("/admin/events")) return html`<forma-admin-events></forma-admin-events>`;
-    if (path.startsWith("/library")) return html`<forma-library></forma-library>`;
-    if (path.startsWith("/sessions")) return html`<forma-sessions></forma-sessions>`;
-    if (path.startsWith("/scout")) return html`<forma-scout></forma-scout>`;
-    if (path.startsWith("/memory")) return html`<forma-memory></forma-memory>`;
-    if (path.startsWith("/system/focal-points")) return html`<forma-focal-point-lab></forma-focal-point-lab>`;
-    if (path.startsWith("/system")) return html`<forma-system></forma-system>`;
-    return html`<forma-workspace></forma-workspace>`;
+    const application=applicationIdFromRoute(this.store.route.get());
+    if(application==="operations")return html`<forma-operations-application></forma-operations-application>`;
+    if(application==="laboratory")return html`<forma-laboratory-application></forma-laboratory-application>`;
+    return html`<forma-creative-application></forma-creative-application>`;
   }
   #share() {
     const p = this.store.projection.get();
@@ -123,52 +101,60 @@ export class FormaShell extends FormaElement {
   }
   #commands() {
     const q = this.store.ui.search.toLowerCase();
-    const simplifiedEditor = documentViewFromRoute(this.store.route.get()) === "editor";
-    const commands = [
-      { label: "Generate from current context", hint: "Studio", run: () => this.store.generate() },
+    const path=this.store.route.get();const applicationId=applicationIdFromRoute(path);const application=applicationDefinition(applicationId);
+    const simplifiedEditor = documentViewFromRoute(path) === "editor";
+    const creativeCommands = [
+      { label: "Generate from current context", hint: "Create", run: () => this.store.generate() },
       { label: simplifiedEditor ? "Add a goal" : "Add a direction block", hint: "Document", run: () => this.store.append({ type: "BlockCreated", payload: { block_id: crypto.randomUUID(), type: "direction", handle: `direction/study-${this.store.head.get()}`, position: `z${this.store.head.get()}`, properties: { text: simplifiedEditor ? "Describe what this work should achieve" : "A new creative direction", weight: .65, authority: "authored" } } }) },
-      ...(!simplifiedEditor ? [{ label: "Review the durable stream", hint: "Admin", run: () => this.#route("/admin/events") }] : []),
-      { label: "Open reusable library", hint: "Library", run: () => this.#route("/library") },
-      { label: "Run a bounded scout report", hint: "Scout", run: () => this.#route("/scout") },
-      { label: "Review taste and time memory", hint: "Memory", run: () => this.#route("/memory") },
-      ...(!simplifiedEditor ? [{ label: "Inspect plan coverage", hint: "System", run: () => this.#route("/system") }] : []),
+      { label: "Open reusable library", hint: "Creative", run: () => this.#route("/library") },
+      { label: "Run a bounded scout report", hint: "Creative", run: () => this.#route("/scout") },
+      { label: "Review taste and time memory", hint: "Creative", run: () => this.#route("/memory") },
+      { label: "Review the durable stream", hint: "Operations", run: () => this.#route("/operations/events") },
+      { label: "Open replay laboratory", hint: "Laboratory", run: () => this.#route("/laboratory/replay") },
       { label: "Undo last authored change", hint: "⌘Z", run: () => this.store.undo() },
       { label: simplifiedEditor ? "Share or download" : "Export full graph", hint: simplifiedEditor ? "Document" : "JSON", run: () => this.store.patchUi({ shareOpen: true }) },
-    ].filter((c) => c.label.toLowerCase().includes(q) || c.hint.toLowerCase().includes(q));
+    ];
+    const applicationCommands=[
+      ...application.navigation.map((item)=>({label:`Open ${item.label}`,hint:application.label,run:()=>this.#route(item.href)})),
+      {label:"Return to Creative",hint:"Application",run:()=>this.#route("/projects")},
+    ];
+    const commands=(applicationId==="creative"?creativeCommands:applicationCommands).filter((c) => c.label.toLowerCase().includes(q) || c.hint.toLowerCase().includes(q));
     const run = async (index: number) => { const command = commands[index]; if (!command) return; this.store.patchUi({ commandOpen: false, search: "" }); this.#commandIndex = 0; await command.run(); };
     return html`<dialog class="command-dialog" open closedby="any" aria-labelledby="command-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.store.patchUi({commandOpen:false});}}>
       <div class="command-card">
         <label id="command-title" class="sr-only" for="command-search">Search commands</label>
         <div class="command-search"><span>${icon("search")}</span><input id="command-search" autofocus placeholder="Type a command…" .value=${this.store.ui.search} @input=${(e: InputEvent) => { this.#commandIndex = 0; this.store.patchUi({ search: (e.target as HTMLInputElement).value }); }} @keydown=${(e: KeyboardEvent) => { if (e.key === "ArrowDown") { e.preventDefault(); this.#commandIndex = Math.min(commands.length - 1, this.#commandIndex + 1); this.requestUpdate(); } else if (e.key === "ArrowUp") { e.preventDefault(); this.#commandIndex = Math.max(0, this.#commandIndex - 1); this.requestUpdate(); } else if (e.key === "Enter") { e.preventDefault(); void run(this.#commandIndex); } }}><kbd>esc</kbd></div>
         <div class="command-results" role="listbox">${commands.map((c, i) => html`<button class="command-row" role="option" aria-selected=${i === this.#commandIndex} @mouseenter=${() => { this.#commandIndex = i; this.requestUpdate(); }} @click=${() => run(i)}><span>${c.label}</span><small>${c.hint}</small></button>`)}</div>
-        <footer><span>↑↓ navigate</span><span>↵ run</span><span>${simplifiedEditor ? "Changes save automatically" : "Every operation appends or navigates"}</span></footer>
+        <footer><span>↑↓ navigate</span><span>↵ run</span><span>${applicationId==="creative"?(simplifiedEditor ? "Changes save automatically" : "Commands append or navigate"):"Navigation does not mutate creative state"}</span></footer>
       </div>
     </dialog>`;
   }
 
   override render() {
-    const path = this.store.route.get(); const pathname = routePathname(path); const isAdmin = pathname.startsWith("/admin");
+    const path = this.store.route.get();const applicationId=applicationIdFromRoute(path);const application=applicationDefinition(applicationId);const isCreative=applicationId==="creative";
     if(path.startsWith("/share/"))return html`<forma-shared-view .token=${decodeURIComponent(path.slice("/share/".length))}></forma-shared-view>`;
     const session=this.store.session.get();
     const simplifiedEditor = documentViewFromRoute(path) === "editor";
-    const routeActive=(href:string)=>href==="/projects"?(pathname.startsWith("/projects")||pathname.startsWith("/studio/project")):href==="/"?isDocumentViewRoute(path):(pathname===href||pathname.startsWith(`${href}/`));
-    return html`<div class="app-shell ${isAdmin ? "admin-shell" : ""}">
+    const projection=this.store.projection.get();
+    const navigationHref=(id:string,href:string)=>id==="create"?withDocumentInRoute(href,projection.documentId,projection.documentTitle):href;
+    return html`<div class=${`app-shell application-${applicationId} ${applicationId==="operations"?"admin-shell":""}`}>
       <header class="topbar">
         <button class="brand" @click=${() => this.#route("/projects")} aria-label="Open all Forma projects"><span class="brand-mark">F</span><span>Forma</span></button>
-        <nav class="global-nav" aria-label="Creative workspace">${routes.map(({href,label,description}) => {const projection=this.store.projection.get();const routedHref=href==="/"?withDocumentInRoute(href,projection.documentId,projection.documentTitle):href;return html`<a href=${routedHref} title=${description} class=${routeActive(href)?"active":""} aria-current=${routeActive(href)?"page":nothing} @click=${(e: MouseEvent) => { e.preventDefault(); this.#route(routedHref); }}>${label}</a>`;})}</nav>
+        <nav class="application-switcher" aria-label="Application">${APPLICATIONS.map((candidate)=>html`<a href=${candidate.home} title=${candidate.description} class=${candidate.id===applicationId?"active":""} aria-current=${candidate.id===applicationId?"page":nothing} @click=${(event:MouseEvent)=>{event.preventDefault();this.#route(candidate.home);}}>${candidate.label}</a>`)}</nav>
+        ${isCreative?html`<nav class="global-nav" aria-label="Creative workspace">${application.navigation.map((item)=>{const href=navigationHref(item.id,item.href);const active=navigationItemActive(applicationId,item.id,path);return html`<a href=${href} title=${item.description} class=${active?"active":""} aria-current=${active?"page":nothing} @click=${(event:MouseEvent)=>{event.preventDefault();this.#route(href);}}>${item.label}</a>`;})}</nav>`:html`<div class="application-context"><b>${application.label}</b><span>${application.description}</span></div>`}
         <div class="top-actions">
           <button class="command-trigger" @click=${() => this.store.patchUi({ commandOpen: true })}><span>${icon("search")}</span><span class="command-label">Search or command</span><kbd>⌘ K</kbd></button>
-          ${!isAdmin ? html`<button class="button secondary compact" @click=${() => {void this.store.loadShares();this.store.patchUi({ shareOpen: true });}}>${icon("share")} Share</button>` : nothing}
+          ${isCreative ? html`<button class="button secondary compact" @click=${() => {void this.store.loadShares();this.store.patchUi({ shareOpen: true });}}>${icon("share")} Share</button>` : nothing}
           <button class="avatar" aria-label="Open account and privacy settings" aria-expanded=${this.store.ui.accountOpen} @click=${() => this.store.patchUi({ accountOpen: !this.store.ui.accountOpen })}>${session?.user.displayName?.slice(0,1).toUpperCase()??"·"}</button>
         </div>
-        ${this.store.ui.accountOpen ? html`<div class="account-popover"><span class="eyebrow">${session?.user.role??"authenticated"}</span><b>${session?.user.displayName??"Signed-in creative"}</b><p>${session?.user.email??"Identity loading"}${simplifiedEditor ? nothing : ` · ${this.store.head.get()} events`}</p><nav class="account-nav" aria-label="Administration"><a href="/system" @click=${(event:MouseEvent)=>{event.preventDefault();this.#route("/system");}}><span>System & governance</span>${icon("arrow")}</a>${session?.user.role==="admin"&&!simplifiedEditor?html`<a href="/admin/events" @click=${(event:MouseEvent)=>{event.preventDefault();this.#route("/admin/events");}}><span>Event operations</span>${icon("arrow")}</a>`:nothing}</nav><div class="account-policy"><span>Terms</span><b>${session?.policy.accepted?"accepted":"required"}</b><span>Provider</span><b>${session?.provider.configured?session.provider.model:"key required"}</b><span>Content retention</span><b>${session?.policy.retentionDays??30} days</b><span>Attention signals</span><b>${this.store.ui.attentionCapture?(this.store.ui.attentionPaused?"paused":"on"):"off"}</b></div><label class="toggle-row"><input type="checkbox" .checked=${this.store.ui.instrumentation} @change=${(e: Event) => this.store.patchUi({ instrumentation: (e.target as HTMLInputElement).checked })}><span>Record explicit view actions</span></label><label class="toggle-row"><input type="checkbox" .checked=${this.store.ui.attentionCapture} @change=${(e:Event)=>this.store.setAttentionCapture((e.target as HTMLInputElement).checked)}><span>Use attention signals to improve Forma</span></label>${this.store.ui.attentionCapture?html`<button class="button ghost compact attention-pause" @click=${()=>this.store.setAttentionPaused(!this.store.ui.attentionPaused)}>${this.store.ui.attentionPaused?icon("play"):icon("pause")} ${this.store.ui.attentionPaused?"Resume on this device":"Pause on this device"}</button>`:nothing}<small>Opt-in capture runs only while this page is visible. It stores coarse surface, active/idle time, visible item IDs, and the action that ended a period—never pointer paths, keys, typed text, microphone, or ambient device data. Device episodes expire after 14 days.</small><button class="button ghost" @click=${() => this.#route("/system#governance")}>Review privacy controls</button></div>` : nothing}
+        ${this.store.ui.accountOpen ? html`<div class="account-popover"><span class="eyebrow">${session?.user.role??"authenticated"}</span><b>${session?.user.displayName??"Signed-in creative"}</b><p>${session?.user.email??"Identity loading"}${simplifiedEditor ? nothing : ` · ${this.store.head.get()} events`}</p><nav class="account-nav" aria-label="Platform tools"><a href="/operations" @click=${(event:MouseEvent)=>{event.preventDefault();this.#route("/operations");}}><span>Operations</span>${icon("arrow")}</a>${session?.user.role==="admin"&&!simplifiedEditor?html`<a href="/operations/events" @click=${(event:MouseEvent)=>{event.preventDefault();this.#route("/operations/events");}}><span>Durable stream</span>${icon("arrow")}</a><a href="/laboratory/replay" @click=${(event:MouseEvent)=>{event.preventDefault();this.#route("/laboratory/replay");}}><span>Laboratory</span>${icon("arrow")}</a>`:nothing}</nav><div class="account-policy"><span>Terms</span><b>${session?.policy.accepted?"accepted":"required"}</b><span>Provider</span><b>${session?.provider.configured?session.provider.model:"key required"}</b><span>Content retention</span><b>${session?.policy.retentionDays??30} days</b><span>Attention signals</span><b>${this.store.ui.attentionCapture?(this.store.ui.attentionPaused?"paused":"on"):"off"}</b></div><label class="toggle-row"><input type="checkbox" .checked=${this.store.ui.instrumentation} @change=${(e: Event) => this.store.patchUi({ instrumentation: (e.target as HTMLInputElement).checked })}><span>Record explicit view actions</span></label><label class="toggle-row"><input type="checkbox" .checked=${this.store.ui.attentionCapture} @change=${(e:Event)=>this.store.setAttentionCapture((e.target as HTMLInputElement).checked)}><span>Use attention signals to improve Forma</span></label>${this.store.ui.attentionCapture?html`<button class="button ghost compact attention-pause" @click=${()=>this.store.setAttentionPaused(!this.store.ui.attentionPaused)}>${this.store.ui.attentionPaused?icon("play"):icon("pause")} ${this.store.ui.attentionPaused?"Resume on this device":"Pause on this device"}</button>`:nothing}<small>Opt-in capture runs only while this page is visible. It stores coarse surface, active/idle time, visible item IDs, and the action that ended a period—never pointer paths, keys, typed text, microphone, or ambient device data. Device episodes expire after 14 days.</small><button class="button ghost" @click=${() => this.#route("/operations#governance")}>Review privacy controls</button></div>` : nothing}
       </header>
       ${this.store.error.get() ? html`<div class="error-banner" role="alert"><b>${simplifiedEditor ? "Your work could not be loaded." : "Durable stream unavailable."}</b> ${this.store.error.get()} <button @click=${() => this.store.load()}>Retry</button></div>` : nothing}
       <main id="main-content">${this.#page()}</main>
       ${this.store.ui.toast ? html`<div class="toast" role="status" aria-live="polite" popover="manual">${icon("check")} ${this.store.ui.toast}</div>` : nothing}
       ${this.store.ui.commandOpen ? this.#commands() : nothing}
       ${this.store.ui.shareOpen ? this.#share() : nothing}
-      ${session&&!session.policy.accepted?this.#terms():nothing}
+      ${session&&!session.policy.accepted&&isCreative?this.#terms():nothing}
       <forma-attention-observer></forma-attention-observer>
       <span class="sr-only" aria-live="polite">${this.store.busy.get() ? `Working: ${this.store.busy.get()}` : this.store.documentJobs.get().some((job)=>job.status==="running") ? "A document operation is running on the server" : this.store.documentJobs.get().some((job)=>job.status==="queued") ? "A document operation is queued" : "Ready"}</span>
     </div>`;

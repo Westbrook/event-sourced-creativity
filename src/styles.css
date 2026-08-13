@@ -85,6 +85,13 @@ code, pre, kbd { font-family: var(--mono); }
 .global-nav a::after { position: absolute; right: 10px; bottom: -1px; left: 10px; height: 2px; content: ""; background: transparent; }
 .global-nav a:hover, .global-nav a.active { color: var(--ink); }
 .global-nav a.active::after { background: var(--orange); }
+.application-switcher { display: flex; flex: none; align-items: center; gap: 2px; padding: 3px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; }
+.application-switcher a { min-width: max-content; padding: 6px 9px; color: var(--muted); border-radius: 5px; font-size: var(--type-caption); font-weight: 600; }
+.application-switcher a:hover { color: var(--ink); background: var(--panel); }
+.application-switcher a.active { color: var(--on-strong); background: var(--ink); }
+.application-context { display: flex; min-width: 0; flex: 1; align-items: baseline; gap: 10px; }
+.application-context b { flex: none; font-size: var(--type-small); }
+.application-context span { min-width: 0; overflow: hidden; color: var(--muted); font-size: var(--type-caption); text-overflow: ellipsis; white-space: nowrap; }
 .top-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .command-trigger { display: flex; min-width: 226px; align-items: center; gap: 9px; padding: 8px 10px; color: var(--muted); background: #fff; border: 1px solid var(--line); border-radius: 8px; text-align: left; }
 .command-trigger kbd { margin-left: auto; padding: 2px 5px; border: 1px solid var(--line); border-radius: 4px; font-size: var(--type-micro); }
@@ -742,12 +749,14 @@ forma-output-visual { position: absolute; inset: 0; display: grid; min-width: 0;
 .area-navigation > span { flex: none; color: var(--muted); font: 500 var(--type-micro) var(--mono); letter-spacing: .08em; text-transform: uppercase; }
 .area-navigation > div { display: flex; min-width: 0; gap: 4px; overflow-x: auto; }
 .area-navigation a { min-width: max-content; padding: 7px 10px; color: var(--muted); border-radius: 5px; font-size: var(--type-caption); font-weight: 600; }.area-navigation a:hover { color: var(--ink); background: var(--panel-2); }.area-navigation a.active { color: var(--on-strong); background: var(--ink); }
-.area-navigation--administration { background: var(--admin-chrome); border-color: var(--admin-chrome-line); }
-.area-navigation--administration > span { color: var(--admin-chrome-subtle); }
-.area-navigation--administration a { color: var(--admin-chrome-muted); }
-.area-navigation--administration a:hover { color: var(--on-dark); background: var(--admin-chrome-hover); }
-.area-navigation--administration a.active { color: var(--on-accent); background: var(--orange); }
-.admin-page > forma-area-navigation .area-navigation--administration { max-width: none; margin: 0; border-width: 0 0 1px; border-radius: 0; }
+.area-navigation--operations { background: var(--admin-chrome); border-color: var(--admin-chrome-line); }
+.area-navigation--operations > span { color: var(--admin-chrome-subtle); }
+.area-navigation--operations a { color: var(--admin-chrome-muted); }
+.area-navigation--operations a:hover { color: var(--on-dark); background: var(--admin-chrome-hover); }
+.area-navigation--operations a.active { color: var(--on-accent); background: var(--orange); }
+.area-navigation--laboratory { background: color-mix(in srgb,var(--panel) 90%,var(--orange)); border-color: color-mix(in srgb,var(--line) 72%,var(--orange)); }
+.area-navigation--laboratory a.active { color: var(--on-strong); background: var(--ink); }
+.admin-page > forma-area-navigation :is(.area-navigation--operations,.area-navigation--laboratory) { max-width: none; margin: 0; border-width: 0 0 1px; border-radius: 0; }
 .admin-health { display: flex; align-items: center; gap: 10px; padding: 11px 14px; color: var(--ink); background: var(--acid); border-radius: 7px; }
 .admin-health b, .admin-health small { display: block; }
 .admin-health small { font: var(--type-micro) var(--mono); }

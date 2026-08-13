@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appEntryPath, documentEntryPath, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentFocusInRoute, withDocumentInRoute } from "../src/model/routes.ts";
+import { documentEntryPath, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentFocusInRoute, withDocumentInRoute } from "../src/model/routes.ts";
+import { applicationEntryPath, applicationIdFromRoute } from "../src/platform/applications.ts";
 
 test("document views use a readable path for the selected durable document", () => {
   const paths = [["/", "document"], ["/studio/board", "board"], ["/studio/guided", "guided"], ["/studio/layers", "layers"], ["/studio/adaptive", "adaptive"], ["/studio/editor", "editor"], ["/studio/chat", "chat"]];
@@ -55,7 +56,7 @@ test("Library focus dialogs have refresh-safe content paths", () => {
   assert.deepEqual(libraryFocusFromRoute("/library/family/family-9/warm-nocturnes"), { kind: "family", id: "family-9" });
   assert.equal(libraryFocusFromRoute("/library"), null);
   assert.equal(libraryRootRoute("/library/output/output-7?scope=kept#preview"), "/library?scope=kept#preview");
-  assert.equal(appEntryPath("/library/output/output-7"), "/library/");
+  assert.equal(applicationEntryPath("/library/output/output-7"), "/creative/");
 });
 
 test("Library Block editor targets are durable refresh-safe paths",()=>{
@@ -64,5 +65,15 @@ test("Library Block editor targets are durable refresh-safe paths",()=>{
   assert.deepEqual(libraryBlockEditorFromRoute("/library/blocks/editor/new"),{blockId:null});
   assert.deepEqual(libraryBlockEditorFromRoute("/library/blocks/editor/block%2F42"),{blockId:"block/42"});
   assert.equal(libraryBlockEditorFromRoute("/library/block/block-42"),null);
-  assert.equal(appEntryPath("/library/blocks/editor/block-42"),"/library/");
+  assert.equal(applicationEntryPath("/library/blocks/editor/block-42"),"/creative/");
+});
+
+test("application routes select one canonical runtime boundary",()=>{
+  assert.equal(applicationIdFromRoute("/document/doc-a/study/view/chat/focus"),"creative");
+  assert.equal(applicationIdFromRoute("/creative/create/conversational"),"creative");
+  assert.equal(applicationIdFromRoute("/operations/events/permissions"),"operations");
+  assert.equal(applicationIdFromRoute("/admin/events/stream"),"operations");
+  assert.equal(applicationIdFromRoute("/laboratory/replay"),"laboratory");
+  assert.equal(applicationIdFromRoute("/admin/events/replay"),"laboratory");
+  assert.equal(applicationEntryPath("/system/focal-points"),"/laboratory/");
 });

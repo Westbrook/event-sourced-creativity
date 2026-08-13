@@ -114,9 +114,3 @@ export function documentEntryPath(route: string) {
   if (!view || view === "document") return "/";
   return `/studio/${view}/`;
 }
-
-export function appEntryPath(route: string) {
-  const pathname = routePathname(route);
-  if (pathname.startsWith("/library/")) return "/library/";
-  return documentEntryPath(route);
-}

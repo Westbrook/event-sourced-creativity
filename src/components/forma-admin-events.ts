@@ -1,4 +1,4 @@
-import { html } from "lit";
+import { html, nothing } from "lit";
 import { FormaElement, icon, downloadJson } from "./forma-element";
 import { eventCategory, shortEventType } from "../model/events";
 import type { CreativeEvent } from "../model/events";
@@ -17,11 +17,11 @@ const usd=(microusd:number)=>new Intl.NumberFormat(undefined,{style:"currency",c
 
 type AdminTab = "stream" | "replay" | "permissions";
 const ADMIN_TAB_PATHS: Record<AdminTab, string> = {
-  stream: "/admin/events/stream",
-  replay: "/admin/events/replay",
-  permissions: "/admin/events/permissions",
+  stream: "/operations/events",
+  replay: "/laboratory/replay",
+  permissions: "/operations/events/permissions",
 };
-const adminTabFromPath = (path: string): AdminTab => path.startsWith("/admin/events/replay") ? "replay" : path.startsWith("/admin/events/permissions") ? "permissions" : "stream";
+const adminTabFromPath = (path: string): AdminTab => path === "/laboratory" || path.startsWith("/laboratory/replay") || path.startsWith("/admin/events/replay") ? "replay" : path.startsWith("/operations/events/permissions") || path.startsWith("/admin/events/permissions") ? "permissions" : "stream";
 const adminTabPath = (tab: AdminTab) => ADMIN_TAB_PATHS[tab];
 
 export class FormaAdminEvents extends FormaElement {
@@ -137,8 +137,9 @@ export class FormaAdminEvents extends FormaElement {
   }
   override render() {
     this.#tab = adminTabFromPath(this.store.route.get());
-    if(this.store.session.get()?.user.role!=="admin")return html`<section class="admin-page"><forma-area-navigation area="administration" active="events"></forma-area-navigation><div class="replay-empty"><span>${icon("lock")}</span><h2>Administrator role required</h2><p>The event-operations surface is server-authorized and unavailable to ${this.store.session.get()?.user.role??"this identity"}.</p></div></section>`;
-    return html`<section class="admin-page"><forma-area-navigation area="administration" active="events"></forma-area-navigation><header class="page-header page-header--admin"><div class="page-header-copy"><span class="eyebrow">Administration / Event operations</span><h1>Event operations</h1><p>Inspect truth, trace projections, and rehearse years of user–application–agent interaction without mutating production state.</p></div><div class="page-header-actions"><div class="admin-health"><span class="live-dot"></span><div><b>Stream healthy</b><small>Head #${this.store.head.get()} · lag 0 · append only</small></div></div></div></header><nav class="tabbar" aria-label="Event administration"><a href=${adminTabPath("stream")} class=${this.#tab==="stream"?"active":""} aria-current=${this.#tab==="stream"?"page":"false"} @click=${(event:MouseEvent)=>{event.preventDefault();this.#setTab("stream");}}>Durable stream</a><a href=${adminTabPath("replay")} class=${this.#tab==="replay"?"active":""} aria-current=${this.#tab==="replay"?"page":"false"} @click=${(event:MouseEvent)=>{event.preventDefault();this.#setTab("replay");}}>Replay laboratory</a><a href=${adminTabPath("permissions")} class=${this.#tab==="permissions"?"active":""} aria-current=${this.#tab==="permissions"?"page":"false"} @click=${(event:MouseEvent)=>{event.preventDefault();this.#setTab("permissions");}}>Permissions & concurrency</a></nav>${this.#tab==="stream"?this.#stream():this.#tab==="replay"?this.#replay():this.#permissions()}</section>`;
+    const laboratory=this.#tab==="replay";const area=laboratory?"laboratory":"operations";const active=laboratory?"replay":this.#tab;
+    if(this.store.session.get()?.user.role!=="admin")return html`<section class="admin-page"><forma-area-navigation area=${area} active=${active}></forma-area-navigation><div class="replay-empty"><span>${icon("lock")}</span><h2>Administrator role required</h2><p>The ${laboratory?"replay laboratory":"event operations surface"} is server-authorized and unavailable to ${this.store.session.get()?.user.role??"this identity"}.</p></div></section>`;
+    return html`<section class="admin-page"><forma-area-navigation area=${area} active=${active}></forma-area-navigation><header class="page-header page-header--admin"><div class="page-header-copy"><span class="eyebrow">${laboratory?"Laboratory / Controlled replay":"Operations / Durable data"}</span><h1>${laboratory?"Replay laboratory":"Event operations"}</h1><p>${laboratory?"Rehearse years of user–application–agent interaction in an isolated projection without mutating creative documents.":"Inspect immutable truth, trace rebuildable projections, and review who may append each event family."}</p></div><div class="page-header-actions"><div class="admin-health"><span class="live-dot"></span><div><b>${laboratory?"Experiment isolated":"Stream healthy"}</b><small>${laboratory?"Saved fixtures · explicit provider approval":`Head #${this.store.head.get()} · lag 0 · append only`}</small></div></div></div></header>${laboratory?nothing:html`<nav class="tabbar" aria-label="Event operations"><a href=${adminTabPath("stream")} class=${this.#tab==="stream"?"active":""} aria-current=${this.#tab==="stream"?"page":"false"} @click=${(event:MouseEvent)=>{event.preventDefault();this.#setTab("stream");}}>Durable stream</a><a href=${adminTabPath("permissions")} class=${this.#tab==="permissions"?"active":""} aria-current=${this.#tab==="permissions"?"page":"false"} @click=${(event:MouseEvent)=>{event.preventDefault();this.#setTab("permissions");}}>Permissions & concurrency</a></nav>`}${this.#tab==="stream"?this.#stream():this.#tab==="replay"?this.#replay():this.#permissions()}</section>`;
   }
 }
 customElements.define("forma-admin-events", FormaAdminEvents);

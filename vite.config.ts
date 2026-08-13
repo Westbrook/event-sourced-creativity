@@ -17,7 +17,7 @@ const localBindingConfig = {
   assets: {
     binding: "ASSETS",
     not_found_handling: "single-page-application" as const,
-    run_worker_first: ["/api/*", "/share/*", "/document/*", "/library/*"],
+    run_worker_first: ["/api/*", "/share/*", "/document/*", "/library/*", "/creative/*", "/operations/*", "/laboratory/*"],
   },
   d1_databases: d1
     ? [
