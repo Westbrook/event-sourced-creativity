@@ -86,6 +86,16 @@ export const budgetCounters = sqliteTable(
   (table) => [primaryKey({ columns: [table.scope, table.scopeId, table.period] })],
 );
 
+/** Monthly USD-denominated projection for provider work whose modalities have different token prices. */
+export const costBudgetCounters = sqliteTable(
+  "cost_budget_counters",
+  {
+    scope: text("scope").notNull(), scopeId: text("scope_id").notNull(), period: text("period").notNull(),
+    usedMicrousd: integer("used_microusd").notNull().default(0), reservedMicrousd: integer("reserved_microusd").notNull().default(0), hardLimitMicrousd: integer("hard_limit_microusd").notNull(), updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.scope, table.scopeId, table.period] })],
+);
+
 export const shares = sqliteTable(
   "shares",
   {
@@ -108,6 +118,15 @@ export const replayApprovals = sqliteTable(
     seed: text("seed").notNull(), requestedAt: text("requested_at").notNull(), expiresAt: text("expires_at").notNull(), consumedAt: text("consumed_at"),
   },
   (table) => [index("idx_replay_approvals_owner_expiry").on(table.ownerId, table.expiresAt)],
+);
+
+/** Amount-bounded cost authorization attached to a one-use replay approval. */
+export const replayCostAuthorizations = sqliteTable(
+  "replay_cost_authorizations",
+  {
+    approvalId: text("approval_id").primaryKey(), ownerId: text("owner_id").notNull(), pricingVersion: text("pricing_version").notNull(),
+    estimatedMicrousd: integer("estimated_microusd").notNull(), reservedMicrousd: integer("reserved_microusd").notNull(), maximumMicrousd: integer("maximum_microusd").notNull(), allowUserOverage: integer("allow_user_overage", { mode: "boolean" }).notNull().default(false), createdAt: text("created_at").notNull(),
+  },
 );
 
 /** Paid provider-backed mocks are durable fixtures so their events and images can be replayed without paying again. */

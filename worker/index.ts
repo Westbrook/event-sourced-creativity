@@ -3,7 +3,7 @@ import { getMedia, uploadMedia } from "./media-api";
 import { handleAdminUsers, handleSession } from "./pilot-policy";
 import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
 import { appEntryPath, isDocumentViewRoute, libraryBlockEditorFromRoute, libraryFocusFromRoute } from "../src/model/routes";
-import { handleReplayApproval, handleReplaySessions } from "./replay-sessions-api";
+import { handleReplayApproval, handleReplayEstimate, handleReplaySessions } from "./replay-sessions-api";
 import { handleDocumentJobs } from "./document-jobs-api";
 
 export default {
@@ -12,6 +12,7 @@ export default {
     if(url.pathname==="/api/session")return handleSession(request,env);
     if(url.pathname==="/api/admin/users")return handleAdminUsers(request,env);
     if(url.pathname==="/api/replay-sessions/approval")return handleReplayApproval(request,env);
+    if(url.pathname==="/api/replay-sessions/estimate")return handleReplayEstimate(request,env);
     if(url.pathname==="/api/replay-sessions")return handleReplaySessions(request,env);
     if(url.pathname.startsWith("/api/replay-sessions/"))return handleReplaySessions(request,env,decodeURIComponent(url.pathname.slice("/api/replay-sessions/".length)));
     if(url.pathname==="/api/document-jobs")return handleDocumentJobs(request,env);

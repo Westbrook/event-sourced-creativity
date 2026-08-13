@@ -1702,6 +1702,14 @@ forma-document-generations { display: block; min-width: 0; }
   box-shadow: none;
 }
 
+.replay-inline-status { color: var(--danger); }
+
+.capability-audit { color: var(--ink); }
+.capability-audit > span { background: var(--panel-2); }
+.capability-audit b { color: var(--orange); }
+.capability-audit small,
+.capability-audit p { color: var(--muted); }
+
 .saved-replays {
   margin-bottom: clamp(4rem, 7vw, 7rem);
   padding: 0 0 clamp(3rem, 5vw, 5rem);
@@ -1779,7 +1787,7 @@ forma-document-generations { display: block; min-width: 0; }
 
 .actual-replay-warning b { color: var(--ink); }
 .actual-replay-warning p { color: var(--muted); }
-.actual-replay-warning > span { color: #fff; background: var(--warning); }
+.actual-replay-warning > span { color: var(--on-accent); background: var(--warning); }
 
 /* Spatial scope editor and reference extraction use the normalized form
    language while leaving the image as the dominant control. */
@@ -1814,7 +1822,25 @@ forma-document-generations { display: block; min-width: 0; }
 }
 
 .spatial-kind-picker label:hover > span { border-color: var(--orange); }
-.spatial-kind-picker input:checked + span { color: var(--orange); background: var(--orange-soft); border-color: var(--orange); }
+.spatial-kind-picker input:checked + span {
+  color: var(--on-accent);
+  background: var(--orange);
+  border-color: var(--orange);
+}
+.spatial-kind-picker input:checked + span > i {
+  color: var(--on-accent);
+  background: var(--orange);
+  border-color: var(--orange);
+}
+.spatial-kind-picker input:checked + span b,
+.spatial-kind-picker input:checked + span small { color: inherit; }
+
+.spatial-direct-tools button[aria-pressed="true"],
+.spatial-region-picker button[aria-pressed="true"] {
+  color: var(--on-accent);
+  background: var(--orange);
+  border-color: var(--orange);
+}
 
 .reference-findings {
   padding: 1.5rem 0 0;
@@ -1852,6 +1878,23 @@ forma-document-generations { display: block; min-width: 0; }
  * their fixed dark presentation so images and operational evidence retain a
  * stable inspection environment in either system theme.
  */
+
+.area-navigation {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  border-color: var(--line);
+}
+
+.area-navigation > span,
+.area-navigation a { color: var(--muted); }
+.area-navigation a:hover { color: var(--ink); background: var(--panel-2); }
+.area-navigation a.active { color: var(--on-strong); background: var(--ink); }
+
+.area-navigation--administration { background: var(--admin-chrome); border-color: var(--admin-chrome-line); }
+.area-navigation--administration > span { color: var(--admin-chrome-subtle); }
+.area-navigation--administration a { color: var(--admin-chrome-muted); }
+.area-navigation--administration a:hover { color: var(--on-dark); background: var(--admin-chrome-hover); }
+.area-navigation--administration a.active { color: var(--on-accent); background: var(--orange); }
 
 :where(
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
@@ -1913,6 +1956,70 @@ forma-document-generations { display: block; min-width: 0; }
 .tree-row:hover,
 .rail-links a:hover { background: var(--panel); }
 
+:is(
+  .continuity-receipt,
+  .corpus-lab,
+  .saved-replays,
+  .replay-clock,
+  .replay-console > footer,
+  .decision-spine,
+  .adaptive-relations,
+  .adaptive-intent,
+  .board-capture,
+  .whole-document-map,
+  .reference-findings,
+  .creative-plan-page,
+  .creative-editor-item,
+  .chat-workspace,
+  .chat-composer,
+  .document-generation-embedded
+) {
+  color: var(--ink);
+  background: var(--panel);
+  border-color: var(--line);
+}
+
+:is(
+  .creative-plan-section,
+  .creative-editor-item-toggle,
+  .spatial-precision[open] summary
+) { background: var(--panel-2); border-color: var(--line); }
+
+.creative-editor-canvas { background: var(--canvas); }
+.context-board :is(.board-lane--intent, .board-lane--scene, .board-lane--craft, .board-lane--constraint) { background: transparent; }
+
+.output-quality.full {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, var(--panel));
+}
+
+.output-quality.draft {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, var(--panel));
+}
+
+.authority.inferred,
+.status.simulation,
+.status.evaluation {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, var(--panel));
+}
+
+.status.operational {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, var(--panel));
+}
+
+.status.gated {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, var(--panel));
+}
+
+.status.partial {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 12%, var(--panel));
+}
+
 .toast {
   color: var(--on-strong);
   background: var(--ink);
@@ -1965,7 +2072,155 @@ forma-document-generations { display: block; min-width: 0; }
   .guided-actions,
   .spatial-scope-preview
 ) {
-  background: #171717;
+  color: var(--fixed-dark-ink);
+  background: var(--fixed-dark);
+}
+
+:is(
+  .gate-metrics b,
+  .dosage-curve em,
+  .threshold.ready,
+  .architecture-strip > i,
+  .gauge-grid b,
+  .gauge-row b,
+  .envelope-card h2,
+  .envelope-card dd,
+  .extractor-metrics b
+) { color: var(--fixed-dark-accent); }
+
+:is(
+  .gate-card > p,
+  .gate-metrics span,
+  .threshold small,
+  .gate-details dt,
+  .dosage-curve,
+  .architecture-strip span,
+  .gauge-grid span,
+  .envelope-card dt,
+  .envelope-card p
+) { color: var(--fixed-dark-muted); }
+
+.architecture-strip .truth {
+  color: var(--on-accent);
+  background: var(--orange);
+}
+.architecture-strip .truth span { color: color-mix(in srgb, var(--on-accent) 72%, transparent); }
+
+.gate-review { color: var(--on-accent); background: var(--orange); }
+.gate-review.recorded { color: var(--ink); background: var(--mint); }
+.gate-review > small { color: inherit; opacity: .76; }
+.gate-review .gate-continue { color: var(--ink); background: var(--panel); }
+
+.view-workflow-list article > small,
+.decision-panel details small { color: var(--warning); }
+.tech-note p { color: var(--muted); }
+
+.danger-quiet,
+.remove-block { color: var(--danger); }
+
+.compile-bridge > span,
+.compile-bridge button,
+.document-generation-feature > footer em { color: var(--fixed-dark-accent); }
+
+.unresolved-chip {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, var(--panel));
+}
+
+.reality-tools button,
+.creative-quick-tools > button,
+.creative-reference-tool,
+.reality-list article,
+.project-reality-list article,
+.layers-panel li {
+  color: var(--fixed-dark-ink);
+  background: var(--fixed-dark-panel);
+  border-color: #444;
+}
+
+.reality-tools button > span,
+.creative-quick-tools > button > span,
+.reality-glyph,
+.editor-item-glyph,
+.creative-inspector-empty > span {
+  color: var(--on-accent);
+  background: var(--orange);
+}
+
+/* The legacy ingredient variants and editor toolbar selectors are more
+   specific than the shared fixed-dark palette above. Keep the semantic
+   glyph color consistent instead of letting light-mode swatches leak back
+   into the dark editing canvas. */
+.reality-list .reality-glyph,
+.project-reality-list .reality-glyph,
+.reality-list .reality-glyph.light,
+.project-reality-list .reality-glyph.light {
+  color: var(--on-accent);
+  background: var(--orange);
+}
+
+.editor-toolbar button:hover,
+.editor-toolbar button.active {
+  color: var(--on-accent);
+  background: var(--orange);
+}
+
+.editor-toolbar button.active > span { color: inherit; }
+
+.canvas-context button {
+  color: var(--fixed-dark-ink);
+  background: var(--fixed-dark-panel);
+  border-color: #666;
+}
+.canvas-context button span { color: var(--fixed-dark-accent); }
+.canvas-context button.selected span { color: inherit; }
+
+.reality-tools button:hover,
+.reality-tools button.active,
+.creative-quick-tools > button:hover {
+  color: var(--on-accent);
+  background: var(--orange);
+  border-color: var(--orange);
+}
+
+.new-layer-button,
+.reality-list article > button,
+.project-reality-list article > button,
+.layer-inspector > header button,
+.layer-inspector button,
+.creative-tool-more { color: var(--fixed-dark-accent); }
+
+.creative-editor-toolbar .button.primary,
+.reality-stage > footer .button {
+  color: var(--on-accent);
+  background: var(--orange);
+}
+
+.creative-editor-tools > footer {
+  color: var(--fixed-dark-ink);
+  background: var(--fixed-dark-panel);
+  border-color: #444;
+}
+.creative-editor-tools > footer p { color: var(--fixed-dark-muted); }
+.creative-editor-tools > footer button { color: var(--fixed-dark-accent); }
+
+.creative-plan-section > header button {
+  color: var(--ink);
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+.creative-editor-item.negative-constraint {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--danger) 9%, var(--panel));
+  border-color: color-mix(in srgb, var(--danger) 48%, var(--line));
+}
+
+.spatial-scope-control--layers .spatial-scope-trigger > span:first-child,
+.spatial-scope-control--editor .spatial-scope-trigger > span:first-child {
+  color: var(--on-accent);
+  background: var(--orange);
+  border-color: var(--orange);
 }
 
 .block-source-notice > span,
