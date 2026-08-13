@@ -1338,6 +1338,16 @@ forma-project-rail:has(.project-rail.collapsed) { width: 72px; }
 .spatial-preview-canvas > i:nth-child(2) { width: 68%; height: 16%; left: 16%; bottom: 9%; border-radius: 50%; }
 .spatial-preview-canvas > b { position: absolute; display: block; background: rgba(206,255,58,.43); border: 1px solid var(--acid); cursor: move; }
 .spatial-preview-canvas > b.outside { background: rgba(235,121,74,.35); border-color: var(--orange); }
+.spatial-shape-handle { position: absolute; z-index: 4; display: block; padding: 0; transform: translate(-50%,-50%); touch-action: none; background: #f7f9f4; border: 2px solid #26372e; border-radius: 50%; box-shadow: 0 1px 4px rgba(9,16,12,.45); }
+.spatial-shape-handle.corner { width: 16px; height: 16px; }
+.spatial-shape-handle.edge { width: 12px; height: 12px; background: var(--acid); }
+.spatial-shape-handle:hover,.spatial-shape-handle:focus-visible { width: 20px; height: 20px; background: #fff; border-color: var(--orange); outline: 0; }
+.spatial-shape-handle--n,.spatial-shape-handle--s { width: 24px !important; height: 10px !important; border-radius: 999px; cursor: ns-resize; }
+.spatial-shape-handle--e,.spatial-shape-handle--w { width: 10px !important; height: 24px !important; border-radius: 999px; cursor: ew-resize; }
+.spatial-shape-handle--nw,.spatial-shape-handle--se { cursor: nwse-resize; }
+.spatial-shape-handle--ne,.spatial-shape-handle--sw { cursor: nesw-resize; }
+.spatial-shape-handle--path-point { cursor: move; }
+.spatial-shape-handle--path-edge { width: 11px; height: 11px; background: #22352b; border-color: #f7f9f4; cursor: cell; opacity: .86; }
 .spatial-preview-canvas > small { position: absolute; right: 7px; bottom: 7px; left: 7px; padding: 5px 6px; pointer-events: none; color: #eef3f0; background: rgba(20,31,25,.78); border: 1px solid rgba(255,255,255,.2); border-radius: 4px; font-size: var(--type-micro); }
 .spatial-preview-language { display: grid; gap: 4px; margin-bottom: 12px; color: #b7c4bc; font-size: var(--type-micro); }
 .spatial-preview-language input { min-width: 0; width: 100%; padding: 8px; color: #f1f4f2; background: #2c3b33; border: 1px solid #607067; border-radius: 5px; font-size: var(--type-caption); }

@@ -54,7 +54,14 @@ test("offers the same durable targeting capability through every document lens",
   assert.match(store, /spatial_scope: normalizeSpatialScope/);
   assert.match(scopeEditor, /@pointerdown=\$\{this\.#startPreviewGesture\}/);
   assert.match(scopeEditor, /move-box/);
+  assert.match(scopeEditor, /resize-box/);
   assert.match(scopeEditor, /draw-path/);
+  assert.match(scopeEditor, /move-path-point/);
+  assert.match(scopeEditor, /data-box-handle/);
+  assert.match(scopeEditor, /data-path-point/);
+  assert.match(scopeEditor, /data-path-edge/);
+  assert.match(scopeEditor, /#nudgeBoxHandle/);
+  assert.match(scopeEditor, /#nudgePathPoint/);
   assert.match(scopeEditor, /#describeArea/);
   assert.match(scopeEditor, /Or describe it in words/);
 });

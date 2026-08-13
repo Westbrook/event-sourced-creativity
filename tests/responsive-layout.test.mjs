@@ -104,6 +104,9 @@ test("keeps the affected-area editor and its image controls inside the dialog", 
   assert.match(styles, /\.spatial-scope-scroll\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto/);
   assert.match(styles, /\.spatial-scope-actions\s*\{[^}]*margin-top:\s*0;[^}]*border-top:\s*1px solid var\(--line\)/);
   assert.doesNotMatch(styles, /\.spatial-scope-actions\s*\{[^}]*position:\s*sticky/);
+  assert.match(styles, /\.spatial-shape-handle\s*\{[^}]*position:\s*absolute;[^}]*touch-action:\s*none;[^}]*border:\s*2px solid #26372e;[^}]*border-radius:\s*50%/);
+  assert.match(styles, /\.spatial-shape-handle--n,[^}]*\{[^}]*cursor:\s*ns-resize/);
+  assert.match(styles, /\.spatial-shape-handle--e,[^}]*\{[^}]*cursor:\s*ew-resize/);
   assert.match(editor, /class="spatial-scope-scroll"><div class="spatial-scope-layout"/);
 });
 
