@@ -10,6 +10,7 @@ import { normalizeSpatialScope } from "../model/spatial-scope";
 import { normalizeImageFocalPoint } from "../model/focal-point";
 import { resolveImageFocalAnalysis } from "../model/image-focus";
 import { documentGenerationRequestKey as generationRequestKeyFor, documentGenerationRevision as generationRevisionFor, documentJobIsStale, type DocumentJob, type DocumentJobKind } from "../model/document-jobs";
+import { effectivePromptPreference, normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptPreferenceScope, type PromptTechnique } from "../model/prompt-structures";
 
 type Listener = () => void;
 export type PilotSession = {
@@ -79,7 +80,8 @@ export class FormaStore {
   }
   documentJob(kind:DocumentJobKind,documentId=this.projection.get().documentId){return this.documentJobs.get().find((job)=>job.documentId===documentId&&job.kind===kind&&(job.status==="queued"||job.status==="running"));}
   documentGenerationRevision(){return this.#generationContext().documentRevision;}
-  documentGenerationRequestKey(kind:"preview"|"generate",sourcePreviewId?:string|null){return generationRequestKeyFor(kind,this.documentGenerationRevision(),sourcePreviewId);}
+  promptTechniquePreference(){const projection=this.projection.get();const filed=projection.membership[projection.documentId];return effectivePromptPreference(projection.preferences,{documentId:projection.documentId,collectionIds:filed?[filed.collectionId]:[],projectId:projection.projectId,accountId:this.session.get()?.user.userId});}
+  documentGenerationRequestKey(kind:"preview"|"generate",sourcePreviewId?:string|null,promptTechnique:PromptTechnique=this.promptTechniquePreference().technique,promptFanId?:string|null){return generationRequestKeyFor(kind,this.documentGenerationRevision(),sourcePreviewId,promptTechnique,promptFanId);}
   documentGenerationJobs(documentId=this.projection.get().documentId){return this.documentJobs.get().filter((job)=>job.documentId===documentId&&(job.kind==="preview"||job.kind==="generate")&&(job.status==="queued"||job.status==="running")).sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId));}
   documentJobForRequest(kind:"preview"|"generate",requestKey:string,documentId=this.projection.get().documentId){return this.documentGenerationJobs(documentId).find((job)=>job.kind===kind&&job.requestKey===requestKey);}
   documentJobStarting(requestKey:string){return this.#jobStarts.has(requestKey);}
@@ -226,20 +228,34 @@ export class FormaStore {
     } finally { this.busy.set(""); this.notify(); }
   }
 
-  async preview(sourceSurface?: string) {
-    try{const context=this.#generationContext();const requestKey=generationRequestKeyFor("preview",context.documentRevision);const {reused}=await this.#startDocumentJob("preview",{...context,requestKey},sourceSurface??"studio");this.toast(reused?"This exact draft is already in the queue.":"Draft queued. You can keep editing and queue the updated document too.");}catch(error){this.toast(error instanceof Error?error.message:"Draft generation failed");}
+  async preview(sourceSurface?: string,promptTechnique?:PromptTechnique) {
+    const technique=normalizePromptTechnique(promptTechnique??this.promptTechniquePreference().technique);
+    try{const context=this.#generationContext();const requestKey=generationRequestKeyFor("preview",context.documentRevision,null,technique);const {reused}=await this.#startDocumentJob("preview",{...context,requestKey,promptTechnique:technique},sourceSurface??"studio");this.toast(reused?"This exact draft is already in the queue.":`${technique==="prose"?"Draft":`${technique} draft`} queued. You can keep editing and queue the updated document too.`);}catch(error){this.toast(error instanceof Error?error.message:"Draft generation failed");}
   }
 
-  async generate(options?: string | { sourceSurface?: string; sourcePreviewId?: string }) {
-    const sourceSurface=typeof options==="string"?options:options?.sourceSurface;const sourcePreviewId=typeof options==="string"?undefined:options?.sourcePreviewId;
+  async generate(options?: string | { sourceSurface?: string; sourcePreviewId?: string; promptTechnique?: PromptTechnique }) {
+    const sourceSurface=typeof options==="string"?options:options?.sourceSurface;const sourcePreviewId=typeof options==="string"?undefined:options?.sourcePreviewId;const technique=normalizePromptTechnique(typeof options==="string"?this.promptTechniquePreference().technique:options?.promptTechnique??this.promptTechniquePreference().technique);
     try {
-      const context=this.#generationContext();const requestKey=generationRequestKeyFor("generate",context.documentRevision,sourcePreviewId);const {reused}=await this.#startDocumentJob("generate",{sourcePreviewId,...context,requestKey},sourceSurface??"studio");this.toast(reused?"This exact full-quality image is already in the queue.":"Full-quality generation queued. You can keep editing and queue the updated document too.");
+      const context=this.#generationContext();const requestKey=generationRequestKeyFor("generate",context.documentRevision,sourcePreviewId,technique);const {reused}=await this.#startDocumentJob("generate",{sourcePreviewId,...context,requestKey,promptTechnique:technique},sourceSurface??"studio");this.toast(reused?"This exact full-quality image is already in the queue.":`${technique==="prose"?"Full-quality generation":`${technique} full-quality generation`} queued. You can keep editing and queue the updated document too.`);
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
+  }
+
+  async generatePromptFan(kind:"preview"|"generate",options:{sourceSurface?:string;sourcePreviewId?:string}={}){
+    const context=this.#generationContext();const promptFanId=crypto.randomUUID();let started=0;
+    for(const technique of PROMPT_TECHNIQUES){try{const requestKey=generationRequestKeyFor(kind,context.documentRevision,options.sourcePreviewId,technique,promptFanId);await this.#startDocumentJob(kind,{...context,sourcePreviewId:options.sourcePreviewId,requestKey,promptTechnique:technique,promptFanId},options.sourceSurface??"studio");started+=1;}catch(error){this.toast(`${started} of 4 prompt fan requests queued. ${error instanceof Error?error.message:"The remaining request could not be started."}`);return promptFanId;}}
+    this.toast(`${kind==="preview"?"Draft":"Full-quality"} prompt fan queued · prose, bullets, JSON, and XML.`);return promptFanId;
+  }
+
+  async preferPromptTechnique(technique:PromptTechnique,scope:PromptPreferenceScope,source:{fanId?:string|null;outputId?:string|null}={}){
+    const projection=this.projection.get();const collectionId=projection.membership[projection.documentId]?.collectionId;const scopeId=scope==="document"?projection.documentId:scope==="collection"?collectionId:scope==="project"?projection.projectId:this.session.get()?.user.userId;
+    if(!scopeId){this.toast("File this document in a collection before setting a folder preference.");return false;}
+    const appended=await this.append({type:"PromptTechniquePreferred",payload:{preference_id:crypto.randomUUID(),preference_kind:"prompt_technique",technique:normalizePromptTechnique(technique),scope,scope_id:scopeId,document_id:projection.documentId,project_id:projection.projectId,source_fan_id:source.fanId??null,source_output_id:source.outputId??null}});
+    if(appended.length)this.toast(`${normalizePromptTechnique(technique)} prompts preferred for this ${scope==="collection"?"folder":scope}.`);return Boolean(appended.length);
   }
 
   async chat(message:string,livePreview=true) {
     try{
-      await this.#startDocumentJob("chat",{message,livePreview,documentId:this.projection.get().documentId},"chat");return[];
+      const documentId=this.projection.get().documentId;await this.#startDocumentJob("chat",{message,livePreview,documentId,promptTechnique:this.promptTechniquePreference().technique},"chat");return[];
     }catch(error){this.toast(error instanceof Error?error.message:"Forma could not respond");return[];}
   }
 

@@ -70,4 +70,6 @@ test("distinguishes updated draft work and full generations promoted from differ
   assert.notEqual(documentGenerationRequestKey("preview", "rev-one"), documentGenerationRequestKey("preview", "rev-two"));
   assert.notEqual(documentGenerationRequestKey("generate", "rev-one", "draft-a"), documentGenerationRequestKey("generate", "rev-one", "draft-b"));
   assert.equal(documentGenerationRequestKey("generate", "rev-one"), "generate:rev-one:document");
+  assert.notEqual(documentGenerationRequestKey("preview", "rev-one", null, "json"), documentGenerationRequestKey("preview", "rev-one", null, "xml"));
+  assert.notEqual(documentGenerationRequestKey("preview", "rev-one", null, "prose", "fan-a"), documentGenerationRequestKey("preview", "rev-one", null, "prose", "fan-b"));
 });

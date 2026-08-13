@@ -11,6 +11,8 @@ export type DocumentJob = {
   documentRevision: string;
   requestKey: string;
   sourcePreviewId: string | null;
+  promptTechnique: "prose" | "bullets" | "json" | "xml";
+  promptFanId: string | null;
   result: Record<string, unknown> | null;
   error: string | null;
   attemptCount: number;
@@ -41,8 +43,9 @@ export function documentGenerationRevision(value: unknown) {
   return `rev-${(hash >>> 0).toString(36)}`;
 }
 
-export function documentGenerationRequestKey(kind: "preview" | "generate", documentRevision: string, sourcePreviewId?: string | null) {
-  return kind === "preview" ? `preview:${documentRevision}` : `generate:${documentRevision}:${sourcePreviewId || "document"}`;
+export function documentGenerationRequestKey(kind: "preview" | "generate", documentRevision: string, sourcePreviewId?: string | null, promptTechnique = "prose", promptFanId?: string | null) {
+  const base = kind === "preview" ? `preview:${documentRevision}` : `generate:${documentRevision}:${sourcePreviewId || "document"}`;
+  return promptTechnique === "prose" && !promptFanId ? base : `${base}:prompt:${promptTechnique}${promptFanId ? `:fan:${promptFanId}` : ""}`;
 }
 
 export const DOCUMENT_JOB_LEASE_MS = 75_000;

@@ -1537,6 +1537,46 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .generation-actions { display: flex; flex: none; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .generation-actions.compact { gap: 6px; }
 .generation-actions .button { white-space: nowrap; }
+.generation-action-pair { display: inline-flex; min-width: 0; align-items: stretch; gap: 3px; }
+.generation-action-pair > .button { min-width: 0; }
+.generation-fan-button { min-height: 32px; padding: 6px 9px; border: 1px solid var(--line-strong); border-radius: 6px; font: 700 var(--type-micro) var(--sans); white-space: nowrap; }
+.generation-fan-button.secondary { color: var(--forest); background: var(--panel); }
+.generation-fan-button.primary { color: var(--panel); background: var(--forest-2); border-color: var(--forest-2); }
+.generation-fan-button:hover:not(:disabled) { filter: brightness(.96); }
+.prompt-fan-review-trigger-wrap { display: flex; justify-content: flex-end; margin-top: 6px; }
+.prompt-fan-review-trigger { display: inline-flex; min-height: 30px; align-items: center; gap: 7px; padding: 4px 0; color: var(--muted); background: transparent; border: 0; font: 650 var(--type-micro) var(--sans); }
+.prompt-fan-review-trigger:hover { color: var(--ink); }
+.prompt-fan-card { display: grid; width: min(1440px,calc(100% - 28px)); max-height: calc(100dvh - 28px); grid-template-rows: auto auto minmax(0,1fr) auto; overflow: hidden; margin: 14px auto; padding: 0; }
+.prompt-fan-card > header { padding: 30px 64px 22px 32px; border-bottom: 1px solid var(--line); }
+.prompt-fan-card > header > span { color: var(--muted); font: 700 var(--type-micro) var(--sans); letter-spacing: .08em; text-transform: uppercase; }
+.prompt-fan-card > header h2 { margin: 5px 0 7px; font: 600 clamp(1.45rem,2.5vw,2.35rem)/1.05 var(--sans); letter-spacing: -.035em; }
+.prompt-fan-card > header p { max-width: 760px; margin: 0; color: var(--muted); }
+.prompt-fan-preference-bar { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px 32px; background: var(--panel-2); border-bottom: 1px solid var(--line); }
+.prompt-fan-preference-bar > div { display: grid; gap: 2px; }
+.prompt-fan-preference-bar small { color: var(--muted); font-size: var(--type-micro); }
+.prompt-fan-preference-bar label { display: flex; flex: none; align-items: center; gap: 10px; color: var(--muted); font: 650 var(--type-micro) var(--sans); }
+.prompt-fan-preference-bar select { min-width: 180px; }
+.prompt-fan-grid { display: grid; min-height: 0; overflow: auto; grid-template-columns: repeat(4,minmax(240px,1fr)); background: var(--line); gap: 1px; }
+.prompt-fan-option { display: flex; min-width: 0; flex-direction: column; padding: 20px; background: var(--panel); }
+.prompt-fan-option.preferred { background: color-mix(in srgb,var(--acid) 9%,var(--panel)); }
+.prompt-fan-option > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.prompt-fan-option > header span { color: var(--muted); font: 700 var(--type-micro) var(--sans); letter-spacing: .06em; text-transform: uppercase; }
+.prompt-fan-option h3 { margin: 2px 0 0; font: 650 var(--type-body) var(--sans); }
+.prompt-fan-option > header em { display: inline-flex; flex: none; align-items: center; gap: 4px; color: var(--forest); font: 700 var(--type-micro) var(--sans); font-style: normal; }
+.prompt-fan-option > p { min-height: 3.8em; margin: 10px 0 16px; color: var(--muted); font-size: var(--type-caption); }
+.prompt-fan-image { min-height: 260px; aspect-ratio: 1 / 1; overflow: hidden; background: var(--panel-2); }
+.prompt-fan-image forma-output-visual,.prompt-fan-image .output-visual { width: 100%; height: 100%; }
+.prompt-fan-image img { width: 100%; height: 100%; object-fit: cover; object-position: var(--focal-x,50%) var(--focal-y,50%); }
+.prompt-fan-pending { display: grid; height: 100%; place-content: center; gap: 8px; color: var(--muted); text-align: center; font-size: var(--type-caption); }
+.prompt-fan-pending:first-child { font-size: var(--type-heading); }
+.prompt-fan-option > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.prompt-fan-option > footer > span { display: grid; min-width: 0; }
+.prompt-fan-option > footer small { overflow: hidden; color: var(--muted); font-size: var(--type-micro); text-overflow: ellipsis; white-space: nowrap; }
+.prompt-fan-option details { margin-top: 14px; border-top: 1px solid var(--line); }
+.prompt-fan-option summary { padding: 10px 0 0; color: var(--muted); cursor: pointer; font: 650 var(--type-micro) var(--sans); }
+.prompt-fan-option pre { max-height: 220px; overflow: auto; margin: 10px 0 0; padding: 12px; background: var(--panel-2); font-size: var(--type-micro); white-space: pre-wrap; overflow-wrap: anywhere; }
+.prompt-fan-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px 32px; border-top: 1px solid var(--line); }
+.prompt-fan-card > footer p { margin: 0; color: var(--muted); font-size: var(--type-caption); }
 .generation-queue-trigger { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; gap: 6px; padding: 6px 9px; color: var(--forest-2); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 6px; font: 650 var(--type-micro) var(--sans); white-space: nowrap; }
 .generation-queue-trigger:hover { color: var(--forest); background: var(--panel-2); }
 .generation-queue-trigger b { display: none; min-width: 18px; height: 18px; place-items: center; color: var(--panel); background: var(--forest); border-radius: 999px; font-size: var(--type-micro); }
@@ -1669,6 +1709,15 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
   .image-lightbox-card > footer .button { width: 100%; }
   .generation-actions { width: 100%; align-items: stretch; flex-direction: column; }
   .generation-actions .button { width: 100%; }
+  .generation-action-pair { width: 100%; }
+  .generation-action-pair > .button { flex: 1; width: auto; }
+  .prompt-fan-card { width: calc(100% - 12px); max-height: calc(100dvh - 12px); margin: 6px auto; }
+  .prompt-fan-preference-bar { align-items: stretch; flex-direction: column; gap: 10px; padding: 14px 18px; }
+  .prompt-fan-preference-bar label { align-items: stretch; flex-direction: column; gap: 5px; }
+  .prompt-fan-preference-bar select { width: 100%; min-width: 0; }
+  .prompt-fan-grid { grid-template-columns: minmax(0,1fr); }
+  .prompt-fan-card > header { padding: 24px 52px 18px 18px; }
+  .prompt-fan-card > footer { align-items: stretch; flex-direction: column; gap: 12px; padding: 15px 18px; }
   .generation-queue-trigger { width: 100%; }
   .generation-queue-card { width: calc(100% - 12px); max-height: calc(100dvh - 12px); margin: 6px auto; }
   .generation-queue-card > header { padding: 24px 52px 15px 18px; }

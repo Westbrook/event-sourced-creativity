@@ -13,6 +13,12 @@ test("builds a GPT Image prompt that preserves role, intent, and negative constr
   assert.match(prompt,/subject_reference/);assert.match(prompt,/target block supports the source block/);
 });
 
+test("sends the requested prompt representation without changing the image request profile",async()=>{
+  const originalFetch=globalThis.fetch;const prompts=[];globalThis.fetch=async(_url,init)=>{prompts.push(JSON.parse(String(init.body)).prompt);return Response.json({data:[{b64_json:btoa("image")}],usage:{total_tokens:1}});};
+  try{for(const promptTechnique of ["prose","bullets","json","xml"])await generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[{block_id:"b",role:"direction",properties:{text:"Quiet field"}}]},{title:"Study"},{promptTechnique});}finally{globalThis.fetch=originalFetch;}
+  assert.match(prompts[0],/^Create one polished landscape/);assert.match(prompts[1],/Document decisions:/);assert.equal(JSON.parse(prompts[2]).operation,"generate_image");assert.match(prompts[3],/<image-generation-prompt/);assert.equal(new Set(prompts).size,4);
+});
+
 test("turns every spatial block scope into an explicit image-generation directive",()=>{
   const snapshot={facts:[
     {block_id:"subject-1",role:"subject",intent:"include",properties:{text:"glass vessel",weight:.8,spatial_scope:{kind:"aabb",aabb:{x:.62,y:.18,width:.28,height:.54},falloff:"hard"}}},

@@ -750,6 +750,11 @@ Build Event operations outside the main app interface:
 24. Resolve every policy-enabled Reference image to authenticated bytes and send those bytes to the image-editing model. Do not substitute textual descriptions when pixel use was explicitly requested.
 25. Calculate and append a normalized focal point for every generated image. Prefer inexpensive deterministic analysis and use a bounded vision-model fallback only when local confidence is inadequate.
 26. Configure OpenAI credentials and `OPENAI_PROJECT` only in server environments. Add project attribution to every Responses and Image API request.
+27. Compile one canonical creative meaning into four prompt representations: narrative prose, prose bullets, structured JSON, and a stable XML node set. Keep prose as the no-preference default.
+28. Make prompt representation an explicit generation receipt and job-identity dimension; it must never be inferred from the prompt body after the fact.
+29. Add Draft and Full-quality fan actions that queue all four representations against the same immutable document state, reference inputs, generation profile, and shared planner direction.
+30. Compare fan outputs side by side with technique explanations and expandable prepared prompts. Persist an explicit preferred technique at document, collection, project, or account scope, resolving the narrowest applicable scope first.
+31. Keep ordinary generation and Chat live-preview generation on the effective preferred technique. Fan actions always run all four and never silently change preference.
 
 ### Done when
 
@@ -766,6 +771,9 @@ Build Event operations outside the main app interface:
 - Promoting a draft to full quality preserves the selected draft as an image reference and creates a queryable intent-to-outcome record.
 - Spatial scopes, typed block relationships, and policy-enabled reference pixels measurably affect the provider request.
 - Every `object-fit: cover` rendering of a generated image uses its focal point.
+- Prose, bullets, JSON, and XML serialize deterministically from the same canonical context; JSON follows the stable image-operation/layout schema and XML preserves a stable node hierarchy.
+- One fan produces four durable outputs with a common fan identity and shared planner direction, while each output retains its own prompt reference and technique.
+- Preference resolution is replayable at document, collection, project, and account scope; removing a preference falls back to the next applicable scope and ultimately prose.
 
 ### Do not
 
@@ -1193,7 +1201,7 @@ Build this as an administrative application surface independent of the creative 
 
 Build deterministic 1,000, 10,000, and 50,000-event streams in memory. Provide eight narratives:
 
-1. **Creative loop** — extraction, authored correction, pixel policy, focal point, compile, draft, draft-to-full promotion, image editing, compare, keep, and export.
+1. **Creative loop** — extraction, authored correction, pixel policy, focal point, compile, draft, draft-to-full promotion, four-technique prompt fan, scoped prompt preference and revocation, image editing, compare, keep, and export.
 2. **Document evolution** — project/document lifecycle, all 20 block types, standalone Library blocks, typed reference relationships, atomic context-set copy, reversible context, objects, annotations, and shared collections.
 3. **Asynchronous return** — durable server job, partial preview, navigation away, completion notice, session close, brief, Scout report space, judgment, acceptance, and document promotion.
 4. **Concurrent pressure** — inert model proposal, commutative actions, stale validation, partial progress, and explicit rejection.
@@ -1364,6 +1372,7 @@ A successful append that leaves the user believing nothing happened is a usabili
 - Actor permission and schema enforcement.
 - Optimistic concurrency, authored-wins race, and partial-batch behavior.
 - Stable prompt serialization.
+- Four-language prompt parity, schema stability, fan identity, shared-planner reuse, and scoped preference precedence.
 - Lossless archive round-trip.
 - Route refresh, cold entry, deep-link, and browser-history tests.
 - Projection lag, rebuild duration, and throughput.

@@ -1,7 +1,7 @@
 import type { WorkerEnv } from "./runtime.ts";
-import { BLOCK_TYPES, referencePixelModeDefinition, type AdaptiveStructure, type BlockKind, type ReferencePixelMode } from "../src/model/block-types.ts";
-import { normalizeSpatialScope } from "../src/model/spatial-scope.ts";
+import { BLOCK_TYPES, type AdaptiveStructure, type BlockKind, type ReferencePixelMode } from "../src/model/block-types.ts";
 import type { LiveReplayPlan } from "../src/model/live-replay.ts";
+import { buildPromptRepresentation, buildReferencePromptDirectives, buildSpatialPromptDirectives, normalizePromptTechnique, type PromptReferenceDescriptor, type PromptTechnique } from "../src/model/prompt-structures.ts";
 
 type OpenAIResponse = { id?: string; model?: string; output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: { message?: string } };
 type OpenAIImageUsage = { input_tokens?: number; output_tokens?: number; total_tokens?: number };
@@ -20,6 +20,7 @@ export type CreativeImageOptions = {
   partialImages?: 0 | 1 | 2 | 3;
   onPartial?: (partial: CreativeImagePartial) => void | Promise<void>;
   references?: ImageReference[];
+  promptTechnique?: PromptTechnique;
 };
 
 const outputSchema = {
@@ -125,62 +126,11 @@ export async function generateCreativeDirection(env: WorkerEnv, userId: string, 
   return { responseId: body.id ?? "", model: body.model ?? env.OPENAI_MODEL ?? "gpt-5.6-terra", output: parsed, raw: text, latencyMs: Date.now() - started, usage: { inputTokens: Number(body.usage?.input_tokens ?? 0), outputTokens: Number(body.usage?.output_tokens ?? 0), totalTokens: Number(body.usage?.total_tokens ?? 0) } };
 }
 
-const record=(value:unknown)=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};
-const percent=(value:number)=>`${Math.round(value*100)}%`;
-
-export function buildSpatialDirectives(snapshot:Record<string,unknown>){
-  const facts=Array.isArray(snapshot.facts)?snapshot.facts.map(record):[];
-  const labelFor=(fact:Record<string,unknown>)=>{const properties=record(fact.properties);return String(properties.text??properties.label??fact.handle??fact.type??"decision");};
-  const subjectFor=(id:string)=>labelFor(facts.find((fact)=>String(fact.block_id??"")===id)??{});
-  return facts.map((fact)=>{
-    const properties=record(fact.properties);const scope=normalizeSpatialScope(properties.spatial_scope);const decision=`${String(fact.role??fact.type??"decision")} “${labelFor(fact)}”`;
-    if(fact.active===false)return `- Do not apply ${decision}; this block is inactive and is included only for provenance.`;
-    let target="across the entire image";
-    if(scope.kind==="region")target=scope.region==="custom"?`in the implied area described as “${scope.instruction||"custom area"}”`:`in the ${scope.region} area`;
-    if(scope.kind==="aabb"&&scope.aabb)target=`inside the document-relative rectangle at left ${percent(scope.aabb.x)}, top ${percent(scope.aabb.y)}, width ${percent(scope.aabb.width)}, height ${percent(scope.aabb.height)}`;
-    if(scope.kind==="subject")target=`${scope.subject_relation?.replaceAll("-"," ")} the subject “${subjectFor(scope.subject_block_id??"")}”`;
-    if(scope.kind==="path")target=`inside the document-relative clipping path ${JSON.stringify(scope.path??[])}`;
-    if(scope.polarity==="outside"&&scope.kind!=="document")target=`everywhere outside ${target.replace(/^inside /,"").replace(/^in /,"")}`;
-    return `- Apply ${decision} ${target}; use a ${scope.falloff} transition with ${percent(scope.feather)} feather. Intent: ${String(fact.intent??"include")}; influence: ${percent(Number(properties.weight??.5))}.`;
-  });
-}
-
-export function buildPixelReferenceDirectives(references:ImageReference[]) {
-  if (!references.length) return "No source-image pixels are attached. Use only the compiled text context.";
-  return references.map((reference,index)=>{
-    if(reference.source==="ideation-preview")return `- Image ${index+1} is the selected working draft. Refine it into the requested result while preserving the creative progress it represents.`;
-    const policy=referencePixelModeDefinition(reference.mode);const label=reference.label||reference.referenceId||reference.blockId||"uploaded reference";
-    return `- Image ${index+1}, “${label}”, is an opted-in uploaded reference. ${policy.promptDirective}`;
-  }).join("\n");
-}
-
-export function buildCreativeImagePrompt(snapshot:Record<string,unknown>,direction:Record<string,unknown>,references:ImageReference[] = []) {
-  const sourceFacts=Array.isArray(snapshot.facts)?snapshot.facts.map(record):[];
-  const activeFacts=sourceFacts.filter((fact)=>fact.active!==false).map((fact)=>({
-    block_id:fact.block_id,
-    type:fact.type,
-    role:fact.role,
-    intent:fact.intent,
-    effect:fact.effect,
-    handle:fact.handle,
-    authority:fact.authority,
-    properties:fact.properties,
-  }));
-  const activeIds=new Set(activeFacts.map((fact)=>String(fact.block_id??"")));const relationships=(Array.isArray(snapshot.relationships)?snapshot.relationships.map(record):[]).filter((relation)=>activeIds.has(String(relation.from_block_id??""))&&activeIds.has(String(relation.to_block_id??""))).map((relation)=>({relation_id:relation.relation_id,from_block_id:relation.from_block_id,to_block_id:relation.to_block_id,kind:relation.kind,properties:relation.properties}));
-  const compactContext={facts:activeFacts,relationships,pins:Array.isArray(snapshot.pins)?snapshot.pins:[],standing_constraints:Array.isArray(snapshot.standing_constraints)?snapshot.standing_constraints:[],document:snapshot.document};
-  const spatialDirectives=buildSpatialDirectives(snapshot);
-  return [
-    "Create one polished landscape image that realizes the supplied creative direction.",
-    "Use every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.",
-    "Any fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.",
-    "Spatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.",
-    "Do not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.",
-    `Attached source-image policy:\n${buildPixelReferenceDirectives(references)}`,
-    `Spatial application map:\n${spatialDirectives.length?spatialDirectives.join("\n"):"- No active block decisions were supplied."}`,
-    `Creative direction:\n${JSON.stringify(direction)}`,
-    `Active creative context:\n${JSON.stringify(compactContext)}`,
-  ].join("\n\n");
-}
+const referenceDescriptors=(references:ImageReference[]):PromptReferenceDescriptor[]=>references.map((reference)=>({blockId:reference.blockId,referenceId:reference.referenceId,label:reference.label,mode:reference.mode,mimeType:reference.mimeType,source:reference.source}));
+export const buildSpatialDirectives=buildSpatialPromptDirectives;
+export const buildPixelReferenceDirectives=(references:ImageReference[])=>buildReferencePromptDirectives(referenceDescriptors(references));
+export const buildCreativeImagePrompt=(snapshot:Record<string,unknown>,direction:Record<string,unknown>,references:ImageReference[] = [],technique:PromptTechnique="prose",options:Pick<CreativeImageOptions,"size"|"quality"|"partialImages">={})=>
+  buildPromptRepresentation(normalizePromptTechnique(technique),snapshot,direction,referenceDescriptors(references),options);
 
 const imageMimeType=(format:ImageOutputFormat)=>format==="jpeg"?"image/jpeg":format==="webp"?"image/webp":"image/png";
 const decodeBase64Image=(encoded:string)=>{try{const binary=atob(encoded);return Uint8Array.from(binary,(character)=>character.charCodeAt(0));}catch{throw new Error("provider_returned_invalid_image");}};
@@ -200,7 +150,7 @@ async function readImageStream(response:Response,onEvent:(event:OpenAIImageStrea
 
 export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot:Record<string,unknown>,direction:Record<string,unknown>,options:CreativeImageOptions={}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
-  const model=env.OPENAI_IMAGE_MODEL??"gpt-image-2";const references=(options.references??[]).filter((reference)=>reference.bytes.byteLength>0);const prompt=buildCreativeImagePrompt(snapshot,direction,references);const started=Date.now();
+  const model=env.OPENAI_IMAGE_MODEL??"gpt-image-2";const references=(options.references??[]).filter((reference)=>reference.bytes.byteLength>0);const promptTechnique=normalizePromptTechnique(options.promptTechnique);const prompt=buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size:options.size,quality:options.quality,partialImages:options.partialImages});const started=Date.now();
   const quality=options.quality??"high";const size=options.size??"1536x1024";const outputFormat=options.outputFormat??"png";const outputCompression=Math.max(0,Math.min(100,Math.round(options.outputCompression??100)));const partialImages=options.partialImages??0;const user=await safetyIdentifier(userId);
   let response:Response;
   if(references.length){
@@ -218,7 +168,7 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
     const body=await response.json() as OpenAIImageResponse;encoded=body.data?.[0]?.b64_json??"";revisedPrompt=body.data?.[0]?.revised_prompt??null;createdAt=body.created??null;usage=body.usage??{};
   }
   if(!encoded)throw new Error("provider_returned_no_image");const bytes=decodeBase64Image(encoded);const [width,height]=completedSize.split("x").map(Number);
-  return{model,prompt,bytes,revisedPrompt,createdAt,latencyMs:Date.now()-started,usage:{inputTokens:Number(usage.input_tokens??0),outputTokens:Number(usage.output_tokens??0),totalTokens:Number(usage.total_tokens??0)},width:Number.isFinite(width)?width:requestedWidth,height:Number.isFinite(height)?height:requestedHeight,mimeType:imageMimeType(completedFormat),quality,usedReference:references.length>0,referenceCount:references.length,referenceInputs:references.map((reference)=>({source:reference.source,blockId:reference.blockId??null,referenceId:reference.referenceId??null,label:reference.label??null,mode:reference.mode??null})),partialCount,outputFormat:completedFormat,outputCompression:completedFormat==="png"?null:outputCompression};
+  return{model,prompt,promptTechnique,bytes,revisedPrompt,createdAt,latencyMs:Date.now()-started,usage:{inputTokens:Number(usage.input_tokens??0),outputTokens:Number(usage.output_tokens??0),totalTokens:Number(usage.total_tokens??0)},width:Number.isFinite(width)?width:requestedWidth,height:Number.isFinite(height)?height:requestedHeight,mimeType:imageMimeType(completedFormat),quality,usedReference:references.length>0,referenceCount:references.length,referenceInputs:references.map((reference)=>({source:reference.source,blockId:reference.blockId??null,referenceId:reference.referenceId??null,label:reference.label??null,mode:reference.mode??null})),partialCount,outputFormat:completedFormat,outputCompression:completedFormat==="png"?null:outputCompression};
 }
 
 export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{documentTitle:string;blocks:Array<Record<string,unknown>>;history:Array<{role:"user"|"assistant";text:string}>;message:string}) {
