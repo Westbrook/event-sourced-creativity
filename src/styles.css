@@ -1107,7 +1107,7 @@ html[data-document-focus] .reality-editor { height: calc(100dvh - 70px); max-hei
 .project-block-grid p { display: -webkit-box; overflow: hidden; margin: 0 0 14px; color: var(--muted); font-size: var(--type-caption); -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .project-block-grid .button { justify-self: start; margin-top: auto; }
 
-.projects-page { min-height: calc(100dvh - 62px); background: linear-gradient(180deg,#f4f1e8 0,#fbfaf6 360px); }
+.projects-page { min-height: calc(100dvh - 62px); background: linear-gradient(180deg,color-mix(in srgb,var(--orange-soft) 18%,var(--paper)) 0,var(--paper) 360px); }
 .projects-grid { display: grid; max-width: 1400px; grid-template-columns: repeat(auto-fit,minmax(min(300px,100%),1fr)); gap: 14px; margin-inline: auto; }
 .project-card { min-width: 0; padding: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 30px rgba(40,48,41,.05); }
 .project-card.current { border-color: var(--orange); background: var(--orange-soft); box-shadow: none; }

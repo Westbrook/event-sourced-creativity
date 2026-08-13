@@ -54,3 +54,10 @@ test("administration navigation keeps readable fixed-dark chrome in either color
   assert.match(design, /\.tabbar\s*\{[^}]*color:\s*var\(--admin-chrome-muted\);[^}]*background:\s*var\(--admin-chrome\);/s);
   assert.match(design, /\.tabbar a\.active::after\s*\{\s*background:\s*var\(--orange\);\s*\}/);
 });
+
+test("Projects derives its page wash from theme surfaces instead of a light-only canvas", () => {
+  const projects = design.match(/\.projects-page\s*\{[^}]+\}/s)?.[0] ?? "";
+  assert.match(projects, /color-mix\(in srgb,\s*var\(--orange-soft\) 18%,\s*var\(--paper\)\)/);
+  assert.match(projects, /var\(--paper\) 22\.5rem/);
+  assert.doesNotMatch(projects, /#f4f1e8|#fbfaf6/);
+});

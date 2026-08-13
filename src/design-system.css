@@ -1428,7 +1428,15 @@ forma-document-generations { display: block; min-width: 0; }
 
 /* Projects and project contents */
 
-.projects-page { max-width: 112rem; margin-inline: auto; }
+.projects-page {
+  max-width: 112rem;
+  margin-inline: auto;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--orange-soft) 18%, var(--paper)) 0,
+    var(--paper) 22.5rem
+  );
+}
 
 .projects-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(25rem, 100%), 1fr));
