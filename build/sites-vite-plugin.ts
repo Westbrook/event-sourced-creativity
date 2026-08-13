@@ -18,6 +18,7 @@ export const SITE_ROUTE_ENTRIES = [
   { path: "/scout", module: "src/components/forma-scout.ts", title: "Scout — Forma", description: "Run bounded creative research and inspect its evidence." },
   { path: "/memory", module: "src/components/forma-memory.ts", title: "Taste & time — Forma", description: "Review reversible preferences, taste evidence, and time-based memory." },
   { path: "/system", module: "src/components/forma-system.ts", title: "System & governance — Forma", description: "Review governance, evaluation gates, privacy, and system health." },
+  { path: "/system/focal-points", module: "src/components/forma-focal-point-lab.ts", title: "Focal-point laboratory — Forma", description: "Compare focal-point coordinate interpretation and image containment across generated and uploaded images." },
   { path: "/admin/events", module: "src/components/forma-admin-events.ts", title: "Event administration — Forma", description: "Inspect and replay the durable creative event stream." },
   { path: "/admin/events/stream", module: "src/components/forma-admin-events.ts", title: "Durable stream — Forma", description: "Inspect the immutable envelopes and payloads in Forma’s durable creative stream." },
   { path: "/admin/events/replay", module: "src/components/forma-admin-events.ts", title: "Replay laboratory — Forma", description: "Build and replay theoretical long-running creative event streams." },

@@ -20,6 +20,7 @@ export function loadRouteComponent(path: string): RouteModule {
   if (path.startsWith("/sessions")) return import("./components/forma-sessions");
   if (path.startsWith("/scout")) return import("./components/forma-scout");
   if (path.startsWith("/memory")) return import("./components/forma-memory");
+  if (path.startsWith("/system/focal-points")) return import("./components/forma-focal-point-lab");
   if (path.startsWith("/system")) return import("./components/forma-system");
   return import("./components/forma-workspace");
 }

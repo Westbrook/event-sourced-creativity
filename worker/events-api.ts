@@ -11,7 +11,7 @@ import { buildPhase7Index } from "../src/model/indexing";
 import { buildScoutEnvelope, buildScoutTrajectory } from "../src/model/scout";
 import { CREATOR_AXES, inferTasteBeliefs, standingConstraints } from "../src/model/taste";
 import { buildAttentionEpisode } from "../src/model/attention";
-import { calculateImageFocalPoint } from "../src/model/focal-point";
+import { calculateImageFocalPoint, CURRENT_FOCAL_POINT_METHOD } from "../src/model/focal-point";
 import { DOCUMENT_VIEWS, documentViewWorkflow } from "../src/model/document-view-signals";
 import { normalizePromptTechnique } from "../src/model/prompt-structures";
 
@@ -226,7 +226,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       const findingKinds=Array.isArray(body.findingKinds)?body.findingKinds:[];
       const requestedAt=makeEvent(streamId,current+1,"user",client,corr,"ExtractionRequested",{block_id:body.blockId,reference_id:body.referenceId,extractors:["dimensions-v1","palette-kmeans-v1","dominant-edges-v1","image-character-v1"],requested_findings:findingKinds});
       const completed=makeEvent(streamId,current+2,"worker:extractor",client,corr,"ExtractionCompleted",{block_id:body.blockId,reference_id:body.referenceId,extractor_name:"deterministic-image-suite-v2",extractor_versions:["dimensions-v1","palette-kmeans-v1","dominant-edges-v1","image-character-v1"],chips:[{chip_id:`chip-${body.blockId}-dimensions`,property:"dimensions",value:facts.dimensions,confidence:facts.confidence.dimensions},{chip_id:`chip-${body.blockId}-palette`,property:"colors",value:facts.palette,confidence:facts.confidence.palette},{chip_id:`chip-${body.blockId}-edges`,property:"dominant_edges",value:facts.dominantEdges,confidence:facts.confidence.dominantEdges},{chip_id:`chip-${body.blockId}-findings`,property:"reference_findings",value:facts.findings,confidence:facts.confidence.findings}],overall_confidence:facts.confidence.overall,sample_grid:{width:body.sample.gridWidth,height:body.sample.gridHeight},requested_findings:findingKinds},{causationId:requestedAt.eventId});
-      const focal=makeEvent(streamId,current+3,"worker:extractor",client,corr,"ImageFocalPointCalculated",{target_kind:"reference",target_id:body.blockId,block_id:body.blockId,reference_id:body.referenceId,document_id:body.documentId??foldEvents(await readEvents(env,streamId)).documentId,focal_point:focalPoint,sample_grid:{width:body.sample.gridWidth,height:body.sample.gridHeight},extractor_name:"saliency-grid-v1",cost_class:"local-free"},{causationId:completed.eventId});
+      const focal=makeEvent(streamId,current+3,"worker:extractor",client,corr,"ImageFocalPointCalculated",{target_kind:"reference",target_id:body.blockId,block_id:body.blockId,reference_id:body.referenceId,document_id:body.documentId??foldEvents(await readEvents(env,streamId)).documentId,focal_point:focalPoint,sample_grid:{width:body.sample.gridWidth,height:body.sample.gridHeight},extractor_name:CURRENT_FOCAL_POINT_METHOD,cost_class:"local-free"},{causationId:completed.eventId});
       await env.DB.batch([requestedAt,completed,focal].map(event=>insertEvent(env,event)));return Response.json({appended:[requestedAt,completed,focal],rejected:[],head:focal.sequence});
     }
     if(body.action==="calculate_focal_point"){
@@ -237,9 +237,9 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       }else{
         const block=projection.libraryBlocks.find((item)=>item.id===body.targetId&&item.type==="reference");if(!block||String(block.properties.media_url??"")!==body.mediaUrl)return Response.json({error:"reference_media_target_not_found"},{status:404});blockId=block.id;referenceId=String(block.properties.reference_id??body.referenceId??"")||null;documentId=block.documentId;causationId=block.sourceEvents.at(-1)??null;
       }
-      const existing=events.find((event)=>event.type==="ImageFocalPointCalculated"&&event.payload.target_kind===body.targetKind&&String(event.payload.target_id??"")===body.targetId&&String(event.payload.media_url??body.mediaUrl)===body.mediaUrl);
+      const existing=events.findLast((event)=>event.type==="ImageFocalPointCalculated"&&event.payload.target_kind===body.targetKind&&String(event.payload.target_id??"")===body.targetId&&String(event.payload.media_url??body.mediaUrl)===body.mediaUrl&&(event.payload.focal_point as {method?:unknown}|undefined)?.method===CURRENT_FOCAL_POINT_METHOD);
       if(existing)return Response.json({appended:[],rejected:[],head:current,focalPoint:existing.payload.focal_point,cached:true});
-      const focalPoint=calculateImageFocalPoint(body.sample);const focal=makeEvent(streamId,current+1,"worker:extractor",client,corr,"ImageFocalPointCalculated",{target_kind:body.targetKind,target_id:body.targetId,block_id:blockId,reference_id:referenceId,document_id:documentId,media_url:body.mediaUrl,focal_point:focalPoint,sample_grid:{width:body.sample.gridWidth,height:body.sample.gridHeight},extractor_name:"saliency-grid-v1",cost_class:"local-free"},{causationId});
+      const focalPoint=calculateImageFocalPoint(body.sample);const focal=makeEvent(streamId,current+1,"worker:extractor",client,corr,"ImageFocalPointCalculated",{target_kind:body.targetKind,target_id:body.targetId,block_id:blockId,reference_id:referenceId,document_id:documentId,media_url:body.mediaUrl,focal_point:focalPoint,sample_grid:{width:body.sample.gridWidth,height:body.sample.gridHeight},extractor_name:CURRENT_FOCAL_POINT_METHOD,cost_class:"local-free"},{causationId});
       await insertEvent(env,focal).run();return Response.json({appended:[focal],rejected:[],head:focal.sequence,focalPoint,cached:false});
     }
     if(body.action==="close_session"){

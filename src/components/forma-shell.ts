@@ -85,6 +85,7 @@ export class FormaShell extends FormaElement {
     if (path.startsWith("/sessions")) return html`<forma-sessions></forma-sessions>`;
     if (path.startsWith("/scout")) return html`<forma-scout></forma-scout>`;
     if (path.startsWith("/memory")) return html`<forma-memory></forma-memory>`;
+    if (path.startsWith("/system/focal-points")) return html`<forma-focal-point-lab></forma-focal-point-lab>`;
     if (path.startsWith("/system")) return html`<forma-system></forma-system>`;
     return html`<forma-workspace></forma-workspace>`;
   }

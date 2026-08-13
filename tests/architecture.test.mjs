@@ -183,7 +183,7 @@ test("packages first-class HTML entry points for every named application route",
   const shell = await readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8");
   const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
   const config = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
-  const routes = ["document","projects","studio/project","studio/board","studio/guided","studio/layers","studio/adaptive","studio/editor","studio/chat","library","sessions","scout","memory","system","admin/events","admin/events/stream","admin/events/replay","admin/events/permissions"];
+  const routes = ["document","projects","studio/project","studio/board","studio/guided","studio/layers","studio/adaptive","studio/editor","studio/chat","library","sessions","scout","memory","system","system/focal-points","admin/events","admin/events/stream","admin/events/replay","admin/events/permissions"];
   for (const route of routes) {
     assert.match(plugin, new RegExp(`path: "/${route.replaceAll("/", "\\/")}"`));
     const entry = await readFile(new URL(`../dist/client/${route}/index.html`, import.meta.url), "utf8");

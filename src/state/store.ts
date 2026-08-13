@@ -7,7 +7,7 @@ import { readAttentionPreference, writeAttentionPreference } from "../model/atte
 import { blockEffectFor, blockIntentFor, type AdaptiveStructure } from "../model/block-types";
 import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import { normalizeSpatialScope } from "../model/spatial-scope";
-import { normalizeImageFocalPoint } from "../model/focal-point";
+import { CURRENT_FOCAL_POINT_METHOD, normalizeImageFocalPoint } from "../model/focal-point";
 import { resolveImageFocalAnalysis } from "../model/image-focus";
 import { documentGenerationRequestKey as generationRequestKeyFor, documentGenerationRevision as generationRevisionFor, documentJobIsStale, type DocumentJob, type DocumentJobKind } from "../model/document-jobs";
 import { effectivePromptPreference, normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptPreferenceScope, type PromptTechnique } from "../model/prompt-structures";
@@ -57,11 +57,11 @@ export class FormaStore {
   subscribe(listener: Listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   notify() { this.#listeners.forEach((listener) => listener()); }
   #publishAppended(events:CreativeEvent[]){if(events.length){window.dispatchEvent(new CustomEvent("forma-events-appended",{detail:{events}}));queueMicrotask(()=>this.#backfillImageFocalPoints());}}
-  #hasFocalPoint(targetKind:"generation"|"reference",targetId:string){const projection=this.projection.get();return targetKind==="generation"?Boolean(projection.libraryOutputs.find((output)=>output.id===targetId)?.focalPoint??projection.outputs.find((output)=>output.id===targetId)?.focalPoint):Boolean(normalizeImageFocalPoint(projection.libraryBlocks.find((block)=>block.id===targetId)?.properties.focal_point??projection.blocks.find((block)=>block.id===targetId)?.properties.focal_point));}
+  #hasFocalPoint(targetKind:"generation"|"reference",targetId:string){const projection=this.projection.get();const point=targetKind==="generation"?(projection.libraryOutputs.find((output)=>output.id===targetId)?.focalPoint??projection.outputs.find((output)=>output.id===targetId)?.focalPoint):normalizeImageFocalPoint(projection.libraryBlocks.find((block)=>block.id===targetId)?.properties.focal_point??projection.blocks.find((block)=>block.id===targetId)?.properties.focal_point);return point?.method===CURRENT_FOCAL_POINT_METHOD;}
   #backfillImageFocalPoints(){
     const projection=this.projection.get();const seen=new Set<string>();
-    for(const output of [...projection.outputs,...projection.libraryOutputs])if(output.mediaUrl&&!output.focalPoint&&!seen.has(`generation:${output.id}`)){seen.add(`generation:${output.id}`);void this.calculateImageFocalPoint({targetKind:"generation",targetId:output.id,mediaUrl:output.mediaUrl});}
-    for(const block of [...projection.blocks,...projection.libraryBlocks]){const mediaUrl=String(block.properties.media_url??"");if(block.type!=="reference"||!mediaUrl||block.properties.extraction_status==="pending"||normalizeImageFocalPoint(block.properties.focal_point)||seen.has(`reference:${block.id}`))continue;seen.add(`reference:${block.id}`);void this.calculateImageFocalPoint({targetKind:"reference",targetId:block.id,referenceId:String(block.properties.reference_id??""),mediaUrl});}
+    for(const output of [...projection.outputs,...projection.libraryOutputs])if(output.mediaUrl&&output.focalPoint?.method!==CURRENT_FOCAL_POINT_METHOD&&!seen.has(`generation:${output.id}`)){seen.add(`generation:${output.id}`);void this.calculateImageFocalPoint({targetKind:"generation",targetId:output.id,mediaUrl:output.mediaUrl});}
+    for(const block of [...projection.blocks,...projection.libraryBlocks]){const mediaUrl=String(block.properties.media_url??"");if(block.type!=="reference"||!mediaUrl||block.properties.extraction_status==="pending"||normalizeImageFocalPoint(block.properties.focal_point)?.method===CURRENT_FOCAL_POINT_METHOD||seen.has(`reference:${block.id}`))continue;seen.add(`reference:${block.id}`);void this.calculateImageFocalPoint({targetKind:"reference",targetId:block.id,referenceId:String(block.properties.reference_id??""),mediaUrl});}
   }
   #reflectDocumentInRoute() {
     const currentRoute = this.route.get();

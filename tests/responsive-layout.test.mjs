@@ -88,6 +88,22 @@ test("keeps every prompt-fan image and its controls inside bounded generation su
   }
 });
 
+test("gives Studio filmstrip images a complete bounded cover-crop chain", async () => {
+  const [styles, workspace] = await Promise.all([
+    read("../src/styles.css"),
+    read("../src/components/forma-workspace.ts"),
+  ]);
+
+  assert.match(styles, /\.output-filmstrip\s*\{[^}]*grid-template-columns:\s*repeat\(4,minmax\(0,1fr\)\)/);
+  assert.match(styles, /\.mini-output\s*\{[^}]*display:\s*block;[^}]*width:\s*100%;[^}]*min-width:\s*0;[^}]*height:\s*64px;[^}]*overflow:\s*hidden;[^}]*contain:\s*layout paint/);
+  assert.match(styles, /\.mini-output > :is\(forma-output-visual,forma-prompt-fan-visual\)\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0;[^}]*width:\s*100%;[^}]*height:\s*100%;[^}]*max-width:\s*100%;[^}]*max-height:\s*100%/);
+  assert.match(styles, /\.mini-output > forma-output-visual > \.generated-output-image\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0;[^}]*width:\s*100%;[^}]*height:\s*100%;[^}]*object-fit:\s*cover;[^}]*object-position:\s*var\(--focal-x,50%\) var\(--focal-y,50%\)/);
+  assert.match(styles, /\.mini-output > forma-prompt-fan-visual > \.prompt-fan-visual\s*\{[^}]*width:\s*100%;[^}]*height:\s*100%;[^}]*aspect-ratio:\s*auto/);
+  assert.match(workspace, /class="mini-output/);
+  assert.match(workspace, /forma-output-visual/);
+  assert.match(workspace, /forma-prompt-fan-visual/);
+});
+
 test("keeps the affected-area editor and its image controls inside the dialog", async () => {
   const [styles, design, editor] = await Promise.all([
     read("../src/styles.css"),
