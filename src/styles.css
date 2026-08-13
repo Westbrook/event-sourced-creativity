@@ -25,6 +25,11 @@
   --on-strong: light-dark(#fff, #171717);
   --on-accent: light-dark(#fff, #111a35);
   --on-dark: #fff;
+  --admin-chrome: #151515;
+  --admin-chrome-hover: #242424;
+  --admin-chrome-line: #3a3a3a;
+  --admin-chrome-muted: #bdbdb8;
+  --admin-chrome-subtle: #92928e;
   --shadow: 0 24px 72px light-dark(rgba(23, 23, 23, .14), rgba(0, 0, 0, .5));
   --sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
   --serif: var(--sans);
@@ -732,15 +737,21 @@ forma-output-visual { position: absolute; inset: 0; display: grid; min-width: 0;
 .area-navigation > span { flex: none; color: var(--muted); font: 500 var(--type-micro) var(--mono); letter-spacing: .08em; text-transform: uppercase; }
 .area-navigation > div { display: flex; min-width: 0; gap: 4px; overflow-x: auto; }
 .area-navigation a { min-width: max-content; padding: 7px 10px; color: var(--muted); border-radius: 5px; font-size: var(--type-caption); font-weight: 600; }.area-navigation a:hover { color: var(--forest); background: var(--panel); }.area-navigation a.active { color: #fff; background: var(--forest); }
-.admin-page > .area-navigation { max-width: none; margin: 0; border-width: 0 0 1px; border-radius: 0; }
+.area-navigation--administration { background: var(--admin-chrome); border-color: var(--admin-chrome-line); }
+.area-navigation--administration > span { color: var(--admin-chrome-subtle); }
+.area-navigation--administration a { color: var(--admin-chrome-muted); }
+.area-navigation--administration a:hover { color: var(--on-dark); background: var(--admin-chrome-hover); }
+.area-navigation--administration a.active { color: var(--on-accent); background: var(--orange); }
+.admin-page > forma-area-navigation .area-navigation--administration { max-width: none; margin: 0; border-width: 0 0 1px; border-radius: 0; }
 .admin-health { display: flex; align-items: center; gap: 10px; padding: 11px 14px; color: var(--ink); background: var(--acid); border-radius: 7px; }
 .admin-health b, .admin-health small { display: block; }
 .admin-health small { font: var(--type-micro) var(--mono); }
-.tabbar { display: flex; padding: 0 clamp(20px,5vw,70px); color: #bbc6bf; background: var(--forest); }
+.tabbar { display: flex; padding: 0 clamp(20px,5vw,70px); color: var(--admin-chrome-muted); background: var(--admin-chrome); }
 .tabbar a { position: relative; padding: 14px 18px; color: inherit; font-size: var(--type-caption); }
 .tabbar a::after { position: absolute; right: 18px; bottom: 0; left: 18px; height: 3px; content: ""; background: transparent; }
-.tabbar a.active { color: #fff; }
-.tabbar a.active::after { background: var(--acid); }
+.tabbar a:hover { color: var(--on-dark); background: var(--admin-chrome-hover); }
+.tabbar a.active { color: var(--on-dark); }
+.tabbar a.active::after { background: var(--orange); }
 .admin-content { padding: 22px clamp(20px,5vw,70px) 70px; }
 .filterbar { display: flex; align-items: flex-end; gap: 9px; padding: 11px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px 8px 0 0; }
 .filterbar label, .builder-controls label { display: grid; gap: 3px; color: var(--muted); font: var(--type-micro) var(--mono); text-transform: uppercase; }

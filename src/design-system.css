@@ -1647,15 +1647,31 @@ forma-document-generations { display: block; min-width: 0; }
 .page-header--admin h1 { font-size: clamp(2.75rem, 7vw, 6.5rem); }
 .page-header--admin p { color: #bdbdb8; }
 
-.admin-page > .area-navigation {
-  background: #151515;
-  border-bottom-color: #3a3a3a;
+.area-navigation--administration {
+  background: var(--admin-chrome);
+  border-color: var(--admin-chrome-line);
 }
 
-.admin-page > .area-navigation > span { color: #92928e; }
-.admin-page > .area-navigation a { color: #bdbdb8; }
-.admin-page > .area-navigation a:hover { color: #fff; background: #242424; }
-.admin-page > .area-navigation a.active { color: var(--on-accent); background: var(--orange); }
+.area-navigation--administration > span { color: var(--admin-chrome-subtle); }
+.area-navigation--administration a { color: var(--admin-chrome-muted); }
+.area-navigation--administration a:hover { color: var(--on-dark); background: var(--admin-chrome-hover); }
+.area-navigation--administration a.active { color: var(--on-accent); background: var(--orange); }
+
+.admin-page > forma-area-navigation .area-navigation--administration {
+  max-width: none;
+  margin: 0;
+  border-width: 0 0 1px;
+  border-radius: 0;
+}
+
+.tabbar {
+  color: var(--admin-chrome-muted);
+  background: var(--admin-chrome);
+}
+
+.tabbar a:hover { color: var(--on-dark); background: var(--admin-chrome-hover); }
+.tabbar a.active { color: var(--on-dark); }
+.tabbar a.active::after { background: var(--orange); }
 
 .admin-content { padding: clamp(2rem, 5vw, 5rem) var(--page-gutter) var(--page-bottom-space); }
 
