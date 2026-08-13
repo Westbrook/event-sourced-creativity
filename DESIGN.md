@@ -66,22 +66,24 @@ Hover and focus may change color, opacity, or a non-layout shadow. They must not
 
 ### Color
 
-The palette is neutral and artwork-first. Most of the application is warm white, white, ink, and restrained gray. A clear blue accent identifies focus and primary interaction. Green is reserved for success; amber for attention; red for destructive or failed states.
+The palette is neutral and artwork-first. It follows the browser and operating-system color preference through CSS-native `color-scheme: light dark` and `light-dark()` tokens; there is no application-owned theme state or picker. Light mode uses warm white, white, ink, and restrained gray. Dark mode uses near-black canvas and quiet charcoal surfaces rather than a pure-black inversion. A clear blue accent identifies focus and primary interaction. Green is reserved for success; amber for attention; red for destructive or failed states.
 
-| Token | Value | Use |
-| --- | --- | --- |
-| Canvas | `#f7f7f4` | Application and reading background |
-| Surface | `#ffffff` | Inputs, dialogs, and necessary bounded regions |
-| Subtle surface | `#f0f0ec` | Quiet controls and secondary grouped content |
-| Ink | `#171717` | Primary text and dark controls |
-| Muted ink | `#686864` | Supporting copy and metadata |
-| Hairline | `#deded8` | Necessary boundaries |
-| Strong line | `#bcbcb5` | Inputs and selected structural boundaries |
-| Accent | `#315fe8` | Focus, links, selected states, and primary emphasis |
-| Accent wash | `#e9eeff` | Selected backgrounds and focus support |
-| Success | `#287a4b` | Completed and healthy states |
-| Warning | `#9a6419` | Incomplete or attention states |
-| Danger | `#a3382b` | Destructive actions and failures |
+| Token | Light | Dark | Use |
+| --- | --- | --- | --- |
+| Canvas | `#f7f7f4` | `#10110f` | Application and reading background |
+| Surface | `#ffffff` | `#191a18` | Inputs, dialogs, and necessary bounded regions |
+| Subtle surface | `#f0f0ec` | `#242521` | Quiet controls and secondary grouped content |
+| Ink | `#171717` | `#f3f3ef` | Primary text and strong controls |
+| Muted ink | `#686864` | `#aaa9a2` | Supporting copy and metadata |
+| Hairline | `#deded8` | `#343530` | Necessary boundaries |
+| Strong line | `#bcbcb5` | `#555650` | Inputs and selected structural boundaries |
+| Accent | `#315fe8` | `#8ca9ff` | Focus, links, selected states, and primary emphasis |
+| Accent wash | `#e9eeff` | `#202d52` | Selected backgrounds and focus support |
+| Success | `#287a4b` | `#72d499` | Completed and healthy states |
+| Warning | `#9a6419` | `#e2ae62` | Incomplete or attention states |
+| Danger | `#a3382b` | `#ff8b80` | Destructive actions and failures |
+
+Use semantic foreground tokens for filled controls (`--on-strong`, `--on-accent`) rather than assuming white text. Native form controls inherit the active `color-scheme`. Fixed dark media stages and operational inspection consoles may remain dark in both modes when a stable viewing environment materially helps evaluate the content.
 
 Never use color as the only way to communicate state. Text, an icon, or a stable structural change must accompany it.
 

@@ -8,7 +8,7 @@
  */
 
 ::selection {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--orange);
 }
 
@@ -37,7 +37,7 @@ h2 { line-height: 1.12; }
 h3 { line-height: 1.25; }
 
 :focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--orange) 78%, #fff);
+  outline: 3px solid color-mix(in srgb, var(--orange) 78%, var(--panel));
   outline-offset: 3px;
 }
 
@@ -63,11 +63,11 @@ h3 { line-height: 1.25; }
 .button.compact { min-height: 2.5rem; }
 
 .button.primary {
-  color: #fff;
+  color: var(--on-strong);
   background: var(--ink);
 }
 
-.button.primary:hover { background: #343434; }
+.button.primary:hover { background: var(--forest-2); }
 
 .button.secondary {
   background: var(--panel);
@@ -88,7 +88,7 @@ h3 { line-height: 1.25; }
 }
 
 .button.danger {
-  color: #fff;
+  color: light-dark(#fff, #250806);
   background: var(--danger);
 }
 
@@ -143,7 +143,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orange); }
 }
 
 .segmented button.active {
-  color: #fff;
+  color: var(--on-strong);
   background: var(--ink);
   box-shadow: none;
 }
@@ -182,7 +182,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orange); }
 .brand-mark,
 .project-monogram,
 .rail-dock a:first-child > span {
-  color: #fff;
+  color: var(--on-strong);
   background: var(--ink);
   border-radius: 6px;
   font-family: var(--sans);
@@ -242,7 +242,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orange); }
 }
 
 forma-project-rail {
-  background: color-mix(in srgb, var(--paper) 84%, #fff);
+  background: var(--rail);
   border-right: 1px solid var(--line);
 }
 
@@ -303,7 +303,7 @@ forma-project-rail {
   text-transform: none;
 }
 
-.project-status { color: var(--success); background: color-mix(in srgb, var(--success) 10%, #fff); }
+.project-status { color: var(--success); background: color-mix(in srgb, var(--success) 10%, var(--panel)); }
 
 .rail-project-meta {
   grid-template-columns: repeat(2, auto);
@@ -374,7 +374,7 @@ forma-project-rail {
 .live-dot,
 .rail-live-dot {
   background: var(--success);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 14%, #fff);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 14%, var(--panel));
 }
 
 /* Page hierarchy */
@@ -468,7 +468,7 @@ forma-project-rail {
   margin: max(1rem, 6dvh) auto;
   padding: clamp(1.5rem, 4vw, 3rem);
   background: var(--panel);
-  border: 1px solid color-mix(in srgb, #fff 40%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--panel) 40%, var(--line));
   border-radius: 14px;
   box-shadow: 0 28px 90px rgba(0, 0, 0, .24);
 }
@@ -619,7 +619,7 @@ forma-project-rail {
 
 .asset-preview:not(.palette) {
   padding: clamp(1.25rem, 3vw, 2.5rem);
-  background: linear-gradient(145deg, #ecece8, #f7f7f3);
+  background: linear-gradient(145deg, var(--panel-2), var(--panel));
 }
 
 .asset-preview:not(.palette)::after {
@@ -851,7 +851,7 @@ forma-project-rail {
 .studio-grid { grid-template-columns: minmax(24rem, .78fr) minmax(30rem, 1.22fr); }
 
 .context-column { border-right: 1px solid var(--line); }
-.output-column { background: #efefec; }
+.output-column { background: var(--canvas); }
 
 .context-column > .section-heading,
 .output-column > .section-heading {
@@ -888,10 +888,10 @@ forma-project-rail {
 .handle { max-width: min(100%, 34rem); padding-top: 0; color: var(--muted); font-family: var(--mono); }
 .block-heading-state { align-items: flex-start; }
 .block-intent-badge { color: var(--ink-muted); background: var(--panel-2); border-color: var(--line); }
-.block-intent-badge.include { color: var(--success); background: color-mix(in srgb, var(--success) 8%, #fff); border-color: color-mix(in srgb, var(--success) 24%, var(--line)); }
+.block-intent-badge.include { color: var(--success); background: color-mix(in srgb, var(--success) 8%, var(--panel)); border-color: color-mix(in srgb, var(--success) 24%, var(--line)); }
 .block-intent-badge.prefer { color: var(--orange); background: var(--orange-soft); border-color: color-mix(in srgb, var(--orange) 24%, var(--line)); }
-.block-intent-badge.avoid { color: var(--warning); background: color-mix(in srgb, var(--warning) 9%, #fff); border-color: color-mix(in srgb, var(--warning) 26%, var(--line)); }
-.block-intent-badge.prohibit { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, #fff); border-color: color-mix(in srgb, var(--danger) 24%, var(--line)); }
+.block-intent-badge.avoid { color: var(--warning); background: color-mix(in srgb, var(--warning) 9%, var(--panel)); border-color: color-mix(in srgb, var(--warning) 26%, var(--line)); }
+.block-intent-badge.prohibit { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--panel)); border-color: color-mix(in srgb, var(--danger) 24%, var(--line)); }
 .block-copy { padding: 1.25rem 0 1rem; font-family: var(--sans); font-size: var(--type-lede); line-height: 1.45; }
 .block-classifiers { margin: 0 0 1rem; padding-top: .75rem; border-top: 1px solid var(--line); }
 .block-subtype,.block-intent { display: grid; grid-template-columns: auto minmax(7.5rem, auto); gap: .45rem; margin: 0; }
@@ -1041,7 +1041,7 @@ forma-document-generations { display: block; min-width: 0; }
 .view-readiness > small,
 .next-best-action > p { color: var(--muted); }
 
-.next-best-action .button { color: #fff; background: var(--ink); }
+.next-best-action .button { color: var(--on-strong); background: var(--ink); }
 
 .document-generations {
   padding: clamp(2rem, 5vw, 4rem) 0 0;
@@ -1298,7 +1298,7 @@ forma-document-generations { display: block; min-width: 0; }
 .creative-editor-inspector textarea,
 .creative-editor-inspector select {
   color: var(--ink);
-  background: #fff;
+  background: var(--panel);
   border-color: var(--line-strong);
 }
 
@@ -1311,7 +1311,7 @@ forma-document-generations { display: block; min-width: 0; }
 
 .creative-editor-inspector fieldset input:checked + span,
 .creative-add-card fieldset input:checked + span {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--orange);
   border-color: var(--orange);
 }
@@ -1347,9 +1347,9 @@ forma-document-generations { display: block; min-width: 0; }
   border-radius: 0;
 }
 
-.adaptive-model-suggestions .button { color: #fff; background: var(--orange); }
+.adaptive-model-suggestions .button { color: var(--on-accent); background: var(--orange); }
 .adaptive-choices > button.active,
-.canvas-context button.selected { color: #fff; background: var(--orange); border-color: var(--orange); }
+.canvas-context button.selected { color: var(--on-accent); background: var(--orange); border-color: var(--orange); }
 
 /* Chat */
 
@@ -1368,7 +1368,7 @@ forma-document-generations { display: block; min-width: 0; }
 .chat-generation { background: #111; }
 .chat-generation-stage { background: #090909; }
 .chat-generation .chat-generate,
-.chat-generation .generation-actions .primary { color: #fff; background: var(--orange); border-color: var(--orange); }
+.chat-generation .generation-actions .primary { color: var(--on-accent); background: var(--orange); border-color: var(--orange); }
 .chat-generation .chat-generate:hover { background: #234fd0; }
 .chat-generation-history { background: #191919; border-top-color: #333; }
 .chat-generation-history > button.selected { border-color: var(--orange); box-shadow: none; outline: 2px solid var(--orange); }
@@ -1377,7 +1377,7 @@ forma-document-generations { display: block; min-width: 0; }
 .chat-thread { padding: 2rem; }
 .chat-line > span { font-family: var(--sans); text-transform: none; }
 .chat-line > p { padding: .8rem 1rem; background: var(--panel-2); }
-.chat-line.user > p { background: var(--ink); }
+.chat-line.user > p { color: var(--on-strong); background: var(--ink); }
 .chat-composer { padding: 1rem; background: var(--paper); }
 
 /* Image presentation */
@@ -1425,7 +1425,7 @@ forma-document-generations { display: block; min-width: 0; }
 .project-card.current { background: color-mix(in srgb, var(--orange-soft) 48%, var(--panel)); border-color: var(--orange); box-shadow: none; }
 .project-card > header { padding: 0; }
 .project-card-kind { color: var(--muted); font-size: var(--type-small); }
-.project-card .project-status { color: var(--success); background: color-mix(in srgb, var(--success) 9%, #fff); }
+.project-card .project-status { color: var(--success); background: color-mix(in srgb, var(--success) 9%, var(--panel)); }
 .project-card-title { display: grid; align-content: start; min-height: 12rem; padding-block: clamp(2rem, 4vw, 3.75rem) 2rem; }
 .project-card h2 { margin: 0; overflow-wrap: anywhere; font-size: clamp(2rem, 4vw, 3.5rem); line-height: 1; }
 .project-card-title p { max-width: 36rem; margin: 1rem 0 0; color: var(--muted); font-size: var(--type-small); line-height: 1.55; }
@@ -1630,7 +1630,7 @@ forma-document-generations { display: block; min-width: 0; }
 .admin-page > .area-navigation > span { color: #92928e; }
 .admin-page > .area-navigation a { color: #bdbdb8; }
 .admin-page > .area-navigation a:hover { color: #fff; background: #242424; }
-.admin-page > .area-navigation a.active { color: #fff; background: var(--orange); }
+.admin-page > .area-navigation a.active { color: var(--on-accent); background: var(--orange); }
 
 .admin-content { padding: clamp(2rem, 5vw, 5rem) var(--page-gutter) var(--page-bottom-space); }
 
@@ -1701,7 +1701,7 @@ forma-document-generations { display: block; min-width: 0; }
 .event-table th { background: var(--panel-2); }
 .event-table tbody tr:hover,
 .event-table tr.selected { background: var(--orange-soft); }
-.event-badge { background: var(--ink); text-transform: none; }
+.event-badge { color: var(--on-strong); background: var(--ink); text-transform: none; }
 
 .replay-console {
   color: #f4f4f2;
@@ -1724,7 +1724,7 @@ forma-document-generations { display: block; min-width: 0; }
 
 .actual-replay-warning {
   color: var(--ink);
-  background: color-mix(in srgb, var(--warning) 9%, #fff);
+  background: color-mix(in srgb, var(--warning) 9%, var(--panel));
   border-color: color-mix(in srgb, var(--warning) 30%, var(--line));
 }
 
@@ -1794,6 +1794,151 @@ forma-document-generations { display: block; min-width: 0; }
 .generated-output-trigger:focus-visible > span {
   opacity: 1;
   visibility: visible;
+}
+
+/* Preference-reactive chrome
+ *
+ * These rules retire the remaining light-only assumptions in the legacy
+ * component layer. Media stages and the replay console intentionally keep
+ * their fixed dark presentation so images and operational evidence retain a
+ * stable inspection environment in either system theme.
+ */
+
+:where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  textarea,
+  select
+) {
+  color: var(--ink);
+  background-color: var(--panel);
+  border-color: var(--line-strong);
+}
+
+:where(input, textarea)::placeholder { color: var(--muted); opacity: .82; }
+
+:is(
+  .command-trigger,
+  .document-title-editor input,
+  .block-editor textarea,
+  .block-type-grid button,
+  .block-draft-copy textarea,
+  .block-draft-copy input,
+  .proposal-preview,
+  .rights-check,
+  .collection-form input,
+  .project-settings-form input,
+  .project-settings-form select,
+  .palette-options > button,
+  .choice-card,
+  .library-block-form input:not([type="range"]):not([type="color"]):not([type="checkbox"]):not([type="file"]),
+  .library-block-form textarea,
+  .library-block-form select,
+  .brief-block,
+  .blank-document-form input,
+  .intent-card textarea,
+  .filterbar input,
+  .filterbar select,
+  .builder-controls select,
+  .timeline-control select,
+  .actual-replay-seed textarea,
+  .approval-phrase input,
+  .actual-replay-cost,
+  .board-quick-add input,
+  .board-quick-add select,
+  .chat-composer textarea
+) {
+  color: var(--ink);
+  background: var(--panel);
+  border-color: var(--line-strong);
+}
+
+.topbar,
+.page-header--library,
+.page-header--document {
+  background: color-mix(in srgb, var(--paper) 92%, transparent);
+}
+
+.account-nav { background: var(--panel-2); }
+.account-nav a:hover,
+.rail-collapse-toggle:hover,
+.tree-row:hover,
+.rail-links a:hover { background: var(--panel); }
+
+.toast {
+  color: var(--on-strong);
+  background: var(--ink);
+}
+
+:is(
+  .avatar,
+  .gate-review .gate-advance,
+  .judgment-actions button:hover,
+  .studio-mode-nav a.active,
+  .document-focus-toggle:hover,
+  .context-set-trigger,
+  .subtype-picker input:checked + span,
+  .decision-spine button.complete > i,
+  .relationship-map .resolved i,
+  .board-empty:hover,
+  .next-best-action .button,
+  .output-actions button.promote,
+  .generation-queue-item.running .generation-queue-order,
+  .chat-line.user > p
+) {
+  color: var(--on-strong);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+:is(
+  .editor-item-glyph,
+  .creative-inspector-empty > span,
+  .editor-item-glyph--references
+) {
+  color: var(--on-accent);
+  background: var(--orange);
+}
+
+/* These are deliberate dark inspection and report surfaces, not chrome. */
+:is(
+  .compile-bridge,
+  .gate-card,
+  .extractor-metrics div,
+  .timeline-control,
+  .admission-note,
+  .architecture-strip,
+  .gauge-panel,
+  .envelope-card,
+  .fresh-share,
+  .shared-hero,
+  .shared-output,
+  .alternative-intro,
+  .guided-actions,
+  .spatial-scope-preview
+) {
+  background: #171717;
+}
+
+.block-source-notice > span,
+.decision-spine button > i,
+.guided-step-nav i,
+.relationship-map i {
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+}
+
+.board-empty,
+.adaptive-empty,
+.adaptive-supporting li button,
+.reference-findings-empty,
+.creative-section-empty,
+.document-generation-embedded--rail {
+  background: color-mix(in srgb, var(--panel) 58%, transparent);
+}
+
+.modal,
+.command-dialog,
+.modal::backdrop {
+  background: light-dark(rgba(16, 16, 16, .46), rgba(0, 0, 0, .72));
 }
 
 /* Responsive simplification */
