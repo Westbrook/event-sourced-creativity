@@ -37,7 +37,11 @@ export default {
         return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
       }
     }
-    const assetRequest=/^\/(?:assets\/|og\.png$|favicon\.|robots\.txt$)|\.[a-z0-9]{2,8}$/i.test(url.pathname);
+    // Vite's development runtime has extensionless module endpoints. They are
+    // assets, not navigations, and must reach the asset binding or the HTML
+    // shell will never hydrate after a deep-link refresh.
+    const developmentAssetRequest=/^\/(?:@vite\/|@id\/|@fs\/|__vite_ping$|__open-in-editor)/.test(url.pathname);
+    const assetRequest=developmentAssetRequest||/^\/(?:assets\/|og\.png$|favicon\.|robots\.txt$)|\.[a-z0-9]{2,8}$/i.test(url.pathname);
     if(assetRequest)return env.ASSETS.fetch(request);
     if(request.method!=="GET"&&request.method!=="HEAD")return new Response("Method not allowed",{status:405});
     return new Response("Page not found",{status:404,headers:{"content-type":"text/plain; charset=utf-8"}});

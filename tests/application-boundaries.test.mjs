@@ -45,6 +45,12 @@ test("the server resolves every shareable deep-link family before SPA hydration"
   assert.equal(resolveServerRoute("/not-a-real-surface"),null);
 });
 
+test("server-first routing preserves the development module runtime",async()=>{
+  const worker=await readFile(new URL("../worker/index.ts",import.meta.url),"utf8");
+  assert.match(worker,/@vite\\\//);
+  assert.match(worker,/developmentAssetRequest\|\|/);
+});
+
 test("application entries do not import sibling applications",async()=>{
   for(const application of APPLICATIONS){
     const source=await readFile(new URL(`../${application.entry}`,import.meta.url),"utf8");
