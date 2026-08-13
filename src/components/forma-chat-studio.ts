@@ -1,11 +1,13 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
-import { isDraftOutput, outputQualityLabel } from "../model/events";
+import { generationHistoryItemIsDraft, generationHistoryItems, isDraftOutput, outputQualityLabel } from "../model/events";
 import { documentFocusFromRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import "./project-rail";
 import "./studio-navigation";
 import "./output-visual";
 import "./generation-actions";
+import "./prompt-fan-visual";
+import "./prompt-fan-review";
 
 type ChatLine={id:string;role:"user"|"assistant";text:string;sequence:number};
 
@@ -28,7 +30,7 @@ export class FormaChatStudio extends FormaElement {
   #keydown(event:KeyboardEvent){if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();this.querySelector<HTMLFormElement>(".chat-composer")?.requestSubmit();}}
 
   override render(){
-    const projection=this.store.projection.get();const lines=this.#lines(projection.documentId);const current=projection.outputs.find((output)=>output.id===this.store.ui.selectedOutputId)??projection.outputs[0]??null;const previewProgress=this.store.documentPreviewProgress(projection.documentId);const previewActive=this.store.documentJobActive("preview",projection.documentId);const working=Boolean(previewProgress)||isDraftOutput(current);const busy=this.store.busy.get();const chatActive=this.store.documentJobActive("chat");
+    const projection=this.store.projection.get();const lines=this.#lines(projection.documentId);const history=generationHistoryItems(projection.outputs);const currentItem=history.find((item)=>(item.kind==="fan"?`fan:${item.id}`:item.id)===this.store.ui.selectedOutputId)??history[0]??null;const current=currentItem?.kind==="output"?currentItem.output:null;const previewProgress=this.store.documentPreviewProgress(projection.documentId);const previewActive=this.store.documentJobActive("preview",projection.documentId);const working=Boolean(previewProgress)||generationHistoryItemIsDraft(currentItem);const busy=this.store.busy.get();const chatActive=this.store.documentJobActive("chat");
     const destination=withDocumentFocusInRoute(withDocumentInRoute("/studio/chat",projection.documentId,projection.documentTitle),documentFocusFromRoute(this.store.route.get()));
     return html`<section class="workspace-page studio-subpage chat-view-page">
       <forma-project-rail surface="studio" destination=${destination} quiet></forma-project-rail>
@@ -47,9 +49,9 @@ export class FormaChatStudio extends FormaElement {
           <section class="chat-generation" aria-labelledby="chat-generation-title">
             <header><div><span class="eyebrow">${working?"Working preview":"Current generation"}</span><h1 id="chat-generation-title">${projection.documentTitle}</h1></div><span class=${`chat-image-status ${working?"working":"final"}`}>${working?"Following the conversation":"Full quality"}</span></header>
             <div class="chat-generation-stage" aria-busy=${previewActive}>
-              ${previewProgress?html`<div class="streaming-preview"><img class="streaming-preview-image" src=${previewProgress.mediaUrl} width=${previewProgress.width} height=${previewProgress.height} alt="Early image preview still being refined"><span>Early preview · finalizing</span></div>`:current?html`<forma-output-visual .output=${current} interactive></forma-output-visual>`:html`<div class="chat-generation-empty">${icon("image")}<b>${previewActive?"Preparing the first image…":"Your image will appear here"}</b><span>${previewActive?"The server is resolving the latest creative plan. An early image will appear before the completed draft.":"Tell Forma what you want to make. A quick working preview will follow the conversation."}</span></div>`}
+              ${previewProgress?html`<div class="streaming-preview"><img class="streaming-preview-image" src=${previewProgress.mediaUrl} width=${previewProgress.width} height=${previewProgress.height} alt="Early image preview still being refined"><span>Early preview · finalizing</span></div>`:currentItem?.kind==="fan"?html`<div class="chat-prompt-fan"><forma-prompt-fan-visual .outputs=${currentItem.outputs}></forma-prompt-fan-visual><forma-prompt-fan-review .fanId=${currentItem.id}></forma-prompt-fan-review></div>`:current?html`<forma-output-visual .output=${current} interactive></forma-output-visual>`:html`<div class="chat-generation-empty">${icon("image")}<b>${previewActive?"Preparing the first image…":"Your image will appear here"}</b><span>${previewActive?"The server is resolving the latest creative plan. An early image will appear before the completed draft.":"Tell Forma what you want to make. A quick working preview will follow the conversation."}</span></div>`}
             </div>
-            ${projection.outputs.length>1?html`<div class="chat-generation-history" role="list" aria-label="Generation history">${projection.outputs.map((output,index)=>html`<button role="listitem" class=${output.id===current?.id?"selected":""} aria-pressed=${output.id===current?.id} @click=${()=>this.store.patchUi({selectedOutputId:output.id})}><forma-output-visual .output=${output} compact></forma-output-visual><span>${outputQualityLabel(output)}</span><small>${index===0?"Latest":`#${projection.outputs.length-index}`}</small></button>`)}</div>`:nothing}
+            ${history.length>1?html`<div class="chat-generation-history" role="list" aria-label="Generation history">${history.map((item,index)=>{const id=item.kind==="fan"?`fan:${item.id}`:item.id;return html`<button role="listitem" class=${id===(currentItem?.kind==="fan"?`fan:${currentItem.id}`:currentItem?.id)?"selected":""} aria-pressed=${id===(currentItem?.kind==="fan"?`fan:${currentItem.id}`:currentItem?.id)} @click=${()=>this.store.patchUi({selectedOutputId:id})}>${item.kind==="fan"?html`<forma-prompt-fan-visual .outputs=${item.outputs} compact></forma-prompt-fan-visual>`:html`<forma-output-visual .output=${item.output} compact></forma-output-visual>`}<span>${item.kind==="fan"?`${generationHistoryItemIsDraft(item)?"Draft":"Full"} fan`:outputQualityLabel(item.output)}</span><small>${index===0?"Latest":`#${history.length-index}`}</small></button>`;})}</div>`:nothing}
             <footer><p>${previewProgress?"This early image is usable for orientation while GPT Image finishes the durable draft.":working?"This fast draft keeps pace with your ideas. Generating it at full quality records a deliberate promotion and preserves the visual handoff.":"This is a full-quality image. Preview another direction quickly, or keep talking to reshape the plan."}</p><forma-generation-actions source="chat" .selected=${current}></forma-generation-actions></footer>
           </section>
 

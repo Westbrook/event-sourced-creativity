@@ -53,7 +53,7 @@ export function buildScoutTrajectory(events: CreativeEvent[]): ScoutTrajectorySl
   const recent = outputs.slice(-6);
   const generationEvents = events.filter((event) => event.type === "GenerationCompleted" && event.payload.report_space !== "scout");
   const requestEvents = events.filter((event) => event.type === "GenerationRequested" && event.actor !== "worker:scout");
-  const engagementEvents = events.filter((event) => /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary|BriefItemAccepted)$/.test(event.type));
+  const engagementEvents = events.filter((event) => /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary|PromptFanOutputPromoted|BriefItemAccepted)$/.test(event.type));
   const comparisonEvents = events.filter((event) => event.type === "ComparisonOpened");
   const retainedAttention = attentionEvents(events);
   const frictionAttention = retainedAttention.filter((event) => Number(event.payload.friction_score ?? 0) >= .45);

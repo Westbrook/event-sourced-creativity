@@ -253,6 +253,13 @@ export class FormaStore {
     if(appended.length)this.toast(`${normalizePromptTechnique(technique)} prompts preferred for this ${scope==="collection"?"folder":scope}.`);return Boolean(appended.length);
   }
 
+  async promotePromptFanOutputs(promptFanId:string,outputIds:string[]){
+    const projection=this.projection.get();const requested=new Set(outputIds);const outputs=projection.outputs.filter((output)=>output.promptFanId===promptFanId&&requested.has(output.id)&&!output.standalone);
+    if(!outputs.length){this.toast("Those fan results already stand on their own.");return false;}
+    const appended=await this.appendBatch(outputs.map((output)=>({type:"PromptFanOutputPromoted",payload:{object_id:output.id,prompt_fan_id:promptFanId,prompt_technique:output.promptTechnique,document_id:projection.documentId,project_id:projection.projectId,source_surface:"prompt-fan-comparison"}})));
+    if(appended.length)this.toast(`${appended.length} fan result${appended.length===1?" now stands":"s now stand"} alone in the generation history.`);return Boolean(appended.length);
+  }
+
   async chat(message:string,livePreview=true) {
     try{
       const documentId=this.projection.get().documentId;await this.#startDocumentJob("chat",{message,livePreview,documentId,promptTechnique:this.promptTechniquePreference().technique},"chat");return[];

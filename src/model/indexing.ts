@@ -132,7 +132,7 @@ export function buildVectorIndex(events: CreativeEvent[]): VectorItem[] {
     const completed = events.find((event) => event.type === "GenerationCompleted" && list(event.payload.object_ids).map(String).includes(output.id));
     const compiled = generationContext(events, output.generationId);
     const engagement = engagementFor(events, output.id);
-    const accepted = promotedDraftIds.has(output.id)||engagement.some((event) => /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary)$/.test(event.type));
+    const accepted = promotedDraftIds.has(output.id)||engagement.some((event) => /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary|PromptFanOutputPromoted)$/.test(event.type));
     const context = asRecord(compiled?.payload.compiled_snapshot);
     return {
       id: output.id,
@@ -190,7 +190,7 @@ export function buildFewShotCorpus(events: CreativeEvent[], content: Record<stri
   for (const event of events.filter((item) => item.type === "GenerationCompleted")) {
     const generationId = String(event.payload.generation_id ?? "");
     const objectIds = list(event.payload.object_ids).map(String);
-    const engagement = events.filter((item) => item.sequence > event.sequence && objectIds.some((id) => String(item.payload.object_id ?? "") === id) && /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary)$/.test(item.type));const promotion=promotions.find((signal)=>signal.status==="completed"&&signal.fullGenerationId===generationId);
+    const engagement = events.filter((item) => item.sequence > event.sequence && objectIds.some((id) => String(item.payload.object_id ?? "") === id) && /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary|PromptFanOutputPromoted)$/.test(item.type));const promotion=promotions.find((signal)=>signal.status==="completed"&&signal.fullGenerationId===generationId);
     if (!engagement.length&&!promotion) continue;
     const compiled = generationContext(events, generationId);
     const context = asRecord(compiled?.payload.compiled_snapshot);

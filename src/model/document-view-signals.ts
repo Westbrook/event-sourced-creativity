@@ -42,7 +42,7 @@ export type DocumentViewWorkflow = {
 };
 
 const EDIT_EVENTS = /^(BlockCreated|BlockRenamed|BlockPropertyEdited|BlockWeightSet|BlockLocked|BlockUnlocked|BlockRemoved|BlockRestored|BlockRelationAdded|BlockRelationRemoved|ChipEdited|ChatMessageSent)$/;
-const OUTCOME_EVENTS = /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary|IdeationPromoted|BriefItemAccepted)$/;
+const OUTCOME_EVENTS = /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary|IdeationPromoted|PromptFanOutputPromoted|BriefItemAccepted)$/;
 const GENERATION_EVENTS = /^(GenerationRequested)$/;
 const round = (value: number, precision = 3) => Number(value.toFixed(precision));
 const safeView = (value: unknown): DocumentView | null => DOCUMENT_VIEWS.includes(value as DocumentView) ? value as DocumentView : null;

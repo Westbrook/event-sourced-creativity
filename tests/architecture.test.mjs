@@ -33,6 +33,22 @@ test("builds and replays theoretical long streams deterministically", () => {
   assert.ok(final.outputs.length >= halfway.outputs.length);
 });
 
+test("delivers prompt fans as one generation with explicit member promotion", async () => {
+  const [review, generations, worker] = await Promise.all([
+    readFile(new URL("../src/components/prompt-fan-review.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/document-generations.ts", import.meta.url), "utf8"),
+    readFile(new URL("../worker/events-api.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(generations, /generationHistoryItems/);
+  assert.match(generations, /forma-prompt-fan-visual/);
+  assert.match(review, /One generation, four ways to hand off the plan/);
+  assert.match(review, /Promote image/);
+  assert.match(review, /Promote all/);
+  assert.match(review, /Use as default/);
+  assert.match(review, /Apply default to/);
+  assert.match(worker, /PromptFanOutputPromoted/);
+});
+
 test("keeps every replay fixture current and every mocked event specifically explained", () => {
   assert.ok(SCENARIOS.length >= 8);
   const stories = new Set();
@@ -253,10 +269,10 @@ test("presents every alternate Studio lens as the same complete durable document
   assert.match(creativeEditor, /BlockCreated/); assert.match(creativeEditor, /BlockPropertyEdited/); assert.match(creativeEditor, /BlockWeightSet/); assert.match(creativeEditor, /BlockRemoved/);
   assert.match(creativeEditor, /The brief/); assert.match(creativeEditor, /The picture/); assert.match(creativeEditor, /The look/); assert.match(creativeEditor, /The guardrails/); assert.match(creativeEditor, /Visual references/);
   assert.doesNotMatch(creativeEditor, />Event|>Metadata|>Provenance|Creative history|source events/i);
-  assert.match(navigation, /projection\.blocks\.length/); assert.match(navigation, /projection\.outputs\.length/); assert.match(navigation, /Every saved decision and result/);
+  assert.match(navigation, /projection\.blocks\.length/); assert.match(navigation, /generationHistoryItems\(projection\.outputs\)/); assert.match(navigation, /Every saved decision and result/);
   assert.match(navigation, /Creative editor/);
   assert.match(navigation, /Add context/);assert.match(navigation, /copyLibraryBlockSet/);assert.match(navigation, /Add context set/);
-  assert.match(generations, /projection\.get\(\)\.outputs/); assert.match(generations, /Results from this document/); assert.match(generations, /"full"\|"compact"\|"canvas"\|"rail"/); assert.match(generations, /interactive/);
+  assert.match(generations, /projection\.get\(\)\.outputs/); assert.match(generations, /Results from this document/); assert.match(generations, /"full"\s*\|\s*"compact"\s*\|\s*"canvas"\s*\|\s*"rail"/); assert.match(generations, /interactive/);
   assert.match(navigation, /DOCUMENT_FOCUS_KEY/); assert.match(navigation, /data-document-focus/); assert.match(navigation, /Focus view/); assert.match(navigation, /Exit focus/); assert.match(navigation, /event\.key === "Escape"/); assert.match(navigation, /withDocumentFocusInRoute/); assert.match(navigation, /documentFocusFromRoute/);
   assert.match(styles, /\.creative-editor \{[^}]*grid-template-rows: auto minmax\(0,1fr\)[^}]*height: clamp\(590px,72dvh,780px\)/);
   assert.match(styles, /\.creative-editor-layout \{[^}]*min-height: 0;[^}]*overflow: hidden/);
@@ -508,7 +524,7 @@ test("connects the final Library and Studio affordances to explicit destinations
     readFile(new URL("../worker/openai-adapter.ts",import.meta.url),"utf8"),
   ]);
   assert.match(library,/Use in open document/);assert.match(library,/focused preview/i);assert.match(library,/Generated with this block/);assert.match(library,/Open family lightbox/);
-  assert.match(library,/Keep for reuse/);assert.match(library,/Recent shows the project trail/);assert.doesNotMatch(library,/Project contents|Open in Studio/);
+  assert.match(library,/Keep for reuse/);assert.match(library,/A four-image fan remains one result/);assert.doesNotMatch(library,/Project contents|Open in Studio/);
   assert.match(contents,/Project contents/);assert.match(contents,/>Open \$\{icon\("arrow"\)\}/);assert.match(contents,/openDocument/);
   assert.match(eventsModel,/DocumentOpened/);assert.match(eventsApi,/DocumentOpened/);assert.match(store,/openDocument/);assert.match(classification,/DocumentOpened,behavioral/);
   assert.match(eventsModel,/ProjectOpened/);assert.match(eventsApi,/ProjectOpened/);assert.match(store,/openProject/);assert.match(classification,/ProjectOpened,behavioral/);

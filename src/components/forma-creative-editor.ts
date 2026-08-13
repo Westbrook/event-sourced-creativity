@@ -1,5 +1,5 @@
 import { html, nothing } from "lit";
-import { isDraftOutput, outputQualityLabel, type CreativeBlock, type EventInput } from "../model/events";
+import { generationHistoryItemIsDraft, generationHistoryItems, isDraftOutput, outputQualityLabel, type CreativeBlock, type EventInput } from "../model/events";
 import { BLOCK_INTENTS, BLOCK_TYPES, blockIntentFor, blockTypeDefinition, isBlockIntent, isBlockKind, isNegativeIntent, suggestedSubtype, type BlockIntent, type BlockKind } from "../model/block-types";
 import { DEFAULT_REFERENCE_FINDINGS } from "../model/extractors";
 import { sampleImageFile } from "../model/image-sample";
@@ -13,6 +13,8 @@ import "./output-visual";
 import "./reference-image";
 import "./reference-pixel-policy";
 import "./generation-actions";
+import "./prompt-fan-visual";
+import "./prompt-fan-review";
 
 type EditorSection = {
   id: "brief" | "picture" | "look" | "delivery" | "references";
@@ -321,9 +323,9 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const selected = projection.blocks.find((item) => item.id === this.#selectedId) ?? projection.blocks[0];
     const selectedIntent = selected ? blockIntentFor(selected.type, selected.properties) : "include";
     const selectedIsExclusion = isNegativeIntent(selectedIntent);
-    const latest = projection.outputs.find((output)=>output.id===this.store.ui.selectedOutputId)??projection.outputs[0];const previewProgress=this.store.documentPreviewProgress(projection.documentId);
+    const history=generationHistoryItems(projection.outputs);const latestItem=history.find((item)=>(item.kind==="fan"?`fan:${item.id}`:item.id)===this.store.ui.selectedOutputId)??history[0];const latest=latestItem?.kind==="output"?latestItem.output:undefined;const latestSequence=latestItem?.sequence??0;const previewProgress=this.store.documentPreviewProgress(projection.documentId);
     const blockIds = new Set(projection.blocks.map((item) => item.id));
-    const previewOutdated = Boolean(latest && this.store.events.get().some((event) => event.sequence > latest.sequence && /^(BlockCreated|BlockPropertyEdited|BlockWeightSet|BlockRemoved|BlockRestored|ChipEdited)$/.test(event.type) && (event.payload.document_id === projection.documentId || blockIds.has(String(event.payload.block_id ?? "")))));
+    const previewOutdated = Boolean(latestItem && this.store.events.get().some((event) => event.sequence > latestSequence && /^(BlockCreated|BlockPropertyEdited|BlockWeightSet|BlockRemoved|BlockRestored|ChipEdited)$/.test(event.type) && (event.payload.document_id === projection.documentId || blockIds.has(String(event.payload.block_id ?? "")))));
     const preview = this.#previewCopy(latest);
     const direction = projection.blocks.find((item) => item.type === "direction" && !isNegativeIntent(blockIntentFor(item.type, item.properties)) && Number(item.properties.weight ?? .65) > 0);
     const subject = projection.blocks.find((item) => item.type === "subject" && !isNegativeIntent(blockIntentFor(item.type, item.properties)) && Number(item.properties.weight ?? .65) > 0);
@@ -354,14 +356,15 @@ export class FormaCreativeEditor extends AlternativeStudio {
           <main class="creative-editor-canvas">
             <section class=${`creative-preview ${previewOutdated ? "preview-outdated" : ""}`}>
               <div class="creative-preview-stage">
-                <div class=${`creative-preview-art ${latest?.mediaUrl||previewProgress ? "has-preview" : ""}`}>${previewProgress?html`<div class="streaming-preview"><img class="streaming-preview-image" src=${previewProgress.mediaUrl} width=${previewProgress.width} height=${previewProgress.height} alt="Early image preview still being refined"><span>Early preview · finalizing</span></div>`:html`<forma-output-visual .output=${latest} .interactive=${true}></forma-output-visual>`}</div>
-                ${projection.outputs.length>1?html`<div class="creative-preview-filmstrip" aria-label="All generations from this document">${projection.outputs.map((output,index)=>html`<button class=${output.id===latest?.id?"selected":""} aria-pressed=${output.id===latest?.id} aria-label=${`Show ${outputQualityLabel(output).toLowerCase()} ${index+1}`} @click=${()=>this.#selectOutput(output.id)}><forma-output-visual .output=${output} .compact=${true}></forma-output-visual><span>${isDraftOutput(output)?"Draft":"Full"}${index===0?" · Latest":` · #${projection.outputs.length-index}`}</span></button>`)}</div>`:nothing}
+                <div class=${`creative-preview-art ${latest?.mediaUrl||latestItem?.kind==="fan"||previewProgress ? "has-preview" : ""} ${latestItem?.kind==="fan"?"fan":""}`}>${previewProgress?html`<div class="streaming-preview"><img class="streaming-preview-image" src=${previewProgress.mediaUrl} width=${previewProgress.width} height=${previewProgress.height} alt="Early image preview still being refined"><span>Early preview · finalizing</span></div>`:latestItem?.kind==="fan"?html`<forma-prompt-fan-visual .outputs=${latestItem.outputs}></forma-prompt-fan-visual>`:html`<forma-output-visual .output=${latest} .interactive=${true}></forma-output-visual>`}</div>
+                ${latestItem?.kind==="fan"?html`<div class="creative-prompt-fan-actions"><forma-prompt-fan-review .fanId=${latestItem.id}></forma-prompt-fan-review></div>`:nothing}
+                ${history.length>1?html`<div class="creative-preview-filmstrip" aria-label="All generations from this document">${history.map((item,index)=>{const id=item.kind==="fan"?`fan:${item.id}`:item.id;return html`<button class=${id===(latestItem?.kind==="fan"?`fan:${latestItem.id}`:latestItem?.id)?"selected":""} aria-pressed=${id===(latestItem?.kind==="fan"?`fan:${latestItem.id}`:latestItem?.id)} aria-label=${`Show ${item.kind==="fan"?"prompt fan":outputQualityLabel(item.output).toLowerCase()} ${index+1}`} @click=${()=>this.#selectOutput(id)}>${item.kind==="fan"?html`<forma-prompt-fan-visual .outputs=${item.outputs} .compact=${true}></forma-prompt-fan-visual>`:html`<forma-output-visual .output=${item.output} .compact=${true}></forma-output-visual>`}<span>${item.kind==="fan"?`${generationHistoryItemIsDraft(item)?"Draft":"Full"} fan`:isDraftOutput(item.output)?"Draft":"Full"}${index===0?" · Latest":` · #${history.length-index}`}</span></button>`;})}</div>`:nothing}
               </div>
               <div class="creative-preview-copy">
-                <span>${previewProgress?"Image arriving":latest?outputQualityLabel(latest):"Working preview"}</span>
-                <h2>${previewProgress?"The plan is becoming visible":preview ? String(preview.title ?? "A direction is taking shape") : direction ? textFor(direction) : "Start with one clear goal"}</h2>
-                <p>${previewProgress?"Use this early pass to orient yourself while the completed draft is finalized.":preview ? String(preview.rationale ?? preview.scene ?? "") : subject ? `Centered on ${textFor(subject)}${look ? `, with ${textFor(look).toLowerCase()}` : ""}.` : "Add a goal, subject, or visual reference. You can refine the rest only when it becomes useful."}</p>
-                ${previewProgress?html`<small>The durable draft will replace this streamed image automatically.</small>`:previewOutdated ? html`<small>Plan changed since this image · Preview draft or Update image at full quality.</small>` : latest?.mediaUrl ? html`<small>${isDraftOutput(latest)?"Fast draft for exploration · generate it at full quality when it holds.":latest.promotedFromId?"Full-quality result refined from a selected draft.":"Full-quality generated image."}</small>` : html`<small>No generated image yet · the plan remains useful on its own.</small>`}
+                <span>${previewProgress?"Image arriving":latestItem?.kind==="fan"?"Fan generation":latest?outputQualityLabel(latest):"Working preview"}</span>
+                <h2>${previewProgress?"The plan is becoming visible":latestItem?.kind==="fan"?"Four prompt processes, one creative decision":preview ? String(preview.title ?? "A direction is taking shape") : direction ? textFor(direction) : "Start with one clear goal"}</h2>
+                <p>${previewProgress?"Use this early pass to orient yourself while the completed draft is finalized.":latestItem?.kind==="fan"?"Compare the four outputs together. Promote only the results that deserve an independent place in the document history.":preview ? String(preview.rationale ?? preview.scene ?? "") : subject ? `Centered on ${textFor(subject)}${look ? `, with ${textFor(look).toLowerCase()}` : ""}.` : "Add a goal, subject, or visual reference. You can refine the rest only when it becomes useful."}</p>
+                ${previewProgress?html`<small>The durable draft will replace this streamed image automatically.</small>`:previewOutdated ? html`<small>Plan changed since this image · Preview draft or Update image at full quality.</small>`:latestItem?.kind==="fan"?html`<small>${latestItem.complete} of 4 ready · ${latestItem.standaloneCount} promoted to stand alone.</small>` : latest?.mediaUrl ? html`<small>${isDraftOutput(latest)?"Fast draft for exploration · generate it at full quality when it holds.":latest.promotedFromId?"Full-quality result refined from a selected draft.":"Full-quality generated image."}</small>` : html`<small>No generated image yet · the plan remains useful on its own.</small>`}
               </div>
             </section>
 

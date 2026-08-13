@@ -63,7 +63,7 @@ export function standingConstraints(events: CreativeEvent[], recordedAsOf = Numb
 
 function positiveContextEvidence(events: CreativeEvent[]) {
   const rows: Array<{axis:CreatorAxis;value:string;polarity:PreferencePolarity;event:CreativeEvent;refs:string[]}> = [];
-  for (const outcome of events.filter((event) => /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary)$/.test(event.type))) {
+  for (const outcome of events.filter((event) => /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary|PromptFanOutputPromoted)$/.test(event.type))) {
     const objectId = String(outcome.payload.object_id ?? outcome.payload.item_id ?? "");
     const completed = [...events].reverse().find((event) => event.sequence < outcome.sequence && event.type === "GenerationCompleted" && list(event.payload.object_ids).map(String).includes(objectId));
     if (!completed) continue;

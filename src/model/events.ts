@@ -1,5 +1,5 @@
 import { normalizeImageFocalPoint, type ImageFocalPoint } from "./focal-point.ts";
-import { normalizePromptTechnique, type PromptTechnique } from "./prompt-structures.ts";
+import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "./prompt-structures.ts";
 
 export type EventActor = "user" | `worker:${string}` | `model:${string}`;
 
@@ -113,7 +113,25 @@ export type CreativeOutput = {
   promotedFromId: string | null;
   promotedFromEventId: string | null;
   focalPoint: ImageFocalPoint | null;
+  standalone: boolean;
+  standaloneSequence: number | null;
 };
+
+export type PromptFanGeneration = {
+  kind: "fan";
+  id: string;
+  documentId: string;
+  outputs: CreativeOutput[];
+  sequence: number;
+  quality: CreativeOutput["quality"];
+  purpose: CreativeOutput["purpose"];
+  complete: number;
+  standaloneCount: number;
+};
+
+export type GenerationHistoryItem =
+  | { kind: "output"; id: string; documentId: string; output: CreativeOutput; sequence: number }
+  | PromptFanGeneration;
 
 export const isDraftOutput = (output: CreativeOutput | null | undefined) =>
   Boolean(output && (output.purpose === "ideate" || output.quality === "low"));
@@ -124,6 +142,31 @@ export const outputQualityLabel = (output: CreativeOutput | null | undefined) =>
 export function generationMix(outputs: CreativeOutput[]) {
   const drafts = outputs.filter(isDraftOutput).length;
   return { total: outputs.length, drafts, full: outputs.length - drafts };
+}
+
+export function generationHistoryItems(outputs: CreativeOutput[]): GenerationHistoryItem[] {
+  const fans = new Map<string, CreativeOutput[]>();
+  const items: GenerationHistoryItem[] = [];
+  for (const output of outputs) {
+    if (output.promptFanId) fans.set(output.promptFanId, [...(fans.get(output.promptFanId) ?? []), output]);
+    if (!output.promptFanId || output.standalone) items.push({ kind: "output", id: output.id, documentId: output.documentId, output, sequence: output.standaloneSequence ?? output.sequence });
+  }
+  for (const [id, members] of fans) {
+    const ordered = [...members].sort((left, right) => PROMPT_TECHNIQUES.indexOf(left.promptTechnique) - PROMPT_TECHNIQUES.indexOf(right.promptTechnique));
+    const representative = ordered[0];
+    if (!representative) continue;
+    items.push({ kind: "fan", id, documentId: representative.documentId, outputs: ordered, sequence: Math.max(...ordered.map((output) => output.sequence)), quality: representative.quality, purpose: representative.purpose, complete: ordered.length, standaloneCount: ordered.filter((output) => output.standalone).length });
+  }
+  return items.sort((left, right) => right.sequence - left.sequence || (left.kind === "fan" ? -1 : 1));
+}
+
+export const generationHistoryItemIsDraft = (item: GenerationHistoryItem | null | undefined) =>
+  Boolean(item && (item.kind === "output" ? isDraftOutput(item.output) : item.purpose === "ideate" || item.quality === "low"));
+
+export function generationHistoryMix(outputs: CreativeOutput[]) {
+  const items = generationHistoryItems(outputs);
+  const drafts = items.filter(generationHistoryItemIsDraft).length;
+  return { total: items.length, drafts, full: items.length - drafts };
 }
 
 export type CreativeProjection = {
@@ -266,13 +309,13 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "IdeationPreviewCompleted": {
         const id=String(p.object_id??(Array.isArray(p.object_ids)?p.object_ids[0]:"")??"")||`draft-${String(p.generation_id??event.eventId)}`;
         previewOutputByEvent.set(event.eventId,id);
-        outputs.set(id,{id,documentId:String(p.document_id??state.documentId),generationId:String(p.generation_id??""),modelId:String(p.model_id??"gpt-image-2"),variant:Number(p.variant??outputs.size%4),latency:Number(p.latency_ms??0),sequence:event.sequence,pinned:false,saved:false,discarded:false,library:false,contentRef:p.output_ref?String(p.output_ref):null,promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null,provider:String(p.provider??"openai"),mediaUrl:p.media_url?String(p.media_url):null,mediaType:p.media_type?String(p.media_type):null,width:p.image_width?Number(p.image_width):null,height:p.image_height?Number(p.image_height):null,plannerModelId:p.planner_model_id?String(p.planner_model_id):null,quality:"low",purpose:"ideate",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):p.source_chat_turn_id?"chat":null,promotionId:null,promotedFromId:null,promotedFromEventId:null,focalPoint:normalizeImageFocalPoint(p.focal_point)});
+        outputs.set(id,{id,documentId:String(p.document_id??state.documentId),generationId:String(p.generation_id??""),modelId:String(p.model_id??"gpt-image-2"),variant:Number(p.variant??outputs.size%4),latency:Number(p.latency_ms??0),sequence:event.sequence,pinned:false,saved:false,discarded:false,library:false,contentRef:p.output_ref?String(p.output_ref):null,promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null,provider:String(p.provider??"openai"),mediaUrl:p.media_url?String(p.media_url):null,mediaType:p.media_type?String(p.media_type):null,width:p.image_width?Number(p.image_width):null,height:p.image_height?Number(p.image_height):null,plannerModelId:p.planner_model_id?String(p.planner_model_id):null,quality:"low",purpose:"ideate",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):p.source_chat_turn_id?"chat":null,promotionId:null,promotedFromId:null,promotedFromEventId:null,focalPoint:normalizeImageFocalPoint(p.focal_point),standalone:!p.prompt_fan_id,standaloneSequence:p.prompt_fan_id?null:event.sequence});
         break;
       }
       case "GenerationCompleted": {
         if (p.report_space === "scout") break;
         const ids = Array.isArray(p.object_ids) ? p.object_ids : [];
-        ids.forEach((value) => { const id = String(value); const promotedFromEventId=p.reference_preview_event_id?String(p.reference_preview_event_id):null; outputs.set(id, { id, documentId: String(p.document_id ?? state.documentId), generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")), mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null, width: p.image_width ? Number(p.image_width) : null, height: p.image_height ? Number(p.image_height) : null, plannerModelId: p.planner_model_id ? String(p.planner_model_id) : null, quality:p.quality==="low"?"low":p.quality==="medium"?"medium":"high",purpose:p.purpose==="ideate"?"ideate":"final",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):null,promotionId:p.promotion_id?String(p.promotion_id):null,promotedFromId:p.promoted_from_object_id?String(p.promoted_from_object_id):promotedFromEventId?previewOutputByEvent.get(promotedFromEventId)??null:null,promotedFromEventId,focalPoint:normalizeImageFocalPoint(p.focal_point) }); });
+        ids.forEach((value) => { const id = String(value); const promotedFromEventId=p.reference_preview_event_id?String(p.reference_preview_event_id):null; outputs.set(id, { id, documentId: String(p.document_id ?? state.documentId), generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")), mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null, width: p.image_width ? Number(p.image_width) : null, height: p.image_height ? Number(p.image_height) : null, plannerModelId: p.planner_model_id ? String(p.planner_model_id) : null, quality:p.quality==="low"?"low":p.quality==="medium"?"medium":"high",purpose:p.purpose==="ideate"?"ideate":"final",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):null,promotionId:p.promotion_id?String(p.promotion_id):null,promotedFromId:p.promoted_from_object_id?String(p.promoted_from_object_id):promotedFromEventId?previewOutputByEvent.get(promotedFromEventId)??null:null,promotedFromEventId,focalPoint:normalizeImageFocalPoint(p.focal_point),standalone:!p.prompt_fan_id,standaloneSequence:p.prompt_fan_id?null:event.sequence }); });
         break;
       }
       case "ImageFocalPointCalculated": {
@@ -283,6 +326,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       }
       case "ObjectPinned": case "ObjectUnpinned": { const o = outputs.get(String(p.object_id)); if (o) o.pinned = event.type === "ObjectPinned"; break; }
       case "ObjectSaved": { const o = outputs.get(String(p.object_id)); if (o) o.saved = true; break; }
+      case "PromptFanOutputPromoted": { const o = outputs.get(String(p.object_id)); if (o && o.promptFanId === String(p.prompt_fan_id ?? o.promptFanId)) { o.standalone = true; o.standaloneSequence = event.sequence; } break; }
       case "ObjectDiscarded": { const o = outputs.get(String(p.object_id)); if (o) o.discarded = true; break; }
       case "AddedToLibrary": case "RemovedFromLibrary": { const o = outputs.get(String(p.object_id ?? p.item_id)); if (o) o.library = event.type === "AddedToLibrary"; break; }
       case "BriefComposed": state.brief = p; state.presentedBriefItems.clear(); break;
@@ -340,8 +384,8 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   state.libraryOutputs = [...outputs.values()].filter((o) => !o.discarded&&(!documents.has(o.documentId)||visibleDocumentIds.has(o.documentId))).sort((a, b) => b.sequence - a.sequence);
   state.outputs = state.libraryOutputs.filter((output) => output.documentId === state.documentId);
   state.annotations = [...annotations.values()]; state.families = [...families.values()]; state.preferences = [...preferences.values()]; state.conditions = [...conditions.values()];
-  state.projects=[...projects.values()].map((project)=>{const projectDocuments=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed);const documentIds=new Set(projectDocuments.map((document)=>document.id));return{...project,documentCount:projectDocuments.length,collectionCount:[...collections.values()].filter((collection)=>collection.projectId===project.id&&!collection.removed).length,blockCount:[...blocks.values()].filter((block)=>block.projectId===project.id&&!block.removed&&(block.scope==="library"||documentIds.has(block.documentId))).length,outputCount:[...outputs.values()].filter((output)=>documentIds.has(output.documentId)&&!output.discarded).length};}).sort((a,b)=>a.id===state.projectId?-1:b.id===state.projectId?1:b.lastSequence-a.lastSequence);
-  if(!state.projects.length&&state.projectId)state.projects=[{id:state.projectId,name:state.projectName,state:state.projectState,createdSequence:0,lastSequence:0,documentCount:state.documents.length,collectionCount:state.collections.length,blockCount:state.libraryBlocks.length,outputCount:state.libraryOutputs.length}];
+  state.projects=[...projects.values()].map((project)=>{const projectDocuments=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed);const documentIds=new Set(projectDocuments.map((document)=>document.id));const projectOutputs=[...outputs.values()].filter((output)=>documentIds.has(output.documentId)&&!output.discarded);return{...project,documentCount:projectDocuments.length,collectionCount:[...collections.values()].filter((collection)=>collection.projectId===project.id&&!collection.removed).length,blockCount:[...blocks.values()].filter((block)=>block.projectId===project.id&&!block.removed&&(block.scope==="library"||documentIds.has(block.documentId))).length,outputCount:generationHistoryItems(projectOutputs).length};}).sort((a,b)=>a.id===state.projectId?-1:b.id===state.projectId?1:b.lastSequence-a.lastSequence);
+  if(!state.projects.length&&state.projectId)state.projects=[{id:state.projectId,name:state.projectName,state:state.projectState,createdSequence:0,lastSequence:0,documentCount:state.documents.length,collectionCount:state.collections.length,blockCount:state.libraryBlocks.length,outputCount:generationHistoryItems(state.libraryOutputs).length}];
   return state;
 }
 

@@ -55,6 +55,10 @@ test("preserves usable controls when document navigation and editors get narrow"
   assert.match(navigation, /class="studio-mode-action-label"/);
   assert.match(navigation, /aria-label="Add reusable context"/);
   assert.match(navigation, /aria-label=\$\{this\.#focused \? "Exit focused document view" : "Enter focused document view"\}/);
+  assert.match(navigation, /class="studio-mode-links"/);
+  assert.match(navigation, /#revealActiveMode\(\)/);
+  assert.match(navigation, /a\[aria-current="page"\]/);
+  assert.match(navigation, /scroller\.scrollLeft \+= activeBounds\.(?:left|right)/);
 });
 
 test("stacks document headers without seams and reserves composer space inside Studio", async () => {

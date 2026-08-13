@@ -43,6 +43,7 @@ const TERMINAL_VALUE: Record<string, number> = {
   ComparisonOpened: .72,
   GenerationRequested: .7,
   IdeationPromoted: 1,
+  PromptFanOutputPromoted: 1,
   route_changed: .32,
   page_hidden: .12,
   idle_timeout: .08,

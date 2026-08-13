@@ -1,6 +1,6 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
-import { contextDiff, foldEvents, shortEventType, type CreativeBlock, type EventInput } from "../model/events";
+import { contextDiff, foldEvents, generationHistoryItems, type GenerationHistoryItem, shortEventType, type CreativeBlock, type EventInput } from "../model/events";
 import { sampleImageFile } from "../model/image-sample";
 import { DEFAULT_REFERENCE_FINDINGS, REFERENCE_FINDING_OPTIONS, type ImageSample, type ReferenceFindingKind } from "../model/extractors";
 import { retrieveFewShotExemplars, type RetrievedExemplar } from "../model/indexing";
@@ -11,6 +11,8 @@ import "./output-card";
 import "./project-rail";
 import "./studio-navigation";
 import "./generation-actions";
+import "./prompt-fan-visual";
+import "./prompt-fan-review";
 
 type BlockDraft = { type: BlockKind|""; subtype: string; text: string; colors: string[] };
 
@@ -109,7 +111,7 @@ export class FormaWorkspace extends FormaElement {
     if (appended.length) { this.#documentName = null; this.requestUpdate(); }
   }
   #compare() {
-    const out = this.store.projection.get().outputs.slice(0,2); if (out.length < 2) return this.store.toast("Generate one more output to compare.");
+    const out = generationHistoryItems(this.store.projection.get().outputs).filter((item) => item.kind === "output").slice(0,2).map((item) => item.output); if (out.length < 2) return this.store.toast("Promote a fan result or generate one more stand-alone output to compare.");
     const ids = out.map((o) => o.id); void this.store.append({ type: "ComparisonOpened", payload: { object_ids: ids, source_surface: "studio" } }); this.store.patchUi({ compareOpen: true, comparisonOutputIds: ids.join("|") });
   }
 
@@ -159,7 +161,7 @@ export class FormaWorkspace extends FormaElement {
   }
 
   override render() {
-    const p = this.store.projection.get(); const output = p.outputs.find((item)=>item.id===this.store.ui.selectedOutputId)??p.outputs[0];const previewProgress=this.store.documentPreviewProgress(p.documentId); const canCompare=p.outputs.length>=2;const contextGroups=new Set(p.blocks.map((block)=>blockTypeDefinition(block.type)?.group).filter(Boolean));const documentInsight=contextGroups.size>=4?`Aha: ${p.blocks.length} independently editable decisions now compile into one output while every source remains inspectable.`:`This document resolves ${contextGroups.size} of 5 context areas. Switch views to discover whether the remaining gaps are intentional.`;
+    const p = this.store.projection.get();const history=generationHistoryItems(p.outputs);const selectedItem=history.find((item)=>(item.kind==="fan"?`fan:${item.id}`:item.id)===this.store.ui.selectedOutputId)??history[0];const output=selectedItem?.kind==="output"?selectedItem.output:undefined;const previewProgress=this.store.documentPreviewProgress(p.documentId);const canCompare=history.filter((item)=>item.kind==="output").length>=2;const contextGroups=new Set(p.blocks.map((block)=>blockTypeDefinition(block.type)?.group).filter(Boolean));const documentInsight=contextGroups.size>=4?`Aha: ${p.blocks.length} independently editable decisions now compile into one output while every source remains inspectable.`:`This document resolves ${contextGroups.size} of 5 context areas. Switch views to discover whether the remaining gaps are intentional.`;
     return html`<section class="workspace-page">
       <forma-project-rail surface="studio" destination="/" @edit-project=${()=>this.#openProjectSettings()}></forma-project-rail>
       <div class="studio-main">
@@ -176,8 +178,8 @@ export class FormaWorkspace extends FormaElement {
             <div class="compile-bridge"><span>${icon("branch")}</span><div><b>Deterministic context compiler</b><small>${p.latestCompile ? "Snapshot embedded at last generation" : "Ready to compile"} · citations intact</small></div><button @click=${() => this.store.patchUi({ inspectorOpen:true })}>Inspect</button></div>
           </section>
           <section class="output-column" aria-labelledby="output-title"><div class="section-heading"><div><span class="eyebrow">${this.store.session.get()?.provider.configured ? `Live · ${this.store.session.get()?.provider.model}` : "Provider awaiting secure key"}</span><h2 id="output-title">Output</h2></div><button class="text-button" ?disabled=${!canCompare} title=${canCompare?"Compare output history":"Generate one more output to compare"} @click=${this.#compare}>Compare history</button></div>
-            ${previewProgress?html`<div class="output-card primary streaming-output-card"><div class="output-art"><div class="streaming-preview"><img class="streaming-preview-image" src=${previewProgress.mediaUrl} width=${previewProgress.width} height=${previewProgress.height} alt="Early image preview still being refined"><span>Early preview · finalizing</span></div></div><div class="output-info"><div><span class="output-quality draft">Draft arriving</span><b>The plan is becoming visible</b><small>This streamed pass will be replaced by the durable completed draft.</small></div></div></div>`:output ? html`<forma-output-card .output=${output} .primary=${true}></forma-output-card>` : html`<div class="empty-output"><span>${icon("image")}</span><h3>${p.blocks.length ? "Context is ready" : "A genuinely blank canvas"}</h3><p>${p.blocks.length ? "Generate an image from the current replayable projection." : "No context or output has been inferred. Add only what you choose."}</p></div>`}
-            ${p.outputs.length > 1 ? html`<div class="output-filmstrip" aria-label="Previous outputs">${p.outputs.slice(1,5).map((o) => html`<button class="mini-output ${this.store.ui.selectedOutputId===o.id?"selected":""}" aria-label="Select ${o.id}" aria-pressed=${this.store.ui.selectedOutputId===o.id} @click=${() => { this.store.patchUi({ selectedOutputId:o.id }); if (this.store.ui.instrumentation) void this.store.hot({type:"ObjectViewed",payload:{object_id:o.id}}); }}><forma-output-visual .output=${o} .compact=${true}></forma-output-visual></button>`)}</div>` : nothing}
+            ${previewProgress?html`<div class="output-card primary streaming-output-card"><div class="output-art"><div class="streaming-preview"><img class="streaming-preview-image" src=${previewProgress.mediaUrl} width=${previewProgress.width} height=${previewProgress.height} alt="Early image preview still being refined"><span>Early preview · finalizing</span></div></div><div class="output-info"><div><span class="output-quality draft">Draft arriving</span><b>The plan is becoming visible</b><small>This streamed pass will be replaced by the durable completed draft.</small></div></div></div>`:selectedItem?.kind==="fan"?html`<article class="output-card primary prompt-fan-output-card"><forma-prompt-fan-visual .outputs=${selectedItem.outputs}></forma-prompt-fan-visual><div class="output-info"><div><span class=${`output-quality ${selectedItem.purpose==="ideate"?"draft":"full"}`}>${selectedItem.purpose==="ideate"?"Draft fan":"Full-quality fan"}</span><b>One generation · four prompt processes</b><small>${selectedItem.complete} of 4 ready · ${selectedItem.standaloneCount} promoted to stand alone</small></div></div><forma-prompt-fan-review .fanId=${selectedItem.id}></forma-prompt-fan-review></article>`:output ? html`<forma-output-card .output=${output} .primary=${true}></forma-output-card>` : html`<div class="empty-output"><span>${icon("image")}</span><h3>${p.blocks.length ? "Context is ready" : "A genuinely blank canvas"}</h3><p>${p.blocks.length ? "Generate an image from the current replayable projection." : "No context or output has been inferred. Add only what you choose."}</p></div>`}
+            ${history.length > 1 ? html`<div class="output-filmstrip" aria-label="Previous generations">${history.slice(1,5).map((item:GenerationHistoryItem)=>{const id=item.kind==="fan"?`fan:${item.id}`:item.id;return html`<button class="mini-output ${this.store.ui.selectedOutputId===id?"selected":""}" aria-label=${item.kind==="fan"?"Select fan generation":`Select ${item.id}`} aria-pressed=${this.store.ui.selectedOutputId===id} @click=${() => { this.store.patchUi({ selectedOutputId:id }); if (item.kind==="output"&&this.store.ui.instrumentation) void this.store.hot({type:"ObjectViewed",payload:{object_id:item.id}}); }}>${item.kind==="fan"?html`<forma-prompt-fan-visual .outputs=${item.outputs} .compact=${true}></forma-prompt-fan-visual>`:html`<forma-output-visual .output=${item.output} .compact=${true}></forma-output-visual>`}</button>`;})}</div>` : nothing}
             <label class="dropzone"><input type="file" accept="image/*" @change=${this.#queueUpload}><span>${icon("plus")}</span><b>${this.#uploading ? "Uploading…" : "Drop or choose a reference"}</b><small>Stored in R2 after an explicit ownership or license assertion</small></label>
           </section>
         </div>

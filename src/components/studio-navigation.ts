@@ -1,7 +1,7 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
 import { documentFocusFromRoute, isDocumentViewRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
-import { generationMix, outputQualityLabel } from "../model/events";
+import { generationHistoryItemIsDraft, generationHistoryItems, generationHistoryMix, outputQualityLabel } from "../model/events";
 import "./reference-image";
 
 type StudioMode = "document" | "board" | "guided" | "layers" | "adaptive" | "editor" | "chat";
@@ -34,6 +34,7 @@ const readDocumentFocus = () => {
 export class StudioModeNav extends FormaElement {
   #focused = false;
   #contextPickerOpen = false;
+  #revealedMode: StudioMode | null = null;
   #focusKeydown = (event: KeyboardEvent) => {
     if (event.key === "Escape" && this.#focused && !document.querySelector("dialog[open]")) this.#setFocused(false);
   };
@@ -54,7 +55,31 @@ export class StudioModeNav extends FormaElement {
     super.disconnectedCallback();
   }
 
-  protected override updated(){const dialog=this.querySelector<HTMLDialogElement>(".context-set-picker-dialog");if(dialog&&!dialog.open)dialog.showModal();}
+  protected override updated() {
+    const dialog = this.querySelector<HTMLDialogElement>(".context-set-picker-dialog");
+    if (dialog && !dialog.open) dialog.showModal();
+
+    const active = (this.getAttribute("active") ?? "document") as StudioMode;
+    if (active !== this.#revealedMode) {
+      this.#revealedMode = active;
+      this.#revealActiveMode();
+    }
+  }
+
+  #revealActiveMode() {
+    const scroller = this.querySelector<HTMLElement>(".studio-mode-links");
+    const activeLink = scroller?.querySelector<HTMLElement>('a[aria-current="page"]');
+    if (!scroller || !activeLink) return;
+
+    const scrollerBounds = scroller.getBoundingClientRect();
+    const activeBounds = activeLink.getBoundingClientRect();
+    const breathingRoom = 8;
+    if (activeBounds.left < scrollerBounds.left + breathingRoom) {
+      scroller.scrollLeft += activeBounds.left - scrollerBounds.left - breathingRoom;
+    } else if (activeBounds.right > scrollerBounds.right - breathingRoom) {
+      scroller.scrollLeft += activeBounds.right - scrollerBounds.right + breathingRoom;
+    }
+  }
 
   #reflectFocus() {
     document.documentElement.toggleAttribute("data-document-focus", this.#focused);
@@ -82,7 +107,7 @@ export class StudioModeNav extends FormaElement {
       this.#reflectFocus();
     }
     const standalone=projection.libraryBlocks.filter((block)=>block.scope==="library");const targeted=new Set(projection.libraryBlockRelations.map((relation)=>relation.toBlockId));const roots=standalone.filter((block)=>block.type!=="reference"||!targeted.has(block.id));
-    return html`<nav class="studio-mode-nav" aria-label="Document views"><span>Document views</span><div>${modes.map((mode)=>{const href=withDocumentFocusInRoute(withDocumentInRoute(mode.path,projection.documentId,projection.documentTitle),this.#focused);return html`<a href=${href} class=${active===mode.id?"active":""} aria-current=${active===mode.id?"page":nothing} @click=${(event:MouseEvent)=>{event.preventDefault();this.store.setRoute(href);window.scrollTo({top:0});}}>${mode.label}</a>`;})}</div><button class="context-set-trigger" aria-label="Add reusable context" title="Add reusable context" @click=${()=>{this.#contextPickerOpen=true;this.requestUpdate();}}>${icon("plus")}<span class="studio-mode-action-label">Add context</span></button><button class="document-focus-toggle" aria-label=${this.#focused ? "Exit focused document view" : "Enter focused document view"} aria-pressed=${this.#focused} title=${this.#focused ? "Restore project navigation and page context" : "Give this document view the full workspace"} @click=${() => this.#setFocused(!this.#focused)}><span aria-hidden="true">${this.#focused ? "↙" : "↗"}</span><span class="studio-mode-action-label">${this.#focused ? "Exit focus" : "Focus view"}</span></button>${this.#contextPickerOpen?html`<dialog class="modal context-set-picker-dialog" closedby="any" aria-labelledby="context-set-picker-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeContextPicker();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeContextPicker();}}><section class="context-set-picker-panel"><button class="icon-button modal-close" aria-label="Close reusable context picker" @click=${this.#closeContextPicker}>${icon("close")}</button><header><span class="eyebrow">${projection.projectName} / Reusable context</span><h2 id="context-set-picker-title">Add a complete idea</h2><p>Choose once to add the root decision and every related reference image. The blocks stay independently editable after they enter this document.</p></header>${roots.length?html`<div class="context-set-picker-list">${roots.map((block)=>{const connected=this.#connectedIds(block.id);const connectedBlocks=projection.libraryBlocks.filter((item)=>connected.has(item.id));const references=connectedBlocks.filter((item)=>item.type==="reference");return html`<article><div class="context-set-preview">${references.slice(0,3).map((reference)=>html`<forma-reference-image .src=${String(reference.properties.media_url??"")} .alt=${String(reference.properties.label??reference.handle)} .compact=${true} .targetId=${reference.id} .referenceId=${String(reference.properties.reference_id??"")} .focalPoint=${reference.properties.focal_point}></forma-reference-image>`)}${!references.length?html`<span>${block.type.slice(0,2).toUpperCase()}</span>`:nothing}</div><div><span>${block.type} · ${connectedBlocks.length===1?"single block":`${connectedBlocks.length} connected blocks`}</span><h3>${block.handle}</h3><p>${String(block.properties.text??block.properties.label??"Reusable creative context")}</p>${references.length?html`<small>${references.map((reference)=>String(reference.properties.label??reference.handle)).join(" · ")}</small>`:html`<small>No related reference image</small>`}</div><button class="button primary" @click=${()=>this.#addContextSet(block.id)}>${connectedBlocks.length===1?"Add block":"Add context set"}</button></article>`;})}</div>`:html`<div class="context-set-picker-empty"><b>No reusable context yet</b><p>Create blocks and connect their reference images in the Library Block editor.</p><a href="/library/blocks/editor/new" @click=${(event:MouseEvent)=>{event.preventDefault();this.#closeContextPicker();this.store.setRoute("/library/blocks/editor/new");}}>Open Block editor ${icon("arrow")}</a></div>`}</section></dialog>`:nothing}</nav>`;
+    return html`<nav class="studio-mode-nav" aria-label="Document views"><span>Document views</span><div class="studio-mode-links">${modes.map((mode)=>{const href=withDocumentFocusInRoute(withDocumentInRoute(mode.path,projection.documentId,projection.documentTitle),this.#focused);return html`<a href=${href} class=${active===mode.id?"active":""} aria-current=${active===mode.id?"page":nothing} @click=${(event:MouseEvent)=>{event.preventDefault();this.store.setRoute(href);window.scrollTo({top:0});}}>${mode.label}</a>`;})}</div><button class="context-set-trigger" aria-label="Add reusable context" title="Add reusable context" @click=${()=>{this.#contextPickerOpen=true;this.requestUpdate();}}>${icon("plus")}<span class="studio-mode-action-label">Add context</span></button><button class="document-focus-toggle" aria-label=${this.#focused ? "Exit focused document view" : "Enter focused document view"} aria-pressed=${this.#focused} title=${this.#focused ? "Restore project navigation and page context" : "Give this document view the full workspace"} @click=${() => this.#setFocused(!this.#focused)}><span aria-hidden="true">${this.#focused ? "↙" : "↗"}</span><span class="studio-mode-action-label">${this.#focused ? "Exit focus" : "Focus view"}</span></button>${this.#contextPickerOpen?html`<dialog class="modal context-set-picker-dialog" closedby="any" aria-labelledby="context-set-picker-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeContextPicker();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeContextPicker();}}><section class="context-set-picker-panel"><button class="icon-button modal-close" aria-label="Close reusable context picker" @click=${this.#closeContextPicker}>${icon("close")}</button><header><span class="eyebrow">${projection.projectName} / Reusable context</span><h2 id="context-set-picker-title">Add a complete idea</h2><p>Choose once to add the root decision and every related reference image. The blocks stay independently editable after they enter this document.</p></header>${roots.length?html`<div class="context-set-picker-list">${roots.map((block)=>{const connected=this.#connectedIds(block.id);const connectedBlocks=projection.libraryBlocks.filter((item)=>connected.has(item.id));const references=connectedBlocks.filter((item)=>item.type==="reference");return html`<article><div class="context-set-preview">${references.slice(0,3).map((reference)=>html`<forma-reference-image .src=${String(reference.properties.media_url??"")} .alt=${String(reference.properties.label??reference.handle)} .compact=${true} .targetId=${reference.id} .referenceId=${String(reference.properties.reference_id??"")} .focalPoint=${reference.properties.focal_point}></forma-reference-image>`)}${!references.length?html`<span>${block.type.slice(0,2).toUpperCase()}</span>`:nothing}</div><div><span>${block.type} · ${connectedBlocks.length===1?"single block":`${connectedBlocks.length} connected blocks`}</span><h3>${block.handle}</h3><p>${String(block.properties.text??block.properties.label??"Reusable creative context")}</p>${references.length?html`<small>${references.map((reference)=>String(reference.properties.label??reference.handle)).join(" · ")}</small>`:html`<small>No related reference image</small>`}</div><button class="button primary" @click=${()=>this.#addContextSet(block.id)}>${connectedBlocks.length===1?"Add block":"Add context set"}</button></article>`;})}</div>`:html`<div class="context-set-picker-empty"><b>No reusable context yet</b><p>Create blocks and connect their reference images in the Library Block editor.</p><a href="/library/blocks/editor/new" @click=${(event:MouseEvent)=>{event.preventDefault();this.#closeContextPicker();this.store.setRoute("/library/blocks/editor/new");}}>Open Block editor ${icon("arrow")}</a></div>`}</section></dialog>`:nothing}</nav>`;
   }
 }
 
@@ -108,8 +133,8 @@ export class DocumentContinuity extends FormaElement {
     const projection = this.store.projection.get();
     const view = (this.getAttribute("view") ?? "board") as Exclude<StudioMode, "document">;
     const active = projection.blocks.filter((block) => Number(block.properties.weight ?? .5) > 0).length;
-    const latest = projection.outputs[0];
-    const generationCount=projection.outputs.length;const mix=generationMix(projection.outputs);
+    const history=generationHistoryItems(projection.outputs);const latest=history[0];
+    const generationCount=history.length;const mix=generationHistoryMix(projection.outputs);
     const baselineRoute = withDocumentInRoute("/", projection.documentId, projection.documentTitle);
     return html`<section class="document-continuity" aria-label="Current document represented in this view">
       <div class="document-continuity-title">
@@ -122,7 +147,7 @@ export class DocumentContinuity extends FormaElement {
         <div><dt>Guiding now</dt><dd>${active}</dd></div>
         <div><dt>Generations</dt><dd>${generationCount}</dd></div>
         <div><dt>Draft / full</dt><dd>${mix.drafts} / ${mix.full}</dd></div>
-        <div><dt>Latest</dt><dd>${latest ? outputQualityLabel(latest) : "Not generated"}</dd></div>
+        <div><dt>Latest</dt><dd>${latest ? latest.kind==="fan"?`${generationHistoryItemIsDraft(latest)?"Draft":"Full"} fan`:outputQualityLabel(latest.output) : "Not generated"}</dd></div>
       </dl>
       <a href=${baselineRoute} @click=${(event: MouseEvent) => { event.preventDefault(); this.store.setRoute(baselineRoute); window.scrollTo({ top: 0 }); }}>Open baseline ${icon("arrow")}</a>
     </section>`;

@@ -1,6 +1,7 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
 import { isDocumentViewRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, routePathname, withDocumentInRoute } from "../model/routes";
+import { generationHistoryItems } from "../model/events";
 import "./collection-tree";
 
 type RailSurface = "studio" | "library";
@@ -43,7 +44,7 @@ export class ProjectRail extends FormaElement {
    const libraryLinks: Array<{ view: LibraryView; label: string; count?: number; glyph: string }> = [
      { view: "all", label: "Library overview", glyph: "⌂" },
       { view: "blocks", label: quiet ? "Reusable ideas" : "Reusable blocks", count: projection.libraryBlocks.length, glyph: "▦" },
-      { view: "outputs", label: quiet ? "Recent results" : "Recent outputs", count: projection.libraryOutputs.length, glyph: "▧" },
+      { view: "outputs", label: quiet ? "Recent results" : "Recent outputs", count: generationHistoryItems(projection.libraryOutputs).length, glyph: "▧" },
       { view: "families", label: quiet ? "Visual families" : "Aesthetic families", count: projection.families.filter((family) => !family.superseded).length, glyph: "◌" },
    ];
 
