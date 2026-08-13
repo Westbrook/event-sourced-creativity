@@ -9,7 +9,7 @@ import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isD
 import { normalizeSpatialScope } from "../model/spatial-scope";
 import { normalizeImageFocalPoint } from "../model/focal-point";
 import { resolveImageFocalAnalysis } from "../model/image-focus";
-import { documentJobIsStale, type DocumentJob, type DocumentJobKind } from "../model/document-jobs";
+import { documentGenerationRequestKey as generationRequestKeyFor, documentGenerationRevision as generationRevisionFor, documentJobIsStale, type DocumentJob, type DocumentJobKind } from "../model/document-jobs";
 
 type Listener = () => void;
 export type PilotSession = {
@@ -48,6 +48,7 @@ export class FormaStore {
   #jobPollFailures = 0;
   #jobPollIssueNotified = false;
   #jobsDriving = new Set<string>();
+  #jobStarts = new Set<string>();
   #pendingJobNotices: DocumentJob[] = [];
 
   constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){this.#flushPendingJobNotices();void this.syncDocumentJobs();}});}
@@ -70,12 +71,18 @@ export class FormaStore {
   }
   #generationContext() {
     const projection=this.projection.get();
-    return {
+    const context={
       snapshot:{facts:projection.blocks.map((b)=>({block_id:b.id,document_id:b.documentId,type: b.type,role:b.type,intent: blockIntentFor(b.type, b.properties),handle:b.handle,position:b.position,locked:b.locked,active:Number(b.properties.weight??.5)>0,effect: blockEffectFor(b.type, b.properties),properties:{...b.properties,spatial_scope: normalizeSpatialScope(b.properties.spatial_scope)},authority:b.properties.authority??"authored",source_event_refs:b.sourceEvents})),relationships:projection.blockRelations.map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties,source_event_refs:relation.sourceEvents})),pins:projection.outputs.filter((o)=>o.pinned).map((o)=>o.id),tail:[]},
       sourceBlockVersions:projection.blocks.map((b)=>({block_id:b.id,version:b.sourceEvents.length})),documentId:projection.documentId,
     };
+    return {...context,documentRevision:generationRevisionFor(context)};
   }
   documentJob(kind:DocumentJobKind,documentId=this.projection.get().documentId){return this.documentJobs.get().find((job)=>job.documentId===documentId&&job.kind===kind&&(job.status==="queued"||job.status==="running"));}
+  documentGenerationRevision(){return this.#generationContext().documentRevision;}
+  documentGenerationRequestKey(kind:"preview"|"generate",sourcePreviewId?:string|null){return generationRequestKeyFor(kind,this.documentGenerationRevision(),sourcePreviewId);}
+  documentGenerationJobs(documentId=this.projection.get().documentId){return this.documentJobs.get().filter((job)=>job.documentId===documentId&&(job.kind==="preview"||job.kind==="generate")&&(job.status==="queued"||job.status==="running")).sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId));}
+  documentJobForRequest(kind:"preview"|"generate",requestKey:string,documentId=this.projection.get().documentId){return this.documentGenerationJobs(documentId).find((job)=>job.kind===kind&&job.requestKey===requestKey);}
+  documentJobStarting(requestKey:string){return this.#jobStarts.has(requestKey);}
   documentJobActive(kind?:DocumentJobKind,documentId=this.projection.get().documentId){return this.documentJobs.get().some((job)=>job.documentId===documentId&&(!kind||job.kind===kind)&&(job.status==="queued"||job.status==="running"));}
   documentPreviewProgress(documentId=this.projection.get().documentId){const job=this.documentJobs.get().find((item)=>item.documentId===documentId&&item.kind==="preview"&&item.status==="running"&&item.result?.partialMediaUrl);if(!job)return null;return{jobId:job.jobId,mediaUrl:String(job.result!.partialMediaUrl),mediaType:String(job.result!.partialMediaType??"image/jpeg"),width:Number(job.result!.partialWidth??816),height:Number(job.result!.partialHeight??816),index:Number(job.result!.partialIndex??0),sourceSurface:job.sourceSurface};}
   adaptiveStructureFor(documentId=this.projection.get().documentId){return this.adaptiveStructures.get()[documentId]??null;}
@@ -93,7 +100,7 @@ export class FormaStore {
       for(const job of completed){if(job.kind==="structure_adaptive"&&job.status==="completed"&&job.result?.structure)this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId);continue;}if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);}
       this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(jobs.some((job)=>job.status==="queued"||job.status==="running")?1_500:10_000);
     }catch{this.#jobPollFailures+=1;if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}this.#scheduleJobPoll(5_000);}finally{this.#jobsSyncing=false;}}
-  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string){const documentId=this.projection.get().documentId;const response=await fetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})});const body=await response.json() as {job?:DocumentJob;error?:string;reused?:boolean};if(!response.ok||!body.job)throw new Error(body.error??"Document operation could not be started");const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);return body.job;}
+  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string){const documentId=this.projection.get().documentId;const requestKey=String(payload.requestKey??"");if(requestKey&&this.#jobStarts.has(requestKey))throw new Error("This exact image request is already being queued.");if(requestKey){this.#jobStarts.add(requestKey);this.notify();}try{const response=await fetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})});const body=await response.json() as {job?:DocumentJob;error?:string;reused?:boolean};if(!response.ok||!body.job)throw new Error(body.error??"Document operation could not be started");const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);return{job:body.job,reused:Boolean(body.reused)};}finally{if(requestKey){this.#jobStarts.delete(requestKey);this.notify();}}}
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   toast(message: string) { this.ui.toast = message; this.notify(); window.setTimeout(() => { if (this.ui.toast === message) { this.ui.toast = ""; this.notify(); } }, 2800); }
   setRoute(path: string, options: { replace?: boolean; documentFocus?: boolean } = {}) {
@@ -220,13 +227,13 @@ export class FormaStore {
   }
 
   async preview(sourceSurface?: string) {
-    try{await this.#startDocumentJob("preview",{...this.#generationContext()},sourceSurface??"studio");this.toast("Draft queued. The server will recover it if the connection changes.");}catch(error){this.toast(error instanceof Error?error.message:"Draft generation failed");}
+    try{const context=this.#generationContext();const requestKey=generationRequestKeyFor("preview",context.documentRevision);const {reused}=await this.#startDocumentJob("preview",{...context,requestKey},sourceSurface??"studio");this.toast(reused?"This exact draft is already in the queue.":"Draft queued. You can keep editing and queue the updated document too.");}catch(error){this.toast(error instanceof Error?error.message:"Draft generation failed");}
   }
 
   async generate(options?: string | { sourceSurface?: string; sourcePreviewId?: string }) {
     const sourceSurface=typeof options==="string"?options:options?.sourceSurface;const sourcePreviewId=typeof options==="string"?undefined:options?.sourcePreviewId;
     try {
-      await this.#startDocumentJob("generate",{sourcePreviewId,...this.#generationContext()},sourceSurface??"studio");this.toast("Full-quality generation queued. The server will recover it if the connection changes.");
+      const context=this.#generationContext();const requestKey=generationRequestKeyFor("generate",context.documentRevision,sourcePreviewId);const {reused}=await this.#startDocumentJob("generate",{sourcePreviewId,...context,requestKey},sourceSurface??"studio");this.toast(reused?"This exact full-quality image is already in the queue.":"Full-quality generation queued. You can keep editing and queue the updated document too.");
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
   }
 

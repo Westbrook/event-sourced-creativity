@@ -124,6 +124,30 @@ test("treats context block hover as a stable row instead of a new container", as
   }
 });
 
+test("anchors selectable output, context, and project cards without clipped decoration", async () => {
+  const [styles, design, context, projects] = await Promise.all([
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/design-system.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/context-block.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/forma-projects.ts", import.meta.url), "utf8"),
+  ]);
+  for (const sheet of [styles, design]) {
+    assert.match(sheet, /\.output-card\s*\{[^}]*border:\s*3px solid transparent/);
+    assert.match(sheet, /\.output-card\.selected\s*\{[^}]*border-color:\s*var\(--orange\)/);
+    assert.doesNotMatch(sheet, /\.output-card\.selected\s*\{[^}]*outline-offset/);
+  }
+  assert.match(design, /\.output-card\.selected\s*\{[^}]*outline:\s*0/);
+  assert.match(context, /block-intent-badge/);
+  assert.match(context, /block-classifiers/);
+  assert.ok(context.indexOf("block-classifiers") > context.indexOf("block-copy"));
+  assert.match(projects, /project-card-summary/);
+  assert.match(projects, /Continue working/);
+  assert.match(projects, /View project contents/);
+  assert.doesNotMatch(projects, /Created at event/);
+  assert.match(design, /\.project-card\s*\{[^}]*border:\s*1px solid var\(--line\);[^}]*border-radius:\s*14px/);
+  assert.match(design, /\.project-card\.current\s*\{[^}]*border-color:\s*var\(--orange\)/);
+});
+
 test("keeps Studio composition wrappers free of redundant page padding", async () => {
   const [styles, design] = await Promise.all([
     readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
@@ -277,7 +301,9 @@ test("runs document async work as durable reconnectable server jobs",async()=>{
   assert.match(worker,/\/api\/document-jobs/);assert.doesNotMatch(worker,/WorkerExecutionContext/);
   assert.match(jobs,/lease_expires_at/);assert.match(jobs,/\/run/);assert.match(jobs,/runWithHeartbeat/);assert.match(jobs,/renewJobLease/);assert.match(jobs,/documentJobMaxAttempts/);assert.match(jobs,/failStaleJob/);assert.match(jobs,/releaseInterruptedAttempt/);assert.match(jobs,/correlationId/);assert.match(jobs,/notified_at/);assert.doesNotMatch(jobs,/ctx\.waitUntil/);assert.doesNotMatch(jobs,/runNextDocumentJob/);
   for(const kind of ["preview","generate","chat","structure_adaptive","extract_reference"])assert.match(store,new RegExp(`#startDocumentJob\\("${kind}"`));
-  assert.match(store,/visibilitychange/);assert.match(store,/#jobResultVisible/);assert.match(store,/#pendingJobNotices/);assert.match(store,/#driveDocumentJobs/);assert.match(store,/documentJobIsStale/);assert.match(store,/\/ack/);assert.match(actions,/documentJobActionLabel/);assert.match(actions,/documentJob\("preview"\)/);
+  assert.match(store,/visibilitychange/);assert.match(store,/#jobResultVisible/);assert.match(store,/#pendingJobNotices/);assert.match(store,/#driveDocumentJobs/);assert.match(store,/documentJobIsStale/);assert.match(store,/documentGenerationRevision/);assert.match(store,/documentJobForRequest/);assert.match(store,/\/ack/);
+  assert.match(jobs,/generationRequestIdentity/);assert.match(jobs,/requestKey/);assert.match(jobs,/candidates\.find/);
+  assert.match(actions,/documentJobActionLabel/);assert.match(actions,/documentJobForRequest/);assert.match(actions,/Images in progress/);assert.match(actions,/Current document state/);assert.match(actions,/Earlier document state/);assert.match(actions,/closedby="any"/);
 });
 
 test("opens otherwise passive generation and reference images in contained dialogs",async()=>{

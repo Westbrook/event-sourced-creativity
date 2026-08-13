@@ -8,6 +8,9 @@ export type DocumentJob = {
   status: DocumentJobStatus;
   sourceSurface: string;
   requestedSequence: number;
+  documentRevision: string;
+  requestKey: string;
+  sourcePreviewId: string | null;
   result: Record<string, unknown> | null;
   error: string | null;
   attemptCount: number;
@@ -20,6 +23,27 @@ export type DocumentJob = {
   stage: string;
   progressMessage: string;
 };
+
+function stableGenerationValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableGenerationValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, stableGenerationValue(item)]));
+}
+
+/** A compact, deterministic identity for the exact context sent to image generation. */
+export function documentGenerationRevision(value: unknown) {
+  const source = JSON.stringify(stableGenerationValue(value));
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `rev-${(hash >>> 0).toString(36)}`;
+}
+
+export function documentGenerationRequestKey(kind: "preview" | "generate", documentRevision: string, sourcePreviewId?: string | null) {
+  return kind === "preview" ? `preview:${documentRevision}` : `generate:${documentRevision}:${sourcePreviewId || "document"}`;
+}
 
 export const DOCUMENT_JOB_LEASE_MS = 75_000;
 export const DOCUMENT_JOB_HEARTBEAT_MS = 15_000;

@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DOCUMENT_JOB_STALE_AFTER_MS,
+  documentGenerationRequestKey,
+  documentGenerationRevision,
   documentJobActionLabel,
   documentJobIsStale,
   documentJobMaxAttempts,
@@ -14,6 +16,9 @@ const job = (patch = {}) => ({
   status: "queued",
   sourceSurface: "studio",
   requestedSequence: 1,
+  documentRevision: "rev-one",
+  requestKey: "preview:rev-one",
+  sourcePreviewId: null,
   result: null,
   error: null,
   attemptCount: 0,
@@ -50,4 +55,19 @@ test("reports queued and running stages truthfully", () => {
   assert.equal(documentJobActionLabel(job({ status: "running", stage: "preparing" }), "preview"), "Draft preparing…");
   assert.equal(documentJobActionLabel(job({ status: "running", stage: "rendering" }), "preview"), "Draft rendering…");
   assert.equal(documentJobActionLabel(job({ kind: "generate", status: "running", stage: "rendering" }), "generate"), "Rendering full image…");
+});
+
+test("identifies the exact document state independently of object key order", () => {
+  const first = { documentId: "doc-1", snapshot: { facts: [{ block_id: "b1", properties: { weight: .5, text: "Quiet light" } }], pins: [] }, sourceBlockVersions: [{ block_id: "b1", version: 2 }] };
+  const reordered = { sourceBlockVersions: [{ version: 2, block_id: "b1" }], snapshot: { pins: [], facts: [{ properties: { text: "Quiet light", weight: .5 }, block_id: "b1" }] }, documentId: "doc-1" };
+  const changed = { ...first, sourceBlockVersions: [{ block_id: "b1", version: 3 }] };
+  assert.equal(documentGenerationRevision(first), documentGenerationRevision(reordered));
+  assert.notEqual(documentGenerationRevision(first), documentGenerationRevision(changed));
+});
+
+test("distinguishes updated draft work and full generations promoted from different drafts", () => {
+  assert.equal(documentGenerationRequestKey("preview", "rev-one"), "preview:rev-one");
+  assert.notEqual(documentGenerationRequestKey("preview", "rev-one"), documentGenerationRequestKey("preview", "rev-two"));
+  assert.notEqual(documentGenerationRequestKey("generate", "rev-one", "draft-a"), documentGenerationRequestKey("generate", "rev-one", "draft-b"));
+  assert.equal(documentGenerationRequestKey("generate", "rev-one"), "generate:rev-one:document");
 });

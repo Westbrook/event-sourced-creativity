@@ -236,6 +236,8 @@ Use a card only when the item is independently actionable or movable. Otherwise 
 
 - Every grid uses `minmax(0, 1fr)` and allows children to shrink without overflow.
 - Switch multi-column forms and content layouts to one column before labels or controls truncate.
+- Reusable work surfaces respond to their available container width, including the space left after rails and inspectors, rather than assuming the viewport width is available.
+- Route bodies must not hide layout defects with `overflow-x: hidden` or `clip`; wrap, reflow, or give intrinsically wide data an explicit local scroller.
 - Rail collapse and focus modes must be valid independent states.
 - Horizontal scrolling is acceptable for timelines, filmstrips, and wide data tables when clearly intentional; it is not a page-layout strategy.
 - Sticky elements must not stack into an unusable viewport.

@@ -6,6 +6,8 @@ import {
   DOCUMENT_JOB_HEARTBEAT_MS,
   DOCUMENT_JOB_LEASE_MS,
   DOCUMENT_JOB_STALE_AFTER_MS,
+  documentGenerationRequestKey,
+  documentGenerationRevision,
   documentJobMaxAttempts,
   type DocumentJobKind,
   type DocumentJobStatus,
@@ -25,11 +27,26 @@ function parseResult(row: Pick<DocumentJobRow, "result_json">) {
   try { return row.result_json ? JSON.parse(row.result_json) as Record<string, unknown> : {}; } catch { return {}; }
 }
 
+function parseRequest(row: Pick<DocumentJobRow, "request_json">) {
+  try { return row.request_json ? JSON.parse(row.request_json) as Record<string, unknown> : {}; } catch { return {}; }
+}
+
+function generationRevisionFromRequest(request: Record<string, unknown>, documentId: string) {
+  return String(request.documentRevision || documentGenerationRevision({ snapshot: request.snapshot ?? {}, sourceBlockVersions: request.sourceBlockVersions ?? [], documentId }));
+}
+
+function generationRequestIdentity(kind: DocumentJobKind, request: Record<string, unknown>, documentId: string) {
+  const documentRevision = generationRevisionFromRequest(request, documentId);
+  const sourcePreviewId = typeof request.sourcePreviewId === "string" && request.sourcePreviewId ? request.sourcePreviewId : null;
+  const requestKey = kind === "preview" || kind === "generate" ? String(request.requestKey || documentGenerationRequestKey(kind, documentRevision, sourcePreviewId)) : "";
+  return { documentRevision, requestKey, sourcePreviewId };
+}
+
 function serializeJob(row: DocumentJobRow) {
-  const parsed = parseResult(row); const result = row.result_json ? parsed : null;
+  const parsed = parseResult(row); const result = row.result_json ? parsed : null; const identity = generationRequestIdentity(row.kind, parseRequest(row), row.document_id);
   return {
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
-    requestedSequence: Number(row.requested_sequence), result, error: row.error_message, attemptCount: Number(row.attempt_count),
+    requestedSequence: Number(row.requested_sequence), documentRevision: identity.documentRevision, requestKey: identity.requestKey, sourcePreviewId: identity.sourcePreviewId, result, error: row.error_message, attemptCount: Number(row.attempt_count),
     requestedAt: row.requested_at, startedAt: row.started_at, completedAt: row.completed_at, notifiedAt: row.notified_at,
     leaseExpiresAt: row.lease_expires_at, updatedAt: row.updated_at,
     stage: String(parsed.stage ?? row.status), progressMessage: String(parsed.progressMessage ?? ""),
@@ -111,8 +128,9 @@ function safeResult(body: Record<string, unknown>, correlatedEventIds: string[] 
 }
 
 async function queueFollowupPreview(env:WorkerEnv,user:PilotUser,parent:DocumentJobRow,spec:Record<string,unknown>){
-  if(spec.kind!=="preview"||String(spec.documentId??"")!==parent.document_id)return null;const payload=spec.payload&&typeof spec.payload==="object"?spec.payload as Record<string,unknown>:{};if(!payload.directionRef||JSON.stringify(payload).length>MAX_PAYLOAD_BYTES)return null;
+  if(spec.kind!=="preview"||String(spec.documentId??"")!==parent.document_id)return null;const payload=spec.payload&&typeof spec.payload==="object"?{...(spec.payload as Record<string,unknown>)}:{};if(!payload.directionRef||JSON.stringify(payload).length>MAX_PAYLOAD_BYTES)return null;
   const requestedAt=new Date();const now=requestedAt.toISOString();const configuredRetention=Number(env.FORMA_RETENTION_DAYS??30);const retentionDays=Number.isFinite(configuredRetention)&&configuredRetention>0?configuredRetention:30;const expiresAt=new Date(requestedAt.getTime()+retentionDays*86_400_000).toISOString();const jobId=uuidV7();const sourceSurface=String(spec.sourceSurface??"chat").slice(0,80)||"chat";const requestedSequence=await streamHead(env,user.streamId);
+  payload.documentRevision=`chat-${parent.job_id}`;payload.requestKey=`preview:${payload.documentRevision}`;
   await env.DB.prepare("UPDATE document_jobs SET status='failed',error_message='superseded_by_newer_chat_preview',completed_at=?,notified_at=?,updated_at=? WHERE owner_id=? AND document_id=? AND kind='preview' AND source_surface='chat' AND status='queued'").bind(now,now,now,user.userId,parent.document_id).run();
   await env.DB.prepare("INSERT INTO document_jobs (job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at) VALUES (?,?,?,?,?,'queued',?,?,?,?,NULL,NULL,0,?,NULL,NULL,NULL,NULL,?,?)").bind(jobId,user.userId,user.streamId,parent.document_id,"preview",sourceSurface,jobId,requestedSequence,JSON.stringify(payload),now,expiresAt,now).run();return readJob(env,user.userId,jobId);
 }
@@ -211,7 +229,14 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const documentId = String(input.documentId ?? projection.documentId); const documentRecord = projection.documents.find((document) => document.id === documentId);
   if (!documentRecord) return Response.json({ error: "document_not_found" }, { status: 404 });
 
-  const active = kind === "extract_reference" ? null : await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND document_id=? AND kind=? AND status IN ('queued','running') ORDER BY requested_at DESC LIMIT 1").bind(user.userId, documentId, kind).first<DocumentJobRow>();
+  let active:DocumentJobRow|null=null;
+  if(kind!=="extract_reference"){
+    const candidates=(await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND document_id=? AND kind=? AND status IN ('queued','running') ORDER BY requested_at DESC LIMIT 50").bind(user.userId,documentId,kind).all<DocumentJobRow>()).results;
+    if(kind==="preview"||kind==="generate"){
+      const identity=generationRequestIdentity(kind,payload,documentId);payload.documentRevision=identity.documentRevision;payload.requestKey=identity.requestKey;
+      active=candidates.find((candidate)=>generationRequestIdentity(kind,parseRequest(candidate),documentId).requestKey===identity.requestKey)??null;
+    }else active=candidates[0]??null;
+  }
   if (active) return Response.json({ job: serializeJob(active), reused: true }, { status: 202 });
 
   if (kind === "chat" || kind === "structure_adaptive") {

@@ -231,9 +231,9 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
         if (b) b.sourceEvents.push(event.eventId);
         break;
       }
-      case "BlockWeightSet": { const b = blocks.get(String(p.block_id)); if (b) b.properties.weight = Number(p.weight ?? .5); break; }
-      case "BlockLocked": case "BlockUnlocked": { const b = blocks.get(String(p.block_id)); if (b) b.locked = event.type === "BlockLocked"; break; }
-      case "BlockRemoved": case "BlockRestored": { const b = blocks.get(String(p.block_id)); if (b) b.removed = event.type === "BlockRemoved"; break; }
+      case "BlockWeightSet": { const b = blocks.get(String(p.block_id)); if (b) { b.properties.weight = Number(p.weight ?? .5); b.sourceEvents.push(event.eventId); } break; }
+      case "BlockLocked": case "BlockUnlocked": { const b = blocks.get(String(p.block_id)); if (b) { b.locked = event.type === "BlockLocked"; b.sourceEvents.push(event.eventId); } break; }
+      case "BlockRemoved": case "BlockRestored": { const b = blocks.get(String(p.block_id)); if (b) { b.removed = event.type === "BlockRemoved"; b.sourceEvents.push(event.eventId); } break; }
       case "BlockRelationAdded": {
         const id=String(p.relation_id??"");const fromBlockId=String(p.from_block_id??"");const toBlockId=String(p.to_block_id??"");if(!id||!fromBlockId||!toBlockId||fromBlockId===toBlockId)break;
         const from=blocks.get(fromBlockId);const to=blocks.get(toBlockId);const existing=blockRelations.get(id);const documentId=String(p.document_id??(from?.documentId&&from.documentId===to?.documentId?from.documentId:"")??"");const projectId=String(p.project_id??from?.projectId??to?.projectId??state.projectId);

@@ -84,6 +84,20 @@ test("projects independent blocks beside documents and files both in the same co
   assert.equal(projection.projects[0].blockCount,2);
 });
 
+test("versions generation-relevant block state changes",()=>{
+  const projection=foldEvents([
+    event(1,"DocumentCreated",{document_id:"doc-a",title:"A"}),
+    event(2,"BlockCreated",{block_id:"block-a",document_id:"doc-a",type:"direction",handle:"direction/a",properties:{text:"Begin"}}),
+    event(3,"BlockWeightSet",{block_id:"block-a",weight:.8}),
+    event(4,"BlockLocked",{block_id:"block-a"}),
+    event(5,"BlockRemoved",{block_id:"block-a"}),
+    event(6,"BlockRestored",{block_id:"block-a"}),
+  ]);
+  const block=projection.blocks.find((item)=>item.id==="block-a");
+  assert.deepEqual(block.sourceEvents,["event-2","event-3","event-4","event-5","event-6"]);
+  assert.equal(block.properties.weight,.8);assert.equal(block.locked,true);
+});
+
 test("keeps project-scoped reusable blocks out of other project projections",()=>{
   const events=[
     event(1,"ProjectCreated",{project_id:"project-a",name:"A"}),
