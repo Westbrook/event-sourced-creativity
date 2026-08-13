@@ -27,14 +27,16 @@ export abstract class AlternativeStudio extends FormaElement {
     return html`<section class="workspace-page studio-subpage studio-alternative">
       <forma-project-rail surface="studio" destination=${destination} ?quiet=${options.quietRail ?? false}></forma-project-rail>
       <div class="studio-main">
-        <header class="page-header page-header--document">
-          <div class="page-header-copy">
-            <span class="eyebrow">${projection.projectName} / ${projection.documentTitle} / Document view</span>
-            <h1>${title}</h1>
-            <p>${description}</p>
-          </div>
-        </header>
-        <forma-studio-mode-nav active=${active}></forma-studio-mode-nav>
+        <div class="studio-header-stack">
+          <header class="page-header page-header--document">
+            <div class="page-header-copy">
+              <span class="eyebrow">${projection.projectName} / ${projection.documentTitle} / Document view</span>
+              <h1>${title}</h1>
+              <p>${description}</p>
+            </div>
+          </header>
+          <forma-studio-mode-nav active=${active}></forma-studio-mode-nav>
+        </div>
         <div class="studio-subpage-body">
           <forma-studio-navigator destination=${destination}></forma-studio-navigator>
           ${options.continuity === false ? nothing : html`<forma-document-continuity view=${active}></forma-document-continuity>`}

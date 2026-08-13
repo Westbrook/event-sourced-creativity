@@ -927,8 +927,23 @@ forma-project-rail {
 
 /* Shared document lenses */
 
+.studio-header-stack {
+  position: sticky;
+  z-index: 35;
+  top: 64px;
+  background: var(--paper);
+}
+
+.studio-header-stack > forma-studio-mode-nav { display: block; }
+
+.studio-header-stack > .page-header--document,
+.studio-header-stack > forma-studio-mode-nav > .studio-mode-nav {
+  position: static;
+  top: auto;
+}
+
 .studio-mode-nav {
-  top: 152px;
+  top: 64px;
   min-height: 3.25rem;
   padding: .5rem var(--page-gutter);
   background: color-mix(in srgb, var(--paper) 92%, transparent);
@@ -975,7 +990,7 @@ forma-document-generations { display: block; min-width: 0; }
 
 .studio-subpage-body--chat { max-width: none; }
 
-.chat-view-page .studio-mode-nav { top: 152px; }
+.chat-view-page .studio-mode-nav { top: 64px; }
 
 .studio-navigator {
   padding: 0 0 1.5rem;
@@ -1998,6 +2013,7 @@ forma-document-generations { display: block; min-width: 0; }
   .library-block-editor-header { align-items: flex-start; flex-direction: column; }
   .page-header--library,
   .page-header--document { position: relative; top: auto; }
+  .studio-header-stack { position: static; top: auto; }
   .studio-mode-nav { top: 64px; }
   .library-toolbar { align-items: stretch; flex-direction: column; }
   .library-toolbar .searchbox { width: 100%; }
@@ -2030,6 +2046,7 @@ html[data-document-focus] .studio-subpage-body > :is(.creative-editor, .reality-
   box-shadow: none;
 }
 
+html[data-document-focus] .studio-header-stack { top: 0; }
 html[data-document-focus] .chat-view-page .studio-mode-nav { top: 0; }
 
 @media (max-width: 520px) {

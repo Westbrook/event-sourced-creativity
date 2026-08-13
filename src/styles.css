@@ -103,7 +103,7 @@ code, pre, kbd { font-family: var(--mono); }
 
 /* Studio */
 .workspace-page, .library-page { min-height: calc(100dvh - 62px); display: grid; grid-template-columns: 272px minmax(0,1fr); transition: grid-template-columns .2s ease; }
-.workspace-page { padding-bottom: 88px; }
+.workspace-page:has(> .composer-dock) > .studio-main { padding-bottom: 88px; }
 forma-project-rail { display: block; min-width: 0; background: #ecece5; border-right: 1px solid var(--line); }
 .project-rail { position: sticky; top: 62px; width: 272px; height: calc(100dvh - 62px); overflow: hidden; background: #ecece5; }
 .rail-toolbar { display: flex; height: 48px; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 11px; border-bottom: 1px solid var(--line-strong); }
@@ -965,7 +965,7 @@ forma-output-visual { position: absolute; inset: 0; display: grid; min-width: 0;
   .top-actions { margin-left: 0; }
   .account-popover { top: 49px; right: 10px; }
   .workspace-page, .library-page { display: block; min-height: calc(100dvh - 56px); }
-  .workspace-page { padding-bottom: 100px; }
+  .workspace-page:has(> .composer-dock) > .studio-main { padding-bottom: 100px; }
   forma-project-rail { border-right: 0; border-bottom: 1px solid var(--line); }
   .project-rail { position: static; width: 100%; height: auto; overflow: visible; }
   .rail-content { height: auto; max-height: min(70dvh,620px); padding: 12px; }
@@ -1066,10 +1066,10 @@ forma-output-visual { position: absolute; inset: 0; display: grid; min-width: 0;
 
 /* Device-local focus mode gives every document lens the full working viewport. */
 html[data-document-focus] .topbar { display: none; }
-html[data-document-focus] .workspace-page { grid-template-columns: minmax(0,1fr); min-height: 100dvh; padding-bottom: 0; }
+html[data-document-focus] .workspace-page { grid-template-columns: minmax(0,1fr); min-height: 100dvh; }
 html[data-document-focus] .workspace-page:has(> forma-project-rail > .project-rail.collapsed) { grid-template-columns: minmax(0,1fr); }
 html[data-document-focus] .workspace-page > forma-project-rail { display: none; }
-html[data-document-focus] .studio-main > .page-header--document { display: none; }
+html[data-document-focus] .studio-header-stack > .page-header--document { display: none; }
 html[data-document-focus] .studio-mode-nav { top: 0; padding: 7px 12px; }
 html[data-document-focus] .studio-mode-nav > span { display: none; }
 html[data-document-focus] .studio-subpage-body { gap: 0; max-width: none; margin: 0; }

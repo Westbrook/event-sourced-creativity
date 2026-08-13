@@ -56,3 +56,21 @@ test("preserves usable controls when document navigation and editors get narrow"
   assert.match(navigation, /aria-label="Add reusable context"/);
   assert.match(navigation, /aria-label=\$\{this\.#focused \? "Exit focused document view" : "Enter focused document view"\}/);
 });
+
+test("stacks document headers without seams and reserves composer space inside Studio", async () => {
+  const [styles, design, workspace, alternatives, chat] = await Promise.all([
+    read("../src/styles.css"),
+    read("../src/design-system.css"),
+    read("../src/components/forma-workspace.ts"),
+    read("../src/components/forma-studio-alternatives.ts"),
+    read("../src/components/forma-chat-studio.ts"),
+  ]);
+
+  assert.doesNotMatch(styles, /\.workspace-page\s*\{[^}]*padding-bottom/);
+  assert.match(styles, /\.workspace-page:has\(> \.composer-dock\) > \.studio-main\s*\{\s*padding-bottom:\s*88px/);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.workspace-page:has\(> \.composer-dock\) > \.studio-main\s*\{\s*padding-bottom:\s*100px/);
+  assert.match(design, /\.studio-header-stack\s*\{[^}]*position:\s*sticky;[^}]*top:\s*64px;[^}]*background:\s*var\(--paper\)/);
+  assert.match(design, /\.studio-header-stack > forma-studio-mode-nav > \.studio-mode-nav\s*\{[^}]*position:\s*static;[^}]*top:\s*auto/);
+  assert.match(design, /@media \(max-width: 760px\)[\s\S]*?\.studio-header-stack\s*\{\s*position:\s*static;\s*top:\s*auto;/);
+  for (const component of [workspace, alternatives, chat]) assert.match(component, /class="studio-header-stack"/);
+});

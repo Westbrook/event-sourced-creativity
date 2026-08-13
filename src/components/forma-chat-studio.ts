@@ -33,14 +33,16 @@ export class FormaChatStudio extends FormaElement {
     return html`<section class="workspace-page studio-subpage chat-view-page">
       <forma-project-rail surface="studio" destination=${destination} quiet></forma-project-rail>
       <div class="studio-main chat-view-main">
-        <header class="page-header page-header--document">
-          <div class="page-header-copy">
-            <span class="eyebrow">${projection.projectName} / ${projection.documentTitle} / Document view</span>
-            <h1>Chat</h1>
-            <p>Shape the same durable document through conversation while the creative plan stays out of the way.</p>
-          </div>
-        </header>
-        <forma-studio-mode-nav active="chat"></forma-studio-mode-nav>
+        <div class="studio-header-stack">
+          <header class="page-header page-header--document">
+            <div class="page-header-copy">
+              <span class="eyebrow">${projection.projectName} / ${projection.documentTitle} / Document view</span>
+              <h1>Chat</h1>
+              <p>Shape the same durable document through conversation while the creative plan stays out of the way.</p>
+            </div>
+          </header>
+          <forma-studio-mode-nav active="chat"></forma-studio-mode-nav>
+        </div>
         <div class="studio-subpage-body studio-subpage-body--chat"><main class="chat-workspace" aria-label="Chat document view">
           <section class="chat-generation" aria-labelledby="chat-generation-title">
             <header><div><span class="eyebrow">${working?"Working preview":"Current generation"}</span><h1 id="chat-generation-title">${projection.documentTitle}</h1></div><span class=${`chat-image-status ${working?"working":"final"}`}>${working?"Following the conversation":"Full quality"}</span></header>
