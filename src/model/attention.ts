@@ -9,6 +9,9 @@ export type AttentionEpisode = {
   episode_id: string;
   surface: string;
   context: string;
+  document_view?: string;
+  document_id?: string;
+  focused?: boolean;
   started_at: string;
   ended_at: string;
   expires_at: string;
@@ -19,7 +22,7 @@ export type AttentionEpisode = {
   terminal_ref: string | null;
   outcome_weight: number;
   friction_score: number;
-  capture_version: "attention-v1";
+  capture_version: "attention-v1" | "attention-v2";
 };
 
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value));
@@ -56,7 +59,7 @@ export function buildAttentionEpisode(input: Omit<AttentionEpisode,"outcome_weig
   const unresolvedTerminal = /^(route_changed|page_hidden|DocumentCreated|EmptyCanvasChosen|idle_timeout)$/.test(input.terminal_type) ? 1 : .25;
   const frictionScore = clamp(longActive * activeRatio * contextRisk * unresolvedTerminal);
   const expiresAt = new Date(Date.parse(input.ended_at) + retentionDays * 86_400_000).toISOString();
-  return { ...input, expires_at: expiresAt, outcome_weight: round(outcomeWeight), friction_score: round(frictionScore), capture_version:"attention-v1" };
+  return { ...input, expires_at: expiresAt, outcome_weight: round(outcomeWeight), friction_score: round(frictionScore), capture_version:"attention-v2" };
 }
 
 export function attentionEvents(events: CreativeEvent[], now = Date.now()) {

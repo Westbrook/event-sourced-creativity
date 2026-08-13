@@ -1,7 +1,7 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon, downloadJson } from "./forma-element";
 import { loadRouteComponent } from "../route-loader";
-import { documentViewFromRoute, isDocumentViewRoute, routePathname, withDocumentInRoute } from "../model/routes";
+import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, routePathname, withDocumentInRoute } from "../model/routes";
 import "./forma-attention-observer";
 
 const routes = [
@@ -17,6 +17,7 @@ export class FormaShell extends FormaElement {
   #commandIndex = 0;
   #shareHours = 24; #freshShareUrl = ""; #termsOwnership = false; #termsProvider = false;
   #dialogObserver?: MutationObserver;
+  #lastObservedDocumentView = "";
   #keydown = (event: KeyboardEvent) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); this.store.patchUi({ commandOpen: !this.store.ui.commandOpen }); }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); if (event.shiftKey) void this.store.redo(); else void this.store.undo(); }
@@ -26,6 +27,7 @@ export class FormaShell extends FormaElement {
     const path = (event as CustomEvent<{ path?: string }>).detail?.path ?? `${location.pathname}${location.search}${location.hash}`;
     void loadRouteComponent(path);
     if (!this.store.loading.get()) void this.store.syncDocumentFromRoute(path);
+    this.#observeDocumentView(path);
   };
   #pop = () => { this.store.setRoute(`${location.pathname}${location.search}${location.hash}`); };
 
@@ -50,7 +52,21 @@ export class FormaShell extends FormaElement {
     } catch { /* The toast remains a fixed fallback when popovers are unavailable. */ }
   }
 
-  protected override updated() { this.#raiseToast(); }
+  protected override updated() { this.#raiseToast(); this.#observeDocumentView(this.store.route.get()); }
+
+  #observeDocumentView(path: string) {
+    const view = documentViewFromRoute(path);
+    if (!view) { this.#lastObservedDocumentView = ""; return; }
+    if (this.store.loading.get() || !this.store.events.get().length) return;
+    const projection = this.store.projection.get();
+    const documentId = documentIdFromRoute(path) ?? projection.documentId;
+    if (!documentId) return;
+    const focused = documentFocusFromRoute(path);
+    const visitKey = `${documentId}:${view}:${focused ? "focus" : "standard"}`;
+    if (visitKey === this.#lastObservedDocumentView) return;
+    this.#lastObservedDocumentView = visitKey;
+    void this.store.hot({ type: "DocumentViewVisited", payload: { document_id: documentId, project_id: projection.projectId, view, focused, route_family: "document", source_surface: "document-view-navigation" } });
+  }
 
   #route(path: string) { this.store.patchUi({ commandOpen: false, accountOpen: false }); this.store.setRoute(path); const hash=path.includes("#")?path.slice(path.indexOf("#")+1):"";if(hash)window.setTimeout(()=>{const target=document.getElementById(hash);target?.scrollIntoView({behavior:"smooth",block:"center"});target?.focus({preventScroll:true});},0);else window.scrollTo({ top: 0 }); }
   #page() {

@@ -211,7 +211,7 @@ export class FormaStore {
       const response = await fetch("/api/events/hot", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "hot", event, events: [event], clientId: "web:lit" }), keepalive: options.keepalive });
       if (!response.ok) return;
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number };
-      const appended=body.appended??[];this.events.set([...this.events.get(), ...appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(appended);this.notify();
+      const appended=body.appended??[];this.events.set([...this.events.get(), ...appended].sort((left,right)=>left.sequence-right.sequence)); this.head.set(Math.max(this.head.get(),body.head??0)); this.#publishAppended(appended);this.notify();
     } catch { /* Engagement instrumentation never blocks the creative action. */ }
   }
 

@@ -2,8 +2,9 @@ import { buildPhase7Index, cosineSimilarity } from "./indexing.ts";
 import { foldEvents, type CreativeEvent } from "./events.ts";
 import { attentionEvents } from "./attention.ts";
 import { generationPromotionSignals } from "./generation-signals.ts";
+import { DOCUMENT_VIEW_LABELS, documentViewWorkflow } from "./document-view-signals.ts";
 
-export type ScoutObservationType = "convergence" | "divergence" | "stall" | "adjacency" | "promotion";
+export type ScoutObservationType = "convergence" | "divergence" | "stall" | "adjacency" | "promotion" | "workflow";
 
 export type ScoutTrajectorySlice = {
   sliceId: string;
@@ -63,6 +64,13 @@ export function buildScoutTrajectory(events: CreativeEvent[]): ScoutTrajectorySl
   const headRange = `${recent.at(0)?.sourceSequence ?? 0}-${recent.at(-1)?.sourceSequence ?? events.at(-1)?.sequence ?? 0}`;
   const slices: ScoutTrajectorySlice[] = [];
   const promotions=generationPromotionSignals(events);
+  const workflow=documentViewWorkflow(events);
+  const preferredView=workflow.preferredView;
+
+  if(preferredView&&workflow.totalVisits>0){
+    const frictionOnly=preferredView.frictionEpisodes>=2&&preferredView.outcomes===0;
+    slices.push({sliceId:`workflow:${preferredView.view}:${events.at(-1)?.sequence??0}`,type:"workflow",label:frictionOnly?`${DOCUMENT_VIEW_LABELS[preferredView.view]} may be adding friction`:`${DOCUMENT_VIEW_LABELS[preferredView.view]} is carrying the strongest progress`,summary:frictionOnly?`Repeated active-attention episodes in ${DOCUMENT_VIEW_LABELS[preferredView.view]} ended without a strong outcome. Direct visits identify the surface; optional dwell only adds a low-authority friction flag.`:`Across ${workflow.usedViews} working mode${workflow.usedViews===1?"":"s"}, ${DOCUMENT_VIEW_LABELS[preferredView.view]} has the strongest combination of edits, generation requests, and retained outcomes. This can improve routing and UX support without becoming aesthetic taste or generation context.`,confidence:frictionOnly?Math.min(.44,preferredView.confidence):preferredView.confidence,evidenceRefs:preferredView.evidenceRefs.map((id)=>`event:${id}`),signature:`workflow:${preferredView.view}:${preferredView.visits}:${preferredView.outcomes}`,metrics:{preferred_view:preferredView.label,used_views:workflow.usedViews,view_transitions:workflow.transitions,visits:preferredView.visits,edits:preferredView.edits,generation_requests:preferredView.generationRequests,retained_outcomes:preferredView.outcomes,active_minutes:preferredView.activeMinutes,friction_episodes:preferredView.frictionEpisodes}});
+  }
 
   if (recent.length >= 2 && meanSimilarity >= .72) {
     const signature = `convergence:${headRange}:${round(meanSimilarity,2)}`;
@@ -146,7 +154,7 @@ export function scoutPrecisionLedger(events: CreativeEvent[]) {
   for (const judgment of judgments) { const verdict = String(judgment.payload.verdict) as keyof typeof counts; if (verdict in counts) counts[verdict] += 1; }
   const costUsd = events.filter((event) => event.type === "ScoutRunCompleted").reduce((sum, event) => sum + Number(event.payload.cost_usd ?? 0), 0);
   const meanConfidence = observations.length ? observations.reduce((sum, event) => sum + Number(event.payload.confidence ?? 0), 0) / observations.length : 0;
-  const byType = (["convergence","divergence","stall","adjacency","promotion"] as ScoutObservationType[]).map((type) => {
+  const byType = (["convergence","divergence","stall","adjacency","promotion","workflow"] as ScoutObservationType[]).map((type) => {
     const ids = new Set(observations.filter((event) => event.payload.type === type).map((event) => String(event.payload.observation_id)));
     const judged = judgments.filter((event) => ids.has(String(event.payload.observation_id)));
     return { type, observations: ids.size, judged: judged.length, confirmed: judged.filter((event) => event.payload.verdict === "confirmed").length };

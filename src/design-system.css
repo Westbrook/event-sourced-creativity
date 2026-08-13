@@ -1523,6 +1523,77 @@ forma-document-generations { display: block; min-width: 0; }
 
 .memory-policy span { color: var(--orange); }
 
+.brief-view-path {
+  display: block;
+  width: fit-content;
+  margin: .75rem 0 .35rem;
+  color: var(--forest-2);
+  font-size: var(--type-caption);
+  font-weight: 700;
+}
+
+.reentry-view-evidence {
+  display: grid;
+  gap: .5rem;
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+}
+
+.reentry-view-evidence > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 1rem;
+  align-items: baseline;
+}
+
+.reentry-view-evidence span,
+.reentry-view-evidence em { color: var(--muted); font-size: var(--type-caption); font-style: normal; }
+.reentry-view-evidence em { color: var(--forest-2); font-family: var(--mono); }
+
+.view-workflow-report > p {
+  max-width: 50rem;
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+}
+
+.view-workflow-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(17rem, 100%), 1fr));
+  gap: 1.5rem 2.5rem;
+}
+
+.view-workflow-list article {
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.view-workflow-list article.preferred { border-top-color: var(--orange); }
+.view-workflow-list article header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem 1rem; }
+.view-workflow-list article header span { color: var(--orange); font-size: var(--type-micro); font-weight: 700; text-transform: uppercase; }
+.view-workflow-list article > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; margin-top: 1rem; }
+.view-workflow-list article > div span { color: var(--muted); font-size: var(--type-micro); }
+.view-workflow-list article > div b { display: block; color: var(--ink); font: 600 var(--type-lede) var(--mono); }
+.view-workflow-list article > small { display: block; margin-top: .75rem; color: #80583a; }
+
+.workflow-memory h2 { margin: .4rem 0; }
+.workflow-memory > p { color: var(--muted); }
+.workflow-memory-list { display: grid; margin-top: 1rem; }
+.workflow-memory-list > div { display: flex; justify-content: space-between; gap: 1rem; padding: .75rem 0; border-top: 1px solid var(--line); }
+.workflow-memory-list span, .workflow-memory-list small { display: block; min-width: 0; }
+.workflow-memory-list small { margin-top: .15rem; color: var(--muted); }
+.workflow-memory-list em { flex: 0 0 auto; color: var(--forest-2); font: normal var(--type-caption) var(--mono); }
+.workflow-memory-policy { display: block; margin-top: 1rem; color: var(--muted); }
+
+/* Active evidence uses a complete horizontal rule, never a simulated inset edge on rounded cards. */
+.observation-card,
+.belief-card {
+  border: 0;
+  border-top: 2px solid var(--observation-accent, var(--belief-accent, var(--line-strong)));
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .metric-grid,
 .gauge-grid,
 .invariant-grid,

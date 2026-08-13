@@ -456,6 +456,26 @@ test("operationalizes bounded Scout and reversible ranking-only taste memory", a
   assert.doesNotMatch(userPermissions, /ObjectCritiqued|Deferred|ConditionSet|ConditionFired|Resurfaced/); assert.match(eventsApi, /Deferred/); assert.match(classification, /ConditionFired,behavioral,structured_only,worker:scheduler/);
 });
 
+test("keeps document-view workflow evidence durable and separate from aesthetic taste",async()=>{
+  const [shell,observer,eventsApi,signals,brief,scout,taste,sessionsPage,scoutPage,memoryPage,classification]=await Promise.all([
+    readFile(new URL("../src/components/forma-shell.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-attention-observer.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/model/document-view-signals.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/model/brief.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/model/scout.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/model/taste.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-sessions.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-scout.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-memory.ts",import.meta.url),"utf8"),
+    readFile(new URL("../docs/event-classification.csv",import.meta.url),"utf8"),
+  ]);
+  assert.match(shell,/DocumentViewVisited/);assert.match(observer,/document_view/);assert.match(eventsApi,/normalizeDocumentView/);assert.match(eventsApi,/workflow_policy:\{ui_routing_only:true,generation_input:false/);
+  assert.match(signals,/visits \* \.18/);assert.match(signals,/outcomes \+/);assert.match(brief,/document_view/);assert.match(scout,/type:"workflow"/);assert.match(taste,/documentViewWorkflow/);
+  assert.match(sessionsPage,/Working-mode acceptance/);assert.match(scoutPage,/Where progress is happening/);assert.match(memoryPage,/Working-mode memory/);assert.match(memoryPage,/excluded from generation input/);
+  assert.match(classification,/DocumentViewVisited,behavioral,structured_only,user,immutable/);
+});
+
 test("makes closeable dialogs light-dismissable with a compatibility fallback", async () => {
   const sources = await Promise.all([
     "forma-shell.ts", "forma-workspace.ts", "forma-library.ts", "collection-tree.ts", "reference-image.ts", "reference-palette-picker.ts",

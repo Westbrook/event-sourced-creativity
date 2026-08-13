@@ -22,6 +22,7 @@ const corpus = [
   event(9, "GenerationRequested", { generation_id: "g3" }),
   event(10, "FamilyDeclared", { family_id: "warm", label: "Warm nocturnes", confidence: .8 }, "worker:indexer"),
   event(11, "FamilyMembershipAsserted", { family_id: "warm", object_id: "o2", claim_ref: "family-membership:warm:o2" }, "worker:indexer"),
+  event(12, "DocumentViewVisited", { document_id: "document", view: "editor", focused: true }),
 ];
 
 test("builds deterministic typed trajectory slices with stable evidence", () => {
@@ -30,6 +31,7 @@ test("builds deterministic typed trajectory slices with stable evidence", () => 
   assert.ok(first.some((slice) => slice.type === "convergence"));
   assert.ok(first.some((slice) => slice.type === "stall"));
   assert.ok(first.some((slice) => slice.type === "adjacency"));
+  assert.ok(first.some((slice) => slice.type === "workflow"));
   assert.ok(first.every((slice) => slice.sliceId && slice.signature && slice.evidenceRefs.length));
 });
 
@@ -37,8 +39,8 @@ test("remembers rejected scout paths by observation signature", () => {
   const rejected = buildScoutTrajectory(corpus)[0];
   const withJudgment = [
     ...corpus,
-    event(12, "ScoutObserved", { observation_id: "observation-1", signature: rejected.signature, type: rejected.type }, "worker:scout"),
-    event(13, "ObservationJudged", { observation_id: "observation-1", observation_signature: rejected.signature, verdict: "rejected" }),
+    event(13, "ScoutObserved", { observation_id: "observation-1", signature: rejected.signature, type: rejected.type }, "worker:scout"),
+    event(14, "ObservationJudged", { observation_id: "observation-1", observation_signature: rejected.signature, verdict: "rejected" }),
   ];
   assert.ok(!buildScoutTrajectory(withJudgment).some((slice) => slice.signature === rejected.signature));
 });

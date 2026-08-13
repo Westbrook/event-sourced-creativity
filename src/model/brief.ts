@@ -1,14 +1,18 @@
 import { foldEvents, type CreativeEvent } from "./events.ts";
+import { DOCUMENT_VIEW_LABELS, documentViewWorkflow } from "./document-view-signals.ts";
+import { withDocumentInRoute, type DocumentView } from "./routes.ts";
 
 export const PHASE6_MIN_CLOSED_SESSIONS = 3;
 export const PHASE6_MIN_IMPRESSIONS = 10;
 const REJECTED_PATH_STALENESS_EVENTS = 30;
 
 export type BriefDestination = {
-  route: "/" | "/library";
+  route: string;
   view: "comparison" | "context-block" | "collection";
   ref_id: string;
   object_ids?: string[];
+  document_id?: string;
+  document_view?: DocumentView;
 };
 
 export type BriefItem = {
@@ -60,11 +64,17 @@ export function sessionContinuityDelta(events: CreativeEvent[]) {
   const snapshotHead = Number(snapshot.head ?? close?.sequence ?? 0);
   const excluded = /^(SessionOpened|SessionClosed|BriefComposed|BriefItemPresented)$/;
   const changes = events.filter((event) => event.sequence > snapshotHead && !excluded.test(event.type));
+  const workflow = documentViewWorkflow(events);
+  const changedViews = [...new Set(changes.filter((event) => event.type === "DocumentViewVisited").map((event) => String(event.payload.view)))].filter(Boolean);
   return {
     snapshotHead,
     eventCount: changes.length,
     eventTypes: [...new Set(changes.map((event) => event.type))].sort(),
     sourceEventRefs: changes.slice(-12).map((event) => event.eventId),
+    documentViews: changedViews,
+    viewTransitions: workflow.transitions,
+    lastDocumentView: workflow.lastView?.view ?? null,
+    preferredDocumentView: workflow.preferredView?.view ?? null,
   };
 }
 
@@ -83,12 +93,21 @@ export function rejectedPathMemory(events: CreativeEvent[]) {
 
 function candidates(events: CreativeEvent[]): BriefItem[] {
   const projection = foldEvents(events);
+  const destinationFor = (documentId: string) => {
+    const workflow = documentViewWorkflow(events, documentId);
+    const documentView = workflow.preferredView?.view ?? workflow.lastView?.view ?? "document";
+    const title = projection.documents.find((document) => document.id === documentId)?.title ?? projection.documentTitle;
+    const base = documentView === "document" ? "/" : `/studio/${documentView}`;
+    return { route: withDocumentInRoute(base, documentId, title), document_id: documentId, document_view: documentView };
+  };
   const items: Array<BriefItem & { lastSequence: number }> = [];
   const comparisons = openComparisons(events);
   const comparison = comparisons.at(-1);
   if (comparison) {
     const objectIds = list(comparison.payload.object_ids);
-    items.push({ item_id: `comparison:${comparison.eventId}`, item_type: "comparison", ref_id: objectIds[0] ?? comparison.eventId, rank: 0, title: "Resolve an open comparison", summary: `${objectIds.length || 2} alternatives remain on the decision frontier.`, rationale_ref: `event:${comparison.eventId}`, source_event_refs: [comparison.eventId], authority: "inferred", destination: { route: "/", view: "comparison", ref_id: objectIds[0] ?? comparison.eventId, object_ids: objectIds }, lastSequence: comparison.sequence });
+    const documentId = String(comparison.payload.document_id ?? projection.libraryOutputs.find((output) => objectIds.includes(output.id))?.documentId ?? projection.documentId);
+    const location = destinationFor(documentId);
+    items.push({ item_id: `comparison:${comparison.eventId}`, item_type: "comparison", ref_id: objectIds[0] ?? comparison.eventId, rank: 0, title: "Resolve an open comparison", summary: `${objectIds.length || 2} alternatives remain on the decision frontier. Resume in ${DOCUMENT_VIEW_LABELS[location.document_view]}, the working mode with the strongest recent direct evidence.`, rationale_ref: `event:${comparison.eventId}`, source_event_refs: [comparison.eventId], authority: "inferred", destination: { ...location, view: "comparison", ref_id: objectIds[0] ?? comparison.eventId, object_ids: objectIds }, lastSequence: comparison.sequence });
   }
   const recentBlockEvents = [...events].reverse().filter((event) => /^(BlockCreated|BlockPropertyEdited|ChipEdited|ExtractionCompleted)$/.test(event.type));
   const seenBlocks = new Set<string>();
@@ -97,7 +116,8 @@ function candidates(events: CreativeEvent[]): BriefItem[] {
     if (!blockId || seenBlocks.has(blockId)) continue;
     const block = projection.blocks.find((value) => value.id === blockId); if (!block) continue;
     seenBlocks.add(blockId);
-    items.push({ item_id: `thread:${block.id}`, item_type: "thread", ref_id: block.handle, rank: 0, title: `Continue ${block.handle}`, summary: `This authored thread was recently active and remains available as portable context.`, rationale_ref: `event:${event.eventId}`, source_event_refs: block.sourceEvents.slice(-4), authority: "inferred", destination: { route: "/", view: "context-block", ref_id: block.id }, lastSequence: event.sequence });
+    const location = destinationFor(block.documentId || projection.documentId);
+    items.push({ item_id: `thread:${block.id}`, item_type: "thread", ref_id: block.handle, rank: 0, title: `Continue ${block.handle}`, summary: `This authored thread was recently active and remains available as portable context. Resume in ${DOCUMENT_VIEW_LABELS[location.document_view]}, where this document has had the strongest recent progress.`, rationale_ref: `event:${event.eventId}`, source_event_refs: block.sourceEvents.slice(-4), authority: "inferred", destination: { ...location, view: "context-block", ref_id: block.id }, lastSequence: event.sequence });
     if (seenBlocks.size >= 2) break;
   }
   const collection = projection.collections.find((value) => Object.values(projection.membership).some((membership) => membership.collectionId === value.id));
@@ -125,7 +145,7 @@ export function composeReentryBrief(events: CreativeEvent[], briefId: string) {
       session_id: sessionId,
       as_of: { sequence: events.at(-1)?.sequence ?? 0 },
       items,
-      input_receipt: { state_at_close_sequence: delta.snapshotHead, continuity_delta_events: delta.eventCount, warm_thread_candidates: items.filter((item) => item.item_type !== "comparison").length, rejected_paths_excluded: rejected.length, source_event_refs: delta.sourceEventRefs },
+      input_receipt: { state_at_close_sequence: delta.snapshotHead, continuity_delta_events: delta.eventCount, warm_thread_candidates: items.filter((item) => item.item_type !== "comparison").length, rejected_paths_excluded: rejected.length, document_views_since_close: delta.documentViews, view_transitions: delta.viewTransitions, last_document_view: delta.lastDocumentView, preferred_document_view: delta.preferredDocumentView, source_event_refs: delta.sourceEventRefs },
       prompt_contract: { facts_first: true, authority_marked: true, citations_required: true, token_budget: { facts: 0, pins: 0, tail: 0 }, mode: "deterministic-composition" },
       composition: { mode: "deterministic", cost_usd: 0, input_tokens: 0, output_tokens: 0, dosage: items.length },
     },
@@ -135,8 +155,17 @@ export function composeReentryBrief(events: CreativeEvent[], briefId: string) {
 export function phase6GateMetrics(events: CreativeEvent[]) {
   const briefs = new Map(events.filter((event) => event.type === "BriefComposed").map((event) => [String(event.payload.brief_id), event]));
   const presented = events.filter((event) => event.type === "BriefItemPresented");
+  const viewForItem = (event: CreativeEvent) => {
+    const direct = String(event.payload.document_view ?? record(event.payload.destination).document_view ?? "");
+    if (direct) return direct as DocumentView;
+    const items = Array.isArray(briefs.get(String(event.payload.brief_id))?.payload.items) ? briefs.get(String(event.payload.brief_id))!.payload.items as unknown[] : [];
+    const item = items.map(record).find((value) => String(value.item_id) === String(event.payload.item_id));
+    return String(record(item?.destination).document_view ?? "") as DocumentView | "";
+  };
+  const viewByPresentation = new Map(presented.map((event) => [`${String(event.payload.brief_id)}:${String(event.payload.item_id)}`, viewForItem(event)]));
   const presentedKeys = new Set(presented.map((event) => `${String(event.payload.brief_id)}:${String(event.payload.item_id)}`));
   const accepted = events.filter((event) => event.type === "BriefItemAccepted" && presentedKeys.has(`${String(event.payload.brief_id)}:${String(event.payload.item_id)}`));
+  const ignored = events.filter((event) => event.type === "BriefItemIgnored" && presentedKeys.has(`${String(event.payload.brief_id)}:${String(event.payload.item_id)}`));
   const dismissed = events.filter((event) => event.type === "BriefDismissed");
   const blankChoices = events.filter((event) => event.type === "EmptyCanvasChosen").length;
   const totalCost = [...briefs.values()].reduce((sum, event) => sum + Number(record(event.payload.composition).cost_usd ?? 0), 0);
@@ -155,6 +184,14 @@ export function phase6GateMetrics(events: CreativeEvent[]) {
   });
   const impressions = presented.length;
   const acceptances = accepted.length;
+  const representedViews = [...new Set(viewByPresentation.values())].filter((view): view is DocumentView => Boolean(view));
+  const viewBreakdown = representedViews.map((view) => {
+    const keys = new Set([...viewByPresentation].filter(([, candidate]) => candidate === view).map(([key]) => key));
+    const viewImpressions = presented.filter((event) => keys.has(`${String(event.payload.brief_id)}:${String(event.payload.item_id)}`)).length;
+    const viewAcceptances = accepted.filter((event) => keys.has(`${String(event.payload.brief_id)}:${String(event.payload.item_id)}`)).length;
+    const viewIgnored = ignored.filter((event) => keys.has(`${String(event.payload.brief_id)}:${String(event.payload.item_id)}`)).length;
+    return { view, label: DOCUMENT_VIEW_LABELS[view], impressions: viewImpressions, acceptances: viewAcceptances, ignored: viewIgnored, acceptanceRate: viewImpressions ? round(viewAcceptances / viewImpressions) : 0 };
+  }).sort((left, right) => right.acceptances - left.acceptances || right.impressions - left.impressions || left.label.localeCompare(right.label));
   return {
     impressions,
     acceptances,
@@ -164,6 +201,9 @@ export function phase6GateMetrics(events: CreativeEvent[]) {
     costPerAcceptance: acceptances ? round(totalCost / acceptances, 6) : null,
     dosageCurve,
     averageTimeToFirstAcceptMs: firstAcceptTimes.length ? Math.round(firstAcceptTimes.reduce((sum, value) => sum + value, 0) / firstAcceptTimes.length) : null,
+    viewBreakdown,
+    viewCoverage: impressions ? round([...viewByPresentation.values()].filter(Boolean).length / impressions) : 0,
+    topAcceptedView: viewBreakdown.find((entry) => entry.acceptances)?.view ?? null,
     requiredImpressions: PHASE6_MIN_IMPRESSIONS,
     evidenceReady: impressions >= PHASE6_MIN_IMPRESSIONS && dosageCurve.some((entry) => entry.impressions > 0),
   };

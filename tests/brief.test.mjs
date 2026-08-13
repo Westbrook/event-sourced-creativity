@@ -36,9 +36,9 @@ test("re-entry composition is deterministic, cited, bounded, and rejects recent 
   assert.ok(first.payload.items.every((item) => item.source_event_refs.length > 0 && item.authority === "inferred"));
   assert.ok(first.payload.items.every((item) => item.destination?.route && item.destination?.view && item.destination?.ref_id));
   const comparison = first.payload.items.find((item) => item.item_type === "comparison");
-  assert.deepEqual(comparison?.destination, { route: "/", view: "comparison", ref_id: "o1", object_ids: ["o1", "o2"] });
+  assert.deepEqual(comparison?.destination, { route: "/document/d1/study", document_id: "d1", document_view: "document", view: "comparison", ref_id: "o1", object_ids: ["o1", "o2"] });
   const thread = first.payload.items.find((item) => item.item_type === "thread");
-  assert.deepEqual(thread?.destination, { route: "/", view: "context-block", ref_id: "b1" });
+  assert.deepEqual(thread?.destination, { route: "/document/d1/study", document_id: "d1", document_view: "document", view: "context-block", ref_id: "b1" });
   assert.equal(first.payload.composition.cost_usd, 0);
   assert.deepEqual(composeReentryBrief(history, "brief-1"), first);
   const ignored = first.payload.items[0];
@@ -54,13 +54,14 @@ test("continuity and gate metrics derive from witnessed events", () => {
   const metricsEvents = [
     ...history,
     event(13, "BriefComposed", brief.payload),
-    event(14, "BriefItemPresented", { brief_id: "brief-1", item_id: brief.payload.items[0].item_id, rank: 1, brief_size: brief.payload.items.length }),
+    event(14, "BriefItemPresented", { brief_id: "brief-1", item_id: brief.payload.items[0].item_id, rank: 1, brief_size: brief.payload.items.length, destination: brief.payload.items[0].destination, document_view: brief.payload.items[0].destination.document_view }),
     event(15, "BriefItemAccepted", { brief_id: "brief-1", item_id: brief.payload.items[0].item_id, rank: 1, brief_size: brief.payload.items.length }),
     event(16, "EmptyCanvasChosen", { brief_id: "brief-1" }),
   ];
   const metrics = phase6GateMetrics(metricsEvents);
   assert.equal(metrics.impressions, 1); assert.equal(metrics.acceptances, 1); assert.equal(metrics.acceptanceRate, 1);
   assert.equal(metrics.costPerAcceptance, 0); assert.equal(metrics.blankChoices, 1); assert.equal(metrics.dosageCurve[0].acceptanceRate, 1);
+  assert.equal(metrics.viewCoverage, 1); assert.equal(metrics.viewBreakdown[0].acceptanceRate, 1);
   assert.ok(sessionContinuityDelta(history).eventCount >= 2);
 });
 

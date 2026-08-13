@@ -978,6 +978,8 @@ Build Context Board, Guided Brief, Reality Layers, Adaptive Path, Creative Edito
 11. Build the Brief Dosage Curve and join it with Compute Ledger cost.
 12. Permit optional `IntentDeclared` content; never require it.
 13. Require at least ten witnessed item impressions before the first human advance review.
+14. Witness canonical document-view visits, including Focus mode, and carry the strongest/last working mode into each document-bound re-entry destination.
+15. Evaluate acceptance by destination view so a useful brief item can be distinguished from a useful route and presentation mode.
 
 ### Gate
 
@@ -995,6 +997,7 @@ The ten-impression floor permits review; it is not automatic proof. Phases 8 and
 - The app never confuses a click with a meaningful destination change.
 - Acceptance, cost-adjusted acceptance, dosage, and blank-canvas choice can be computed from durable facts.
 - Rejected paths are not immediately re-proposed.
+- Re-entry can return to an evidenced working mode without confusing navigation frequency with creative preference.
 
 ### Do not
 
@@ -1058,6 +1061,8 @@ Define the Scout Trajectory Substrate and stable evidence-reference shape before
 11. Build the Scout Precision Ledger and confirmed-observations-per-dollar view.
 12. Prevent adjacency suggestions from rediscovering recently rejected paths without an explicit staleness reason.
 13. Treat draft-to-full promotion as direct trajectory evidence: the user found an exploratory result worth advancing. Keep the later provider completion/failure separate so Scout can distinguish strong intent from delivery quality.
+14. Analyze direct visits, edits, generation requests, retained outcomes, transitions, and optional friction support by document view.
+15. Report working-mode fit as a falsifiable workflow observation; use it to improve routing and UX support, never as generation context or creative direction.
 
 ### Done when
 
@@ -1066,6 +1071,7 @@ Define the Scout Trajectory Substrate and stable evidence-reference shape before
 - Budget exhaustion is planned rather than surprising.
 - Candidate artifacts remain outside authored documents until promoted.
 - Confirmed observations per dollar can be computed.
+- Progress and friction can be located in a named document view with direct and supplemental evidence visibly separated.
 
 ### Do not
 
@@ -1090,13 +1096,14 @@ Define the Scout Trajectory Substrate and stable evidence-reference shape before
 10. Implement affirm, revoke, retract, forget, defer, condition, fire, and resurface paths.
 11. Measure promotion and revocation rather than treating suggestion acceptance as taste truth.
 12. Feed draft-to-full promotion into the Intent-to-outcome ledger and later ranking as strong direct-action evidence, while never turning one promotion into a permanent taste rule.
+13. Store a separate working-mode projection for last/preferred document view and per-view outcomes; label it as UI-routing memory and exclude it from aesthetic beliefs and generation input.
 
 ### 18.2 Opt-in attention pilot
 
 1. Keep ordinary explicit-click instrumentation separately controllable.
 2. Make attention capture off by default and require explicit opt-in.
 3. Capture only while `document.visibilityState === "visible"`.
-4. Record coarse semantic surface, action context, visible object IDs, active time, idle time, and terminal action.
+4. Record coarse semantic surface, document view and Focus state when applicable, action context, visible object IDs, active time, idle time, and terminal action.
 5. Exclude raw pointer movement, coordinates, keystrokes, typed text, microphone, camera, and ambient device signals.
 6. Discount page exits, hidden pages, idle timeouts, and long machine-away periods.
 7. Give greater—but still weak—weight when an episode ends in comparison selection, pin, generation choice, document creation, or another explicit act.
@@ -1375,10 +1382,10 @@ A successful append that leaves the user believing nothing happened is a usabili
 | Area | Evidence | Decision supported |
 | --- | --- | --- |
 | Extractors | Correction rate, direction, churn, confidence calibration | Whether a finding is reliable enough to show or automate |
-| Re-entry | Impressions, acceptance, blank canvas, composition cost, dosage | Whether pre-paid re-entry helps without creating dependence |
+| Re-entry | Impressions, acceptance, blank canvas, composition cost, dosage, destination-view acceptance | Whether pre-paid re-entry helps and returns through a productive working mode without creating dependence |
 | Retrieval | Cited-example relevance, family correction, collection filtering | Whether the private corpus improves translation and recall |
-| Scout | Judgment by type/confidence, confirmed observations per dollar | Whether bounded exploration is honest and useful |
-| Taste | Promotion, revocation, critiques, freshness, ranking usefulness | Whether memory should rank without narrowing possibility |
+| Scout | Judgment by type/confidence, confirmed observations per dollar, per-view progress/friction | Whether bounded exploration is honest, useful, and able to locate UX support opportunities |
+| Taste | Promotion, revocation, critiques, freshness, ranking usefulness, separated working-mode memory | Whether memory should rank without narrowing possibility or confusing workflow with aesthetics |
 | Attention | Opt-in, false-positive friction, later explicit confirmation, forgetting | Whether weak signals improve UX insight without surveillance |
 | Adaptive UI | Structure adoption/rejection and time to next meaningful decision | Whether mutation clarifies rather than destabilizes |
 | IA | Rail collapse, direct-entry comprehension, project/Library scope | Whether hierarchy remains legible without prior context |

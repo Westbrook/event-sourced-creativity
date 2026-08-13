@@ -1,4 +1,5 @@
 import type { CreativeEvent } from "./events.ts";
+import { documentViewWorkflow } from "./document-view-signals.ts";
 
 export const CREATOR_AXES = ["subject","composition","style","palette","lighting","exclusion"] as const;
 export type CreatorAxis = typeof CREATOR_AXES[number];
@@ -147,7 +148,8 @@ export function tasteMetrics(events: CreativeEvent[]) {
   const axisLedger=CREATOR_AXES.map((axis)=>({axis,positive:critiques.filter((event)=>event.payload.axis_ref===axis&&event.payload.polarity==="positive").length,negative:critiques.filter((event)=>event.payload.axis_ref===axis&&event.payload.polarity!=="positive").length}));
   const compilerBlame=compilerBlameLedger(events);
   const generationPromotions=events.filter((event)=>event.type==="IdeationPromoted");const completedGenerationPromotions=generationPromotions.filter((promotion)=>events.some((event)=>event.type==="GenerationCompleted"&&String(event.payload.promotion_id??"")===String(promotion.payload.promotion_id??promotion.eventId))).length;
-  return {versions:versions.length,inferred,activeAuthored:standingConstraints(events).length,promoted,promotionRate:inferred?round(Math.min(1,promoted/inferred)):0,generationPromotions:generationPromotions.length,completedGenerationPromotions,generationPromotionSuccessRate:generationPromotions.length?round(completedGenerationPromotions/generationPromotions.length):0,axisLedger,compilerBlame,attributedCritiques:compilerBlame.filter((cluster)=>cluster.attributed).reduce((total,cluster)=>total+cluster.critiqueCount,0)};
+  const workflow=documentViewWorkflow(events);
+  return {versions:versions.length,inferred,activeAuthored:standingConstraints(events).length,promoted,promotionRate:inferred?round(Math.min(1,promoted/inferred)):0,generationPromotions:generationPromotions.length,completedGenerationPromotions,generationPromotionSuccessRate:generationPromotions.length?round(completedGenerationPromotions/generationPromotions.length):0,axisLedger,compilerBlame,attributedCritiques:compilerBlame.filter((cluster)=>cluster.attributed).reduce((total,cluster)=>total+cluster.critiqueCount,0),workflow};
 }
 
 export function beliefHistory(events: CreativeEvent[]) {
