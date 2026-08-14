@@ -16,7 +16,9 @@ test("fan generation is accepted once and retains explicit failed member states"
   assert.match(method,/#startDocumentJob\("prompt_fan"/);
   assert.match(api,/childJobIds/);
   assert.match(api,/status === "partial"/);
-  assert.match(review,/Safety rejected/);
+  assert.match(review,/generationFailureGuidance/);
+  assert.match(review,/failureGuidance\.title/);
+  assert.match(review,/failureGuidance\.summary/);
   assert.doesNotMatch(review,/Awaiting this result/);
 });
 

@@ -2,7 +2,7 @@ import type { WorkerEnv } from "./runtime.ts";
 import { BLOCK_TYPES, type AdaptiveStructure, type BlockKind, type ReferencePixelMode } from "../src/model/block-types.ts";
 import type { LiveReplayPlan } from "../src/model/live-replay.ts";
 import { buildPromptRepresentation, buildReferencePromptDirectives, buildSpatialPromptDirectives, normalizePromptTechnique, type PromptReferenceDescriptor, type PromptTechnique } from "../src/model/prompt-structures.ts";
-import { providerErrorFromResponse } from "./provider-errors.ts";
+import { classifyProviderFailure, ProviderRequestError, providerErrorFromResponse, type ProviderFailureDetail } from "./provider-errors.ts";
 
 type OpenAIError = { message?: string; type?: string; code?: string | null; param?: string | null };
 type OpenAIResponse = { id?: string; model?: string; output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: OpenAIError };
@@ -91,11 +91,42 @@ function openAIAuthHeaders(env: WorkerEnv) {
 }
 function openAIHeaders(env: WorkerEnv) { return { ...openAIAuthHeaders(env), "content-type": "application/json" }; }
 
+export const OPENAI_REQUEST_MAX_ATTEMPTS = 3;
+export function shouldAutomaticallyRetryProviderFailure(detail: ProviderFailureDetail) {
+  return detail.category === "rate_limit" || detail.category === "server" && (detail.httpStatus === 502 || detail.httpStatus === 503 || detail.httpStatus === 504);
+}
+export function providerRetryDelay(detail: ProviderFailureDetail, attempt: number) {
+  const exponential = 1_000 * 2 ** Math.max(0, attempt - 1);
+  return Math.min(30_000, Math.max(exponential, detail.retryAfterMs ?? 0));
+}
+const wait = (delay: number) => new Promise<void>((resolve) => setTimeout(resolve, delay));
+
+async function openAIRequest(input: string, init: RequestInit) {
+  for (let attempt = 1; attempt <= OPENAI_REQUEST_MAX_ATTEMPTS; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(input, init);
+    } catch (error) {
+      const detail = classifyProviderFailure(error);
+      // A network failure is ambiguous for a paid POST: it may have reached the provider.
+      // Surface a retry affordance to the user instead of risking a duplicate charge here.
+      throw new ProviderRequestError(detail);
+    }
+    if (response.ok) return response;
+    let body: unknown = {};
+    try { body = await response.clone().json(); } catch { /* Status and headers still classify the failure. */ }
+    const detail = classifyProviderFailure(new Error("openai_request_failed"), response, body);
+    if (!shouldAutomaticallyRetryProviderFailure(detail) || attempt === OPENAI_REQUEST_MAX_ATTEMPTS) return response;
+    await wait(providerRetryDelay(detail, attempt));
+  }
+  throw new Error("openai_request_failed");
+}
+
 const responseText=(body:OpenAIResponse)=>body.output_text||body.output?.flatMap((item)=>item.content??[]).find((item)=>item.type==="output_text")?.text||"";
 
 export async function generateLiveReplayPlan(env:WorkerEnv,userId:string,seed:string){
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");const started=Date.now();
-  const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({
+  const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({
     model:env.OPENAI_MODEL??"gpt-5.6-terra",
     instructions:"Create a realistic, coherent, fully populated creative-workflow mock for an event-sourced image application. This is synthetic evaluation data, not a description of implementation. Make every field specific, natural, and user-readable. Supply exactly one block for every provided block type, with no duplicates; choose a useful supported subtype. Across the blocks use every spatial_method at least once. Include positive direction, role-specific avoid/prohibit constraints, and several local targets that genuinely matter to the pictured scene. Write three to five conversational turns that show an idea becoming more precise; Live preview must be true on at least one turn and false on at least one turn so the user can batch decisions. The assistant should acknowledge uncertainty and resolve only the requested change. The draft should be fast and exploratory. The final direction should refine that draft. Compare the likely strengths of prose, bullets, JSON, and XML handoffs with a distinct, specific reason for each; choose a preferred technique and one or more outputs worth promoting. Include a plausible moment where the user gets stuck in one document view and a concrete recovery. Use valid CSS hex colors. Do not mention events, schemas, APIs, tests, or internal metadata.",
     input:JSON.stringify({seed:seed.trim()||"Develop a richly art-directed editorial image through conversation, reference analysis, local constraints, iteration, memory, and re-entry.",required_block_types:BLOCK_TYPES.map((item)=>({type:item.type,subtypes:item.subtypes,description:item.description}))}),
@@ -111,7 +142,7 @@ export async function generateLiveReplayPlan(env:WorkerEnv,userId:string,seed:st
 export async function generateCreativeDirection(env: WorkerEnv, userId: string, snapshot: Record<string, unknown>) {
   if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
   const started = Date.now();
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const response = await openAIRequest("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: openAIHeaders(env),
     body: JSON.stringify({
@@ -161,9 +192,9 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
   if(references.length){
     const form=new FormData();form.set("model",model);form.set("prompt",prompt);form.set("n","1");form.set("size",size);form.set("quality",quality);form.set("output_format",outputFormat);if(outputFormat!=="png")form.set("output_compression",String(outputCompression));if(partialImages){form.set("stream","true");form.set("partial_images",String(partialImages));}form.set("user",user);
     references.forEach((reference,index)=>{const buffer=reference.bytes.buffer.slice(reference.bytes.byteOffset,reference.bytes.byteOffset+reference.bytes.byteLength) as ArrayBuffer;const extension=reference.mimeType==="image/jpeg"?"jpg":reference.mimeType==="image/webp"?"webp":"png";form.append("image[]",new Blob([buffer],{type:reference.mimeType}),`${reference.source}-${index+1}.${extension}`);});
-    response=await fetch("https://api.openai.com/v1/images/edits",{method:"POST",headers:openAIAuthHeaders(env),body:form});
+    response=await openAIRequest("https://api.openai.com/v1/images/edits",{method:"POST",headers:openAIAuthHeaders(env),body:form});
   }else{
-    response=await fetch("https://api.openai.com/v1/images/generations",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({model,prompt,n:1,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user})});
+    response=await openAIRequest("https://api.openai.com/v1/images/generations",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({model,prompt,n:1,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user})});
   }
   if(!response.ok){let error:OpenAIImageResponse={};try{error=await response.json() as OpenAIImageResponse;}catch{/* Preserve the provider status when no JSON error body is available. */}throw providerErrorFromResponse(response,error,`openai_image_${response.status}`);}
   const [requestedWidth,requestedHeight]=size.split("x").map(Number);let encoded="";let revisedPrompt:string|null=null;let createdAt:number|null=null;let usage:OpenAIImageUsage={};let completedSize:string=size;let completedFormat=outputFormat;let partialCount=0;
@@ -179,7 +210,7 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
 export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{documentTitle:string;blocks:Array<Record<string,unknown>>;history:Array<{role:"user"|"assistant";text:string}>;message:string}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
-  const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({
+  const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({
     model:env.OPENAI_MODEL??"gpt-5.6-terra",
     instructions:"You are Forma, a concise creative collaborator inside a chat-only document view. Speak about the user's creative plan and intended image, never about blocks, events, schemas, metadata, adapters, or hidden machinery. Interpret the newest message against the existing plan and recent conversation. Return a helpful reply plus the smallest accurate set of plan mutations. Create adds a new durable decision; edit changes one existing decision and must name its target_block_id; remove deletes one existing decision and must name its target_block_id. Never target a missing item. For create, target_block_id is null. Never create a reference item through chat because an actual uploaded image is required. The reference_pixel_mode field is unchanged for ordinary mutations. When the user says to use a named existing reference image, edit the matching reference and choose inspiration unless they explicitly ask to preserve its composition, subject, or visual style. Choose context_only when they say not to send or use its pixels. Never change reference_pixel_mode on a non-reference item. For unused mutation fields return sensible empty strings, but type must always be a valid vocabulary value. If the creative image meaningfully changes, preview_worthy is true and preview_direction is a standalone visual instruction incorporating the whole current intention after your proposed changes. If the user is only asking a question or chatting without changing visual intent, do not mutate and set preview_worthy false.",
     input:JSON.stringify({...input,block_vocabulary:BLOCK_TYPES.map((item)=>({type:item.type,subtypes:item.subtypes})),mutation_rules:{create:"target_block_id must be null",edit:"target_block_id must match an existing id",remove:"target_block_id must match an existing id"}}),
@@ -194,7 +225,7 @@ export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{d
 export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input:{intent:string;documentTitle:string;blocks:Array<Record<string,unknown>>}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
-  const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({
+  const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({
     model:env.OPENAI_MODEL??"gpt-5.6-terra",
     instructions:"You structure an adaptive creative-context interface. Interpret the user's broad intent together with the currently authored blocks. Propose the next useful decision and 2–6 concise context blocks across intent, scene, craft, evidence, or constraints. Use only the supplied block type vocabulary. Subtypes should match the system suggestions when practical. Explain product-facing reasons, never hidden chain-of-thought. Do not claim proposals were authored and do not mutate anything.",
     input:JSON.stringify({...input,block_vocabulary:BLOCK_TYPES.map((item)=>({type:item.type,description:item.description,subtypes:item.subtypes}))}),

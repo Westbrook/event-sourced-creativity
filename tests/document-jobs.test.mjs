@@ -5,9 +5,11 @@ import {
   documentGenerationRequestKey,
   documentGenerationRevision,
   documentJobActionLabel,
+  generationFailureGuidance,
   documentJobIsStale,
   documentJobMaxAttempts,
 } from "../src/model/document-jobs.ts";
+import { documentJobCompletionBindings } from "../worker/document-job-sql.ts";
 
 const job = (patch = {}) => ({
   jobId: "job-1",
@@ -77,4 +79,20 @@ test("distinguishes updated draft work and full generations promoted from differ
   assert.equal(documentGenerationRequestKey("generate", "rev-one"), "generate:rev-one:document");
   assert.notEqual(documentGenerationRequestKey("preview", "rev-one", null, "json"), documentGenerationRequestKey("preview", "rev-one", null, "xml"));
   assert.notEqual(documentGenerationRequestKey("preview", "rev-one", null, "prose", "fan-a"), documentGenerationRequestKey("preview", "rev-one", null, "prose", "fan-b"));
+});
+
+test("explains safety, application budgets, and project quotas without suggesting futile retries",()=>{
+  const base={code:"failure",category:"quota",scope:"project",action:"raise_limit",message:"limit",retryable:false,retryAfterMs:null,requestId:null,httpStatus:429};
+  assert.equal(generationFailureGuidance({...base,code:"moderation_blocked",category:"safety",scope:"request",action:"edit_request"}).retryAllowed,false);
+  assert.match(generationFailureGuidance({...base,code:"budget_hard_cap_reached",scope:"user",action:"review_budget"}).title,/Your generation budget/);
+  assert.match(generationFailureGuidance(base).title,/OpenAI project limit/);
+  assert.equal(generationFailureGuidance({...base,category:"rate_limit",action:"wait_and_retry",retryable:true,retryAfterMs:2500}).retryAllowed,true);
+});
+
+test("keeps every terminal D1 placeholder paired with one binding",()=>{
+  const values=documentJobCompletionBindings({status:"completed",result:{stage:"completed"},errorMessage:null,completedAt:"2026-08-14T12:00:00.000Z",parentId:null,jobId:"job-1",ownerId:"user-1",correlationId:"job-1:attempt:1"});
+  assert.equal(values.length,10);
+  assert.equal(values[3],"2026-08-14T12:00:00.000Z");
+  assert.equal(values[4],null);
+  assert.equal(values[7],"job-1");
 });

@@ -1586,6 +1586,28 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .generation-fan-button.secondary { color: var(--forest); background: var(--panel); }
 .generation-fan-button.primary { color: var(--panel); background: var(--forest-2); border-color: var(--forest-2); }
 .generation-fan-button:hover:not(:disabled) { filter: brightness(.96); }
+.generation-budget-note { display: flex; min-width: 0; align-items: flex-start; gap: 9px; margin: 10px 0 0; padding: 10px 12px; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; font-size: var(--type-caption); }
+.generation-budget-note > svg { flex: none; margin-top: 2px; }
+.generation-budget-note > span { min-width: 0; }
+.generation-budget-note > a { flex: none; color: var(--ink); font-weight: 700; }
+.generation-failure-list { display: grid; min-width: 0; gap: 8px; margin-top: 10px; }
+.generation-failure-card { display: grid; min-width: 0; grid-template-columns: auto minmax(0,1fr); align-items: start; gap: 12px; padding: 13px 14px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px; }
+.generation-failure-card.safety { border-color: color-mix(in srgb,var(--warning) 48%,var(--line)); }
+.generation-failure-card.quota,.generation-failure-card.authentication,.generation-failure-card.access { border-color: color-mix(in srgb,var(--danger) 48%,var(--line)); }
+.generation-failure-icon { display: grid; width: 28px; height: 28px; place-items: center; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 50%; }
+.generation-failure-card > div { min-width: 0; }
+.generation-failure-card header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.generation-failure-card header > div { display: grid; min-width: 0; gap: 2px; }
+.generation-failure-card header b { font: 700 var(--type-body) var(--sans); }
+.generation-failure-card header small { color: var(--muted); font-size: var(--type-micro); }
+.generation-failure-card header > span { flex: none; padding: 3px 7px; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; font: 700 var(--type-micro) var(--sans); text-transform: capitalize; }
+.generation-failure-card p { max-width: 70ch; margin: 7px 0 0; color: var(--muted); font-size: var(--type-caption); }
+.generation-failure-actions { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 11px; }
+.generation-failure-actions details { min-width: 0; color: var(--muted); font-size: var(--type-micro); }
+.generation-failure-actions summary { cursor: pointer; font-weight: 700; }
+.generation-failure-actions details[open] { display: flex; flex: 1 1 100%; flex-wrap: wrap; gap: 7px 12px; padding-top: 5px; }
+.generation-failure-actions details[open] summary { flex-basis: 100%; }
+.generation-failure-actions code { overflow-wrap: anywhere; }
 .prompt-fan-review-trigger-wrap { display: flex; justify-content: flex-end; margin-top: 6px; }
 .prompt-fan-review-trigger { display: inline-flex; min-height: 30px; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 7px; padding: 4px 0; color: var(--muted); background: transparent; border: 0; font: 650 var(--type-micro) var(--sans); }
 .prompt-fan-review-trigger:hover { color: var(--ink); }
