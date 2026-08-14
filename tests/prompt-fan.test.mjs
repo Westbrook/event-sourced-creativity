@@ -23,8 +23,14 @@ test("fan generation is accepted once and retains explicit failed member states"
   assert.match(review,/failureGuidance\.summary/);
   assert.match(review,/Review submitted prompt/);
   assert.match(actions,/Review submitted/);
+  assert.match(review,/Copy prompt/);
+  assert.match(actions,/Copy prompt/);
+  assert.match(actions,/Copy receipt/);
+  assert.match(review,/Prompt copied to the clipboard/);
+  assert.match(actions,/Prompt copied to the clipboard/);
+  assert.match(actions,/Technical receipt copied to the clipboard/);
   assert.match(actions,/private retention period has expired/);
-  assert.match(actions,/Dismiss this moderation notice/);
+  assert.match(actions,/Dismiss this generation issue/);
   assert.match(api,/path\.endsWith\("\/dismiss"\)/);
   assert.doesNotMatch(review,/Awaiting this result/);
 });

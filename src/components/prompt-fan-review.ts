@@ -2,7 +2,7 @@ import { html, nothing } from "lit";
 import { outputQualityLabel, type CreativeOutput } from "../model/events";
 import { generationFailureGuidance } from "../model/document-jobs";
 import { PROMPT_TECHNIQUE_DEFINITIONS, type PromptPreferenceScope, type PromptTechnique } from "../model/prompt-structures";
-import { FormaElement, icon } from "./forma-element";
+import { copyTextToClipboard, FormaElement, icon } from "./forma-element";
 import "./output-visual";
 
 export class PromptFanReview extends FormaElement {
@@ -10,6 +10,7 @@ export class PromptFanReview extends FormaElement {
   fanId = "";
   #open = false;
   #scope: PromptPreferenceScope = "document";
+  #promptCopy: { key: string; ok: boolean } | null = null;
 
   protected override updated() {
     const dialog = this.querySelector<HTMLDialogElement>(".prompt-fan-dialog");
@@ -19,6 +20,13 @@ export class PromptFanReview extends FormaElement {
   #close() {
     this.querySelector<HTMLDialogElement>(".prompt-fan-dialog")?.close();
     this.#open = false;
+    this.#promptCopy = null;
+    this.requestUpdate();
+  }
+
+  async #copyPrompt(prompt: string, key: string) {
+    const ok = await copyTextToClipboard(prompt);
+    this.#promptCopy = { key, ok };
     this.requestUpdate();
   }
 
@@ -78,7 +86,7 @@ export class PromptFanReview extends FormaElement {
               <header><div><span>${definition.shortLabel} prompt process</span><h3>${definition.label}</h3></div><div class="prompt-fan-statuses">${output?.standalone ? html`<em>${icon("check")} Standalone</em>` : nothing}${preferred ? html`<em>${icon("check")} Default</em>` : nothing}</div></header>
               <p>${definition.description}</p>
               <div class="prompt-fan-image">${output ? html`<forma-output-visual .output=${output} .interactive=${true}></forma-output-visual>` : failedHere ? html`<div class="prompt-fan-pending failed">${icon("close")}<span><b>${failureGuidance.title}</b><small>${failureGuidance.summary}${failureRequestId?` Request ${failureRequestId}.`:""}</small></span></div>` : html`<div class="prompt-fan-pending">${icon("clock")}<span>${member?.status==="running"?"Generating on the server":member?.status==="queued"||fanJob?"Queued on the server":"No recorded result"}</span></div>`}</div>
-              ${failedHere&&failureCategory==="safety"?failurePrompt?html`<details class="prompt-fan-failure-prompt"><summary>Review submitted prompt</summary><p>Exact private request sent to the generation workflow.</p><pre>${failurePrompt}</pre></details>`:html`<p class="prompt-fan-failure-prompt-unavailable">Submitted prompt was not retained for this earlier failure.</p>`:nothing}
+              ${failedHere&&failureCategory==="safety"?failurePrompt?html`<details class="prompt-fan-failure-prompt"><summary>Review submitted prompt</summary><div class="prompt-copy-heading"><p>Exact private request sent to the generation workflow.</p><button type="button" class="button ghost compact" @click=${()=>this.#copyPrompt(failurePrompt,definition.id)}>${this.#promptCopy?.key===definition.id&&this.#promptCopy.ok?`${icon("check")} Copied`:"Copy prompt"}</button></div><pre>${failurePrompt}</pre>${this.#promptCopy?.key===definition.id?html`<span class=${`prompt-copy-status ${this.#promptCopy.ok?"success":"error"}`} role="status">${this.#promptCopy.ok?"Prompt copied to the clipboard.":"The prompt could not be copied. Select the text above and copy it manually."}</span>`:nothing}</details>`:html`<p class="prompt-fan-failure-prompt-unavailable">Submitted prompt was not retained for this earlier failure.</p>`:nothing}
               ${output ? html`<footer><span><b>${outputQualityLabel(output)}</b><small>${output.modelId} · ${Math.max(0, Math.round(output.latency / 100) / 10)}s</small></span><div class="prompt-fan-output-actions"><button class="button secondary compact" ?disabled=${output.standalone} @click=${() => this.store.promotePromptFanOutputs(fanId, [output.id])}>${output.standalone ? "Promoted" : "Promote image"}</button><button class="button ghost compact" @click=${() => this.store.preferPromptTechnique(definition.id as PromptTechnique, this.#scope, { fanId, outputId: output.id })}>${preferred ? "Keep as default" : "Use as default"}</button></div></footer>${prompt ? html`<details><summary>Inspect prepared ${definition.shortLabel.toLowerCase()} prompt</summary><pre>${prompt}</pre></details>` : nothing}` : nothing}
             </article>`;
           })}</div>

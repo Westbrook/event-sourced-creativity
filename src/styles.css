@@ -1608,11 +1608,20 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .generation-failure-actions details[open] { display: flex; flex: 1 1 100%; flex-wrap: wrap; gap: 7px 12px; padding-top: 5px; }
 .generation-failure-actions details[open] summary { flex-basis: 100%; }
 .generation-failure-actions code { overflow-wrap: anywhere; }
+.technical-receipt-body { display: flex; min-width: 0; flex: 1 1 100%; flex-wrap: wrap; align-items: center; gap: 7px 12px; }
+.technical-receipt-body > .button { margin-left: auto; }
+.technical-receipt > .prompt-copy-status { flex: 1 1 100%; }
 .generation-failure-actions .generation-failure-prompt { flex: 1 1 100%; margin-top: 3px; padding-top: 9px; border-top: 1px solid var(--line); }
 .generation-failure-actions .generation-failure-prompt[open] { display: block; padding-top: 9px; }
 .generation-failure-prompt > p { margin: 7px 0 10px; }
 .generation-failure-prompt section { min-width: 0; margin-top: 9px; }
-.generation-failure-prompt h4 { margin: 0 0 5px; color: var(--ink); font: 700 var(--type-micro) var(--sans); }
+.generation-failure-prompt h4 { margin: 0; color: var(--ink); font: 700 var(--type-micro) var(--sans); }
+.prompt-copy-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.prompt-copy-heading > p { min-width: 0; margin: 0; }
+.prompt-copy-heading > .button { flex: none; }
+.prompt-copy-status { display: block; margin-top: 6px; color: var(--muted); font: 650 var(--type-micro) var(--sans); }
+.prompt-copy-status.success { color: var(--positive); }
+.prompt-copy-status.error { color: var(--danger); }
 .generation-failure-prompt pre,.prompt-fan-failure-prompt pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; font: 400 var(--type-micro) ui-monospace,SFMono-Regular,Consolas,monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .generation-failure-actions .generation-failure-prompt-unavailable { flex: 1 1 100%; margin: 3px 0 0; padding-top: 9px; border-top: 1px solid var(--line); font-size: var(--type-micro); }
 .prompt-fan-review-trigger-wrap { display: flex; justify-content: flex-end; margin-top: 6px; }

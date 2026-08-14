@@ -86,6 +86,30 @@ export const budgetCounters = sqliteTable(
   (table) => [primaryKey({ columns: [table.scope, table.scopeId, table.period] })],
 );
 
+/** Idempotent ownership ledger for each capacity reservation represented by BudgetReserved. */
+export const budgetReservations = sqliteTable(
+  "budget_reservations",
+  {
+    reservationId: text("reservation_id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    streamId: text("stream_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    operation: text("operation").notNull(),
+    period: text("period").notNull(),
+    reservedTokens: integer("reserved_tokens").notNull(),
+    usedTokens: integer("used_tokens").notNull().default(0),
+    status: text("status").notNull(),
+    settlementReason: text("settlement_reason"),
+    createdAt: text("created_at").notNull(),
+    settledAt: text("settled_at"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_budget_reservations_owner_status").on(table.ownerId, table.status, table.createdAt),
+    index("idx_budget_reservations_correlation").on(table.correlationId),
+  ],
+);
+
 /** Monthly USD-denominated projection for provider work whose modalities have different token prices. */
 export const costBudgetCounters = sqliteTable(
   "cost_budget_counters",

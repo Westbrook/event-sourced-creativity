@@ -21,3 +21,24 @@ export function downloadJson(filename: string, value: unknown) {
   const url = URL.createObjectURL(blob); const link = document.createElement("a");
   link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url);
 }
+
+export async function copyTextToClipboard(value: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // Fall through for browsers or permission policies that block Clipboard API access.
+  }
+  const field = document.createElement("textarea");
+  field.value = value;
+  field.setAttribute("readonly", "");
+  field.style.position = "fixed";
+  field.style.opacity = "0";
+  document.body.append(field);
+  field.select();
+  try { return document.execCommand("copy"); }
+  catch { return false; }
+  finally { field.remove(); }
+}

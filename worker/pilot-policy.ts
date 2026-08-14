@@ -48,6 +48,9 @@ export function requireConsent(user: PilotUser) {
 
 const period = () => new Date().toISOString().slice(0, 7);
 const budgetLimits = (env: WorkerEnv) => ({ user: intEnv(env.FORMA_USER_TOKEN_LIMIT, 250_000), workspace: intEnv(env.FORMA_WORKSPACE_TOKEN_LIMIT, 2_500_000) });
+const BUDGET_RECONCILIATION_AGE_MS = 5 * 60_000;
+type BudgetReservationRow = { reservation_id: string; owner_id: string; stream_id: string; correlation_id: string; operation: string; period: string; reserved_tokens: number; used_tokens: number; status: string; settlement_reason: string | null; created_at: string; settled_at: string | null; updated_at: string };
+type BudgetReservationContext = { streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string };
 
 async function ensureBudgetRow(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limit: number) {
   const now = new Date().toISOString();
@@ -62,28 +65,90 @@ export async function readBudgets(env: WorkerEnv, userId: string) {
   return { period: period(), user: map.user ?? { used: 0, reserved: 0, limit: limits.user }, workspace: map.workspace ?? { used: 0, reserved: 0, limit: limits.workspace } };
 }
 
-export async function reserveBudget(env: WorkerEnv, userId: string, tokens: number) {
-  const limits = budgetLimits(env); await ensureBudgetRow(env, "user", userId, limits.user); await ensureBudgetRow(env, "workspace", "forma", limits.workspace);
-  const now = new Date().toISOString();
-  const userResult = await env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens").bind(tokens, now, userId, period(), tokens).run();
-  if (Number(userResult.meta.changes ?? 0) !== 1) return { ok: false as const, scope: "user" as const };
-  const workspaceResult = await env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens").bind(tokens, now, period(), tokens).run();
-  if (Number(workspaceResult.meta.changes ?? 0) !== 1) {
-    await env.DB.prepare("UPDATE budget_counters SET reserved_tokens=MAX(0,reserved_tokens-?),updated_at=? WHERE scope='user' AND scope_id=? AND period=?").bind(tokens, now, userId, period()).run();
-    return { ok: false as const, scope: "workspace" as const };
-  }
-  return { ok: true as const, reservationId: uuidV7(), reservedTokens: tokens };
-}
-
-export async function settleBudget(env: WorkerEnv, userId: string, reserved: number, used: number) {
-  const now = new Date().toISOString();
-  await env.DB.batch([
-    env.DB.prepare("UPDATE budget_counters SET reserved_tokens=MAX(0,reserved_tokens-?),used_tokens=used_tokens+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=?").bind(reserved, used, now, userId, period()),
-    env.DB.prepare("UPDATE budget_counters SET reserved_tokens=MAX(0,reserved_tokens-?),used_tokens=used_tokens+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=?").bind(reserved, used, now, period()),
+export async function reserveBudget(env: WorkerEnv, userId: string, tokens: number, context: BudgetReservationContext = {}) {
+  const amount = Math.max(0, Math.floor(tokens)); const limits = budgetLimits(env); const reservationPeriod = context.period ?? period();
+  await ensureBudgetRow(env, "user", userId, limits.user); await ensureBudgetRow(env, "workspace", "forma", limits.workspace);
+  const reservationId = uuidV7(); const now = context.createdAt ?? new Date().toISOString();
+  const results = await env.DB.batch([
+    env.DB.prepare(`INSERT INTO budget_reservations (reservation_id,owner_id,stream_id,correlation_id,operation,period,reserved_tokens,used_tokens,status,settlement_reason,created_at,settled_at,updated_at)
+      SELECT ?,?,?,?,?,?,?,0,'active',NULL,?,NULL,?
+      WHERE ?>0
+      AND EXISTS (SELECT 1 FROM budget_counters WHERE scope='user' AND scope_id=? AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)
+      AND EXISTS (SELECT 1 FROM budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)`).bind(reservationId,userId,context.streamId??"",context.correlationId??"",context.operation??"provider-operation",reservationPeriod,amount,now,now,amount,userId,reservationPeriod,amount,reservationPeriod,amount),
+    env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=? AND EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=? AND status='active')").bind(amount,now,userId,reservationPeriod,reservationId),
+    env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=? AND EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=? AND status='active')").bind(amount,now,reservationPeriod,reservationId),
   ]);
+  if (Number(results[0]?.meta.changes ?? 0) !== 1) {
+    const budgets = await readBudgets(env, userId); const userRemaining = budgets.user.limit - budgets.user.used - budgets.user.reserved;
+    return { ok: false as const, scope: userRemaining < amount ? "user" as const : "workspace" as const };
+  }
+  return { ok: true as const, reservationId, reservedTokens: amount, period: reservationPeriod };
 }
 
-export async function releaseBudget(env: WorkerEnv, userId: string, reserved: number) { await settleBudget(env, userId, reserved, 0); }
+async function budgetReservation(env: WorkerEnv, userId: string, reservationId: string) {
+  return env.DB.prepare("SELECT * FROM budget_reservations WHERE reservation_id=? AND owner_id=?").bind(reservationId,userId).first<BudgetReservationRow>();
+}
+
+async function adoptLegacyBudgetReservation(env: WorkerEnv, userId: string, reservationId: string, reservedTokens: number, context: BudgetReservationContext) {
+  const now = new Date().toISOString(); const createdAt = context.createdAt ?? now;
+  await env.DB.prepare("INSERT OR IGNORE INTO budget_reservations (reservation_id,owner_id,stream_id,correlation_id,operation,period,reserved_tokens,used_tokens,status,settlement_reason,created_at,settled_at,updated_at) VALUES (?,?,?,?,?,?,?,0,'active',NULL,?,NULL,?)")
+    .bind(reservationId,userId,context.streamId??"",context.correlationId??"",context.operation??"legacy-provider-operation",context.period??createdAt.slice(0,7),Math.max(0,Math.floor(reservedTokens)),createdAt,now).run();
+}
+
+export async function settleBudget(env: WorkerEnv, userId: string, reservationId: string, used: number, reason = "provider_usage_recorded") {
+  const reservation = await budgetReservation(env,userId,reservationId); if(!reservation)return{settled:false as const,reservedTokens:0,usedTokens:0,status:"missing"};
+  const actual = Math.max(0,Math.floor(used)); const now = new Date().toISOString(); const status = actual > 0 ? "settled" : "released";
+  const active = "EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=? AND owner_id=? AND status='active')";
+  const results = await env.DB.batch([
+    env.DB.prepare(`UPDATE budget_counters SET reserved_tokens=MAX(0,reserved_tokens-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_tokens=used_tokens+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='user' AND scope_id=? AND period=?`).bind(reservationId,userId,reservation.reserved_tokens,reservationId,userId,actual,now,userId,reservation.period),
+    env.DB.prepare(`UPDATE budget_counters SET reserved_tokens=MAX(0,reserved_tokens-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_tokens=used_tokens+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=?`).bind(reservationId,userId,reservation.reserved_tokens,reservationId,userId,actual,now,reservation.period),
+    env.DB.prepare("UPDATE budget_reservations SET used_tokens=?,status=?,settlement_reason=?,settled_at=?,updated_at=? WHERE reservation_id=? AND owner_id=? AND status='active'").bind(actual,status,reason,now,now,reservationId,userId),
+  ]);
+  const settled = Number(results[2]?.meta.changes ?? 0) === 1;
+  return { settled, reservedTokens: reservation.reserved_tokens, usedTokens: settled ? actual : reservation.used_tokens, status: settled ? status : reservation.status };
+}
+
+export async function releaseBudget(env: WorkerEnv, userId: string, reservationId: string, options: BudgetReservationContext & { reservedTokens?: number; reason?: string } = {}) {
+  if(!await budgetReservation(env,userId,reservationId)&&Number(options.reservedTokens)>0)await adoptLegacyBudgetReservation(env,userId,reservationId,Number(options.reservedTokens),options);
+  return settleBudget(env,userId,reservationId,0,options.reason??"provider_operation_failed");
+}
+
+export async function releaseBudgetReservationsForCorrelation(env:WorkerEnv,user:PilotUser,correlationId:string,reason:string){
+  const legacy=await env.DB.prepare(`SELECT occurred_at,json_extract(payload,'$.reservation_id') AS reservation_id,CAST(json_extract(payload,'$.reserved_tokens') AS INTEGER) AS reserved_tokens,COALESCE(json_extract(payload,'$.operation'),'provider-operation') AS operation,COALESCE(json_extract(payload,'$.period'),substr(occurred_at,1,7)) AS period FROM events reserved
+    WHERE stream_id=? AND correlation_id=? AND type='BudgetReserved' AND NOT EXISTS (SELECT 1 FROM events terminal WHERE terminal.stream_id=reserved.stream_id AND terminal.type IN ('BudgetReleased','GenerationUsageRecorded') AND json_extract(terminal.payload,'$.reservation_id')=json_extract(reserved.payload,'$.reservation_id'))`).bind(user.streamId,correlationId).all<Record<string,unknown>>();
+  for(const row of legacy.results){const reservationId=String(row.reservation_id??"");const tokens=Number(row.reserved_tokens??0);if(reservationId&&tokens>0)await adoptLegacyBudgetReservation(env,user.userId,reservationId,tokens,{streamId:user.streamId,correlationId,operation:String(row.operation??"provider-operation"),period:String(row.period??period()),createdAt:String(row.occurred_at??new Date().toISOString())});}
+  const active=await env.DB.prepare("SELECT * FROM budget_reservations WHERE owner_id=? AND correlation_id=? AND status='active' ORDER BY created_at").bind(user.userId,correlationId).all<BudgetReservationRow>();const released=[] as Array<{id:string;tokens:number;operation:string}>;
+  for(const reservation of active.results){const result=await releaseBudget(env,user.userId,reservation.reservation_id,{reason});if(result.settled)released.push({id:reservation.reservation_id,tokens:result.reservedTokens,operation:reservation.operation});}
+  return released;
+}
+
+/** Repairs reservations whose event has no terminal settlement and whose server job is no longer active. */
+export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: PilotUser, now = Date.now()) {
+  await ensureSchema(env); const cutoff = new Date(now-BUDGET_RECONCILIATION_AGE_MS).toISOString();
+  const legacy = await env.DB.prepare(`SELECT reserved.event_id,reserved.correlation_id,reserved.occurred_at,
+      json_extract(reserved.payload,'$.reservation_id') AS reservation_id,
+      CAST(json_extract(reserved.payload,'$.reserved_tokens') AS INTEGER) AS reserved_tokens,
+      COALESCE(json_extract(reserved.payload,'$.operation'),'image-generation') AS operation,
+      COALESCE(json_extract(reserved.payload,'$.period'),substr(reserved.occurred_at,1,7)) AS period
+    FROM events reserved
+    WHERE reserved.stream_id=? AND reserved.type='BudgetReserved' AND reserved.occurred_at<=?
+      AND json_extract(reserved.payload,'$.reservation_id') IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM events terminal WHERE terminal.stream_id=reserved.stream_id AND terminal.type IN ('BudgetReleased','GenerationUsageRecorded') AND json_extract(terminal.payload,'$.reservation_id')=json_extract(reserved.payload,'$.reservation_id'))
+    ORDER BY reserved.occurred_at ASC LIMIT 200`).bind(user.streamId,cutoff).all<Record<string,unknown>>();
+  for(const row of legacy.results){const reservationId=String(row.reservation_id??"");const reservedTokens=Number(row.reserved_tokens??0);if(!reservationId||reservedTokens<=0)continue;await adoptLegacyBudgetReservation(env,user.userId,reservationId,reservedTokens,{streamId:user.streamId,correlationId:String(row.correlation_id??""),operation:String(row.operation??"image-generation"),period:String(row.period??period()),createdAt:String(row.occurred_at??new Date(now).toISOString())});}
+  const active = await env.DB.prepare(`SELECT * FROM budget_reservations reservation
+    WHERE reservation.owner_id=? AND reservation.status='active' AND reservation.created_at<=?
+      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.owner_id=reservation.owner_id AND job.status IN ('queued','running') AND job.correlation_id=reservation.correlation_id)
+    ORDER BY reservation.created_at ASC LIMIT 100`).bind(user.userId,cutoff).all<BudgetReservationRow>();
+  let released = 0;let count=0;
+  for(const row of active.results){
+    const settlement=await releaseBudget(env,user.userId,row.reservation_id,{reason:"orphaned_failed_reservation_reconciled"});
+    if(!settlement.settled)continue;
+    released+=settlement.reservedTokens;count+=1;
+    await appendAuditEvent(env,user.streamId,"worker:policy","BudgetReleased",{reservation_id:row.reservation_id,reserved_tokens:settlement.reservedTokens,reason:"orphaned_failed_reservation_reconciled",operation:row.operation,automatic_reconciliation:true},row.correlation_id||uuidV7());
+  }
+  return { releasedTokens: released, reservationCount: count };
+}
 
 export type CostBudgetSnapshot = { usedMicrousd: number; reservedMicrousd: number; limitMicrousd: number; remainingMicrousd: number };
 const costBudgetLimits = (env: WorkerEnv) => ({ user: moneyEnv(env.FORMA_USER_COST_LIMIT_USD, 10), workspace: moneyEnv(env.FORMA_WORKSPACE_COST_LIMIT_USD, 100) });
@@ -159,6 +224,7 @@ export async function handleSession(request: Request, env: WorkerEnv) {
     await appendAuditEvent(env, user.streamId, "user", "ConsentAccepted", { policy_version: POLICY_VERSION, ownership_confirmed: true, external_provider_processing_confirmed: true });
     user.consentVersion = POLICY_VERSION; user.consentedAt = now;
   } else if (request.method !== "GET") return new Response("Method not allowed", { status: 405 });
+  await reconcileFailedBudgetReservations(env,user);
   return Response.json({ user, policy: { version: POLICY_VERSION, accepted: user.consentVersion === POLICY_VERSION, passiveCapture: false, attentionCapture: { available: true, defaultOn: false, retentionDays: 14, rawInputCapture: false }, externalAssetsRequireAssertion: true, retentionDays: intEnv(env.FORMA_RETENTION_DAYS, 30), sharing: "private-expiring-revocable" }, provider: { name: "OpenAI Responses + Image APIs", model: env.OPENAI_IMAGE_MODEL ?? "gpt-image-2", plannerModel: env.OPENAI_MODEL ?? "gpt-5.6-terra", configured: Boolean(env.OPENAI_API_KEY) }, budgets: await readBudgets(env, user.userId) });
 }
 

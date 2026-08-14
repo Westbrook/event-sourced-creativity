@@ -11,6 +11,7 @@ import {
   documentJobMaxAttempts,
 } from "../src/model/document-jobs.ts";
 import { documentJobCompletionBindings } from "../worker/document-job-sql.ts";
+import { readFile } from "node:fs/promises";
 
 const job = (patch = {}) => ({
   jobId: "job-1",
@@ -105,4 +106,26 @@ test("keeps terminal failures visible until their durable notice is dismissed",(
   assert.equal(documentJobFailureVisible(job({status:"partial",dismissedAt:null})),true);
   assert.equal(documentJobFailureVisible(job({status:"failed",dismissedAt:"2026-08-14T12:00:00.000Z"})),false);
   assert.equal(documentJobFailureVisible(job({status:"completed",dismissedAt:null})),false);
+});
+
+test("settles generation capacity by reservation identity and repairs orphaned failures",async()=>{
+  const [policy,eventsApi,jobsApi,runtime,actions]=await Promise.all([
+    readFile(new URL("../worker/pilot-policy.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/runtime.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/generation-actions.ts",import.meta.url),"utf8"),
+  ]);
+  assert.match(runtime,/CREATE TABLE IF NOT EXISTS budget_reservations/);
+  assert.match(policy,/WHERE reservation_id=\? AND owner_id=\? AND status='active'/);
+  assert.match(policy,/orphaned_failed_reservation_reconciled/);
+  assert.match(policy,/NOT EXISTS \(SELECT 1 FROM document_jobs job[\s\S]*status IN \('queued','running'\)/);
+  assert.match(jobsApi,/releaseBudgetReservationsForCorrelation\(env,user,row\.correlation_id/);
+  assert.doesNotMatch(jobsApi,/releaseBudget\(env, user\.userId, reservedTokens\)/);
+  assert.doesNotMatch(eventsApi,/releaseBudget\(env,ownerId,reserved\)/);
+  assert.match(eventsApi,/settleBudget\(env,ownerId,reservation\.reservationId/);
+  assert.match(actions,/aria-describedby=\$\{previewFanBudgetBlocked\?this\.#budgetNoteId:nothing\}/);
+  assert.match(actions,/Failed work releases its reservation automatically/);
+  assert.match(actions,/<button class="button ghost compact" aria-label="Dismiss this generation issue"/);
+  assert.doesNotMatch(actions,/category==="safety"\?html`<button class="button ghost compact" aria-label="Dismiss/);
 });

@@ -1,5 +1,5 @@
 import { handleEvents } from "./events-api";
-import { loadPrivateContent, releaseBudget, requireConsent, requireUser, storePrivateContent, type PilotUser } from "./pilot-policy";
+import { loadPrivateContent, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, requireConsent, requireUser, storePrivateContent, type PilotUser } from "./pilot-policy";
 import { appendAuditEvent, ensureSchema, readEvents, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { foldEvents } from "../src/model/events";
 import {
@@ -159,13 +159,10 @@ async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow, operatio
 }
 
 async function releaseInterruptedAttempt(env: WorkerEnv, user: PilotUser, row: DocumentJobRow, reason: string) {
-  const events = await readEvents(env, user.streamId); const correlated = events.filter((event) => event.correlationId === row.correlation_id);
-  const settledReservations = new Set(correlated.filter((event) => event.type === "BudgetReleased" || event.type === "GenerationUsageRecorded").map((event) => String(event.payload.reservation_id ?? "")).filter(Boolean));
-  const reservations = correlated.filter((event) => event.type === "BudgetReserved").map((event) => ({ id: String(event.payload.reservation_id ?? ""), tokens: Number(event.payload.reserved_tokens ?? 0), operation: String(event.payload.operation ?? row.kind) })).filter((reservation) => reservation.id && reservation.tokens > 0 && !settledReservations.has(reservation.id));
-  const reservedTokens = reservations.reduce((sum, reservation) => sum + reservation.tokens, 0); if (reservedTokens) await releaseBudget(env, user.userId, reservedTokens);
+  const released=await releaseBudgetReservationsForCorrelation(env,user,row.correlation_id,reason);
   try {
-    await appendAuditEvent(env, user.streamId, "worker:scheduler", "JobAttemptInterrupted", { job_id: row.job_id, document_id: row.document_id, kind: row.kind, attempt: row.attempt_count, reason, released_reservation_count: reservations.length }, row.correlation_id);
-    for (const reservation of reservations) await appendAuditEvent(env, user.streamId, "worker:policy", "BudgetReleased", { reservation_id: reservation.id, reserved_tokens: reservation.tokens, reason, operation: reservation.operation, job_id: row.job_id, attempt: row.attempt_count }, row.correlation_id);
+    await appendAuditEvent(env, user.streamId, "worker:scheduler", "JobAttemptInterrupted", { job_id: row.job_id, document_id: row.document_id, kind: row.kind, attempt: row.attempt_count, reason, released_reservation_count: released.length }, row.correlation_id);
+    for (const reservation of released) await appendAuditEvent(env, user.streamId, "worker:policy", "BudgetReleased", { reservation_id: reservation.id, reserved_tokens: reservation.tokens, reason, operation: reservation.operation, job_id: row.job_id, attempt: row.attempt_count }, row.correlation_id);
   } catch (error) { console.error("document_job_interruption_audit_failed", row.job_id, error instanceof Error ? error.message : "unknown"); }
 }
 
@@ -309,6 +306,7 @@ async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
 
 export async function handleDocumentJobs(request: Request, env: WorkerEnv, path = "", context?: WorkerExecutionContext) {
   await ensureSchema(env); const auth = await requireUser(request, env, request.method === "GET" ? "viewer" : "creator"); if (auth.response || !auth.user) return auth.response!; const user = auth.user;
+  await reconcileFailedBudgetReservations(env,user);
   const now = new Date().toISOString();
   await env.DB.prepare("UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)").bind(now, user.userId, now).run();
 
