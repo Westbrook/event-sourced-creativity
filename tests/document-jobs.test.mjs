@@ -5,6 +5,7 @@ import {
   documentGenerationRequestKey,
   documentGenerationRevision,
   documentJobActionLabel,
+  documentJobFailureVisible,
   generationFailureGuidance,
   documentJobIsStale,
   documentJobMaxAttempts,
@@ -27,6 +28,8 @@ const job = (patch = {}) => ({
   result: null,
   error: null,
   errorDetail: null,
+  moderationPromptRef: null,
+  dismissedAt: null,
   attemptCount: 0,
   requestedAt: "2026-08-12T00:00:00.000Z",
   startedAt: null,
@@ -95,4 +98,11 @@ test("keeps every terminal D1 placeholder paired with one binding",()=>{
   assert.equal(values[3],"2026-08-14T12:00:00.000Z");
   assert.equal(values[4],null);
   assert.equal(values[7],"job-1");
+});
+
+test("keeps terminal failures visible until their durable notice is dismissed",()=>{
+  assert.equal(documentJobFailureVisible(job({status:"failed",dismissedAt:null})),true);
+  assert.equal(documentJobFailureVisible(job({status:"partial",dismissedAt:null})),true);
+  assert.equal(documentJobFailureVisible(job({status:"failed",dismissedAt:"2026-08-14T12:00:00.000Z"})),false);
+  assert.equal(documentJobFailureVisible(job({status:"completed",dismissedAt:null})),false);
 });

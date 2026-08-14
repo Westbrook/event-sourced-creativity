@@ -34,6 +34,7 @@ export type DocumentJob = {
   error: string | null;
   errorDetail: DocumentJobError | null;
   moderationPromptRef: string | null;
+  dismissedAt: string | null;
   attemptCount: number;
   requestedAt: string;
   startedAt: string | null;
@@ -75,6 +76,7 @@ export const documentJobMaxAttempts = (kind: DocumentJobKind) =>
   kind === "preview" || kind === "generate" || kind === "extract_reference" ? 2 : 1;
 
 export const documentJobTerminal = (job: Pick<DocumentJob, "status">) => job.status === "completed" || job.status === "partial" || job.status === "failed";
+export const documentJobFailureVisible = (job: Pick<DocumentJob, "status" | "dismissedAt">) => (job.status === "failed" || job.status === "partial") && !job.dismissedAt;
 
 export function documentJobFailure(job: DocumentJob) {
   const stored = job.errorDetail ?? job.members.find((member) => member.error)?.error ?? null;

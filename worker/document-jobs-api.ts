@@ -93,7 +93,7 @@ function serializeJob(row: DocumentJobRow) {
   return {
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
     requestedSequence: Number(row.requested_sequence), documentRevision: identity.documentRevision, requestKey: identity.requestKey, sourcePreviewId: identity.sourcePreviewId, promptTechnique: identity.promptTechnique, promptFanId: identity.promptFanId,
-    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result, error: row.error_message, errorDetail: errorDetailFromResult(parsed), moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, attemptCount: Number(row.attempt_count),
+    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result, error: row.error_message, errorDetail: errorDetailFromResult(parsed), moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
     requestedAt: row.requested_at, startedAt: row.started_at, completedAt: row.completed_at, notifiedAt: row.notified_at,
     leaseExpiresAt: row.lease_expires_at, updatedAt: row.updated_at,
     stage: String(parsed.stage ?? row.status), progressMessage: String(parsed.progressMessage ?? ""),
@@ -319,6 +319,18 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const statements = [jobId, ...childIds].map((id) => env.DB.prepare("UPDATE document_jobs SET notified_at=COALESCE(notified_at,?),updated_at=? WHERE job_id=? AND owner_id=?").bind(now, now, id, user.userId));
     const results = await env.DB.batch(statements); const result = results[0];
     return Number(result.meta.changes ?? 0) === 1 ? Response.json({ ok: true }) : Response.json({ error: "job_not_found" }, { status: 404 });
+  }
+
+  if (path.endsWith("/dismiss") && request.method === "POST") {
+    const jobId = decodeURIComponent(path.slice(0, -8).replace(/\/$/, ""));
+    const target = await readJob(env, user.userId, jobId);
+    if (!target) return Response.json({ error: "job_not_found" }, { status: 404 });
+    if (target.status !== "failed" && target.status !== "partial") return Response.json({ error: "terminal_failure_required" }, { status: 409 });
+    const previousResult = parseResult(target);
+    const result = { ...previousResult, dismissedAt: previousResult.dismissedAt ?? now };
+    await env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=?").bind(JSON.stringify(result), now, jobId, user.userId).run();
+    const updated = await readJob(env, user.userId, jobId);
+    return Response.json({ job: serializeJob(updated!) });
   }
 
   if (path.endsWith("/run") && request.method === "POST") {
