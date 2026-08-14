@@ -1608,6 +1608,13 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .generation-failure-actions details[open] { display: flex; flex: 1 1 100%; flex-wrap: wrap; gap: 7px 12px; padding-top: 5px; }
 .generation-failure-actions details[open] summary { flex-basis: 100%; }
 .generation-failure-actions code { overflow-wrap: anywhere; }
+.generation-failure-actions .generation-failure-prompt { flex: 1 1 100%; margin-top: 3px; padding-top: 9px; border-top: 1px solid var(--line); }
+.generation-failure-actions .generation-failure-prompt[open] { display: block; padding-top: 9px; }
+.generation-failure-prompt > p { margin: 7px 0 10px; }
+.generation-failure-prompt section { min-width: 0; margin-top: 9px; }
+.generation-failure-prompt h4 { margin: 0 0 5px; color: var(--ink); font: 700 var(--type-micro) var(--sans); }
+.generation-failure-prompt pre,.prompt-fan-failure-prompt pre { max-width: 100%; max-height: 260px; overflow: auto; margin: 0; padding: 12px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; font: 400 var(--type-micro) ui-monospace,SFMono-Regular,Consolas,monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.generation-failure-actions .generation-failure-prompt-unavailable { flex: 1 1 100%; margin: 3px 0 0; padding-top: 9px; border-top: 1px solid var(--line); font-size: var(--type-micro); }
 .prompt-fan-review-trigger-wrap { display: flex; justify-content: flex-end; margin-top: 6px; }
 .prompt-fan-review-trigger { display: inline-flex; min-height: 30px; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 7px; padding: 4px 0; color: var(--muted); background: transparent; border: 0; font: 650 var(--type-micro) var(--sans); }
 .prompt-fan-review-trigger:hover { color: var(--ink); }
@@ -1663,6 +1670,8 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .prompt-fan-option details { margin-top: 14px; border-top: 1px solid var(--line); }
 .prompt-fan-option summary { padding: 10px 0 0; color: var(--muted); cursor: pointer; font: 650 var(--type-micro) var(--sans); }
 .prompt-fan-option pre { max-height: 220px; overflow: auto; margin: 10px 0 0; padding: 12px; background: var(--panel-2); font-size: var(--type-micro); white-space: pre-wrap; overflow-wrap: anywhere; }
+.prompt-fan-option .prompt-fan-failure-prompt > p { min-height: 0; margin: 8px 0; color: var(--muted); font-size: var(--type-micro); }
+.prompt-fan-option > .prompt-fan-failure-prompt-unavailable { min-height: 0; margin: 12px 0 0; color: var(--muted); font-size: var(--type-micro); }
 .prompt-fan-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px 32px; border-top: 1px solid var(--line); }
 .prompt-fan-card > footer p { margin: 0; color: var(--muted); font-size: var(--type-caption); }
 .prompt-fan-card > footer > div { display: flex; flex: none; gap: 8px; }

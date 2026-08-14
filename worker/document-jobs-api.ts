@@ -93,7 +93,7 @@ function serializeJob(row: DocumentJobRow) {
   return {
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
     requestedSequence: Number(row.requested_sequence), documentRevision: identity.documentRevision, requestKey: identity.requestKey, sourcePreviewId: identity.sourcePreviewId, promptTechnique: identity.promptTechnique, promptFanId: identity.promptFanId,
-    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result, error: row.error_message, errorDetail: errorDetailFromResult(parsed), attemptCount: Number(row.attempt_count),
+    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result, error: row.error_message, errorDetail: errorDetailFromResult(parsed), moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, attemptCount: Number(row.attempt_count),
     requestedAt: row.requested_at, startedAt: row.started_at, completedAt: row.completed_at, notifiedAt: row.notified_at,
     leaseExpiresAt: row.lease_expires_at, updatedAt: row.updated_at,
     stage: String(parsed.stage ?? row.status), progressMessage: String(parsed.progressMessage ?? ""),
@@ -106,7 +106,7 @@ async function reconcilePromptFanParent(env: WorkerEnv, ownerId: string, parentI
   const children = (await Promise.all(childIds.map((jobId) => readJob(env, ownerId, jobId)))).filter((row): row is DocumentJobRow => Boolean(row));
   const members = children.map((child) => {
     const childRequest = parseRequest(child); const childResult = parseResult(child);
-    return { jobId: child.job_id, promptTechnique: normalizePromptTechnique(childRequest.promptTechnique), status: child.status, error: errorDetailFromResult(childResult), attemptCount: Number(child.attempt_count), updatedAt: child.updated_at };
+    return { jobId: child.job_id, promptTechnique: normalizePromptTechnique(childRequest.promptTechnique), status: child.status, error: errorDetailFromResult(childResult), moderationPromptRef: childResult.moderationPromptRef ? String(childResult.moderationPromptRef) : null, attemptCount: Number(child.attempt_count), updatedAt: child.updated_at };
   });
   const terminal = children.filter((child) => child.status === "completed" || child.status === "failed"); const succeeded = terminal.filter((child) => child.status === "completed").length; const failed = terminal.length - succeeded;
   const status: DocumentJobStatus = terminal.length === childIds.length && childIds.length > 0 ? failed === 0 ? "completed" : succeeded > 0 ? "partial" : "failed" : children.some((child) => child.status === "running") || terminal.length > 0 ? "running" : "queued";
@@ -204,12 +204,18 @@ function correlatedFailureDetail(events: Awaited<ReturnType<typeof readEvents>>)
   } satisfies DocumentJobError;
 }
 
+function correlatedModerationPromptRef(events: Awaited<ReturnType<typeof readEvents>>) {
+  const failureEvent=[...events].reverse().find((event)=>event.type==="GenerationFailed"&&event.payload.prompt_ref);
+  return failureEvent?.payload.prompt_ref?String(failureEvent.payload.prompt_ref):null;
+}
+
 async function repairMisreportedTerminalJob(env: WorkerEnv, row: DocumentJobRow, events: Awaited<ReturnType<typeof readEvents>>) {
   if (row.status !== "failed" || !/Wrong number of parameter bindings/i.test(row.error_message ?? "")) return false;
   const finished = operationFinished(events, row); if (!finished) return false;
   const detail = finished.failed ? correlatedFailureDetail(finished.correlated) : null;
   const status = finished.failed ? "failed" : "completed";
-  const result = { ...parseResult(row), ...(detail ? { errorDetail: detail } : {}), stage: status, progressMessage: finished.failed ? failureProgressMessage(detail) : "The operation finished." };
+  const moderationPromptRef=finished.failed?correlatedModerationPromptRef(finished.correlated):null;
+  const result = { ...parseResult(row), ...(detail ? { errorDetail: detail } : {}), ...(moderationPromptRef?{moderationPromptRef}:{}), stage: status, progressMessage: finished.failed ? failureProgressMessage(detail) : "The operation finished." };
   await finishDocumentJob(env, row, status, result, detail?.message ?? (finished.failed ? "operation_failed" : null), row.completed_at ?? new Date().toISOString());
   return true;
 }
@@ -219,7 +225,7 @@ function safeResult(body: Record<string, unknown>, correlatedEventIds: string[] 
   return {
     head: Number(body.head ?? 0),
     appendedEventIds: appended.map((event) => String(event.eventId ?? "")).filter(Boolean).concat(correlatedEventIds),
-    previewed: Boolean(body.previewed), previewQueued: Boolean(body.previewQueued), previewSuppressed: Boolean(body.previewSuppressed), followupJobId: body.followupJobId ? String(body.followupJobId) : undefined, promoted: Boolean(body.promoted), quality: body.quality ? String(body.quality) : undefined,
+    previewed: Boolean(body.previewed), previewQueued: Boolean(body.previewQueued), previewSuppressed: Boolean(body.previewSuppressed), followupJobId: body.followupJobId ? String(body.followupJobId) : undefined, moderationPromptRef: body.moderationPromptRef ? String(body.moderationPromptRef) : undefined, promoted: Boolean(body.promoted), quality: body.quality ? String(body.quality) : undefined,
     structure: body.structure && typeof body.structure === "object" ? body.structure : undefined,
   };
 }
@@ -243,8 +249,8 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   if (finished) {
     const now = new Date().toISOString(); const status: DocumentJobStatus = finished.failed ? "failed" : "completed";let followup:DocumentJobRow|null=null;
     if(!finished.failed&&row.kind==="chat"){const reasoned=finished.correlated.find((event)=>event.type==="AssistantReasoned"&&event.payload.preview_queued&&event.payload.preview_direction_ref);if(reasoned)followup=await queueFollowupPreview(env,user,row,{kind:"preview",documentId:row.document_id,sourceSurface:"chat",payload:{directionRef:reasoned.payload.preview_direction_ref,directionModel:reasoned.payload.model_id,sourceChatTurnId:reasoned.payload.turn_id}});}
-    const failureDetail = finished.failed ? correlatedFailureDetail(finished.correlated) : null;
-    const result = { ...safeResult({ head: existingEvents.at(-1)?.sequence ?? 0,previewQueued:Boolean(followup),followupJobId:followup?.job_id }, finished.correlated.map((event) => event.eventId)), ...(failureDetail ? { errorDetail: failureDetail } : {}), stage: status, progressMessage: finished.failed ? failureProgressMessage(failureDetail) : "The operation finished." };
+    const failureDetail = finished.failed ? correlatedFailureDetail(finished.correlated) : null;const moderationPromptRef=finished.failed?correlatedModerationPromptRef(finished.correlated):null;
+    const result = { ...safeResult({ head: existingEvents.at(-1)?.sequence ?? 0,previewQueued:Boolean(followup),followupJobId:followup?.job_id,moderationPromptRef }, finished.correlated.map((event) => event.eventId)), ...(failureDetail ? { errorDetail: failureDetail } : {}), stage: status, progressMessage: finished.failed ? failureProgressMessage(failureDetail) : "The operation finished." };
     await finishDocumentJob(env, row, status, result, failureDetail?.message ?? (finished.failed ? "operation_failed" : null), now);
     await reconcileParentForChild(env, row);
     return readJob(env, user.userId, jobId);

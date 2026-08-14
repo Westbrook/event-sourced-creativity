@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { buildCreativeImagePrompt, buildPixelReferenceDirectives, buildSpatialDirectives, generateCreativeImage } from "../worker/openai-adapter.ts";
+import { buildCreativeImagePrompt, buildPixelReferenceDirectives, buildSpatialDirectives, generateCreativeDirection, generateCreativeImage } from "../worker/openai-adapter.ts";
 import { foldEvents } from "../src/model/events.ts";
+import { providerFailurePrompt } from "../worker/provider-errors.ts";
 
 test("builds a GPT Image prompt that preserves role, intent, and negative constraints",()=>{
   const prompt=buildCreativeImagePrompt({facts:[{block_id:"subject",role:"subject",intent:"avoid",effect:"must_not_include",properties:{text:"people under 20 years old"}},{block_id:"reference",role:"reference",intent:"include",properties:{label:"Casting reference"}}],relationships:[{relation_id:"relation",from_block_id:"subject",to_block_id:"reference",kind:"subject_reference"}]},{title:"Quiet interior",scene:"A still room after dusk"});
@@ -46,6 +47,25 @@ test("calls the direct Image API with gpt-image-2, project attribution, and deco
     assert.equal(requestBody.model,"gpt-image-2");assert.equal(requestBody.size,"1536x1024");assert.equal(requestBody.quality,"high");assert.equal(requestBody.n,1);
     assert.equal(requestHeaders.get("OpenAI-Project"),"proj_test");
     assert.equal(new TextDecoder().decode(result.bytes),"png-bytes");assert.equal(result.usage.totalTokens,1020);assert.equal(result.mimeType,"image/png");
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("preserves the exact image prompt when moderation stops a generation",async()=>{
+  const originalFetch=globalThis.fetch;globalThis.fetch=async()=>Response.json({error:{message:"Your request was rejected by the safety system.",type:"image_generation_user_error"}},{status:400,headers:{"x-request-id":"req_prompt_receipt"}});
+  try{
+    await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[{block_id:"subject",role:"subject",properties:{text:"Editorial portrait"}}]},{title:"Moderation receipt study"}),error=>{
+      assert.match(providerFailurePrompt(error)??"",/Moderation receipt study/);
+      assert.equal(error.detail.category,"safety");assert.equal(error.detail.requestId,"req_prompt_receipt");return true;
+    });
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("preserves planner instructions and context when moderation stops before image submission",async()=>{
+  const originalFetch=globalThis.fetch;globalThis.fetch=async()=>Response.json({error:{message:"Request was rejected by moderation.",type:"content_policy_violation"}},{status:400});
+  try{
+    await assert.rejects(()=>generateCreativeDirection({OPENAI_API_KEY:"test-only"},"user-1",{document:{title:"Planning receipt"}}),error=>{
+      const submitted=providerFailurePrompt(error)??"";assert.match(submitted,/creative-direction planner instructions/i);assert.match(submitted,/Planning receipt/);assert.equal(error.detail.category,"safety");return true;
+    });
   }finally{globalThis.fetch=originalFetch;}
 });
 

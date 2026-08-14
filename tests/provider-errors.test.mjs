@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applicationFailureDetail, classifyProviderFailure, providerErrorFromResponse, providerRetryAfterMs } from "../worker/provider-errors.ts";
+import { applicationFailureDetail, classifyProviderFailure, providerErrorFromResponse, providerFailurePrompt, providerRetryAfterMs } from "../worker/provider-errors.ts";
 import { providerRetryDelay, shouldAutomaticallyRetryProviderFailure } from "../worker/openai-adapter.ts";
 
 test("classifies safety rejections as terminal and preserves provider receipts",()=>{
   const response=new Response(JSON.stringify({error:{message:"Your request was rejected by the safety system.",type:"image_generation_user_error"}}),{status:400,headers:{"x-request-id":"req_safety"}});
   const error=providerErrorFromResponse(response,{error:{message:"Your request was rejected by the safety system.",type:"image_generation_user_error"}},"openai_image_400");
   assert.deepEqual(error.detail,{code:"image_generation_user_error",category:"safety",scope:"request",action:"edit_request",message:"Your request was rejected by the safety system.",retryable:false,retryAfterMs:null,requestId:"req_safety",httpStatus:400});
+  const promptError=providerErrorFromResponse(response,{error:{message:"Your request was rejected by the safety system.",type:"image_generation_user_error"}},"openai_image_400","Exact submitted prompt");
+  assert.equal(providerFailurePrompt(promptError),"Exact submitted prompt");
 });
 
 test("distinguishes quota, rate limits, and retryable provider failures",()=>{

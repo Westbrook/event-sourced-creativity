@@ -11,14 +11,19 @@ test("fan generation is accepted once and retains explicit failed member states"
   const store=await readFile(new URL("../src/state/store.ts",import.meta.url),"utf8");
   const api=await readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8");
   const review=await readFile(new URL("../src/components/prompt-fan-review.ts",import.meta.url),"utf8");
+  const actions=await readFile(new URL("../src/components/generation-actions.ts",import.meta.url),"utf8");
   const method=store.slice(store.indexOf("async generatePromptFan"),store.indexOf("async preferPromptTechnique"));
   assert.equal((method.match(/#startDocumentJob\(/g)??[]).length,1);
   assert.match(method,/#startDocumentJob\("prompt_fan"/);
   assert.match(api,/childJobIds/);
   assert.match(api,/status === "partial"/);
+  assert.match(api,/moderationPromptRef/);
   assert.match(review,/generationFailureGuidance/);
   assert.match(review,/failureGuidance\.title/);
   assert.match(review,/failureGuidance\.summary/);
+  assert.match(review,/Review submitted prompt/);
+  assert.match(actions,/Review submitted/);
+  assert.match(actions,/private retention period has expired/);
   assert.doesNotMatch(review,/Awaiting this result/);
 });
 

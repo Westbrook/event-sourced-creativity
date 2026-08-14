@@ -16,11 +16,17 @@ export type ProviderFailureDetail = {
 
 export class ProviderRequestError extends Error {
   readonly detail: ProviderFailureDetail;
-  constructor(detail: ProviderFailureDetail) {
+  readonly preparedPrompt: string | null;
+  constructor(detail: ProviderFailureDetail, preparedPrompt: string | null = null) {
     super(detail.message);
     this.name = "ProviderRequestError";
     this.detail = detail;
+    this.preparedPrompt = preparedPrompt;
   }
+}
+
+export function providerFailurePrompt(input: unknown) {
+  return input instanceof ProviderRequestError ? input.preparedPrompt : null;
 }
 
 const errorRecord = (value: unknown) => value && typeof value === "object" ? value as Record<string, unknown> : {};
@@ -118,9 +124,9 @@ export function applicationFailureDetail(code: string, scope?: unknown, status: 
   return classifyProviderFailure(new Error(code), status ? new Response(null, { status }) : undefined, { error: { code, message: code } });
 }
 
-export function providerErrorFromResponse(response: Response, body: unknown, fallback: string) {
+export function providerErrorFromResponse(response: Response, body: unknown, fallback: string, preparedPrompt: string | null = null) {
   const record = errorRecord(errorRecord(body).error ?? body);
-  return new ProviderRequestError(classifyProviderFailure(new Error(String(record.message ?? fallback)), response, body));
+  return new ProviderRequestError(classifyProviderFailure(new Error(String(record.message ?? fallback)), response, body), preparedPrompt);
 }
 
 export function publicFailureDetail(detail: ProviderFailureDetail) {

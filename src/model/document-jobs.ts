@@ -5,7 +5,7 @@ export type ProviderFailureCategory = "safety" | "authentication" | "access" | "
 export type ProviderFailureScope = "request" | "user" | "workspace" | "account" | "project" | "organization" | "model" | "region" | "network" | "provider" | "unknown";
 export type ProviderFailureAction = "edit_request" | "check_credentials" | "check_project" | "verify_organization" | "add_credits" | "raise_limit" | "review_budget" | "wait_and_retry" | "retry" | "contact_support" | "none";
 export type DocumentJobError = { code: string; category: ProviderFailureCategory; scope: ProviderFailureScope; action: ProviderFailureAction; message: string; retryable: boolean; retryAfterMs: number | null; requestId: string | null; httpStatus: number | null };
-export type PromptFanMember = { jobId: string; promptTechnique: "prose" | "bullets" | "json" | "xml"; status: Exclude<DocumentJobStatus, "partial">; error: DocumentJobError | null; attemptCount: number; updatedAt: string };
+export type PromptFanMember = { jobId: string; promptTechnique: "prose" | "bullets" | "json" | "xml"; status: Exclude<DocumentJobStatus, "partial">; error: DocumentJobError | null; moderationPromptRef: string | null; attemptCount: number; updatedAt: string };
 
 export type GenerationFailureGuidance = {
   title: string;
@@ -33,6 +33,7 @@ export type DocumentJob = {
   result: Record<string, unknown> | null;
   error: string | null;
   errorDetail: DocumentJobError | null;
+  moderationPromptRef: string | null;
   attemptCount: number;
   requestedAt: string;
   startedAt: string | null;
