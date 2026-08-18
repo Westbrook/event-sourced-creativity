@@ -407,9 +407,14 @@ forma-project-rail {
   font-size: var(--type-body);
 }
 
+.page-pad:has(> .page-header--hero:first-child) { padding-top: 0; }
+
 .page-header--hero {
-  max-width: 96rem;
-  margin-bottom: clamp(4rem, 8vw, 7rem);
+  max-width: none;
+  margin: 0 calc(-1 * var(--page-gutter)) clamp(4rem, 8vw, 7rem);
+  padding-block: clamp(3rem, 7vw, 7rem) clamp(2rem, 5vw, 4rem);
+  padding-inline: var(--page-gutter);
+  background: var(--admin-chrome);
 }
 
 .page-header--library,
@@ -1654,16 +1659,57 @@ forma-document-generations { display: block; min-width: 0; }
 
 .admin-page { background: var(--paper); }
 
+:is(.page-header--hero, .page-header--admin) {
+  display: flex;
+  max-width: none;
+  align-items: flex-end;
+  justify-content: space-between;
+  color: var(--on-dark);
+}
+
 .page-header--admin {
   padding-block: clamp(3rem, 7vw, 7rem) clamp(2rem, 5vw, 4rem);
   padding-inline: var(--page-gutter);
-  color: #fff;
-  background: #151515;
+  background: var(--admin-chrome);
 }
 
-.page-header--admin .eyebrow { color: #a9a9a4; }
-.page-header--admin h1 { font-size: clamp(2.75rem, 7vw, 6.5rem); }
-.page-header--admin p { color: #bdbdb8; }
+:is(.page-header--hero, .page-header--admin) .eyebrow { color: var(--admin-chrome-subtle); }
+
+:is(.page-header--hero, .page-header--admin) h1 {
+  color: var(--on-dark);
+  font-size: clamp(2.4rem, 5vw, 4.75rem);
+}
+
+:is(.page-header--hero, .page-header--admin) p {
+  max-width: 44rem;
+  color: var(--admin-chrome-muted);
+  font-size: var(--type-body);
+}
+
+:is(.page-header--hero, .page-header--admin) .page-header-actions {
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
+:is(.page-header--hero, .page-header--admin) .button.primary {
+  color: var(--on-accent);
+  background: var(--orange);
+}
+
+:is(.page-header--hero, .page-header--admin) .button.primary:hover {
+  background: color-mix(in srgb, var(--orange) 84%, white);
+}
+
+:is(.page-header--hero, .page-header--admin) .button.secondary {
+  color: var(--on-dark);
+  background: var(--admin-chrome-hover);
+  border-color: var(--admin-chrome-line);
+}
+
+:is(.page-header--hero, .page-header--admin) .button.secondary:hover {
+  color: var(--on-dark);
+  background: color-mix(in srgb, var(--admin-chrome-hover) 78%, white);
+}
 
 .administrative-page > forma-area-navigation .area-navigation--administrative {
   max-width: none;
@@ -1691,6 +1737,13 @@ forma-document-generations { display: block; min-width: 0; }
   border: 1px solid var(--line);
   border-radius: 6px;
 }
+
+:is(.page-header--hero, .page-header--admin) .admin-health {
+  color: var(--on-dark);
+  border-color: var(--admin-chrome-line);
+}
+
+:is(.page-header--hero, .page-header--admin) .admin-health small { color: var(--admin-chrome-muted); }
 
 .filterbar,
 .builder-controls,
@@ -2302,6 +2355,10 @@ forma-document-generations { display: block; min-width: 0; }
   .top-actions > .button.secondary { display: none; }
   .page-header,
   .library-block-editor-header { align-items: flex-start; flex-direction: column; }
+  :is(.page-header--hero, .page-header--admin) .page-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
   .page-header--library,
   .page-header--document { position: relative; top: auto; }
   .studio-header-stack { position: static; top: auto; }

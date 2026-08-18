@@ -57,6 +57,15 @@ test("operations and laboratory navigation share readable fixed-dark chrome in e
   assert.match(design, /\.tabbar a\.active::after\s*\{\s*background:\s*var\(--orange\);\s*\}/);
 });
 
+test("creative, operations, and laboratory headers share one compact justified chrome contract", () => {
+  assert.match(design, /:is\(\.page-header--hero, \.page-header--admin\)\s*\{[^}]*display:\s*flex;[^}]*max-width:\s*none;[^}]*justify-content:\s*space-between;[^}]*color:\s*var\(--on-dark\);/s);
+  assert.match(design, /\.page-header--hero\s*\{[^}]*margin:\s*0 calc\(-1 \* var\(--page-gutter\)\)[^;]*;[^}]*padding-inline:\s*var\(--page-gutter\);[^}]*background:\s*var\(--admin-chrome\);/s);
+  assert.match(design, /\.page-header--admin\s*\{[^}]*padding-inline:\s*var\(--page-gutter\);[^}]*background:\s*var\(--admin-chrome\);/s);
+  assert.match(design, /:is\(\.page-header--hero, \.page-header--admin\) h1\s*\{[^}]*font-size:\s*clamp\(2\.4rem, 5vw, 4\.75rem\);/s);
+  assert.match(design, /:is\(\.page-header--hero, \.page-header--admin\) \.page-header-actions\s*\{[^}]*justify-content:\s*flex-end;[^}]*margin-top:\s*0;/s);
+  assert.doesNotMatch(design, /\.page-header--admin h1\s*\{[^}]*6\.5rem/s);
+});
+
 test("Projects derives its page wash from theme surfaces instead of a light-only canvas", () => {
   const projects = design.match(/\.projects-page\s*\{[^}]+\}/s)?.[0] ?? "";
   assert.match(projects, /color-mix\(in srgb,\s*var\(--orange-soft\) 18%,\s*var\(--paper\)\)/);
