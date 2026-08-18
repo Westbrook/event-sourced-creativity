@@ -567,6 +567,7 @@ test("keeps account, project, document, intelligence, operations, and laboratory
   assert.doesNotMatch(contents,/forma-studio-mode-nav|forma-studio-navigator/);assert.match(library,/Project library/);assert.match(collections,/destination==="\/library"/);
   for(const [source,active] of [[sessions,"sessions"],[scout,"scout"],[memory,"memory"]])assert.match(source,new RegExp(`forma-area-navigation area="intelligence" active="${active}"`));
   assert.match(system,/area="operations" active="system"/);assert.match(admin,/laboratory\?"laboratory":"operations"/);assert.match(areas,/Creative intelligence/);assert.match(areas,/Operations/);assert.match(areas,/Laboratory/);
+  assert.match(areas,/area-navigation--administrative/);
   assert.match(styles,/\.rail-dock/);assert.match(styles,/\.area-navigation/);assert.match(styles,/\.studio-breadcrumbs/);assert.match(styles,/\.block-type-group/);assert.doesNotMatch(styles,/global-nav a:nth-child/);
   assert.match(review,/Deficiencies found and resolved/);assert.match(review,/Primary navigation/);assert.match(review,/Follow-up evaluation/);
 });

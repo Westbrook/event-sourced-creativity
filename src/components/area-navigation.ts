@@ -38,7 +38,9 @@ export class AreaNavigation extends FormaElement {
         ? laboratory.filter(() => session?.user.role === "admin")
         : intelligence;
     const label = area === "operations" ? "Operations" : area === "laboratory" ? "Laboratory" : "Creative intelligence";
-    return html`<nav class=${`area-navigation area-navigation--${area}`} aria-label=${label}>
+    const administrative = area === "operations" || area === "laboratory";
+    const classes = `area-navigation${administrative ? " area-navigation--administrative" : ""} area-navigation--${area}`;
+    return html`<nav class=${classes} aria-label=${label}>
       <span>${label}</span>
       <div>${items.map((item) => html`<a href=${item.href} title=${item.description} class=${active === item.id ? "active" : ""} aria-current=${active === item.id ? "page" : nothing} @click=${(event:MouseEvent)=>this.#go(event,item.href)}>${item.label}</a>`)}</div>
     </nav>`;

@@ -45,12 +45,14 @@ test("shared chrome consumes theme tokens while fixed dark media stages remain e
   assert.match(design, /Media stages and the replay console intentionally keep\s*\n\s*\* their fixed dark presentation/);
 });
 
-test("operations navigation keeps readable fixed-dark chrome in either color scheme", () => {
+test("operations and laboratory navigation share readable fixed-dark chrome in either color scheme", () => {
   for (const token of ["admin-chrome", "admin-chrome-hover", "admin-chrome-line", "admin-chrome-muted", "admin-chrome-subtle"]) {
     assert.match(legacy, new RegExp(`--${token}:`));
   }
-  assert.match(design, /\.area-navigation--operations\s*\{[^}]*background:\s*var\(--admin-chrome\);[^}]*border-color:\s*var\(--admin-chrome-line\);/s);
-  assert.match(design, /\.admin-page\s*>\s*forma-area-navigation\s+:is\(\.area-navigation--operations,\s*\.area-navigation--laboratory\)\s*\{[^}]*border-radius:\s*0;/s);
+  assert.match(design, /\.area-navigation--administrative\s*\{[^}]*background:\s*var\(--admin-chrome\);[^}]*border-color:\s*var\(--admin-chrome-line\);/s);
+  assert.match(design, /\.area-navigation--administrative a\.active\s*\{[^}]*color:\s*var\(--on-accent\);[^}]*background:\s*var\(--orange\);/s);
+  assert.match(design, /\.admin-page\s*>\s*forma-area-navigation\s+\.area-navigation--administrative\s*\{[^}]*border-radius:\s*0;/s);
+  assert.doesNotMatch(design, /\.area-navigation--laboratory\s*\{[^}]*background:/s);
   assert.match(design, /\.tabbar\s*\{[^}]*color:\s*var\(--admin-chrome-muted\);[^}]*background:\s*var\(--admin-chrome\);/s);
   assert.match(design, /\.tabbar a\.active::after\s*\{\s*background:\s*var\(--orange\);\s*\}/);
 });
