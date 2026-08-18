@@ -138,7 +138,7 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
   for(const row of legacy.results){const reservationId=String(row.reservation_id??"");const reservedTokens=Number(row.reserved_tokens??0);if(!reservationId||reservedTokens<=0)continue;await adoptLegacyBudgetReservation(env,user.userId,reservationId,reservedTokens,{streamId:user.streamId,correlationId:String(row.correlation_id??""),operation:String(row.operation??"image-generation"),period:String(row.period??period()),createdAt:String(row.occurred_at??new Date(now).toISOString())});}
   const active = await env.DB.prepare(`SELECT * FROM budget_reservations reservation
     WHERE reservation.owner_id=? AND reservation.status='active' AND reservation.created_at<=?
-      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.owner_id=reservation.owner_id AND job.status IN ('queued','running') AND job.correlation_id=reservation.correlation_id)
+      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.owner_id=reservation.owner_id AND job.status IN ('queued','running','committing') AND job.correlation_id=reservation.correlation_id)
     ORDER BY reservation.created_at ASC LIMIT 100`).bind(user.userId,cutoff).all<BudgetReservationRow>();
   let released = 0;let count=0;
   for(const row of active.results){

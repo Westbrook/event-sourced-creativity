@@ -1708,6 +1708,13 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .generation-queue-item header span.earlier { color: var(--muted); background: var(--panel-2); }
 .generation-queue-item p { margin: 5px 0 3px; overflow-wrap: anywhere; color: var(--ink); font-size: var(--type-caption); }
 .generation-queue-item small { display: block; overflow-wrap: anywhere; color: var(--muted); font-size: var(--type-micro); }
+.generation-queue-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.generation-queue-finalizing { padding-top: 6px; color: var(--muted); }
+.generation-queue-confirm { display: grid; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.generation-queue-confirm p { margin: 0; }
+.generation-queue-confirm > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.generation-queue-confirm.force { color: var(--danger); }
+.generation-queue-confirm .button.danger { color: var(--panel); background: var(--danger); border-color: var(--danger); }
 .generation-queue-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 30px; background: var(--panel-2); }
 .generation-queue-card > footer p { max-width: 560px; margin: 0; color: var(--muted); font-size: var(--type-caption); }
 .generation-queue-card > footer .button { flex: none; }

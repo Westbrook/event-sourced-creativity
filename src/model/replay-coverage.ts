@@ -5,7 +5,7 @@ import type { CreativeEvent } from "./events.ts";
 import { PROMPT_TECHNIQUES } from "./prompt-structures.ts";
 import { normalizeSpatialScope } from "./spatial-scope.ts";
 
-export const REPLAY_COVERAGE_CONTRACT_VERSION = 3;
+export const REPLAY_COVERAGE_CONTRACT_VERSION = 4;
 
 export const REPLAY_CAPABILITIES = [
   { key:"event-vocabulary", label:"Every admitted event family is rehearsed", evidence:["event registry"] },
@@ -30,6 +30,7 @@ export const REPLAY_CAPABILITIES = [
   { key:"bounded-agency", label:"Scout works in report space under a visible budget", evidence:["ScoutRunStarted","ScoutObserved","ObservationJudged","ScoutBudgetExhausted"] },
   { key:"document-lifecycle", label:"Project, document, collection, and reusable-block lifecycles appear", evidence:["ProjectCreated","DocumentForked","DocumentRemoved","CollectionCreated"] },
   { key:"operations", label:"Provider, retry, budget, validation, and retention failures remain inspectable", evidence:["BudgetReserved","JobAttemptInterrupted","BudgetReleased","ValidationFailed","RetentionSweepCompleted"] },
+  { key:"job-control", label:"Creators can stop image work and administrators can force-fail exceptional jobs", evidence:["JobCanceled","JobForceFailed","BudgetReleased"] },
 ] as const;
 
 export type ReplayCoverageCheck = {
@@ -125,6 +126,7 @@ export function evaluateReplayCoverage(events: CreativeEvent[], expectedEventTyp
     "bounded-agency": { passed: ["ScoutRunStarted","ScoutObserved","ObservationJudged","ScoutBudgetExhausted"].every((type) => types.has(type)), summary: "Scout produces report-space evidence under a hard envelope", evidence: matching("ScoutRunStarted","ScoutObserved","ObservationJudged","ScoutBudgetExhausted") },
     "document-lifecycle": { passed: ["ProjectCreated","DocumentCreated","DocumentForked","DocumentRemoved","DocumentRestored","CollectionCreated","CollectionRemoved","CollectionRestored"].every((type) => types.has(type)), summary: "Project, document, collection, and reusable context history are exercised", evidence: matching("ProjectCreated","DocumentCreated","DocumentForked","DocumentRemoved","CollectionCreated") },
     "operations": { passed: ["BudgetReserved","JobAttemptInterrupted","BudgetReleased","BudgetExceeded","ValidationFailed","GenerationFailed","RetentionSweepCompleted"].every((type) => types.has(type)), summary: "Budget, recovery, validation, provider failure, and retention receipts appear", evidence: matching("BudgetReserved","JobAttemptInterrupted","BudgetReleased","ValidationFailed","GenerationFailed","RetentionSweepCompleted") },
+    "job-control": { passed: types.has("JobCanceled") && types.has("JobForceFailed") && events.some((event) => event.type === "BudgetReleased" && /cancel|force/i.test(text(event.payload.reason))), summary: "Owner cancellation and administrative force-failure preserve receipts and release reservations", evidence: matching("JobCanceled","JobForceFailed","BudgetReleased") },
   };
   const checks: ReplayCoverageCheck[] = REPLAY_CAPABILITIES.map((capability) => ({ key:capability.key, label:capability.label, passed:checksByKey[capability.key].passed, summary:checksByKey[capability.key].summary, evidenceEventIds:eventIds(checksByKey[capability.key].evidence) }));
   const missingEventTypes = expectedEventTypes.filter((type) => !types.has(type));

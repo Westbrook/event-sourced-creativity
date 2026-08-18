@@ -1,6 +1,6 @@
 export const DOCUMENT_JOB_KINDS = ["preview", "generate", "prompt_fan", "chat", "structure_adaptive", "extract_reference"] as const;
 export type DocumentJobKind = typeof DOCUMENT_JOB_KINDS[number];
-export type DocumentJobStatus = "queued" | "running" | "completed" | "partial" | "failed";
+export type DocumentJobStatus = "queued" | "running" | "committing" | "completed" | "partial" | "failed" | "canceled";
 export type ProviderFailureCategory = "safety" | "authentication" | "access" | "quota" | "rate_limit" | "network" | "canceled" | "provider" | "server" | "unknown";
 export type ProviderFailureScope = "request" | "user" | "workspace" | "account" | "project" | "organization" | "model" | "region" | "network" | "provider" | "unknown";
 export type ProviderFailureAction = "edit_request" | "check_credentials" | "check_project" | "verify_organization" | "add_credits" | "raise_limit" | "review_budget" | "wait_and_retry" | "retry" | "contact_support" | "none";
@@ -75,7 +75,7 @@ export const DOCUMENT_JOB_STALE_AFTER_MS = 45_000;
 export const documentJobMaxAttempts = (kind: DocumentJobKind) =>
   kind === "preview" || kind === "generate" || kind === "extract_reference" ? 2 : 1;
 
-export const documentJobTerminal = (job: Pick<DocumentJob, "status">) => job.status === "completed" || job.status === "partial" || job.status === "failed";
+export const documentJobTerminal = (job: Pick<DocumentJob, "status">) => job.status === "completed" || job.status === "partial" || job.status === "failed" || job.status === "canceled";
 export const documentJobFailureVisible = (job: Pick<DocumentJob, "status" | "dismissedAt">) => (job.status === "failed" || job.status === "partial") && !job.dismissedAt;
 
 export function documentJobFailure(job: DocumentJob) {
@@ -99,11 +99,12 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
   if (detail.category === "access") return { title: detail.scope === "model" ? "This project cannot use the image model" : "This credential cannot access the configured OpenAI project", summary: "Check that the API key belongs to the selected project and that the project permits GPT Image 2.", actionLabel: "Review project settings", actionUrl: "https://platform.openai.com/settings/organization/projects", retryAllowed: false };
   if (detail.category === "rate_limit") return { title: "OpenAI is limiting image throughput", summary: detail.retryAfterMs ? `The server already retried. Wait about ${Math.max(1, Math.ceil(detail.retryAfterMs / 1000))} seconds before trying again.` : "The server already retried with backoff. Wait briefly before trying again.", actionLabel: "Review rate limits", actionUrl: "https://platform.openai.com/settings/organization/limits", retryAllowed: true };
   if (detail.category === "network" || detail.category === "server") return { title: "The provider connection was interrupted", summary: "No terminal account or request block was reported. It is reasonable to retry.", actionLabel: null, actionUrl: null, retryAllowed: true };
+  if (detail.category === "canceled") return { title: "The image request was stopped", summary: "No late provider result will be adopted. Start a new request whenever the document is ready.", actionLabel: null, actionUrl: null, retryAllowed: true };
   return { title: "The provider did not produce an image", summary: detail.message || fallback || "Review the technical receipt, adjust the request if needed, and try again.", actionLabel: null, actionUrl: null, retryAllowed: detail.retryable };
 }
 
 export function documentJobIsStale(job: Pick<DocumentJob, "status" | "leaseExpiresAt" | "updatedAt">, now = Date.now()) {
-  if (job.status !== "running") return false;
+  if (job.status !== "running" && job.status !== "committing") return false;
   const leaseExpires = Date.parse(job.leaseExpiresAt ?? "");
   const updated = Date.parse(job.updatedAt);
   return Number.isFinite(leaseExpires) && leaseExpires <= now || Number.isFinite(updated) && updated <= now - DOCUMENT_JOB_STALE_AFTER_MS;
@@ -115,6 +116,7 @@ export function documentJobActionLabel(job: DocumentJob | undefined, kind: "prev
     if (kind === "generate" && blockedByDraft) return "Full queued behind draft…";
     return kind === "preview" ? "Draft queued…" : "Full generation queued…";
   }
+  if (job.status === "committing") return kind === "preview" ? "Finalizing draft…" : "Finalizing full image…";
   if (kind === "preview") return job.stage === "rendering" ? "Draft rendering…" : "Draft preparing…";
   return job.stage === "rendering" ? "Rendering full image…" : "Preparing full image…";
 }

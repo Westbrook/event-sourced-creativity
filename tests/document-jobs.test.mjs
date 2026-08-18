@@ -6,6 +6,7 @@ import {
   documentGenerationRevision,
   documentJobActionLabel,
   documentJobFailureVisible,
+  documentJobTerminal,
   generationFailureGuidance,
   documentJobIsStale,
   documentJobMaxAttempts,
@@ -66,6 +67,30 @@ test("reports queued and running stages truthfully", () => {
   assert.equal(documentJobActionLabel(job({ status: "running", stage: "preparing" }), "preview"), "Draft preparing…");
   assert.equal(documentJobActionLabel(job({ status: "running", stage: "rendering" }), "preview"), "Draft rendering…");
   assert.equal(documentJobActionLabel(job({ kind: "generate", status: "running", stage: "rendering" }), "generate"), "Rendering full image…");
+  assert.equal(documentJobActionLabel(job({ kind: "generate", status: "committing", stage: "rendering" }), "generate"), "Finalizing full image…");
+  assert.equal(documentJobTerminal(job({ status: "canceled" })), true);
+});
+
+test("gives creators durable cancellation and administrators a force-fail escape hatch",async()=>{
+  const [jobsApi,eventsApi,adapter,actions,store]=await Promise.all([
+    readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/openai-adapter.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/generation-actions.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
+  ]);
+  assert.match(jobsApi,/path\.endsWith\("\/cancel"\)/);
+  assert.match(jobsApi,/path\.endsWith\("\/force-fail"\)/);
+  assert.match(jobsApi,/user\.role !== "admin"/);
+  assert.match(jobsApi,/SET status='committing'/);
+  assert.match(jobsApi,/status IN \('running','committing'\)/);
+  assert.match(jobsApi,/releaseBudgetReservationsForCorrelation/);
+  assert.match(eventsApi,/execution\?\.beginCommit\(\)/);
+  assert.match(eventsApi,/signal:execution\?\.signal/);
+  assert.match(adapter,/signal:options\.signal/);
+  assert.match(actions,/Stop generation/);
+  assert.match(actions,/Force fail/);
+  assert.match(store,/stopDocumentJob\(jobId:string,force=false\)/);
 });
 
 test("identifies the exact document state independently of object key order", () => {
@@ -119,7 +144,7 @@ test("settles generation capacity by reservation identity and repairs orphaned f
   assert.match(runtime,/CREATE TABLE IF NOT EXISTS budget_reservations/);
   assert.match(policy,/WHERE reservation_id=\? AND owner_id=\? AND status='active'/);
   assert.match(policy,/orphaned_failed_reservation_reconciled/);
-  assert.match(policy,/NOT EXISTS \(SELECT 1 FROM document_jobs job[\s\S]*status IN \('queued','running'\)/);
+  assert.match(policy,/NOT EXISTS \(SELECT 1 FROM document_jobs job[\s\S]*status IN \('queued','running','committing'\)/);
   assert.match(jobsApi,/releaseBudgetReservationsForCorrelation\(env,user,row\.correlation_id/);
   assert.doesNotMatch(jobsApi,/releaseBudget\(env, user\.userId, reservedTokens\)/);
   assert.doesNotMatch(eventsApi,/releaseBudget\(env,ownerId,reserved\)/);

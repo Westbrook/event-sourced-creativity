@@ -17,26 +17,29 @@ const surfaceLabel = (surface: string) => ({
 
 export class GenerationActions extends FormaElement {
   static properties={source:{type:String},selected:{attribute:false},compact:{type:Boolean}};
-  source="studio";selected:CreativeOutput|null=null;compact=false;#queueOpen=false;#promptCopy:{key:string;ok:boolean}|null=null;#receiptCopy:{key:string;ok:boolean}|null=null;#budgetNoteId=`generation-budget-capacity-${crypto.randomUUID()}`;
+  source="studio";selected:CreativeOutput|null=null;compact=false;#queueOpen=false;#queueConfirm:{jobId:string;force:boolean}|null=null;#queueBusy:string|null=null;#promptCopy:{key:string;ok:boolean}|null=null;#receiptCopy:{key:string;ok:boolean}|null=null;#budgetNoteId=`generation-budget-capacity-${crypto.randomUUID()}`;
 
   protected override updated(){
     const dialog=this.querySelector<HTMLDialogElement>(".generation-queue-dialog");
     if(this.#queueOpen&&dialog&&!dialog.open)dialog.showModal();
   }
 
-  #closeQueue(){this.querySelector<HTMLDialogElement>(".generation-queue-dialog")?.close();this.#queueOpen=false;this.requestUpdate();}
+  #closeQueue(){this.querySelector<HTMLDialogElement>(".generation-queue-dialog")?.close();this.#queueOpen=false;this.#queueConfirm=null;this.requestUpdate();}
+
+  async #stopJob(jobId:string,force:boolean){this.#queueBusy=jobId;this.requestUpdate();const stopped=await this.store.stopDocumentJob(jobId,force);this.#queueBusy=null;this.#queueConfirm=null;if(stopped&&!this.store.documentGenerationJobs().length)this.#closeQueue();else this.requestUpdate();}
 
   async #copyPrompt(prompt:string,key:string){const ok=await copyTextToClipboard(prompt);this.#promptCopy={key,ok};this.requestUpdate();}
   async #copyReceipt(receipt:string,key:string){const ok=await copyTextToClipboard(receipt);this.#receiptCopy={key,ok};this.requestUpdate();}
 
   #queueItem(job:DocumentJob,index:number,currentRevision:string){
-    const current=job.documentRevision===currentRevision;const technique=promptTechniqueDefinition(job.promptTechnique);const isFan=job.kind==="prompt_fan";const finished=isFan?job.members.filter((member)=>member.status==="completed"||member.status==="failed").length:0;const failed=isFan?job.members.filter((member)=>member.status==="failed").length:0;const title=isFan?`${job.fanKind==="preview"?"Draft":"Full-quality"} fan · four prompt processes`:`${job.kind==="preview"?"Draft":"Full-quality"} · ${technique.shortLabel}`;const status=job.status==="running"?isFan?`${finished} of 4 finished${failed?` · ${failed} failed`:""}`:"Running now":`Waiting · ${index+1} in the image queue`;const requested=new Date(job.requestedAt);
+    const current=job.documentRevision===currentRevision;const technique=promptTechniqueDefinition(job.promptTechnique);const isFan=job.kind==="prompt_fan";const finished=isFan?job.members.filter((member)=>member.status==="completed"||member.status==="failed"||member.status==="canceled").length:0;const failed=isFan?job.members.filter((member)=>member.status==="failed").length:0;const title=isFan?`${job.fanKind==="preview"?"Draft":"Full-quality"} fan · four prompt processes`:`${job.kind==="preview"?"Draft":"Full-quality"} · ${technique.shortLabel}`;const status=job.status==="committing"?"Finalizing the durable result":job.status==="running"?isFan?`${finished} of 4 finished${failed?` · ${failed} failed`:""}`:"Running now":`Waiting · ${index+1} in the image queue`;const requested=new Date(job.requestedAt);const confirm=this.#queueConfirm?.jobId===job.jobId?this.#queueConfirm:null;const busy=this.#queueBusy===job.jobId;const admin=this.store.session.get()?.user.role==="admin";
     return html`<li class=${`generation-queue-item ${job.status}`}>
       <span class="generation-queue-order" aria-hidden="true">${job.status==="running"?icon("spark"):index+1}</span>
       <div>
         <header><b>${title}</b><span class=${current?"current":"earlier"}>${current?"Current document state":"Earlier document state"}</span></header>
         <p>${job.progressMessage||status}</p>
         <small>${status} · from ${surfaceLabel(job.sourceSurface)} · <time datetime=${job.requestedAt}>${Number.isNaN(requested.getTime())?"recently":requested.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}</time>${job.sourcePreviewId?" · refines a selected draft":""}</small>
+        ${job.status==="committing"?html`<p class="generation-queue-finalizing">The provider result is being committed and can no longer be stopped safely.</p>`:confirm?html`<div class=${`generation-queue-confirm ${confirm.force?"force":"cancel"}`} role="alert"><p><b>${confirm.force?"Force-fail this request?":"Stop this request?"}</b> ${confirm.force?"The job will be marked failed for operational review.":"Queued work will be removed; running provider work will be ignored and its reservation released."}</p><div><button class="button ghost compact" ?disabled=${busy} @click=${()=>{this.#queueConfirm=null;this.requestUpdate();}}>Keep it</button><button class=${`button compact ${confirm.force?"danger":"secondary"}`} ?disabled=${busy} @click=${()=>this.#stopJob(job.jobId,confirm.force)}>${busy?"Stopping…":confirm.force?"Force fail":"Stop generation"}</button></div></div>`:html`<div class="generation-queue-actions"><button class="button ghost compact" @click=${()=>{this.#queueConfirm={jobId:job.jobId,force:false};this.requestUpdate();}}>${job.status==="queued"?"Cancel request":"Stop generation"}</button>${admin?html`<button class="button ghost compact" @click=${()=>{this.#queueConfirm={jobId:job.jobId,force:true};this.requestUpdate();}}>Force fail</button>`:nothing}</div>`}
       </div>
     </li>`;
   }

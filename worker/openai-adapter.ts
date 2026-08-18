@@ -23,6 +23,7 @@ export type CreativeImageOptions = {
   onPartial?: (partial: CreativeImagePartial) => void | Promise<void>;
   references?: ImageReference[];
   promptTechnique?: PromptTechnique;
+  signal?: AbortSignal;
 };
 
 const outputSchema = {
@@ -99,7 +100,11 @@ export function providerRetryDelay(detail: ProviderFailureDetail, attempt: numbe
   const exponential = 1_000 * 2 ** Math.max(0, attempt - 1);
   return Math.min(30_000, Math.max(exponential, detail.retryAfterMs ?? 0));
 }
-const wait = (delay: number) => new Promise<void>((resolve) => setTimeout(resolve, delay));
+const wait = (delay: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+  if (signal?.aborted) { reject(new DOMException("The operation was aborted.", "AbortError")); return; }
+  const timer = setTimeout(resolve, delay);
+  signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new DOMException("The operation was aborted.", "AbortError")); }, { once: true });
+});
 
 async function openAIRequest(input: string, init: RequestInit) {
   for (let attempt = 1; attempt <= OPENAI_REQUEST_MAX_ATTEMPTS; attempt += 1) {
@@ -117,7 +122,7 @@ async function openAIRequest(input: string, init: RequestInit) {
     try { body = await response.clone().json(); } catch { /* Status and headers still classify the failure. */ }
     const detail = classifyProviderFailure(new Error("openai_request_failed"), response, body);
     if (!shouldAutomaticallyRetryProviderFailure(detail) || attempt === OPENAI_REQUEST_MAX_ATTEMPTS) return response;
-    await wait(providerRetryDelay(detail, attempt));
+    await wait(providerRetryDelay(detail, attempt), init.signal ?? undefined);
   }
   throw new Error("openai_request_failed");
 }
@@ -139,7 +144,7 @@ export async function generateLiveReplayPlan(env:WorkerEnv,userId:string,seed:st
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output,raw,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
-export async function generateCreativeDirection(env: WorkerEnv, userId: string, snapshot: Record<string, unknown>) {
+export async function generateCreativeDirection(env: WorkerEnv, userId: string, snapshot: Record<string, unknown>, signal?: AbortSignal) {
   if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
   const started = Date.now();
   const instructions = "You are Forma's creative-direction adapter. Interpret every field of the supplied authored and cited context. Return a concrete visual direction, not hidden reasoning. Treat inferred material as suggestive and never claim it was authored. Each fact has an independent semantic role and intent. Ignore facts whose active field is false; they remain present only for provenance. Every active fact whose intent is avoid or prohibit, whose effect is must_not_include, or whose legacy type is exclusion is a negative constraint: apply the prohibition to its named role, and never let the named content become a positive focus in the title, scene, rationale, palette, or next moves. Prohibit is a hard boundary; avoid is a strong negative preference. Weight expresses the constraint's influence, not creative prominence. Prefer facts are positive preferences, while include facts are ordinary positive instructions. A fact's properties.spatial_scope limits where that fact applies. Preserve its named region, rectangle, subject relationship, or custom path in the scene and rationale; do not silently promote a local decision into a whole-image instruction.";
@@ -147,6 +152,7 @@ export async function generateCreativeDirection(env: WorkerEnv, userId: string, 
   const response = await openAIRequest("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: openAIHeaders(env),
+    signal,
     body: JSON.stringify({
       model: env.OPENAI_MODEL ?? "gpt-5.6-terra",
       instructions,
@@ -194,9 +200,9 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
   if(references.length){
     const form=new FormData();form.set("model",model);form.set("prompt",prompt);form.set("n","1");form.set("size",size);form.set("quality",quality);form.set("output_format",outputFormat);if(outputFormat!=="png")form.set("output_compression",String(outputCompression));if(partialImages){form.set("stream","true");form.set("partial_images",String(partialImages));}form.set("user",user);
     references.forEach((reference,index)=>{const buffer=reference.bytes.buffer.slice(reference.bytes.byteOffset,reference.bytes.byteOffset+reference.bytes.byteLength) as ArrayBuffer;const extension=reference.mimeType==="image/jpeg"?"jpg":reference.mimeType==="image/webp"?"webp":"png";form.append("image[]",new Blob([buffer],{type:reference.mimeType}),`${reference.source}-${index+1}.${extension}`);});
-    try{response=await openAIRequest("https://api.openai.com/v1/images/edits",{method:"POST",headers:openAIAuthHeaders(env),body:form});}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
+    try{response=await openAIRequest("https://api.openai.com/v1/images/edits",{method:"POST",headers:openAIAuthHeaders(env),body:form,signal:options.signal});}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
   }else{
-    try{response=await openAIRequest("https://api.openai.com/v1/images/generations",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({model,prompt,n:1,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user})});}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
+    try{response=await openAIRequest("https://api.openai.com/v1/images/generations",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({model,prompt,n:1,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user}),signal:options.signal});}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
   }
   if(!response.ok){let error:OpenAIImageResponse={};try{error=await response.json() as OpenAIImageResponse;}catch{/* Preserve the provider status when no JSON error body is available. */}throw providerErrorFromResponse(response,error,`openai_image_${response.status}`,prompt);}
   const [requestedWidth,requestedHeight]=size.split("x").map(Number);let encoded="";let revisedPrompt:string|null=null;let createdAt:number|null=null;let usage:OpenAIImageUsage={};let completedSize:string=size;let completedFormat=outputFormat;let partialCount=0;
