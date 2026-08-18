@@ -14,14 +14,14 @@ import "./generation-actions";
 import "./prompt-fan-visual";
 import "./prompt-fan-review";
 
-type BlockDraft = { type: BlockKind|""; subtype: string; text: string; colors: string[] };
+type BlockDraft = { type: BlockKind|""; subtype: string; text: string; colors: string[]; documentId: string; documentTitle: string };
 
 export class FormaWorkspace extends FormaElement {
   #prompt = "";
   #blockDraft: BlockDraft | null = null;
   #documentName: string | null = null;
   #proposal: { prompt: string; events: EventInput[]; proposalId?: string; exemplars: RetrievedExemplar[] } | null = null;
-  #uploading = false; #pendingUpload: File | null = null; #rightsConfirmed = false;
+  #uploading = false; #pendingUpload: File | null = null; #uploadDocumentId = ""; #rightsConfirmed = false;
   #referenceFindingKinds = new Set<ReferenceFindingKind>(DEFAULT_REFERENCE_FINDINGS);
   #projectSettings=false;#projectName="";#projectState="active";#deleteDocument=false;
 
@@ -30,22 +30,23 @@ export class FormaWorkspace extends FormaElement {
   }
 
   #beginBlock() {
-    this.#blockDraft = {type:"",subtype:"",text:"",colors:["#27252b","#e9a073","#e8d7bd","#8a6571"]}; this.requestUpdate();
+    const projection=this.store.projection.get();
+    this.#blockDraft = {type:"",subtype:"",text:"",colors:["#27252b","#e9a073","#e8d7bd","#8a6571"],documentId:projection.documentId,documentTitle:projection.documentTitle}; this.requestUpdate();
   }
   #closeBlock(){this.querySelector<HTMLDialogElement>(".block-composer-dialog")?.close();this.#blockDraft=null;this.requestUpdate();}
   async #addBlock(event: SubmitEvent) {
     event.preventDefault(); const draft = this.#blockDraft; const text = draft?.text.trim(); if (!draft?.type || draft.type === "reference" || !text) return;
     const blockId = crypto.randomUUID(); const slug = text.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"").slice(0,42) || `study-${this.store.head.get()+1}`;
     const properties = draft.type === "palette" ? {label:text,colors:draft.colors,subtype:draft.subtype||suggestedSubtype(draft.type),weight:.64,authority:"authored"} : {text,subtype:draft.subtype||suggestedSubtype(draft.type),weight:.64,authority:"authored"};
-    const appended = await this.store.append({ type: "BlockCreated", payload: { block_id: blockId, type: draft.type, handle: `${draft.type}/${slug}`, position: `z${String(this.store.head.get()+1).padStart(4,"0")}`, properties } });
+    const appended = await this.store.append({ type: "BlockCreated", payload: { block_id: blockId, document_id:draft.documentId, type: draft.type, handle: `${draft.type}/${slug}`, position: `z${String(this.store.head.get()+1).padStart(4,"0")}`, properties } },{rebaseAttempts:6});
     if (appended.length) { this.#closeBlock(); this.store.patchUi({ focusBlockId: blockId }); }
   }
   #queueUpload(event: Event) {
     const input = event.target as HTMLInputElement; const file = input.files?.[0]; if (!file) return;
-    this.#pendingUpload = file; this.#rightsConfirmed = false; this.#referenceFindingKinds = new Set(DEFAULT_REFERENCE_FINDINGS); this.requestUpdate();
+    this.#pendingUpload = file; this.#uploadDocumentId=this.#blockDraft?.documentId??this.store.projection.get().documentId; this.#rightsConfirmed = false; this.#referenceFindingKinds = new Set(DEFAULT_REFERENCE_FINDINGS); this.requestUpdate();
   }
   #resetFileInputs() { this.querySelectorAll<HTMLInputElement>('input[type="file"]').forEach((input)=>{input.value="";}); }
-  #cancelUpload() { this.#pendingUpload = null; this.#rightsConfirmed = false; this.#resetFileInputs(); this.requestUpdate(); }
+  #cancelUpload() { this.#pendingUpload = null; this.#uploadDocumentId=""; this.#rightsConfirmed = false; this.#resetFileInputs(); this.requestUpdate(); }
   async #confirmUpload() {
     const file = this.#pendingUpload; if (!file || !this.#rightsConfirmed) return;
     this.#uploading = true; this.requestUpdate();
@@ -55,20 +56,21 @@ export class FormaWorkspace extends FormaElement {
       const form = new FormData(); form.append("file", file); form.append("rightsConfirmed", "true"); const response = await fetch("/api/media", { method: "POST", body: form }); const media = await response.json() as { key?: string; url?: string; error?: string };
       if (!response.ok) throw new Error(media.error ?? "Upload failed");
       const ref = crypto.randomUUID(); const block = crypto.randomUUID();
-      const findingKinds=[...this.#referenceFindingKinds];
-      await this.store.appendBatch([
+      const findingKinds=[...this.#referenceFindingKinds];const documentId=this.#uploadDocumentId||this.store.projection.get().documentId;
+      const appended=await this.store.appendBatch([
         { type: "ReferenceIngested", payload: { reference_id: ref, source_type: "upload", source_ref: media.url, content_hash: media.key, rights_class: "asserted" } },
         { type: "RightsAsserted", payload: { reference_id: ref, rights_class: "owned_or_licensed", assertion_method: "explicit-upload-confirmation" } },
-        { type: "BlockCreated", payload: { block_id: block, type: "reference", handle: `reference/${file.name.replace(/\W+/g,"-").toLowerCase()}`, position: `z${this.store.head.get()}`, properties: { reference_id: ref, label: file.name, media_url: media.url, subtype: "Mood", weight: .72, authority: "authored", pixel_reference_mode: "context_only", extraction_preferences: findingKinds, extraction_status: sample ? "pending" : "unavailable" } } },
-      ]);
+        { type: "BlockCreated", payload: { block_id: block, document_id:documentId, type: "reference", handle: `reference/${file.name.replace(/\W+/g,"-").toLowerCase()}`, position: `z${this.store.head.get()}`, properties: { reference_id: ref, label: file.name, media_url: media.url, subtype: "Mood", weight: .72, authority: "authored", pixel_reference_mode: "context_only", extraction_preferences: findingKinds, extraction_status: sample ? "pending" : "unavailable" } } },
+      ],{rebaseAttempts:6});
+      if(!appended.length){this.#uploading=false;this.requestUpdate();return;}
       if (sample) await this.store.extractReference(block, ref, sample, findingKinds); else this.store.toast("Reference stored; image findings can be analyzed later from the block.");
-      this.#pendingUpload = null; this.#rightsConfirmed = false; this.#blockDraft = null; this.#resetFileInputs();
+      this.#pendingUpload = null; this.#uploadDocumentId=""; this.#rightsConfirmed = false; this.#blockDraft = null; this.#resetFileInputs();
     } catch (error) { this.store.toast(error instanceof Error ? error.message : "Upload failed"); }
     this.#uploading = false; this.requestUpdate();
   }
   #blockComposer() {
     const draft = this.#blockDraft; if (!draft) return nothing; const selected = blockTypeDefinition(draft.type);
-    return html`<dialog class="modal workspace-modal block-composer-dialog" closedby="any" aria-labelledby="block-composer-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeBlock();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeBlock();}} @close=${()=>{if(this.#blockDraft){this.#blockDraft=null;this.requestUpdate();}}}><form class="modal-card wide block-composer" @submit=${this.#addBlock}><button type="button" class="icon-button modal-close" aria-label="Close authored block dialog" @click=${this.#closeBlock}>${icon("close")}</button><header><div><span class="eyebrow">New authored block</span><h3 id="block-composer-title">${selected?selected.label:"Choose a block type"}</h3><p>${selected?.description??"Each type compiles differently and remains independently editable."}</p></div>${selected?html`<button type="button" class="text-button" @click=${()=>{draft.type="";this.requestUpdate();}}>Choose another type</button>`:nothing}</header>
+    return html`<dialog class="modal workspace-modal block-composer-dialog" closedby="any" aria-labelledby="block-composer-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeBlock();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeBlock();}} @close=${()=>{if(this.#blockDraft){this.#blockDraft=null;this.requestUpdate();}}}><form class="modal-card wide block-composer" @submit=${this.#addBlock}><button type="button" class="icon-button modal-close" aria-label="Close authored block dialog" @click=${this.#closeBlock}>${icon("close")}</button><header><div><span class="eyebrow">New authored block · ${draft.documentTitle}</span><h3 id="block-composer-title">${selected?selected.label:"Choose a block type"}</h3><p>${selected?.description??"Each type compiles differently and remains independently editable."}</p></div>${selected?html`<button type="button" class="text-button" @click=${()=>{draft.type="";this.requestUpdate();}}>Choose another type</button>`:nothing}</header>
       ${!draft.type?html`<div class="block-type-catalog">${BLOCK_GROUPS.map((group)=>{const options=BLOCK_TYPES.filter((option)=>option.group===group.id);return html`<section class="block-type-group" aria-labelledby=${`block-group-${group.id}`}><header><div><h4 id=${`block-group-${group.id}`}>${group.label}</h4><p>${group.description}</p></div><span>${options.length} ${options.length===1?"type":"types"}</span></header><div class="block-type-grid">${options.map((option)=>html`<button type="button" @click=${()=>{draft.type=option.type;draft.subtype=option.subtypes[0];this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLElement>(".block-composer textarea,.block-composer input")?.focus());}}><span>${option.label.slice(0,2).toUpperCase()}</span><b>${option.label}</b><small>${option.description}</small></button>`)}</div></section>`;})}</div>`:html`<fieldset class="subtype-picker"><legend>System-suggested subtype</legend>${selected?.subtypes.map((subtype)=>html`<label><input type="radio" name="block-subtype" .value=${subtype} .checked=${draft.subtype===subtype} @change=${()=>{draft.subtype=subtype;this.requestUpdate();}}><span>${subtype}</span></label>`)}</fieldset>${draft.type==="reference"?html`<div class="reference-choice"><span>${icon("image")}</span><div><b>Choose an image reference</b><small>Its bytes stay in private object storage; rights are confirmed before upload.</small></div><label class="button primary">Choose image<input type="file" accept="image/*" @change=${this.#queueUpload}></label></div>`:draft.type==="palette"?html`<label class="block-draft-copy">Palette name<input maxlength="120" placeholder=${selected?.prompt} .value=${draft.text} @input=${(event:InputEvent)=>{draft.text=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label><div class="draft-palette">${draft.colors.map((color,index)=>html`<label><input type="color" .value=${color} @input=${(event:InputEvent)=>{draft.colors=draft.colors.map((value,position)=>position===index?(event.target as HTMLInputElement).value:value);this.requestUpdate();}}><span style=${`--swatch:${color}`}></span><small>${color}</small></label>`)}</div>`:html`<label class="block-draft-copy">${selected?.label} content<textarea rows="3" placeholder=${selected?.prompt} .value=${draft.text} @input=${(event:InputEvent)=>{draft.text=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}}></textarea></label>`}`}
       <footer><button type="button" class="button ghost" @click=${this.#closeBlock}>Cancel</button>${draft.type&&draft.type!=="reference"?html`<button type="submit" class="button primary" ?disabled=${!draft.text.trim()}>Add ${selected?.label.toLowerCase()}</button>`:nothing}</footer></form></dialog>`;
   }
@@ -192,7 +194,7 @@ export class FormaWorkspace extends FormaElement {
       ${this.store.ui.compareOpen ? this.#comparison() : nothing}
       ${this.#projectSettings?html`<dialog class="modal workspace-modal project-settings-dialog" closedby="any" aria-labelledby="project-settings-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeProjectSettings();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeProjectSettings();}} @close=${()=>{if(this.#projectSettings){this.#projectSettings=false;this.requestUpdate();}}}><form class="modal-card project-settings-form" @submit=${this.#saveProject}><button type="button" class="icon-button modal-close" aria-label="Close project settings" @click=${this.#closeProjectSettings}>${icon("close")}</button><span class="eyebrow">Project settings</span><h2 id="project-settings-title">Edit ${p.projectName}</h2><label>Project name<input maxlength="80" required .value=${this.#projectName} @input=${(event:InputEvent)=>{this.#projectName=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label><label>Project state<select .value=${this.#projectState} @change=${(event:Event)=>{this.#projectState=(event.target as HTMLSelectElement).value;}}><option value="active">Active</option><option value="archived">Archived</option><option value="paused">Paused</option></select><small>State changes are reversible events; they never delete project history.</small></label><footer><button type="button" class="button ghost" @click=${this.#closeProjectSettings}>Cancel</button><button class="button primary" ?disabled=${!this.#projectName.trim()}>Save project</button></footer></form></dialog>`:nothing}
       ${this.#deleteDocument?html`<dialog class="modal workspace-modal document-delete-dialog studio-document-delete-dialog" closedby="any" aria-labelledby="studio-delete-document-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closeDeleteDocument();}} @cancel=${(event:Event)=>{event.preventDefault();this.#closeDeleteDocument();}} @close=${()=>{if(this.#deleteDocument){this.#deleteDocument=false;this.requestUpdate();}}}><div class="modal-card document-delete-card"><button class="icon-button modal-close" aria-label="Cancel document removal" @click=${this.#closeDeleteDocument}>${icon("close")}</button><span class="eyebrow">Reversible removal · event-sourced</span><h2 id="studio-delete-document-title">Remove “${p.documentTitle}”?</h2><p>The document, its blocks, and its outputs will leave active Studio and Library views. Another document will open automatically, and Undo can restore this one from the durable stream.</p><div class="document-delete-summary"><span>${icon("trash")}</span><div><b>${p.documentTitle}</b><small>${p.documentId}</small></div></div><footer><button class="button ghost" @click=${this.#closeDeleteDocument}>Cancel</button><button class="button danger" @click=${this.#confirmDeleteDocument}>Remove document</button></footer></div></dialog>`:nothing}
-      ${this.#pendingUpload ? html`<dialog class="modal workspace-modal upload-rights-modal" closedby="any" aria-modal="true" aria-labelledby="upload-rights-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget && !this.#uploading) this.#cancelUpload(); }} @cancel=${(event: Event) => { event.preventDefault(); if (!this.#uploading) this.#cancelUpload(); }} @close=${() => { if (this.#pendingUpload && !this.#uploading) { this.#pendingUpload = null; this.#rightsConfirmed = false; this.requestUpdate(); } }}>
+      ${this.#pendingUpload ? html`<dialog class="modal workspace-modal upload-rights-modal" closedby="any" aria-modal="true" aria-labelledby="upload-rights-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget && !this.#uploading) this.#cancelUpload(); }} @cancel=${(event: Event) => { event.preventDefault(); if (!this.#uploading) this.#cancelUpload(); }} @close=${() => { if (this.#pendingUpload && !this.#uploading) { this.#pendingUpload = null; this.#uploadDocumentId = ""; this.#rightsConfirmed = false; this.requestUpdate(); } }}>
         <div class="modal-card reference-upload-card">
           <button class="icon-button modal-close" aria-label="Cancel upload" ?disabled=${this.#uploading} @click=${this.#cancelUpload}>${icon("close")}</button>
           <span class="eyebrow">Reference setup · before upload</span><h2 id="upload-rights-title">Choose what this image should contribute</h2>

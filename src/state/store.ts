@@ -37,7 +37,10 @@ export class FormaStore {
   readonly documentJobs = new Signal.State<DocumentJob[]>([]);
   readonly adaptiveStructures = new Signal.State<Record<string,AdaptiveStructure>>({});
   readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, projectRailCollapsed: false, instrumentation: true, attentionCapture: readAttentionPreference(), attentionPaused: false, selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", libraryView: "all", libraryOutputScope: "recent", search: "", toast: "" });
-  readonly projection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.events.get(), this.asOf.get()));
+  readonly projection = new Signal.Computed<CreativeProjection>(() => {
+    const route = this.route.get();
+    return foldEvents(this.events.get(), this.asOf.get(), isDocumentViewRoute(route) ? documentIdFromRoute(route) ?? "" : "");
+  });
   readonly replayProjection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.replayEvents.get(), this.replayAsOf.get()));
   #listeners = new Set<Listener>();
   #undo: CreativeEvent[] = [];
@@ -180,22 +183,23 @@ export class FormaStore {
     finally { this.busy.set(""); this.notify(); }
   }
 
-  async append(event: EventInput, options: { expected?: number; remember?: boolean } = {}) {
+  async append(event: EventInput, options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean } = {}) {
     return this.appendBatch([event], options);
   }
 
-  async appendBatch(events: EventInput[], options: { expected?: number; remember?: boolean } = {}) {
+  async appendBatch(events: EventInput[], options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean } = {}) {
     this.busy.set(events[0]?.type ?? "append"); this.notify();
     try {
       let response:Response;let body:{ appended?: CreativeEvent[]; rejected?: Array<{ reason: string }>; head?: number; error?: string }={};
-      for(let attempt=0;attempt<2;attempt+=1){response=await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: events.length > 1 ? "batch" : "append", event: events[0], events, expectedSequence: options.expected ?? this.head.get(), clientId: "web:lit" }) });body=await response.json() as typeof body;if(response.status===409&&body.error==="stale_sequence"&&options.expected===undefined&&attempt===0){await this.#refreshEvents();continue;}if(!response.ok)throw new Error(body.error==="stale_sequence"?"The document changed elsewhere. Its latest state is now loaded; try that change again.":body.error??"Append rejected");break;}
+      const attempts=options.expected===undefined?Math.max(1,Math.min(6,options.rebaseAttempts??2)):1;
+      for(let attempt=0;attempt<attempts;attempt+=1){response=await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: events.length > 1 ? "batch" : "append", event: events[0], events, expectedSequence: options.expected ?? this.head.get(), clientId: "web:lit" }) });body=await response.json() as typeof body;if(response.status===409&&body.error==="stale_sequence"&&options.expected===undefined&&attempt<attempts-1){await this.#refreshEvents();continue;}if(!response.ok)throw new Error(body.error==="stale_sequence"?"The document changed elsewhere. Its latest state is now loaded; try that change again.":body.error??"Append rejected");break;}
       const appended = body.appended ?? [];
       this.events.set([...this.events.get(), ...appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(appended);
       this.#reflectDocumentInRoute();
       if (options.remember !== false) { this.#undo.push(...appended.filter((e) => e.actor === "user" && !e.compensatesEventId && inverseEvent(e))); this.#redo = []; }
       if (body.rejected?.length) this.toast(documentViewFromRoute(this.route.get()) === "editor" ? `${body.rejected.length} change${body.rejected.length === 1 ? "" : "s"} could not be saved; the other changes are safe.` : `${body.rejected.length} event${body.rejected.length === 1 ? "" : "s"} rejected; valid events still appended.`);
       return appended;
-    } catch (error) { this.toast(error instanceof Error ? error.message : "Append failed"); return []; }
+    } catch (error) { if(!options.silent)this.toast(error instanceof Error ? error.message : "Append failed"); return []; }
     finally { this.busy.set(""); this.notify(); }
   }
 
@@ -287,8 +291,10 @@ export class FormaStore {
   async openDocument(documentId: string, destination="/", sourceSurface?: string) {
     const projection=this.projection.get();const target=projection.documents.find((document)=>document.id===documentId);const routedDestination = withDocumentInRoute(destination, documentId, target?.title ?? "");
     if(!documentId||documentId===projection.documentId){this.setRoute(routedDestination);return true;}
-    const appended=await this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:projection.documentId,source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative")}});
-    if(!appended.length)return false;this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});this.setRoute(routedDestination);this.toast("Document opened.");return true;
+    if(!target){this.toast("That document is no longer available.");return false;}
+    const previousDocumentId=projection.documentId;this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});this.setRoute(routedDestination);
+    const appended=await this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:previousDocumentId,source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative")}},{rebaseAttempts:6,silent:true});
+    if(appended.length)this.toast("Document opened.");return true;
   }
 
   async removeDocument(documentId: string) {

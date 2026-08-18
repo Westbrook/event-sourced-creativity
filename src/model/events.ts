@@ -365,6 +365,8 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ConditionFired": { const c = conditions.get(String(p.condition_id)); if (c) c.fired = true; break; }
     }
   }
+  const requestedDocument=selectedDocumentId?documents.get(selectedDocumentId):undefined;
+  if(requestedDocument&&!requestedDocument.removed&&requestedDocument.projectId!==state.projectId){const requestedProject=projects.get(requestedDocument.projectId);state.projectId=requestedDocument.projectId;if(requestedProject){state.projectName=requestedProject.name;state.projectState=requestedProject.state;}}
   const visibleDocuments=[...documents.values()].filter((document)=>!document.removed&&document.projectId===state.projectId).sort((a,b)=>b.createdSequence-a.createdSequence);const visibleDocumentIds=new Set(visibleDocuments.map((document)=>document.id));
   const visibleCollections=new Set([...collections.values()].filter((collection)=>!collection.removed&&collection.projectId===state.projectId).map((collection)=>collection.id));
   for(const [id,filed] of Object.entries(membership)){

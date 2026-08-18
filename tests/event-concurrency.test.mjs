@@ -11,8 +11,23 @@ test("hot-path appends and generation receipts use the atomic head allocator",as
   assert.match(eventsApi,/appendEvents\(env,\[complete,usage\]\)/);
 });
 
-test("the client refreshes and rebases one authored append after a stale head",async()=>{
+test("the client refreshes and rebases authored appends after stale heads",async()=>{
   const store=await readFile(new URL("../src/state/store.ts",import.meta.url),"utf8");
   assert.match(store,/response\.status===409&&body\.error==="stale_sequence"/);
   assert.match(store,/await this\.#refreshEvents\(\);continue/);
+  assert.match(store,/rebaseAttempts\?\?2/);
+  assert.match(store,/rebaseAttempts:6,silent:true/);
+  assert.match(store,/this\.setRoute\(routedDestination\);\s*const appended=await this\.append/);
+});
+
+test("document dialogs preserve their target document across background event refreshes",async()=>{
+  const [store,workspace]=await Promise.all([
+    readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-workspace.ts",import.meta.url),"utf8"),
+  ]);
+  assert.match(store,/foldEvents\(this\.events\.get\(\), this\.asOf\.get\(\), isDocumentViewRoute\(route\) \? documentIdFromRoute\(route\)/);
+  assert.match(workspace,/documentId:projection\.documentId/);
+  assert.match(workspace,/document_id:draft\.documentId/);
+  assert.match(workspace,/document_id:documentId/);
+  assert.match(workspace,/rebaseAttempts:6/);
 });

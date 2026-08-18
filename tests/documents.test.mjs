@@ -37,6 +37,24 @@ test("switches project projections without copying cross-project documents",()=>
   assert.deepEqual(projection.projects.map((project)=>project.id),["project-a","project-b"]);
 });
 
+test("keeps a URL-selected document and its project stable when later events open another project",()=>{
+  const events=[
+    event(1,"ProjectCreated",{project_id:"project-a",name:"First project"}),
+    event(2,"DocumentCreated",{project_id:"project-a",document_id:"doc-a",title:"First document"}),
+    event(3,"BlockCreated",{block_id:"block-a",document_id:"doc-a",type:"direction",handle:"direction/a",position:"a0",properties:{text:"First direction"}}),
+    event(4,"ProjectCreated",{project_id:"project-b",name:"Second project"}),
+    event(5,"DocumentCreated",{project_id:"project-b",document_id:"doc-b",title:"Second document"}),
+    event(6,"BlockCreated",{block_id:"block-b",document_id:"doc-b",type:"subject",handle:"subject/b",position:"a0",properties:{text:"Second subject"}}),
+    event(7,"ProjectOpened",{project_id:"project-b",previous_project_id:"project-a"}),
+    event(8,"DocumentOpened",{document_id:"doc-b",previous_document_id:"doc-a"}),
+  ];
+  const projection=foldEvents(events,Number.POSITIVE_INFINITY,"doc-a");
+  assert.equal(projection.projectId,"project-a");
+  assert.equal(projection.documentId,"doc-a");
+  assert.deepEqual(projection.documents.map((document)=>document.id),["doc-a"]);
+  assert.deepEqual(projection.blocks.map((block)=>block.id),["block-a"]);
+});
+
 test("replays a compensated document-open event back to the previous document",()=>{
   const events=[event(1,"DocumentCreated",{document_id:"doc-a",title:"A"}),event(2,"DocumentCreated",{document_id:"doc-b",title:"B"}),event(3,"DocumentOpened",{document_id:"doc-a",previous_document_id:"doc-b"}),event(4,"DocumentOpened",{document_id:"doc-b",previous_document_id:"doc-a"},"user","event-3")];
   assert.equal(foldEvents(events).documentId,"doc-b");
