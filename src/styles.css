@@ -754,7 +754,7 @@ forma-output-visual { position: absolute; inset: 0; display: grid; min-width: 0;
 .area-navigation--administrative a { color: var(--admin-chrome-muted); }
 .area-navigation--administrative a:hover { color: var(--on-dark); background: var(--admin-chrome-hover); }
 .area-navigation--administrative a.active { color: var(--on-accent); background: var(--orange); }
-.admin-page > forma-area-navigation .area-navigation--administrative { max-width: none; margin: 0; padding-inline: var(--page-gutter); border-width: 0 0 1px; border-radius: 0; }
+.administrative-page > forma-area-navigation .area-navigation--administrative { max-width: none; margin: 0; padding-inline: var(--page-gutter); border-width: 0 0 1px; border-radius: 0; }
 .admin-health { display: flex; align-items: center; gap: 10px; padding: 11px 14px; color: var(--ink); background: var(--acid); border-radius: 7px; }
 .admin-health b, .admin-health small { display: block; }
 .admin-health small { font: var(--type-micro) var(--mono); }

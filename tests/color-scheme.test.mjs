@@ -51,7 +51,7 @@ test("operations and laboratory navigation share readable fixed-dark chrome in e
   }
   assert.match(design, /\.area-navigation--administrative\s*\{[^}]*background:\s*var\(--admin-chrome\);[^}]*border-color:\s*var\(--admin-chrome-line\);/s);
   assert.match(design, /\.area-navigation--administrative a\.active\s*\{[^}]*color:\s*var\(--on-accent\);[^}]*background:\s*var\(--orange\);/s);
-  assert.match(design, /\.admin-page\s*>\s*forma-area-navigation\s+\.area-navigation--administrative\s*\{[^}]*border-radius:\s*0;/s);
+  assert.match(design, /\.administrative-page\s*>\s*forma-area-navigation\s+\.area-navigation--administrative\s*\{[^}]*border-radius:\s*0;/s);
   assert.doesNotMatch(design, /\.area-navigation--laboratory\s*\{[^}]*background:/s);
   assert.match(design, /\.tabbar\s*\{[^}]*color:\s*var\(--admin-chrome-muted\);[^}]*background:\s*var\(--admin-chrome\);/s);
   assert.match(design, /\.tabbar a\.active::after\s*\{\s*background:\s*var\(--orange\);\s*\}/);

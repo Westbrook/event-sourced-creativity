@@ -1665,7 +1665,7 @@ forma-document-generations { display: block; min-width: 0; }
 .page-header--admin h1 { font-size: clamp(2.75rem, 7vw, 6.5rem); }
 .page-header--admin p { color: #bdbdb8; }
 
-.admin-page > forma-area-navigation .area-navigation--administrative {
+.administrative-page > forma-area-navigation .area-navigation--administrative {
   max-width: none;
   margin: 0;
   padding-inline: var(--page-gutter);

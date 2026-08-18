@@ -42,7 +42,7 @@ test("keeps page-shell content on one responsive inline gutter", async () => {
   assert.match(styles, /--page-gutter:\s*clamp\(/);
   assert.match(design, /\.page-pad\s*\{\s*padding:\s*clamp\([^;]+\)\s+var\(--page-gutter\)\s+var\(--page-bottom-space\);\s*\}/);
   assert.match(design, /\.page-header--admin\s*\{[^}]*padding-inline:\s*var\(--page-gutter\);/s);
-  assert.match(design, /\.admin-page\s*>\s*forma-area-navigation\s+\.area-navigation--administrative\s*\{[^}]*padding-inline:\s*var\(--page-gutter\);/s);
+  assert.match(design, /\.administrative-page\s*>\s*forma-area-navigation\s+\.area-navigation--administrative\s*\{[^}]*padding-inline:\s*var\(--page-gutter\);/s);
   assert.match(design, /\.tabbar\s*\{[^}]*padding-inline:\s*var\(--page-gutter\);/s);
   assert.match(design, /\.admin-content\s*\{\s*padding:\s*clamp\([^;]+\)\s+var\(--page-gutter\)\s+var\(--page-bottom-space\);\s*\}/);
 });
