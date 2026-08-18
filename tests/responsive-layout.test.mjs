@@ -48,13 +48,21 @@ test("keeps page-shell content on one responsive inline gutter", async () => {
 });
 
 test("gives Library and dense administrative data their own responsive contracts", async () => {
-  const design = await read("../src/design-system.css");
+  const [design, styles, admin] = await Promise.all([
+    read("../src/design-system.css"),
+    read("../src/styles.css"),
+    read("../src/components/forma-admin-events.ts"),
+  ]);
 
   assert.match(design, /\.library-main\s*\{\s*container:\s*library \/ inline-size;/);
   assert.match(design, /@container library \(max-width: 62rem\)[\s\S]*?\.family-card,[\s\S]*?\.output-focus-layout\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\)/);
   assert.match(design, /@container library \(max-width: 48rem\)[\s\S]*?\.library-toolbar,[\s\S]*?\.page-header--library/);
   assert.match(design, /\.event-table-wrap,[\s\S]*?\.permission-table\s*\{\s*overflow-x:\s*auto/);
   assert.match(design, /\.permission-table > div\s*\{\s*min-width:\s*32rem/);
+  assert.match(admin, /class="builder-controls"><div class="builder-control-fields">/);
+  assert.match(admin, /<\/label><\/div><div class="builder-control-actions"><button/);
+  assert.match(styles, /\.builder-controls\s*>\s*div\s*\{[^}]*display:\s*flex;[^}]*min-width:\s*0;/s);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.builder-controls,\.builder-controls\s*>\s*div\s*\{[^}]*flex-direction:\s*column;/s);
 });
 
 test("preserves usable controls when document navigation and editors get narrow", async () => {
