@@ -188,27 +188,12 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--orange); }
   font-family: var(--sans);
 }
 
-.global-nav { gap: .2rem; }
-
-.global-nav a {
-  padding-inline: .75rem;
-  color: var(--muted);
-  font-size: var(--type-small);
-  font-weight: 500;
+.global-nav {
+  height: auto;
+  flex: none;
 }
 
-.global-nav a::after {
-  right: auto;
-  bottom: 8px;
-  left: 50%;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  transform: translateX(-50%);
-}
-
-.global-nav a.active { color: var(--ink); font-weight: 650; }
-.global-nav a.active::after { background: var(--orange); }
+.global-nav a::after { content: none; }
 
 .application-switcher {
   background: color-mix(in srgb, var(--panel) 78%, transparent);
@@ -1719,6 +1704,14 @@ forma-document-generations { display: block; min-width: 0; }
   border-radius: 0;
 }
 
+.app-shell > .global-nav {
+  max-width: none;
+  margin: 0;
+  padding-inline: var(--page-gutter);
+  border-width: 0 0 1px;
+  border-radius: 0;
+}
+
 .tabbar {
   padding-inline: var(--page-gutter);
   color: var(--admin-chrome-muted);
@@ -2325,7 +2318,7 @@ forma-document-generations { display: block; min-width: 0; }
 }
 
 @media (max-width: 1050px) {
-  .global-nav { overflow-x: auto; }
+  .global-nav > div { overflow-x: auto; }
   .command-trigger { min-width: 2.5rem; }
   .command-label { display: none; }
   .index-health { grid-template-columns: minmax(0, 1fr); }
@@ -2481,7 +2474,11 @@ img, video, canvas { max-width: 100%; }
 .brand { flex: none; }
 .global-nav {
   min-width: 0;
-  flex: 1 1 auto;
+  flex: none;
+  overflow: visible;
+}
+.global-nav > div {
+  min-width: 0;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
   scrollbar-width: thin;

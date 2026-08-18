@@ -57,6 +57,12 @@ test("operations and laboratory navigation share readable fixed-dark chrome in e
   assert.match(design, /\.tabbar a\.active::after\s*\{\s*background:\s*var\(--orange\);\s*\}/);
 });
 
+test("Creative navigation uses the same full-width fixed-dark section row", () => {
+  assert.match(design, /\.app-shell > \.global-nav\s*\{[^}]*max-width:\s*none;[^}]*margin:\s*0;[^}]*padding-inline:\s*var\(--page-gutter\);[^}]*border-width:\s*0 0 1px;[^}]*border-radius:\s*0;/s);
+  assert.match(design, /\.global-nav a::after\s*\{\s*content:\s*none;\s*\}/);
+  assert.match(design, /\.global-nav > div\s*\{[^}]*overflow-x:\s*auto;[^}]*overscroll-behavior-inline:\s*contain;/s);
+});
+
 test("creative, operations, and laboratory headers share one compact justified chrome contract", () => {
   assert.match(design, /:is\(\.page-header--hero, \.page-header--admin\)\s*\{[^}]*display:\s*flex;[^}]*max-width:\s*none;[^}]*justify-content:\s*space-between;[^}]*color:\s*var\(--on-dark\);/s);
   assert.match(design, /\.page-header--hero\s*\{[^}]*margin:\s*0 calc\(-1 \* var\(--page-gutter\)\)[^;]*;[^}]*padding-inline:\s*var\(--page-gutter\);[^}]*background:\s*var\(--admin-chrome\);/s);

@@ -562,6 +562,7 @@ test("keeps account, project, document, intelligence, operations, and laboratory
   ]));
   assert.match(applications,/label: "Creative"/);assert.match(applications,/label: "Operations"/);assert.match(applications,/label: "Laboratory"/);assert.match(applications,/label: "Projects"/);assert.match(applications,/label: "Create"/);assert.match(applications,/label: "Re-entry"/);assert.match(applications,/label: "Taste & time"/);
   assert.match(shell,/class="account-nav"/);assert.match(shell,/application-switcher/);assert.match(shell,/Durable stream/);assert.match(shell,/Laboratory/);
+  assert.match(shell,/class="global-nav area-navigation area-navigation--administrative area-navigation--creative"/);assert.match(shell,/<span>Creative<\/span>/);assert.match(shell,/\$\{creativeNavigation\}[\s\S]*\$\{this\.store\.error/);assert.doesNotMatch(shell,/\$\{isCreative\?html`<nav class="global-nav"/);
   assert.match(rail,/rail-project-card/);assert.match(rail,/rail-dock/);assert.match(rail,/aria-controls="project-rail-content"/);assert.match(rail,/Project destinations/);assert.match(rail,/Project library/);assert.match(rail,/Creative history/);
   assert.match(navigation,/aria-label="Document views"/);assert.doesNotMatch(navigation,/Project-level|studio-project-overview/);assert.match(navigation,/studio-breadcrumbs/);assert.match(navigation,/Projects/);
   assert.doesNotMatch(contents,/forma-studio-mode-nav|forma-studio-navigator/);assert.match(library,/Project library/);assert.match(collections,/destination==="\/library"/);
