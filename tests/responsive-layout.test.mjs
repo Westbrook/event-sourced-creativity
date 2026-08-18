@@ -33,6 +33,20 @@ test("keeps route shells intrinsically containable without hiding page overflow"
   assert.match(design, /:where\(h1, h2, h3, h4, p, dd, code, pre, small, strong\)\s*\{\s*overflow-wrap:\s*anywhere/);
 });
 
+test("keeps page-shell content on one responsive inline gutter", async () => {
+  const [styles, design] = await Promise.all([
+    read("../src/styles.css"),
+    read("../src/design-system.css"),
+  ]);
+
+  assert.match(styles, /--page-gutter:\s*clamp\(/);
+  assert.match(design, /\.page-pad\s*\{\s*padding:\s*clamp\([^;]+\)\s+var\(--page-gutter\)\s+var\(--page-bottom-space\);\s*\}/);
+  assert.match(design, /\.page-header--admin\s*\{[^}]*padding-inline:\s*var\(--page-gutter\);/s);
+  assert.match(design, /\.admin-page\s*>\s*forma-area-navigation\s+\.area-navigation--administrative\s*\{[^}]*padding-inline:\s*var\(--page-gutter\);/s);
+  assert.match(design, /\.tabbar\s*\{[^}]*padding-inline:\s*var\(--page-gutter\);/s);
+  assert.match(design, /\.admin-content\s*\{\s*padding:\s*clamp\([^;]+\)\s+var\(--page-gutter\)\s+var\(--page-bottom-space\);\s*\}/);
+});
+
 test("gives Library and dense administrative data their own responsive contracts", async () => {
   const design = await read("../src/design-system.css");
 

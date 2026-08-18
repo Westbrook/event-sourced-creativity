@@ -1655,7 +1655,8 @@ forma-document-generations { display: block; min-width: 0; }
 .admin-page { background: var(--paper); }
 
 .page-header--admin {
-  padding: clamp(3rem, 7vw, 7rem) clamp(1rem, 5vw, 4.5rem) clamp(2rem, 5vw, 4rem);
+  padding-block: clamp(3rem, 7vw, 7rem) clamp(2rem, 5vw, 4rem);
+  padding-inline: var(--page-gutter);
   color: #fff;
   background: #151515;
 }
@@ -1667,11 +1668,13 @@ forma-document-generations { display: block; min-width: 0; }
 .admin-page > forma-area-navigation .area-navigation--administrative {
   max-width: none;
   margin: 0;
+  padding-inline: var(--page-gutter);
   border-width: 0 0 1px;
   border-radius: 0;
 }
 
 .tabbar {
+  padding-inline: var(--page-gutter);
   color: var(--admin-chrome-muted);
   background: var(--admin-chrome);
 }
@@ -2338,7 +2341,7 @@ html[data-document-focus] .studio-header-stack { top: 0; }
 html[data-document-focus] .chat-view-page .studio-mode-nav { top: 0; }
 
 @media (max-width: 520px) {
-  .page-pad { padding-inline: 1rem; }
+  .page-pad { padding-inline: var(--page-gutter); }
   .global-nav a { padding-inline: .5rem; }
   .page-header-actions,
   .library-block-editor-header > div:last-child { width: 100%; }
