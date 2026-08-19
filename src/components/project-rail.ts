@@ -76,7 +76,7 @@ export class ProjectRail extends FormaElement {
         </nav>
 
         <section class="rail-collections" aria-label="Authored collections">
-          <forma-collection-tree destination=${this.getAttribute("destination")||(surface==="library"?"/library":"/")}></forma-collection-tree>
+          <forma-collection-tree destination=${surface==="library"?"/library":"/studio/project"}></forma-collection-tree>
         </section>
 
         <nav class="rail-links rail-library-links" aria-label="Project library">
