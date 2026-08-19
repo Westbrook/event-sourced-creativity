@@ -1,8 +1,19 @@
 import { normalizeSpatialScope } from "./spatial-scope.ts";
+import { documentImageFormat, imageAspectRatioLabel, imageOrientationLabel } from "./image-format.ts";
 
 export const PROMPT_TECHNIQUES = ["prose", "bullets", "json", "xml"] as const;
 export type PromptTechnique = typeof PROMPT_TECHNIQUES[number];
 export type PromptPreferenceScope = "document" | "collection" | "project" | "account";
+export const IMAGE_PROMPT_MAX_CHARACTERS = 32_000;
+
+export type BoundedPromptRepresentation = {
+  prompt: string;
+  originalLength: number;
+  finalLength: number;
+  compacted: boolean;
+  fits: boolean;
+  limit: number;
+};
 
 export const PROMPT_TECHNIQUE_DEFINITIONS: ReadonlyArray<{ id: PromptTechnique; label: string; shortLabel: string; description: string }> = [
   { id: "prose", label: "Prose", shortLabel: "Prose", description: "The current narrative prompt, with creative direction, constraints, and spatial instructions in paragraphs." },
@@ -17,7 +28,7 @@ export type PromptReferenceDescriptor = {
   label?: string;
   mode?: string;
   mimeType?: string;
-  source: "uploaded-reference" | "ideation-preview";
+  source: "uploaded-reference" | "ideation-preview" | "locked-study";
 };
 
 type PromptBlobstruct = {
@@ -106,6 +117,7 @@ export function buildReferencePromptDirectives(references: PromptReferenceDescri
   if (!references.length) return "No source-image pixels are attached. Use only the compiled text context.";
   return references.map((reference, index) => {
     if (reference.source === "ideation-preview") return `- Image ${index + 1} is the selected working draft. Refine it into the requested result while preserving the creative progress it represents.`;
+    if (reference.source === "locked-study") return `- Image ${index + 1} is an accepted ${reference.label || "creative study"}. Preserve its established identity and defining decisions while composing the larger image.`;
     const policies: Record<string, string> = {
       preserve_composition: "Preserve the reference image's composition and spatial organization while applying the document's other decisions.",
       preserve_subject: "Preserve the identity and recognizable features of its subject while applying the document's other decisions.",
@@ -129,9 +141,10 @@ function activeCreativeContext(snapshot: Record<string, unknown>) {
 }
 
 export function buildProsePrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = []) {
-  const spatialDirectives = buildSpatialPromptDirectives(snapshot);
+  const spatialDirectives = buildSpatialPromptDirectives(snapshot); const imageFormat = documentImageFormat(snapshot).format;
   return [
-    "Create one polished landscape image that realizes the supplied creative direction.",
+    `Create one polished ${imageOrientationLabel(imageFormat)} image that realizes the supplied creative direction.`,
+    `Output frame: ${imageFormat.dimensions.width} × ${imageFormat.dimensions.height} pixels at ${imageAspectRatioLabel(imageFormat)}. Treat the ratio and intended production dimensions as binding document constraints.`,
     "Use every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.",
     "Any fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.",
     "Spatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.",
@@ -144,7 +157,7 @@ export function buildProsePrompt(snapshot: Record<string, unknown>, direction: R
 }
 
 export function buildBulletPrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = []) {
-  const context = activeCreativeContext(snapshot); const facts = context.facts.map(record); const relationships = context.relationships.map(record);
+  const context = activeCreativeContext(snapshot); const facts = context.facts.map(record); const relationships = context.relationships.map(record); const imageFormat = documentImageFormat(snapshot).format;
   const factLines = facts.map((fact, index) => {
     const properties = record(fact.properties); const scope = normalizeSpatialScope(properties.spatial_scope);
     const propertyLines=Object.entries(properties).filter(([key])=>key!=="spatial_scope"&&key!=="weight").map(([key,value])=>`  - ${key.replaceAll("_"," ")}: ${typeof value==="string"?value:JSON.stringify(value)}`);
@@ -155,6 +168,7 @@ export function buildBulletPrompt(snapshot: Record<string, unknown>, direction: 
   return [
     "Create one polished image from the following independently addressable instructions.",
     "Global requirements:",
+    `- Output frame: ${imageFormat.dimensions.width} × ${imageFormat.dimensions.height} pixels at ${imageAspectRatioLabel(imageFormat)}. Preserve this framing throughout generation.`,
     "- Honor every active instruction, its role, intent, influence, relationships, and local application area.",
     "- Treat avoid, prohibit, must_not_include, and exclusion instructions only as negative constraints.",
     "- Do not add typography, logos, watermarks, UI, borders, contact sheets, captions, or annotations unless explicitly requested.",
@@ -185,12 +199,14 @@ function attachedBlob(reference: PromptReferenceDescriptor, index: number): Prom
 }
 
 export function buildStructuredPrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = [], options: { size?: string; quality?: string; partialImages?: number } = {}): StructuredImagePrompt {
-  const size = options.size ?? "1536x1024"; const [width, height] = size.split("x").map(Number); const facts = list(snapshot.facts).map(record).filter((fact) => fact.active !== false); const blobs = references.map(attachedBlob);
+  const targetFormat = documentImageFormat(snapshot).format; const width = targetFormat.dimensions.width; const height = targetFormat.dimensions.height; const facts = list(snapshot.facts).map(record).filter((fact) => fact.active !== false); const blobs = references.map(attachedBlob);
   const regions = facts.map((fact, index): PromptRegion => {
     const properties = record(fact.properties); const scope = normalizeSpatialScope(properties.spatial_scope); const bbox = scopeBox(scope); const colors = list(properties.colors).map(parseColor).filter((color): color is NonNullable<typeof color> => Boolean(color)); const referenceIndexes = references.map((reference, referenceIndex) => reference.blockId === String(fact.block_id ?? "") ? referenceIndex : -1).filter((referenceIndex) => referenceIndex >= 0);
     const path = scope.kind === "path" ? ` Clipping path: ${JSON.stringify(scope.path ?? [])}.` : "";
+    const additionalProperties=Object.fromEntries(Object.entries(properties).filter(([key])=>!["text","label","subtype","weight","spatial_scope","colors"].includes(key)));
+    const subtype=properties.subtype?` Subtype ${String(properties.subtype)}.`:"";const additional=Object.keys(additionalProperties).length?` Additional properties: ${JSON.stringify(additionalProperties)}.`:"";
     return {
-      prompt: `${String(fact.role ?? fact.type ?? "decision")}: ${factLabel(fact)}. Intent ${String(fact.intent ?? "include")}; effect ${String(fact.effect ?? "include")}; influence ${percent(Number(properties.weight ?? .5))}; ${scope.polarity} ${scope.kind} scope with ${scope.falloff} falloff and ${percent(scope.feather)} feather.${path} Properties: ${JSON.stringify(properties)}.`,
+      prompt: `${String(fact.role ?? fact.type ?? "decision")}: ${factLabel(fact)}.${subtype} Intent ${String(fact.intent ?? "include")}; effect ${String(fact.effect ?? "include")}; influence ${percent(Number(properties.weight ?? .5))}; ${scope.polarity} ${scope.kind} scope with ${scope.falloff} falloff and ${percent(scope.feather)} feather.${path}${additional}`,
       ...(bbox ? { bbox, prev_bbox: bbox, point: { x: round((bbox.x0 + bbox.x1) / 2), y: round((bbox.y0 + bbox.y1) / 2) } } : {}),
       ...(referenceIndexes.length ? { bbox_ref_image_index: referenceIndexes[0], reference_images: referenceIndexes.map((referenceIndex) => blobs[referenceIndex]) } : {}),
       ...(colors.length ? { color_palette: colors } : {}), corresponding_region_id: index, label: String(fact.handle ?? `${fact.type ?? "decision"}-${index + 1}`), locked: fact.locked ? 1 : 0,
@@ -201,14 +217,12 @@ export function buildStructuredPrompt(snapshot: Record<string, unknown>, directi
   const prompt = `Create one polished image. ${Object.entries(direction).map(([key, value]) => `${key.replaceAll("_", " ")}: ${Array.isArray(value) ? value.join(", ") : String(value)}`).join(". ")}. Typed relationships: ${relationships||"none"}. Standing constraints: ${constraints||"none"}. Pinned evidence: ${pins||"none"}. Honor negative intent, typed relationships, local regions, and reference-image policy.`;
   const layout: PromptLayout = { width: Number.isFinite(width) ? width : undefined, height: Number.isFinite(height) ? height : undefined, overall_prompt: `${prompt} Coordinates are document-normalized from 0 to 1.`, regions };
   return {
-    operation: "generate_image", prompt, aspect_ratio: Number.isFinite(width) && Number.isFinite(height) ? `${width / gcd(width, height)}:${height / gcd(width, height)}` : undefined,
+    operation: "generate_image", prompt, aspect_ratio: imageAspectRatioLabel(targetFormat),
     disable_search: 1, ...(options.partialImages ? { intermediate_image_steps: Array.from({ length: options.partialImages }, (_, index) => index + 1), preview_interval_seconds: 2 } : {}),
-    reference_images: references.map((reference, index) => ({ image: blobs[index], prompt: buildReferencePromptDirectives([reference]).replace(/^- /, "") })), resolution: size,
+    reference_images: references.map((reference, index) => ({ image: blobs[index], prompt: buildReferencePromptDirectives([reference]).replace(/^- /, "") })), resolution: `${width}x${height}`,
     streaming: options.partialImages ? 1 : 0, use_reference_images: references.length ? 1 : 0, user_edited_layout: layout,
   };
 }
-
-function gcd(left: number, right: number): number { return right ? gcd(right, left % right) : left; }
 
 const xmlEscape = (value: unknown) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&apos;");
 const xmlName = (value: string) => value.replaceAll("_", "-");
@@ -238,6 +252,34 @@ export function buildPromptRepresentation(technique: PromptTechnique, snapshot: 
   if (technique === "json") return JSON.stringify(buildStructuredPrompt(snapshot, direction, references, options), null, 2);
   if (technique === "xml") return buildXmlPrompt(snapshot, direction, references, options);
   return buildProsePrompt(snapshot, direction, references);
+}
+
+const compactPromptWhitespace=(technique:PromptTechnique,prompt:string)=>technique==="json"?JSON.stringify(JSON.parse(prompt)):technique==="xml"?prompt.replace(/>\s+</g,"><"):prompt;
+const fitString=(value:string,limit:number)=>value.length<=limit?value:`${value.slice(0,Math.max(0,limit-38))}…[${value.length-limit} characters compacted]`;
+const fitPromptValue=(value:unknown,stringLimit:number):unknown=>{
+  if(typeof value==="string")return fitString(value,stringLimit);
+  if(Array.isArray(value))return value.map((item)=>fitPromptValue(item,stringLimit));
+  if(value&&typeof value==="object")return Object.fromEntries(Object.entries(value as Record<string,unknown>).map(([key,item])=>[key,fitPromptValue(item,stringLimit)]));
+  return value;
+};
+
+/**
+ * Prepare an Image API prompt without letting presentation whitespace or a few
+ * unusually verbose fields turn a valid creative document into a provider
+ * validation failure. Every key and array member is retained; only oversized
+ * string leaves are explicitly marked and shortened as a last resort.
+ */
+export function buildBoundedPromptRepresentation(technique:PromptTechnique,snapshot:Record<string,unknown>,direction:Record<string,unknown>,references:PromptReferenceDescriptor[]=[],options:{size?:string;quality?:string;partialImages?:number}={},limit=IMAGE_PROMPT_MAX_CHARACTERS):BoundedPromptRepresentation{
+  const original=buildPromptRepresentation(technique,snapshot,direction,references,options);const originalLength=original.length;
+  if(originalLength<=limit)return{prompt:original,originalLength,finalLength:originalLength,compacted:false,fits:true,limit};
+  const whitespaceCompacted=compactPromptWhitespace(technique,original);
+  if(whitespaceCompacted.length<=limit)return{prompt:whitespaceCompacted,originalLength,finalLength:whitespaceCompacted.length,compacted:true,fits:true,limit};
+  let candidate=whitespaceCompacted;
+  for(const stringLimit of [2048,1024,512,256,128,64]){
+    candidate=compactPromptWhitespace(technique,buildPromptRepresentation(technique,fitPromptValue(snapshot,stringLimit) as Record<string,unknown>,fitPromptValue(direction,stringLimit) as Record<string,unknown>,fitPromptValue(references,stringLimit) as PromptReferenceDescriptor[],options));
+    if(candidate.length<=limit)return{prompt:candidate,originalLength,finalLength:candidate.length,compacted:true,fits:true,limit};
+  }
+  return{prompt:candidate,originalLength,finalLength:candidate.length,compacted:true,fits:false,limit};
 }
 
 export function effectivePromptPreference(preferences: Array<Record<string, unknown>>, context: { documentId: string; collectionIds: string[]; projectId: string; accountId?: string }) {

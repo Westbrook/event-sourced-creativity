@@ -792,9 +792,8 @@ forma-output-visual { position: absolute; inset: 0; display: grid; min-width: 0;
 .replay-builder { display: flex; align-items: end; justify-content: space-between; gap: 30px; }
 .replay-builder h2 { margin-bottom: 8px; font-size: var(--type-title); }
 .replay-builder p { max-width: 670px; color: var(--muted); }
-.builder-controls { display: flex; min-width: 0; align-items: flex-end; gap: 8px; }
+.builder-controls { display: flex; min-width: 0; align-items: flex-end; flex-direction: column; justify-content: end; gap: 8px; }
 .builder-controls > div { display: flex; min-width: 0; align-items: flex-end; gap: 8px; }
-.builder-control-fields { flex: 1 1 20rem; }
 .builder-control-fields label { min-width: 0; flex: 1 1 10rem; }
 .builder-control-actions { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; }
 .builder-controls .button { white-space: nowrap; }
@@ -1592,6 +1591,7 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .generation-budget-note > svg { flex: none; margin-top: 2px; }
 .generation-budget-note > span { min-width: 0; }
 .generation-budget-note > a { flex: none; color: var(--ink); font-weight: 700; }
+.generation-budget-note > .generation-budget-dismiss { flex: none; width: 28px; height: 28px; margin: -5px -7px -5px 0; color: var(--muted); }
 .generation-failure-list { display: grid; min-width: 0; gap: 8px; margin-top: 10px; }
 .generation-failure-card { display: grid; min-width: 0; grid-template-columns: auto minmax(0,1fr); align-items: start; gap: 12px; padding: 13px 14px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px; }
 .generation-failure-card.safety { border-color: color-mix(in srgb,var(--warning) 48%,var(--line)); }
@@ -1772,8 +1772,13 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .image-lightbox-card { display: grid; width: min(1400px,calc(100vw - 24px)); height: min(920px,calc(100dvh - 24px)); grid-template-rows: auto minmax(0,1fr) auto; overflow: hidden; margin: 12px auto; padding: 18px; }
 .image-lightbox-card > header { min-width: 0; padding-right: 46px; }
 .image-lightbox-card h2 { margin: 3px 0 12px; overflow: hidden; font: 600 var(--type-heading) var(--serif); text-overflow: ellipsis; white-space: nowrap; }
+.image-lightbox-card > header p { margin: -6px 0 12px; color: var(--muted); font-size: var(--type-caption); }
 .image-lightbox-stage { position: relative; display: grid; min-width: 0; min-height: 0; place-items: center; overflow: hidden; background: #111613; border: 1px solid #0a0e0c; border-radius: 8px; }
 .image-lightbox-card .image-lightbox-stage .generated-output-image { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
+.fan-image-navigation { position: absolute; z-index: 2; top: 50%; width: 44px; height: 44px; translate: 0 -50%; color: #fff; background: rgb(0 0 0 / 58%); border: 1px solid rgb(255 255 255 / 38%); border-radius: 50%; backdrop-filter: blur(8px); }
+.fan-image-navigation:hover { background: rgb(0 0 0 / 78%); }
+.fan-image-navigation.previous { left: 12px; }
+.fan-image-navigation.next { right: 12px; }
 .image-lightbox-card > footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 12px; }
 .image-lightbox-card > footer span { min-width: 0; overflow: hidden; color: var(--muted); font: var(--type-micro) var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 
@@ -1862,6 +1867,33 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .actual-cost-heading p { margin: 0; }
 .actual-cost-refresh { flex: none; color: var(--muted); font: var(--type-micro) var(--mono); }
 .actual-cost-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1px; margin: 16px 0; overflow: hidden; background: var(--line); border: 1px solid var(--line); border-radius: 7px; }
+.actual-replay-profile { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 0 0 16px; }
+.actual-replay-profile label { display: grid; min-width: 0; gap: 6px; color: var(--muted); font: var(--type-caption) var(--mono); text-transform: uppercase; }
+.actual-replay-profile select { width: 100%; min-height: 42px; padding: 8px 10px; color: var(--ink); background: var(--paper); border: 1px solid var(--line-strong); border-radius: 5px; font: var(--type-body) var(--sans); text-transform: none; }
+.actual-replay-profile small { font: var(--type-micro) var(--sans); text-transform: none; }
+.actual-study-selector { min-width: 0; margin: 4px 0 20px; padding: 18px 0 20px; border: 0; border-block: 1px solid var(--line); }
+.actual-study-selector legend { padding: 0; color: var(--ink); font: 600 var(--type-lede) var(--sans); }
+.actual-study-selector > p { max-width: 62ch; margin: 6px 0 14px; color: var(--muted); font-size: var(--type-small); }
+.actual-study-selector > div { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.actual-study-selector > div label { display: grid; grid-template-columns: 20px minmax(0,1fr); gap: 9px; align-items: start; min-width: 0; padding: 11px; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; cursor: pointer; }
+.actual-study-selector > div label:hover { border-color: var(--line-strong); }
+.actual-study-selector > div label.selected { background: var(--orange-soft); border-color: var(--orange); }
+.actual-study-selector input { width: 17px; height: 17px; margin: 2px 0 0; accent-color: var(--orange); }
+.actual-study-selector label span { display: grid; gap: 3px; min-width: 0; }
+.actual-study-selector label b { color: var(--ink); font: 600 var(--type-small) var(--sans); }
+.actual-study-selector label small { color: var(--muted); font: var(--type-micro) var(--sans); line-height: 1.45; }
+.actual-development-path { display: flex; gap: 0; margin: 16px 0 0; padding: 0; overflow-x: auto; list-style: none; }
+.actual-development-path li { position: relative; display: grid; flex: 1 0 9rem; grid-template-columns: 25px minmax(0,1fr); gap: 8px; align-items: start; padding: 10px 16px 0 0; }
+.actual-development-path li:not(:last-child)::after { position: absolute; top: 22px; right: 4px; width: 8px; height: 1px; content: ""; background: var(--line-strong); }
+.actual-development-path li > span { display: grid; width: 25px; height: 25px; place-items: center; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 50%; font: var(--type-micro) var(--mono); }
+.actual-development-path li.composition > span { color: var(--on-accent); background: var(--orange); border-color: var(--orange); }
+.actual-development-path div { display: grid; gap: 2px; }
+.actual-development-path b { color: var(--ink); font: 600 var(--type-small) var(--sans); }
+.actual-development-path small { color: var(--muted); font: var(--type-micro) var(--sans); line-height: 1.35; }
+.actual-profile-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 1px; margin: 16px 0 0; overflow: hidden; background: var(--line); border: 1px solid var(--line); border-radius: 7px; }
+.actual-profile-summary span { display: grid; gap: 2px; padding: 10px; background: var(--paper); }
+.actual-profile-summary b { color: var(--ink); font: 600 var(--type-lede) var(--sans); }
+.actual-profile-summary small { overflow-wrap: anywhere; color: var(--muted); font: var(--type-micro) var(--mono); text-transform: uppercase; }
 .actual-cost-summary span { display: grid; gap: 3px; padding: 12px; background: var(--paper); }
 .actual-cost-summary small,.actual-budget-grid small { color: var(--muted); font: var(--type-micro) var(--mono); text-transform: uppercase; }
 .actual-cost-summary b { color: var(--ink); font: 600 var(--type-lede) var(--sans); }
@@ -1885,7 +1917,9 @@ forma-document-generations,forma-generation-actions { display: block; min-width:
 .actual-replay-panel > footer { position: sticky; z-index: 1; bottom: -24px; margin-inline: -24px; padding: 14px 24px 24px; background: linear-gradient(to bottom,transparent,var(--paper) 18px); }
 
 @media (max-width: 620px) {
-  .actual-cost-summary,.actual-budget-grid { grid-template-columns: minmax(0,1fr); }
+  .actual-replay-profile,.actual-cost-summary,.actual-budget-grid { grid-template-columns: minmax(0,1fr); }
+  .actual-study-selector > div { grid-template-columns: minmax(0,1fr); }
+  .actual-profile-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .actual-cost-breakdown span { align-items: flex-start; flex-direction: column; gap: 2px; }
   .actual-replay-panel > footer { bottom: -18px; margin-inline: -18px; padding: 14px 18px 18px; }
 }

@@ -56,12 +56,15 @@ export function classifyProviderFailure(input: unknown, response?: Response, pro
   const status = response?.status ?? null;
   const providerCode = String(body.code ?? body.type ?? "").trim();
   const lower = `${providerCode} ${message}`.toLowerCase();
+  const promptTooLong = /prompt.*(?:string too long|maximum length)|(?:string too long|maximum length).*prompt/.test(lower);
   let category: ProviderFailureCategory = "unknown";
   let scope: ProviderFailureScope = "unknown";
   let action: ProviderFailureAction = "none";
 
   if (/safety|content[_ -]?policy|moderation|request was rejected/.test(lower)) {
     category = "safety"; scope = "request"; action = "edit_request";
+  } else if (promptTooLong) {
+    category = "provider"; scope = "request"; action = "edit_request";
   } else if (/credit_balance_exhausted|insufficient[_ -]?quota|billing[_ -]?quota|billing.*not active|credit.*exhaust|hard[_ -]?cap/.test(lower)) {
     category = "quota"; scope = "account"; action = "add_credits";
   } else if (/project_(spend|usage)_limit_exceeded|project.*(spend|usage).*limit/.test(lower)) {
@@ -98,7 +101,8 @@ export function classifyProviderFailure(input: unknown, response?: Response, pro
     safety: "safety_rejected", authentication: "provider_authentication_failed", access: "provider_access_denied", quota: "provider_quota_exhausted", rate_limit: "provider_rate_limited", network: "provider_network_failed", canceled: "provider_request_canceled", provider: "provider_request_failed", server: "provider_server_failed", unknown: "operation_failed",
   };
   return {
-    code: providerCode || fallbackCode[category], category, scope, action, message,
+    code: promptTooLong ? "image_prompt_too_long" : providerCode || fallbackCode[category], category, scope, action,
+    message: promptTooLong ? "The prepared image prompt exceeded the provider's 32,000-character limit. The application should compact the document context before retrying." : message,
     retryable: category === "network" || category === "rate_limit" || category === "server" || category === "canceled",
     retryAfterMs: providerRetryAfterMs(response),
     requestId: response?.headers.get("x-request-id") ?? response?.headers.get("openai-request-id") ?? null,

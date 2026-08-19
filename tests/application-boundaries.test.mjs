@@ -9,9 +9,9 @@ const sourceFiles=async(directory)=>{
   return nested.flat();
 };
 
-test("declares three route-owning applications over one shared platform",()=>{
-  assert.deepEqual(APPLICATIONS.map(({id})=>id),["creative","operations","laboratory"]);
-  assert.equal(new Set(APPLICATIONS.map(({entry})=>entry)).size,3);
+test("declares four route-owning applications over one shared platform",()=>{
+  assert.deepEqual(APPLICATIONS.map(({id})=>id),["creative","canvas","operations","laboratory"]);
+  assert.equal(new Set(APPLICATIONS.map(({entry})=>entry)).size,4);
   assert.equal(new Set(SITE_ROUTE_ENTRIES.map(({path})=>path)).size,SITE_ROUTE_ENTRIES.length);
   for(const entry of SITE_ROUTE_ENTRIES){
     assert.equal(entry.application,applicationIdFromRoute(entry.path),`route owner for ${entry.path}`);
@@ -21,6 +21,7 @@ test("declares three route-owning applications over one shared platform",()=>{
   assert.equal(applicationIdFromRoute("/creative/create/conversational"),"creative");
   assert.equal(applicationEntryPath("/operations/events"),"/operations/");
   assert.equal(applicationEntryPath("/laboratory/replay"),"/laboratory/");
+  assert.equal(applicationEntryPath("/canvas/canvas-42/study"),"/canvas/");
 });
 
 test("the server resolves every shareable deep-link family before SPA hydration",()=>{
@@ -35,7 +36,12 @@ test("the server resolves every shareable deep-link family before SPA hydration"
     ["/library/output/object-1/final","/library/","creative"],
     ["/library/blocks/editor/block-1","/library/","creative"],
     ["/share/private-token","/share/","creative"],
+    ["/canvas/canvas-42/study","/canvas/","canvas"],
+    ["/canvas/canvas-42/study/view/list","/canvas/","canvas"],
+    ["/canvas/proposals/proposal-1","/canvas/proposals/","canvas"],
     ["/operations/events/permissions","/operations/events/permissions/","operations"],
+    ["/operations/analytics","/operations/analytics/","operations"],
+    ["/admin/events/sync","/admin/events/sync/","operations"],
     ["/laboratory/replay","/laboratory/replay/","laboratory"],
     ["/creative/create/conversational","/creative/create/","creative"],
   ];
@@ -79,7 +85,7 @@ test("production manifest contains an independently loadable entry for every app
 
 test("architecture guide reserves future Create approaches inside Creative",async()=>{
   const guide=await readFile(new URL("../ARCHITECTURE.md",import.meta.url),"utf8");
-  assert.match(guide,/three independently loaded applications/);
+  assert.match(guide,/four independently loaded applications/);
   assert.match(guide,/src\/apps\/creative\/create\//);
   assert.match(guide,/same document stream and projections/);
   assert.match(guide,/must not import a sibling application/);

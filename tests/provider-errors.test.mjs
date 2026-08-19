@@ -17,6 +17,12 @@ test("distinguishes quota, rate limits, and retryable provider failures",()=>{
   assert.equal(classifyProviderFailure(new Error("temporary outage"),new Response(null,{status:503})).retryable,true);
 });
 
+test("turns provider prompt-length validation into an actionable request error",()=>{
+  const detail=classifyProviderFailure(new Error("provider"),new Response(null,{status:400}),{error:{code:"invalid_value",message:"Invalid 'prompt': string too long. Expected a string with maximum length 32000, but got a string with length 39013 instead."}});
+  assert.deepEqual([detail.code,detail.category,detail.scope,detail.action,detail.retryable],["image_prompt_too_long","provider","request","edit_request",false]);
+  assert.match(detail.message,/32,000-character limit/);
+});
+
 test("turns project and organization limits into specific non-retryable receipts",()=>{
   const project=classifyProviderFailure(new Error("provider"),new Response(null,{status:429}),{error:{code:"project_spend_limit_exceeded",message:"Project spend limit reached"}});
   const organization=classifyProviderFailure(new Error("provider"),new Response(null,{status:429}),{error:{code:"organization_usage_limit_exceeded",message:"Organization usage limit reached"}});

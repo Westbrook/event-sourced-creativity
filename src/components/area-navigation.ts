@@ -11,8 +11,10 @@ const intelligence = [
 
 const operations = [
   { id: "system", href: "/operations", label: "System & governance", description: "Policies, gates, and operational health" },
+  { id: "analytics", href: "/operations/analytics", label: "Analytics", description: "Find product improvements and creative outcome evidence" },
   { id: "stream", href: "/operations/events", label: "Durable stream", description: "Inspect immutable event envelopes and projections" },
   { id: "permissions", href: "/operations/events/permissions", label: "Permissions", description: "Review producer and concurrency boundaries" },
+  { id: "sync", href: "/operations/events/sync", label: "Canvas sync", description: "Inspect convergence and offline operation delivery" },
 ] as const;
 
 const laboratory = [

@@ -1,8 +1,10 @@
 import type { BlockKind } from "./block-types.ts";
-import type { CreativeEvent } from "./events.ts";
-import { PROMPT_TECHNIQUES, type PromptTechnique } from "./prompt-structures.ts";
+import type { CreativeEvent, CreativeOutput } from "./events.ts";
+import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "./prompt-structures.ts";
 import { evaluateReplayCoverage } from "./replay-coverage.ts";
 import { buildComprehensiveScenario, SCENARIO_EVENT_TYPES } from "./scenarios.ts";
+import { imageFormatEventFields, normalizeImageFormat, providerRenderFormat, type ImageFormat } from "./image-format.ts";
+import type { CreativeStudyKind, ReplayDevelopmentStage, ReplayDevelopmentStageKind } from "./replay-development.ts";
 
 export type LiveReplayBlock = {
   type: BlockKind;
@@ -21,9 +23,24 @@ export type LiveReplayPlan = {
   user_goal: string;
   project_name: string;
   document_title: string;
+  image_format: ImageFormat;
+  development: {
+    stage_kind: ReplayDevelopmentStageKind;
+    stage_label: string;
+    focus: string;
+    purpose: string;
+    success_criteria: string[];
+    lock_summary: string;
+    locked_decisions: Array<{ block_type: BlockKind; label: string; value: string }>;
+    consumes_studies: CreativeStudyKind[];
+  };
   reference: {
     label: string;
     description: string;
+    source_strategy: "generated" | "licensed-web";
+    source_rationale: string;
+    generation_prompt: string;
+    internet_search_query: string;
     mood: string;
     composition: string;
     materials: string;
@@ -42,12 +59,36 @@ export type LiveReplayPlan = {
   friction: { stuck_moment: string; recovery_action: string; view: "document" | "board" | "guided" | "layers" | "adaptive" | "editor" | "chat" };
 };
 
-export type LiveReplayFanAsset = { technique: PromptTechnique; mediaUrl: string; generationId: string; objectId: string; latencyMs: number; model: string };
+export type LiveReplayFanAsset = { technique: PromptTechnique; mediaUrl: string; generationId: string; objectId: string; latencyMs: number; model: string; width: number; height: number };
+export type LiveReplayReferenceSource = {
+  kind: "generated" | "licensed-web";
+  requestedKind: "generated" | "licensed-web";
+  provider: "openai" | "wikimedia-commons";
+  model: string | null;
+  query: string | null;
+  sourceUrl: string | null;
+  sourcePageUrl: string | null;
+  licenseName: string;
+  licenseUrl: string | null;
+  creator: string | null;
+  attribution: string;
+  fallbackReason: string | null;
+};
 export type LiveReplayAssets = {
+  developmentStage?: ReplayDevelopmentStage;
   referenceMediaUrl: string;
+  referenceMediaType: string;
+  referenceWidth: number;
+  referenceHeight: number;
+  referenceByteSize: number;
+  referenceContentHash: string;
+  referenceSource: LiveReplayReferenceSource;
   previewMediaUrl: string;
+  previewWidth: number;
+  previewHeight: number;
   referenceGenerationId: string;
   previewGenerationId: string;
+  lockedStudyReferences?: Array<{ kind: CreativeStudyKind; label: string; generationId: string; objectId: string; mediaUrl: string }>;
   fanOutputs: LiveReplayFanAsset[];
   plannerModel: string;
   imageModel: string;
@@ -55,6 +96,7 @@ export type LiveReplayAssets = {
   previewLatencyMs: number;
   createdAt: string;
 };
+export type LiveReplayMilestone = { plan: LiveReplayPlan; assets: LiveReplayAssets };
 
 const scopeFor=(block:LiveReplayBlock,index=0)=>{
   if(block.spatial_method==="document")return{schema_version:1,kind:"document",coordinate_space:"document-normalized",feather:0,falloff:"hard",polarity:"inside"};
@@ -73,7 +115,11 @@ const text=(value:unknown)=>String(value??"");
  */
 export function buildLiveReplayEvents(plan:LiveReplayPlan,assets:LiveReplayAssets,sessionId:string):CreativeEvent[]{
   const source=buildComprehensiveScenario(`replay-session:${sessionId}`);const sourceStart=Date.parse(source[0]?.occurredAt??assets.createdAt);const actualStart=Date.parse(assets.createdAt);
-  const blocksByType=new Map(plan.blocks.map((block)=>[block.type,block]));
+  const stage=assets.developmentStage??{kind:"composition" as const,label:"Composed image",purpose:"Resolve the full creative direction into one image.",sequence:1,total:1,study:false,consumesStudies:[]};
+  const development=plan.development??{stage_kind:stage.kind,stage_label:stage.label,focus:plan.user_goal,purpose:stage.purpose,success_criteria:["The intended direction is recognizable."],lock_summary:stage.study?`Lock the ${stage.label.toLowerCase()} before composition.`:"Resolve the composed image.",locked_decisions:[],consumes_studies:stage.consumesStudies};
+  const lockedStudyInputs=(assets.lockedStudyReferences??[]).map((reference)=>({source:"locked-study",study_kind:reference.kind,label:reference.label,generation_id:reference.generationId,object_id:reference.objectId,media_url:reference.mediaUrl,mode:"preserve_subject"}));
+  const stageFields={development_stage_kind:stage.kind,development_stage_label:stage.label,development_stage_sequence:stage.sequence,development_stage_total:stage.total,study:stage.study,study_lock_summary:development.lock_summary,locked_decisions:development.locked_decisions,consumes_studies:stage.consumesStudies};
+  const blocksByType=new Map(plan.blocks.map((block)=>[block.type,block]));const imageFormat=normalizeImageFormat(plan.image_format);const sourceFormatBlockId=text(source.find((event)=>event.type==="BlockCreated"&&event.payload.type==="format")?.payload.block_id)||"live-block-format";const previewFormatFields=imageFormatEventFields(imageFormat,"preview",sourceFormatBlockId);const fullFormatFields=imageFormatEventFields(imageFormat,"full",sourceFormatBlockId);const previewRender=providerRenderFormat(imageFormat,"preview");const fullRender=providerRenderFormat(imageFormat,"full");
   const fanByTechnique=new Map(assets.fanOutputs.map((output)=>[output.technique,output]));
   const preferred=fanByTechnique.get(plan.fan_review.preferred_technique)??assets.fanOutputs[0];
   if(!preferred||PROMPT_TECHNIQUES.some((technique)=>!fanByTechnique.has(technique)))throw new Error("live_replay_prompt_fan_assets_incomplete");
@@ -82,28 +128,30 @@ export function buildLiveReplayEvents(plan:LiveReplayPlan,assets:LiveReplayAsset
   let blockOrdinal=0;let chatOrdinal=0;let assistantOrdinal=0;
   return source.map((event,index)=>{
     const eventId=`live-${sessionId}-${index+1}`;const previousId=index?`live-${sessionId}-${index}`:null;const occurredAt=new Date(actualStart+Math.max(0,Date.parse(event.occurredAt)-sourceStart)).toISOString();
-    let payload:Record<string,unknown>={...event.payload,mock_data_source:"openai-provider",replay_session_id:sessionId};
+    let payload:Record<string,unknown>={...event.payload,mock_data_source:"openai-provider",replay_session_id:sessionId,...stageFields};
     if(event.type==="ProjectCreated")payload={...payload,name:plan.project_name,description:plan.summary};
     if(event.type==="ProjectRenamed")payload={...payload,new_name:plan.project_name,reason:"The LLM-populated interaction converged on the project’s working language."};
     if(event.type==="DocumentCreated"||event.type==="DocumentRenamed")payload={...payload,title:plan.document_title,new_title:plan.document_title,creative_goal:plan.user_goal};
     if(event.type==="IntentDeclared")payload={...payload,statement:plan.user_goal,statement_ref:`live-intent:${sessionId}`};
     if(event.type==="BlockCreated"){
       const existingType=text(payload.type) as BlockKind;const standalone=payload.scope==="library";const block=blocksByType.get(existingType)??plan.blocks[blockOrdinal%Math.max(1,plan.blocks.length)]??fallbackBlock;blockOrdinal+=1;
-      payload={...payload,type:block.type,handle:`${block.type}/${block.label.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"decision"}`,properties:{text:block.instruction,label:block.label,subtype:block.subtype,authority:"authored",weight:block.weight,intent:block.intent,effect:effectFor(block.intent),spatial_scope:scopeFor(block,blockOrdinal-1),...(standalone?{created_from:"library-block-editor",forked_from_block_id:`live-source-${sessionId}-${block.type}`}:{}) ,...(block.type==="reference"?{reference_id:`live-reference-${sessionId}`,media_url:assets.referenceMediaUrl,pixel_reference_mode:"context_only"}:{})}};
+      payload={...payload,type:block.type,handle:`${block.type}/${block.label.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"decision"}`,properties:{text:block.instruction,label:block.label,subtype:block.subtype,authority:"authored",weight:block.weight,intent:block.intent,effect:effectFor(block.intent),spatial_scope:scopeFor(block,blockOrdinal-1),development_stage:stage.kind,study_lock_candidate:stage.study,...(standalone?{created_from:"library-block-editor",forked_from_block_id:`live-source-${sessionId}-${block.type}`}:{}) ,...(block.type==="format"?{image_format:imageFormat}:{}),...(block.type==="reference"?{reference_id:`live-reference-${sessionId}`,media_url:assets.referenceMediaUrl,pixel_reference_mode:"context_only"}:{})}};
     }
-    if(event.type==="ReferenceIngested")payload={...payload,reference_id:`live-reference-${sessionId}`,label:plan.reference.label,description:plan.reference.description,media_url:assets.referenceMediaUrl,content_ref:assets.referenceMediaUrl,media_type:"image/jpeg",synthetic_reference:true,reference_generation_id:assets.referenceGenerationId,latency_ms:assets.referenceLatencyMs};
-    if(event.type==="RightsAsserted")payload={...payload,reference_id:`live-reference-${sessionId}`,rights_class:"synthetic-provider-fixture",scope:"generation-and-image-editing",assertion_method:"approved-provider-backed-replay"};
+    if(event.type==="BlockLocked"&&stage.study)payload={...payload,lock_scope:"creative-study",lock_reason:development.lock_summary,locked_decisions:development.locked_decisions};
+    if(event.type==="ReferenceIngested")payload={...payload,reference_id:`live-reference-${sessionId}`,label:plan.reference.label,description:plan.reference.description,source_type:assets.referenceSource.kind==="licensed-web"?"licensed-web-import":"generated-image",source_ref:assets.referenceSource.sourceUrl??assets.referenceMediaUrl,source_page_url:assets.referenceSource.sourcePageUrl,media_url:assets.referenceMediaUrl,content_ref:assets.referenceMediaUrl,content_hash:assets.referenceContentHash,media_type:assets.referenceMediaType,image_width:assets.referenceWidth,image_height:assets.referenceHeight,byte_size:assets.referenceByteSize,actual_image:true,asset_prepared_before_ingest:true,provider:assets.referenceSource.provider,model_id:assets.referenceSource.model??assets.referenceSource.provider,synthetic_reference:true,reference_asset_id:assets.referenceGenerationId,reference_generation_id:assets.referenceSource.kind==="generated"?assets.referenceGenerationId:null,reference_source:assets.referenceSource,license_name:assets.referenceSource.licenseName,license_url:assets.referenceSource.licenseUrl,attribution:assets.referenceSource.attribution,latency_ms:assets.referenceLatencyMs};
+    if(event.type==="RightsAsserted")payload={...payload,reference_id:`live-reference-${sessionId}`,rights_class:assets.referenceSource.kind==="licensed-web"?"licensed-public-web-fixture":"synthetic-provider-fixture",scope:"generation-and-image-editing",assertion_method:assets.referenceSource.kind==="licensed-web"?"verified-commons-license":"approved-provider-backed-replay",license_name:assets.referenceSource.licenseName,license_url:assets.referenceSource.licenseUrl,attribution:assets.referenceSource.attribution};
     if(event.type==="ExtractionCompleted")payload={...payload,overall_confidence:.86,requested_findings:["palette","mood","composition","material","lighting","spatial"],chips:[{property:"colors",value:plan.reference.palette,confidence:.9},{property:"reference_findings",value:[{kind:"mood",label:"Mood",value:plan.reference.mood,confidence:.86},{kind:"composition",label:"Composition",value:plan.reference.composition,confidence:.84},{kind:"material",label:"Materials",value:plan.reference.materials,confidence:.82},{kind:"lighting",label:"Lighting",value:plan.reference.lighting,confidence:.88},{kind:"spatial",label:"Spatial structure",value:plan.reference.spatial,confidence:.8}],confidence:.84}]};
     if(event.type==="ChatMessageSent"){const turn=plan.chat_turns[chatOrdinal%plan.chat_turns.length];payload={...payload,turn_id:`live-chat-turn:${sessionId}:${chatOrdinal+1}`,content_ref:`live-chat-user:${sessionId}:${chatOrdinal+1}`,mock_content:turn.user_message,live_preview:turn.live_preview,live_preview_requested:turn.live_preview,job_kind:"chat"};chatOrdinal+=1;}
     if(event.type==="AssistantReasoned"){const turn=plan.chat_turns[assistantOrdinal%plan.chat_turns.length];payload={...payload,turn_id:`live-chat-turn:${sessionId}:${assistantOrdinal+1}`,content_ref:`live-chat-assistant:${sessionId}:${assistantOrdinal+1}`,mock_content:turn.assistant_reply,resolved_change:turn.resolved_change,provider:"openai",model_id:assets.plannerModel,job_kind:event.payload.operation==="adaptive-structure"?"structure_adaptive":"chat",live_preview_requested:turn.live_preview,preview_suppressed:!turn.live_preview};assistantOrdinal+=1;}
     if(event.type==="MutationProposed")payload={...payload,summary:plan.chat_turns[0]?.resolved_change??plan.user_goal,content_ref:`live-mutation:${sessionId}`};
-    if(event.type==="IdeationPreviewCompleted")payload={...payload,generation_id:assets.previewGenerationId,object_id:`draft-${sessionId}`,object_ids:[`draft-${sessionId}`],media_url:assets.previewMediaUrl,media_type:"image/jpeg",image_width:816,image_height:816,model_id:assets.imageModel,quality:"low",purpose:"ideate",size:"816x816",output_format:"jpeg",output_compression:70,planning_source:"provider",reference_input_count:1,reference_inputs:[{source:"uploaded-reference",reference_id:`live-reference-${sessionId}`,label:plan.reference.label,mode:"inspiration"}],used_uploaded_reference_pixels:true,adapter_version:"openai-image-v4",latency_ms:assets.previewLatencyMs,simulation:false,title:plan.draft.title,rationale:plan.draft.rationale,scene:plan.draft.scene,palette:plan.draft.palette,next_moves:plan.draft.next_moves};
+    if(event.type==="BlockPropertyEdited"&&payload.property_path==="image_format")payload={...payload,block_id:sourceFormatBlockId,document_id:`live-document-${sessionId}`,old_value:{schema_version:1,aspect_ratio:{width:3,height:2},dimensions:{width:1536,height:1024,unit:"px"}},new_value:imageFormat,source_surface:"context-block"};
+    if(event.type==="IdeationPreviewCompleted")payload={...payload,generation_id:assets.previewGenerationId,object_id:`draft-${sessionId}`,object_ids:[`draft-${sessionId}`],media_url:assets.previewMediaUrl,media_type:"image/jpeg",image_width:assets.previewWidth??previewRender.width,image_height:assets.previewHeight??previewRender.height,model_id:assets.imageModel,quality:"low",purpose:"ideate",...previewFormatFields,output_format:"jpeg",output_compression:70,planning_source:"provider",reference_input_count:1,reference_inputs:[{source:"uploaded-reference",reference_id:`live-reference-${sessionId}`,label:plan.reference.label,mode:"inspiration"}],used_uploaded_reference_pixels:true,adapter_version:"openai-image-v5",latency_ms:assets.previewLatencyMs,simulation:false,title:plan.draft.title,rationale:plan.draft.rationale,scene:plan.draft.scene,palette:plan.draft.palette,next_moves:plan.draft.next_moves};
     if(event.type==="IdeationPromoted")payload={...payload,promotion_id:`promotion-${sessionId}`,draft_generation_id:assets.previewGenerationId,draft_object_id:`draft-${sessionId}`,full_generation_id:preferred.generationId,prompt_fan_id:`live-prompt-fan-${sessionId}`,intent_weight:1,system_success_pending:true};
     const technique=PROMPT_TECHNIQUES.includes(payload.prompt_technique as PromptTechnique)?payload.prompt_technique as PromptTechnique:null;const sourceFanId=text(payload.prompt_fan_id);const liveFanId=sourceFanId?`live-${sourceFanId}-${sessionId}`:`live-prompt-fan-${sessionId}`;const fanAsset=technique&&sourceFanId?fanByTechnique.get(technique):undefined;
-    if(event.type==="GenerationRequested"&&event.actor==="user"&&fanAsset)payload={...payload,generation_id:fanAsset.generationId,requested_output:"image",model_ids:[assets.plannerModel,fanAsset.model],quality:"high",purpose:"final",job_kind:"generate",prompt_fan_id:liveFanId,reference_preview_event_id:`live-preview:${sessionId}`};
-    if(event.type==="ContextCompiled"&&fanAsset)payload={...payload,generation_id:fanAsset.generationId,model_id:fanAsset.model,planner_model_id:assets.plannerModel,adapter_version:"openai-image-v4",prompt_fan_id:liveFanId,reference_input_count:2,reference_inputs:[{source:"ideation-preview",mode:null},{source:"uploaded-reference",reference_id:`live-reference-${sessionId}`,label:plan.reference.label,mode:"inspiration"}],used_ideation_preview_pixels:true,used_uploaded_reference_pixels:true,compiled_snapshot:{facts:plan.blocks.map((block,ordinal)=>({type:block.type,label:block.label,instruction:block.instruction,intent:block.intent,weight:block.weight,spatial_scope:scopeFor(block,ordinal)})),relationships:[...activeRelations.values()],reference:plan.reference,reference_inputs:[{source:"ideation-preview",mode:null},{source:"uploaded-reference",reference_id:`live-reference-${sessionId}`,label:plan.reference.label,mode:"inspiration"}],user_goal:plan.user_goal,standing_constraints:[plan.memory.preference],prompt_technique:technique,as_of:{replay_session_id:sessionId,complete:true}}};
-    if(event.type==="GenerationCompleted"&&event.actor==="worker:generator"&&fanAsset)payload={...payload,generation_id:fanAsset.generationId,object_ids:[fanAsset.objectId],media_url:fanAsset.mediaUrl,media_type:"image/png",image_width:1536,image_height:1024,quality:"high",purpose:"final",model_id:fanAsset.model,planner_model_id:assets.plannerModel,adapter_version:"openai-image-v4",prompt_fan_id:liveFanId,promoted_from_object_id:`draft-${sessionId}`,promotion_outcome:"completed",reference_input_count:2,reference_inputs:[{source:"ideation-preview",mode:null},{source:"uploaded-reference",reference_id:`live-reference-${sessionId}`,label:plan.reference.label,mode:"inspiration"}],used_ideation_preview_pixels:true,used_uploaded_reference_pixels:true,latency_ms:fanAsset.latencyMs,simulation:false,title:`${plan.final.title} · ${technique}`,rationale:plan.fan_review.reasons[technique!],scene:plan.final.scene,palette:plan.final.palette,next_moves:plan.final.next_moves};
-    if(event.type==="PromptFanOutputPromoted"){const promoted=plan.fan_review.promoted_techniques[0]??plan.fan_review.preferred_technique;const asset=fanByTechnique.get(promoted)!;payload={...payload,object_id:asset.objectId,prompt_fan_id:`live-${text(event.payload.prompt_fan_id)}-${sessionId}`,prompt_technique:promoted,reason:plan.fan_review.reasons[promoted]};}
+    if(event.type==="GenerationRequested"&&event.actor==="user"&&fanAsset)payload={...payload,generation_id:fanAsset.generationId,requested_output:"image",model_ids:[assets.plannerModel,fanAsset.model],quality:"high",purpose:"final",job_kind:"generate",...fullFormatFields,prompt_fan_id:liveFanId,reference_preview_event_id:`live-preview:${sessionId}`};
+    if(event.type==="ContextCompiled"&&fanAsset){const referenceInputs=[{source:"ideation-preview",mode:null},{source:"uploaded-reference",reference_id:`live-reference-${sessionId}`,label:plan.reference.label,mode:"inspiration"},...lockedStudyInputs];payload={...payload,generation_id:fanAsset.generationId,model_id:fanAsset.model,planner_model_id:assets.plannerModel,adapter_version:"openai-image-v5",...fullFormatFields,prompt_fan_id:liveFanId,reference_input_count:referenceInputs.length,reference_inputs:referenceInputs,used_ideation_preview_pixels:true,used_uploaded_reference_pixels:true,used_locked_study_pixels:lockedStudyInputs.length>0,compiled_snapshot:{facts:plan.blocks.map((block,ordinal)=>({block_id:`live-block-${block.type}`,type:block.type,label:block.label,instruction:block.instruction,intent:block.intent,active:true,properties:{text:block.instruction,weight:block.weight,spatial_scope:scopeFor(block,ordinal),...(block.type==="format"?{image_format:imageFormat}:{})}})),relationships:[...activeRelations.values()],reference:plan.reference,reference_inputs:referenceInputs,development,locked_studies:lockedStudyInputs,user_goal:plan.user_goal,standing_constraints:[plan.memory.preference],prompt_technique:technique,as_of:{replay_session_id:sessionId,complete:true}}};}
+    if(event.type==="GenerationCompleted"&&event.actor==="worker:generator"&&fanAsset){const referenceInputs=[{source:"ideation-preview",mode:null},{source:"uploaded-reference",reference_id:`live-reference-${sessionId}`,label:plan.reference.label,mode:"inspiration"},...lockedStudyInputs];payload={...payload,generation_id:fanAsset.generationId,object_ids:[fanAsset.objectId],media_url:fanAsset.mediaUrl,media_type:"image/png",image_width:fanAsset.width??fullRender.width,image_height:fanAsset.height??fullRender.height,quality:"high",purpose:stage.study?"study":"final",model_id:fanAsset.model,planner_model_id:assets.plannerModel,adapter_version:"openai-image-v5",...fullFormatFields,prompt_fan_id:liveFanId,promoted_from_object_id:`draft-${sessionId}`,promotion_outcome:"completed",reference_input_count:referenceInputs.length,reference_inputs:referenceInputs,used_ideation_preview_pixels:true,used_uploaded_reference_pixels:true,used_locked_study_pixels:lockedStudyInputs.length>0,latency_ms:fanAsset.latencyMs,simulation:false,title:`${plan.final.title} · ${technique}`,rationale:plan.fan_review.reasons[technique!],scene:plan.final.scene,palette:plan.final.palette,next_moves:plan.final.next_moves};}
+    if(event.type==="PromptFanOutputPromoted"){const promoted=plan.fan_review.promoted_techniques[0]??plan.fan_review.preferred_technique;const asset=fanByTechnique.get(promoted)!;payload={...payload,object_id:asset.objectId,prompt_fan_id:`live-${text(event.payload.prompt_fan_id)}-${sessionId}`,prompt_technique:promoted,reason:plan.fan_review.reasons[promoted],study_locked:stage.study,lock_summary:stage.study?development.lock_summary:null,locked_decisions:stage.study?development.locked_decisions:[]};}
     if(event.type==="PromptTechniquePreferred")payload={...payload,technique:plan.fan_review.preferred_technique,source_fan_id:`live-${text(event.payload.source_fan_id)}-${sessionId}`,source_output_id:preferred.objectId,comparison_note:plan.fan_review.comparison_note};
     if(event.type==="ObjectCritiqued")payload={...payload,object_id:preferred.objectId,axis_ref:plan.critique.axis,polarity:plan.critique.polarity,value:plan.critique.value,note:plan.critique.note};
     if(["ObjectViewed","ObjectSaved","ObjectPinned","ObjectUnpinned","ObjectRegenerated","AddedToLibrary","RemovedFromLibrary","ObjectDiscarded","ObjectExported","AnnotationAdded","AnnotationRetracted"].includes(event.type))payload={...payload,object_id:preferred.objectId};
@@ -119,4 +167,52 @@ export function buildLiveReplayEvents(plan:LiveReplayPlan,assets:LiveReplayAsset
 
 export function replayCoverage(events:CreativeEvent[]){
   return evaluateReplayCoverage(events,SCENARIO_EVENT_TYPES);
+}
+
+/**
+ * Materialize one bounded page of a long-running provider-backed fixture.
+ * Provider calls create the milestone assets once; later cycles reuse those
+ * durable pixels while continuing to exercise the full event vocabulary.
+ */
+export function buildScaledLiveReplayPage(milestones:LiveReplayMilestone[],sessionId:string,targetEventCount:number,startSequence=1,pageSize=250):CreativeEvent[]{
+  if(!milestones.length||targetEventCount<=0||startSequence>targetEventCount)return[];
+  const first=milestones[0];
+  const probe=buildLiveReplayEvents(first.plan,{...first.assets,createdAt:first.assets.createdAt},`${sessionId}-probe`);
+  const cycleLength=probe.length;
+  const cycleSpan=Math.max(1,Date.parse(probe.at(-1)?.occurredAt??first.assets.createdAt)-Date.parse(probe[0]?.occurredAt??first.assets.createdAt));
+  const sessionStart=Date.parse(first.assets.createdAt);
+  const endSequence=Math.min(targetEventCount,startSequence+Math.max(1,pageSize)-1);
+  const pages:CreativeEvent[]=[];
+  const cycleCache=new Map<number,CreativeEvent[]>();
+  for(let sequence=startSequence;sequence<=endSequence;sequence+=1){
+    const globalIndex=sequence-1;const cycleIndex=Math.floor(globalIndex/cycleLength);const localIndex=globalIndex%cycleLength;const milestoneIndex=cycleIndex%milestones.length;const milestone=milestones[milestoneIndex];
+    let cycle=cycleCache.get(cycleIndex);
+    if(!cycle){const cycleId=`${sessionId}-m${milestoneIndex+1}-c${cycleIndex+1}`;cycle=buildLiveReplayEvents(milestone.plan,{...milestone.assets,createdAt:first.assets.createdAt},cycleId);cycleCache.set(cycleIndex,cycle);}
+    const source=cycle[localIndex];const firstProviderCycle=cycleIndex===milestoneIndex;const assetKey=source.type==="GenerationCompleted"&&milestone.assets.fanOutputs.some((asset)=>asset.generationId===source.payload.generation_id)?String(source.payload.generation_id??""):source.type==="IdeationPreviewCompleted"&&source.payload.generation_id===milestone.assets.previewGenerationId?String(source.payload.generation_id??""):source.type==="ReferenceIngested"&&source.payload.reference_asset_id===milestone.assets.referenceGenerationId?String(source.payload.reference_asset_id??""):"";
+    const priorSameAsset=assetKey?cycle.slice(0,localIndex).some((event)=>event.type===source.type&&String(event.payload.generation_id??event.payload.reference_asset_id??event.payload.reference_generation_id??"")===assetKey):false;
+    const durableMediaBacked=Boolean(assetKey)&&firstProviderCycle&&!priorSameAsset;
+    const providerCallBacked=durableMediaBacked&&(source.type!=="ReferenceIngested"||milestone.assets.referenceSource.kind==="generated");
+    const externalAssetBacked=durableMediaBacked&&source.type==="ReferenceIngested"&&milestone.assets.referenceSource.kind==="licensed-web";
+    const occurredAt=new Date(sessionStart+cycleIndex*(cycleSpan+60_000)+Math.max(0,Date.parse(source.occurredAt)-sessionStart)).toISOString();
+    pages.push({...source,eventId:`live-${sessionId}-${sequence}`,streamId:`replay-session:${sessionId}`,sequence,occurredAt,recordedAt:occurredAt,correlationId:`live-replay:${sessionId}:cycle-${cycleIndex+1}`,causationId:sequence>1?`live-${sessionId}-${sequence-1}`:null,payload:{...source.payload,replay_session_id:sessionId,target_event_count:targetEventCount,provider_milestone_index:milestoneIndex+1,fixture_cycle:cycleIndex+1,durable_media_backed:durableMediaBacked,provider_call_backed:providerCallBacked,external_asset_backed:externalAssetBacked,fixture_asset_reused:Boolean(assetKey)&&!durableMediaBacked}});
+  }
+  return pages;
+}
+
+export function buildScaledLiveReplayEvents(milestones:LiveReplayMilestone[],sessionId:string,targetEventCount:number):CreativeEvent[]{
+  const events:CreativeEvent[]=[];for(let start=1;start<=targetEventCount;start+=500)events.push(...buildScaledLiveReplayPage(milestones,sessionId,targetEventCount,start,500));return events;
+}
+
+const persistentReplayMediaUrl=(value:unknown)=>{const url=String(value??"");return Boolean(url)&&!url.includes("replay%2Fgenerated")&&!url.includes("/replay/generated");};
+
+/** Returns each durable provider image once, independent of replay position. */
+export function replaySavedMediaOutputs(events:CreativeEvent[]):CreativeOutput[]{
+  const durableReceipts=events.some((event)=>event.payload.durable_media_backed===true);const providerReceipts=events.some((event)=>event.payload.provider_call_backed===true);const outputs=new Map<string,CreativeOutput>();
+  for(const event of events){
+    if(!["ReferenceIngested","IdeationPreviewCompleted","GenerationCompleted"].includes(event.type))continue;const payload=event.payload;const mediaUrl=String(payload.media_url??"");if(!persistentReplayMediaUrl(mediaUrl)||payload.simulation===true||(durableReceipts?payload.durable_media_backed!==true:providerReceipts&&payload.provider_call_backed!==true))continue;
+    const reference=event.type==="ReferenceIngested";const preview=event.type==="IdeationPreviewCompleted";if(reference&&payload.synthetic_reference!==true)continue;
+    const rawObjectId=reference?payload.reference_id:payload.object_id??(Array.isArray(payload.object_ids)?payload.object_ids[0]:null);const id=String(rawObjectId??payload.generation_id??payload.reference_generation_id??event.eventId);if(!id)continue;
+    outputs.set(mediaUrl,{id,documentId:String(payload.document_id??"replay-document"),canvasId:null,contextSetId:null,generationId:String(payload.generation_id??payload.reference_generation_id??id),modelId:String(payload.model_id??"gpt-image-2"),variant:outputs.size%4,latency:Number(payload.latency_ms??0),sequence:event.sequence,pinned:false,saved:true,discarded:false,library:true,contentRef:null,promptRef:null,promptTechnique:normalizePromptTechnique(payload.prompt_technique),promptFanId:payload.prompt_fan_id?String(payload.prompt_fan_id):null,provider:String(payload.provider??"openai"),mediaUrl,mediaType:String(payload.media_type??"image/jpeg"),width:Number(payload.image_width??816)||null,height:Number(payload.image_height??816)||null,plannerModelId:payload.planner_model_id?String(payload.planner_model_id):null,quality:payload.quality==="high"?"high":payload.quality==="medium"?"medium":"low",purpose:reference||preview?"ideate":"final",sourceEventId:event.eventId,sourceSurface:"replay-laboratory",promotionId:null,promotedFromId:payload.promoted_from_object_id?String(payload.promoted_from_object_id):null,promotedFromEventId:null,focalPoint:null,standalone:!payload.prompt_fan_id,standaloneSequence:payload.prompt_fan_id?null:event.sequence});
+  }
+  return[...outputs.values()].sort((left,right)=>left.sequence-right.sequence);
 }

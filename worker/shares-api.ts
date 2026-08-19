@@ -36,7 +36,7 @@ export async function handleSharedView(request: Request, env: WorkerEnv, rawToke
   const row = await activeShare(env,rawToken);
   if (!row) return Response.json({ error: "share_expired_or_revoked" }, { status: 404 });
   const events = await readEvents(env, String(row.stream_id)); const projection = foldEvents(events);
-  return Response.json({ share: serializeShare(row), projection: { projectName: projection.projectName, documentTitle: projection.documentTitle, blocks: projection.blocks, outputs: projection.outputs.map(({ id, modelId, variant, sequence, mediaUrl, width, height, focalPoint }) => {const key=mediaUrl?.startsWith("/api/media/")?decodeURIComponent(mediaUrl.slice("/api/media/".length)):"";return{id,modelId,variant,sequence,width,height,focalPoint,mediaUrl:key?`/api/shared/${encodeURIComponent(rawToken)}/media/${encodeURIComponent(key)}`:null};}), latestCompile: projection.latestCompile } });
+  return Response.json({ share: serializeShare(row), projection: { projectName: projection.projectName, documentTitle: projection.documentTitle, blocks: projection.blocks, outputs: projection.outputs.map(({ id, documentId, modelId, provider, variant, sequence, mediaUrl, mediaType, width, height, focalPoint, latency, purpose, promptFanId, promptTechnique }) => {const key=mediaUrl?.startsWith("/api/media/")?decodeURIComponent(mediaUrl.slice("/api/media/".length)):"";return{id,documentId,modelId,provider,variant,sequence,mediaType,width,height,focalPoint,latency,purpose,promptFanId,promptTechnique,mediaUrl:key?`/api/shared/${encodeURIComponent(rawToken)}/media/${encodeURIComponent(key)}`:null};}), latestCompile: projection.latestCompile } });
 }
 
 export async function handleSharedMedia(request:Request,env:WorkerEnv,rawToken:string,key:string){

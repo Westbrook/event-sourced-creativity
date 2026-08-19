@@ -50,6 +50,16 @@ test("calls the direct Image API with gpt-image-2, project attribution, and deco
   }finally{globalThis.fetch=originalFetch;}
 });
 
+test("rejects invalid GPT Image 2 dimensions before a paid provider request",async()=>{
+  const originalFetch=globalThis.fetch;let requests=0;globalThis.fetch=async()=>{requests+=1;return Response.json({});};
+  try{
+    await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Invalid portrait"},{quality:"low",size:"544x816"}),error=>{
+      assert.equal(error.detail.code,"invalid_image_size");assert.equal(error.detail.action,"edit_request");assert.equal(error.detail.retryable,false);assert.match(error.detail.message,/at least 655,360 pixels/);return true;
+    });
+    assert.equal(requests,0);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("preserves the exact image prompt when moderation stops a generation",async()=>{
   const originalFetch=globalThis.fetch;globalThis.fetch=async()=>Response.json({error:{message:"Your request was rejected by the safety system.",type:"image_generation_user_error"}},{status:400,headers:{"x-request-id":"req_prompt_receipt"}});
   try{

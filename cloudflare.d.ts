@@ -26,6 +26,9 @@ interface R2ObjectBody {
   writeHttpMetadata(headers: Headers): void;
 }
 
+interface R2ListedObject { key: string; }
+interface R2Objects { objects: R2ListedObject[]; truncated: boolean; cursor?: string; }
+
 interface R2Bucket {
   put(
     key: string,
@@ -36,6 +39,8 @@ interface R2Bucket {
     },
   ): Promise<unknown>;
   get(key: string): Promise<R2ObjectBody | null>;
+  list(options?: { prefix?: string; cursor?: string }): Promise<R2Objects>;
+  delete(keys: string | string[]): Promise<void>;
 }
 
 declare module "cloudflare:workers" {

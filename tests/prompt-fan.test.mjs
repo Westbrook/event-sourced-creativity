@@ -35,6 +35,34 @@ test("fan generation is accepted once and retains explicit failed member states"
   assert.doesNotMatch(review,/Awaiting this result/);
 });
 
+test("keeps one image dialog open while keyboard navigation traverses a prompt fan",async()=>{
+  const [visual,fanVisual,review,shared,sharesApi,scenarios,styles]=await Promise.all([
+    readFile(new URL("../src/components/output-visual.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/prompt-fan-visual.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/prompt-fan-review.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-shared-view.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/shares-api.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/model/scenarios.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/styles.css",import.meta.url),"utf8"),
+  ]);
+  assert.match(visual,/event\.key!=="ArrowLeft"&&event\.key!=="ArrowRight"/);
+  assert.match(visual,/#navigateFan\(event\.key==="ArrowLeft"\?-1:1,"keyboard"\)/);
+  assert.match(visual,/PROMPT_TECHNIQUES\.indexOf/);
+  assert.match(visual,/type:"ComparisonOpened"/);
+  assert.match(visual,/type:"ObjectViewed"/);
+  assert.match(visual,/navigation_method:navigationMethod/);
+  assert.match(visual,/forma-fan-image-navigated/);
+  assert.match(visual,/Use the Left and Right Arrow keys/);
+  assert.match(fanVisual,/\.fanOutputs=\$\{this\.outputs\}/);
+  assert.match(review,/\.fanOutputs=\$\{fanOutputs\}/);
+  assert.match(shared,/\.fanOutputs=\$\{p\.outputs\}/);
+  assert.match(sharesApi,/promptFanId,promptTechnique/);
+  assert.match(scenarios,/source_surface:"fan-image-dialog"/);
+  assert.match(scenarios,/navigation_method:viewedOrdinal===0\?"trigger":"keyboard"/);
+  assert.match(styles,/\.fan-image-navigation\.previous/);
+  assert.match(styles,/\.fan-image-navigation\.next/);
+});
+
 const events = [
   event(1, "ProjectCreated", { project_id: "p", name: "Project" }, "user"),
   event(2, "DocumentCreated", { project_id: "p", document_id: "d", title: "Study" }, "user"),

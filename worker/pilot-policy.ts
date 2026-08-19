@@ -3,7 +3,8 @@ import { MICRO_USD_PER_USD } from "./replay-cost";
 
 export const POLICY_VERSION = "pilot-2026-08-10";
 export type PilotRole = "admin" | "creator" | "agent" | "viewer";
-export type PilotUser = { userId: string; email: string; displayName: string; role: PilotRole; consentVersion: string | null; consentedAt: string | null; streamId: string };
+export type PilotUser = { userId: string; email: string; displayName: string; role: PilotRole; consentVersion: string | null; consentedAt: string | null; streamId: string; fictional?: boolean; billingUserId?: string };
+export type PilotImpersonation = { impersonationId:string; personaId:string; replaySessionId:string; actor:PilotUser; fictionalUser:PilotUser; startedAt:string; expiresAt:string };
 
 const roleRank: Record<PilotRole, number> = { viewer: 0, agent: 1, creator: 2, admin: 3 };
 const intEnv = (value: string | undefined, fallback: number) => { const parsed = Number(value); return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback; };
@@ -26,7 +27,20 @@ function identityFromRequest(request: Request) {
   return null;
 }
 
-export async function requireUser(request: Request, env: WorkerEnv, minimum: PilotRole = "viewer") {
+const cookieValue=(request:Request,name:string)=>request.headers.get("cookie")?.split(";").map((value)=>value.trim()).find((value)=>value.startsWith(`${name}=`))?.slice(name.length+1)??"";
+const decodedCookieValue=(request:Request,name:string)=>{const value=cookieValue(request,name);try{return decodeURIComponent(value);}catch{return "";}};
+const impersonationCookie=(request:Request,value:string,maxAge:number)=>`forma_impersonation=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${new URL(request.url).protocol==="https:"?"; Secure":""}`;
+const impersonationMutationExempt=(request:Request)=>{const url=new URL(request.url);if(["GET","HEAD","OPTIONS"].includes(request.method))return true;if(url.pathname.startsWith("/api/impersonation")||url.pathname.startsWith("/api/replay-sessions")||url.pathname.startsWith("/api/admin/")||url.pathname==="/api/session")return true;return /^\/api\/document-jobs\/[^/]+\/(?:run|ack)$/.test(url.pathname);};
+
+async function activeImpersonation(request:Request,env:WorkerEnv,actor:PilotUser):Promise<PilotImpersonation|null>{
+  const id=decodedCookieValue(request,"forma_impersonation");if(!id)return null;const row=await env.DB.prepare(`SELECT impersonation.*,persona.display_name,fictional.email,fictional.role AS fictional_role,fictional.consent_version,fictional.consented_at
+    FROM impersonation_sessions impersonation JOIN replay_personas persona ON persona.persona_id=impersonation.persona_id JOIN users fictional ON fictional.user_id=impersonation.fictional_user_id
+    WHERE impersonation.impersonation_id=? AND impersonation.actor_user_id=? AND impersonation.status='active' AND impersonation.expires_at>? AND persona.status='ready'`).bind(id,actor.userId,new Date().toISOString()).first<Record<string,unknown>>();
+  if(!row)return null;const fictionalUser:PilotUser={userId:String(row.fictional_user_id),email:String(row.email),displayName:String(row.display_name),role:String(row.fictional_role??"creator") as PilotRole,consentVersion:row.consent_version?String(row.consent_version):null,consentedAt:row.consented_at?String(row.consented_at):null,streamId:`creative:${String(row.fictional_user_id)}`,fictional:true,billingUserId:actor.userId};
+  return{impersonationId:String(row.impersonation_id),personaId:String(row.persona_id),replaySessionId:String(row.replay_session_id),actor,fictionalUser,startedAt:String(row.started_at),expiresAt:String(row.expires_at)};
+}
+
+export async function requireUser(request: Request, env: WorkerEnv, minimum: PilotRole = "viewer", options:{account?:"effective"|"principal"}={}) {
   await ensureSchema(env);
   const identity = identityFromRequest(request);
   if (!identity) return { response: Response.json({ error: "authentication_required" }, { status: 401 }), user: null };
@@ -37,9 +51,11 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
   await env.DB.prepare("INSERT OR IGNORE INTO users (user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,?,?)").bind(identity.userId, identity.email, identity.displayName, initialRole, now, now).run();
   await env.DB.prepare("UPDATE users SET email=?, display_name=?, updated_at=? WHERE user_id=?").bind(identity.email, identity.displayName, now, identity.userId).run();
   const row = await env.DB.prepare("SELECT * FROM users WHERE user_id=?").bind(identity.userId).first<Record<string, unknown>>();
-  const user: PilotUser = { userId: String(row?.user_id), email: String(row?.email), displayName: String(row?.display_name), role: String(row?.role) as PilotRole, consentVersion: row?.consent_version ? String(row.consent_version) : null, consentedAt: row?.consented_at ? String(row.consented_at) : null, streamId: `creative:${identity.userId}` };
-  if (roleRank[user.role] < roleRank[minimum]) return { response: Response.json({ error: "insufficient_role", required: minimum, role: user.role }, { status: 403 }), user: null };
-  return { response: null, user };
+  const principal: PilotUser = { userId: String(row?.user_id), email: String(row?.email), displayName: String(row?.display_name), role: String(row?.role) as PilotRole, consentVersion: row?.consent_version ? String(row.consent_version) : null, consentedAt: row?.consented_at ? String(row.consented_at) : null, streamId: `creative:${identity.userId}` };
+  if (roleRank[principal.role] < roleRank[minimum]) return { response: Response.json({ error: "insufficient_role", required: minimum, role: principal.role }, { status: 403 }), user: null, principal, impersonation:null };
+  const impersonation=options.account==="principal"?null:await activeImpersonation(request,env,principal);const user=impersonation?.fictionalUser??principal;
+  if(impersonation&&!impersonationMutationExempt(request)&&request.headers.get("x-forma-impersonation-confirmation")!=="I understand, continue")return{response:Response.json({error:"impersonation_confirmation_required",message:`You are acting as ${user.displayName}. Confirm this individual interaction before it changes the fictional account.`},{status:428}),user:null,principal,impersonation};
+  return { response: null, user, principal, impersonation };
 }
 
 export function requireConsent(user: PilotUser) {
@@ -114,17 +130,18 @@ export async function releaseBudget(env: WorkerEnv, userId: string, reservationI
 }
 
 export async function releaseBudgetReservationsForCorrelation(env:WorkerEnv,user:PilotUser,correlationId:string,reason:string){
+  const billingUserId=user.billingUserId??user.userId;
   const legacy=await env.DB.prepare(`SELECT occurred_at,json_extract(payload,'$.reservation_id') AS reservation_id,CAST(json_extract(payload,'$.reserved_tokens') AS INTEGER) AS reserved_tokens,COALESCE(json_extract(payload,'$.operation'),'provider-operation') AS operation,COALESCE(json_extract(payload,'$.period'),substr(occurred_at,1,7)) AS period FROM events reserved
     WHERE stream_id=? AND correlation_id=? AND type='BudgetReserved' AND NOT EXISTS (SELECT 1 FROM events terminal WHERE terminal.stream_id=reserved.stream_id AND terminal.type IN ('BudgetReleased','GenerationUsageRecorded') AND json_extract(terminal.payload,'$.reservation_id')=json_extract(reserved.payload,'$.reservation_id'))`).bind(user.streamId,correlationId).all<Record<string,unknown>>();
-  for(const row of legacy.results){const reservationId=String(row.reservation_id??"");const tokens=Number(row.reserved_tokens??0);if(reservationId&&tokens>0)await adoptLegacyBudgetReservation(env,user.userId,reservationId,tokens,{streamId:user.streamId,correlationId,operation:String(row.operation??"provider-operation"),period:String(row.period??period()),createdAt:String(row.occurred_at??new Date().toISOString())});}
-  const active=await env.DB.prepare("SELECT * FROM budget_reservations WHERE owner_id=? AND correlation_id=? AND status='active' ORDER BY created_at").bind(user.userId,correlationId).all<BudgetReservationRow>();const released=[] as Array<{id:string;tokens:number;operation:string}>;
-  for(const reservation of active.results){const result=await releaseBudget(env,user.userId,reservation.reservation_id,{reason});if(result.settled)released.push({id:reservation.reservation_id,tokens:result.reservedTokens,operation:reservation.operation});}
+  for(const row of legacy.results){const reservationId=String(row.reservation_id??"");const tokens=Number(row.reserved_tokens??0);if(reservationId&&tokens>0)await adoptLegacyBudgetReservation(env,billingUserId,reservationId,tokens,{streamId:user.streamId,correlationId,operation:String(row.operation??"provider-operation"),period:String(row.period??period()),createdAt:String(row.occurred_at??new Date().toISOString())});}
+  const active=await env.DB.prepare("SELECT * FROM budget_reservations WHERE owner_id=? AND correlation_id=? AND status='active' ORDER BY created_at").bind(billingUserId,correlationId).all<BudgetReservationRow>();const released=[] as Array<{id:string;tokens:number;operation:string}>;
+  for(const reservation of active.results){const result=await releaseBudget(env,billingUserId,reservation.reservation_id,{reason});if(result.settled)released.push({id:reservation.reservation_id,tokens:result.reservedTokens,operation:reservation.operation});}
   return released;
 }
 
 /** Repairs reservations whose event has no terminal settlement and whose server job is no longer active. */
 export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: PilotUser, now = Date.now()) {
-  await ensureSchema(env); const cutoff = new Date(now-BUDGET_RECONCILIATION_AGE_MS).toISOString();
+  await ensureSchema(env); const cutoff = new Date(now-BUDGET_RECONCILIATION_AGE_MS).toISOString();const billingUserId=user.billingUserId??user.userId;
   const legacy = await env.DB.prepare(`SELECT reserved.event_id,reserved.correlation_id,reserved.occurred_at,
       json_extract(reserved.payload,'$.reservation_id') AS reservation_id,
       CAST(json_extract(reserved.payload,'$.reserved_tokens') AS INTEGER) AS reserved_tokens,
@@ -135,14 +152,14 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
       AND json_extract(reserved.payload,'$.reservation_id') IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM events terminal WHERE terminal.stream_id=reserved.stream_id AND terminal.type IN ('BudgetReleased','GenerationUsageRecorded') AND json_extract(terminal.payload,'$.reservation_id')=json_extract(reserved.payload,'$.reservation_id'))
     ORDER BY reserved.occurred_at ASC LIMIT 200`).bind(user.streamId,cutoff).all<Record<string,unknown>>();
-  for(const row of legacy.results){const reservationId=String(row.reservation_id??"");const reservedTokens=Number(row.reserved_tokens??0);if(!reservationId||reservedTokens<=0)continue;await adoptLegacyBudgetReservation(env,user.userId,reservationId,reservedTokens,{streamId:user.streamId,correlationId:String(row.correlation_id??""),operation:String(row.operation??"image-generation"),period:String(row.period??period()),createdAt:String(row.occurred_at??new Date(now).toISOString())});}
+  for(const row of legacy.results){const reservationId=String(row.reservation_id??"");const reservedTokens=Number(row.reserved_tokens??0);if(!reservationId||reservedTokens<=0)continue;await adoptLegacyBudgetReservation(env,billingUserId,reservationId,reservedTokens,{streamId:user.streamId,correlationId:String(row.correlation_id??""),operation:String(row.operation??"image-generation"),period:String(row.period??period()),createdAt:String(row.occurred_at??new Date(now).toISOString())});}
   const active = await env.DB.prepare(`SELECT * FROM budget_reservations reservation
     WHERE reservation.owner_id=? AND reservation.status='active' AND reservation.created_at<=?
-      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.owner_id=reservation.owner_id AND job.status IN ('queued','running','committing') AND job.correlation_id=reservation.correlation_id)
-    ORDER BY reservation.created_at ASC LIMIT 100`).bind(user.userId,cutoff).all<BudgetReservationRow>();
+      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.status IN ('queued','running','committing') AND job.correlation_id=reservation.correlation_id)
+    ORDER BY reservation.created_at ASC LIMIT 100`).bind(billingUserId,cutoff,user.streamId).all<BudgetReservationRow>();
   let released = 0;let count=0;
   for(const row of active.results){
-    const settlement=await releaseBudget(env,user.userId,row.reservation_id,{reason:"orphaned_failed_reservation_reconciled"});
+    const settlement=await releaseBudget(env,billingUserId,row.reservation_id,{reason:"orphaned_failed_reservation_reconciled"});
     if(!settlement.settled)continue;
     released+=settlement.reservedTokens;count+=1;
     await appendAuditEvent(env,user.streamId,"worker:policy","BudgetReleased",{reservation_id:row.reservation_id,reserved_tokens:settlement.reservedTokens,reason:"orphaned_failed_reservation_reconciled",operation:row.operation,automatic_reconciliation:true},row.correlation_id||uuidV7());
@@ -224,12 +241,28 @@ export async function handleSession(request: Request, env: WorkerEnv) {
     await appendAuditEvent(env, user.streamId, "user", "ConsentAccepted", { policy_version: POLICY_VERSION, ownership_confirmed: true, external_provider_processing_confirmed: true });
     user.consentVersion = POLICY_VERSION; user.consentedAt = now;
   } else if (request.method !== "GET") return new Response("Method not allowed", { status: 405 });
-  await reconcileFailedBudgetReservations(env,user);
-  return Response.json({ user, policy: { version: POLICY_VERSION, accepted: user.consentVersion === POLICY_VERSION, passiveCapture: false, attentionCapture: { available: true, defaultOn: false, retentionDays: 14, rawInputCapture: false }, externalAssetsRequireAssertion: true, retentionDays: intEnv(env.FORMA_RETENTION_DAYS, 30), sharing: "private-expiring-revocable" }, provider: { name: "OpenAI Responses + Image APIs", model: env.OPENAI_IMAGE_MODEL ?? "gpt-image-2", plannerModel: env.OPENAI_MODEL ?? "gpt-5.6-terra", configured: Boolean(env.OPENAI_API_KEY) }, budgets: await readBudgets(env, user.userId) });
+  const budgetUser=auth.principal??user;await reconcileFailedBudgetReservations(env,budgetUser);
+  return Response.json({ user, impersonation:auth.impersonation?{active:true,impersonationId:auth.impersonation.impersonationId,personaId:auth.impersonation.personaId,replaySessionId:auth.impersonation.replaySessionId,actor:auth.impersonation.actor,fictionalUser:auth.impersonation.fictionalUser,startedAt:auth.impersonation.startedAt,expiresAt:auth.impersonation.expiresAt}:null, policy: { version: POLICY_VERSION, accepted: user.consentVersion === POLICY_VERSION, passiveCapture: false, attentionCapture: { available: true, defaultOn: false, retentionDays: 14, rawInputCapture: false }, externalAssetsRequireAssertion: true, retentionDays: intEnv(env.FORMA_RETENTION_DAYS, 30), sharing: "private-expiring-revocable" }, provider: { name: "OpenAI Responses + Image APIs", model: env.OPENAI_IMAGE_MODEL ?? "gpt-image-2", plannerModel: env.OPENAI_MODEL ?? "gpt-5.6-terra", configured: Boolean(env.OPENAI_API_KEY) }, budgets: await readBudgets(env, budgetUser.userId) });
+}
+
+export async function handleImpersonation(request:Request,env:WorkerEnv){
+  const auth=await requireUser(request,env,"admin",{account:"principal"});if(auth.response||!auth.user)return auth.response!;const actor=auth.user;
+  if(request.method==="POST"){
+    const body=await request.json().catch(()=>({})) as {personaId?:string;confirmation?:string};if(body.confirmation!=="I understand, continue")return Response.json({error:"explicit_impersonation_confirmation_required"},{status:428});
+    const persona=await env.DB.prepare("SELECT * FROM replay_personas WHERE persona_id=? AND owner_id=? AND status='ready'").bind(String(body.personaId??""),actor.userId).first<Record<string,unknown>>();if(!persona)return Response.json({error:"replay_persona_not_ready"},{status:409});
+    const now=new Date();const expiresAt=new Date(now.getTime()+8*60*60_000);const impersonationId=uuidV7();await env.DB.batch([env.DB.prepare("UPDATE impersonation_sessions SET status='ended',ended_at=? WHERE actor_user_id=? AND status='active'").bind(now.toISOString(),actor.userId),env.DB.prepare("INSERT INTO impersonation_sessions (impersonation_id,actor_user_id,persona_id,fictional_user_id,replay_session_id,status,started_at,expires_at,ended_at) VALUES (?,?,?,?,?,'active',?,?,NULL)").bind(impersonationId,actor.userId,String(persona.persona_id),String(persona.fictional_user_id),String(persona.session_id),now.toISOString(),expiresAt.toISOString())]);
+    await appendAuditEvent(env,actor.streamId,"user","ReplayPersonaImpersonationStarted",{impersonation_id:impersonationId,persona_id:String(persona.persona_id),replay_session_id:String(persona.session_id),fictional_user_id:String(persona.fictional_user_id),expires_at:expiresAt.toISOString(),explicit_confirmation:true});
+    const response=Response.json({active:true,route:String(persona.route??"/projects"),displayName:String(persona.display_name),expiresAt:expiresAt.toISOString()});response.headers.set("set-cookie",impersonationCookie(request,impersonationId,8*60*60));return response;
+  }
+  if(request.method==="DELETE"){
+    const id=decodedCookieValue(request,"forma_impersonation");const now=new Date().toISOString();if(id){const active=await env.DB.prepare("SELECT * FROM impersonation_sessions WHERE impersonation_id=? AND actor_user_id=? AND status='active'").bind(id,actor.userId).first<Record<string,unknown>>();await env.DB.prepare("UPDATE impersonation_sessions SET status='ended',ended_at=? WHERE impersonation_id=? AND actor_user_id=? AND status='active'").bind(now,id,actor.userId).run();if(active)await appendAuditEvent(env,actor.streamId,"user","ReplayPersonaImpersonationEnded",{impersonation_id:id,persona_id:String(active.persona_id),replay_session_id:String(active.replay_session_id),fictional_user_id:String(active.fictional_user_id)});}
+    const response=Response.json({active:false,route:"/laboratory/replay"});response.headers.set("set-cookie",impersonationCookie(request,"",0));return response;
+  }
+  return new Response("Method not allowed",{status:405});
 }
 
 export async function handleAdminUsers(request: Request, env: WorkerEnv) {
-  const auth = await requireUser(request, env, "admin"); if (auth.response || !auth.user) return auth.response!;
+  const auth = await requireUser(request, env, "admin", {account:"principal"}); if (auth.response || !auth.user) return auth.response!;
   if (request.method === "GET") {
     const result = await env.DB.prepare("SELECT user_id,email,display_name,role,consent_version,consented_at,created_at FROM users ORDER BY created_at").all(); return Response.json({ users: result.results });
   }

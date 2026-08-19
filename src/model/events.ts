@@ -28,8 +28,9 @@ export type EventInput = {
 export type CreativeBlock = {
   id: string;
   documentId: string;
+  canvasId: string;
   projectId: string;
-  scope: "document" | "library";
+  scope: "document" | "library" | "canvas";
   type: string;
   handle: string;
   position: string;
@@ -86,6 +87,8 @@ export type CreativeDocument = {
 export type CreativeOutput = {
   id: string;
   documentId: string;
+  canvasId: string | null;
+  contextSetId: string | null;
   generationId: string;
   modelId: string;
   variant: number;
@@ -207,7 +210,7 @@ const itemId = (value: unknown) => {
   return String(ref.document_id ?? ref.block_id ?? ref.collection_id ?? ref.object_id ?? "");
 };
 
-export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFINITY, selectedDocumentId = ""): CreativeProjection {
+export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFINITY, selectedDocumentId = "", selectedProjectId = ""): CreativeProjection {
   const projects = new Map<string, Omit<CreativeProject, "documentCount" | "collectionCount" | "blockCount" | "outputCount">>();
   const blocks = new Map<string, CreativeBlock>();
   const blockRelations = new Map<string, CreativeBlockRelation>();
@@ -215,6 +218,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   const collections = new Map<string, CreativeCollection>();
   const membership: Record<string, { collectionId: string; position: string }> = {};
   const outputs = new Map<string, CreativeOutput>();
+  const generationCanvas = new Map<string,{canvasId:string;contextSetId:string}>();
   const previewOutputByEvent = new Map<string, string>();
   const annotations = new Map<string, Record<string, unknown>>();
   const families = new Map<string, Record<string, unknown>>();
@@ -263,12 +267,14 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       }
       case "BlockCreated": {
         const id = String(p.block_id);
-        const scope = p.scope === "library" || p.library_block === true ? "library" : "document";
-        const documentId = scope === "library" ? "" : String(p.document_id ?? state.documentId);
+        const scope: CreativeBlock["scope"] = p.canvas_id || p.scope === "canvas" ? "canvas" : p.scope === "library" || p.library_block === true ? "library" : "document";
+        const documentId = scope === "document" ? String(p.document_id ?? state.documentId) : "";
+        const canvasId = scope === "canvas" ? String(p.canvas_id ?? "") : "";
         const projectId = String(p.project_id ?? (documentId ? documents.get(documentId)?.projectId : state.projectId) ?? state.projectId);
-        blocks.set(id, { id, documentId, projectId, scope, type: String(p.type ?? "text"), handle: String(p.handle ?? id), position: String(p.position ?? "a0"), removed: false, locked: false, properties: { ...asRecord(p.properties) }, sourceEvents: [event.eventId] });
+        blocks.set(id, { id, documentId, canvasId, projectId, scope, type: String(p.type ?? "text"), handle: String(p.handle ?? id), position: String(p.position ?? "a0"), removed: false, locked: false, properties: { ...asRecord(p.properties) }, sourceEvents: [event.eventId] });
         break;
       }
+      case "BlockRehomed": { const b=blocks.get(String(p.block_id??""));if(b){const nextScope=String(p.scope??"library") as CreativeBlock["scope"];b.scope=nextScope;b.documentId=nextScope==="document"?String(p.document_id??""):"";b.canvasId=nextScope==="canvas"?String(p.canvas_id??""):"";b.projectId=String(p.project_id??b.projectId);b.sourceEvents.push(event.eventId);}break; }
       case "BlockRenamed": { const b = blocks.get(String(p.block_id)); if (b) { b.handle = String(p.new_handle ?? b.handle); b.sourceEvents.push(event.eventId); } break; }
       case "BlockPropertyEdited": {
         const b = blocks.get(String(p.block_id)); const path = String(p.property_path ?? "");
@@ -305,17 +311,17 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "CollectionItemAdded": { const id = itemId(p.item_ref); if (id) membership[id] = { collectionId: String(p.collection_id), position: String(p.position ?? "a0") }; break; }
       case "CollectionItemRemoved": delete membership[itemId(p.item_ref)]; break;
       case "CollectionItemMoved": { const id = itemId(p.item_ref); if (id) membership[id] = { collectionId: String(p.to_collection_id), position: String(p.position ?? "a0") }; break; }
-      case "ContextCompiled": state.latestCompile = p; break;
+      case "ContextCompiled": {state.latestCompile=p;const snapshot=asRecord(p.compiled_snapshot);const canvas=asRecord(snapshot.canvas);const generationId=String(p.generation_id??"");if(generationId&&canvas.canvas_id)generationCanvas.set(generationId,{canvasId:String(canvas.canvas_id),contextSetId:String(canvas.context_set_id??"")});break;}
       case "IdeationPreviewCompleted": {
         const id=String(p.object_id??(Array.isArray(p.object_ids)?p.object_ids[0]:"")??"")||`draft-${String(p.generation_id??event.eventId)}`;
         previewOutputByEvent.set(event.eventId,id);
-        outputs.set(id,{id,documentId:String(p.document_id??state.documentId),generationId:String(p.generation_id??""),modelId:String(p.model_id??"gpt-image-2"),variant:Number(p.variant??outputs.size%4),latency:Number(p.latency_ms??0),sequence:event.sequence,pinned:false,saved:false,discarded:false,library:false,contentRef:p.output_ref?String(p.output_ref):null,promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null,provider:String(p.provider??"openai"),mediaUrl:p.media_url?String(p.media_url):null,mediaType:p.media_type?String(p.media_type):null,width:p.image_width?Number(p.image_width):null,height:p.image_height?Number(p.image_height):null,plannerModelId:p.planner_model_id?String(p.planner_model_id):null,quality:"low",purpose:"ideate",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):p.source_chat_turn_id?"chat":null,promotionId:null,promotedFromId:null,promotedFromEventId:null,focalPoint:normalizeImageFocalPoint(p.focal_point),standalone:!p.prompt_fan_id,standaloneSequence:p.prompt_fan_id?null:event.sequence});
+        {const receipt=generationCanvas.get(String(p.generation_id??""));outputs.set(id,{id,documentId:String(p.document_id??state.documentId),canvasId:p.canvas_id?String(p.canvas_id):receipt?.canvasId??null,contextSetId:p.context_set_id?String(p.context_set_id):receipt?.contextSetId??null,generationId:String(p.generation_id??""),modelId:String(p.model_id??"gpt-image-2"),variant:Number(p.variant??outputs.size%4),latency:Number(p.latency_ms??0),sequence:event.sequence,pinned:false,saved:false,discarded:false,library:false,contentRef:p.output_ref?String(p.output_ref):null,promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null,provider:String(p.provider??"openai"),mediaUrl:p.media_url?String(p.media_url):null,mediaType:p.media_type?String(p.media_type):null,width:p.image_width?Number(p.image_width):null,height:p.image_height?Number(p.image_height):null,plannerModelId:p.planner_model_id?String(p.planner_model_id):null,quality:"low",purpose:"ideate",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):p.source_chat_turn_id?"chat":null,promotionId:null,promotedFromId:null,promotedFromEventId:null,focalPoint:normalizeImageFocalPoint(p.focal_point),standalone:!p.prompt_fan_id,standaloneSequence:p.prompt_fan_id?null:event.sequence});}
         break;
       }
       case "GenerationCompleted": {
         if (p.report_space === "scout") break;
         const ids = Array.isArray(p.object_ids) ? p.object_ids : [];
-        ids.forEach((value) => { const id = String(value); const promotedFromEventId=p.reference_preview_event_id?String(p.reference_preview_event_id):null; outputs.set(id, { id, documentId: String(p.document_id ?? state.documentId), generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")), mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null, width: p.image_width ? Number(p.image_width) : null, height: p.image_height ? Number(p.image_height) : null, plannerModelId: p.planner_model_id ? String(p.planner_model_id) : null, quality:p.quality==="low"?"low":p.quality==="medium"?"medium":"high",purpose:p.purpose==="ideate"?"ideate":"final",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):null,promotionId:p.promotion_id?String(p.promotion_id):null,promotedFromId:p.promoted_from_object_id?String(p.promoted_from_object_id):promotedFromEventId?previewOutputByEvent.get(promotedFromEventId)??null:null,promotedFromEventId,focalPoint:normalizeImageFocalPoint(p.focal_point),standalone:!p.prompt_fan_id,standaloneSequence:p.prompt_fan_id?null:event.sequence }); });
+        ids.forEach((value) => { const id = String(value); const promotedFromEventId=p.reference_preview_event_id?String(p.reference_preview_event_id):null;const receipt=generationCanvas.get(String(p.generation_id??"")); outputs.set(id, { id, documentId: String(p.document_id ?? state.documentId), canvasId:p.canvas_id?String(p.canvas_id):receipt?.canvasId??null,contextSetId:p.context_set_id?String(p.context_set_id):receipt?.contextSetId??null,generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")), mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null, width: p.image_width ? Number(p.image_width) : null, height: p.image_height ? Number(p.image_height) : null, plannerModelId: p.planner_model_id ? String(p.planner_model_id) : null, quality:p.quality==="low"?"low":p.quality==="medium"?"medium":"high",purpose:p.purpose==="ideate"?"ideate":"final",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):null,promotionId:p.promotion_id?String(p.promotion_id):null,promotedFromId:p.promoted_from_object_id?String(p.promoted_from_object_id):promotedFromEventId?previewOutputByEvent.get(promotedFromEventId)??null:null,promotedFromEventId,focalPoint:normalizeImageFocalPoint(p.focal_point),standalone:!p.prompt_fan_id,standaloneSequence:p.prompt_fan_id?null:event.sequence }); });
         break;
       }
       case "ImageFocalPointCalculated": {
@@ -367,13 +373,14 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   }
   const requestedDocument=selectedDocumentId?documents.get(selectedDocumentId):undefined;
   if(requestedDocument&&!requestedDocument.removed&&requestedDocument.projectId!==state.projectId){const requestedProject=projects.get(requestedDocument.projectId);state.projectId=requestedDocument.projectId;if(requestedProject){state.projectName=requestedProject.name;state.projectState=requestedProject.state;}}
+  if(selectedProjectId&&selectedProjectId!==state.projectId){const requestedProject=projects.get(selectedProjectId);if(requestedProject){state.projectId=requestedProject.id;state.projectName=requestedProject.name;state.projectState=requestedProject.state;}}
   const visibleDocuments=[...documents.values()].filter((document)=>!document.removed&&document.projectId===state.projectId).sort((a,b)=>b.createdSequence-a.createdSequence);const visibleDocumentIds=new Set(visibleDocuments.map((document)=>document.id));
   const visibleCollections=new Set([...collections.values()].filter((collection)=>!collection.removed&&collection.projectId===state.projectId).map((collection)=>collection.id));
   for(const [id,filed] of Object.entries(membership)){
     const itemProjectId=documents.get(id)?.projectId??blocks.get(id)?.projectId??collections.get(id)?.projectId??(outputs.get(id)?.documentId?documents.get(outputs.get(id)!.documentId)?.projectId:undefined);
     if(!visibleCollections.has(filed.collectionId)||(documents.has(id)&&!visibleDocumentIds.has(id))||(blocks.has(id)&&blocks.get(id)!.removed)||(itemProjectId&&itemProjectId!==state.projectId))delete membership[id];
   }
-  state.libraryBlocks = [...blocks.values()].filter((b) => !b.removed&&b.projectId===state.projectId&&(b.scope==="library"||visibleDocumentIds.has(b.documentId))).sort((a, b) => a.position.localeCompare(b.position));
+  state.libraryBlocks = [...blocks.values()].filter((b) => !b.removed&&b.projectId===state.projectId&&(b.scope==="library"||b.scope==="canvas"||visibleDocumentIds.has(b.documentId))).sort((a, b) => a.position.localeCompare(b.position));
   state.documents = visibleDocuments;
   const selectedDocument=selectedDocumentId?visibleDocuments.find((document)=>document.id===selectedDocumentId):undefined;
   if(selectedDocument){state.documentId=selectedDocument.id;state.documentTitle=selectedDocument.title;}
@@ -386,13 +393,14 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   state.libraryOutputs = [...outputs.values()].filter((o) => !o.discarded&&(!documents.has(o.documentId)||visibleDocumentIds.has(o.documentId))).sort((a, b) => b.sequence - a.sequence);
   state.outputs = state.libraryOutputs.filter((output) => output.documentId === state.documentId);
   state.annotations = [...annotations.values()]; state.families = [...families.values()]; state.preferences = [...preferences.values()]; state.conditions = [...conditions.values()];
-  state.projects=[...projects.values()].map((project)=>{const projectDocuments=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed);const documentIds=new Set(projectDocuments.map((document)=>document.id));const projectOutputs=[...outputs.values()].filter((output)=>documentIds.has(output.documentId)&&!output.discarded);return{...project,documentCount:projectDocuments.length,collectionCount:[...collections.values()].filter((collection)=>collection.projectId===project.id&&!collection.removed).length,blockCount:[...blocks.values()].filter((block)=>block.projectId===project.id&&!block.removed&&(block.scope==="library"||documentIds.has(block.documentId))).length,outputCount:generationHistoryItems(projectOutputs).length};}).sort((a,b)=>a.id===state.projectId?-1:b.id===state.projectId?1:b.lastSequence-a.lastSequence);
+  state.projects=[...projects.values()].map((project)=>{const projectDocuments=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed);const documentIds=new Set(projectDocuments.map((document)=>document.id));const projectOutputs=[...outputs.values()].filter((output)=>documentIds.has(output.documentId)&&!output.discarded);return{...project,documentCount:projectDocuments.length,collectionCount:[...collections.values()].filter((collection)=>collection.projectId===project.id&&!collection.removed).length,blockCount:[...blocks.values()].filter((block)=>block.projectId===project.id&&!block.removed&&(block.scope==="library"||block.scope==="canvas"||documentIds.has(block.documentId))).length,outputCount:generationHistoryItems(projectOutputs).length};}).sort((a,b)=>a.id===state.projectId?-1:b.id===state.projectId?1:b.lastSequence-a.lastSequence);
   if(!state.projects.length&&state.projectId)state.projects=[{id:state.projectId,name:state.projectName,state:state.projectState,createdSequence:0,lastSequence:0,documentCount:state.documents.length,collectionCount:state.collections.length,blockCount:state.libraryBlocks.length,outputCount:generationHistoryItems(state.libraryOutputs).length}];
   return state;
 }
 
 export const shortEventType = (type: string) => type.replace(/([a-z])([A-Z])/g, "$1 $2");
 export function eventCategory(type: string) {
+  if (/^(Canvas|Stroke|ContextSet)/.test(type)) return "canvas";
   if (/^(Block|Document|Project)/.test(type)) return "document";
   if (type.startsWith("Collection")) return "collection";
   if (/Generation|Ideation|ContextCompiled|Model|Adapter|Capability|PromptTechnique/.test(type)) return "generation";

@@ -148,9 +148,13 @@ test("settles generation capacity by reservation identity and repairs orphaned f
   assert.match(jobsApi,/releaseBudgetReservationsForCorrelation\(env,user,row\.correlation_id/);
   assert.doesNotMatch(jobsApi,/releaseBudget\(env, user\.userId, reservedTokens\)/);
   assert.doesNotMatch(eventsApi,/releaseBudget\(env,ownerId,reserved\)/);
-  assert.match(eventsApi,/settleBudget\(env,ownerId,reservation\.reservationId/);
-  assert.match(actions,/aria-describedby=\$\{previewFanBudgetBlocked\?this\.#budgetNoteId:nothing\}/);
+  assert.match(eventsApi,/const billingOwnerId=auth\.user\.billingUserId\?\?ownerId/);
+  assert.match(eventsApi,/settleBudget\(env,billingOwnerId,reservation\.reservationId/);
+  assert.match(actions,/aria-describedby=\$\{previewFanBudgetBlocked&&budgetNoteVisible\?this\.#budgetNoteId:nothing\}/);
   assert.match(actions,/Failed work releases its reservation automatically/);
+  assert.match(actions,/Dismiss generation capacity notification/);
+  assert.match(actions,/sessionStorage\.setItem\(key,"dismissed"\)/);
+  assert.match(actions,/budgetBand/);
   assert.match(actions,/<button class="button ghost compact" aria-label="Dismiss this generation issue"/);
   assert.doesNotMatch(actions,/category==="safety"\?html`<button class="button ghost compact" aria-label="Dismiss/);
 });

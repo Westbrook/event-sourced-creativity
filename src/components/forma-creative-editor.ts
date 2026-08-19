@@ -53,6 +53,7 @@ const FRIENDLY_LABELS: Record<BlockKind, string> = {
   exclusion: "General constraint",
   accessibility: "Accessibility",
   reference: "Reference image",
+  sketch: "Sketch",
 };
 
 const QUICK_TOOLS: readonly { type: BlockKind; intent: BlockIntent; label?: string; description?: string }[] = [
@@ -130,7 +131,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
       const form = new FormData();
       form.append("file", file);
       form.append("rightsConfirmed", "true");
-      const response = await fetch("/api/media", { method: "POST", body: form });
+      const response = await this.store.guardedFetch("/api/media", { method: "POST", body: form },"upload this reference image");
       const media = await response.json() as { key?: string; url?: string; error?: string };
       if (!response.ok || !media.url) throw new Error(media.error ?? "That image could not be added");
       const projection = this.store.projection.get();

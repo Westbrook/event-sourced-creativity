@@ -7,6 +7,28 @@ const [legacy, design] = await Promise.all([
   readFile(new URL("../src/design-system.css", import.meta.url), "utf8"),
 ]);
 
+const rgb = (hex) => {
+  const value = hex.replace("#", "");
+  const normalized = value.length === 3 ? [...value].map((part) => part + part).join("") : value;
+  return [0, 2, 4].map((offset) => Number.parseInt(normalized.slice(offset, offset + 2), 16));
+};
+
+const luminance = (hex) => rgb(hex)
+  .map((channel) => channel / 255)
+  .map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+  .reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+
+const contrast = (foreground, background) => {
+  const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+  return (values[0] + 0.05) / (values[1] + 0.05);
+};
+
+const themeValues = (token) => {
+  const match = legacy.match(new RegExp(`--${token}:\\s*light-dark\\((#[0-9a-f]+),\\s*(#[0-9a-f]+)\\)`, "i"));
+  assert.ok(match, `--${token} should define light and dark values`);
+  return { light: match[1], dark: match[2] };
+};
+
 test("the visual system follows the user agent color preference with native CSS", () => {
   assert.match(legacy, /color-scheme:\s*light dark;/);
   assert.doesNotMatch(`${legacy}\n${design}`, /prefers-color-scheme/);
@@ -38,11 +60,34 @@ test("semantic surfaces and foregrounds have paired light and dark values", () =
   }
 });
 
-test("shared chrome consumes theme tokens while fixed dark media stages remain explicit", () => {
+test("semantic content pairs remain readable in both user color preferences", () => {
+  for (const [foregroundToken, backgroundToken, minimum] of [
+    ["ink", "paper", 7],
+    ["ink", "panel", 7],
+    ["muted", "paper", 4.5],
+    ["muted", "panel", 4.5],
+    ["on-strong", "ink", 7],
+    ["on-accent", "orange", 4.5],
+  ]) {
+    const foreground = themeValues(foregroundToken);
+    const background = themeValues(backgroundToken);
+    for (const mode of ["light", "dark"]) {
+      assert.ok(
+        contrast(foreground[mode], background[mode]) >= minimum,
+        `${foregroundToken} on ${backgroundToken} should meet ${minimum}:1 in ${mode} mode`,
+      );
+    }
+  }
+});
+
+test("shared chrome and replay content consume theme tokens while fixed dark media stages remain explicit", () => {
   assert.match(design, /\.output-column\s*\{\s*background:\s*var\(--canvas\);\s*\}/);
   assert.match(design, /\.button\.primary\s*\{[^}]*color:\s*var\(--on-strong\);[^}]*background:\s*var\(--ink\);/s);
   assert.match(design, /\.chat-line\.user\s*>\s*p\s*\{\s*color:\s*var\(--on-strong\);/);
-  assert.match(design, /Media stages and the replay console intentionally keep\s*\n\s*\* their fixed dark presentation/);
+  assert.match(design, /Image and spatial-inspection stages intentionally keep a\s*\n\s*\* fixed dark presentation/);
+  assert.match(design, /\.replay-console\s*\{[^}]*color:\s*var\(--ink\);[^}]*background:\s*var\(--panel\);[^}]*border-color:\s*var\(--line\);/s);
+  assert.match(design, /\.replay-explanation\s*\{[^}]*color:\s*var\(--ink\);[^}]*background:\s*var\(--panel-2\);[^}]*border:\s*1px solid var\(--line\);/s);
+  assert.match(design, /\.replay-explanation p,[^}]*\.replay-explanation small\s*\{\s*color:\s*var\(--muted\);\s*\}/s);
 });
 
 test("operations and laboratory navigation share readable fixed-dark chrome in either color scheme", () => {
@@ -88,6 +133,10 @@ test("shared navigation and common content surfaces remain preference reactive",
   assert.match(design, /\.output-quality\.draft\s*\{[^}]*color:\s*var\(--warning\);[^}]*var\(--panel\)/s);
   assert.match(design, /\.capability-audit\s*\{\s*color:\s*var\(--ink\);\s*\}/);
   assert.match(design, /\.capability-audit b\s*\{\s*color:\s*var\(--orange\);\s*\}/);
+  assert.match(design, /\.actor-token\.worker\s*\{[^}]*color:\s*var\(--warning\);[^}]*var\(--panel\)/s);
+  assert.match(design, /\.actor-token\.model\s*\{[^}]*color:\s*var\(--blue\);[^}]*var\(--panel\)/s);
+  assert.match(design, /\.actual-replay-status\s*\{[^}]*color:\s*var\(--success\);[^}]*var\(--panel\)/s);
+  assert.match(design, /\.permission-table em\s*\{[^}]*color:\s*var\(--success\);[^}]*var\(--panel\)/s);
 });
 
 test("fixed-dark inspection surfaces use a non-reactive readable foreground palette", () => {

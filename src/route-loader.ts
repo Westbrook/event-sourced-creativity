@@ -8,6 +8,7 @@ type RouteModule = Promise<unknown>;
  */
 export function loadRouteComponent(path: string): RouteModule {
   const application=applicationIdFromRoute(path);
+  if(application==="canvas")return import("./apps/canvas/entry").then((module)=>module.loadCanvasRoute(path));
   if(application==="operations")return import("./apps/operations/entry").then((module)=>module.loadOperationsRoute(path));
   if(application==="laboratory")return import("./apps/laboratory/entry").then((module)=>module.loadLaboratoryRoute(path));
   return import("./apps/creative/entry").then((module)=>module.loadCreativeRoute(path));

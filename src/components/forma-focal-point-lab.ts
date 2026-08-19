@@ -42,6 +42,8 @@ function diagnosticOutput(id: string, mediaUrl: string, point: ImageFocalPoint, 
   return {
     id,
     documentId: "focal-point-lab",
+    canvasId: null,
+    contextSetId: null,
     generationId: "focal-point-lab",
     modelId,
     variant: index,

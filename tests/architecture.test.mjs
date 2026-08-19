@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import { exportArchive, importArchive } from "../src/model/archive.ts";
-import { buildScenario, explainReplayEvent, SCENARIOS, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
+import { buildReplayScenario, buildScenario, explainReplayEvent, REPLAY_SCENARIOS, SCENARIOS, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
 import { BLOCK_TYPES } from "../src/model/block-types.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { applicationIdFromRoute } from "../src/platform/applications.ts";
@@ -32,6 +32,13 @@ test("builds and replays theoretical long streams deterministically", () => {
   const halfway = foldEvents(first, 5_000); const final = foldEvents(first);
   assert.ok(final.blocks.length >= halfway.blocks.length);
   assert.ok(final.outputs.length >= halfway.outputs.length);
+});
+
+test("offers one exact-length application tour containing every workflow narrative", () => {
+  const first=buildReplayScenario("complete-application-tour",1_000);const second=buildReplayScenario("complete-application-tour",1_000);
+  assert.equal(first.length,1_000);assert.deepEqual(first,second);assert.equal(first[0].sequence,1);assert.equal(first.at(-1).sequence,1_000);
+  for(const scenario of SCENARIOS)assert.ok(first.some((event)=>event.correlationId.includes(`corr-${scenario.key}-`)),`${scenario.label} is absent from the complete tour`);
+  assert.equal(REPLAY_SCENARIOS[0].key,"complete-application-tour");
 });
 
 test("delivers prompt fans as one generation with explicit member promotion", async () => {

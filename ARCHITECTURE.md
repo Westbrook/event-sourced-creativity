@@ -1,6 +1,6 @@
 # Application architecture
 
-The product is one event-sourced platform with three independently loaded applications. They share durable data and domain contracts; they do not share route ownership or import each other.
+The product is one event-sourced platform with four independently loaded applications. They share durable data and domain contracts; they do not share route ownership or import each other.
 
 ## Application boundaries
 
@@ -9,6 +9,14 @@ The product is one event-sourced platform with three independently loaded applic
 Owns projects, Create, documents, the Library, Re-entry, Scout, and Taste & time. It may append user-authorized creative events and consume creative projections.
 
 The current Create experience remains the baseline. Future Create approaches belong below `src/apps/creative/create/` and use `/creative/create/...` for their application routes. They must operate on the same document stream and projections rather than creating a parallel data model.
+
+### Canvas
+
+Owns named, project-scoped spatial workspaces and report-space proposals. Canvas is an alternative authoring interface over the same projects, documents, blocks, collections, outputs, users, and project membership boundaries as Creative. Canvas-native blocks remain visible in the project Library.
+
+Spatial placement is its own projection: moving or grouping an item never changes its source content and never enters generation context until a person emits `ContextSetFormalized`. URL-only lenses may reorder or filter a view without creating events. Cursor presence is ephemeral and must not enter the durable stream.
+
+Canonical routes begin with `/canvas`. `src/canvas/` owns the spatial projection and UI, while `src/sync/` and `worker/realtime/` own offline operation delivery and admission.
 
 ### Operations
 
@@ -19,6 +27,8 @@ Canonical routes begin with `/operations`. Historical `/system` and `/admin/even
 ### Laboratory
 
 Owns controlled experiments, comparison tooling, and reusable synthetic fixtures. A laboratory may read production-shaped data and save explicitly approved fixtures, but experimental controls must not silently mutate creative documents.
+
+Each actual-data replay owns one fictional creator with a separate event stream, media namespace, and complete project graph. Administrators inspect that graph through a bounded impersonation session rather than copying it into a regular account. The effective fictional identity is always visible; every modifying request requires a fresh explicit confirmation, while cancellation or light-dismiss prevents the request. Personal attention, memory, taste, Scout, and re-entry evidence never cross this boundary, and provider costs remain attributable to the signed-in principal.
 
 Canonical routes begin with `/laboratory`. Replay and focal-point comparison are the first two laboratories.
 

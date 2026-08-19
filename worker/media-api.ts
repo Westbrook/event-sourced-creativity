@@ -3,9 +3,9 @@ import type { WorkerEnv } from "./runtime";
 
 const ownerPrefix = (ownerId:string) => ownerId.replace(/[^a-zA-Z0-9._-]/g,"-");
 
-export async function storeGeneratedImage(env:WorkerEnv,ownerId:string,generationId:string,bytes:Uint8Array,model:string,mimeType="image/png") {
+export async function storeGeneratedImage(env:WorkerEnv,ownerId:string,generationId:string,bytes:Uint8Array,model:string,mimeType="image/png",metadata:Record<string,string>={}) {
   const extension=mimeType==="image/jpeg"?"jpg":mimeType==="image/webp"?"webp":"png";const key=`${ownerPrefix(ownerId)}/generated/${generationId}.${extension}`;
-  await env.MEDIA.put(key,bytes.buffer as ArrayBuffer,{httpMetadata:{contentType:mimeType},customMetadata:{ownerId,generationId,model,source:"openai-image-api"}});
+  await env.MEDIA.put(key,bytes.buffer as ArrayBuffer,{httpMetadata:{contentType:mimeType},customMetadata:{ownerId,generationId,model,source:"openai-image-api",...metadata}});
   return{key,url:`/api/media/${encodeURIComponent(key)}`,mimeType};
 }
 

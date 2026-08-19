@@ -4,13 +4,15 @@ import { DOCUMENT_VIEWS } from "./document-view-signals.ts";
 import type { CreativeEvent } from "./events.ts";
 import { PROMPT_TECHNIQUES } from "./prompt-structures.ts";
 import { normalizeSpatialScope } from "./spatial-scope.ts";
+import { imageAspectRatioLabel, normalizeImageFormat } from "./image-format.ts";
 
-export const REPLAY_COVERAGE_CONTRACT_VERSION = 4;
+export const REPLAY_COVERAGE_CONTRACT_VERSION = 9;
 
 export const REPLAY_CAPABILITIES = [
   { key:"event-vocabulary", label:"Every admitted event family is rehearsed", evidence:["event registry"] },
   { key:"context-vocabulary", label:"Every authored block type is exercised", evidence:["BlockCreated"] },
   { key:"document-view-workflow", label:"Every document view and Focus mode appear", evidence:["DocumentViewVisited"] },
+  { key:"application-view-workflow", label:"General visits across every application are measurable", evidence:["ApplicationViewVisited"] },
   { key:"job-vocabulary", label:"Every durable asynchronous job kind appears", evidence:["GenerationRequested","ChatMessageSent","AssistantReasoned","ExtractionRequested"] },
   { key:"chat-resolution", label:"Multi-turn Chat changes intent with and without Live preview", evidence:["ChatMessageSent","AssistantReasoned","BlockCreated","BlockPropertyEdited"] },
   { key:"draft-promotion", label:"Draft selection becomes a full-quality visual handoff", evidence:["IdeationPreviewCompleted","IdeationPromoted","GenerationCompleted"] },
@@ -18,8 +20,11 @@ export const REPLAY_CAPABILITIES = [
   { key:"prompt-fan-judgment", label:"Fan members can be promoted and their technique preferred", evidence:["PromptFanOutputPromoted","PromptTechniquePreferred","PromptTechniquePreferenceRevoked"] },
   { key:"spatial-vocabulary", label:"Document, region, rectangle, subject, and path scopes appear", evidence:["BlockCreated","BlockPropertyEdited"] },
   { key:"spatial-editing", label:"Rectangle handles and clipping-path points are actually edited", evidence:["BlockPropertyEdited"] },
+  { key:"image-format-control", label:"Block-level dimensions and aspect ratio survive editing, compilation, and rendering", evidence:["BlockCreated","BlockPropertyEdited","GenerationRequested","ContextCompiled","GenerationCompleted"] },
   { key:"reference-realities", label:"Reference mood, composition, material, light, space, and palette are extracted", evidence:["ExtractionCompleted","ChipEdited"] },
+  { key:"reference-asset-reality", label:"Actual-data reference uploads contain prepared, attributable image bytes", evidence:["ReferenceIngested","RightsAsserted"] },
   { key:"reference-pixel-handoff", label:"Rights-aware pixels reach preview and full image edits", evidence:["RightsAsserted","BlockPropertyEdited","ContextCompiled","GenerationCompleted"] },
+  { key:"study-to-composition", label:"Focused studies can lock decisions and pixels before composed-image generation", evidence:["BlockLocked","PromptFanOutputPromoted","ContextCompiled","GenerationCompleted"] },
   { key:"connected-context", label:"Typed reusable-block relationships survive compilation", evidence:["BlockRelationAdded","BlockRelationRemoved","ContextCompiled"] },
   { key:"revision-queue", label:"Overlapping revisions, recovery, and out-of-order completion stay legible", evidence:["GenerationRequested","JobAttemptInterrupted","GenerationCompleted"] },
   { key:"quality-media", label:"Draft and full outputs retain quality, media, and focal-point receipts", evidence:["IdeationPreviewCompleted","GenerationCompleted","ImageFocalPointCalculated"] },
@@ -31,6 +36,11 @@ export const REPLAY_CAPABILITIES = [
   { key:"document-lifecycle", label:"Project, document, collection, and reusable-block lifecycles appear", evidence:["ProjectCreated","DocumentForked","DocumentRemoved","CollectionCreated"] },
   { key:"operations", label:"Provider, retry, budget, validation, and retention failures remain inspectable", evidence:["BudgetReserved","JobAttemptInterrupted","BudgetReleased","ValidationFailed","RetentionSweepCompleted"] },
   { key:"job-control", label:"Creators can stop image work and administrators can force-fail exceptional jobs", evidence:["JobCanceled","JobForceFailed","BudgetReleased"] },
+  { key:"canvas-shared-sources", label:"Canvas places every shared project-source family without copying it", evidence:["CanvasCreated","CanvasItemPlaced","CanvasReferenceCreated"] },
+  { key:"canvas-convergence", label:"Canvas geometry, text, locks, and strokes exercise their convergence grammar", evidence:["CanvasRegisterSet","CanvasTextApplied","CanvasLockAcquired","StrokeAdded","StrokeErased"] },
+  { key:"canvas-context-formalization", label:"Only an explicit canvas context set crosses into generation", evidence:["ContextSetFormalized","ContextCompiled","GenerationCompleted"] },
+  { key:"canvas-report-space", label:"Arrangement assistance stays proposed, voted, reversible, and separate from authorship", evidence:["ProposalIssued","VoteCast","ProposalAccepted","ProposalRejected","ProposalRestored"] },
+  { key:"canvas-governance", label:"Membership, recovery, lifecycle, and presence-minimization boundaries are rehearsed", evidence:["MembershipAdded","MembershipRemoved","CanvasLockOverridden","CanvasRemoved","CanvasRestored"] },
 ] as const;
 
 export type ReplayCoverageCheck = {
@@ -52,6 +62,7 @@ export function evaluateReplayCoverage(events: CreativeEvent[], expectedEventTyp
   const blockTypes = new Set(blockEvents.map((event) => text(event.payload.type)));
   const viewEvents = events.filter((event) => event.type === "DocumentViewVisited");
   const views = new Set(viewEvents.map((event) => text(event.payload.view)));
+  const applicationViewEvents=events.filter((event)=>event.type==="ApplicationViewVisited");const visitedApplications=new Set(applicationViewEvents.map((event)=>text(event.payload.application)));
   const scopes = events.flatMap((event) => {
     if (event.type === "BlockCreated") return [normalizeSpatialScope(record(event.payload.properties).spatial_scope)];
     if (event.type === "BlockPropertyEdited" && event.payload.property_path === "spatial_scope") return [normalizeSpatialScope(event.payload.new_value)];
@@ -86,6 +97,7 @@ export function evaluateReplayCoverage(events: CreativeEvent[], expectedEventTyp
     if (beforeCompletion.length >= 2 && documentRevisions.size >= 2) { overlapping = beforeCompletion; revisions = documentRevisions; break; }
   }
   const editedScopes = events.filter((event) => event.type === "BlockPropertyEdited" && event.payload.property_path === "spatial_scope" && ["aabb","path"].includes(normalizeSpatialScope(event.payload.new_value).kind) && /spatial-preview|scope-dialog/.test(text(event.payload.source_surface)));
+  const formatCreated=blockEvents.find((event)=>text(event.payload.type)==="format"&&Boolean(record(record(event.payload.properties).image_format).dimensions));const formatEdit=events.find((event)=>event.type==="BlockPropertyEdited"&&event.payload.property_path==="image_format"&&Boolean(record(event.payload.new_value).dimensions));const authoredFormat=normalizeImageFormat(formatEdit?.payload.new_value??record(formatCreated?.payload.properties).image_format);const formatReceipts=events.filter((event)=>["GenerationRequested","ContextCompiled","IdeationPreviewCompleted","GenerationCompleted"].includes(event.type)&&text(event.payload.requested_output)!=="report-candidate"&&Boolean(event.payload.target_aspect_ratio));const matchingFormatReceipts=formatReceipts.filter((event)=>text(event.payload.target_aspect_ratio)===imageAspectRatioLabel(authoredFormat)&&Number(event.payload.target_width)===authoredFormat.dimensions.width&&Number(event.payload.target_height)===authoredFormat.dimensions.height);
   const extraction = events.filter((event) => event.type === "ExtractionCompleted");
   const findings = new Set(extraction.flatMap((event) => list(event.payload.chips).flatMap((chip) => list(record(chip).value).map((finding) => text(record(finding).kind))).filter(Boolean)));
   const paletteFound = extraction.some((event) => list(event.payload.chips).some((chip) => text(record(chip).property) === "colors"));
@@ -100,13 +112,28 @@ export function evaluateReplayCoverage(events: CreativeEvent[], expectedEventTyp
     return [];
   }));
   const providerBacked = events.some((event) => event.payload.mock_data_source === "openai-provider");
+  const developmentEvents=events.filter((event)=>Boolean(text(event.payload.development_stage_kind)));
+  const studyKinds=new Set(developmentEvents.filter((event)=>event.payload.study===true).map((event)=>text(event.payload.development_stage_kind)));
+  const lockedStudyKinds=new Set(events.filter((event)=>event.type==="PromptFanOutputPromoted"&&event.payload.study_locked===true).map((event)=>text(event.payload.development_stage_kind)));
+  const studyComposition=compiled.filter((event)=>text(event.payload.development_stage_kind)==="composition").find((event)=>{const snapshot=record(event.payload.compiled_snapshot);const consumed=new Set(list(event.payload.consumes_studies).map(text));const locked=list(snapshot.locked_studies);return [...studyKinds].every((kind)=>consumed.has(kind)&&locked.some((item)=>text(record(item).study_kind)===kind))&&event.payload.used_locked_study_pixels===(studyKinds.size>0);});
+  const referenceUploads = events.filter((event) => event.type === "ReferenceIngested");
+  const concreteReference = referenceUploads.find((event) => {
+    const source = record(event.payload.reference_source);
+    return text(event.payload.media_url).startsWith("/api/media/") && event.payload.actual_image === true && event.payload.asset_prepared_before_ingest === true && Number(event.payload.byte_size) > 0 && text(event.payload.content_hash).length === 64 && ["generated","licensed-web"].includes(text(source.kind)) && Boolean(text(event.payload.attribution));
+  });
   const providerFanValid = !providerBacked || completeFan.every((event) => text(event.payload.media_url).startsWith("/api/media/"));
+  const canvasEvents=events.filter((event)=>event.type.startsWith("Canvas")||["StrokeAdded","StrokeErased","ContextSetFormalized","ProposalIssued","VoteCast","MembershipAdded","MembershipRemoved","BlockRehomed"].includes(event.type));
+  const canvasSourceKinds=new Set(canvasEvents.filter((event)=>event.type==="CanvasItemPlaced"||event.type==="CanvasReferenceCreated").map((event)=>text(event.payload.source_kind)));
+  const canvasCompile=compiled.find((event)=>Boolean(event.payload.canvas_id)&&Boolean(event.payload.context_set_id));
+  const canvasSnapshot=record(canvasCompile?.payload.compiled_snapshot);const canvasSnapshotMeta=record(canvasSnapshot.canvas);
+  const forbiddenPresenceKeys=canvasEvents.flatMap((event)=>Object.keys(event.payload)).filter((key)=>/cursor_trail|pointer_path|raw_pointer|raw_keys|raw_input/i.test(key));
 
   const matching = (...names: string[]) => events.filter((event) => names.includes(event.type));
   const checksByKey: Record<string, { passed: boolean; summary: string; evidence: CreativeEvent[] }> = {
     "event-vocabulary": { passed: expectedEventTypes.every((type) => types.has(type)), summary: `${types.size} event types; ${expectedEventTypes.filter((type) => !types.has(type)).length} expected types missing`, evidence: events },
     "context-vocabulary": { passed: BLOCK_TYPES.every((definition) => blockTypes.has(definition.type)), summary: `${blockTypes.size}/${BLOCK_TYPES.length} block types`, evidence: blockEvents },
     "document-view-workflow": { passed: DOCUMENT_VIEWS.every((view) => views.has(view)) && viewEvents.some((event) => event.payload.focused === true) && viewEvents.some((event) => event.payload.focused === false), summary: `${views.size}/${DOCUMENT_VIEWS.length} views with focused and standard visits`, evidence: viewEvents },
+    "application-view-workflow":{passed:["creative","canvas","operations","laboratory"].every((application)=>visitedApplications.has(application)),summary:`${visitedApplications.size}/4 application surfaces have durable visits`,evidence:applicationViewEvents},
     "job-vocabulary": { passed: DOCUMENT_JOB_KINDS.every((kind) => jobKinds.has(kind)), summary: `${jobKinds.size}/${DOCUMENT_JOB_KINDS.length} durable job kinds`, evidence: events.filter((event) => text(event.payload.job_kind) || event.type === "GenerationRequested") },
     "chat-resolution": { passed: chats.length >= 3 && chats.some((event) => event.payload.live_preview_requested === true) && chats.some((event) => event.payload.live_preview_requested === false) && assistantEvents.length >= 3 && matching("BlockCreated","BlockPropertyEdited","BlockRemoved").length > 0, summary: `${chats.length} user turns, ${assistantEvents.length} model replies, Live preview on and off`, evidence: [...chats,...assistantEvents] },
     "draft-promotion": { passed: previews.some((event) => event.payload.quality === "low") && types.has("IdeationPromoted") && generated.some((event) => text(event.payload.promoted_from_object_id)), summary: "A low-quality draft has an explicit intent and full-quality outcome chain", evidence: matching("IdeationPreviewCompleted","IdeationPromoted","GenerationCompleted") },
@@ -114,8 +141,11 @@ export function evaluateReplayCoverage(events: CreativeEvent[], expectedEventTyp
     "prompt-fan-judgment": { passed: types.has("PromptFanOutputPromoted") && types.has("PromptTechniquePreferred") && types.has("PromptTechniquePreferenceRevoked"), summary: "Promotion, scoped preference, and revocation are all reversible", evidence: matching("PromptFanOutputPromoted","PromptTechniquePreferred","PromptTechniquePreferenceRevoked") },
     "spatial-vocabulary": { passed: (["document","region","aabb","subject","path"] as const).every((kind) => scopeKinds.has(kind)), summary: `${scopeKinds.size}/5 targeting methods`, evidence: events.filter((event) => event.type === "BlockCreated" || event.payload.property_path === "spatial_scope") },
     "spatial-editing": { passed: editedScopes.some((event) => normalizeSpatialScope(event.payload.new_value).kind === "aabb") && editedScopes.some((event) => normalizeSpatialScope(event.payload.new_value).kind === "path"), summary: `${editedScopes.length} handle- or point-driven spatial edits`, evidence: editedScopes },
+    "image-format-control": { passed:Boolean(formatCreated)&&Boolean(formatEdit)&&matchingFormatReceipts.some((event)=>event.type==="GenerationRequested")&&matchingFormatReceipts.some((event)=>event.type==="ContextCompiled")&&matchingFormatReceipts.some((event)=>event.type==="GenerationCompleted"), summary:`${matchingFormatReceipts.length}/${formatReceipts.length} generation receipts agree with ${imageAspectRatioLabel(authoredFormat)} at ${authoredFormat.dimensions.width} × ${authoredFormat.dimensions.height} px`, evidence:[...(formatCreated?[formatCreated]:[]),...(formatEdit?[formatEdit]:[]),...matchingFormatReceipts] },
     "reference-realities": { passed: ["mood","composition","material","lighting","spatial"].every((kind) => findings.has(kind)) && paletteFound && types.has("ChipEdited"), summary: `${findings.size} extracted reality classes plus palette and authored correction`, evidence: matching("ExtractionCompleted","ChipEdited") },
+    "reference-asset-reality": { passed: !providerBacked || Boolean(concreteReference), summary: providerBacked ? concreteReference ? "A validated stored image, source, rights, and content hash precede mock ingestion" : "Provider-backed reference lacks prepared image evidence" : "Theoretical fixtures do not claim provider-backed reference bytes", evidence: matching("ReferenceIngested","RightsAsserted") },
     "reference-pixel-handoff": { passed: types.has("RightsAsserted") && events.some((event) => event.type === "BlockPropertyEdited" && event.payload.property_path === "pixel_reference_mode" && event.payload.new_value !== "context_only") && pixelCompiled && [...previews,...generated].some((event) => event.payload.used_uploaded_reference_pixels === true), summary: "Rights, explicit pixel mode, compile receipt, and image edit agree", evidence: matching("RightsAsserted","BlockPropertyEdited","ContextCompiled","GenerationCompleted") },
+    "study-to-composition": { passed: !providerBacked||Boolean(studyComposition)&&[...studyKinds].every((kind)=>lockedStudyKinds.has(kind)), summary: studyKinds.size?`${studyKinds.size} focused ${studyKinds.size===1?"study is":"studies are"} locked and consumed by a composed image`:"A composed-image stage is explicit; no preliminary studies were requested", evidence: developmentEvents },
     "connected-context": { passed: types.has("BlockRelationAdded") && types.has("BlockRelationRemoved") && relationshipsCompiled, summary: "Relationship changes are retained in a compiled snapshot", evidence: matching("BlockRelationAdded","BlockRelationRemoved","ContextCompiled") },
     "revision-queue": { passed: overlapping.length >= 2 && revisions.size >= 2 && types.has("JobAttemptInterrupted") && generated.length >= 2, summary: `${overlapping.length} overlapping requests across ${revisions.size} document revisions`, evidence: matching("GenerationRequested","JobAttemptInterrupted","GenerationCompleted") },
     "quality-media": { passed: previews.some((event) => text(event.payload.media_url) && event.payload.quality === "low") && generated.some((event) => text(event.payload.media_url) && event.payload.quality === "high") && focal.some((event) => event.payload.target_kind === "reference") && focal.some((event) => event.payload.target_kind === "generation"), summary: "Draft and full media have quality tiers and content-aware crop evidence", evidence: [...previews,...generated,...focal] },
@@ -127,6 +157,11 @@ export function evaluateReplayCoverage(events: CreativeEvent[], expectedEventTyp
     "document-lifecycle": { passed: ["ProjectCreated","DocumentCreated","DocumentForked","DocumentRemoved","DocumentRestored","CollectionCreated","CollectionRemoved","CollectionRestored"].every((type) => types.has(type)), summary: "Project, document, collection, and reusable context history are exercised", evidence: matching("ProjectCreated","DocumentCreated","DocumentForked","DocumentRemoved","CollectionCreated") },
     "operations": { passed: ["BudgetReserved","JobAttemptInterrupted","BudgetReleased","BudgetExceeded","ValidationFailed","GenerationFailed","RetentionSweepCompleted"].every((type) => types.has(type)), summary: "Budget, recovery, validation, provider failure, and retention receipts appear", evidence: matching("BudgetReserved","JobAttemptInterrupted","BudgetReleased","ValidationFailed","GenerationFailed","RetentionSweepCompleted") },
     "job-control": { passed: types.has("JobCanceled") && types.has("JobForceFailed") && events.some((event) => event.type === "BudgetReleased" && /cancel|force/i.test(text(event.payload.reason))), summary: "Owner cancellation and administrative force-failure preserve receipts and release reservations", evidence: matching("JobCanceled","JobForceFailed","BudgetReleased") },
+    "canvas-shared-sources": { passed:["block","document","output","reference","sketch"].every((kind)=>canvasSourceKinds.has(kind))&&types.has("CanvasCreated")&&types.has("BlockRehomed"), summary:`${canvasSourceKinds.size}/5 shared source families plus project rehoming`, evidence:canvasEvents },
+    "canvas-convergence": { passed:["CanvasRegisterSet","CanvasTextApplied","CanvasLockAcquired","CanvasLockReleased","StrokeAdded","StrokeErased"].every((type)=>types.has(type))&&events.filter((event)=>event.type==="CanvasRegisterSet").every((event)=>Boolean(record(record(event.payload.operation).hlc).site)), summary:"HLC registers, mergeable text, advisory locks, and observed-remove strokes appear", evidence:matching("CanvasRegisterSet","CanvasTextApplied","CanvasLockAcquired","CanvasLockReleased","StrokeAdded","StrokeErased") },
+    "canvas-context-formalization": { passed:types.has("ContextSetFormalized")&&Boolean(canvasCompile)&&canvasSnapshotMeta.spatial_arrangement_is_semantic===false&&generated.some((event)=>Boolean(event.payload.canvas_id)&&Boolean(event.payload.context_set_id)), summary:"A named selection compiles with spatial arrangement explicitly non-semantic", evidence:matching("ContextSetFormalized","ContextCompiled","GenerationCompleted") },
+    "canvas-report-space": { passed:["ProposalIssued","VoteCast","ProposalAccepted","ProposalRejected","ProposalRestored"].every((type)=>types.has(type))&&events.some((event)=>event.type==="ProposalIssued"&&event.payload.report_space===true), summary:"Agent proposal, collective review, decision, rejection, and restoration remain distinct", evidence:matching("ProposalIssued","VoteCast","ProposalAccepted","ProposalRejected","ProposalRestored") },
+    "canvas-governance": { passed:["MembershipAdded","MembershipRemoved","CanvasLockOverridden","CanvasRemoved","CanvasRestored"].every((type)=>types.has(type))&&forbiddenPresenceKeys.length===0, summary:`Membership and recovery receipts appear; ${forbiddenPresenceKeys.length} raw-presence fields persisted`, evidence:canvasEvents },
   };
   const checks: ReplayCoverageCheck[] = REPLAY_CAPABILITIES.map((capability) => ({ key:capability.key, label:capability.label, passed:checksByKey[capability.key].passed, summary:checksByKey[capability.key].summary, evidenceEventIds:eventIds(checksByKey[capability.key].evidence) }));
   const missingEventTypes = expectedEventTypes.filter((type) => !types.has(type));
