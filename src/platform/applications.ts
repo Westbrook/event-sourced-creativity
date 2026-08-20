@@ -56,6 +56,7 @@ export const APPLICATIONS: readonly ApplicationDefinition[] = [
     navigation: [
       { id: "system", href: "/operations", label: "System & governance", description: "Policies, gates, and operational health" },
       { id: "analytics", href: "/operations/analytics", label: "Analytics", description: "Find product improvements and creative outcome evidence" },
+      { id: "canvas", href: "/operations/canvas", label: "Canvas governance", description: "Review and approve Canvas release requirements" },
       { id: "stream", href: "/operations/events", label: "Durable stream", description: "Inspect immutable event envelopes" },
       { id: "permissions", href: "/operations/events/permissions", label: "Permissions", description: "Review producer and concurrency boundaries" },
       { id: "sync", href: "/operations/events/sync", label: "Canvas sync", description: "Inspect convergence, locks, queues, and formalized context" },
@@ -69,6 +70,7 @@ export const APPLICATIONS: readonly ApplicationDefinition[] = [
     entry: "src/apps/laboratory/entry.ts",
     navigation: [
       { id: "replay", href: "/laboratory/replay", label: "Replay", description: "Rehearse theoretical and provider-backed workflows" },
+      { id: "image-adapters", href: "/laboratory/image-adapters", label: "Image adapters", description: "Preview provider routing, capabilities, costs, and qualification" },
       { id: "focal-points", href: "/laboratory/focal-points", label: "Focal points", description: "Compare image focal-point calculations" },
     ],
   },
@@ -99,6 +101,7 @@ export function navigationItemActive(applicationId: ApplicationId, itemId: strin
   if (applicationId === "operations") {
     if (itemId === "system") return path === "/operations" || path === "/system";
     if (itemId === "analytics") return path === "/operations/analytics";
+    if (itemId === "canvas") return path === "/operations/canvas";
     if (itemId === "stream") return path === "/operations/events" || path === "/operations/events/stream" || path === "/admin/events" || path === "/admin/events/stream";
     if(itemId==="permissions")return path === "/operations/events/permissions" || path === "/admin/events/permissions";
     return path === "/operations/events/sync" || path === "/admin/events/sync";
@@ -109,6 +112,7 @@ export function navigationItemActive(applicationId: ApplicationId, itemId: strin
     return path === `/${itemId}` || path.startsWith(`/${itemId}/`);
   }
   if (itemId === "replay") return path === "/laboratory" || path === "/laboratory/replay" || path === "/admin/events/replay";
+  if (itemId === "image-adapters") return path === "/laboratory/image-adapters";
   return path === "/laboratory/focal-points" || path === "/system/focal-points";
 }
 
@@ -150,6 +154,7 @@ export const SITE_ROUTE_ENTRIES: readonly SiteRouteEntry[] = [
   route("/canvas/proposals", "canvas", "Canvas report space", "Review agent proposals without mixing them into authored work."),
   route("/operations", "operations", "Operations — Forma", "Review governance, system health, and operational gates."),
   route("/operations/analytics", "operations", "Product analytics — Forma", "Find product improvements, creative outcome evidence, cost, timing, and usage patterns in the durable event stream."),
+  route("/operations/canvas", "operations", "Canvas governance — Forma", "Review the server-enforced Canvas pilot release gate and its approval evidence."),
   route("/operations/events", "operations", "Durable stream — Forma", "Inspect immutable event envelopes and projections."),
   route("/operations/events/stream", "operations", "Durable stream — Forma", "Inspect immutable event envelopes and projections."),
   route("/operations/events/permissions", "operations", "Producer permissions — Forma", "Review producer permissions and concurrency behavior."),
@@ -161,6 +166,7 @@ export const SITE_ROUTE_ENTRIES: readonly SiteRouteEntry[] = [
   route("/admin/events/sync", "operations", "Canvas sync — Forma", "Inspect collaborative Canvas convergence and offline delivery."),
   route("/laboratory", "laboratory", "Laboratory — Forma", "Run controlled experiments over durable creative data."),
   route("/laboratory/replay", "laboratory", "Replay laboratory — Forma", "Build and replay theoretical and provider-backed creative event streams."),
+  route("/laboratory/image-adapters", "laboratory", "Image-adapter laboratory — Forma", "Preview provider routing, capabilities, normalized receipts, costs, and qualification evidence without making paid calls."),
   route("/laboratory/focal-points", "laboratory", "Focal-point laboratory — Forma", "Compare focal-point calculations and image containment."),
   route("/system/focal-points", "laboratory", "Focal-point laboratory — Forma", "Compare focal-point calculations and image containment."),
   route("/admin/events/replay", "laboratory", "Replay laboratory — Forma", "Build and replay theoretical and provider-backed creative event streams."),
@@ -196,7 +202,7 @@ export function resolveServerRoute(routeValue: string): ServerRouteResolution | 
 
   if (/^\/share\/[^/]+$/.test(path)) return { application: "creative", entryPath: "/share/", canonicalFamily: "/share/:token" };
   if (/^\/canvas\/proposals\/[^/]+$/.test(path)) return { application: "canvas", entryPath: "/canvas/proposals/", canonicalFamily: "/canvas/proposals/:proposal" };
-  if (/^\/canvas\/[^/]+(?:\/[^/]+)?(?:\/view\/(?:spatial|list|compare|folders))?$/.test(path)) return { application: "canvas", entryPath: "/canvas/", canonicalFamily: "/canvas/:canvas/:view" };
+  if (/^\/canvas\/[^/]+(?:\/[^/]+)?(?:\/view\/(?:spatial|list|compare|folders))?(?:\/focus)?$/.test(path)) return { application: "canvas", entryPath: "/canvas/", canonicalFamily: "/canvas/:canvas/:view" };
   if (/^\/library\/(?:block|output|family)\/[^/]+(?:\/[^/]+)?$/.test(path)) return { application: "creative", entryPath: "/library/", canonicalFamily: "/library/:focus/:id" };
   if (/^\/library\/blocks\/editor\/(?:new|[^/]+)$/.test(path)) return { application: "creative", entryPath: "/library/", canonicalFamily: "/library/blocks/editor/:id" };
   if (/^\/creative\/create(?:\/[^/]+)*$/.test(path)) return { application: "creative", entryPath: "/creative/create/", canonicalFamily: "/creative/create/*" };

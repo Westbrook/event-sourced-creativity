@@ -12,12 +12,22 @@ test("hot-path appends and generation receipts use the atomic head allocator",as
 });
 
 test("the client refreshes and rebases authored appends after stale heads",async()=>{
-  const store=await readFile(new URL("../src/state/store.ts",import.meta.url),"utf8");
+  const [store,runtime,eventsApi]=await Promise.all([
+    readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/runtime.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),
+  ]);
   assert.match(store,/response\.status===409&&body\.error==="stale_sequence"/);
   assert.match(store,/await this\.#refreshEvents\(\);continue/);
   assert.match(store,/rebaseAttempts\?\?2/);
   assert.match(store,/rebaseAttempts:6,silent:true/);
   assert.match(store,/this\.setRoute\(routedDestination\);\s*const appended=await this\.append/);
+  assert.match(runtime,/sequence>\? ORDER BY sequence ASC LIMIT \?/);
+  assert.match(runtime,/while\(events\.length<requested\)/);
+  assert.match(eventsApi,/readEventPage\(env,streamId,after,limit\)/);
+  assert.match(eventsApi,/streamHead\(env,streamId\)/);
+  assert.match(store,/#readEventPages\(after=0\)/);
+  assert.match(store,/hasMore&&next<=cursor/);
 });
 
 test("document dialogs preserve their target document across background event refreshes",async()=>{

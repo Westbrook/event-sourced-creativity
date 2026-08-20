@@ -17,6 +17,7 @@ import {
 import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "../src/model/prompt-structures";
 import { applicationFailureDetail, classifyProviderFailure, publicFailureDetail, type ProviderFailureDetail } from "./provider-errors";
 import { documentJobCompletionBindings } from "./document-job-sql";
+import { preflightGeneration } from "./generation-readiness";
 
 type DocumentJobRow = {
   job_id: string; owner_id: string; stream_id: string; document_id: string; kind: DocumentJobKind; status: DocumentJobStatus;
@@ -25,7 +26,7 @@ type DocumentJobRow = {
   lease_expires_at: string | null; notified_at: string | null; expires_at: string; updated_at: string;
 };
 
-const KINDS = new Set<DocumentJobKind>(["preview", "generate", "prompt_fan", "chat", "structure_adaptive", "extract_reference"]);
+const KINDS = new Set<DocumentJobKind>(["preview", "generate", "prompt_fan", "chat", "structure_adaptive", "extract_reference", "render_document"]);
 const MAX_PAYLOAD_BYTES = 750_000;
 
 function parseResult(row: Pick<DocumentJobRow, "result_json">) {
@@ -65,6 +66,7 @@ function errorDetailFromResult(result: Record<string, unknown>): DocumentJobErro
     scope: String(detail.scope ?? "unknown") as DocumentJobError["scope"], action: String(detail.action ?? "none") as DocumentJobError["action"],
     message: String(detail.message ?? "The operation failed."), retryable: Boolean(detail.retryable), retryAfterMs: detail.retryAfterMs === null || detail.retryAfterMs === undefined || !Number.isFinite(Number(detail.retryAfterMs)) ? null : Number(detail.retryAfterMs),
     requestId: detail.requestId ? String(detail.requestId) : null, httpStatus: detail.httpStatus === null || detail.httpStatus === undefined || !Number.isFinite(Number(detail.httpStatus)) ? null : Number(detail.httpStatus),
+    riskCategories: Array.isArray(detail.riskCategories) ? detail.riskCategories.map(String) : [], contributingBlockIds: Array.isArray(detail.contributingBlockIds) ? detail.contributingBlockIds.map(String) : [], contributingReferenceIds: Array.isArray(detail.contributingReferenceIds) ? detail.contributingReferenceIds.map(String) : [], probe: detail.probe ? String(detail.probe) : null,
   };
 }
 
@@ -92,10 +94,13 @@ async function finishDocumentJob(env: WorkerEnv, row: DocumentJobRow, status: "c
 function serializeJob(row: DocumentJobRow) {
   const parsed = parseResult(row); const result = row.result_json ? parsed : null; const request = parseRequest(row); const identity = generationRequestIdentity(row.kind, request, row.document_id);
   const members = Array.isArray(parsed.members) ? parsed.members : [];
+  const visibleResult = row.kind === "render_document" && request.artifactKind
+    ? { ...(result ?? {}), artifactKind: String(parsed.artifactKind ?? request.artifactKind) }
+    : result;
   return {
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
     requestedSequence: Number(row.requested_sequence), documentRevision: identity.documentRevision, requestKey: identity.requestKey, sourcePreviewId: identity.sourcePreviewId, promptTechnique: identity.promptTechnique, promptFanId: identity.promptFanId,
-    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result, error: row.error_message, errorDetail: errorDetailFromResult(parsed), moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
+    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result: visibleResult, error: row.error_message, errorDetail: errorDetailFromResult(parsed), moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
     requestedAt: row.requested_at, startedAt: row.started_at, completedAt: row.completed_at, notifiedAt: row.notified_at,
     leaseExpiresAt: row.lease_expires_at, updatedAt: row.updated_at,
     stage: String(parsed.stage ?? row.status), progressMessage: String(parsed.progressMessage ?? ""),
@@ -137,8 +142,8 @@ function rowIsStale(row: DocumentJobRow, now = Date.now()) {
   return Number.isFinite(leaseExpires) && leaseExpires <= now || Number.isFinite(updated) && updated <= now - DOCUMENT_JOB_STALE_AFTER_MS;
 }
 
-async function updateJobProgress(env: WorkerEnv, row: DocumentJobRow, stage: string, progressMessage: string) {
-  const updatedAt = new Date().toISOString(); const result = { ...parseResult(row), stage, progressMessage };
+async function updateJobProgress(env: WorkerEnv, row: DocumentJobRow, stage: string, progressMessage: string, patch:Record<string,unknown>={}) {
+  const updatedAt = new Date().toISOString(); const result = { ...parseResult(row), stage, progressMessage, ...patch };
   await env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND status='running' AND correlation_id=?").bind(JSON.stringify(result), updatedAt, row.job_id, row.owner_id, row.correlation_id).run();
   row.result_json = JSON.stringify(result); row.updated_at = updatedAt;
 }
@@ -157,10 +162,10 @@ async function beginJobCommit(env: WorkerEnv, row: DocumentJobRow) {
   row.status = "committing"; row.updated_at = now;
 }
 
-async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow, operation: (control: { signal: AbortSignal; beginCommit: () => Promise<void> }) => Promise<T>) {
+async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow, operation: (control: { signal: AbortSignal; beginCommit: () => Promise<void>; progress: (stage:string,message:string,patch?:Record<string,unknown>) => Promise<void> }) => Promise<T>) {
   let settled = false; let value: T | undefined; let failure: unknown;
   const controller = new AbortController(); let commitStarted = false;
-  const execution = operation({ signal: controller.signal, beginCommit: async () => { if (commitStarted) return; await beginJobCommit(env, row); commitStarted = true; } }).then((result) => { value = result; settled = true; }, (error) => { failure = error; settled = true; });
+  const execution = operation({ signal: controller.signal, beginCommit: async () => { if (commitStarted) return; await updateJobProgress(env,row,"saving","Saving the provider result and its durable receipt.");await beginJobCommit(env, row); commitStarted = true; }, progress: async(stage,message,patch)=>{if(!commitStarted)await updateJobProgress(env,row,stage,message,patch);} }).then((result) => { value = result; settled = true; }, (error) => { failure = error; settled = true; });
   while (!settled) {
     await Promise.race([execution, new Promise<void>((resolve) => setTimeout(resolve, DOCUMENT_JOB_HEARTBEAT_MS))]);
     if (!settled) try { await renewJobLease(env, row); } catch (error) { controller.abort("document_job_canceled"); failure = error; await execution; }
@@ -192,14 +197,15 @@ function operationFinished(events: Awaited<ReturnType<typeof readEvents>>, row: 
     if (row.kind === "generate") return event.type === "GenerationCompleted" || event.type === "GenerationFailed";
     if (row.kind === "chat") return event.type === "GenerationUsageRecorded" && event.payload.operation === "creative-chat" || event.type === "BudgetReleased" && event.payload.operation === "creative-chat";
     if (row.kind === "structure_adaptive") return event.type === "GenerationUsageRecorded" && event.payload.operation === "adaptive-structure" || event.type === "BudgetReleased" && event.payload.operation === "adaptive-structure";
+    if (row.kind === "render_document") return event.type === "DocumentRenderCompleted" || event.type === "DocumentRenderFailed";
     return event.type === "ExtractionCompleted" || event.type === "ExtractionFailed";
   });
-  const failed = terminal?.type === "GenerationFailed" || terminal?.type === "ExtractionFailed" || terminal?.type === "BudgetReleased";
+  const failed = terminal?.type === "GenerationFailed" || terminal?.type === "ExtractionFailed" || terminal?.type === "DocumentRenderFailed" || terminal?.type === "BudgetReleased";
   return terminal ? { failed, correlated } : null;
 }
 
 function correlatedFailureDetail(events: Awaited<ReturnType<typeof readEvents>>) {
-  const failureEvent = [...events].reverse().find((event) => event.type === "GenerationFailed" || event.type === "ExtractionFailed");
+  const failureEvent = [...events].reverse().find((event) => event.type === "GenerationFailed" || event.type === "ExtractionFailed" || event.type === "DocumentRenderFailed");
   if (!failureEvent) return null;
   const payload = failureEvent.payload;
   return {
@@ -209,6 +215,7 @@ function correlatedFailureDetail(events: Awaited<ReturnType<typeof readEvents>>)
     retryAfterMs: payload.retry_after_ms === null || payload.retry_after_ms === undefined || !Number.isFinite(Number(payload.retry_after_ms)) ? null : Number(payload.retry_after_ms),
     requestId: payload.provider_request_id ? String(payload.provider_request_id) : null,
     httpStatus: payload.http_status === null || payload.http_status === undefined || !Number.isFinite(Number(payload.http_status)) ? null : Number(payload.http_status),
+    riskCategories: Array.isArray(payload.risk_categories) ? payload.risk_categories.map(String) : [], contributingBlockIds: Array.isArray(payload.contributing_block_ids) ? payload.contributing_block_ids.map(String) : [], contributingReferenceIds: Array.isArray(payload.contributing_reference_ids) ? payload.contributing_reference_ids.map(String) : [], probe: payload.preflight_probe ? String(payload.preflight_probe) : null,
   } satisfies DocumentJobError;
 }
 
@@ -230,10 +237,15 @@ async function repairMisreportedTerminalJob(env: WorkerEnv, row: DocumentJobRow,
 
 function safeResult(body: Record<string, unknown>, correlatedEventIds: string[] = []) {
   const appended = Array.isArray(body.appended) ? body.appended as Array<Record<string, unknown>> : [];
+  const adaptiveReasoning = appended.find((event) => event.type === "AssistantReasoned" && (event.payload as Record<string, unknown> | undefined)?.operation === "adaptive-structure");
+  const adaptivePayload = adaptiveReasoning?.payload as Record<string, unknown> | undefined;
   return {
     head: Number(body.head ?? 0),
     appendedEventIds: appended.map((event) => String(event.eventId ?? "")).filter(Boolean).concat(correlatedEventIds),
     previewed: Boolean(body.previewed), previewQueued: Boolean(body.previewQueued), previewSuppressed: Boolean(body.previewSuppressed), followupJobId: body.followupJobId ? String(body.followupJobId) : undefined, moderationPromptRef: body.moderationPromptRef ? String(body.moderationPromptRef) : undefined, promoted: Boolean(body.promoted), quality: body.quality ? String(body.quality) : undefined,
+    artifactId: body.artifactId ? String(body.artifactId) : undefined, artifactKind: body.artifactKind ? String(body.artifactKind) : undefined,
+    providerJobId: body.providerJobId ? String(body.providerJobId) : undefined, provider: body.provider ? String(body.provider) : undefined,
+    intentRef: adaptivePayload?.intent_ref ? String(adaptivePayload.intent_ref) : undefined,
     structure: body.structure && typeof body.structure === "object" ? body.structure : undefined,
   };
 }
@@ -274,7 +286,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   const attemptCorrelationId = `${jobId}:attempt:${attempt}`; const initialResult = { ...parseResult(row), stage: "preparing", progressMessage: attempt > 1 ? "Recovering the interrupted operation." : "Preparing the document context." };
   const claimed = await env.DB.prepare("UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=COALESCE(started_at,?),lease_expires_at=?,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND (status='queued' OR (status='running' AND (lease_expires_at<? OR updated_at<?)))").bind(attemptCorrelationId, nowIso, leaseExpiresAt, JSON.stringify(initialResult), nowIso, jobId, user.userId, nowIso, staleBefore).run();
   if (Number(claimed.meta.changes ?? 0) !== 1) return readJob(env, user.userId, jobId);
-  if (previousAttempt > 0) await releaseInterruptedAttempt(env, user, previousRow, "execution_interrupted_retrying");
+  if (previousAttempt > 0 && !(row.kind === "render_document" && parseResult(previousRow).providerJobId)) await releaseInterruptedAttempt(env, user, previousRow, "execution_interrupted_retrying");
   row = await readJob(env, user.userId, jobId); if (!row) return null;
 
   try {
@@ -287,9 +299,12 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       if (row.kind === "structure_adaptive") payload.prompt = input;
     }
     delete payload.expectedSequence; delete payload.jobInputRef;
+    if(row.kind==="render_document"){
+      const checkpoint=parseResult(row);for(const key of ["artifactId","providerJobId","artifactPlan","plannerModel","plannerResponseId","plannerLatencyMs","plannerUsage","renderedItems"] as const)if(checkpoint[key]!==undefined)payload[key]=checkpoint[key];if(checkpoint.providerJobId&&checkpoint.reservationId)payload.reservationId=checkpoint.reservationId;
+    }
     payload.action = row.kind; payload.documentId = row.document_id; payload.sourceSurface = row.source_surface;
     payload.correlationId = row.correlation_id; payload.clientId = `server:document-job:${row.kind}`;
-    await updateJobProgress(env, row, "processing", row.kind === "preview" || row.kind === "generate" ? "Planning and rendering from the current document." : "Processing the requested document change.");
+    await updateJobProgress(env, row, "compiling", row.kind === "preview" || row.kind === "generate" ? "Compiling the checked document state for generation." : row.kind==="render_document"?"Compiling the document into the requested artifact.":"Processing the requested document change.");
     const response = await runWithHeartbeat(env, row, (control) => handleEvents(new Request("http://document-job.local/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: control.signal }), env, false, user, control));
     const body = await response.json() as Record<string, unknown>;let followup:DocumentJobRow|null=null;if(response.ok&&body.followupJob&&typeof body.followupJob==="object")followup=await queueFollowupPreview(env,user,row,body.followupJob as Record<string,unknown>);const completedAt = new Date().toISOString();
     const detail = !response.ok
@@ -316,7 +331,7 @@ async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
 }
 
 async function stopGenerationJob(env: WorkerEnv, user: PilotUser, target: DocumentJobRow, force: boolean) {
-  if (target.kind !== "preview" && target.kind !== "generate" && target.kind !== "prompt_fan") return { error: "generation_job_required", status: 409 } as const;
+  if (target.kind !== "preview" && target.kind !== "generate" && target.kind !== "prompt_fan" && target.kind !== "render_document") return { error: "generation_job_required", status: 409 } as const;
   if (target.status === "committing") return { error: "job_finalizing", status: 409 } as const;
   if (documentJobTerminal(target)) return { job: target } as const;
   const request = parseRequest(target); const childIds = target.kind === "prompt_fan" && Array.isArray(request.childJobIds) ? request.childJobIds.map(String).filter(Boolean) : [];
@@ -432,6 +447,14 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const documentId = String(input.documentId ?? projection.documentId); const documentRecord = projection.documents.find((document) => document.id === documentId);
   if (!documentRecord) return Response.json({ error: "document_not_found" }, { status: 404 });
 
+  if(kind==="preview"||kind==="generate"||kind==="prompt_fan"){
+    const readinessKind=kind==="prompt_fan"?`${fanKindFromRequest(payload)??"generate"}_fan` as const:kind;const readiness=await preflightGeneration(env,user,{kind:readinessKind,documentId,documentRevision:String(payload.documentRevision??""),requestKey:String(payload.requestKey??""),sourcePreviewId:typeof payload.sourcePreviewId==="string"?payload.sourcePreviewId:null,promptTechnique:normalizePromptTechnique(payload.promptTechnique),snapshot:payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:undefined,force:true,sourceSurface:String(input.sourceSurface??"generation-controls")},{appendEvents:true,allowCache:false});
+    if(readiness.status==="blocked"){await appendAuditEvent(env,user.streamId,"worker:policy","GenerationBlockedBeforeProvider",{preflight_id:readiness.preflightId,document_id:documentId,document_revision:readiness.documentRevision,request_key:readiness.requestKey,kind:readiness.kind,status:readiness.status,blocking_probes:readiness.probes.filter((probe)=>probe.status==="fail").map((probe)=>probe.id),estimated_cost_avoided_microusd:readiness.estimatedCostMicrousd},uuidV7());return Response.json({error:"generation_preflight_blocked",message:readiness.summary,readiness},{status:409});}
+    if(readiness.status==="review"&&payload.preflightAcknowledged!==true)return Response.json({error:"generation_preflight_review_required",message:readiness.summary,readiness},{status:428});
+    if(readiness.status==="review")await appendAuditEvent(env,user.streamId,"worker:policy","GenerationRiskAcknowledged",{preflight_id:readiness.preflightId,document_id:documentId,document_revision:readiness.documentRevision,request_key:readiness.requestKey,kind:readiness.kind,warning_probes:readiness.probes.filter((probe)=>probe.status==="warning"||probe.status==="unknown").map((probe)=>probe.id),source_surface:String(input.sourceSurface??"generation-controls")});
+    payload.preflightId=readiness.preflightId;payload.preflightVersion=readiness.version;payload.preflightAcknowledged=readiness.status==="review";
+  }
+
   if (kind === "prompt_fan") {
     const fanKind = fanKindFromRequest(payload); if (!fanKind) return Response.json({ error: "prompt_fan_kind_required" }, { status: 400 });
     const promptFanId = typeof payload.promptFanId === "string" && payload.promptFanId ? payload.promptFanId : uuidV7();
@@ -457,7 +480,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     if(kind==="preview"||kind==="generate"){
       const identity=generationRequestIdentity(kind,payload,documentId);payload.documentRevision=identity.documentRevision;payload.requestKey=identity.requestKey;
       active=candidates.find((candidate)=>generationRequestIdentity(kind,parseRequest(candidate),documentId).requestKey===identity.requestKey)??null;
-    }else active=candidates[0]??null;
+    }else if(kind==="render_document")active=candidates.find((candidate)=>String(parseRequest(candidate).requestKey??"")===String(payload.requestKey??""))??null;
+    else active=candidates[0]??null;
   }
   if (active) return Response.json({ job: serializeJob(active), reused: true }, { status: 202 });
 

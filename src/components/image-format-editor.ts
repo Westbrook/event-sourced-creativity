@@ -48,7 +48,7 @@ export class ImageFormatEditor extends FormaElement {
     const ratio = imageAspectRatioLabel(format); const preset = IMAGE_FORMAT_PRESETS.find((item) => item.id === ratio && item.dimensions.width === format.dimensions.width && item.dimensions.height === format.dimensions.height)?.id ?? "custom";
     const disabled = Boolean(target?.locked) || this.#saving;
     const fields = html`<form class="image-format-form" @submit=${this.#apply}>
-      <label><span>Aspect ratio</span><select name="preset" .value=${preset} ?disabled=${disabled} @change=${this.#selectPreset}>${IMAGE_FORMAT_PRESETS.map((item) => html`<option value=${item.id}>${item.id} · ${item.label}</option>`)}<option value="custom">Custom dimensions</option></select></label>
+      <label><span>Aspect ratio</span><select name="preset" .value=${preset} ?disabled=${disabled} @change=${this.#selectPreset}>${IMAGE_FORMAT_PRESETS.map((item) => html`<option value=${item.id} ?selected=${item.id===preset}>${item.id} · ${item.label}</option>`)}<option value="custom" ?selected=${preset==="custom"}>Custom dimensions</option></select></label>
       <div class="image-format-dimensions" aria-label="Target image dimensions">
         <label><span>Width</span><input name="width" type="number" min="64" max="8192" step="1" .value=${String(format.dimensions.width)} ?disabled=${disabled}></label>
         <span aria-hidden="true">×</span>

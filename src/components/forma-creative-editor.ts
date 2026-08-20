@@ -13,6 +13,7 @@ import "./output-visual";
 import "./reference-image";
 import "./reference-pixel-policy";
 import "./generation-actions";
+import "./document-artifacts";
 import "./prompt-fan-visual";
 import "./prompt-fan-review";
 
@@ -368,6 +369,8 @@ export class FormaCreativeEditor extends AlternativeStudio {
                 ${previewProgress?html`<small>The durable draft will replace this streamed image automatically.</small>`:previewOutdated ? html`<small>Plan changed since this image · Preview draft or Update image at full quality.</small>`:latestItem?.kind==="fan"?html`<small>${latestItem.complete} of 4 ready · ${latestItem.standaloneCount} promoted to stand alone.</small>` : latest?.mediaUrl ? html`<small>${isDraftOutput(latest)?"Fast draft for exploration · generate it at full quality when it holds.":latest.promotedFromId?"Full-quality result refined from a selected draft.":"Full-quality generated image."}</small>` : html`<small>No generated image yet · the plan remains useful on its own.</small>`}
               </div>
             </section>
+
+            <forma-document-artifacts compact source="editor"></forma-document-artifacts>
 
             <section class="creative-plan-page" aria-label="One-page creative plan">
               <header><div><span>One-page plan</span><h2>Everything shaping the work</h2></div><small>Select anything to edit it. Drag to change the reading order.</small></header>

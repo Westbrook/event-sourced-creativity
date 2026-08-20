@@ -23,6 +23,12 @@ test("turns provider prompt-length validation into an actionable request error",
   assert.match(detail.message,/32,000-character limit/);
 });
 
+test("turns provider image-cardinality validation into an actionable contract error",()=>{
+  const detail=classifyProviderFailure(new Error("provider"),new Response(null,{status:400}),{error:{code:"invalid_value",message:"Number of images (2) exceeds maximum of 1"}});
+  assert.deepEqual([detail.code,detail.category,detail.scope,detail.action,detail.retryable],["provider_image_cardinality_exceeded","provider","request","edit_request",false]);
+  assert.match(detail.message,/split the images into valid probes/);
+});
+
 test("turns project and organization limits into specific non-retryable receipts",()=>{
   const project=classifyProviderFailure(new Error("provider"),new Response(null,{status:429}),{error:{code:"project_spend_limit_exceeded",message:"Project spend limit reached"}});
   const organization=classifyProviderFailure(new Error("provider"),new Response(null,{status:429}),{error:{code:"organization_usage_limit_exceeded",message:"Organization usage limit reached"}});

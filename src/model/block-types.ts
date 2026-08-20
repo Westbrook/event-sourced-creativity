@@ -46,6 +46,15 @@ export type AdaptiveStructure = {
   hidden_until_later: string[];
 };
 
+export type AdaptiveSuggestionSet = {
+  id: string;
+  documentId: string;
+  intent: string;
+  structure: AdaptiveStructure;
+  requestedAt: string;
+  completedAt: string;
+};
+
 export const BLOCK_TYPES: readonly BlockTypeDefinition[] = [
   { type:"direction", label:"Direction", description:"The outcome or change the work should create", prompt:"Describe the creative outcome…", group:"intent", subtypes:["Campaign goal","Emotional outcome","Behavioral objective","Exploration question"] },
   { type:"audience", label:"Audience", description:"Who the work needs to reach and in what context", prompt:"Who is this for, and where will they meet it?", group:"intent", subtypes:["Primary audience","Use context","Cultural lens","Accessibility need"] },

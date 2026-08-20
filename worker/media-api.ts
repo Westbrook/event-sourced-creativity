@@ -3,10 +3,15 @@ import type { WorkerEnv } from "./runtime";
 
 const ownerPrefix = (ownerId:string) => ownerId.replace(/[^a-zA-Z0-9._-]/g,"-");
 
-export async function storeGeneratedImage(env:WorkerEnv,ownerId:string,generationId:string,bytes:Uint8Array,model:string,mimeType="image/png",metadata:Record<string,string>={}) {
-  const extension=mimeType==="image/jpeg"?"jpg":mimeType==="image/webp"?"webp":"png";const key=`${ownerPrefix(ownerId)}/generated/${generationId}.${extension}`;
-  await env.MEDIA.put(key,bytes.buffer as ArrayBuffer,{httpMetadata:{contentType:mimeType},customMetadata:{ownerId,generationId,model,source:"openai-image-api",...metadata}});
+export async function storeGeneratedMedia(env:WorkerEnv,ownerId:string,artifactId:string,bytes:Uint8Array,model:string,mimeType:string,metadata:Record<string,string>={}) {
+  const extension=mimeType==="video/mp4"?"mp4":mimeType==="image/jpeg"?"jpg":mimeType==="image/webp"?"webp":mimeType==="application/pdf"?"pdf":"png";
+  const key=`${ownerPrefix(ownerId)}/generated/${artifactId}.${extension}`;
+  await env.MEDIA.put(key,bytes.buffer as ArrayBuffer,{httpMetadata:{contentType:mimeType},customMetadata:{ownerId,artifactId,model,source:"provider-generated-media",...metadata}});
   return{key,url:`/api/media/${encodeURIComponent(key)}`,mimeType};
+}
+
+export async function storeGeneratedImage(env:WorkerEnv,ownerId:string,generationId:string,bytes:Uint8Array,model:string,mimeType="image/png",metadata:Record<string,string>={}) {
+  return storeGeneratedMedia(env,ownerId,generationId,bytes,model,mimeType,{generationId,source:"provider-image-api",...metadata});
 }
 
 export async function readGeneratedImageReference(env:WorkerEnv,ownerId:string,mediaUrl:unknown) {

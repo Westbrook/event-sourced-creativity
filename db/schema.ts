@@ -195,3 +195,18 @@ export const documentJobs = sqliteTable(
     index("idx_document_jobs_stream_document").on(table.streamId, table.documentId, table.requestedAt),
   ],
 );
+
+/** Server-owned release projection; every mutation also appends an immutable governance receipt. */
+export const canvasGovernanceRequirements = sqliteTable(
+  "canvas_governance_requirements",
+  {
+    requirementId: text("requirement_id").primaryKey(),
+    status: text("status").notNull(),
+    approvedByUserId: text("approved_by_user_id"),
+    approvedByName: text("approved_by_name"),
+    approvedAt: text("approved_at"),
+    evidenceRef: text("evidence_ref"),
+    detailsJson: text("details_json").notNull().default("{}"),
+    updatedAt: text("updated_at").notNull(),
+  },
+);

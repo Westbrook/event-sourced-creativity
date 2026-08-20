@@ -6,6 +6,13 @@ export interface WorkerEnv {
   OPENAI_PROJECT?: string;
   OPENAI_MODEL?: string;
   OPENAI_IMAGE_MODEL?: string;
+  FAL_KEY?: string;
+  FAL_IMAGE_MODEL?: string;
+  FAL_IMAGE_PREVIEW_MODEL?: string;
+  FAL_IMAGE_EDIT_MODEL?: string;
+  FAL_VIDEO_MODEL?: string;
+  FORMA_IMAGE_PROVIDER?: string;
+  FORMA_VIDEO_PROVIDER?: string;
   FORMA_ADMIN_EMAILS?: string;
   FORMA_RETENTION_DAYS?: string;
   FORMA_USER_TOKEN_LIMIT?: string;
@@ -65,6 +72,7 @@ export async function ensureSchema(env: WorkerEnv) {
     env.DB.prepare("CREATE TABLE IF NOT EXISTS replay_cost_authorizations (approval_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, pricing_version TEXT NOT NULL, estimated_microusd INTEGER NOT NULL, reserved_microusd INTEGER NOT NULL, maximum_microusd INTEGER NOT NULL, allow_user_overage INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS replay_approval_profiles (approval_id TEXT PRIMARY KEY NOT NULL, event_count INTEGER NOT NULL, provider_coverage TEXT NOT NULL, milestone_count INTEGER NOT NULL, image_count INTEGER NOT NULL, created_at TEXT NOT NULL)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS replay_development_profiles (approval_id TEXT PRIMARY KEY NOT NULL, study_types_json TEXT NOT NULL, created_at TEXT NOT NULL)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS replay_experience_profiles (approval_id TEXT PRIMARY KEY NOT NULL, experience_profile TEXT NOT NULL, created_at TEXT NOT NULL)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS replay_sessions (session_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, status TEXT NOT NULL, title TEXT NOT NULL, summary TEXT NOT NULL, seed TEXT NOT NULL, event_count INTEGER NOT NULL DEFAULT 0, image_count INTEGER NOT NULL DEFAULT 0, preview_media_url TEXT, final_media_url TEXT, events_json TEXT, plan_json TEXT, usage_json TEXT, planner_model TEXT, image_model TEXT, error_message TEXT, created_at TEXT NOT NULL, completed_at TEXT)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_replay_sessions_owner_created ON replay_sessions(owner_id, created_at)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS replay_session_operations (session_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, approval_id TEXT NOT NULL, stage TEXT NOT NULL, progress_message TEXT NOT NULL, completed_operations INTEGER NOT NULL DEFAULT 0, total_operations INTEGER NOT NULL DEFAULT 0, reserved_microusd INTEGER NOT NULL DEFAULT 0, actual_microusd INTEGER NOT NULL DEFAULT 0, budget_period TEXT NOT NULL, heartbeat_at TEXT NOT NULL, created_at TEXT NOT NULL, settled_at TEXT)"),
@@ -80,6 +88,11 @@ export async function ensureSchema(env: WorkerEnv) {
     env.DB.prepare("CREATE TABLE IF NOT EXISTS document_jobs (job_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, stream_id TEXT NOT NULL, document_id TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, source_surface TEXT NOT NULL, correlation_id TEXT NOT NULL, requested_sequence INTEGER NOT NULL, request_json TEXT NOT NULL, result_json TEXT, error_message TEXT, attempt_count INTEGER NOT NULL DEFAULT 0, requested_at TEXT NOT NULL, started_at TEXT, completed_at TEXT, lease_expires_at TEXT, notified_at TEXT, expires_at TEXT NOT NULL, updated_at TEXT NOT NULL)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_document_jobs_owner_status ON document_jobs(owner_id, status, requested_at)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_document_jobs_stream_document ON document_jobs(stream_id, document_id, requested_at)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS provider_health (scope_key TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, scope TEXT NOT NULL, message TEXT NOT NULL, observed_at TEXT NOT NULL, expires_at TEXT NOT NULL, retry_after_ms INTEGER, request_id TEXT)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_provider_health_expiry ON provider_health(expires_at)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS generation_preflights (preflight_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, stream_id TEXT NOT NULL, document_id TEXT NOT NULL, request_key TEXT NOT NULL, status TEXT NOT NULL, result_json TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, UNIQUE(owner_id,request_key))"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_generation_preflights_owner_document ON generation_preflights(owner_id,document_id,expires_at)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS canvas_governance_requirements (requirement_id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, approved_by_user_id TEXT, approved_by_name TEXT, approved_at TEXT, evidence_ref TEXT, details_json TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL)"),
   ]);
 }
 
@@ -123,9 +136,20 @@ export function serializeEvent(row: Record<string, unknown>): EventRow {
   return { eventId: String(row.event_id), streamId: String(row.stream_id), sequence: Number(row.sequence), occurredAt: String(row.occurred_at), recordedAt: String(row.recorded_at), actor: String(row.actor), clientId: String(row.client_id), correlationId: String(row.correlation_id), causationId: row.causation_id ? String(row.causation_id) : null, compensatesEventId: row.compensates_event_id ? String(row.compensates_event_id) : null, schemaVersion: Number(row.schema_version), type: String(row.type), payload: JSON.parse(String(row.payload)) as Record<string, unknown> };
 }
 
-export async function readEvents(env: WorkerEnv, streamId: string, limit = 2000) {
-  const result = await env.DB.prepare("SELECT * FROM events WHERE stream_id=? ORDER BY sequence ASC LIMIT ?").bind(streamId, limit).all<Record<string, unknown>>();
+export const EVENT_PAGE_SIZE = 2000;
+
+export async function readEventPage(env: WorkerEnv, streamId: string, afterSequence = 0, limit = EVENT_PAGE_SIZE) {
+  const pageSize=Math.max(1,Math.min(EVENT_PAGE_SIZE,Math.floor(limit)));
+  const result=await env.DB.prepare("SELECT * FROM events WHERE stream_id=? AND sequence>? ORDER BY sequence ASC LIMIT ?").bind(streamId,Math.max(0,Math.floor(afterSequence)),pageSize).all<Record<string,unknown>>();
   return result.results.map(serializeEvent);
+}
+
+/** Read a complete stream in bounded D1 pages. Callers that only need transport pages should use readEventPage. */
+export async function readEvents(env: WorkerEnv, streamId: string, limit = Number.POSITIVE_INFINITY) {
+  const requested=Number.isFinite(limit)?Math.max(0,Math.floor(limit)):Number.POSITIVE_INFINITY;
+  const events:EventRow[]=[];let cursor=0;
+  while(events.length<requested){const page=await readEventPage(env,streamId,cursor,Math.min(EVENT_PAGE_SIZE,requested-events.length));if(!page.length)break;events.push(...page);cursor=page.at(-1)!.sequence;if(page.length<EVENT_PAGE_SIZE)break;}
+  return events;
 }
 
 export async function appendAuditEvent(env: WorkerEnv, streamId: string, actor: string, type: string, payload: Record<string, unknown>, correlationId = uuidV7()) {

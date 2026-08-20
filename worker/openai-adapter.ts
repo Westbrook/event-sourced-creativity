@@ -5,11 +5,18 @@ import { buildBoundedPromptRepresentation, buildReferencePromptDirectives, build
 import { classifyProviderFailure, ProviderRequestError, providerErrorFromResponse, type ProviderFailureDetail } from "./provider-errors.ts";
 import { normalizeImageFormat, validateProviderImageSize } from "../src/model/image-format.ts";
 import { buildReplayDevelopmentStages, type CreativeStudyKind, type ReplayDevelopmentStage } from "../src/model/replay-development.ts";
+import { moderateExactImagePrompt } from "./openai-moderation.ts";
+import { parseDocumentArtifactContent, slideCopyIsDistinct, slideDeckCopyIsDistinct, slideVisualIsComplete, SLIDE_LAYOUTS, SLIDE_STYLE_PRESET_IDS, SLIDE_VISUAL_KINDS, type DocumentArtifactDraft, type DocumentArtifactKind } from "../src/model/document-artifacts.ts";
+import { REPLAY_EXPERIENCE_PROFILES, replayExperienceDefinition, type ReplayExperienceId } from "../src/model/replay-experiences.ts";
 
 type OpenAIError = { message?: string; type?: string; code?: string | null; param?: string | null };
 type OpenAIResponse = { id?: string; model?: string; output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: OpenAIError };
 type OpenAIImageUsage = { input_tokens?: number; output_tokens?: number; total_tokens?: number; input_tokens_details?: { text_tokens?: number; image_tokens?: number } };
 type OpenAIImageResponse = { created?: number; data?: Array<{ b64_json?: string; revised_prompt?: string }>; usage?: OpenAIImageUsage; error?: OpenAIError };
+type FalQueueStatus = "IN_QUEUE" | "IN_PROGRESS" | "COMPLETED";
+type FalQueueResponse = { status?: FalQueueStatus; request_id?: string; queue_position?: number; logs?: Array<{ message?: string; timestamp?: string }>; metrics?: { inference_time?: number }; error?: OpenAIError };
+type FalVideoFile = { url?: string; content_type?: string; file_name?: string; file_size?: number };
+type FalVideoResponse = { video?: FalVideoFile; data?: { video?: FalVideoFile }; error?: OpenAIError };
 type OpenAIImageStreamEvent = { type?: string; b64_json?: string; created_at?: number; size?: string; output_format?: ImageOutputFormat; partial_image_index?: number; usage?: OpenAIImageUsage; error?: { message?: string } };
 export type CreativeChatMutation = { operation: "create" | "edit" | "remove"; target_block_id: string | null; type: BlockKind; subtype: string; instruction: string; handle: string; reference_pixel_mode: ReferencePixelMode | "unchanged"; image_format: { aspect_ratio:string; width:number; height:number } | null };
 export type CreativeChatResponse = { reply: string; mutations: CreativeChatMutation[]; preview_direction: string; preview_worthy: boolean };
@@ -26,8 +33,11 @@ export type CreativeImageOptions = {
   references?: ImageReference[];
   promptTechnique?: PromptTechnique;
   signal?: AbortSignal;
+  onStage?: (stage:string,message:string) => void | Promise<void>;
 };
-export type LiveReplayPlanningContext = { stage: ReplayDevelopmentStage; lockedStudies: Array<{ kind: CreativeStudyKind; label: string; lockSummary: string; lockedDecisions: LiveReplayPlan["development"]["locked_decisions"] }> };
+export type LiveReplayPlanningContext = { stage: ReplayDevelopmentStage; lockedStudies: Array<{ kind: CreativeStudyKind; label: string; lockSummary: string; lockedDecisions: LiveReplayPlan["development"]["locked_decisions"] }>; experienceProfile?:ReplayExperienceId };
+export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; signal?:AbortSignal };
+export type CreativeVideoOptions = { seconds:4|8|10; size:"1280x720"|"720x1280"; providerJobId?:string; signal?:AbortSignal; onStage?:(stage:string,message:string)=>void|Promise<void>; onReceipt?:(receipt:{providerJobId:string;provider:string;model:string})=>void|Promise<void> };
 
 const outputSchema = {
   type: "object",
@@ -66,10 +76,58 @@ const creativeChatSchema = {
   },
 };
 
+const slidePresentationSchema={
+  type:"object",additionalProperties:false,required:["aspect_ratio","theme","footer_label","style_preset","mode","palette"],
+  properties:{
+    aspect_ratio:{type:"string",enum:["16:9"]},theme:{type:"string",minLength:1,maxLength:80},footer_label:{type:"string",minLength:1,maxLength:80},style_preset:{type:"string",enum:SLIDE_STYLE_PRESET_IDS},mode:{type:"string",enum:["light","dark"]},
+    palette:{type:"object",additionalProperties:false,required:["background","foreground","accent","muted","surface"],properties:{background:{type:"string",pattern:"^#[0-9A-Fa-f]{6}$"},foreground:{type:"string",pattern:"^#[0-9A-Fa-f]{6}$"},accent:{type:"string",pattern:"^#[0-9A-Fa-f]{6}$"},muted:{type:"string",pattern:"^#[0-9A-Fa-f]{6}$"},surface:{type:"string",pattern:"^#[0-9A-Fa-f]{6}$"}}},
+  },
+};
+const slideVisualSchema={
+  type:"object",additionalProperties:false,required:["layout","kicker","bullets","visual"],
+  properties:{
+    layout:{type:"string",enum:SLIDE_LAYOUTS},
+    kicker:{type:"string",minLength:1,maxLength:80},
+    bullets:{type:"array",maxItems:5,items:{type:"string",minLength:1,maxLength:160}},
+    visual:{
+      type:"object",additionalProperties:false,required:["kind","label","value","data"],
+      properties:{
+        kind:{type:"string",enum:SLIDE_VISUAL_KINDS},
+        label:{type:"string",minLength:1,maxLength:100},
+        value:{type:"string",minLength:1,maxLength:120},
+        data:{
+          type:"array",minItems:1,maxItems:5,
+          items:{
+            type:"object",additionalProperties:false,required:["label","value","weight"],
+            properties:{label:{type:"string",minLength:1,maxLength:80},value:{type:"string",minLength:1,maxLength:100},weight:{type:"number",minimum:0,maximum:1}},
+          },
+        },
+      },
+    },
+  },
+};
+const documentArtifactSchema=(kind:DocumentArtifactKind)=>{
+  const itemProperties:Record<string,unknown>={title:{type:"string"},body:{type:"string"},notes:{type:"string"},image_prompt:{type:"string"}};
+  const itemRequired=["title","body","notes","image_prompt"];
+  if(kind==="slides"){itemProperties.slide=slideVisualSchema;itemRequired.push("slide");}
+  const properties:Record<string,unknown>={title:{type:"string"},summary:{type:"string"},content_markdown:{type:"string"},items:{type:"array",minItems:1,maxItems:12,items:{type:"object",additionalProperties:false,required:itemRequired,properties:itemProperties}}};
+  const required=["title","summary","content_markdown","items"];
+  if(kind==="slides"){properties.presentation=slidePresentationSchema;required.push("presentation");}
+  return{type:"object",additionalProperties:false,required,properties};
+};
+
 const replayDirectionSchema={type:"object",additionalProperties:false,required:["title","rationale","scene","palette","next_moves"],properties:{title:{type:"string"},rationale:{type:"string"},scene:{type:"string"},palette:{type:"array",minItems:3,maxItems:6,items:{type:"string"}},next_moves:{type:"array",minItems:2,maxItems:4,items:{type:"string"}}}};
+const replayOutputBriefSchema={type:"object",additionalProperties:false,required:["title","purpose","audience","content_direction","success_signal","beats"],properties:{title:{type:"string",minLength:1,maxLength:120},purpose:{type:"string",minLength:1,maxLength:500},audience:{type:"string",minLength:1,maxLength:160},content_direction:{type:"string",minLength:1,maxLength:1200},success_signal:{type:"string",minLength:1,maxLength:500},beats:{type:"array",minItems:3,maxItems:8,items:{type:"string",minLength:1,maxLength:500}}}};
+const replayExperienceSchema={type:"object",additionalProperties:false,required:["profile","value_proposition","creative_arc","library","canvas","outputs","slides_style_preset"],properties:{
+  profile:{type:"string",enum:REPLAY_EXPERIENCE_PROFILES.map((profile)=>profile.id)},value_proposition:{type:"string",minLength:1,maxLength:800},creative_arc:{type:"array",minItems:5,maxItems:9,items:{type:"string",minLength:1,maxLength:320}},
+  library:{type:"object",additionalProperties:false,required:["goal","reusable_context","search_intent","reuse_decision"],properties:{goal:{type:"string"},reusable_context:{type:"array",minItems:4,maxItems:8,items:{type:"string"}},search_intent:{type:"string"},reuse_decision:{type:"string"}}},
+  canvas:{type:"object",additionalProperties:false,required:["goal","synthesis","arrangement","suggested_next_move"],properties:{goal:{type:"string"},synthesis:{type:"string"},arrangement:{type:"string"},suggested_next_move:{type:"string"}}},
+  outputs:{type:"object",additionalProperties:false,required:["image","short_story","scene","slides","storyboard","video"],properties:{image:replayOutputBriefSchema,short_story:replayOutputBriefSchema,scene:replayOutputBriefSchema,slides:replayOutputBriefSchema,storyboard:replayOutputBriefSchema,video:replayOutputBriefSchema}},
+  slides_style_preset:{type:"string",enum:SLIDE_STYLE_PRESET_IDS},
+}};
 const liveReplayPlanSchema={
-  type:"object",additionalProperties:false,required:["title","summary","user_goal","project_name","document_title","image_format","development","reference","chat_turns","blocks","draft","final","critique","collection","memory","fan_review","friction"],properties:{
-    title:{type:"string"},summary:{type:"string"},user_goal:{type:"string"},project_name:{type:"string"},document_title:{type:"string"},
+  type:"object",additionalProperties:false,required:["title","summary","user_goal","project_name","document_title","experience","image_format","development","reference","chat_turns","blocks","draft","final","critique","collection","memory","fan_review","friction"],properties:{
+    title:{type:"string"},summary:{type:"string"},user_goal:{type:"string"},project_name:{type:"string"},document_title:{type:"string"},experience:replayExperienceSchema,
     image_format:{type:"object",additionalProperties:false,required:["schema_version","aspect_ratio","dimensions"],properties:{schema_version:{type:"integer",enum:[1]},aspect_ratio:{type:"object",additionalProperties:false,required:["width","height"],properties:{width:{type:"integer",minimum:1,maximum:32},height:{type:"integer",minimum:1,maximum:32}}},dimensions:{type:"object",additionalProperties:false,required:["width","height","unit"],properties:{width:{type:"integer",minimum:64,maximum:8192},height:{type:"integer",minimum:64,maximum:8192},unit:{type:"string",enum:["px"]}}}}},
     development:{type:"object",additionalProperties:false,required:["stage_kind","stage_label","focus","purpose","success_criteria","lock_summary","locked_decisions","consumes_studies"],properties:{stage_kind:{type:"string",enum:["character","location","logo","prop","wardrobe","material","lighting","composition"]},stage_label:{type:"string"},focus:{type:"string"},purpose:{type:"string"},success_criteria:{type:"array",minItems:2,maxItems:6,items:{type:"string"}},lock_summary:{type:"string"},locked_decisions:{type:"array",minItems:2,maxItems:8,items:{type:"object",additionalProperties:false,required:["block_type","label","value"],properties:{block_type:{type:"string",enum:BLOCK_TYPES.map((item)=>item.type)},label:{type:"string"},value:{type:"string"}}}},consumes_studies:{type:"array",maxItems:7,items:{type:"string",enum:["character","location","logo","prop","wardrobe","material","lighting"]}}}},
     reference:{type:"object",additionalProperties:false,required:["label","description","source_strategy","source_rationale","generation_prompt","internet_search_query","mood","composition","materials","lighting","spatial","palette"],properties:{label:{type:"string"},description:{type:"string"},source_strategy:{type:"string",enum:["generated","licensed-web"]},source_rationale:{type:"string",maxLength:500},generation_prompt:{type:"string",maxLength:1200},internet_search_query:{type:"string",maxLength:240},mood:{type:"string"},composition:{type:"string"},materials:{type:"string"},lighting:{type:"string"},spatial:{type:"string"},palette:{type:"array",minItems:4,maxItems:6,items:{type:"string"}}}},
@@ -137,19 +195,23 @@ const responseText=(body:OpenAIResponse)=>body.output_text||body.output?.flatMap
 export async function generateLiveReplayPlan(env:WorkerEnv,userId:string,seed:string,planningContext?:LiveReplayPlanningContext){
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");const started=Date.now();
   const stage=planningContext?.stage??buildReplayDevelopmentStages([],1)[0];const lockedStudies=planningContext?.lockedStudies??[];
+  const experience=replayExperienceDefinition(planningContext?.experienceProfile);
   const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),body:JSON.stringify({
     model:env.OPENAI_MODEL??"gpt-5.6-terra",
-    instructions:"Create a realistic, coherent, fully populated creative-workflow mock for an event-sourced image application. This is synthetic evaluation data, not a description of implementation. Make every field specific, natural, and user-readable. You are planning exactly the supplied development stage. For a study, isolate that subject and define concrete decisions that can be accepted and locked before composition; do not prematurely turn it into the final composed campaign image. For a composition, explicitly preserve and combine every supplied locked study rather than redesigning those accepted parts. Echo the supplied stage kind exactly in development.stage_kind, explain its focus and success criteria, and populate locked_decisions with concise, visually testable decisions. Choose one deliberate target image aspect ratio and pixel size in image_format; make the Format block explain that production choice and ensure its instruction agrees with the structured values. The reference must be a real image before the simulated upload occurs. Choose source_strategy licensed-web when an existing, freely reusable documentary or factual image would strengthen the workflow; otherwise choose generated. For licensed-web, provide a concise Wikimedia Commons search query. For generated, write a self-contained low-quality reference-image prompt grounded in the planned stage. Always provide both internet_search_query and generation_prompt so generation can safely fall back if licensed acquisition is unavailable, and explain the choice in source_rationale. Supply exactly one block for every provided block type, with no duplicates; choose a useful supported subtype. Across the blocks use every spatial_method at least once. Include positive direction, role-specific avoid/prohibit constraints, and several local targets that genuinely matter to the pictured scene. Write three to five conversational turns that show the stage becoming more precise; Live preview must be true on at least one turn and false on at least one turn so the user can batch decisions. The assistant should acknowledge uncertainty and resolve only the requested change. The draft should be fast and exploratory. The final direction should refine that draft. Compare the likely strengths of prose, bullets, JSON, and XML handoffs with a distinct, specific reason for each; choose a preferred technique and one or more outputs worth promoting. Include a plausible moment where the user gets stuck in one document view and a concrete recovery. Use valid CSS hex colors. Do not mention events, schemas, APIs, tests, or internal metadata.",
-    input:JSON.stringify({seed:seed.trim()||"Develop a richly art-directed editorial image through conversation, reference analysis, local constraints, iteration, memory, and re-entry.",development_stage:stage,locked_studies:lockedStudies,required_block_types:BLOCK_TYPES.map((item)=>({type:item.type,subtypes:item.subtypes,description:item.description}))}),
-    text:{verbosity:"medium",format:{type:"json_schema",name:"live_replay_plan",strict:true,schema:liveReplayPlanSchema}},reasoning:{effort:"medium"},max_output_tokens:6000,store:false,safety_identifier:await safetyIdentifier(userId),
+    instructions:"Create a realistic, coherent, fully populated creative-workflow mock for an event-sourced creative system. This is synthetic evaluation data, not a description of implementation. Make every field specific, natural, and user-readable. The requested experience profile is a narrative contract: demonstrate its value through believable choices and consequences, not a feature checklist. Give the Library reusable, searchable context with meaningful relationships. Give the project Canvas a distinct synthesis goal, spatial organization rationale, assistant suggestion, selected composite context, and document handoff. Make every output brief purpose-built: the image, short story, screen scene, visual presentation, storyboard, and video treatment must serve distinct audiences or decisions while sharing one durable creative world. Give each output three to eight concrete, ordered beats written for that form: narrative turns for story, playable action for scene, presentation arguments for slides, shots for storyboard, and motion or audio progression for video. Do not reuse the same beats across forms. Creative arc beats must be concrete enough to structure re-entry and the user-like replay without replacing the output-specific beats. You are planning exactly the supplied development stage. For a study, isolate that subject and define concrete decisions that can be accepted and locked before composition; do not prematurely turn it into the final composed campaign image. For a composition, explicitly preserve and combine every supplied locked study rather than redesigning those accepted parts. Echo the supplied stage kind exactly in development.stage_kind, explain its focus and success criteria, and populate locked_decisions with concise, visually testable decisions. Choose one deliberate target image aspect ratio and pixel size in image_format; make the Format block explain that production choice and ensure its instruction agrees with the structured values. The reference must be a real image before the simulated upload occurs. Choose source_strategy licensed-web when an existing, freely reusable documentary or factual image would strengthen the workflow; otherwise choose generated. Always provide both a concise Wikimedia Commons search query and a self-contained low-quality fallback generation prompt, and explain the choice. Supply exactly one block for every provided block type, with no duplicates; choose a useful supported subtype. Across the blocks use every spatial_method at least once. Include positive direction, role-specific avoid/prohibit constraints, and several local targets that genuinely matter. Write three to five conversational turns that show the stage becoming more precise; Live preview must be true on at least one turn and false on at least one turn so decisions can be batched. The assistant should acknowledge uncertainty and resolve only the requested change. The draft should be fast and exploratory. The final direction should refine that draft. Compare prose, bullets, JSON, and XML handoffs with a distinct, specific reason for each; choose a preferred technique and outputs worth promoting. Include a plausible moment where the user gets stuck in one document view and a concrete recovery. Use valid CSS hex colors. Avoid repeated output copy, generic tour language, placeholders, and mentions of events, schemas, APIs, tests, or internal metadata.",
+    input:JSON.stringify({seed:seed.trim()||"Develop a richly art-directed creative campaign through reusable context, spatial synthesis, conversation, reference analysis, local constraints, iteration, multiple deliverable forms, judgment, memory, and re-entry.",experience_profile:{id:experience.id,label:experience.label,summary:experience.summary,planner_brief:experience.plannerBrief},development_stage:stage,locked_studies:lockedStudies,required_block_types:BLOCK_TYPES.map((item)=>({type:item.type,subtypes:item.subtypes,description:item.description}))}),
+    text:{verbosity:"medium",format:{type:"json_schema",name:"live_replay_plan",strict:true,schema:liveReplayPlanSchema}},reasoning:{effort:"medium"},max_output_tokens:7500,store:false,safety_identifier:await safetyIdentifier(userId),
   })});
   const body=await response.json() as OpenAIResponse;if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`);const raw=responseText(body);if(!raw)throw new Error("provider_returned_no_output");
   let output:LiveReplayPlan;try{output=JSON.parse(raw) as LiveReplayPlan;output.image_format=normalizeImageFormat(output.image_format);}catch{throw new Error("provider_returned_invalid_json");}
   if(output.development?.stage_kind!==stage.kind)throw new Error("provider_returned_wrong_development_stage");
+  if(output.experience?.profile!==experience.id)throw new Error("provider_returned_wrong_experience_profile");
   output.development.stage_label=stage.label;output.development.purpose=stage.purpose;output.development.consumes_studies=stage.consumesStudies;
   const supplied=new Set(output.blocks.map((block)=>block.type));const spatialMethods=new Set(output.blocks.map((block)=>block.spatial_method));if(output.blocks.length!==BLOCK_TYPES.length||BLOCK_TYPES.some((definition)=>!supplied.has(definition.type))||["document","region","aabb","subject","path"].some((method)=>!spatialMethods.has(method as LiveReplayPlan["blocks"][number]["spatial_method"])))throw new Error("provider_returned_incomplete_replay_plan");
   if(!output.reference.source_rationale.trim()||!output.reference.generation_prompt.trim()||!output.reference.internet_search_query.trim())throw new Error("provider_returned_incomplete_reference_plan");
   if(output.chat_turns.length<3||!output.chat_turns.some((turn)=>turn.live_preview)||!output.chat_turns.some((turn)=>!turn.live_preview))throw new Error("provider_returned_incomplete_chat_rehearsal");
+  const outputBriefs=Object.values(output.experience.outputs);const outputBeatSignatures=new Set(outputBriefs.map((brief)=>brief.beats.map((beat)=>beat.trim().toLowerCase()).join("|")));
+  if(output.experience.creative_arc.length<5||output.experience.library.reusable_context.length<4||new Set(outputBriefs.map((brief)=>brief.title.trim().toLowerCase())).size<5||outputBriefs.some((brief)=>brief.beats.length<3)||outputBeatSignatures.size<5)throw new Error("provider_returned_incomplete_experience_plan");
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output,raw,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
@@ -190,6 +252,16 @@ export const buildCreativeImagePrompt=(snapshot:Record<string,unknown>,direction
 
 const imageMimeType=(format:ImageOutputFormat)=>format==="jpeg"?"image/jpeg":format==="webp"?"image/webp":"image/png";
 const decodeBase64Image=(encoded:string)=>{try{const binary=atob(encoded);return Uint8Array.from(binary,(character)=>character.charCodeAt(0));}catch{throw new Error("provider_returned_invalid_image");}};
+const SUPPORTED_REFERENCE_MIME_TYPES=new Set(["image/png","image/jpeg","image/webp"]);
+const MAX_REFERENCE_IMAGE_BYTES=50*1024*1024;
+export const validateImageReferences=(references:ImageReference[])=>{
+  for(const [index,reference] of references.entries()){
+    if(!reference.bytes.byteLength)throw new ProviderRequestError({code:"reference_image_empty",category:"provider",scope:"request",action:"edit_request",message:`Reference image ${index+1} has no pixels. Replace or remove it before generating.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
+    if(!SUPPORTED_REFERENCE_MIME_TYPES.has(reference.mimeType))throw new ProviderRequestError({code:"reference_image_type_unsupported",category:"provider",scope:"request",action:"edit_request",message:`Reference image ${index+1} uses ${reference.mimeType||"an unknown format"}. Convert it to PNG, JPEG, or WebP before generating.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
+    if(reference.bytes.byteLength>=MAX_REFERENCE_IMAGE_BYTES)throw new ProviderRequestError({code:"reference_image_too_large",category:"provider",scope:"request",action:"edit_request",message:`Reference image ${index+1} is ${(reference.bytes.byteLength/1024/1024).toFixed(1)} MB. Image-edit inputs must be smaller than 50 MB.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
+  }
+  return references;
+};
 
 async function readImageStream(response:Response,onEvent:(event:OpenAIImageStreamEvent)=>Promise<void>){
   if(!response.body)throw new Error("provider_returned_no_stream");
@@ -208,7 +280,11 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const model=env.OPENAI_IMAGE_MODEL??"gpt-image-2";const quality=options.quality??"high";const size=options.size??"1536x1024";const sizeValidation=validateProviderImageSize(size);
   if(model.startsWith("gpt-image-2")&&!sizeValidation.valid)throw new ProviderRequestError({code:"invalid_image_size",category:"provider",scope:"request",action:"edit_request",message:`The requested image size ${size} cannot be submitted to ${model}. ${sizeValidation.issues.join(" ")}`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
-  const references=(options.references??[]).filter((reference)=>reference.bytes.byteLength>0);const promptTechnique=normalizePromptTechnique(options.promptTechnique);const prompt=buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:options.partialImages});const started=Date.now();
+  const references=validateImageReferences(options.references??[]);const promptTechnique=normalizePromptTechnique(options.promptTechnique);const prompt=buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:options.partialImages});const started=Date.now();
+  await options.onStage?.("safety-review","Reviewing the exact image prompt and selected reference pixels.");
+  let moderation:Awaited<ReturnType<typeof moderateExactImagePrompt>>;try{moderation=await moderateExactImagePrompt(env,prompt,references,options.signal);}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
+  if(moderation.flagged)throw new ProviderRequestError({code:"safety_preflight_flagged",category:"safety",scope:"request",action:"edit_request",message:`A preflight review identified likely safety concerns${moderation.categories.length?` in ${moderation.categories.join(", ")}`:""}. Review the exact prompt and the contributing context before retrying.`,retryable:false,retryAfterMs:null,requestId:moderation.requestId,httpStatus:400,riskCategories:moderation.categories,contributingReferenceIds:moderation.referenceIds,probe:"exact-prompt-and-reference-moderation"},prompt);
+  await options.onStage?.("provider-wait","Safety preflight passed. Waiting for the image provider.");
   const outputFormat=options.outputFormat??"png";const outputCompression=Math.max(0,Math.min(100,Math.round(options.outputCompression??100)));const partialImages=options.partialImages??0;const user=await safetyIdentifier(userId);
   let response:Response;
   if(references.length){
@@ -226,7 +302,7 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
     const body=await response.json() as OpenAIImageResponse;encoded=body.data?.[0]?.b64_json??"";revisedPrompt=body.data?.[0]?.revised_prompt??null;createdAt=body.created??null;usage=body.usage??{};
   }
   if(!encoded)throw new Error("provider_returned_no_image");const bytes=decodeBase64Image(encoded);const [width,height]=completedSize.split("x").map(Number);
-  return{model,prompt,promptTechnique,bytes,revisedPrompt,createdAt,latencyMs:Date.now()-started,usage:{inputTokens:Number(usage.input_tokens??0),outputTokens:Number(usage.output_tokens??0),totalTokens:Number(usage.total_tokens??0),textInputTokens:Number(usage.input_tokens_details?.text_tokens??0),imageInputTokens:Number(usage.input_tokens_details?.image_tokens??0)},width:Number.isFinite(width)?width:requestedWidth,height:Number.isFinite(height)?height:requestedHeight,mimeType:imageMimeType(completedFormat),quality,usedReference:references.length>0,referenceCount:references.length,referenceInputs:references.map((reference)=>({source:reference.source,blockId:reference.blockId??null,referenceId:reference.referenceId??null,label:reference.label??null,mode:reference.mode??null})),partialCount,outputFormat:completedFormat,outputCompression:completedFormat==="png"?null:outputCompression};
+  return{model,prompt,promptTechnique,bytes,revisedPrompt,createdAt,latencyMs:Date.now()-started,usage:{inputTokens:Number(usage.input_tokens??0),outputTokens:Number(usage.output_tokens??0),totalTokens:Number(usage.total_tokens??0),textInputTokens:Number(usage.input_tokens_details?.text_tokens??0),imageInputTokens:Number(usage.input_tokens_details?.image_tokens??0)},width:Number.isFinite(width)?width:requestedWidth,height:Number.isFinite(height)?height:requestedHeight,mimeType:imageMimeType(completedFormat),quality,usedReference:references.length>0,referenceCount:references.length,referenceInputs:references.map((reference)=>({source:reference.source,blockId:reference.blockId??null,referenceId:reference.referenceId??null,label:reference.label??null,mode:reference.mode??null})),safetyProbeCount:moderation.probeCount,safetyCoverage:moderation.coverage,safetyRequestIds:moderation.requestIds,partialCount,outputFormat:completedFormat,outputCompression:completedFormat==="png"?null:outputCompression};
 }
 
 export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{documentTitle:string;blocks:Array<Record<string,unknown>>;history:Array<{role:"user"|"assistant";text:string}>;message:string}) {
@@ -257,4 +333,62 @@ export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input
   const text=responseText(body);if(!text)throw new Error("provider_returned_no_output");
   let parsed:AdaptiveStructure;try{parsed=JSON.parse(text) as AdaptiveStructure;}catch{throw new Error("provider_returned_invalid_json");}
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output:parsed,raw:text,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
+}
+
+const artifactInstructions:Record<DocumentArtifactKind,string>={
+  short_story:"Write a polished short story, not a treatment. Preserve the document's named subjects, setting, tone, constraints, and spatial relationships. content_markdown is the complete story. Items are titled narrative movements with their prose in body; notes briefly explain continuity, and image_prompt describes an optional illustration.",
+  scene:"Write one production-readable scene for film or television. content_markdown must use clear screenplay conventions: scene heading, action, character names, dialogue, and parentheticals only when useful. Items are playable beats in order; body contains the beat's action/dialogue and image_prompt describes its strongest frame.",
+  slides:"Create an informative visual presentation, not an essay split at arbitrary points and not a request for raster slide images. presentation defines one accessible 16:9 CSS theme for the deck. Choose the style_preset that best represents the document: gallery for quiet, warm, image-led work; editorial for assertive narrative hierarchy; nocturne for cinematic or atmospheric work; field-notes for research, evidence, and plans. Make mode and palette coherent with that choice while deriving the specific colors from the document. presentation.theme is internal styling metadata; presentation.footer_label is optional-on-screen deck copy and must be a concise name derived from this document, its subject, or the deck title. Never put process language, model names, provider names, system status, or phrases such as Document-derived editorial in footer_label. Each item is one slide: title and body are concise on-slide copy, notes are speaker notes, and slide is reusable visual data. Choose a purposeful layout and semantic visual primitive for every slide. Use visual.data labels, values, and normalized weights to express the actual idea rather than decoration. Editorially review every slide before returning it: every visible field must add new information. Do not repeat or closely restate the same sentence, quotation, claim, or phrase across its title, body, kicker, bullets, visual label, visual value, or data points. Treat punctuation, quotation marks, line breaks, capitalization, contractions, and minor word-order changes as irrelevant when checking for repetition. Never split one quotation between body copy and a bullet, and never use a bullet as a shortened echo of the body. Then review every slide against every other slide: each slide must advance the deck with a distinct title and distinct visible claims. Do not reuse body copy, bullets, quotations, conclusions, hero statements, metric explanations, or visual values on later slides. Repeated structural axes or short section labels are acceptable only when they make a direct comparison easier to read. Never emit empty bullets or scaffolding such as Point 2, Item 3, TBD, placeholder, or lorem ipsum. Every visual group must be complete and specific: bars and timelines need at least two meaningful label/value pairs; diagrams and color fields need at least two meaningfully named points. If the content supports only one fact, use hero-type or metric instead of pretending it is a multi-point group. Vary layouts with a coherent opening, progression, and closing; keep all copy short enough to fit a 16:9 slide. image_prompt is a brief visual rationale only—the client renders the slide from structured data. content_markdown is a readable slide-by-slide textual version of the same deck.",
+  storyboard:"Create a coherent previz storyboard that can be rendered frame by frame. Each item is one camera shot: title names the shot, body describes action and composition, notes specify camera/lens/movement/continuity, and image_prompt is a self-contained frame prompt that preserves recurring subjects and visual continuity. content_markdown is the ordered shot list.",
+  video:"Create a concise, production-ready video prompt. content_markdown is the exact motion prompt: subject, action, environment, camera, timing, composition, visual style, and audio intent. Use one item to summarize the shot, with technical direction in notes and the same self-contained prompt in image_prompt.",
+};
+
+export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions}) {
+  if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");const started=Date.now();const itemCount=Math.max(1,Math.min(12,Math.floor(Number(input.options?.itemCount??(kind==="slides"?7:kind==="storyboard"?6:kind==="short_story"?3:1)))));
+  const instructions=`You transform a durable creative document into a ${kind.replaceAll("_"," ")} for an end user. ${artifactInstructions[kind]} Treat include and prefer blocks as positive direction; treat avoid and prohibit blocks as negative constraints, never as subjects to feature. Respect every block's spatial scope and authority. Do not mention blocks, events, schemas, or internal implementation. Return exactly ${itemCount} ordered item${itemCount===1?"":"s"}.`;
+  const providerInput=JSON.stringify({document_title:input.documentTitle,creative_context:input.snapshot,audience:input.options?.audience??"general",tone:input.options?.tone??"derived from the document"});
+  const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),signal:input.options?.signal,body:JSON.stringify({model:env.OPENAI_MODEL??"gpt-5.6-terra",instructions,input:providerInput,text:{verbosity:"medium",format:{type:"json_schema",name:`document_${kind}`,strict:true,schema:documentArtifactSchema(kind)}},reasoning:{effort:"low"},max_output_tokens:kind==="short_story"?6000:kind==="slides"?6500:kind==="storyboard"?4000:3000,store:false,safety_identifier:await safetyIdentifier(userId)})});
+  const body=await response.json() as OpenAIResponse;if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`,`Document ${kind} instructions:\n${instructions}\n\nCreative context:\n${providerInput}`);const raw=responseText(body);if(!raw)throw new Error("provider_returned_no_output");const output=parseDocumentArtifactContent(raw) as DocumentArtifactDraft|null;if(!output)throw new Error("provider_returned_invalid_json");const rawItems=(JSON.parse(raw) as {items?:unknown[]}).items??[];if(!output.content_markdown.trim()||output.items.length!==itemCount||kind==="slides"&&(!output.presentation?.footerLabel||!slideDeckCopyIsDistinct(rawItems)||rawItems.some((item)=>!slideCopyIsDistinct(item))||output.items.some((item)=>!item.title.trim()||!item.body.trim()||!item.slide||!slideVisualIsComplete(item.slide))))throw new Error("provider_returned_incomplete_document_artifact");
+  return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output,raw,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
+}
+
+const falHeaders=(env:WorkerEnv)=>({authorization:`Key ${env.FAL_KEY}`,"content-type":"application/json"});
+const falVideoEndpoint=(model:string)=>`https://queue.fal.run/${model}`;
+const falErrorFromResponse=(response:Response,body:unknown,fallback:string,prompt:string)=>{
+  const error=providerErrorFromResponse(response,body,fallback,prompt);return new ProviderRequestError({...error.detail,code:error.detail.code.startsWith("fal_")?error.detail.code:`fal_${error.detail.code}`},prompt);
+};
+const falVideoStatusMessage=(state:FalQueueResponse)=>{
+  const providerMessage=state.logs?.at(-1)?.message?.trim();
+  if(providerMessage)return `Video rendering · ${providerMessage}`;
+  if(state.status==="IN_QUEUE")return Number.isFinite(state.queue_position)?`Video queued · ${Number(state.queue_position)+1} ahead or active` : "Video accepted and waiting for provider capacity.";
+  return "Video rendering with synchronized motion and audio.";
+};
+const trustedFalMediaUrl=(value:string)=>{
+  let url:URL;try{url=new URL(value);}catch{throw new Error("provider_returned_invalid_video_url");}
+  if(url.protocol!=="https:"||url.hostname!=="fal.media"&&!url.hostname.endsWith(".fal.media"))throw new Error("provider_returned_untrusted_video_url");
+  return url.toString();
+};
+async function cancelFalVideo(env:WorkerEnv,model:string,providerJobId:string){
+  try{await fetch(`${falVideoEndpoint(model)}/requests/${encodeURIComponent(providerJobId)}/cancel`,{method:"PUT",headers:falHeaders(env)});}catch{/* Cancellation is best-effort; the durable job still records the local stop. */}
+}
+
+export async function generateCreativeVideo(env:WorkerEnv,prompt:string,options:CreativeVideoOptions) {
+  if(!env.FAL_KEY)throw new ProviderRequestError({code:"video_provider_not_configured",category:"authentication",scope:"account",action:"check_credentials",message:"Fal video generation is not configured for this environment.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:503});
+  const provider=env.FORMA_VIDEO_PROVIDER??"fal";if(provider!=="fal")throw new ProviderRequestError({code:"video_provider_unsupported",category:"access",scope:"provider",action:"check_credentials",message:`The configured video provider ${provider} is not supported by this build.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:503});
+  const cleanPrompt=prompt.trim();if(!cleanPrompt)throw new ProviderRequestError({code:"video_prompt_required",category:"provider",scope:"request",action:"edit_request",message:"The document did not produce a usable motion prompt.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
+  if(cleanPrompt.length>20_000)throw new ProviderRequestError({code:"video_prompt_too_long",category:"provider",scope:"request",action:"edit_request",message:`The prepared motion prompt is ${cleanPrompt.length.toLocaleString()} characters; Gemini Omni Flash accepts at most 20,000. Shorten unusually long document instructions before retrying.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400},cleanPrompt);
+  const started=Date.now();const model=env.FAL_VIDEO_MODEL??"google/gemini-omni-flash";let providerJobId=options.providerJobId??"";
+  try{
+    if(!providerJobId){
+      await options.onStage?.("submitting","Submitting the motion prompt to Fal for a synchronized video and audio render.");
+      const created=await openAIRequest(falVideoEndpoint(model),{method:"POST",headers:falHeaders(env),signal:options.signal,body:JSON.stringify({prompt:cleanPrompt,aspect_ratio:options.size==="720x1280"?"9:16":"16:9",duration:options.seconds})});const receipt=await created.json() as FalQueueResponse;if(!created.ok)throw falErrorFromResponse(created,receipt,`fal_${created.status}`,cleanPrompt);providerJobId=String(receipt.request_id??"");if(!providerJobId)throw new Error("provider_returned_no_video_job");await options.onReceipt?.({providerJobId,provider:"fal",model});
+    }
+    const deadline=Date.now()+15*60_000;let state:FalQueueResponse={request_id:providerJobId,status:"IN_QUEUE"};
+    while(state.status!=="COMPLETED"){
+      if(options.signal?.aborted)throw new DOMException("The operation was aborted.","AbortError");if(Date.now()>deadline)throw new ProviderRequestError({code:"video_generation_timeout",category:"server",scope:"provider",action:"retry",message:"Fal did not finish within fifteen minutes. The durable request receipt can be retried without starting a duplicate render.",retryable:true,retryAfterMs:30_000,requestId:providerJobId,httpStatus:null});
+      const checked=await openAIRequest(`${falVideoEndpoint(model)}/requests/${encodeURIComponent(providerJobId)}/status?logs=1`,{method:"GET",headers:falHeaders(env),signal:options.signal});state=await checked.json() as FalQueueResponse;if(!checked.ok)throw falErrorFromResponse(checked,state,`fal_${checked.status}`,cleanPrompt);if(state.status!=="COMPLETED"){await options.onStage?.(state.status==="IN_QUEUE"?"queued":"rendering",falVideoStatusMessage(state));await wait(5_000,options.signal);}
+    }
+    await options.onStage?.("downloading","Video rendered. Saving the playable result.");const resultResponse=await openAIRequest(`${falVideoEndpoint(model)}/requests/${encodeURIComponent(providerJobId)}`,{method:"GET",headers:falHeaders(env),signal:options.signal});const result=await resultResponse.json() as FalVideoResponse;if(!resultResponse.ok)throw falErrorFromResponse(resultResponse,result,`fal_${resultResponse.status}`,cleanPrompt);const video=result.video??result.data?.video;const mediaUrl=trustedFalMediaUrl(String(video?.url??""));const content=await openAIRequest(mediaUrl,{method:"GET",signal:options.signal});if(!content.ok)throw falErrorFromResponse(content,{},`fal_media_${content.status}`,cleanPrompt);const bytes=new Uint8Array(await content.arrayBuffer());if(!bytes.length)throw new Error("provider_returned_empty_video");const mimeType=String(video?.content_type??content.headers.get("content-type")??"video/mp4");if(!mimeType.startsWith("video/"))throw new Error("provider_returned_invalid_video_type");
+    return{providerJobId,provider:"fal",model,bytes,mimeType,seconds:options.seconds,size:options.size,latencyMs:Date.now()-started,costMicrousd:options.seconds*125_000};
+  }catch(error){if(options.signal?.aborted&&providerJobId)await cancelFalVideo(env,model,providerJobId);throw error;}
 }

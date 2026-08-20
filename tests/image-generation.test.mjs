@@ -5,6 +5,8 @@ import { buildCreativeImagePrompt, buildPixelReferenceDirectives, buildSpatialDi
 import { foldEvents } from "../src/model/events.ts";
 import { providerFailurePrompt } from "../worker/provider-errors.ts";
 
+const moderationPass=()=>Response.json({id:"modr_test",model:"omni-moderation-latest",results:[{flagged:false,categories:{},category_scores:{}}]});
+
 test("builds a GPT Image prompt that preserves role, intent, and negative constraints",()=>{
   const prompt=buildCreativeImagePrompt({facts:[{block_id:"subject",role:"subject",intent:"avoid",effect:"must_not_include",properties:{text:"people under 20 years old"}},{block_id:"reference",role:"reference",intent:"include",properties:{label:"Casting reference"}}],relationships:[{relation_id:"relation",from_block_id:"subject",to_block_id:"reference",kind:"subject_reference"}]},{title:"Quiet interior",scene:"A still room after dusk"});
   assert.match(prompt,/Create one polished landscape image/);
@@ -15,7 +17,7 @@ test("builds a GPT Image prompt that preserves role, intent, and negative constr
 });
 
 test("sends the requested prompt representation without changing the image request profile",async()=>{
-  const originalFetch=globalThis.fetch;const prompts=[];globalThis.fetch=async(_url,init)=>{prompts.push(JSON.parse(String(init.body)).prompt);return Response.json({data:[{b64_json:btoa("image")}],usage:{total_tokens:1}});};
+  const originalFetch=globalThis.fetch;const prompts=[];globalThis.fetch=async(url,init)=>{if(String(url).endsWith("/moderations"))return moderationPass();prompts.push(JSON.parse(String(init.body)).prompt);return Response.json({data:[{b64_json:btoa("image")}],usage:{total_tokens:1}});};
   try{for(const promptTechnique of ["prose","bullets","json","xml"])await generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[{block_id:"b",role:"direction",properties:{text:"Quiet field"}}]},{title:"Study"},{promptTechnique});}finally{globalThis.fetch=originalFetch;}
   assert.match(prompts[0],/^Create one polished landscape/);assert.match(prompts[1],/Document decisions:/);assert.equal(JSON.parse(prompts[2]).operation,"generate_image");assert.match(prompts[3],/<image-generation-prompt/);assert.equal(new Set(prompts).size,4);
 });
@@ -41,7 +43,7 @@ test("turns every spatial block scope into an explicit image-generation directiv
 
 test("calls the direct Image API with gpt-image-2, project attribution, and decodes one private image",async()=>{
   const originalFetch=globalThis.fetch;let requestBody;let requestHeaders;
-  globalThis.fetch=async(url,init)=>{assert.equal(url,"https://api.openai.com/v1/images/generations");requestBody=JSON.parse(String(init.body));requestHeaders=new Headers(init.headers);return Response.json({created:1786406400,data:[{b64_json:btoa("png-bytes")}],usage:{input_tokens:120,output_tokens:900,total_tokens:1020}});};
+  globalThis.fetch=async(url,init)=>{if(String(url).endsWith("/moderations"))return moderationPass();assert.equal(url,"https://api.openai.com/v1/images/generations");requestBody=JSON.parse(String(init.body));requestHeaders=new Headers(init.headers);return Response.json({created:1786406400,data:[{b64_json:btoa("png-bytes")}],usage:{input_tokens:120,output_tokens:900,total_tokens:1020}});};
   try{
     const result=await generateCreativeImage({OPENAI_API_KEY:"test-only",OPENAI_PROJECT:"proj_test"},"user-1",{facts:[]},{title:"Study"});
     assert.equal(requestBody.model,"gpt-image-2");assert.equal(requestBody.size,"1536x1024");assert.equal(requestBody.quality,"high");assert.equal(requestBody.n,1);
@@ -61,12 +63,70 @@ test("rejects invalid GPT Image 2 dimensions before a paid provider request",asy
 });
 
 test("preserves the exact image prompt when moderation stops a generation",async()=>{
-  const originalFetch=globalThis.fetch;globalThis.fetch=async()=>Response.json({error:{message:"Your request was rejected by the safety system.",type:"image_generation_user_error"}},{status:400,headers:{"x-request-id":"req_prompt_receipt"}});
+  const originalFetch=globalThis.fetch;globalThis.fetch=async(url)=>String(url).endsWith("/moderations")?moderationPass():Response.json({error:{message:"Your request was rejected by the safety system.",type:"image_generation_user_error"}},{status:400,headers:{"x-request-id":"req_prompt_receipt"}});
   try{
     await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[{block_id:"subject",role:"subject",properties:{text:"Editorial portrait"}}]},{title:"Moderation receipt study"}),error=>{
       assert.match(providerFailurePrompt(error)??"",/Moderation receipt study/);
       assert.equal(error.detail.category,"safety");assert.equal(error.detail.requestId,"req_prompt_receipt");return true;
     });
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("screens the exact prompt and selected reference pixels before paid image work",async()=>{
+  const originalFetch=globalThis.fetch;let requests=0;globalThis.fetch=async(url)=>{requests+=1;assert.equal(url,"https://api.openai.com/v1/moderations");return requests===1?moderationPass():Response.json({id:"modr_flagged",model:"omni-moderation-latest",results:[{flagged:true,categories:{violence:true},category_scores:{violence:.91}}]},{headers:{"x-request-id":"req_preflight"}});};
+  try{
+    const reference={bytes:new TextEncoder().encode("reference-pixels"),mimeType:"image/png",label:"Action reference",referenceId:"reference-1",source:"uploaded-reference"};
+    await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[{block_id:"direction",role:"direction",properties:{text:"Editorial action study"}}]},{title:"Safety review study"},{references:[reference]}),error=>{
+      assert.equal(error.detail.code,"safety_preflight_flagged");assert.deepEqual(error.detail.riskCategories,["violence"]);assert.deepEqual(error.detail.contributingReferenceIds,["reference-1"]);assert.equal(error.detail.requestId,"req_preflight");assert.match(providerFailurePrompt(error)??"",/Safety review study/);return true;
+    });
+    assert.equal(requests,2);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("moderates every reference with a valid one-image probe before a multi-image edit",async()=>{
+  const originalFetch=globalThis.fetch;const moderationInputs=[];let editRequest=null;
+  globalThis.fetch=async(url,init)=>{
+    if(String(url).endsWith("/moderations")){
+      const input=JSON.parse(String(init.body)).input;moderationInputs.push(input);
+      const imageCount=Array.isArray(input)?input.filter((item)=>item?.type==="image_url").length:0;
+      if(imageCount>1)return Response.json({error:{code:"invalid_value",message:`Number of images (${imageCount}) exceeds maximum of 1`}},{status:400});
+      return moderationPass();
+    }
+    assert.equal(url,"https://api.openai.com/v1/images/edits");editRequest=init;
+    return Response.json({data:[{b64_json:btoa("composed-image")}],usage:{total_tokens:12}});
+  };
+  try{
+    const references=Array.from({length:6},(_,index)=>({bytes:new TextEncoder().encode(`reference-${index}`),mimeType:index%2?"image/jpeg":"image/png",label:`Reference ${index+1}`,referenceId:`reference-${index+1}`,source:index<2?"actual-data-mock":"locked-study"}));
+    const result=await generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Study-heavy composition"},{references});
+    assert.equal(new TextDecoder().decode(result.bytes),"composed-image");assert.equal(result.referenceCount,6);
+    assert.equal(moderationInputs.length,7);assert.equal(moderationInputs[0].filter((item)=>item.type==="image_url").length,0);
+    assert.ok(moderationInputs.slice(1).every((input)=>input.filter((item)=>item.type==="image_url").length===1));
+    assert.ok(editRequest?.body instanceof FormData);assert.equal(editRequest.body.getAll("image[]").length,6);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("stops before image generation when any independently moderated reference is flagged",async()=>{
+  const originalFetch=globalThis.fetch;let moderationRequests=0;let imageRequests=0;
+  globalThis.fetch=async(url)=>{
+    if(!String(url).endsWith("/moderations")){imageRequests+=1;return Response.json({data:[{b64_json:btoa("should-not-exist")}]});}
+    moderationRequests+=1;
+    return moderationRequests===3?Response.json({id:"modr_reference_2",model:"omni-moderation-latest",results:[{flagged:true,categories:{violence:true},category_scores:{violence:.88}}]},{headers:{"x-request-id":"req_reference_2"}}):moderationPass();
+  };
+  try{
+    const references=[1,2,3].map((number)=>({bytes:new TextEncoder().encode(`reference-${number}`),mimeType:"image/png",label:`Reference ${number}`,referenceId:`reference-${number}`,source:"locked-study"}));
+    await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Guarded composition"},{references}),error=>{
+      assert.equal(error.detail.code,"safety_preflight_flagged");assert.deepEqual(error.detail.contributingReferenceIds,["reference-2"]);assert.equal(error.detail.requestId,"req_reference_2");return true;
+    });
+    assert.equal(moderationRequests,4);assert.equal(imageRequests,0);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("rejects unusable reference bytes before moderation or image generation",async()=>{
+  const originalFetch=globalThis.fetch;let requests=0;globalThis.fetch=async()=>{requests+=1;return Response.json({});};
+  try{
+    await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Empty reference"},{references:[{bytes:new Uint8Array(),mimeType:"image/png",source:"uploaded-reference"}]}),error=>error.detail.code==="reference_image_empty");
+    await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"SVG reference"},{references:[{bytes:new Uint8Array([1]),mimeType:"image/svg+xml",source:"uploaded-reference"}]}),error=>error.detail.code==="reference_image_type_unsupported");
+    assert.equal(requests,0);
   }finally{globalThis.fetch=originalFetch;}
 });
 
@@ -87,7 +147,7 @@ test("documents project attribution for every direct OpenAI request",async()=>{
 
 test("uses the small compressed preview profile and hands multiple policy-labelled images to the high-quality edit request",async()=>{
   const originalFetch=globalThis.fetch;const calls=[];
-  globalThis.fetch=async(url,init)=>{calls.push({url,init});return Response.json({data:[{b64_json:btoa("image")}],usage:{total_tokens:12}});};
+  globalThis.fetch=async(url,init)=>{if(String(url).endsWith("/moderations"))return moderationPass();calls.push({url,init});return Response.json({data:[{b64_json:btoa("image")}],usage:{total_tokens:12}});};
   try{
     await generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Draft"},{quality:"low",size:"816x816",outputFormat:"jpeg",outputCompression:70});
     const draftBody=JSON.parse(String(calls[0].init.body));assert.equal(calls[0].url,"https://api.openai.com/v1/images/generations");assert.equal(draftBody.quality,"low");assert.equal(draftBody.size,"816x816");assert.equal(draftBody.output_format,"jpeg");assert.equal(draftBody.output_compression,70);
@@ -120,5 +180,5 @@ test("stores generated bytes in R2 and projects only the authenticated asset ref
     {...base,eventId:"e3",sequence:3,actor:"worker:generator",type:"GenerationCompleted",payload:{generation_id:"g",document_id:"d",model_id:"gpt-image-2",planner_model_id:"gpt-5.6-terra",object_ids:["o"],media_url:mediaUrl,media_type:"image/png",image_width:1536,image_height:1024}},
   ]);
   assert.equal(projection.outputs[0].mediaUrl,mediaUrl);assert.equal(projection.outputs[0].modelId,"gpt-image-2");assert.equal(projection.outputs[0].plannerModelId,"gpt-5.6-terra");assert.equal(projection.outputs[0].width,1536);
-  const [eventApi,mediaApi]=await Promise.all([readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),readFile(new URL("../worker/media-api.ts",import.meta.url),"utf8")]);assert.doesNotMatch(eventApi,/b64_json/);assert.match(eventApi,/media_url:media\.url/);assert.match(mediaApi,/env\.MEDIA\.put\(key,bytes\.buffer/);assert.match(mediaApi,/source:"openai-image-api"/);
+  const [eventApi,mediaApi]=await Promise.all([readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),readFile(new URL("../worker/media-api.ts",import.meta.url),"utf8")]);assert.doesNotMatch(eventApi,/b64_json/);assert.match(eventApi,/media_url:media\.url/);assert.match(mediaApi,/env\.MEDIA\.put\(key,bytes\.buffer/);assert.match(mediaApi,/source:"provider-image-api"/);
 });

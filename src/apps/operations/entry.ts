@@ -6,12 +6,13 @@ const isEventsRoute=(path:string)=>path.startsWith("/operations/events")||path.s
 
 export function loadOperationsRoute(path: string): Promise<unknown> {
   if(routePathname(path)==="/operations/analytics")return import("../../components/forma-analytics");
+  if(routePathname(path)==="/operations/canvas")return import("./canvas-governance");
   if(["/operations/events/sync","/admin/events/sync"].includes(routePathname(path)))return import("./canvas-sync-inspector");
   return isEventsRoute(routePathname(path))?import("../../components/forma-admin-events"):import("../../components/forma-system");
 }
 
 export class FormaOperationsApplication extends FormaElement {
-  override render(){const path=routePathname(this.store.route.get());if(path==="/operations/analytics")return html`<forma-analytics></forma-analytics>`;if(["/operations/events/sync","/admin/events/sync"].includes(path))return html`<forma-canvas-sync-inspector></forma-canvas-sync-inspector>`;return isEventsRoute(path)?html`<forma-admin-events></forma-admin-events>`:html`<forma-system></forma-system>`;}
+  override render(){const path=routePathname(this.store.route.get());if(path==="/operations/analytics")return html`<forma-analytics></forma-analytics>`;if(path==="/operations/canvas")return html`<forma-canvas-governance></forma-canvas-governance>`;if(["/operations/events/sync","/admin/events/sync"].includes(path))return html`<forma-canvas-sync-inspector></forma-canvas-sync-inspector>`;return isEventsRoute(path)?html`<forma-admin-events></forma-admin-events>`:html`<forma-system></forma-system>`;}
 }
 
 if(!customElements.get("forma-operations-application"))customElements.define("forma-operations-application",FormaOperationsApplication);

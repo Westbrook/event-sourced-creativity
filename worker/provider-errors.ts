@@ -12,6 +12,10 @@ export type ProviderFailureDetail = {
   retryAfterMs: number | null;
   requestId: string | null;
   httpStatus: number | null;
+  riskCategories?: string[];
+  contributingBlockIds?: string[];
+  contributingReferenceIds?: string[];
+  probe?: string;
 };
 
 export class ProviderRequestError extends Error {
@@ -57,13 +61,14 @@ export function classifyProviderFailure(input: unknown, response?: Response, pro
   const providerCode = String(body.code ?? body.type ?? "").trim();
   const lower = `${providerCode} ${message}`.toLowerCase();
   const promptTooLong = /prompt.*(?:string too long|maximum length)|(?:string too long|maximum length).*prompt/.test(lower);
+  const imageCardinalityExceeded = /number of images \(\d+\) exceeds maximum of \d+/.test(lower);
   let category: ProviderFailureCategory = "unknown";
   let scope: ProviderFailureScope = "unknown";
   let action: ProviderFailureAction = "none";
 
   if (/safety|content[_ -]?policy|moderation|request was rejected/.test(lower)) {
     category = "safety"; scope = "request"; action = "edit_request";
-  } else if (promptTooLong) {
+  } else if (promptTooLong || imageCardinalityExceeded) {
     category = "provider"; scope = "request"; action = "edit_request";
   } else if (/credit_balance_exhausted|insufficient[_ -]?quota|billing[_ -]?quota|billing.*not active|credit.*exhaust|hard[_ -]?cap/.test(lower)) {
     category = "quota"; scope = "account"; action = "add_credits";
@@ -101,8 +106,12 @@ export function classifyProviderFailure(input: unknown, response?: Response, pro
     safety: "safety_rejected", authentication: "provider_authentication_failed", access: "provider_access_denied", quota: "provider_quota_exhausted", rate_limit: "provider_rate_limited", network: "provider_network_failed", canceled: "provider_request_canceled", provider: "provider_request_failed", server: "provider_server_failed", unknown: "operation_failed",
   };
   return {
-    code: promptTooLong ? "image_prompt_too_long" : providerCode || fallbackCode[category], category, scope, action,
-    message: promptTooLong ? "The prepared image prompt exceeded the provider's 32,000-character limit. The application should compact the document context before retrying." : message,
+    code: promptTooLong ? "image_prompt_too_long" : imageCardinalityExceeded ? "provider_image_cardinality_exceeded" : providerCode || fallbackCode[category], category, scope, action,
+    message: promptTooLong
+      ? "The prepared image prompt exceeded the provider's 32,000-character limit. The application should compact the document context before retrying."
+      : imageCardinalityExceeded
+        ? "A provider preflight received more images than that endpoint accepts. The application must split the images into valid probes before retrying."
+        : message,
     retryable: category === "network" || category === "rate_limit" || category === "server" || category === "canceled",
     retryAfterMs: providerRetryAfterMs(response),
     requestId: response?.headers.get("x-request-id") ?? response?.headers.get("openai-request-id") ?? null,
@@ -122,6 +131,9 @@ export function applicationFailureDetail(code: string, scope?: unknown, status: 
   if (code === "provider_not_configured") {
     return { code, category: "authentication", scope: "account", action: "check_credentials", message: "Image generation is not configured.", retryable: false, retryAfterMs: null, requestId: null, httpStatus: status };
   }
+  if (code === "video_provider_not_configured") {
+    return { code, category: "authentication", scope: "account", action: "check_credentials", message: "Fal video generation is not configured.", retryable: false, retryAfterMs: null, requestId: null, httpStatus: status };
+  }
   if (code === "selected_preview_unavailable") {
     return { code, category: "provider", scope: "request", action: "edit_request", message: "The selected draft image is no longer available. Generate from the document or choose another draft.", retryable: false, retryAfterMs: null, requestId: null, httpStatus: status };
   }
@@ -134,5 +146,5 @@ export function providerErrorFromResponse(response: Response, body: unknown, fal
 }
 
 export function publicFailureDetail(detail: ProviderFailureDetail) {
-  return { code: detail.code, category: detail.category, scope: detail.scope, action: detail.action, message: detail.message, retryable: detail.retryable, retryAfterMs: detail.retryAfterMs, requestId: detail.requestId, httpStatus: detail.httpStatus };
+  return { code: detail.code, category: detail.category, scope: detail.scope, action: detail.action, message: detail.message, retryable: detail.retryable, retryAfterMs: detail.retryAfterMs, requestId: detail.requestId, httpStatus: detail.httpStatus, riskCategories: detail.riskCategories ?? [], contributingBlockIds: detail.contributingBlockIds ?? [], contributingReferenceIds: detail.contributingReferenceIds ?? [], probe: detail.probe ?? null };
 }

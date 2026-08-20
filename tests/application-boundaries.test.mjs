@@ -38,6 +38,8 @@ test("the server resolves every shareable deep-link family before SPA hydration"
     ["/share/private-token","/share/","creative"],
     ["/canvas/canvas-42/study","/canvas/","canvas"],
     ["/canvas/canvas-42/study/view/list","/canvas/","canvas"],
+    ["/canvas/canvas-42/study/focus","/canvas/","canvas"],
+    ["/canvas/canvas-42/study/view/list/focus","/canvas/","canvas"],
     ["/canvas/proposals/proposal-1","/canvas/proposals/","canvas"],
     ["/operations/events/permissions","/operations/events/permissions/","operations"],
     ["/operations/analytics","/operations/analytics/","operations"],

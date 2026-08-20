@@ -7,6 +7,9 @@ import { handleReplayApproval, handleReplayEstimate, handleReplaySessions } from
 import { handleDocumentJobs } from "./document-jobs-api";
 import type { WorkerExecutionContext } from "./runtime";
 import { handleAnalytics } from "./analytics-api";
+import { handleGenerationReadiness } from "./generation-readiness";
+import { handleCanvasGovernance } from "./canvas-governance-api";
+import { handleImageAdapters } from "./image-adapters-api";
 
 export default {
   async fetch(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
@@ -15,6 +18,10 @@ export default {
     if(url.pathname==="/api/impersonation")return handleImpersonation(request,env);
     if(url.pathname==="/api/admin/users")return handleAdminUsers(request,env);
     if(url.pathname==="/api/analytics")return handleAnalytics(request,env);
+    if(url.pathname==="/api/generation-readiness")return handleGenerationReadiness(request,env);
+    if(url.pathname==="/api/canvas-governance")return handleCanvasGovernance(request,env);
+    if(url.pathname==="/api/image-adapters")return handleImageAdapters(request,env);
+    if(url.pathname.startsWith("/api/generation-readiness/"))return handleGenerationReadiness(request,env,url.pathname.slice("/api/generation-readiness/".length));
     if(url.pathname==="/api/replay-sessions/approval")return handleReplayApproval(request,env);
     if(url.pathname==="/api/replay-sessions/estimate")return handleReplayEstimate(request,env);
     if(url.pathname==="/api/replay-sessions")return handleReplaySessions(request,env);

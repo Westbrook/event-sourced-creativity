@@ -21,7 +21,7 @@ const phases = [
 const decisions = [
   ["Provider","OpenAI Responses API · gpt-5.6-terra","Server-side adapter; key never reaches the browser."],
   ["Capture & privacy","Explicit actions + opt-in coarse attention","Visible-page only; no pointer paths, keys, text, microphone, or ambient device capture."],
-  ["Cost ceilings","250k user · 2.5m workspace tokens / month","Race-safe reservations fail closed at the hard cap."],
+  ["Cost ceilings","500k user · 5m workspace tokens / month","Race-safe reservations fail closed at the hard cap."],
   ["Legal & data rights","User-controlled inputs; 30-day private content","External assets require an explicit rights assertion."],
   ["Sharing scope","Private, read-only, expiring, revocable","Link tokens are shown once and never enter the event log."],
   ["Provider diversity debt","Accepted for the pilot","Add and compare a second adapter before Phase 7 production rollout or general availability."],

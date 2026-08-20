@@ -1,0 +1,32 @@
+import { html, nothing } from "lit";
+import { applySlideStylePreset, isSlideStylePresetId, normalizeSlideDeckItems, normalizeSlidePresentation, SLIDE_STYLE_PRESETS, slideStylePresetDefinition, type DocumentArtifactDraftItem, type SlidePresentation, type SlideStylePresetId } from "../model/document-artifacts";
+import { FormaElement } from "./forma-element";
+import { readSlideFooterLabelPreference, writeSlideFooterLabelPreference } from "./presentation-slide";
+
+type DeckView="list"|"slideshow";
+const DECK_VIEW_PREFERENCE="forma:slides:deck-view";
+const DECK_STYLE_PREFERENCE="forma:slides:style";
+const readDeckView=():DeckView=>{try{return localStorage.getItem(DECK_VIEW_PREFERENCE)==="slideshow"?"slideshow":"list";}catch{return"list";}};
+const writeDeckView=(view:DeckView)=>{try{localStorage.setItem(DECK_VIEW_PREFERENCE,view);}catch{/* The active deck still keeps the selected view. */}};
+const readDeckStyle=(key:string)=>{try{const value=localStorage.getItem(`${DECK_STYLE_PREFERENCE}:${key}`);return isSlideStylePresetId(value)?value:null;}catch{return null;}};
+const writeDeckStyle=(key:string,value:SlideStylePresetId)=>{try{localStorage.setItem(`${DECK_STYLE_PREFERENCE}:${key}`,value);}catch{/* The active deck still keeps the selected style. */}};
+
+export class PresentationDeck extends FormaElement{
+  static properties={items:{attribute:false},presentation:{attribute:false},preferenceKey:{type:String,attribute:"preference-key"}};
+  items:DocumentArtifactDraftItem[]=[];presentation:SlidePresentation|null=null;preferenceKey="";#view:DeckView=readDeckView();#index=0;#showFooterLabel=readSlideFooterLabelPreference();#styleOverride:{key:string;value:SlideStylePresetId}|null=null;
+  #setView(view:DeckView){this.#view=view;writeDeckView(view);this.requestUpdate();}
+  #setIndex(index:number,total:number){this.#index=Math.max(0,Math.min(total-1,index));this.requestUpdate();}
+  #toggleFooter(event:Event){this.#showFooterLabel=(event.target as HTMLInputElement).checked;writeSlideFooterLabelPreference(this.#showFooterLabel);this.requestUpdate();}
+  #styleKey(){return this.preferenceKey.trim()||"unscoped";}
+  #selectedStyle(presentation:SlidePresentation){const key=this.#styleKey();return this.#styleOverride?.key===key?this.#styleOverride.value:readDeckStyle(key)??presentation.stylePreset;}
+  #setStyle(event:Event){const value=(event.target as HTMLSelectElement).value;if(!isSlideStylePresetId(value))return;const key=this.#styleKey();this.#styleOverride={key,value};writeDeckStyle(key,value);this.dispatchEvent(new CustomEvent("slide-style-changed",{bubbles:true,composed:true,detail:{preferenceKey:this.preferenceKey,stylePreset:value}}));this.requestUpdate();}
+  #key(event:KeyboardEvent,total:number){if(this.#view!=="slideshow")return;if(event.key==="ArrowLeft"||event.key==="ArrowRight"){event.preventDefault();this.#setIndex(this.#index+(event.key==="ArrowLeft"?-1:1),total);}else if(event.key==="Home"||event.key==="End"){event.preventDefault();this.#setIndex(event.key==="Home"?0:total-1,total);}}
+  #slide(item:DocumentArtifactDraftItem,presentation:SlidePresentation,index:number,total:number){return html`<div class="presentation-deck-frame"><forma-presentation-slide .item=${item} .presentation=${presentation} .index=${index} .total=${total} .showFooterLabel=${this.#showFooterLabel}></forma-presentation-slide></div>`;}
+  override render(){const items=normalizeSlideDeckItems(this.items),total=items.length,generatedPresentation=normalizeSlidePresentation(this.presentation)??applySlideStylePreset(null,"gallery"),selectedStyle=this.#selectedStyle(generatedPresentation),presentation=applySlideStylePreset(generatedPresentation,selectedStyle),styleDefinition=slideStylePresetDefinition(selectedStyle),index=Math.max(0,Math.min(this.#index,total-1)),current=items[index];return html`<section class=${`presentation-deck presentation-deck--${this.#view}`} aria-label="Slide deck" tabindex="0" @keydown=${(event:KeyboardEvent)=>this.#key(event,total)}>
+    <header class="presentation-deck-toolbar"><div><div class="presentation-deck-view-switch" role="group" aria-label="Slide view"><button type="button" aria-pressed=${this.#view==="list"} @click=${()=>this.#setView("list")}>List</button><button type="button" aria-pressed=${this.#view==="slideshow"} @click=${()=>this.#setView("slideshow")}>Slideshow</button></div><label class="presentation-deck-style"><span>Style</span><select aria-label="Slide style" title=${styleDefinition.description} .value=${selectedStyle} @change=${this.#setStyle}>${SLIDE_STYLE_PRESETS.map((preset)=>html`<option value=${preset.id}>${preset.label}</option>`)}</select></label></div><div>${presentation.footerLabel?html`<label class="artifact-slide-footer-toggle" title="Use the document-derived deck label in each slide footer"><input type="checkbox" .checked=${this.#showFooterLabel} @change=${this.#toggleFooter}><span>Show deck label</span></label>`:nothing}<span class="presentation-deck-count" aria-live="polite">${this.#view==="slideshow"&&total?`${index+1} of ${total}`:`${total} slide${total===1?"":"s"}`}</span></div></header>
+    ${!total?html`<div class="presentation-deck-empty">No slides are available.</div>`:this.#view==="list"?html`<ol class="presentation-deck-list">${items.map((item,itemIndex)=>html`<li>${this.#slide(item,presentation,itemIndex,total)}${item.notes?html`<details><summary>Slide ${itemIndex+1} notes</summary><p>${item.notes}</p></details>`:nothing}</li>`)}</ol>`:html`<div class="presentation-deck-stage">${current?this.#slide(current,presentation,index,total):nothing}<nav aria-label="Slideshow controls"><button type="button" ?disabled=${index===0} @click=${()=>this.#setIndex(index-1,total)}>Previous</button><span>${index+1} / ${total}</span><button type="button" ?disabled=${index===total-1} @click=${()=>this.#setIndex(index+1,total)}>Next</button></nav>${current?.notes?html`<details class="presentation-deck-notes"><summary>Speaker notes</summary><p>${current.notes}</p></details>`:nothing}</div>`}
+  </section>`;}
+}
+
+customElements.define("forma-presentation-deck",PresentationDeck);
+declare global{interface HTMLElementTagNameMap{"forma-presentation-deck":PresentationDeck}}

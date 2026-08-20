@@ -209,7 +209,7 @@ The following decisions are inputs to the build, not questions for each implemen
 | Attention | Off by default; explicit opt-in for coarse visible-page episodes only; no raw pointer, coordinate, key, typed-text, microphone, or ambient-device capture |
 | Attention authority | Cap downstream weight at 0.25 of a direct action; attention alone cannot author taste or document state |
 | Attention retention | Expire device-level detail after 14 days; provide pause, review, and forget controls |
-| Pilot budgets | Hard caps of 250,000 tokens per user and 2,500,000 per workspace; reserve before paid work and fail closed at exhaustion |
+| Pilot budgets | Hard caps of 500,000 tokens per user and 5,000,000 per workspace; reserve before paid work and fail closed at exhaustion |
 | Sharing | Private by default, read-only, revocable immediately, and expiring within seven days |
 | Publication | Treat broader team/community publication as a later human-owned product and moderation decision |
 

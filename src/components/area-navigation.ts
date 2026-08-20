@@ -12,6 +12,7 @@ const intelligence = [
 const operations = [
   { id: "system", href: "/operations", label: "System & governance", description: "Policies, gates, and operational health" },
   { id: "analytics", href: "/operations/analytics", label: "Analytics", description: "Find product improvements and creative outcome evidence" },
+  { id: "canvas", href: "/operations/canvas", label: "Canvas governance", description: "Review and approve Canvas release requirements" },
   { id: "stream", href: "/operations/events", label: "Durable stream", description: "Inspect immutable event envelopes and projections" },
   { id: "permissions", href: "/operations/events/permissions", label: "Permissions", description: "Review producer and concurrency boundaries" },
   { id: "sync", href: "/operations/events/sync", label: "Canvas sync", description: "Inspect convergence and offline operation delivery" },
@@ -19,6 +20,7 @@ const operations = [
 
 const laboratory = [
   { id: "replay", href: "/laboratory/replay", label: "Replay", description: "Rehearse theoretical and provider-backed workflows" },
+  { id: "image-adapters", href: "/laboratory/image-adapters", label: "Image adapters", description: "Preview provider routing, capabilities, costs, and qualification" },
   { id: "focal-points", href: "/laboratory/focal-points", label: "Focal points", description: "Compare image focal-point calculations" },
 ] as const;
 

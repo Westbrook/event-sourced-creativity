@@ -148,6 +148,17 @@ test("keeps the affected-area editor and its image controls inside the dialog", 
   assert.match(editor, /class="spatial-scope-scroll"><div class="spatial-scope-layout"/);
 });
 
+test("contains every dialog within the viewport and keeps page scrolling locked", async () => {
+  const design = await read("../src/design-system.css");
+
+  assert.match(design, /html:has\(dialog\[open\]\),\s*body:has\(dialog\[open\]\)\s*\{\s*overflow:\s*hidden/);
+  assert.match(design, /dialog\s*\{[^}]*max-width:\s*calc\(100vw - var\(--dialog-viewport-gap\) - var\(--dialog-viewport-gap\)\);[^}]*max-height:\s*calc\(100dvh - var\(--dialog-viewport-gap\) - var\(--dialog-viewport-gap\)\);[^}]*overscroll-behavior:\s*contain/s);
+  assert.match(design, /dialog\.modal,\s*dialog\.command-dialog\s*\{[^}]*height:\s*100dvh;[^}]*max-height:\s*100dvh;[^}]*overflow:\s*hidden/s);
+  assert.match(design, /dialog\.modal\[open\],\s*dialog\.command-dialog\[open\]\s*\{[^}]*display:\s*grid;[^}]*place-items:\s*center/s);
+  assert.match(design, /dialog\.modal > :first-child,\s*dialog\.command-dialog > :first-child\s*\{[^}]*max-width:\s*100%;[^}]*max-height:\s*100%;[^}]*margin:\s*0;[^}]*overscroll-behavior:\s*contain/s);
+  assert.match(design, /dialog\.command-dialog \.command-results\s*\{[^}]*min-height:\s*0;[^}]*max-height:\s*none;[^}]*overflow:\s*auto/s);
+});
+
 test("stacks document headers without seams and reserves composer space inside Studio", async () => {
   const [styles, design, workspace, alternatives, chat] = await Promise.all([
     read("../src/styles.css"),
@@ -159,9 +170,28 @@ test("stacks document headers without seams and reserves composer space inside S
 
   assert.doesNotMatch(styles, /\.workspace-page\s*\{[^}]*padding-bottom/);
   assert.match(styles, /\.workspace-page:has\(> \.composer-dock\) > \.studio-main\s*\{\s*padding-bottom:\s*88px/);
-  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.workspace-page:has\(> \.composer-dock\) > \.studio-main\s*\{\s*padding-bottom:\s*100px/);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.workspace-page:has\(> \.composer-dock\) > \.studio-main\s*\{\s*padding-bottom:\s*128px/);
   assert.match(design, /\.studio-header-stack\s*\{[^}]*position:\s*sticky;[^}]*top:\s*64px;[^}]*background:\s*var\(--paper\)/);
   assert.match(design, /\.studio-header-stack > forma-studio-mode-nav > \.studio-mode-nav\s*\{[^}]*position:\s*static;[^}]*top:\s*auto/);
   assert.match(design, /@media \(max-width: 760px\)[\s\S]*?\.studio-header-stack\s*\{\s*position:\s*static;\s*top:\s*auto;/);
   for (const component of [workspace, alternatives, chat]) assert.match(component, /class="studio-header-stack"/);
+});
+
+test("keeps the fixed document composer task-focused while disclosing generation detail in a bounded dialog", async () => {
+  const [styles,workspace,actions,formatEditor] = await Promise.all([
+    read("../src/styles.css"),
+    read("../src/components/forma-workspace.ts"),
+    read("../src/components/generation-actions.ts"),
+    read("../src/components/image-format-editor.ts"),
+  ]);
+
+  assert.match(workspace,/class="composer-command"/);
+  assert.match(workspace,/forma-generation-actions source="document"[\s\S]*?compact/);
+  assert.match(actions,/generation-details-trigger/);
+  assert.match(actions,/Image options, \$\{ratio\} frame, \$\{statusLabel\}/);
+  assert.match(actions,/this\.compact&&this\.#detailsOpen\?html`<dialog class="modal generation-details-dialog"/);
+  assert.match(actions,/Output frame/);assert.match(actions,/Generation choices/);assert.match(actions,/Readiness and recovery/);assert.match(actions,/Compare prompt fans/);
+  assert.match(styles,/\.modal-card\.generation-details-card\s*\{[^}]*grid-template-rows:\s*auto minmax\(0,1fr\) auto;[^}]*overflow:\s*hidden/);
+  assert.match(styles,/\.generation-details-body\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*auto/);
+  assert.match(formatEditor,/\?selected=\$\{item\.id===preset\}/);
 });

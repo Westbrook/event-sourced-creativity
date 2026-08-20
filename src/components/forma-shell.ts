@@ -3,6 +3,7 @@ import { FormaElement, icon, downloadJson } from "./forma-element";
 import { loadRouteComponent } from "../route-loader";
 import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, withDocumentInRoute } from "../model/routes";
 import { APPLICATIONS, applicationDefinition, applicationIdFromRoute, navigationItemActive } from "../platform/applications";
+import { canvasFocusFromRoute } from "../canvas/routes";
 import "./forma-attention-observer";
 
 export class FormaShell extends FormaElement {
@@ -54,8 +55,8 @@ export class FormaShell extends FormaElement {
     if(this.store.loading.get()||!this.store.events.get().length)return;
     const pathname=path.split(/[?#]/)[0]||"/";const application=applicationIdFromRoute(pathname);const projection=this.store.projection.get();const documentId=documentIdFromRoute(pathname)??"";
     const routeFamily=documentId?"document":pathname.startsWith("/operations/events")?"operations-events":pathname.startsWith("/operations/analytics")?"operations-analytics":pathname.startsWith("/operations")?"operations-system":pathname.startsWith("/laboratory/replay")?"laboratory-replay":pathname.startsWith("/laboratory")?"laboratory-home":pathname.startsWith("/canvas/")?"canvas-workspace":pathname==="/canvas"?"canvas-home":pathname.startsWith("/library")?"library":pathname.startsWith("/sessions")?"sessions":pathname.startsWith("/scout")?"scout":pathname.startsWith("/memory")?"memory":pathname.startsWith("/projects")?"projects":"creative-workspace";
-    const visitKey=`${routeFamily}:${documentId}:${documentViewFromRoute(pathname)??""}:${documentFocusFromRoute(pathname)?"focus":"standard"}`;if(visitKey===this.#lastObservedApplicationView)return;this.#lastObservedApplicationView=visitKey;
-    void this.store.hot({type:"ApplicationViewVisited",payload:{application,surface:routeFamily,route_family:routeFamily,project_id:documentId?projection.projectId:undefined,document_id:documentId||undefined,document_view:documentId?documentViewFromRoute(pathname):undefined,focused:documentId?documentFocusFromRoute(pathname):undefined}});
+    const focused=documentId?documentFocusFromRoute(pathname):application==="canvas"?canvasFocusFromRoute(pathname):undefined;const visitKey=`${routeFamily}:${documentId}:${documentViewFromRoute(pathname)??""}:${focused===true?"focus":"standard"}`;if(visitKey===this.#lastObservedApplicationView)return;this.#lastObservedApplicationView=visitKey;
+    void this.store.hot({type:"ApplicationViewVisited",payload:{application,surface:routeFamily,route_family:routeFamily,project_id:documentId||application==="canvas"?projection.projectId:undefined,document_id:documentId||undefined,document_view:documentId?documentViewFromRoute(pathname):undefined,focused}});
   }
 
   #observeDocumentView(path: string) {
@@ -116,12 +117,13 @@ export class FormaShell extends FormaElement {
     const session=this.store.session.get();const impersonation=session?.impersonation;if(!impersonation)return nothing;const action=this.store.ui.impersonationAction||"change this fictional account";
     return html`<dialog class="modal impersonation-confirm-dialog" open closedby="any" aria-labelledby="impersonation-confirm-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.store.resolveImpersonatedInteraction(false);}} @cancel=${(event:Event)=>{event.preventDefault();this.store.resolveImpersonatedInteraction(false);}} @close=${()=>{if(this.store.ui.impersonationConfirmOpen)this.store.resolveImpersonatedInteraction(false);}}><div class="modal-card impersonation-confirm-card"><button class="icon-button modal-close" aria-label="Cancel this interaction" @click=${()=>this.store.resolveImpersonatedInteraction(false)}>${icon("close")}</button><span class="eyebrow">Fictional account safeguard</span><h2 id="impersonation-confirm-title">You’re acting as ${impersonation.fictionalUser.displayName}</h2><p>You are about to <b>${action}</b>. This will change the saved mock account and become part of its durable history; it will not change ${impersonation.actor.displayName}’s regular account.</p><div class="impersonation-confirm-note"><span>${icon("lock")}</span><div><b>Confirm this interaction only</b><p>Canceling, pressing Escape, closing the dialog, or clicking its backdrop prevents the interaction entirely.</p></div></div><footer><button class="button ghost" @click=${()=>this.store.resolveImpersonatedInteraction(false)}>Cancel — do nothing</button><button class="button primary" @click=${()=>this.store.resolveImpersonatedInteraction(true)}>I understand, continue</button></footer></div></dialog>`;
   }
+  async #generateFromCommand(){const readiness=await this.store.ensureGenerationReadiness("generate",{sourceSurface:"command-menu"});if(readiness?.status==="ready"||readiness?.status==="review"&&this.store.generationRiskAcknowledged(readiness.requestKey))return this.store.generate({sourceSurface:"command-menu"});this.store.toast(readiness?.status==="review"?"Review and acknowledge the generation warning in the document controls first.":readiness?.summary??"Generation readiness could not be confirmed.");}
   #commands() {
     const q = this.store.ui.search.toLowerCase();
     const path=this.store.route.get();const applicationId=applicationIdFromRoute(path);const application=applicationDefinition(applicationId);
     const simplifiedEditor = documentViewFromRoute(path) === "editor";
     const creativeCommands = [
-      { label: "Generate from current context", hint: "Create", run: () => this.store.generate() },
+      { label: "Generate from current context", hint: "Create", run: () => this.#generateFromCommand() },
       { label: simplifiedEditor ? "Add a goal" : "Add a direction block", hint: "Document", run: () => this.store.append({ type: "BlockCreated", payload: { block_id: crypto.randomUUID(), type: "direction", handle: `direction/study-${this.store.head.get()}`, position: `z${this.store.head.get()}`, properties: { text: simplifiedEditor ? "Describe what this work should achieve" : "A new creative direction", weight: .65, authority: "authored" } } }) },
       { label: "Open reusable library", hint: "Creative", run: () => this.#route("/library") },
       { label: "Run a bounded scout report", hint: "Creative", run: () => this.#route("/scout") },

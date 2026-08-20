@@ -1,6 +1,6 @@
 # Canvas consent and governance gate
 
-Status: draft for named Trust and Safety ownership and counsel review. This copy is implemented as a build-team reference only. It is not approved for pilot exposure.
+Status: Trust & Safety ownership and counsel review approved on 2026-08-20. The server records the named administrator and evidence references. Pilot exposure remains blocked until the independent second image-adapter contract and paired evaluation are recorded.
 
 ## Activity recording
 
@@ -41,8 +41,7 @@ Offline changes remain readable on the unlocked device until reconnection, for a
 
 ## Blocking approvals
 
-- Trust and Safety owner: **unassigned — blocks pilot exposure**
-- Counsel finding: **not on file**
+- Trust and Safety owner: **approved — named administrator and timestamp are held in the server governance record**
+- Counsel finding: **approved — the administrator attests that counsel approval is on file**
 - Required questions: meaningful consent with administrator-visible opt-in status; permanence language for blended aggregates; offline device custody; rights propagation and `influenced-by`; jurisdiction scope.
-- Image-adapter prerequisite: GPT Image 2 and Imagen 4 contracts and paired evaluation must be complete before pilot image use.
-
+- Image-adapter prerequisite: **implemented, not yet approved — blocks pilot exposure.** `fal-ideogram-v4` supplies Ideogram V4, V4 Fast, and V4 image-to-image through Fal with a versioned capability receipt. Its procurement/entitlement reference must still be retained and at least 50 frozen same-context cases must pass against the OpenAI adapter. The contract, capability receipt, corpus version, and evaluation report are recorded through Operations → Canvas governance.

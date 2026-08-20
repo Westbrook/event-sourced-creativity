@@ -132,6 +132,21 @@ export function priceImageUsageBreakdownMicrousd(model:string,usage:ProviderUsag
   return{textInputMicrousd:0,textOutputMicrousd:0,imageTextInputMicrousd,imageInputMicrousd,imageOutputMicrousd,totalMicrousd:imageTextInputMicrousd+imageInputMicrousd+imageOutputMicrousd};
 }
 
+export type FalIdeogramRenderingSpeed = "TURBO" | "BALANCED" | "QUALITY";
+
+/**
+ * fal bills Ideogram V4 per output megapixel. Keep this separate from token
+ * pricing so provider receipts never pretend a pixel charge was token usage.
+ */
+export function priceFalIdeogramImageBreakdownMicrousd(model:string,width:number,height:number,speed:FalIdeogramRenderingSpeed):ProviderCostBreakdown {
+  const standardRates:Record<FalIdeogramRenderingSpeed,number>={TURBO:.0075,BALANCED:.015,QUALITY:.025};
+  const fastRates:Record<FalIdeogramRenderingSpeed,number>={TURBO:.00525,BALANCED:.0105,QUALITY:.0175};
+  const dollarsPerMegapixel=(model.endsWith("/fast")?fastRates:standardRates)[speed];
+  const megapixels=Math.max(0,width)*Math.max(0,height)/1_000_000;
+  const imageOutputMicrousd=Math.ceil(megapixels*dollarsPerMegapixel*1_000_000);
+  return{textInputMicrousd:0,textOutputMicrousd:0,imageTextInputMicrousd:0,imageInputMicrousd:0,imageOutputMicrousd,totalMicrousd:imageOutputMicrousd};
+}
+
 function line(key: ReplayCostLine["key"], label: string, operations: number, estimatedMicrousd: number): ReplayCostLine {
   return { key, label, operations, estimatedMicrousd: Math.ceil(estimatedMicrousd) };
 }
@@ -143,10 +158,12 @@ export function estimateLiveReplayCost(env: Pick<WorkerEnv, "OPENAI_MODEL" | "OP
   const image = imageRates(imageModel);
   const profile = replayGenerationProfile(options.eventCount, options.providerCoverage, options.studyTypes);
 
-  // The planner schema and block vocabulary dominate input size. The optional
-  // seed adds at most 1,200 characters, estimated conservatively at 4 chars/token.
-  const plannerInputTokens = 5_500 + Math.ceil(seed.trim().length / 4);
-  const plannerOutputTokens = 4_200;
+  // The planner schema, complete block vocabulary, and six form-specific output
+  // plans dominate input size. The optional seed adds at most 1,200 characters,
+  // estimated conservatively at 4 chars/token. Output reserves room for the
+  // complete creative arc and distinct beats for every deliverable form.
+  const plannerInputTokens = 7_500 + Math.ceil(seed.trim().length / 4);
+  const plannerOutputTokens = 6_500;
 
   // GPT Image 2 currently reports about 196 output tokens for a minimum-size
   // low-quality square and 5,500 for a 1536x1024 high-quality image.

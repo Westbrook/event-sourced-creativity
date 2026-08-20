@@ -192,7 +192,7 @@ test("packages first-class HTML entry points for every named application route",
   const shell = await readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8");
   const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
   const config = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
-  const routes = ["creative","creative/create","document","projects","studio/project","studio/board","studio/guided","studio/layers","studio/adaptive","studio/editor","studio/chat","library","sessions","scout","memory","operations","operations/events","operations/events/permissions","laboratory","laboratory/replay","laboratory/focal-points","system","system/focal-points","admin/events","admin/events/stream","admin/events/replay","admin/events/permissions"];
+  const routes = ["creative","creative/create","document","projects","studio/project","studio/board","studio/guided","studio/layers","studio/adaptive","studio/editor","studio/chat","library","sessions","scout","memory","operations","operations/events","operations/events/permissions","laboratory","laboratory/replay","laboratory/image-adapters","laboratory/focal-points","system","system/focal-points","admin/events","admin/events/stream","admin/events/replay","admin/events/permissions"];
   for (const route of routes) {
     assert.match(applications, new RegExp(`route\\("/${route.replaceAll("/", "\\/")}"`));
     const entry = await readFile(new URL(`../dist/client/${route}/index.html`, import.meta.url), "utf8");
@@ -387,11 +387,11 @@ test("enforces the adopted production-pilot boundaries", async () => {
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
   ]);
   assert.match(policy, /oai-authenticated-user-id/); assert.match(policy, /cf-access-authenticated-user-email/);
-  assert.match(policy, /pilot_terms_required/); assert.match(policy, /reserved_tokens/); assert.match(policy, /250_000/); assert.match(policy, /2_500_000/);
+  assert.match(policy, /pilot_terms_required/); assert.match(policy, /reserved_tokens/); assert.match(policy, /500_000/); assert.match(policy, /5_000_000/);
   assert.match(adapter, /api\.openai\.com\/v1\/responses/); assert.match(adapter, /store: false/); assert.match(adapter, /safety_identifier/);
   assert.match(shares, /expiresHours/); assert.match(shares, /ShareLinkRevoked/); assert.match(shares, /token_hash/);
   assert.match(media, /rightsConfirmed/); assert.match(shell, /acceptTerms/); assert.match(shell, /forma-shared-view/);
-  assert.match(schema, /private_content/); assert.match(schema, /budget_counters/); assert.match(schema, /budget_reservations/); assert.match(envExample, /OPENAI_API_KEY=/);
+  assert.match(schema, /private_content/); assert.match(schema, /budget_counters/); assert.match(schema, /budget_reservations/); assert.match(envExample, /OPENAI_API_KEY=/); assert.match(envExample, /FORMA_USER_TOKEN_LIMIT=500000/); assert.match(envExample, /FORMA_WORKSPACE_TOKEN_LIMIT=5000000/);
 });
 
 test("records the accepted provider debt and makes the extractor gate operational", async () => {

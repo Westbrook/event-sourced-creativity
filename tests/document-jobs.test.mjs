@@ -6,6 +6,7 @@ import {
   documentGenerationRevision,
   documentJobActionLabel,
   documentJobFailureVisible,
+  documentJobProgress,
   documentJobTerminal,
   generationFailureGuidance,
   documentJobIsStale,
@@ -71,6 +72,38 @@ test("reports queued and running stages truthfully", () => {
   assert.equal(documentJobTerminal(job({ status: "canceled" })), true);
 });
 
+test("projects durable image and document-render checkpoints into honest progress", () => {
+  const queued=documentJobProgress(job());
+  assert.equal(queued.label,"Queue");
+  assert.equal(queued.percent,4);
+  assert.equal(queued.steps[0].state,"active");
+
+  const reviewed=documentJobProgress(job({status:"running",stage:"safety-review",progressMessage:"Reviewing the exact image prompt."}));
+  assert.equal(reviewed.label,"Review");
+  assert.equal(reviewed.steps[1].state,"complete");
+  assert.ok(reviewed.percent>queued.percent);
+
+  const storyboard=documentJobProgress(job({kind:"render_document",status:"running",stage:"rendering-frames",result:{artifactKind:"storyboard"},progressMessage:"3 of 6 storyboard frames are safely stored."}));
+  assert.equal(storyboard.label,"Render frames");
+  assert.equal(storyboard.detail,"3 of 6 frames stored");
+  assert.equal(storyboard.percent,63);
+
+  const video=documentJobProgress(job({kind:"render_document",status:"running",stage:"rendering",result:{artifactKind:"video"},progressMessage:"Video rendering · 37%"}));
+  assert.equal(video.label,"Render");
+  assert.equal(video.detail,"37% reported by the provider");
+  assert.equal(video.percent,67);
+
+  const fan=documentJobProgress(job({kind:"prompt_fan",status:"running",stage:"running",result:{completedCount:2},members:[]}));
+  assert.equal(fan.label,"Render ×4");
+  assert.equal(fan.detail,"2 of 4 prompt approaches finished");
+});
+
+test("keeps pending artifact identity visible before its first worker checkpoint",async()=>{
+  const jobsApi=await readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8");
+  assert.match(jobsApi,/visibleResult = row\.kind === "render_document"/);
+  assert.match(jobsApi,/artifactKind: String\(parsed\.artifactKind \?\? request\.artifactKind\)/);
+});
+
 test("gives creators durable cancellation and administrators a force-fail escape hatch",async()=>{
   const [jobsApi,eventsApi,adapter,actions,store]=await Promise.all([
     readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8"),
@@ -131,6 +164,13 @@ test("keeps terminal failures visible until their durable notice is dismissed",(
   assert.equal(documentJobFailureVisible(job({status:"partial",dismissedAt:null})),true);
   assert.equal(documentJobFailureVisible(job({status:"failed",dismissedAt:"2026-08-14T12:00:00.000Z"})),false);
   assert.equal(documentJobFailureVisible(job({status:"completed",dismissedAt:null})),false);
+});
+
+test("keeps adaptive suggestion receipts associated with the private submitted intent",async()=>{
+  const jobsApi=await readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8");
+  assert.match(jobsApi,/adaptiveReasoning/);
+  assert.match(jobsApi,/intentRef: adaptivePayload\?\.intent_ref/);
+  assert.match(jobsApi,/structure: body\.structure/);
 });
 
 test("settles generation capacity by reservation identity and repairs orphaned failures",async()=>{

@@ -8,6 +8,7 @@ import "./output-visual";
 import "./generation-actions";
 import "./prompt-fan-visual";
 import "./prompt-fan-review";
+import "./document-artifacts";
 
 type ChatLine={id:string;role:"user"|"assistant";text:string;sequence:number};
 
@@ -53,6 +54,7 @@ export class FormaChatStudio extends FormaElement {
             </div>
             ${history.length>1?html`<div class="chat-generation-history" role="list" aria-label="Generation history">${history.map((item,index)=>{const id=item.kind==="fan"?`fan:${item.id}`:item.id;return html`<button role="listitem" class=${id===(currentItem?.kind==="fan"?`fan:${currentItem.id}`:currentItem?.id)?"selected":""} aria-pressed=${id===(currentItem?.kind==="fan"?`fan:${currentItem.id}`:currentItem?.id)} @click=${()=>this.store.patchUi({selectedOutputId:id})}>${item.kind==="fan"?html`<forma-prompt-fan-visual .outputs=${item.outputs} compact></forma-prompt-fan-visual>`:html`<forma-output-visual .output=${item.output} compact></forma-output-visual>`}<span>${item.kind==="fan"?`${generationHistoryItemIsDraft(item)?"Draft":"Full"} fan`:outputQualityLabel(item.output)}</span><small>${index===0?"Latest":`#${history.length-index}`}</small></button>`;})}</div>`:nothing}
             <footer><p>${previewProgress?"This early image is usable for orientation while GPT Image finishes the durable draft.":working?"This fast draft keeps pace with your ideas. Generating it at full quality records a deliberate promotion and preserves the visual handoff.":"This is a full-quality image. Preview another direction quickly, or keep talking to reshape the plan."}</p><forma-generation-actions source="chat" .selected=${current}></forma-generation-actions></footer>
+            <forma-document-artifacts compact source="chat"></forma-document-artifacts>
           </section>
 
           <section class="chat-conversation" aria-labelledby="chat-thread-title">

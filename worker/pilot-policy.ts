@@ -1,5 +1,6 @@
 import { appendAuditEvent, ensureSchema, uuidV7, type WorkerEnv } from "./runtime";
 import { MICRO_USD_PER_USD } from "./replay-cost";
+import { readCanvasGovernance } from "./canvas-governance-policy";
 
 export const POLICY_VERSION = "pilot-2026-08-10";
 export type PilotRole = "admin" | "creator" | "agent" | "viewer";
@@ -63,7 +64,7 @@ export function requireConsent(user: PilotUser) {
 }
 
 const period = () => new Date().toISOString().slice(0, 7);
-const budgetLimits = (env: WorkerEnv) => ({ user: intEnv(env.FORMA_USER_TOKEN_LIMIT, 250_000), workspace: intEnv(env.FORMA_WORKSPACE_TOKEN_LIMIT, 2_500_000) });
+const budgetLimits = (env: WorkerEnv) => ({ user: intEnv(env.FORMA_USER_TOKEN_LIMIT, 500_000), workspace: intEnv(env.FORMA_WORKSPACE_TOKEN_LIMIT, 5_000_000) });
 const BUDGET_RECONCILIATION_AGE_MS = 5 * 60_000;
 type BudgetReservationRow = { reservation_id: string; owner_id: string; stream_id: string; correlation_id: string; operation: string; period: string; reserved_tokens: number; used_tokens: number; status: string; settlement_reason: string | null; created_at: string; settled_at: string | null; updated_at: string };
 type BudgetReservationContext = { streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string };
@@ -219,7 +220,7 @@ export async function settleCostBudget(env: WorkerEnv, userId: string, reservedM
 
 export async function releaseCostBudget(env: WorkerEnv, userId: string, reservedMicrousd: number) { await settleCostBudget(env, userId, reservedMicrousd, 0); }
 
-export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: "prompt" | "provider-output" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt", content: string) {
+export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: "prompt" | "provider-output" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact", content: string) {
   const contentId = uuidV7(); const createdAt = new Date(); const days = intEnv(env.FORMA_RETENTION_DAYS, 30); const expiresAt = new Date(createdAt.getTime() + days * 86_400_000);
   await env.DB.prepare("INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES (?,?,?,?,?,?,NULL)").bind(contentId, ownerId, kind, content, createdAt.toISOString(), expiresAt.toISOString()).run();
   return { contentId, expiresAt: expiresAt.toISOString() };
@@ -242,7 +243,7 @@ export async function handleSession(request: Request, env: WorkerEnv) {
     user.consentVersion = POLICY_VERSION; user.consentedAt = now;
   } else if (request.method !== "GET") return new Response("Method not allowed", { status: 405 });
   const budgetUser=auth.principal??user;await reconcileFailedBudgetReservations(env,budgetUser);
-  return Response.json({ user, impersonation:auth.impersonation?{active:true,impersonationId:auth.impersonation.impersonationId,personaId:auth.impersonation.personaId,replaySessionId:auth.impersonation.replaySessionId,actor:auth.impersonation.actor,fictionalUser:auth.impersonation.fictionalUser,startedAt:auth.impersonation.startedAt,expiresAt:auth.impersonation.expiresAt}:null, policy: { version: POLICY_VERSION, accepted: user.consentVersion === POLICY_VERSION, passiveCapture: false, attentionCapture: { available: true, defaultOn: false, retentionDays: 14, rawInputCapture: false }, externalAssetsRequireAssertion: true, retentionDays: intEnv(env.FORMA_RETENTION_DAYS, 30), sharing: "private-expiring-revocable" }, provider: { name: "OpenAI Responses + Image APIs", model: env.OPENAI_IMAGE_MODEL ?? "gpt-image-2", plannerModel: env.OPENAI_MODEL ?? "gpt-5.6-terra", configured: Boolean(env.OPENAI_API_KEY) }, budgets: await readBudgets(env, budgetUser.userId) });
+  return Response.json({ user, impersonation:auth.impersonation?{active:true,impersonationId:auth.impersonation.impersonationId,personaId:auth.impersonation.personaId,replaySessionId:auth.impersonation.replaySessionId,actor:auth.impersonation.actor,fictionalUser:auth.impersonation.fictionalUser,startedAt:auth.impersonation.startedAt,expiresAt:auth.impersonation.expiresAt}:null, policy: { version: POLICY_VERSION, accepted: user.consentVersion === POLICY_VERSION, passiveCapture: false, attentionCapture: { available: true, defaultOn: false, retentionDays: 14, rawInputCapture: false }, externalAssetsRequireAssertion: true, retentionDays: intEnv(env.FORMA_RETENTION_DAYS, 30), sharing: "private-expiring-revocable" }, canvas:await readCanvasGovernance(env,user.role), provider: { name: "OpenAI Responses · OpenAI + Fal image adapters · Fal video", model: env.OPENAI_IMAGE_MODEL ?? "gpt-image-2", plannerModel: env.OPENAI_MODEL ?? "gpt-5.6-terra", configured: Boolean(env.OPENAI_API_KEY), imageProvider:env.FORMA_IMAGE_PROVIDER??"openai", imageProviders:[{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",configured:Boolean(env.OPENAI_API_KEY)},{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4",previewModel:env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast",editModel:env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image",configured:Boolean(env.FAL_KEY)}], videoProvider: env.FORMA_VIDEO_PROVIDER??"fal", videoModel:env.FAL_VIDEO_MODEL??"google/gemini-omni-flash", videoConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY), videoApiSunset:null }, budgets: await readBudgets(env, budgetUser.userId) });
 }
 
 export async function handleImpersonation(request:Request,env:WorkerEnv){

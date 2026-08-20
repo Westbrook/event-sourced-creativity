@@ -40,6 +40,35 @@ test("derives improvement-first analytics, creative benefits, costs, timing, and
   assert.equal(report.views.find((row)=>row.id==="operations-analytics")?.visits,1);
 });
 
+test("turns Canvas state and semantic interaction receipts into product analytics",()=>{
+  const events=[
+    at(1,"ProjectCreated",{project_id:"project-1",name:"Campaign"}),
+    at(2,"CanvasCreated",{project_id:"project-1",canvas_id:"canvas-1",name:"Working board"}),
+    at(3,"CanvasInteractionRecorded",{project_id:"project-1",canvas_id:"canvas-1",interaction_id:"board_opened",category:"navigation"}),
+    at(4,"CanvasInteractionRecorded",{project_id:"project-1",canvas_id:"canvas-1",interaction_id:"item_selected",category:"selection",selection_count:1}),
+    at(5,"CanvasRegisterSet",{project_id:"project-1",canvas_id:"canvas-1",item_id:"item-1",source_surface:"canvas-organize-menu",operation:{object:{kind:"canvas_item",item_id:"item-1"},prop:"x",value:20,hlc:{pt:1,c:0,site:"test"}}}),
+    at(6,"CanvasInteractionRecorded",{project_id:"project-1",canvas_id:"canvas-1",interaction_id:"intent_submitted",category:"assistant",intent_length:42}),
+  ];
+  const report=buildAnalyticsReport([{streamId:"creative:user-1",userId:"user-1",userName:"Ari",organizationId:"forma",organizationName:"Forma workspace",fictional:false,events}],{rangeDays:30,now:Date.parse("2026-08-18T12:00:00.000Z")});
+  assert.equal(report.canvas.boards,1);assert.equal(report.canvas.interactions,5);assert.equal(report.canvas.coveredInteractions,5);
+  assert.equal(report.canvas.byCategory.find((row)=>row.id==="navigation")?.count,1);assert.equal(report.canvas.byCategory.find((row)=>row.id==="organization")?.count,1);
+  assert.equal(report.canvas.byInteraction.find((row)=>row.id==="intent_submitted")?.count,1);
+});
+
+test("keeps document-derived formats distinct from still-image generations",()=>{
+  const events=[
+    at(1,"ProjectCreated",{project_id:"project-1",name:"Campaign"}),
+    at(2,"DocumentCreated",{project_id:"project-1",document_id:"document-1",title:"Hero"}),
+    at(3,"DocumentRenderCompleted",{artifact_id:"story-1",artifact_kind:"short_story",document_id:"document-1",latency_ms:1_200},"worker:renderer"),
+    at(4,"DocumentRenderCompleted",{artifact_id:"board-1",artifact_kind:"storyboard",document_id:"document-1",latency_ms:8_400},"worker:renderer"),
+    at(5,"DocumentArtifactViewed",{artifact_id:"story-1",artifact_kind:"short_story",document_id:"document-1"}),
+    at(6,"DocumentArtifactExported",{artifact_id:"story-1",artifact_kind:"short_story",document_id:"document-1"}),
+    at(7,"DocumentRenderFailed",{artifact_id:"video-1",artifact_kind:"video",document_id:"document-1"},"worker:renderer"),
+  ];
+  const report=buildAnalyticsReport([{streamId:"creative:user-1",userId:"user-1",userName:"Ari",organizationId:"forma",organizationName:"Forma workspace",fictional:false,events}],{rangeDays:30,now:Date.parse("2026-08-18T12:00:00.000Z")});
+  assert.equal(report.totals.generations,0);assert.equal(report.artifacts.completed,2);assert.equal(report.artifacts.byKind.short_story,1);assert.equal(report.artifacts.byKind.storyboard,1);assert.equal(report.artifacts.byKind.video,0);assert.equal(report.artifacts.viewed,1);assert.equal(report.artifacts.exported,1);assert.equal(report.artifacts.failed,1);assert.equal(report.artifacts.medianRenderMs,1_200);assert.equal(report.artifacts.p90RenderMs,8_400);assert.equal(report.totals.retainedOutcomes,1);
+});
+
 test("keeps attention, slow-generation inputs and outputs, unresolved work, and cost cases inspectable",()=>{
   const events=[
     at(1,"ProjectCreated",{project_id:"project-1",name:"Campaign"}),
@@ -76,6 +105,25 @@ test("separates prompt-fan review, unique terminal failures, retries, cancellati
   assert.ok(!report.improvement.some((item)=>item.key==="unretained-output"));
 });
 
+test("measures preflight coverage, prevented spend, probe interventions, and warning outcomes",()=>{
+  const events=[
+    at(1,"ProjectCreated",{project_id:"project-1",name:"Campaign"}),
+    at(2,"DocumentCreated",{project_id:"project-1",document_id:"document-1",title:"Hero"}),
+    at(3,"GenerationPreflightRequested",{preflight_id:"blocked",document_id:"document-1"},"worker:policy"),
+    at(4,"GenerationPreflightCompleted",{preflight_id:"blocked",document_id:"document-1",status:"blocked",probe_results:[{id:"provider-health",status:"fail"}],estimated_cost_microusd:90_000},"worker:policy"),
+    at(5,"GenerationBlockedBeforeProvider",{preflight_id:"blocked",document_id:"document-1",estimated_cost_avoided_microusd:90_000},"worker:policy"),
+    at(6,"GenerationPreflightRequested",{preflight_id:"review",document_id:"document-1"},"worker:policy"),
+    at(7,"GenerationPreflightCompleted",{preflight_id:"review",document_id:"document-1",status:"review",probe_results:[{id:"context-safety",status:"warning"}]},"worker:policy"),
+    at(8,"GenerationRiskAcknowledged",{preflight_id:"review",document_id:"document-1"},"worker:policy"),
+    at(9,"GenerationRequested",{generation_id:"generation-1",preflight_id:"review",document_id:"document-1",quality:"high"}),
+    at(10,"GenerationCompleted",{generation_id:"generation-1",document_id:"document-1",object_ids:["object-1"],quality:"high"},"worker:generator"),
+    at(11,"GenerationRequested",{generation_id:"legacy",document_id:"document-1",quality:"low"}),
+  ];
+  const report=buildAnalyticsReport([{streamId:"creative:user-1",userId:"user-1",userName:"Ari",organizationId:"forma",organizationName:"Forma workspace",fictional:false,events}],{rangeDays:30,now:Date.parse("2026-08-18T12:00:00.000Z")});
+  assert.equal(report.readiness.requested,2);assert.equal(report.readiness.blocked,1);assert.equal(report.readiness.review,1);assert.equal(report.readiness.acknowledged,1);assert.equal(report.readiness.preventedCostMicrousd,90_000);assert.equal(report.readiness.providerBlocks,1);assert.equal(report.readiness.safetyWarnings,1);assert.equal(report.readiness.preflightedRequests,1);assert.equal(report.readiness.unpreflightedRequests,1);assert.equal(report.readiness.warningsSucceeded,1);assert.equal(report.readiness.warningsFailed,0);
+  assert.ok(report.improvement.some((item)=>item.key==="preflight-blocks"));assert.ok(report.benefits.some((item)=>item.key==="preflight-protection"));
+});
+
 test("keeps fictional actual-data mock accounts out of product analytics unless explicitly requested",()=>{
   const fictional={streamId:"creative:fictional",userId:"fictional",userName:"Mock creator",organizationId:"forma",organizationName:"Forma workspace",fictional:true,events:observed.map((event)=>({...event,eventId:`mock-${event.eventId}`,streamId:"creative:fictional"}))};
   const base={streamId:"creative:user-1",userId:"user-1",userName:"Ari",organizationId:"forma",organizationName:"Forma workspace",fictional:false,events:observed};
@@ -88,7 +136,7 @@ test("ships analytics as an admin-only, server-first Operations surface",async()
     readFile(new URL("../src/components/forma-analytics.ts",import.meta.url),"utf8"),readFile(new URL("../worker/analytics-api.ts",import.meta.url),"utf8"),readFile(new URL("../worker/index.ts",import.meta.url),"utf8"),readFile(new URL("../src/platform/applications.ts",import.meta.url),"utf8"),readFile(new URL("../src/components/area-navigation.ts",import.meta.url),"utf8"),readFile(new URL("../src/design-system.css",import.meta.url),"utf8"),
   ]);
   assert.match(api,/requireUser\(request,env,"admin",\{account:"principal"\}\)/);assert.match(api,/MAX_ANALYTICS_EVENTS/);assert.match(api,/includeSynthetic/);assert.match(worker,/\/api\/analytics/);assert.match(applications,/\/operations\/analytics/);assert.match(navigation,/Find product improvements and creative outcome evidence/);
-  for(const phrase of ["Where Forma should improve","Generation reliability","Comparison and next-step funnel","How Forma helps creative work","Generation economics","Generation and finalization","Views and working surfaces","Context health","Scope comparison","How these measures are derived"])assert.match(component,new RegExp(phrase));
+  for(const phrase of ["Where Forma should improve","Generation reliability","Generation readiness","Comparison and next-step funnel","How Forma helps creative work","Generation economics","Generation and finalization","Views and working surfaces","Canvas behavior","Context health","Scope comparison","How these measures are derived"])assert.match(component,new RegExp(phrase));
   assert.match(component,/Inspect referenced cases/);assert.match(component,/Open in its document/);assert.match(component,/analytics-evidence-media/);
-  for(const selector of [".analytics-improvement",".analytics-evidence",".analytics-evidence-item",".analytics-evidence-media",".analytics-reliability-grid",".analytics-review-list",".analytics-benefits",".analytics-economics-grid",".analytics-view-list",".analytics-table-wrap"])assert.match(styles,new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));
+  for(const selector of [".analytics-improvement",".analytics-evidence",".analytics-evidence-item",".analytics-evidence-media",".analytics-reliability-grid",".analytics-readiness-grid",".analytics-review-list",".analytics-benefits",".analytics-economics-grid",".analytics-view-list",".analytics-canvas-grid",".analytics-table-wrap"])assert.match(styles,new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));
 });

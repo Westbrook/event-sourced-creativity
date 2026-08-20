@@ -1,10 +1,10 @@
-export const DOCUMENT_JOB_KINDS = ["preview", "generate", "prompt_fan", "chat", "structure_adaptive", "extract_reference"] as const;
+export const DOCUMENT_JOB_KINDS = ["preview", "generate", "prompt_fan", "chat", "structure_adaptive", "extract_reference", "render_document"] as const;
 export type DocumentJobKind = typeof DOCUMENT_JOB_KINDS[number];
 export type DocumentJobStatus = "queued" | "running" | "committing" | "completed" | "partial" | "failed" | "canceled";
 export type ProviderFailureCategory = "safety" | "authentication" | "access" | "quota" | "rate_limit" | "network" | "canceled" | "provider" | "server" | "unknown";
 export type ProviderFailureScope = "request" | "user" | "workspace" | "account" | "project" | "organization" | "model" | "region" | "network" | "provider" | "unknown";
 export type ProviderFailureAction = "edit_request" | "check_credentials" | "check_project" | "verify_organization" | "add_credits" | "raise_limit" | "review_budget" | "wait_and_retry" | "retry" | "contact_support" | "none";
-export type DocumentJobError = { code: string; category: ProviderFailureCategory; scope: ProviderFailureScope; action: ProviderFailureAction; message: string; retryable: boolean; retryAfterMs: number | null; requestId: string | null; httpStatus: number | null };
+export type DocumentJobError = { code: string; category: ProviderFailureCategory; scope: ProviderFailureScope; action: ProviderFailureAction; message: string; retryable: boolean; retryAfterMs: number | null; requestId: string | null; httpStatus: number | null; riskCategories?: string[]; contributingBlockIds?: string[]; contributingReferenceIds?: string[]; probe?: string | null };
 export type PromptFanMember = { jobId: string; promptTechnique: "prose" | "bullets" | "json" | "xml"; status: Exclude<DocumentJobStatus, "partial">; error: DocumentJobError | null; moderationPromptRef: string | null; attemptCount: number; updatedAt: string };
 
 export type GenerationFailureGuidance = {
@@ -46,6 +46,108 @@ export type DocumentJob = {
   progressMessage: string;
 };
 
+export type DocumentJobProgressStep = {
+  id: string;
+  label: string;
+  state: "complete" | "active" | "pending";
+};
+
+export type DocumentJobProgress = {
+  percent: number;
+  label: string;
+  detail: string | null;
+  steps: DocumentJobProgressStep[];
+};
+
+type ProgressPhase = { id: string; label: string; stages: string[] };
+
+const IMAGE_PROGRESS: ProgressPhase[] = [
+  { id: "queue", label: "Queue", stages: ["queued"] },
+  { id: "plan", label: "Plan", stages: ["preparing", "compiling", "planning", "processing"] },
+  { id: "review", label: "Review", stages: ["safety-review"] },
+  { id: "render", label: "Render", stages: ["provider-wait", "rendering"] },
+  { id: "save", label: "Save", stages: ["saving", "committing"] },
+];
+
+const FAN_PROGRESS: ProgressPhase[] = [
+  { id: "queue", label: "Queue", stages: ["queued"] },
+  { id: "prepare", label: "Prepare ×4", stages: ["preparing", "compiling", "planning", "processing", "safety-review"] },
+  { id: "render", label: "Render ×4", stages: ["provider-wait", "rendering"] },
+  { id: "save", label: "Save", stages: ["saving", "committing"] },
+];
+
+const TEXT_ARTIFACT_PROGRESS: ProgressPhase[] = [
+  { id: "queue", label: "Queue", stages: ["queued", "preparing"] },
+  { id: "structure", label: "Structure", stages: ["planning"] },
+  { id: "write", label: "Write", stages: ["writing"] },
+  { id: "save", label: "Save", stages: ["saving", "committing"] },
+];
+
+const STORYBOARD_PROGRESS: ProgressPhase[] = [
+  { id: "queue", label: "Queue", stages: ["queued", "preparing"] },
+  { id: "structure", label: "Structure", stages: ["planning"] },
+  { id: "render", label: "Render frames", stages: ["rendering-frames", "safety-review", "provider-wait", "rendering"] },
+  { id: "save", label: "Save", stages: ["saving", "committing"] },
+];
+
+const VIDEO_PROGRESS: ProgressPhase[] = [
+  { id: "queue", label: "Queue", stages: ["queued", "preparing"] },
+  { id: "structure", label: "Structure", stages: ["planning", "preparing-video"] },
+  { id: "submit", label: "Submit", stages: ["submitting"] },
+  { id: "render", label: "Render", stages: ["rendering"] },
+  { id: "save", label: "Save", stages: ["downloading", "saving", "committing"] },
+];
+
+/** A UI-safe estimate from durable job checkpoints; it never implies provider precision we do not have. */
+export function documentJobProgress(job: DocumentJob): DocumentJobProgress {
+  const artifactKind = String(job.result?.artifactKind ?? "");
+  const phases = job.kind === "prompt_fan"
+    ? FAN_PROGRESS
+    : job.kind !== "render_document"
+      ? IMAGE_PROGRESS
+      : artifactKind === "video"
+        ? VIDEO_PROGRESS
+        : artifactKind === "storyboard"
+          ? STORYBOARD_PROGRESS
+          : TEXT_ARTIFACT_PROGRESS;
+  const stage = job.status === "committing" ? "committing" : job.stage || job.status;
+  let activeIndex = phases.findIndex((phase) => phase.stages.includes(stage));
+  if (activeIndex < 0) activeIndex = job.status === "queued" ? 0 : Math.min(1, phases.length - 1);
+  const fanCompleted = job.kind === "prompt_fan" ? Number(job.result?.completedCount ?? job.members.filter((member) => member.status === "completed").length) : 0;
+  if (job.kind === "prompt_fan" && (fanCompleted > 0 || job.members.some((member) => member.status === "running" || member.status === "committing"))) activeIndex = 2;
+
+  const providerPercent = job.progressMessage.match(/(?:rendering\s*[·:]?\s*)?(\d{1,3})%/i);
+  const unitProgress = job.progressMessage.match(/(?:frame\s+)?(\d+)\s+of\s+(\d+)/i);
+  const phaseStart = activeIndex / phases.length * 100;
+  const phaseSpan = 100 / phases.length;
+  let phaseFraction = job.status === "queued" ? .18 : .42;
+  let detail: string | null = null;
+
+  if (providerPercent) {
+    const value = Math.max(0, Math.min(99, Number(providerPercent[1])));
+    phaseFraction = value / 100;
+    detail = `${value}% reported by the provider`;
+  } else if (unitProgress) {
+    const complete = Math.max(0, Number(unitProgress[1]));
+    const total = Math.max(1, Number(unitProgress[2]));
+    phaseFraction = Math.min(1, complete / total);
+    detail = `${Math.min(complete, total)} of ${total} frames stored`;
+  } else if (job.kind === "prompt_fan" && fanCompleted > 0) {
+    phaseFraction = Math.min(1, fanCompleted / 4);
+    detail = `${Math.min(fanCompleted, 4)} of 4 prompt approaches finished`;
+  }
+
+  const percent = job.status === "committing"
+    ? 96
+    : Math.max(job.status === "queued" ? 3 : 8, Math.min(95, Math.round(phaseStart + phaseSpan * phaseFraction)));
+  return {
+    percent,
+    label: phases[activeIndex]?.label ?? "Working",
+    detail,
+    steps: phases.map((phase, index) => ({ id: phase.id, label: phase.label, state: index < activeIndex ? "complete" : index === activeIndex ? "active" : "pending" })),
+  };
+}
+
 function stableGenerationValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableGenerationValue);
   if (!value || typeof value !== "object") return value;
@@ -73,7 +175,7 @@ export const DOCUMENT_JOB_HEARTBEAT_MS = 15_000;
 export const DOCUMENT_JOB_STALE_AFTER_MS = 45_000;
 
 export const documentJobMaxAttempts = (kind: DocumentJobKind) =>
-  kind === "preview" || kind === "generate" || kind === "extract_reference" ? 2 : 1;
+  kind === "render_document" ? 8 : kind === "preview" || kind === "generate" || kind === "extract_reference" ? 2 : 1;
 
 export const documentJobTerminal = (job: Pick<DocumentJob, "status">) => job.status === "completed" || job.status === "partial" || job.status === "failed" || job.status === "canceled";
 export const documentJobFailureVisible = (job: Pick<DocumentJob, "status" | "dismissedAt">) => (job.status === "failed" || job.status === "partial") && !job.dismissedAt;
@@ -89,6 +191,10 @@ export function documentJobFailure(job: DocumentJob) {
 
 export function generationFailureGuidance(detail: DocumentJobError | null, fallback = "") : GenerationFailureGuidance {
   if (!detail) return { title: "The image could not be completed", summary: fallback || "The server returned an error without a provider receipt.", actionLabel: null, actionUrl: null, retryAllowed: true };
+  if (detail.code === "video_provider_not_configured") return { title: "Fal video generation is not configured", summary: "Add a valid server-side Fal key before retrying this video. Other document renderers remain available.", actionLabel: "Review Fal keys", actionUrl: "https://fal.ai/dashboard/keys", retryAllowed: false };
+  if (detail.code.startsWith("fal_") && detail.category === "authentication") return { title: "The Fal credential was rejected", summary: "Replace the server-side Fal key, then retry this video. The app will not keep retrying an invalid credential.", actionLabel: "Review Fal keys", actionUrl: "https://fal.ai/dashboard/keys", retryAllowed: false };
+  if (detail.code.startsWith("fal_") && detail.category === "quota") return { title: "The Fal account cannot fund this video", summary: "Add credits or resolve the Fal account limit before retrying the paid render.", actionLabel: "Review Fal billing", actionUrl: "https://fal.ai/dashboard/billing", retryAllowed: false };
+  if (detail.code.startsWith("fal_") && detail.category === "rate_limit") return { title: "Fal is limiting video throughput", summary: detail.retryAfterMs ? `The server already retried. Wait about ${Math.max(1, Math.ceil(detail.retryAfterMs / 1000))} seconds before trying again.` : "The server already retried with backoff. Wait briefly before trying again.", actionLabel: null, actionUrl: null, retryAllowed: true };
   if (detail.category === "safety") return { title: "Safety checks stopped this image", summary: "Change the request or reference image before trying again. Repeating the exact request is not expected to help.", actionLabel: "Review safety guidance", actionUrl: "https://developers.openai.com/api/docs/guides/safety-best-practices", retryAllowed: false };
   if (detail.action === "review_budget") return { title: detail.scope === "workspace" ? "The workspace generation budget is exhausted" : "Your generation budget is exhausted", summary: "This application limit resets with the next budget period. An administrator can raise the configured token limit; retrying now would be rejected before an OpenAI request is sent.", actionLabel: "Review operational limits", actionUrl: "/operations", retryAllowed: false };
   if (detail.action === "add_credits") return { title: "The OpenAI account has no available API credit", summary: "Add credits or resolve billing on the OpenAI organization, then retry this image.", actionLabel: "Open billing settings", actionUrl: "https://platform.openai.com/settings/organization/billing/overview", retryAllowed: false };
