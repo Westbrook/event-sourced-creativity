@@ -3676,6 +3676,26 @@ dialog.command-dialog .command-results {
 .canvas-adapter-explainer ol { margin-block: 1rem; padding-inline-start: 1.5rem; }
 .canvas-adapter-explainer li + li { margin-top: .5rem; }
 .canvas-adapter-explainer p { margin-bottom: 0; color: var(--muted); }
+.canvas-adapter-control-plane { display: grid; gap: 1.25rem; padding: clamp(1.25rem,3vw,2rem); background: var(--panel-2); }
+.canvas-adapter-control-plane > header { display: flex; align-items: start; justify-content: space-between; gap: 2rem; }
+.canvas-adapter-control-plane > header h3 { margin: .35rem 0; font-size: var(--type-heading); }
+.canvas-adapter-control-plane > header p { max-width: 55rem; margin: 0; color: var(--muted); }
+.canvas-adapter-readiness { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 1rem; }
+.canvas-adapter-readiness article { display: grid; gap: .25rem; min-width: 0; padding-block: 1rem; border-block: 1px solid var(--line); }
+.canvas-adapter-readiness article span { font-size: var(--type-lede); }
+.canvas-adapter-readiness article small { color: var(--muted); }
+.canvas-adapter-models { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .75rem 1.5rem; }
+.canvas-adapter-models span { display: grid; gap: .25rem; min-width: 0; }
+.canvas-adapter-models code { overflow-wrap: anywhere; color: var(--muted); }
+.canvas-adapter-ready { margin: 0; padding: 1rem; color: var(--success); background: color-mix(in srgb,var(--success) 8%,var(--panel)); }
+.canvas-adapter-evaluation { background: color-mix(in srgb,var(--warning) 9%,var(--panel)); }
+.canvas-adapter-evaluation summary { display: flex; align-items: start; justify-content: space-between; gap: 1.5rem; padding: 1rem; cursor: pointer; }
+.canvas-adapter-evaluation summary span { display: grid; gap: .2rem; }
+.canvas-adapter-evaluation summary small,.canvas-adapter-evaluation > p { color: var(--muted); }
+.canvas-adapter-evaluation summary strong { color: var(--warning); }
+.canvas-adapter-evaluation > p,.canvas-adapter-evaluation > dl { margin-inline: 1rem; }
+.canvas-adapter-evaluation > dl { margin-block-end: 1rem; }
+.canvas-adapter-evaluation dl { grid-template-columns: repeat(2,minmax(0,1fr)); gap: .75rem 1.5rem; }
 .canvas-adapter-form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }
 .canvas-governance-error { padding: 1rem; color: var(--danger); background: var(--panel-2); border: 1px solid var(--danger); }
 .canvas-gate-requirements { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1.5rem; margin-top: 2rem; }
@@ -3685,9 +3705,10 @@ dialog.command-dialog .command-results {
 .canvas-gate-requirements p { margin: 0; color: var(--muted); }
 
 @media (max-width: 760px) {
-  .canvas-governance-grid,.canvas-adapter-form,.canvas-gate-requirements { grid-template-columns: 1fr; }
+  .canvas-governance-grid,.canvas-adapter-form,.canvas-gate-requirements,.canvas-adapter-readiness,.canvas-adapter-models { grid-template-columns: 1fr; }
   .canvas-governance-card > header { grid-template-columns: auto minmax(0,1fr); }
   .canvas-governance-card > header > b { grid-column: 2; }
+  .canvas-adapter-control-plane > header,.canvas-adapter-evaluation summary { flex-direction: column; }
 }
 
 /* Image-provider routing is a laboratory surface: dense enough to compare,
@@ -3722,6 +3743,8 @@ dialog.command-dialog .command-results {
 .adapter-route-state { flex: 0 0 auto; padding: .55rem .75rem; background: var(--panel); font-size: var(--type-caption); font-weight: 700; }
 .adapter-route-state.fal { color: var(--success); }
 .adapter-route-state.fallback { color: var(--accent); }
+.adapter-route-state.ready { color: var(--success); }
+.adapter-route-state.blocked { color: var(--warning); }
 .adapter-receipt-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); margin: 0; padding: clamp(1.25rem,3vw,2.5rem); gap: 1.5rem 2rem; }
 .adapter-receipt-grid div { min-width: 0; }
 .adapter-receipt-grid dt { margin-bottom: .35rem; color: var(--muted); font-size: var(--type-caption); }
@@ -3738,10 +3761,25 @@ dialog.command-dialog .command-results {
 .adapter-route-preview > footer span { display: inline-flex; align-items: center; gap: .5rem; font-weight: 700; }
 .adapter-route-preview > footer p { margin: 0; color: var(--muted); font-size: var(--type-caption); text-align: right; }
 .adapter-lab-warning { margin: 0; padding: 1rem clamp(1.25rem,3vw,2.5rem); background: color-mix(in srgb,var(--warning) 12%,var(--panel)); color: var(--text); }
+.adapter-evaluation { display: grid; gap: 1.25rem; padding-block: clamp(1.5rem,3vw,2.5rem); border-block: 1px solid var(--line); }
+.adapter-evaluation > header { display: flex; align-items: start; justify-content: space-between; gap: 2rem; }
+.adapter-evaluation > header h2 { margin: .35rem 0; font-size: var(--type-title); }
+.adapter-evaluation > header p { margin: 0; color: var(--muted); }
+.adapter-evaluation > header > b { color: var(--warning); }
+.adapter-evaluation-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 1.5rem; }
+.adapter-evaluation-metrics dl { min-width: 0; margin: 0; }
+.adapter-evaluation-metrics dt { margin-bottom: .35rem; color: var(--muted); font-size: var(--type-caption); }
+.adapter-evaluation-metrics dd { margin: 0; overflow-wrap: anywhere; }
+.adapter-evaluation-finding { max-width: 72rem; margin: 0; }
+.adapter-evaluation details { max-width: 42rem; }
+.adapter-evaluation summary { cursor: pointer; font-weight: 700; }
+.adapter-evaluation li + li { margin-top: .35rem; }
+.adapter-evaluation > .button { justify-self: start; }
 @media (max-width: 900px) {
   .adapter-lab-grid { grid-template-columns: 1fr; }
   .adapter-lab-controls { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
   .adapter-lab-controls > .section-heading,.adapter-lab-controls > form { grid-column: 1 / -1; }
+  .adapter-evaluation-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 @media (max-width: 640px) {
   .adapter-lab-status,.adapter-route-preview > header,.adapter-route-preview > footer { align-items: stretch; flex-direction: column; }
@@ -3751,4 +3789,6 @@ dialog.command-dialog .command-results {
   .adapter-lab-controls form,.adapter-receipt-grid { grid-template-columns: 1fr; }
   .adapter-route-state { align-self: start; }
   .adapter-route-preview > footer p { text-align: left; }
+  .adapter-evaluation > header,.canvas-adapter-evaluation > header { flex-direction: column; }
+  .adapter-evaluation-metrics,.canvas-adapter-evaluation dl { grid-template-columns: 1fr; }
 }

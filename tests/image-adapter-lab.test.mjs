@@ -10,9 +10,11 @@ test("the image-adapter laboratory is a refreshable Laboratory route",()=>{
 });
 
 test("the image-adapter laboratory previews routing without initiating paid generation",async()=>{
-  const [component,api,entry,index]=await Promise.all([
+  const [component,api,evidence,governance,entry,index]=await Promise.all([
     readFile(new URL("../src/components/forma-image-adapter-lab.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/image-adapters-api.ts",import.meta.url),"utf8"),
+    readFile(new URL("../worker/image-adapter-evaluation-evidence.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/apps/operations/canvas-governance.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/apps/laboratory/entry.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/index.ts",import.meta.url),"utf8"),
   ]);
@@ -21,8 +23,16 @@ test("the image-adapter laboratory previews routing without initiating paid gene
   assert.match(component,/No provider call, image generation, or billable operation occurred/);
   assert.match(component,/Known capability edges/);
   assert.match(component,/Review qualification/);
+  assert.match(component,/Latest frozen comparison/);
   assert.match(api,/selectImageAdapter/);
-  assert.match(api,/Multi-reference edit/);
-  assert.match(api,/published output-pixel rate/);
+  assert.match(api,/IMAGE_ADAPTER_EVALUATION_EVIDENCE/);
+  assert.match(evidence,/caseCount:50/);
+  assert.match(evidence,/status:"review_required"/);
+  assert.match(governance,/Administrative control plane/);
+  assert.match(governance,/server-retained passing report/);
+  assert.match(api,/Google multi-reference edit/);
+  assert.match(api,/GOOGLE_IMAGEN_ADAPTER_ID/);
+  assert.match(api,/canvas-image-corpus-v2/);
+  assert.match(api,/published output-pixel and prompt-expansion rates/);
   assert.doesNotMatch(api,/generateCreativeImage\(/);
 });

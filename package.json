@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern dist",
     "replay": "node --experimental-strip-types scripts/replay.mjs",
+    "eval:image-adapters": "node --experimental-strip-types scripts/run-image-adapter-eval.mjs",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {

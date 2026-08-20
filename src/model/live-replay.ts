@@ -95,7 +95,7 @@ export type LiveReplayFanAsset = { technique: PromptTechnique; mediaUrl: string;
 export type LiveReplayReferenceSource = {
   kind: "generated" | "licensed-web";
   requestedKind: "generated" | "licensed-web";
-  provider: "openai" | "fal" | "wikimedia-commons";
+  provider: "openai" | "fal" | "google" | "wikimedia-commons";
   model: string | null;
   query: string | null;
   sourceUrl: string | null;

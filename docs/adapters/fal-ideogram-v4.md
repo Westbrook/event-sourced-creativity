@@ -1,7 +1,7 @@
 # Fal Ideogram V4 image adapter capability receipt
 
 Adapter: `fal-ideogram-v4`  
-Version: `v1`  
+Version: `v2`
 Contract: creative image adapter contract `7`
 
 ## Purpose
@@ -20,15 +20,15 @@ Model identifiers are environment-configurable. The adapter uses Fal's queued re
 
 | Capability | Delivery |
 | --- | --- |
-| Compiled prompt structures | Prose, bullets, JSON, and XML use the same bounded compiler as the primary adapter. |
-| Draft/full quality | Draft maps to the fast endpoint with `TURBO`; medium maps to `BALANCED`; full maps to `QUALITY`. |
+| Compiled prompt structures | Prose, bullets, JSON, and XML use the same bounded compiler as the primary adapter. Fal then applies Ideogram's documented caption expansion: `Medium` for draft/balanced work and `Large` for full quality. This preserves the same submitted context while adapting it to Ideogram V4's required structured-caption distribution. |
+| Draft/full quality | Draft maps to the fast endpoint with `TURBO`; medium maps to `BALANCED`; full maps to `QUALITY`. Caption expansion stays enabled because Ideogram documents a high false-positive safety rate for unexpanded plain-text prompts. |
 | Custom dimensions | 512–3840 px per side, multiples of 16, validated before submission. |
 | Safety | Exact prompt and each selected reference are preflighted; Fal's safety checker is always enabled. |
 | Reference pixels | One PNG, JPEG, or WebP reference is passed as a server-created data URI. Strength is derived from the block's pixel-use policy. |
 | Multiple references | Not claimed. Requests with more than one reference use the primary adapter and record the selection reason. |
 | Rights | Existing reference selection and rights assertions remain upstream of the adapter and are represented in the compiled request receipt. |
 | Failure behavior | Authentication, validation, provider, queue failure/cancellation, timeout, empty result, and download errors use normalized provider errors with retry guidance. |
-| Usage/cost | OpenAI token counts remain zero for Fal inference. Image cost is recorded separately from the published per-megapixel rate and marked as a rate estimate. |
+| Usage/cost | OpenAI token counts remain zero for Fal inference. Image cost records both the published per-megapixel render rate and the flat prompt-expansion fee and is marked as a provider-rate estimate. |
 | Partial images | Not claimed. The final result is durable; no synthetic streaming receipt is emitted. |
 
 ## Laboratory preview
