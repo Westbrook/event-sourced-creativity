@@ -38,4 +38,5 @@ test("the runner requires explicit failed-case retries and supports report-only 
   assert.match(runner,/generateGoogleCreativeImage/);
   assert.match(runner,/current\?\.status==="failed"&&!retryFailed/);
   assert.match(runner,/if\(!reportOnly\)/);
+  assert.match(runner,/if\(!String\(values\[key\]\?\?""\)\.trim\(\)\)values\[key\]=value/);
 });
