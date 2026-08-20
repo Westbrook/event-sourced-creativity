@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { generateCreativeImage, selectImageAdapter } from "../worker/image-adapter.ts";
+import { falExpansionModel, falReferenceStrength } from "../worker/fal-image-adapter.ts";
 import { priceFalIdeogramImageBreakdownMicrousd } from "../worker/replay-cost.ts";
 
 const moderationPass=()=>Response.json({id:"modr_fal",model:"omni-moderation-latest",results:[{flagged:false,categories:{},category_scores:{}}]});
@@ -47,7 +48,7 @@ test("passes exactly one reference image as pixels to Ideogram image-to-image",a
   try{
     const reference={bytes:new TextEncoder().encode("pixels"),mimeType:"image/png",mode:"preserve_composition",source:"uploaded-reference"};
     const result=await generateCreativeImage({OPENAI_API_KEY:"openai-test",FAL_KEY:"fal-test",FORMA_IMAGE_PROVIDER:"fal-ideogram"},"user-1",{facts:[]},{title:"Edit"},{size:"1024x1024",outputFormat:"png",references:[reference]});
-    assert.equal(result.model,"ideogram/v4/image-to-image");assert.match(submitted.image_url,/^data:image\/png;base64,/);assert.equal(submitted.strength,.35);assert.equal(submitted.enable_safety_checker,true);
+    assert.equal(result.model,"ideogram/v4/image-to-image");assert.match(submitted.image_url,/^data:image\/png;base64,/);assert.equal(submitted.strength,.8);assert.equal(submitted.enable_safety_checker,true);
   }finally{globalThis.fetch=originalFetch;}
 });
 
@@ -85,4 +86,31 @@ test("preserves Fal validation detail and request IDs from result responses",asy
 
 test("prices Fal output by megapixels rather than inventing token usage",()=>{
   assert.deepEqual(priceFalIdeogramImageBreakdownMicrousd("ideogram/v4",1024,1024,"QUALITY","Large"),{textInputMicrousd:30000,textOutputMicrousd:0,imageTextInputMicrousd:0,imageInputMicrousd:0,imageOutputMicrousd:26215,totalMicrousd:56215});
+});
+
+test("maps reference intent onto Fal's documented transformation-strength semantics",()=>{
+  const reference=(mode)=>({bytes:new Uint8Array([1]),mimeType:"image/png",source:"uploaded-reference",mode});
+  assert.ok(falReferenceStrength(reference("preserve_subject"))<falReferenceStrength(reference("preserve_composition")));
+  assert.ok(falReferenceStrength(reference("preserve_composition"))<falReferenceStrength(reference("inspiration")));
+});
+
+test("uses only caption-expansion values accepted by each Ideogram 4 endpoint",()=>{
+  assert.equal(falExpansionModel("low"),"Medium");
+  assert.equal(falExpansionModel("medium"),"Large");
+  assert.equal(falExpansionModel("high"),"Large");
+});
+
+test("submits an explicitly prepared evaluation prompt without rebuilding it",async()=>{
+  const originalFetch=globalThis.fetch;let submitted;
+  globalThis.fetch=async(url,init={})=>{
+    if(String(url).endsWith("/moderations"))return moderationPass();
+    if(String(url)==="https://queue.fal.run/ideogram/v4/fast"&&init.method==="POST"){submitted=JSON.parse(String(init.body));return Response.json({request_id:"fal-prepared-1",status:"COMPLETED",response_url:"https://queue.fal.run/ideogram/v4/fast/requests/fal-prepared-1/response"});}
+    if(String(url).endsWith("/requests/fal-prepared-1/response"))return Response.json({images:[{url:"https://cdn.fal.media/prepared.jpg",content_type:"image/jpeg",width:1024,height:1024}]});
+    if(String(url)==="https://cdn.fal.media/prepared.jpg")return new Response("prepared",{headers:{"content-type":"image/jpeg"}});
+    throw new Error(`unexpected request ${url}`);
+  };
+  try{
+    const result=await generateCreativeImage({OPENAI_API_KEY:"openai-test",FAL_KEY:"fal-test",FORMA_IMAGE_PROVIDER:"fal-ideogram"},"user-1",{ignored:"snapshot"},{ignored:"direction"},{quality:"low",size:"1024x1024",outputFormat:"jpeg",preparedPrompt:"Exact paired evaluation prompt."});
+    assert.equal(submitted.prompt,"Exact paired evaluation prompt.");assert.equal(result.prompt,"Exact paired evaluation prompt.");
+  }finally{globalThis.fetch=originalFetch;}
 });

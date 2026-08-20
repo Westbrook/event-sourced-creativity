@@ -1,7 +1,7 @@
 # Fal Ideogram V4 image adapter capability receipt
 
 Adapter: `fal-ideogram-v4`  
-Version: `v2`
+Version: `v6`
 Contract: creative image adapter contract `7`
 
 ## Purpose
@@ -20,11 +20,11 @@ Model identifiers are environment-configurable. The adapter uses Fal's queued re
 
 | Capability | Delivery |
 | --- | --- |
-| Compiled prompt structures | Prose, bullets, JSON, and XML use the same bounded compiler as the primary adapter. Fal then applies Ideogram's documented caption expansion: `Medium` for draft/balanced work and `Large` for full quality. This preserves the same submitted context while adapting it to Ideogram V4's required structured-caption distribution. |
-| Draft/full quality | Draft maps to the fast endpoint with `TURBO`; medium maps to `BALANCED`; full maps to `QUALITY`. Caption expansion stays enabled because Ideogram documents a high false-positive safety rate for unexpanded plain-text prompts. |
+| Compiled prompt structures | Prose, bullets, JSON, and XML use the same bounded compiler as the primary adapter. Fal applies `Medium` caption expansion to the Fast endpoint and `Large` to the standard endpoint. This preserves the same submitted context while adapting it to Ideogram 4's structured-caption distribution and each endpoint's accepted enum. |
+| Draft/full quality | Draft maps to the Fast endpoint with `TURBO` and its supported `Medium` expansion. Balanced maps to the standard endpoint with `BALANCED` and `Large`; full maps to the standard endpoint with `QUALITY` and `Large`. The stronger standard-endpoint expansion prevents the benign typography safety failure reproduced with Medium. |
 | Custom dimensions | 512–3840 px per side, multiples of 16, validated before submission. |
 | Safety | Exact prompt and each selected reference are preflighted; Fal's safety checker is always enabled. |
-| Reference pixels | One PNG, JPEG, or WebP reference is passed as a server-created data URI. Strength is derived from the block's pixel-use policy. |
+| Reference pixels | One PNG, JPEG, or WebP reference is passed as a server-created data URI. Strength follows Fal's documented transformation semantics: subject preservation stays close to the source, while composition-only and inspiration modes transform strongly enough to replace unrelated source content. Composition prompts explicitly preserve layout while rejecting source identities, objects, text, and story. |
 | Multiple references | Not claimed. Requests with more than one reference use the primary adapter and record the selection reason. |
 | Rights | Existing reference selection and rights assertions remain upstream of the adapter and are represented in the compiled request receipt. |
 | Failure behavior | Authentication, validation, provider, queue failure/cancellation, timeout, empty result, and download errors use normalized provider errors with retry guidance. |
@@ -37,7 +37,7 @@ Model identifiers are environment-configurable. The adapter uses Fal's queued re
 
 ## Governance status
 
-Implementation and mocked contract tests do not constitute release approval. The Canvas pilot gate additionally requires:
+Implementation and mocked contract tests do not constitute release approval. The current `canvas-image-corpus-v2` report is retained non-passing evidence: v6 completed 49/50 candidate requests, produced 39/49 usable candidates and 6/10 usable reference results, and remained below the instruction-following threshold. The Canvas pilot gate requires:
 
 1. an immutable Fal entitlement/procurement reference;
 2. a frozen corpus of at least 50 contexts;

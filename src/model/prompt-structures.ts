@@ -119,7 +119,7 @@ export function buildReferencePromptDirectives(references: PromptReferenceDescri
     if (reference.source === "ideation-preview") return `- Image ${index + 1} is the selected working draft. Refine it into the requested result while preserving the creative progress it represents.`;
     if (reference.source === "locked-study") return `- Image ${index + 1} is an accepted ${reference.label || "creative study"}. Preserve its established identity and defining decisions while composing the larger image.`;
     const policies: Record<string, string> = {
-      preserve_composition: "Preserve the reference image's composition and spatial organization while applying the document's other decisions.",
+      preserve_composition: "Preserve the reference image's composition, framing, balance, and spatial organization only as a layout guide. Replace its subjects, identities, setting, objects, text, and story with the document's authored content unless another decision explicitly preserves them.",
       preserve_subject: "Preserve the identity and recognizable features of its subject while applying the document's other decisions.",
       preserve_style: "Use its visual style and material language without copying unrelated content.",
       inspiration: "Use it as visual inspiration while allowing the document to determine the result.",

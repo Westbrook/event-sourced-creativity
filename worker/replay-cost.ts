@@ -147,18 +147,6 @@ export function priceFalIdeogramImageBreakdownMicrousd(model:string,width:number
   return{textInputMicrousd,textOutputMicrousd:0,imageTextInputMicrousd:0,imageInputMicrousd:0,imageOutputMicrousd,totalMicrousd:textInputMicrousd+imageOutputMicrousd};
 }
 
-/** Published per-image Vertex AI rates for the generally available Imagen 4 family. */
-export function priceGoogleImagenImageBreakdownMicrousd(model:string):ProviderCostBreakdown {
-  const imageOutputMicrousd=model.includes("ultra")?60_000:model.includes("fast")?20_000:40_000;
-  return{textInputMicrousd:0,textOutputMicrousd:0,imageTextInputMicrousd:0,imageInputMicrousd:0,imageOutputMicrousd,totalMicrousd:imageOutputMicrousd};
-}
-
-/** Published Fal Nano Banana 2 output rates; reference pixels are included in the flat image charge. */
-export function priceFalGoogleEditBreakdownMicrousd(resolution:"0.5K"|"1K"|"2K"|"4K"):ProviderCostBreakdown {
-  const imageOutputMicrousd=resolution==="0.5K"?60_000:resolution==="2K"?120_000:resolution==="4K"?160_000:80_000;
-  return{textInputMicrousd:0,textOutputMicrousd:0,imageTextInputMicrousd:0,imageInputMicrousd:0,imageOutputMicrousd,totalMicrousd:imageOutputMicrousd};
-}
-
 function line(key: ReplayCostLine["key"], label: string, operations: number, estimatedMicrousd: number): ReplayCostLine {
   return { key, label, operations, estimatedMicrousd: Math.ceil(estimatedMicrousd) };
 }

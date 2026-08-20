@@ -20,8 +20,10 @@ type FalImageFile = { url?: string; content_type?: string; width?: number; heigh
 type FalImageResult = { images?: FalImageFile[]; timings?: Record<string,number>; seed?: number; has_nsfw_concepts?: boolean[]; prompt?: string; error?: unknown };
 
 export const FAL_IDEOGRAM_ADAPTER_ID="fal-ideogram-v4";
-export const FAL_IDEOGRAM_ADAPTER_VERSION="v2";
+export const FAL_IDEOGRAM_ADAPTER_VERSION="v6";
 const FAL_IMAGE_TIMEOUT_MS=10*60*1000;
+
+export function falIdeogramAdapterReadiness(env:WorkerEnv){return{configured:Boolean(env.FAL_KEY?.trim()),fal:Boolean(env.FAL_KEY?.trim()),missing:env.FAL_KEY?.trim()?[]:["Fal key"]};}
 
 const falHeaders=(env:WorkerEnv)=>({authorization:`Key ${env.FAL_KEY}`,"content-type":"application/json"});
 const falEndpoint=(model:string)=>`https://queue.fal.run/${model}`;
@@ -38,8 +40,8 @@ const dataUri=(reference:ImageReference)=>`data:${reference.mimeType};base64,${b
 const outputFormat=(format:ImageOutputFormat|undefined):"jpeg"|"png"=>format==="png"?"png":"jpeg";
 const renderingSpeed=(quality:CreativeImageOptions["quality"]):FalIdeogramRenderingSpeed=>quality==="low"?"TURBO":quality==="medium"?"BALANCED":"QUALITY";
 export type FalIdeogramExpansionModel="None"|"Medium"|"Large";
-export const falExpansionModel=(quality:CreativeImageOptions["quality"]):FalIdeogramExpansionModel=>quality==="high"?"Large":"Medium";
-const referenceStrength=(reference:ImageReference)=>reference.mode==="preserve_composition"?.35:reference.mode==="preserve_subject"?.5:reference.mode==="preserve_style"?.65:reference.mode==="inspiration"?.82:.75;
+export const falExpansionModel=(quality:CreativeImageOptions["quality"]):FalIdeogramExpansionModel=>quality==="low"?"Medium":"Large";
+export const falReferenceStrength=(reference:ImageReference)=>reference.mode==="preserve_subject"?.35:reference.mode==="preserve_style"?.68:reference.mode==="preserve_composition"?.8:reference.mode==="inspiration"?.9:.8;
 
 export function validateFalImageSize(size:string){
   const match=/^(\d+)x(\d+)$/.exec(size);if(!match)return{valid:false,width:0,height:0,reason:"Use WIDTHxHEIGHT dimensions."};
@@ -89,14 +91,14 @@ export async function generateFalCreativeImage(env:WorkerEnv,userId:string,snaps
   const references=validateImageReferences(options.references??[]);
   if(references.length>1)throw new ProviderRequestError({code:"fal_multiple_reference_images_unsupported",category:"provider",scope:"request",action:"edit_request",message:"The Ideogram V4 image-to-image adapter accepts one reference image. Use the OpenAI image adapter for this multi-reference request.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
   if(options.outputFormat==="webp")throw new ProviderRequestError({code:"fal_webp_output_unsupported",category:"provider",scope:"request",action:"edit_request",message:"The Ideogram V4 adapter returns JPEG or PNG. Choose one of those formats or use the OpenAI image adapter.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
-  const promptTechnique=normalizePromptTechnique(options.promptTechnique);const prompt=buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:0});const started=Date.now();
+  const promptTechnique=normalizePromptTechnique(options.promptTechnique);const prompt=options.preparedPrompt?.trim()||buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:0});const started=Date.now();
   await options.onStage?.("safety-review","Reviewing the exact image prompt and selected reference pixels.");
   let moderation:Awaited<ReturnType<typeof moderateExactImagePrompt>>;try{moderation=await moderateExactImagePrompt(env,prompt,references,options.signal);}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
   if(moderation.flagged)throw new ProviderRequestError({code:"safety_preflight_flagged",category:"safety",scope:"request",action:"edit_request",message:`A preflight review identified likely safety concerns${moderation.categories.length?` in ${moderation.categories.join(", ")}`:""}. Review the exact prompt and contributing context before retrying.`,retryable:false,retryAfterMs:null,requestId:moderation.requestId,httpStatus:400,riskCategories:moderation.categories,contributingReferenceIds:moderation.referenceIds,probe:"exact-prompt-and-reference-moderation"},prompt);
 
   const model=references.length?(env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image"):(quality==="low"?(env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast"):(env.FAL_IMAGE_MODEL??"ideogram/v4"));
   const speed=renderingSpeed(quality);const expansionModel=falExpansionModel(quality);const format=outputFormat(options.outputFormat);const input:Record<string,unknown>={prompt,expansion_model:expansionModel,image_size:{width:sizeResult.width,height:sizeResult.height},rendering_speed:speed,num_images:1,enable_safety_checker:true,output_format:format};
-  if(references[0]){input.image_url=dataUri(references[0]);input.strength=referenceStrength(references[0]);}
+  if(references[0]){input.image_url=dataUri(references[0]);input.strength=falReferenceStrength(references[0]);}
   await options.onStage?.("provider-submit",`Submitting to ${model}.`);
   const submitted=await falJson(env,falEndpoint(model),{method:"POST",headers:falHeaders(env),body:JSON.stringify(input),signal:options.signal},prompt) as FalQueueState;
   const requestId=String(submitted.request_id??"");if(!requestId)throw new ProviderRequestError({code:"fal_provider_returned_no_request_id",category:"provider",scope:"request",action:"retry",message:"Fal accepted no durable request identifier, so the image cannot be tracked safely.",retryable:true,retryAfterMs:2_000,requestId:null,httpStatus:502},prompt);

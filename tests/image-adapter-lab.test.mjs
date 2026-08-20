@@ -30,8 +30,8 @@ test("the image-adapter laboratory previews routing without initiating paid gene
   assert.match(evidence,/status:"review_required"/);
   assert.match(governance,/Administrative control plane/);
   assert.match(governance,/server-retained passing report/);
-  assert.match(api,/Google multi-reference edit/);
-  assert.match(api,/GOOGLE_IMAGEN_ADAPTER_ID/);
+  assert.match(api,/Multi-reference fallback/);
+  assert.match(api,/FAL_IDEOGRAM_ADAPTER_ID/);
   assert.match(api,/canvas-image-corpus-v2/);
   assert.match(api,/published output-pixel and prompt-expansion rates/);
   assert.doesNotMatch(api,/generateCreativeImage\(/);
