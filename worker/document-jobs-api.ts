@@ -18,6 +18,7 @@ import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } fro
 import { applicationFailureDetail, classifyProviderFailure, publicFailureDetail, type ProviderFailureDetail } from "./provider-errors";
 import { documentJobCompletionBindings } from "./document-job-sql";
 import { preflightGeneration } from "./generation-readiness";
+import { DEFAULT_REFERENCE_VIDEO_MODEL } from "../src/model/video-adapter";
 
 type DocumentJobRow = {
   job_id: string; owner_id: string; stream_id: string; document_id: string; kind: DocumentJobKind; status: DocumentJobStatus;
@@ -406,7 +407,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const artifactId = String(previous.artifactId ?? failedEvent?.payload.artifact_id ?? requestedEvent?.payload.artifact_id ?? "");
     if (target.kind !== "render_document" || target.status !== "failed" || !providerJobId || !artifactId) return Response.json({ error: "resumable_provider_job_required" }, { status: 409 });
     const requestPayload = parseRequest(target); const artifactKind = String(requestPayload.artifactKind ?? failedEvent?.payload.artifact_kind ?? "");
-    const providerModel = String(previous.providerModel ?? (artifactKind === "video" ? env.FAL_REFERENCE_VIDEO_MODEL ?? "bytedance/seedance-2.5/reference-to-video" : ""));
+    const providerModel = String(previous.providerModel ?? (artifactKind === "video" ? env.FAL_REFERENCE_VIDEO_MODEL ?? DEFAULT_REFERENCE_VIDEO_MODEL : ""));
     const result:Record<string,unknown> = { ...previous, artifactId, providerJobId, providerModel, stage: "queued", progressMessage: "Recovering the saved Fal render without submitting a second paid video." };delete result.errorDetail;delete result.dismissedAt;delete result.reservationId;
     const updated = await env.DB.prepare("UPDATE document_jobs SET status='queued',correlation_id=?,result_json=?,error_message=NULL,completed_at=NULL,lease_expires_at=NULL,notified_at=NULL,updated_at=? WHERE job_id=? AND owner_id=? AND status='failed'").bind(jobId, JSON.stringify(result), now, jobId, user.userId).run();
     if (Number(updated.meta.changes ?? 0) !== 1) return Response.json({ error: "job_retry_conflict" }, { status: 409 });

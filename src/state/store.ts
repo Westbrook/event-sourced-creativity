@@ -19,18 +19,21 @@ import { storyboardFrameContextEvents } from "../model/storyboard-context";
 
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
+export type CanvasSyncResult = { appended:CreativeEvent[]; rejected:Array<{index?:number;type?:string;reason:string}>; head:number; retryable:boolean; error:string };
 export type PilotSession = {
   user: { userId: string; email: string; displayName: string; role: "admin" | "creator" | "agent" | "viewer"; consentVersion: string | null; consentedAt: string | null };
   impersonation: { active:true; impersonationId:string; personaId:string; replaySessionId:string; actor:{userId:string;email:string;displayName:string;role:"admin"|"creator"|"agent"|"viewer"}; fictionalUser:{userId:string;email:string;displayName:string;role:"admin"|"creator"|"agent"|"viewer"}; startedAt:string; expiresAt:string } | null;
   policy: { version: string; accepted: boolean; passiveCapture: false; attentionCapture?: { available: boolean; defaultOn: false; retentionDays: number; rawInputCapture: false }; externalAssetsRequireAssertion: true; retentionDays: number; sharing: string };
   canvas: { version:string; mode:"internal"|"pilot"; pilotAvailable:boolean; access:boolean; accessReason:"administrator-internal-review"|"pilot-approved"|"pilot-gate-incomplete"|"role-not-eligible"; blockedBy:Array<"trust_safety"|"counsel"|"second_image_adapter">; requirements:Array<{id:"trust_safety"|"counsel"|"second_image_adapter";label:string;summary:string;approved:boolean;approvedBy:string|null;approvedByUserId:string|null;approvedAt:string|null;evidenceRef:string|null;details:Record<string,unknown>}> };
-  provider: { name: string; model: string; plannerModel?: string; configured: boolean; videoProvider?:string; videoModel?:string; videoConfigured?:boolean; videoApiSunset?:string|null };
+  provider: { name: string; model: string; plannerModel?: string; configured: boolean; videoProvider?:string; videoModel?:string; videoReferenceModel?:string; videoAdapterVersion?:string; videoConfigured?:boolean; videoApiSunset?:string|null };
   budgets: { period: string; user: { used: number; reserved: number; limit: number }; workspace: { used: number; reserved: number; limit: number } };
 };
 export type ShareRecord = { shareId: string; token?: string; expiresAt: string; revokedAt?: string | null; createdAt?: string; active: boolean };
 
 export class FormaStore {
   readonly events = new Signal.State<CreativeEvent[]>([]);
+  readonly optimisticEvents = new Signal.State<CreativeEvent[]>([]);
+  readonly eventView = new Signal.Computed<CreativeEvent[]>(() => [...this.events.get(),...this.optimisticEvents.get()]);
   readonly head = new Signal.State(0);
   readonly loading = new Signal.State(true);
   readonly busy = new Signal.State("");
@@ -51,13 +54,16 @@ export class FormaStore {
   readonly projection = new Signal.Computed<CreativeProjection>(() => {
     const route = this.route.get();
     const canvasId=canvasIdFromRoute(route)??"";
-    return foldEvents(this.events.get(), this.asOf.get(), isDocumentViewRoute(route) ? documentIdFromRoute(route) ?? "" : "", canvasId?canvasProjectId(this.events.get(),canvasId):"");
+    const events=this.eventView.get();
+    return foldEvents(events, this.asOf.get(), isDocumentViewRoute(route) ? documentIdFromRoute(route) ?? "" : "", canvasId?canvasProjectId(events,canvasId):"");
   });
-  readonly canvasProjection = new Signal.Computed<CanvasProjection>(() => foldCanvasEvents(this.events.get(),this.projection.get().projectId,canvasIdFromRoute(this.route.get())??""));
+  readonly canvasProjection = new Signal.Computed<CanvasProjection>(() => foldCanvasEvents(this.eventView.get(),this.projection.get().projectId,canvasIdFromRoute(this.route.get())??""));
   readonly replayProjection = new Signal.Computed<CreativeProjection>(() => foldEvents(this.replayEvents.get(), this.replayAsOf.get()));
   #listeners = new Set<Listener>();
   #undo: HistoryGroup[] = [];
   #redo: HistoryGroup[] = [];
+  #rememberedClientEventIds = new Set<string>();
+  #appendPipeline:Promise<void> = Promise.resolve();
   #focalInFlight = new Set<string>();
   #focalAppendQueue: Promise<void> = Promise.resolve();
   #jobPollTimer = 0;
@@ -140,7 +146,32 @@ export class FormaStore {
   async stopDocumentJob(jobId:string,force=false){try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/${force?"force-fail":"cancel"}`,{method:"POST"},force?"force-fail this document operation":"stop this document operation");const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok||!body.job){const messages:Record<string,string>={job_finalizing:"This operation is already finalizing and can no longer be stopped.",admin_required:"Only an administrator can force-fail an operation."};throw new Error(messages[body.error??""]??body.error??"The operation could not be stopped");}this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast(force?"Operation force-failed. Its audit receipt and released budget remain available.":"Operation stopped. Any reserved application budget was released.");await Promise.all([this.syncDocumentJobs(),this.refreshSession()]);return true;}catch(error){this.toast(error instanceof Error?error.message:"The operation could not be stopped");return false;}}
   #flushPendingJobNotices(){if(document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;const jobs=this.#pendingJobNotices.splice(0);this.toast(jobs.length===1?this.#jobNotice(jobs[0]):`${jobs.length} background document operations finished.`);for(const job of jobs)void this.#ackJob(job.jobId);}
   async #readEventPages(after=0){let cursor=Math.max(0,after),head=cursor,first=true;const events:CreativeEvent[]=[];let content:Record<string,string>={};for(let page=0;page<500;page+=1){const response=await fetch(`/api/events?after=${cursor}&limit=2000&content=${first?1:0}`);if(!response.ok)throw new Error(`Event stream returned ${response.status}`);const body=await response.json() as {events?:CreativeEvent[];content?:Record<string,string>;head?:number;nextAfter?:number;hasMore?:boolean};const received=body.events??[];events.push(...received);if(body.content)content={...content,...body.content};head=Math.max(0,Number(body.head??head));const next=Math.max(cursor,Number(body.nextAfter??received.at(-1)?.sequence??cursor));const hasMore=body.hasMore??next<head;if(hasMore&&next<=cursor)throw new Error("Event stream pagination did not advance");cursor=next;first=false;if(!hasMore)return{events,content,head};}throw new Error("Event stream exceeded the supported pagination window");}
-  async #refreshEvents(){const previous=this.events.get();const known=new Set(previous.map((event)=>event.eventId));const after=previous.at(-1)?.sequence??0;let replace=after===0;let body=await this.#readEventPages(after);if(body.head<after){body=await this.#readEventPages(0);replace=true;}const complete=replace?body.events:[...previous,...body.events.filter((event)=>!known.has(event.eventId))];this.events.set(complete);if(Object.keys(body.content).length)this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#publishAppended(complete.filter((event)=>!known.has(event.eventId)));}
+  #clientEventIds(events:CreativeEvent[]){return new Set(events.map((event)=>String(event.payload.client_event_id??"")).filter(Boolean));}
+  #mergeConfirmed(appended:CreativeEvent[],head=this.head.get(),remember=false){
+    const known=new Set(this.events.get().map((event)=>event.eventId));const fresh=appended.filter((event)=>!known.has(event.eventId));
+    if(fresh.length)this.events.set([...this.events.get(),...fresh].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));
+    const confirmedClientIds=this.#clientEventIds(appended);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));
+    this.head.set(Math.max(this.head.get(),head,...appended.map((event)=>event.sequence)));
+    if(remember){const remembered=appended.filter((event)=>{const clientEventId=String(event.payload.client_event_id??"");if(event.actor!=="user"||event.compensatesEventId||!inverseEvent(event)||clientEventId&&this.#rememberedClientEventIds.has(clientEventId))return false;if(clientEventId)this.#rememberedClientEventIds.add(clientEventId);return true;});if(remembered.length){this.#undo.push(remembered);this.#redo=[];}}
+    this.#publishAppended(fresh);return fresh;
+  }
+  stageOptimisticCanvasEvents(events:EventInput[]){
+    const existing=new Set(this.optimisticEvents.get().map((event)=>String(event.payload.client_event_id??"")));const now=new Date().toISOString();let index=this.optimisticEvents.get().length;
+    const staged:CreativeEvent[]=events.filter((event)=>!existing.has(String(event.payload.client_event_id??""))).map((event)=>{const clientEventId=String(event.payload.client_event_id??crypto.randomUUID());return{eventId:`optimistic:${clientEventId}`,streamId:"optimistic:canvas",sequence:this.head.get()+(++index),occurredAt:now,recordedAt:now,actor:"user",clientId:"web:canvas-optimistic",correlationId:String(event.payload.history_action_id??clientEventId),causationId:null,compensatesEventId:event.compensatesEventId??null,schemaVersion:1,type:event.type,payload:{...event.payload,client_event_id:clientEventId}};});
+    if(staged.length){this.optimisticEvents.set([...this.optimisticEvents.get(),...staged]);this.notify();}return staged;
+  }
+  discardOptimisticCanvasEvents(clientEventIds:Iterable<string>){const ids=new Set(clientEventIds);if(!ids.size)return;this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!ids.has(String(event.payload.client_event_id??""))));this.notify();}
+  async syncCanvasBatch(events:EventInput[],options:{remember?:boolean}={}):Promise<CanvasSyncResult>{
+    if(!events.length)return{appended:[],rejected:[],head:this.head.get(),retryable:false,error:""};
+    let response:Response;let body:{appended?:CreativeEvent[];rejected?:Array<{index?:number;type?:string;reason:string}>;head?:number;error?:string}={};
+    try{response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"canvas_sync",events,clientId:"web:canvas"})},events.length>1?`apply ${events.length} ordered board changes`:`record ${events[0].type}`);try{body=await response.json() as typeof body;}catch{body={error:`Canvas sync returned HTTP ${response.status} without a readable receipt.`};}}
+    catch(error){const message=error instanceof Error?error.message:"The Canvas server could not be reached.";this.appendFailure.set(message);return{appended:[],rejected:[],head:this.head.get(),retryable:true,error:message};}
+    const appended=body.appended??[];if(appended.length)this.#mergeConfirmed(appended,body.head??this.head.get(),options.remember!==false);
+    const error=response.ok?"":body.error??`Canvas sync returned HTTP ${response.status}`;const retryable=!response.ok&&(response.status>=500||[408,425,429].includes(response.status)||response.status===409&&body.error==="stale_sequence");
+    this.appendFailure.set(error||((body.rejected?.length??0)>0?body.rejected!.map((item)=>item.reason).join("; "):""));this.notify();
+    return{appended,rejected:body.rejected??[],head:body.head??this.head.get(),retryable,error};
+  }
+  async #refreshEvents(){const previous=this.events.get();const known=new Set(previous.map((event)=>event.eventId));const after=previous.at(-1)?.sequence??0;let replace=after===0;let body=await this.#readEventPages(after);if(body.head<after){body=await this.#readEventPages(0);replace=true;}const complete=replace?body.events:[...previous,...body.events.filter((event)=>!known.has(event.eventId))];this.events.set(complete);const confirmedClientIds=this.#clientEventIds(complete);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));if(Object.keys(body.content).length)this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#publishAppended(complete.filter((event)=>!known.has(event.eventId)));}
   async refreshEvents(){await this.#refreshEvents();this.notify();}
   #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);this.#jobPollTimer=window.setTimeout(()=>void this.syncDocumentJobs(),delay);}
   #driveDocumentJobs(jobs:DocumentJob[]){const next=[...jobs].filter((job)=>job.kind!=="prompt_fan"&&(job.status==="queued"||job.status==="running"||job.status==="committing")).sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId))[0];if(next&&(next.status==="queued"||documentJobIsStale(next))&&!this.#jobsDriving.has(next.jobId))void this.#driveDocumentJob(next);}
@@ -240,6 +271,10 @@ export class FormaStore {
   }
 
   async appendBatch(events: EventInput[], options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean } = {}) {
+    const pending=this.#appendPipeline.then(()=>this.#appendBatchNow(events,options));this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
+  }
+
+  async #appendBatchNow(events: EventInput[], options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean } = {}) {
     this.busy.set(events[0]?.type ?? "append"); this.appendFailure.set(""); this.notify();
     try {
       let response:Response;let body:{ appended?: CreativeEvent[]; rejected?: Array<{ index?: number; type?: string; reason: string }>; head?: number; error?: string }={};

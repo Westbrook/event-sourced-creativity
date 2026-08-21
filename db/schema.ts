@@ -29,6 +29,22 @@ export const events = sqliteTable(
   ],
 );
 
+/** Idempotency receipts let retried Canvas actions resolve to their first durable event. */
+export const eventClientReceipts = sqliteTable(
+  "event_client_receipts",
+  {
+    streamId: text("stream_id").notNull(),
+    clientEventId: text("client_event_id").notNull(),
+    eventId: text("event_id").notNull(),
+    sequence: integer("sequence").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.streamId, table.clientEventId] }),
+    index("idx_event_client_receipts_event").on(table.eventId),
+  ],
+);
+
 /** Erasable natural-language content lives outside the immutable event log. */
 export const externalContent = sqliteTable(
   "external_content",

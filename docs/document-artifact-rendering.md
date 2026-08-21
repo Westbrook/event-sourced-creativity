@@ -39,14 +39,15 @@ Structured text and visual-slide plans use the configured OpenAI Responses model
 Current environment settings:
 
 ```dotenv
-FAL_VIDEO_MODEL=google/gemini-omni-flash
+FAL_VIDEO_MODEL=bytedance/seedance-2.0/reference-to-video
+FAL_REFERENCE_VIDEO_MODEL=bytedance/seedance-2.0/reference-to-video
 FORMA_VIDEO_PROVIDER=fal
 FAL_KEY=
 ```
 
-Video rendering uses Fal's queued `google/gemini-omni-flash` endpoint. The provider accepts a 3–10 second duration and either a 16:9 or 9:16 aspect ratio, and returns a 720p video with synchronized audio. The application offers 4, 8, and 10 seconds, checkpoints the Fal request ID, polls provider status with logs, resumes the same request after a page refresh, saves the returned media privately, and attempts provider cancellation when the durable job is stopped. The credential remains server-side in `FAL_KEY`; it is never sent to the browser.
+Video rendering defaults to Fal's queued `bytedance/seedance-2.0/reference-to-video` endpoint for prompt-only and pixel-backed work. The adopted adapter accepts up to nine ordered JPEG, PNG, or WebP references, uses `@ImageN` prompt bindings, supports 4–15 seconds, 480p through 1080p, 16:9 or 9:16 output, and optional synchronized audio. The application offers 4, 8, and 10 seconds in landscape or portrait, currently defaults document renders to 720p, checkpoints the Fal request ID, polls provider status with logs, resumes the same request after a page refresh, saves returned media privately, and attempts provider cancellation when the durable job is stopped. The credential remains server-side in `FAL_KEY`; it is never sent to the browser.
 
-Published provider cost is approximately $0.125 per output second at 720p. Completion receipts therefore record the chosen duration and actual estimated video cost independently from the OpenAI planning-token receipt. Video prompts are validated against the provider's 20,000-character limit before a paid request is submitted.
+The adopted adapter records the current provider rate by resolution, its `positive-only` reference prompt profile, the adapter contract version, ordered reference hashes, and pixel transport in every retained receipt. Video prompts are validated against the provider's 20,000-character limit and reference count before a paid request is submitted.
 
 ## Operational and replay coverage
 

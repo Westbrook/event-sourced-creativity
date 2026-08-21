@@ -4,8 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateCreativeVideo } from "../worker/openai-adapter.ts";
 
-const PAID_APPROVAL="I approve one 4-second 480p Seedance reference control";
 const args=new Map(process.argv.slice(2).map((part)=>{const [key,...rest]=part.split("=");return[key,rest.join("=")||"true"];}));
+const providerModel=String(args.get("--provider-model")??"bytedance/seedance-2.0/reference-to-video");
+if(providerModel!=="bytedance/seedance-2.5/reference-to-video"&&providerModel!=="bytedance/seedance-2.0/reference-to-video")throw new Error("provider_model_invalid: this control only supports the adopted Seedance 2.0 and retained Seedance 2.5 adapters");
+const PAID_APPROVAL=`I approve one 4-second 480p Seedance ${providerModel.includes("seedance-2.0")?"2.0":"2.5"} reference control`;
 if(args.get("--approve-paid-control")!==PAID_APPROVAL)throw new Error(`paid_control_approval_required: pass --approve-paid-control=${JSON.stringify(PAID_APPROVAL)} only after the active user approves this exact one-request run`);
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),"..");
@@ -39,8 +41,8 @@ const report={
   schemaVersion:1,
   runId,
   purpose:promptProfile==="positive-only"?"Determine whether concise positive-only reference language avoids the late Seedance likeness-policy rejection.":"Determine whether Seedance acceptance follows freshly uploaded image pixels or original Fal asset lineage.",
-  authorization:{requestCount:1,durationSeconds:4,resolution:"480p",maximumCostUsd:0.882},
-  input:{fileName:path.basename(imagePath),mimeType:"image/png",byteLength:bytes.length,sha256,promptProfile},
+  authorization:{requestCount:1,durationSeconds:4,resolution:"480p",maximumCostUsd:providerModel.includes("seedance-2.0")?0.54:0.882},
+  input:{fileName:path.basename(imagePath),mimeType:"image/png",byteLength:bytes.length,sha256,promptProfile,providerModel},
   status:"running",
   stages:[],
 };
@@ -49,7 +51,7 @@ await save();
 
 try{
   const result=await generateCreativeVideo(
-    {FAL_KEY:env.FAL_KEY,FORMA_VIDEO_PROVIDER:"fal",FAL_REFERENCE_VIDEO_MODEL:"bytedance/seedance-2.5/reference-to-video"},
+    {FAL_KEY:env.FAL_KEY,FORMA_VIDEO_PROVIDER:"fal",FAL_REFERENCE_VIDEO_MODEL:providerModel},
     promptProfile==="positive-only"?"Create a restrained four-second editorial motion study. The adult fashion model in @Image1 makes one small natural turn toward warm side light while the camera performs a slow, stable push in. Preserve the clothing, abstract painted environment, composition, and color design. Silent.":"Create a restrained four-second editorial motion study. The fictional adult fashion model in @Image1 makes one small natural turn toward the light while the camera performs a slow, stable push in. Preserve the original clothing, abstract painted environment, mature adult appearance, composition, and color design. Do not identify or imitate a real person. No dialogue and no audio.",
     {
       seconds:4,
@@ -58,6 +60,7 @@ try{
       generateAudio:false,
       endUserId:"seedance-reference-control",
       referencePromptProfile:promptProfile,
+      providerModel,
       references:[{
         bytes,
         mimeType:"image/png",

@@ -6,7 +6,7 @@ export const CANVAS_USER_EVENT_TYPES=[
   "CanvasCreated","CanvasRenamed","CanvasRemoved","CanvasRestored","CanvasItemPlaced","CanvasReferenceCreated","CanvasItemRemoved","CanvasItemRestored","CanvasArrangementCreated","CanvasArrangementRemoved","CanvasArrangementRestored","CanvasRegisterSet","CanvasTextApplied","CanvasLockAcquired","CanvasLockReleased","StrokeAdded","StrokeErased","ContextSetFormalized","CanvasInteractionRecorded","ProposalAccepted","ProposalRejected","ProposalRestored","VoteCast","MembershipAdded","MembershipRemoved","BlockRehomed",
 ] as const;
 
-export const CANVAS_COMMUTATIVE_EVENT_TYPES=["CanvasArrangementCreated","CanvasArrangementRemoved","CanvasArrangementRestored","CanvasRegisterSet","CanvasTextApplied","StrokeAdded","StrokeErased","CanvasLockReleased","VoteCast"] as const;
+export const CANVAS_COMMUTATIVE_EVENT_TYPES=["CanvasArrangementCreated","CanvasArrangementRemoved","CanvasArrangementRestored","CanvasRegisterSet","CanvasTextApplied","StrokeAdded","StrokeErased","CanvasLockAcquired","CanvasLockReleased","VoteCast"] as const;
 const id=(value:unknown)=>typeof value==="string"&&/^[a-z0-9][a-z0-9:_-]{0,127}$/i.test(value);
 const object=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};
 const hlc=(value:unknown)=>{const input=object(value);return Number.isFinite(Number(input.pt))&&Number.isFinite(Number(input.c))&&id(input.site);};

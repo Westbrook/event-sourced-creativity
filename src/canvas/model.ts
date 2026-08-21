@@ -169,6 +169,13 @@ export function organizeCanvasItems(items:OrganizableCanvasItem[],organization:C
   return positions;
 }
 
+/** Translate a selection as one rigid group without changing its internal layout. */
+export function translateCanvasItems(items:OrganizableCanvasItem[],dx:number,dy:number){
+  const positions=new Map<string,{x:number;y:number}>();
+  for(const item of items)positions.set(item.id,{x:item.x+dx,y:item.y+dy});
+  return positions;
+}
+
 export function canvasMatchSizeTarget(items:OrganizableCanvasItem[],modifier:CanvasSizeModifier):CanvasMatchSizeTarget{
   if(!items.length)return{width:0,height:0};
   const widths=items.map((item)=>item.w),heights=items.map((item)=>item.h);

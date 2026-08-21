@@ -1,5 +1,6 @@
 import { referencePixelMode, sendsReferencePixels, type ReferencePixelMode } from "./block-types.ts";
 import type { CreativeBlock, CreativeEvent } from "./events.ts";
+import { VIDEO_ADAPTER_CONTRACT } from "./video-adapter.ts";
 
 export type VideoReferencePreflightItem = {
   block: CreativeBlock;
@@ -27,6 +28,8 @@ export type VideoReferencePreflight = {
   describeOnlyCount: number;
   rightsBlockedCount: number;
   unavailablePixelCount: number;
+  providerLimitExceededCount: number;
+  providerReferenceLimit: number;
   providerPath: "prompt-only" | "reference-to-video" | "blocked";
 };
 
@@ -48,6 +51,6 @@ export function videoReferencePreflight(blocks:CreativeBlock[],events:CreativeEv
     if(left.storyboardId&&left.storyboardId===right.storyboardId)return(left.sequence??Number.POSITIVE_INFINITY)-(right.sequence??Number.POSITIVE_INFINITY);
     return left.block.position.localeCompare(right.block.position);
   });
-  const pixelItems=items.filter((item)=>item.sendsPixels);const rightsBlockedCount=pixelItems.filter((item)=>!item.rightsConfirmed).length;
-  return{items,storyboardItems:items.filter((item)=>item.isStoryboardFrame),otherItems:items.filter((item)=>!item.isStoryboardFrame),pixelCount:pixelItems.length,providerPixelCount:pixelItems.length,describeOnlyCount:items.length-pixelItems.length,rightsBlockedCount,unavailablePixelCount,providerPath:rightsBlockedCount||unavailablePixelCount?"blocked":pixelItems.length?"reference-to-video":"prompt-only"};
+  const pixelItems=items.filter((item)=>item.sendsPixels);const rightsBlockedCount=pixelItems.filter((item)=>!item.rightsConfirmed).length;const providerReferenceLimit=VIDEO_ADAPTER_CONTRACT.maxReferenceImages;const providerLimitExceededCount=Math.max(0,pixelItems.length-providerReferenceLimit);
+  return{items,storyboardItems:items.filter((item)=>item.isStoryboardFrame),otherItems:items.filter((item)=>!item.isStoryboardFrame),pixelCount:pixelItems.length,providerPixelCount:pixelItems.length,describeOnlyCount:items.length-pixelItems.length,rightsBlockedCount,unavailablePixelCount,providerLimitExceededCount,providerReferenceLimit,providerPath:rightsBlockedCount||unavailablePixelCount||providerLimitExceededCount?"blocked":pixelItems.length?"reference-to-video":"prompt-only"};
 }

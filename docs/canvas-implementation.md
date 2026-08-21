@@ -20,11 +20,11 @@ Canvas is a separately routed and separately bundled project application over th
 - All 21 block types, including Sketch, through the same taxonomy used elsewhere.
 - Per-property HLC geometry registers, spec-owned mergeable text operations materialized through Yjs, advisory locks, and observed-remove sketch strokes.
 - Board-scoped, action-grouped Undo and Redo controls compensate durable placement, movement, removal, document/block creation, membership, and stroke operations. Redo uses fresh operation identities so idempotency and observed-remove tombstones cannot swallow a replayed action.
-- Direct manipulation keeps a world-coordinate drag preview mounted until the synchronized position projection has rendered. Lock receipts or other concurrent rerenders therefore cannot expose the card's previous position between pointer release and durable settlement; cancellation and rejected saves still return it deliberately.
-- IndexedDB authoring queue capped at 10,000 operations or 50 MB, warning at 80%; generation remains online-only.
+- Direct manipulation never waits for the advisory-lock round trip. Every completed action first enters an action-sized IndexedDB write-ahead record, projects through the same event fold immediately, and then flushes in client order. The drag preview hands off to that optimistic projection without exposing the prior position.
+- IndexedDB authoring queue capped at 10,000 operations or 50 MB, warning at 80%; generation remains online-only. Complete action batches carry a monotonic client action sequence and batch index, while `client_event_id` receipts make response-loss retries idempotent.
 - Every Canvas render first appends or reuses an explicit single-document `ContextSetFormalized`. Spatial arrangement is carried as provenance and explicitly marked non-semantic; image work cannot start as a side effect of selection or document preparation.
 - Ephemeral `BroadcastChannel` presence that cannot append or fetch durable events.
-- Visible Canvas sessions refresh the authoritative server stream on a bounded interval, so remote durable edits appear without a page reload during internal review.
+- Visible Canvas sessions refresh the authoritative server stream on a bounded interval, so remote durable edits appear without a page reload during internal review. Local writes use a single cross-tab Web Locks flusher and the `canvas_sync` admission path; unrelated stream-head movement can no longer force a person to repeat an edit.
 - Project membership receipts for users and teams; server admission restricts membership changes to administrators during the internal review.
 - Report space with proposal, vote, accept, reject, and restore semantics. Arranger outputs cannot mutate authored Canvas state.
 - Operations sync inspector and Replay Laboratory coverage for shared sources, convergence, document-first rendering across all four render modes, report space, governance, lifecycle, and presence minimization.
@@ -43,9 +43,10 @@ The following plan phases therefore remain target contracts, not completed claim
 4. Presence, cursor paths, pointer paths, raw keys, and raw input are rejected from Canvas durable payloads.
 5. Canvas selections become documents before they can incur image cost. Generation cites that document’s named Canvas context set, recursively resolves copied or composite context, and reuses the durable document job infrastructure while the board card exposes both job progress and results.
 6. Lenses remain in the URL and never enter the event stream.
-7. Offline changes use complete event inputs and budget work fails closed while offline.
+7. Offline and high-latency changes use complete, ordered action batches; they remain visible optimistically, survive reload, and budget work fails closed while offline.
 8. Member and agent actions remain attributable and reversible by forward events.
 9. Image size on a board is durable presentation state and candidate evidence, never an implicit prompt weight or authored influence claim.
+10. A Canvas edit is acknowledged by `client_event_id`; a lost response may retry but may never append the edit twice.
 
 ## Next executable gate
 

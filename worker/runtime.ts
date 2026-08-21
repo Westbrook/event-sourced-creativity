@@ -51,6 +51,8 @@ export async function ensureSchema(env: WorkerEnv) {
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_events_stream_type ON events(stream_id, type)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_events_correlation ON events(correlation_id)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_events_stream_actor ON events(stream_id, actor)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS event_client_receipts (stream_id TEXT NOT NULL, client_event_id TEXT NOT NULL, event_id TEXT NOT NULL, sequence INTEGER NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(stream_id,client_event_id))"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_event_client_receipts_event ON event_client_receipts(event_id)"),
     env.DB.prepare("CREATE TRIGGER IF NOT EXISTS events_block_update BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END"),
     env.DB.prepare("CREATE TRIGGER IF NOT EXISTS events_block_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS external_content (content_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL)"),
@@ -124,6 +126,28 @@ export async function appendEvents(env: WorkerEnv, events: EventRow[], options: 
     if (results.every((result) => Number(result.meta.changes ?? 0) === 1)) return events;
     const current = await streamHead(env, streamId);
     if (options.expectedHead !== undefined) throw new StaleSequenceError(options.expectedHead, current);
+  }
+  throw new Error("event_append_contention");
+}
+
+export async function readEventsByClientEventIds(env:WorkerEnv,streamId:string,clientEventIds:string[]){
+  const ids=[...new Set(clientEventIds.filter(Boolean))];const events=new Map<string,EventRow>();
+  for(let offset=0;offset<ids.length;offset+=200){const page=ids.slice(offset,offset+200),placeholders=page.map(()=>"?").join(",");const result=await env.DB.prepare(`SELECT r.client_event_id,e.* FROM event_client_receipts r JOIN events e ON e.event_id=r.event_id WHERE r.stream_id=? AND r.client_event_id IN (${placeholders})`).bind(streamId,...page).all<Record<string,unknown>>();for(const row of result.results)events.set(String(row.client_event_id),serializeEvent(row));}
+  return events;
+}
+
+/**
+ * Append a client action and its idempotency receipts in one D1 transaction.
+ * A retry after a lost response therefore resolves to the original events
+ * instead of duplicating a move, resize, text edit, or placement.
+ */
+export async function appendEventsWithClientReceipts(env:WorkerEnv,events:EventRow[],clientEventIds:string[],options:{retries?:number}={}){
+  if(events.length!==clientEventIds.length)throw new Error("client_receipt_count_mismatch");if(!events.length)return events;
+  const streamId=events[0].streamId;if(!events.every((event)=>event.streamId===streamId))throw new Error("mixed_event_stream_batch");
+  for(let attempt=0;attempt<Math.max(1,options.retries??8);attempt+=1){
+    const existing=await readEventsByClientEventIds(env,streamId,clientEventIds);const missing=events.map((event,index)=>({event,clientEventId:clientEventIds[index]})).filter((item)=>!existing.has(item.clientEventId));if(!missing.length)return events;
+    const head=await streamHead(env,streamId);missing.forEach((item,index)=>{item.event.sequence=head+index+1;});const createdAt=new Date().toISOString();const statements=missing.flatMap((item,index)=>[insertEventAtHead(env,item.event,head+index),env.DB.prepare("INSERT INTO event_client_receipts (stream_id,client_event_id,event_id,sequence,created_at) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM events WHERE event_id=?)").bind(streamId,item.clientEventId,item.event.eventId,item.event.sequence,createdAt,item.event.eventId)]);
+    try{const results=await env.DB.batch(statements);if(missing.every((_,index)=>Number(results[index*2]?.meta.changes??0)===1))return events;}catch{/* A competing retry may have committed the same client receipt. */}
   }
   throw new Error("event_append_contention");
 }

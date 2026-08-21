@@ -52,6 +52,15 @@ test("video reference preflight preserves mixed per-frame pixel choices",()=>{
   assert.deepEqual(mixed.items.map((item)=>item.sendsPixels),[true,true,true,true,true,false]);
 });
 
+test("video reference preflight blocks more pixel references than the adopted provider contract",()=>{
+  const blocks=Array.from({length:10},(_,index)=>reference(`frame-${index+1}`,index+1,"preserve_composition"));
+  const result=videoReferencePreflight(blocks,blocks.map((block)=>ingested(block.properties.reference_id)));
+  assert.equal(result.providerPath,"blocked");
+  assert.equal(result.pixelCount,10);
+  assert.equal(result.providerReferenceLimit,9);
+  assert.equal(result.providerLimitExceededCount,1);
+});
+
 test("video creation exposes durable batch and per-frame reference controls",async()=>{
   const [dialog,preflight,policy,styles]=await Promise.all([
     readFile(new URL("../src/components/document-artifacts.ts",import.meta.url),"utf8"),
@@ -72,6 +81,8 @@ test("video creation exposes durable batch and per-frame reference controls",asy
   assert.match(preflight,/BlockPropertyEdited/);
   assert.match(preflight,/video_reference_preflight:true/);
   assert.match(preflight,/batch_id:batchId/);
+  assert.match(preflight,/providerLimitExceededCount/);
+  assert.match(preflight,/image limit/);
   assert.match(policy,/Use in generation/);
   assert.match(policy,/image and video models/);
   assert.match(styles,/\.video-reference-preflight/);
