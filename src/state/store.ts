@@ -17,6 +17,7 @@ import type { GenerationReadiness, GenerationReadinessKind, PromptTechniqueSafet
 import { parseDocumentArtifactContent, type DocumentArtifactKind } from "../model/document-artifacts";
 import { artifactContextEvents, imageOutputContextEvents } from "../model/output-context";
 import { combinedContextGroups, combinedContextRoleForBlockType } from "../model/combined-context";
+import type { VideoDurationSeconds } from "../model/video-adapter";
 
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
@@ -405,7 +406,7 @@ export class FormaStore {
     try{if(sourceSurface!=="canvas")this.dismissAdaptiveStructure(documentId);const {job}=await this.#startDocumentJob("structure_adaptive",{prompt,documentId,projectScope:options.projectScope===true},sourceSurface,documentId);this.#pendingAdaptiveIntents.set(job.jobId,prompt);this.toast(sourceSurface==="canvas"?"Forma is shaping a few useful next moves from the whole project.":"Adaptive planning started. You can continue working while it runs.");return true;}catch(error){this.toast(error instanceof Error?error.message:"Forma could not structure that intent");return false;}
   }
 
-  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{documentId?:string;itemCount?:number;audience?:string;tone?:string;videoSeconds?:4|8|10;videoSize?:"1280x720"|"720x1280";paidMediaConfirmed?:boolean;sourceSurface?:string}={}){
+  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{documentId?:string;itemCount?:number;audience?:string;tone?:string;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";paidMediaConfirmed?:boolean;sourceSurface?:string}={}){
     const documentId=options.documentId??this.projection.get().documentId;const context=this.#generationContext(documentId);const audience=options.audience?.trim()||undefined,tone=options.tone?.trim()||undefined;const requestKey=`render:${kind}:${context.documentRevision}:${options.itemCount??"default"}:${options.videoSeconds??"none"}:${options.videoSize??"none"}:${encodeURIComponent(audience?.toLocaleLowerCase()??"general")}:${encodeURIComponent(tone?.toLocaleLowerCase()??"document-derived")}`;
     try{const {reused}=await this.#startDocumentJob("render_document",{...context,requestKey,artifactKind:kind,itemCount:options.itemCount,audience,tone,videoSeconds:options.videoSeconds,videoSize:options.videoSize,paidMediaConfirmed:options.paidMediaConfirmed===true},options.sourceSurface??"document",documentId);this.toast(reused?`This exact ${kind.replaceAll("_"," ")} is already in progress.`:`${kind.replaceAll("_"," ")} queued. You can keep working while it is prepared.`);return true;}catch(error){this.toast(error instanceof Error?error.message:`The ${kind.replaceAll("_"," ")} could not be started.`);return false;}
   }

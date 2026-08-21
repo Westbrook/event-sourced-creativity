@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { applySlideStylePreset, defaultSlidePresentation, documentArtifactValidationIssues, DOCUMENT_ARTIFACT_KINDS, normalizeSlideDeckItems, normalizeSlidePresentation, parseDocumentArtifactContent, SLIDE_STYLE_PRESETS, slideCopyIsDistinct, slideCopyIsNearDuplicate, slideCopyIssues, slideDeckCopyIsDistinct, slideDeckCopyIssues, slideVisualIsComplete } from "../src/model/document-artifacts.ts";
+import { isVideoDurationSeconds, normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT, VIDEO_DURATION_SECONDS } from "../src/model/video-adapter.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { buildComprehensiveScenario, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
 import { evaluateReplayCoverage } from "../src/model/replay-coverage.ts";
@@ -107,6 +108,7 @@ test("keeps text, structured slides, storyboard, and video rendering behind dura
   assert.match(events,/DocumentRenderRequested/);assert.match(events,/DocumentRenderCompleted/);assert.match(events,/DocumentRenderFailed/);
   assert.match(events,/document-artifact-input/);assert.match(events,/input_ref/);assert.match(events,/videoPixelReferences/);assert.match(events,/used_reference_pixels/);
   assert.match(events,/artifact_media_target_not_found/);assert.match(store,/renderDocumentArtifact/);assert.match(store,/targetKind:"artifact"/);assert.match(component,/I understand, continue/);assert.match(component,/VIDEO_ADAPTER_CONTRACT\.label/);assert.match(component,/Inspect inputs/);assert.match(component,/Saving…":"Stop/);assert.match(component,/forma-video-reference-preflight/);assert.match(component,/reference-to-video/);assert.match(component,/No reference pixels will leave storage/);
+  assert.match(component,/VIDEO_DURATION_SECONDS\.map/);assert.match(canvas,/Video length/);assert.match(canvas,/VIDEO_DURATION_SECONDS\.map/);assert.match(events,/video_duration_unsupported/);
   assert.match(component,/document-artifact-reader-content/);assert.match(styles,/\.document-artifact-reader-content \{ min-height: 0; overflow: auto;/);assert.match(styles,/\.document-artifact-reader \{ min-height: 0; overflow: hidden;/);
   assert.match(component,/#createdAt\(artifact:DocumentArtifact\)/);assert.match(component,/event\.eventId===artifact\.sourceEventId/);assert.match(component,/class="document-artifact-created"/);assert.match(component,/>Created \$\{/);assert.match(styles,/\.document-artifact-created \{/);
   assert.match(component,/Use \$\{documentArtifactDefinition\(artifact\.kind\)\.label\.toLowerCase\(\)\} as input/);assert.match(component,/addArtifactAsContext/);assert.match(store,/artifactContextEvents/);assert.match(canvas,/artifactContextEvents/);assert.match(canvas,/imageOutputContextEvents/);
@@ -115,6 +117,15 @@ test("keeps text, structured slides, storyboard, and video rendering behind dura
   assert.match(styles,/\.presentation-deck-frame \{[^}]*aspect-ratio: 16\/9;/);assert.match(styles,/\.presentation-deck-frame \.presentation-slide \{ aspect-ratio: auto;/);
   for(const style of ["gallery","editorial","nocturne","field-notes"])assert.match(styles,new RegExp(`\\.presentation-slide\\.style-${style}`));assert.match(styles,/\.artifact-slides > li/);assert.match(styles,/\.presentation-slide-body > section > ul > li/);assert.match(styles,/list-style: disc/);assert.doesNotMatch(styles,/\.artifact-slides li \{/);
   for(const kind of DOCUMENT_ARTIFACT_KINDS){assert.match(component,new RegExp(kind));assert.match(canvas,new RegExp(kind));}
+});
+
+test("uses the complete Seedance 2.0 duration contract across four through fifteen seconds",()=>{
+  assert.deepEqual(VIDEO_DURATION_SECONDS,[4,5,6,7,8,9,10,11,12,13,14,15]);
+  assert.deepEqual(VIDEO_ADAPTER_CONTRACT.supportedDurations,VIDEO_DURATION_SECONDS);
+  assert.equal(normalizeVideoDurationSeconds("15"),15);
+  assert.equal(normalizeVideoDurationSeconds(3),VIDEO_ADAPTER_CONTRACT.defaultDuration);
+  assert.equal(isVideoDurationSeconds(15),true);
+  assert.equal(isVideoDurationSeconds(16),false);
 });
 
 test("retains inspectable input receipts for image and document outputs",async()=>{
@@ -199,7 +210,7 @@ test("offers a positive-only Seedance 2.0 reference adapter without identity-saf
 
 test("recovers an empty Fal submission body from its durable request header",async()=>{
   const originalFetch=globalThis.fetch;const calls=[];globalThis.fetch=async(input,init={})=>{calls.push({url:String(input),body:init.body});const call=calls.length;if(call===1)return new Response("",{status:200,headers:{"x-fal-request-id":"fal-header-1"}});if(call===2)return Response.json({request_id:"fal-header-1",status:"COMPLETED"});if(call===3)return Response.json({video:{url:"https://v3b.fal.media/files/example/header-video.mp4",content_type:"video/mp4"}});return new Response(Uint8Array.from([0,1,2,3]),{headers:{"content-type":"video/mp4"}});};
-  try{const prepared=[];const result=await generateCreativeVideo({FAL_KEY:"test-only",FORMA_VIDEO_PROVIDER:"fal"},"A slow push through morning light.",{seconds:4,size:"1280x720",onPrepared:(receipt)=>prepared.push(receipt)});assert.equal(calls[0].url,"https://queue.fal.run/bytedance/seedance-2.0/reference-to-video");assert.equal(JSON.parse(String(calls[0].body)).resolution,"720p");assert.equal(prepared[0].parameters.adapter_status,"adopted");assert.equal(result.model,"bytedance/seedance-2.0/reference-to-video");assert.equal(result.providerJobId,"fal-header-1");}
+  try{const prepared=[];const result=await generateCreativeVideo({FAL_KEY:"test-only",FORMA_VIDEO_PROVIDER:"fal"},"A slow push through morning light.",{seconds:15,size:"1280x720",onPrepared:(receipt)=>prepared.push(receipt)});assert.equal(calls[0].url,"https://queue.fal.run/bytedance/seedance-2.0/reference-to-video");const submitted=JSON.parse(String(calls[0].body));assert.equal(submitted.resolution,"720p");assert.equal(submitted.duration,15);assert.match(submitted.prompt,/exactly 15 seconds/);assert.equal(prepared[0].parameters.adapter_status,"adopted");assert.equal(result.model,"bytedance/seedance-2.0/reference-to-video");assert.equal(result.providerJobId,"fal-header-1");}
   finally{globalThis.fetch=originalFetch;}
 });
 
