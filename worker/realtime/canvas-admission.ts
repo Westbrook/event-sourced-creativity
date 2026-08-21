@@ -1,4 +1,5 @@
 import { CANVAS_INTERACTION_DEFINITIONS, isCanvasInteractionId } from "../../src/model/canvas-interactions.ts";
+import { COMBINED_CONTEXT_APPLICATIONS, COMBINED_CONTEXT_ROLES } from "../../src/model/combined-context.ts";
 
 type CanvasEventInput={type?:string;payload?:Record<string,unknown>};
 
@@ -37,7 +38,10 @@ export function validateCanvasEvent(item:CanvasEventInput){
   if(type==="CanvasTextApplied"){const operation=object(payload.operation);if(!Array.isArray(operation.ops)||operation.ops.length>4000)return"invalid_canvas_text_operation";}
   if(type==="StrokeAdded"){const operation=object(payload.operation);const stroke=object(operation.stroke);if(!Array.isArray(stroke.points)||stroke.points.length<4||stroke.points.length>4000||stroke.points.some((value)=>!Number.isFinite(Number(value))))return"invalid_canvas_stroke";}
   if(type==="StrokeErased"&&!object(payload.operation).target&&!id(payload.stroke_id))return"stroke_target_required";
-  if(type==="ContextSetFormalized"&&(!id(payload.context_set_id)||!Array.isArray(payload.item_ids)||payload.item_ids.length<1||payload.item_ids.length>500))return"formalized_context_items_required";
+  if(type==="ContextSetFormalized"){
+    if(!id(payload.context_set_id)||!Array.isArray(payload.item_ids)||payload.item_ids.length<1||payload.item_ids.length>500)return"formalized_context_items_required";
+    if(payload.composite===true&&(!String(payload.name??"").trim()||!String(payload.target??payload.name??"").trim()||!COMBINED_CONTEXT_ROLES.includes(payload.role as typeof COMBINED_CONTEXT_ROLES[number])||!COMBINED_CONTEXT_APPLICATIONS.includes(payload.application as typeof COMBINED_CONTEXT_APPLICATIONS[number])||!Number.isFinite(Number(payload.relativity))||Number(payload.relativity)<0||Number(payload.relativity)>1))return"invalid_combined_context_semantics";
+  }
   if(["ProposalAccepted","ProposalRejected","ProposalRestored"].includes(type)&&!id(payload.proposal_id))return"proposal_id_required";
   if(type==="MembershipAdded"&&(!id(payload.membership_id)||!id(payload.canvas_id)||!id(payload.project_id)||!["user","team"].includes(String(payload.principal_type))||!["viewer","commenter","editor","owner"].includes(String(payload.role))))return"invalid_canvas_membership";
   if(type==="MembershipRemoved"&&(!id(payload.membership_id)||!id(payload.canvas_id)||!id(payload.project_id)))return"invalid_canvas_membership_removal";

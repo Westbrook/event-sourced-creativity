@@ -8,6 +8,7 @@ import { BLOCK_GROUPS, BLOCK_TYPES, blockIntentFor, blockTypeDefinition, suggest
 import { spatialScopeLabel } from "../model/spatial-scope";
 import { DEFAULT_IMAGE_FORMAT, IMAGE_FORMAT_PRESETS, imageFormatForPreset, type ImageFormat } from "../model/image-format";
 import { documentContextBlockFromRoute } from "../model/routes";
+import { combinedContextGroups } from "../model/combined-context";
 import "./context-block";
 import "./output-card";
 import "./project-rail";
@@ -178,7 +179,7 @@ export class FormaWorkspace extends FormaElement {
   }
 
   override render() {
-    const p = this.store.projection.get();const history=generationHistoryItems(p.outputs);const selectedItem=history.find((item)=>(item.kind==="fan"?`fan:${item.id}`:item.id)===this.store.ui.selectedOutputId)??history[0];const output=selectedItem?.kind==="output"?selectedItem.output:undefined;const previewProgress=this.store.documentPreviewProgress(p.documentId);const canCompare=history.filter((item)=>item.kind==="output").length>=2;const contextGroups=new Set(p.blocks.map((block)=>blockTypeDefinition(block.type)?.group).filter(Boolean));const documentInsight=contextGroups.size>=4?`Aha: ${p.blocks.length} independently editable decisions now compile into one output while every source remains inspectable.`:`This document resolves ${contextGroups.size} of 5 context areas. Switch views to discover whether the remaining gaps are intentional.`;
+    const p = this.store.projection.get();const history=generationHistoryItems(p.outputs);const selectedItem=history.find((item)=>(item.kind==="fan"?`fan:${item.id}`:item.id)===this.store.ui.selectedOutputId)??history[0];const output=selectedItem?.kind==="output"?selectedItem.output:undefined;const previewProgress=this.store.documentPreviewProgress(p.documentId);const canCompare=history.filter((item)=>item.kind==="output").length>=2;const contextGroups=new Set(p.blocks.map((block)=>blockTypeDefinition(block.type)?.group).filter(Boolean));const combinedGroups=combinedContextGroups({facts:p.blocks.map((block)=>({block_id:block.id,type:block.type,role:block.type,handle:block.handle,active:Number(block.properties.weight??.5)>0,properties:block.properties}))});const documentInsight=contextGroups.size>=4?`Aha: ${p.blocks.length} independently editable decisions now compile into one output while every source remains inspectable.`:`This document resolves ${contextGroups.size} of 5 context areas. Switch views to discover whether the remaining gaps are intentional.`;
     return html`<section class="workspace-page">
       <forma-project-rail surface="studio" destination="/" @edit-project=${()=>this.#openProjectSettings()}></forma-project-rail>
       <div class="studio-main">
@@ -188,6 +189,7 @@ export class FormaWorkspace extends FormaElement {
         </div>
         <div class="studio-grid">
           <section class="context-column" aria-labelledby="context-title"><div class="section-heading"><div><span class="eyebrow">Projection · sequence ${this.store.head.get()}</span><h2 id="context-title">Creative context</h2></div><span class="health-pill"><i></i> replayable</span></div>
+            ${combinedGroups.length?html`<details class="document-combined-contexts"><summary><span>${icon("branch")} <b>${combinedGroups.length} Combined Context${combinedGroups.length===1?"":"s"}</b></span><small>Review how decisions travel together</small></summary><div>${combinedGroups.map((group)=>html`<article><header><span><b>${group.name}</b><small>${group.role.replaceAll("_"," ")} · ${group.application.replaceAll("_"," ")}</small></span><strong>${Math.round(group.relativity*100)}%</strong></header><p>Applies only to <b>${group.target}</b></p><small>${group.members.length} ordered decision${group.members.length===1?"":"s"}: ${group.members.map((member)=>member.label).join(" · ")}</small></article>`)}</div></details>`:nothing}
             ${p.blocks.length ? html`<div class="block-list">${p.blocks.map((block) => html`<forma-context-block .block=${block}></forma-context-block>`)}</div>` : this.#blockDraft === null ? html`<div class="blank-context"><span>${icon("plus")}</span><h3>This document is empty</h3><p>Add a typed context block, upload a reference, or ask Forma only when you are ready. Nothing is created on your behalf.</p><button class="button primary" @click=${this.#beginBlock}>Add a context block</button></div>` : nothing}
             ${this.#blockComposer()}
             ${this.#blockDraft===null&&p.blocks.length?html`<button class="add-block" @click=${this.#beginBlock}>${icon("plus")} Add context block</button>`:nothing}

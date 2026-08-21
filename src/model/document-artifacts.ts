@@ -50,7 +50,7 @@ export type SlideVisualData = {
   };
 };
 
-export type DocumentArtifactDraftItem = { title: string; body: string; notes: string; image_prompt: string; slide: SlideVisualData | null };
+export type DocumentArtifactDraftItem = { title: string; body: string; notes: string; image_prompt: string; context_group_ids?: string[]; slide: SlideVisualData | null };
 
 export type DocumentArtifactItem = {
   id: string;
@@ -58,6 +58,7 @@ export type DocumentArtifactItem = {
   body: string;
   notes: string;
   imagePrompt: string;
+  contextGroupIds?: string[];
   mediaUrl: string | null;
   mediaType: string | null;
   width: number | null;
@@ -178,7 +179,8 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
 
 export function normalizeSlideItem(value: unknown,index=0):DocumentArtifactDraftItem {
   const input=record(value);const title=text(input.title);const requestedBody=text(input.body);const body=requestedBody&&!placeholderText(requestedBody)&&!slideCopyIsNearDuplicate(title,requestedBody)?requestedBody:"";
-  return{title,body,notes:text(input.notes),image_prompt:text(input.image_prompt),slide:input.slide?normalizeSlideVisual(input.slide,{title,body},index):null};
+  const contextGroupIds=Array.isArray(input.context_group_ids)?[...new Set(input.context_group_ids.map(text).filter(Boolean))]:[];
+  return{title,body,notes:text(input.notes),image_prompt:text(input.image_prompt),context_group_ids:contextGroupIds,slide:input.slide?normalizeSlideVisual(input.slide,{title,body},index):null};
 }
 
 export type SlideCopyIssue={first:string;second:string;firstPath:string;secondPath:string};

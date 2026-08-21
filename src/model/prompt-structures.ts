@@ -1,5 +1,6 @@
 import { normalizeSpatialScope } from "./spatial-scope.ts";
 import { documentImageFormat, imageAspectRatioLabel, imageOrientationLabel } from "./image-format.ts";
+import { combinedContextGroups, combinedContextMemberships, combinedContextPromptDirectives, type CombinedContextGroup } from "./combined-context.ts";
 
 export const PROMPT_TECHNIQUES = ["prose", "bullets", "json", "xml"] as const;
 export type PromptTechnique = typeof PROMPT_TECHNIQUES[number];
@@ -56,6 +57,8 @@ type PromptRegion = {
   reference_images?: PromptBlobstruct[];
   region_type?: string;
   subject?: number;
+  context_group_ids?: string[];
+  group_relativity?: number;
 };
 
 type PromptLayout = { height?: number; overall_prompt?: string; regions?: PromptRegion[]; width?: number };
@@ -74,6 +77,7 @@ export type StructuredImagePrompt = {
   style_embedding?: number[];
   use_reference_images?: number;
   user_edited_layout?: PromptLayout;
+  context_groups?: CombinedContextGroup[];
 };
 
 const record = (value: unknown) => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -137,11 +141,11 @@ function activeCreativeContext(snapshot: Record<string, unknown>) {
   const relationships = list(snapshot.relationships).map(record).filter((relation) => activeIds.has(String(relation.from_block_id ?? "")) && activeIds.has(String(relation.to_block_id ?? ""))).map((relation) => ({
     relation_id: relation.relation_id, from_block_id: relation.from_block_id, to_block_id: relation.to_block_id, kind: relation.kind, properties: relation.properties,
   }));
-  return { facts: activeFacts, relationships, pins: list(snapshot.pins), standing_constraints: list(snapshot.standing_constraints), document: snapshot.document };
+  return { facts: activeFacts, relationships, context_groups: combinedContextGroups({...snapshot,facts:activeFacts}), pins: list(snapshot.pins), standing_constraints: list(snapshot.standing_constraints), document: snapshot.document };
 }
 
 export function buildProsePrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = []) {
-  const spatialDirectives = buildSpatialPromptDirectives(snapshot); const imageFormat = documentImageFormat(snapshot).format;
+  const spatialDirectives = buildSpatialPromptDirectives(snapshot); const groupedDirectives=combinedContextPromptDirectives(snapshot,"image"); const imageFormat = documentImageFormat(snapshot).format;
   return [
     `Create one polished ${imageOrientationLabel(imageFormat)} image that realizes the supplied creative direction.`,
     `Output frame: ${imageFormat.dimensions.width} × ${imageFormat.dimensions.height} pixels at ${imageAspectRatioLabel(imageFormat)}. Treat the ratio and intended production dimensions as binding document constraints.`,
@@ -151,13 +155,14 @@ export function buildProsePrompt(snapshot: Record<string, unknown>, direction: R
     "Do not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.",
     `Attached source-image policy:\n${buildReferencePromptDirectives(references)}`,
     `Spatial application map:\n${spatialDirectives.length ? spatialDirectives.join("\n") : "- No active block decisions were supplied."}`,
+    `Combined-context isolation map:\n${groupedDirectives.length ? groupedDirectives.join("\n") : "No combined contexts were supplied."}`,
     `Creative direction:\n${JSON.stringify(direction)}`,
     `Active creative context:\n${JSON.stringify(activeCreativeContext(snapshot))}`,
   ].join("\n\n");
 }
 
 export function buildBulletPrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = []) {
-  const context = activeCreativeContext(snapshot); const facts = context.facts.map(record); const relationships = context.relationships.map(record); const imageFormat = documentImageFormat(snapshot).format;
+  const context = activeCreativeContext(snapshot); const facts = context.facts.map(record); const relationships = context.relationships.map(record); const groupedDirectives=combinedContextPromptDirectives(snapshot,"image"); const imageFormat = documentImageFormat(snapshot).format;
   const factLines = facts.map((fact, index) => {
     const properties = record(fact.properties); const scope = normalizeSpatialScope(properties.spatial_scope);
     const propertyLines=Object.entries(properties).filter(([key])=>key!=="spatial_scope"&&key!=="weight").map(([key,value])=>`  - ${key.replaceAll("_"," ")}: ${typeof value==="string"?value:JSON.stringify(value)}`);
@@ -176,6 +181,7 @@ export function buildBulletPrompt(snapshot: Record<string, unknown>, direction: 
     ...Object.entries(direction).map(([key, value]) => `- ${key.replaceAll("_", " ")}: ${Array.isArray(value) ? value.join("; ") : String(value)}`),
     "Document decisions:", ...(factLines.length ? factLines : ["- No active document decisions were supplied."]),
     "Relationships:", ...(relationshipLines.length ? relationshipLines : ["- No typed block relationships were supplied."]),
+    "Combined contexts:", ...(groupedDirectives.length ? groupedDirectives.map((directive)=>`- ${directive}`) : ["- No combined contexts were supplied."]),
     "Standing constraints:", ...(constraintLines.length ? constraintLines : ["- No standing constraints were supplied."]),
     "Attached source images:", ...buildReferencePromptDirectives(references).split("\n"),
   ].join("\n");
@@ -201,7 +207,7 @@ function attachedBlob(reference: PromptReferenceDescriptor, index: number): Prom
 export function buildStructuredPrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = [], options: { size?: string; quality?: string; partialImages?: number } = {}): StructuredImagePrompt {
   const targetFormat = documentImageFormat(snapshot).format; const width = targetFormat.dimensions.width; const height = targetFormat.dimensions.height; const facts = list(snapshot.facts).map(record).filter((fact) => fact.active !== false); const blobs = references.map(attachedBlob);
   const regions = facts.map((fact, index): PromptRegion => {
-    const properties = record(fact.properties); const scope = normalizeSpatialScope(properties.spatial_scope); const bbox = scopeBox(scope); const colors = list(properties.colors).map(parseColor).filter((color): color is NonNullable<typeof color> => Boolean(color)); const referenceIndexes = references.map((reference, referenceIndex) => reference.blockId === String(fact.block_id ?? "") ? referenceIndex : -1).filter((referenceIndex) => referenceIndex >= 0);
+    const properties = record(fact.properties); const memberships=combinedContextMemberships(properties); const scope = normalizeSpatialScope(properties.spatial_scope); const bbox = scopeBox(scope); const colors = list(properties.colors).map(parseColor).filter((color): color is NonNullable<typeof color> => Boolean(color)); const referenceIndexes = references.map((reference, referenceIndex) => reference.blockId === String(fact.block_id ?? "") ? referenceIndex : -1).filter((referenceIndex) => referenceIndex >= 0);
     const path = scope.kind === "path" ? ` Clipping path: ${JSON.stringify(scope.path ?? [])}.` : "";
     const additionalProperties=Object.fromEntries(Object.entries(properties).filter(([key])=>!["text","label","subtype","weight","spatial_scope","colors"].includes(key)));
     const subtype=properties.subtype?` Subtype ${String(properties.subtype)}.`:"";const additional=Object.keys(additionalProperties).length?` Additional properties: ${JSON.stringify(additionalProperties)}.`:"";
@@ -211,16 +217,17 @@ export function buildStructuredPrompt(snapshot: Record<string, unknown>, directi
       ...(referenceIndexes.length ? { bbox_ref_image_index: referenceIndexes[0], reference_images: referenceIndexes.map((referenceIndex) => blobs[referenceIndex]) } : {}),
       ...(colors.length ? { color_palette: colors } : {}), corresponding_region_id: index, label: String(fact.handle ?? `${fact.type ?? "decision"}-${index + 1}`), locked: fact.locked ? 1 : 0,
       looseness: round(1 - clamp(properties.weight, .5)), ...(scope.kind === "subject" && scope.subject_block_id ? { parent: scope.subject_block_id } : {}), region_type: scope.kind === "document" ? "global" : scope.kind, subject: String(fact.type ?? fact.role) === "subject" ? 1 : 0,
+      ...(memberships.length?{context_group_ids:memberships.map((membership)=>membership.contextSetId),group_relativity:Math.max(...memberships.map((membership)=>membership.relativity))}:{}),
     };
   });
   const context=activeCreativeContext(snapshot);const relationships=context.relationships.map(record).map((relation)=>`${String(relation.from_block_id)} ${String(relation.kind??"relates to")} ${String(relation.to_block_id)}${Object.keys(record(relation.properties)).length?` with ${JSON.stringify(relation.properties)}`:""}`).join("; ");const constraints=context.standing_constraints.map(record).map((constraint)=>`${String(constraint.axis??"preference")} ${String(constraint.polarity??"")} ${String(constraint.value??"")}`).join("; ");const pins=context.pins.map(String).join(", ");
-  const prompt = `Create one polished image. ${Object.entries(direction).map(([key, value]) => `${key.replaceAll("_", " ")}: ${Array.isArray(value) ? value.join(", ") : String(value)}`).join(". ")}. Typed relationships: ${relationships||"none"}. Standing constraints: ${constraints||"none"}. Pinned evidence: ${pins||"none"}. Honor negative intent, typed relationships, local regions, and reference-image policy.`;
+  const groupedDirectives=combinedContextPromptDirectives(snapshot,"image");const prompt = `Create one polished image. ${Object.entries(direction).map(([key, value]) => `${key.replaceAll("_", " ")}: ${Array.isArray(value) ? value.join(", ") : String(value)}`).join(". ")}. Typed relationships: ${relationships||"none"}. Combined-context isolation: ${groupedDirectives.join(" ")||"none"}. Standing constraints: ${constraints||"none"}. Pinned evidence: ${pins||"none"}. Honor negative intent, typed relationships, local regions, grouped isolation, and reference-image policy.`;
   const layout: PromptLayout = { width: Number.isFinite(width) ? width : undefined, height: Number.isFinite(height) ? height : undefined, overall_prompt: `${prompt} Coordinates are document-normalized from 0 to 1.`, regions };
   return {
     operation: "generate_image", prompt, aspect_ratio: imageAspectRatioLabel(targetFormat),
     disable_search: 1, ...(options.partialImages ? { intermediate_image_steps: Array.from({ length: options.partialImages }, (_, index) => index + 1), preview_interval_seconds: 2 } : {}),
     reference_images: references.map((reference, index) => ({ image: blobs[index], prompt: buildReferencePromptDirectives([reference]).replace(/^- /, "") })), resolution: `${width}x${height}`,
-    streaming: options.partialImages ? 1 : 0, use_reference_images: references.length ? 1 : 0, user_edited_layout: layout,
+    streaming: options.partialImages ? 1 : 0, use_reference_images: references.length ? 1 : 0, user_edited_layout: layout, context_groups:combinedContextGroups(snapshot),
   };
 }
 

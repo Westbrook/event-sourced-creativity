@@ -46,6 +46,7 @@ test("Canvas viewport preferences survive reload without entering the event stre
   assert.equal(readCanvasViewportState(storage,"user-2","canvas-1"),null,"another account cannot inherit this viewport");
   assert.equal(readCanvasViewportState(storage,"user-1","canvas-2"),null,"another board cannot inherit this viewport");
   assert.deepEqual(normalizeCanvasViewportState({schemaVersion:1,zoom:9,cameraX:2_000_000_000,cameraY:-2_000_000_000,updatedAt:"2026-08-21T00:00:00.000Z"}),{zoom:2,cameraX:1_000_000_000,cameraY:-1_000_000_000,updatedAt:"2026-08-21T00:00:00.000Z"});
+  assert.equal(normalizeCanvasViewportState({schemaVersion:1,zoom:.01,cameraX:0,cameraY:0,updatedAt:"2026-08-21T00:00:00.000Z"})?.zoom,.15);
   assert.equal(normalizeCanvasViewportState({schemaVersion:1,zoom:1,cameraX:Number.NaN,cameraY:0}),null);
 });
 
@@ -125,7 +126,7 @@ test("Canvas-native blocks remain shared project content and need explicit forma
   const projection=foldEvents(events,undefined,"doc-1","project-1");
   assert.equal(projection.libraryBlocks.some((block)=>block.id==="block-1"&&block.scope==="canvas"),true);
   const complete=buildComprehensiveScenario();const coverage=evaluateReplayCoverage(complete,SCENARIO_EVENT_TYPES);
-  assert.equal(coverage.passed,true);for(const key of ["canvas-shared-sources","canvas-convergence","canvas-context-formalization","canvas-document-rendering","canvas-report-space","canvas-governance","canvas-interaction-coverage"])assert.equal(coverage.checks.find((check)=>check.key===key)?.passed,true,key);
+  assert.equal(coverage.passed,true);for(const key of ["combined-context-isolation","canvas-shared-sources","canvas-convergence","canvas-context-formalization","canvas-document-rendering","canvas-report-space","canvas-governance","canvas-interaction-coverage"])assert.equal(coverage.checks.find((check)=>check.key===key)?.passed,true,key);
   const prepared=complete.find((item)=>item.type==="DocumentCreated"&&item.payload.created_from==="canvas-selection"&&complete.filter((candidate)=>candidate.type==="GenerationRequested"&&candidate.payload.source_surface==="canvas"&&candidate.payload.document_id===item.payload.document_id).length===4);
   const placement=complete.find((item)=>item.type==="CanvasItemPlaced"&&item.payload.source_id===prepared?.payload.document_id);
   const renders=complete.filter((item)=>item.type==="GenerationRequested"&&item.payload.source_surface==="canvas"&&item.payload.document_id===prepared?.payload.document_id);

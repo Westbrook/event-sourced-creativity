@@ -3,8 +3,8 @@ type CanvasViewportRecord=CanvasViewportState&{schemaVersion:1};
 type CanvasViewportStorage=Pick<Storage,"getItem"|"setItem">;
 
 const STORAGE_PREFIX="forma.canvas.viewport.v1";
-const MIN_ZOOM=.35;
-const MAX_ZOOM=2;
+export const CANVAS_MIN_ZOOM=.15;
+export const CANVAS_MAX_ZOOM=2;
 const MAX_CAMERA_COORDINATE=1_000_000_000;
 
 const bounded=(value:number,min:number,max:number)=>Math.max(min,Math.min(max,value));
@@ -15,7 +15,7 @@ export function normalizeCanvasViewportState(value:unknown):CanvasViewportState|
   const record=value as Partial<CanvasViewportRecord>;
   if(record.schemaVersion!==1||![record.zoom,record.cameraX,record.cameraY].every((item)=>Number.isFinite(item)))return null;
   return{
-    zoom:bounded(Number(record.zoom),MIN_ZOOM,MAX_ZOOM),
+    zoom:bounded(Number(record.zoom),CANVAS_MIN_ZOOM,CANVAS_MAX_ZOOM),
     cameraX:bounded(Number(record.cameraX),-MAX_CAMERA_COORDINATE,MAX_CAMERA_COORDINATE),
     cameraY:bounded(Number(record.cameraY),-MAX_CAMERA_COORDINATE,MAX_CAMERA_COORDINATE),
     updatedAt:typeof record.updatedAt==="string"&&record.updatedAt?record.updatedAt:new Date(0).toISOString(),
