@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { documentEntryPath, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentFocusInRoute, withDocumentInRoute } from "../src/model/routes.ts";
+import { documentContextBlockFromRoute, documentContextBlockRoute, documentEntryPath, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentFocusInRoute, withDocumentInRoute } from "../src/model/routes.ts";
 import { applicationEntryPath, applicationIdFromRoute } from "../src/platform/applications.ts";
 
 test("document views use a readable path for the selected durable document", () => {
@@ -34,6 +34,17 @@ test("focus mode is a durable document path state", () => {
   assert.equal(withDocumentFocusInRoute("/studio/layers", true), "/studio/layers/focus");
   assert.equal(documentViewFromRoute("/studio/layers/focus"), "layers");
   assert.equal(withDocumentInRoute("/document/old/focus/view/document", "new", "Focus"), "/document/new/focus/view/document");
+});
+
+test("document context reports link to a refresh-safe block target",()=>{
+  const route=documentContextBlockRoute("document 42","Evening Atmosphere","block/with spaces");
+  assert.equal(route,"/document/document%2042/evening-atmosphere#context=block%2Fwith%20spaces");
+  assert.equal(documentIdFromRoute(route),"document 42");
+  assert.equal(documentViewFromRoute(route),"document");
+  assert.equal(documentContextBlockFromRoute(route),"block/with spaces");
+  assert.equal(documentContextBlockFromRoute("/document/document-42/evening-atmosphere"),null);
+  assert.equal(documentContextBlockFromRoute("/library#context=block-42"),null);
+  assert.equal(withDocumentInRoute(route,"document-84","New Study"),"/document/document-84/new-study#context=block%2Fwith%20spaces");
 });
 
 test("dynamic document paths select the smallest matching page entry", () => {

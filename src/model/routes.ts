@@ -60,6 +60,13 @@ export function documentFocusFromRoute(route: string) {
   return documentRouteParts(route)?.focused ?? false;
 }
 
+export function documentContextBlockFromRoute(route: string) {
+  if (!isDocumentViewRoute(route)) return null;
+  const hash = routeUrl(route).hash;
+  const prefix = "#context=";
+  return hash.startsWith(prefix) && hash.length > prefix.length ? safeDecode(hash.slice(prefix.length)) : null;
+}
+
 export function documentSlug(value: string) {
   return value.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 64);
 }
@@ -100,6 +107,10 @@ export function withDocumentInRoute(route: string, documentId: string, documentN
   parts.url.searchParams.delete("document");
   const path = `/document/${encodeURIComponent(documentId)}${slug ? `/${slug}` : ""}${viewSuffix}${focusSuffix}`;
   return `${path}${parts.url.search}${parts.url.hash}`;
+}
+
+export function documentContextBlockRoute(documentId: string, documentName: string, blockId: string) {
+  return `${withDocumentInRoute("/", documentId, documentName)}#context=${encodeURIComponent(blockId)}`;
 }
 
 export function withDocumentFocusInRoute(route: string, focused: boolean) {

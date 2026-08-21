@@ -11,6 +11,7 @@ export interface WorkerEnv {
   FAL_IMAGE_PREVIEW_MODEL?: string;
   FAL_IMAGE_EDIT_MODEL?: string;
   FAL_VIDEO_MODEL?: string;
+  FAL_REFERENCE_VIDEO_MODEL?: string;
   FORMA_IMAGE_PROVIDER?: string;
   FORMA_VIDEO_PROVIDER?: string;
   FORMA_ADMIN_EMAILS?: string;

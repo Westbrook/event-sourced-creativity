@@ -1,17 +1,21 @@
-import { blockEffectFor, blockIntentFor, sendsReferencePixels } from "../src/model/block-types.ts";
+import { blockEffectFor, blockIntentFor, referencePixelMode, sendsReferencePixels } from "../src/model/block-types.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { documentGenerationRevision } from "../src/model/document-jobs.ts";
 import { documentImageFormat, providerRenderFormat, validateProviderImageSize } from "../src/model/image-format.ts";
-import { GENERATION_PREFLIGHT_VERSION, generationReadinessCostMicrousd, generationReadinessReservation, generationReadinessSeconds, type GenerationReadiness, type GenerationReadinessKind, type GenerationReadinessProbe, type ProviderHealthSnapshot } from "../src/model/generation-readiness.ts";
-import { normalizePromptTechnique, type PromptTechnique } from "../src/model/prompt-structures.ts";
+import { GENERATION_PREFLIGHT_VERSION, generationReadinessCostMicrousd, generationReadinessReservation, generationReadinessSeconds, type GenerationReadiness, type GenerationReadinessKind, type GenerationReadinessProbe, type PromptTechniqueSafetyComparison, type PromptTechniqueSafetyResult, type ProviderHealthSnapshot } from "../src/model/generation-readiness.ts";
+import { buildBoundedPromptRepresentation, normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptReferenceDescriptor, type PromptTechnique } from "../src/model/prompt-structures.ts";
 import { normalizeSpatialScope } from "../src/model/spatial-scope.ts";
-import { moderateGenerationSnapshot } from "./openai-moderation.ts";
+import { standingConstraints } from "../src/model/taste.ts";
+import { readGeneratedImageReference } from "./media-api.ts";
+import { moderateGenerationSnapshot, moderatePromptTechniqueSet } from "./openai-moderation.ts";
+import type { ImageReference } from "./openai-adapter.ts";
 import { readBudgets, requireConsent, requireUser, type PilotUser } from "./pilot-policy.ts";
 import { classifyProviderFailure, type ProviderFailureDetail } from "./provider-errors.ts";
 import { appendAuditEvent, ensureSchema, readEvents, uuidV7, type WorkerEnv } from "./runtime.ts";
 import { validateFalImageSize } from "./fal-image-adapter.ts";
 
 export type GenerationPreflightInput = { kind: GenerationReadinessKind; documentId: string; documentRevision?: string; requestKey?: string; sourcePreviewId?: string | null; promptTechnique?: PromptTechnique; snapshot?: Record<string, unknown>; force?: boolean; sourceSurface?: string };
+export type PromptTechniqueComparisonInput = { documentId: string; documentRevision?: string; sourcePreviewId?: string | null; failedTechnique?: PromptTechnique; failedPrompt?: string; kind?: "preview" | "generate"; snapshot?: Record<string, unknown>; sourceSurface?: string };
 type ProviderHealthRow = { status:string;scope:string;message:string;observed_at:string;expires_at:string;retry_after_ms:number|null;request_id:string|null };
 type PreflightRow = { result_json:string;expires_at:string };
 
@@ -40,6 +44,116 @@ export async function observeProviderSuccess(env:WorkerEnv,requestId:string|null
 
 function snapshotFor(projection:ReturnType<typeof foldEvents>){return{facts:projection.blocks.map((block)=>({block_id:block.id,document_id:block.documentId,type:block.type,role:block.type,intent:blockIntentFor(block.type,block.properties),handle:block.handle,position:block.position,locked:block.locked,active:Number(block.properties.weight??.5)>0,effect:blockEffectFor(block.type,block.properties),properties:{...block.properties,spatial_scope:normalizeSpatialScope(block.properties.spatial_scope)},authority:block.properties.authority??"authored",source_event_refs:block.sourceEvents})),relationships:projection.blockRelations.map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties,source_event_refs:relation.sourceEvents})),pins:projection.outputs.filter((output)=>output.pinned).map((output)=>output.id),tail:[],document:{id:projection.documentId,title:projection.documentTitle}};}
 const statusBlocksProvider=(health:ProviderHealthSnapshot)=>["credits_blocked","project_limit","organization_limit","authentication_failed","model_access"].includes(health.status)||health.status==="rate_limited"&&Date.parse(health.expiresAt)>Date.now();
+
+const techniqueReferenceDescriptors = (references: ImageReference[]): PromptReferenceDescriptor[] => references.map((reference) => ({
+  blockId: reference.blockId,
+  referenceId: reference.referenceId,
+  label: reference.label,
+  mode: reference.mode,
+  mimeType: reference.mimeType,
+  source: reference.source,
+}));
+
+async function promptTechniqueReferences(env: WorkerEnv, ownerId: string, projection: ReturnType<typeof foldEvents>, events: Awaited<ReturnType<typeof readEvents>>, sourcePreviewId?: string | null) {
+  const references: ImageReference[] = [];
+  for (const block of projection.blocks) {
+    if (block.type !== "reference" || Number(block.properties.weight ?? .5) <= 0 || !sendsReferencePixels(block.properties.pixel_reference_mode)) continue;
+    const referenceId = String(block.properties.reference_id ?? "");
+    const rightsConfirmed = events.some((event) => event.type === "RightsAsserted" && String(event.payload.reference_id ?? "") === referenceId)
+      || events.some((event) => event.type === "ReferenceIngested" && String(event.payload.reference_id ?? "") === referenceId && Boolean(event.payload.rights_class));
+    if (!referenceId || !rightsConfirmed) throw new Error(`reference_pixel_rights_required:${block.id}`);
+    const image = await readGeneratedImageReference(env, ownerId, block.properties.media_url);
+    if (!image) throw new Error(`reference_pixel_input_unavailable:${block.id}`);
+    references.push({ ...image, blockId: block.id, referenceId, label: String(block.properties.label ?? block.handle), mode: referencePixelMode(block.properties.pixel_reference_mode), source: "uploaded-reference" });
+  }
+  if (sourcePreviewId) {
+    const output = projection.outputs.find((candidate) => candidate.id === sourcePreviewId);
+    if (!output?.mediaUrl) throw new Error(`reference_pixel_input_unavailable:${sourcePreviewId}`);
+    const image = await readGeneratedImageReference(env, ownerId, output.mediaUrl);
+    if (!image) throw new Error(`reference_pixel_input_unavailable:${sourcePreviewId}`);
+    references.unshift({ ...image, referenceId: sourcePreviewId, label: "Selected ideation preview", source: "ideation-preview" });
+  }
+  return references;
+}
+
+export async function comparePromptTechniqueSafety(env: WorkerEnv, user: PilotUser, input: PromptTechniqueComparisonInput): Promise<PromptTechniqueSafetyComparison> {
+  if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
+  const events = await readEvents(env, user.streamId);
+  const projection = foldEvents(events, Number.POSITIVE_INFINITY, input.documentId);
+  if (!projection.documentId || projection.documentId !== input.documentId) throw new Error("document_not_found");
+  const baseSnapshot = input.snapshot && Object.keys(input.snapshot).length ? input.snapshot : snapshotFor(projection);
+  const references = await promptTechniqueReferences(env, user.userId, projection, events, input.sourcePreviewId);
+  const snapshot = {
+    ...baseSnapshot,
+    document: { id: projection.documentId, title: projection.documentTitle },
+    standing_constraints: standingConstraints(events).map((item) => ({ preference_id: item.preferenceId, axis: item.axis, value: item.value, polarity: item.polarity, authority: "authored", source_event_refs: item.evidenceRefs, source_claim_ref: item.sourceClaimRef ?? null })),
+    reference_inputs: techniqueReferenceDescriptors(references),
+  };
+  const documentRevision = String(input.documentRevision || documentGenerationRevision({ snapshot, sourceBlockVersions: projection.blocks.map((block) => ({ block_id: block.id, version: block.sourceEvents.length })), documentId: projection.documentId }));
+  const failedTechnique = normalizePromptTechnique(input.failedTechnique);
+  const quality = input.kind === "preview" ? "low" : "high";
+  const imageFormat = documentImageFormat(snapshot);
+  const render = providerRenderFormat(imageFormat.format, input.kind === "preview" ? "preview" : "full");
+  const direction = {
+    title: projection.documentTitle,
+    rationale: "Translate the current document's active creative decisions into one coherent image without adding unsupported subjects or events.",
+    scene: `Create a representative image for “${projection.documentTitle}” from the current document context.`,
+    palette: [],
+    next_moves: [],
+  };
+  const prepared = PROMPT_TECHNIQUES.map((technique) => {
+    const built = buildBoundedPromptRepresentation(technique, snapshot, direction, techniqueReferenceDescriptors(references), { size: render.size, quality, partialImages: input.kind === "preview" ? 1 : 0 });
+    const exactFailedPrompt = technique === failedTechnique ? input.failedPrompt?.trim().slice(0, built.limit) : "";
+    return { technique, ...built, prompt: exactFailedPrompt || built.prompt, finalLength: exactFailedPrompt ? exactFailedPrompt.length : built.finalLength, compacted: exactFailedPrompt ? false : built.compacted, fits: exactFailedPrompt ? true : built.fits };
+  });
+  const comparable = prepared.filter((entry) => entry.fits).map((entry) => ({ technique: entry.technique, prompt: entry.prompt }));
+  const [moderation, snapshotModeration] = await Promise.all([
+    moderatePromptTechniqueSet(env, comparable, references),
+    moderateGenerationSnapshot(env, snapshot).catch(() => null),
+  ]);
+  const sharedReference = moderation.references;
+  const results: PromptTechniqueSafetyResult[] = prepared.map((entry) => {
+    const result = moderation.promptResults.find((candidate) => candidate.technique === entry.technique);
+    if (!entry.fits || !result) return { technique: entry.technique, status: "unknown", summary: `This representation remains ${entry.finalLength.toLocaleString()} characters after safe compaction and cannot be evaluated within the ${entry.limit.toLocaleString()} character provider limit.`, prompt: entry.prompt, promptLength: entry.finalLength, compacted: entry.compacted, categories: [], blockIds: [], referenceIds: [], coverage: references.length ? "text-and-images" : "text", latencyMs: 0, requestId: null };
+    const flagged = result.flagged || sharedReference.flagged;
+    const categories = [...new Set([...result.categories, ...sharedReference.categories])].sort();
+    const referenceOnly = sharedReference.flagged && !result.flagged;
+    const summary = !flagged
+      ? `This ${entry.technique} prompt passed the advisory text${references.length ? " and reference-image" : ""} review. Final provider checks still apply.`
+      : referenceOnly
+        ? `The prompt text passed, but ${sharedReference.referenceIds.length || references.length} selected reference image${(sharedReference.referenceIds.length || references.length) === 1 ? " needs" : "s need"} review. Changing prompt structure alone is unlikely to resolve it.`
+        : `This ${entry.technique} representation raised an advisory moderation concern${categories.length ? `: ${categories.join(", ")}` : ""}.`;
+    return {
+      technique: entry.technique,
+      status: flagged ? "review" : "pass",
+      summary,
+      prompt: entry.prompt,
+      promptLength: entry.finalLength,
+      compacted: entry.compacted,
+      categories,
+      blockIds: result.flagged ? snapshotModeration?.blockIds ?? [] : [],
+      referenceIds: sharedReference.flagged ? sharedReference.referenceIds : [],
+      coverage: references.length ? "text-and-images" : "text",
+      latencyMs: result.latencyMs + Math.round(sharedReference.latencyMs / Math.max(1, PROMPT_TECHNIQUES.length)),
+      requestId: result.flagged ? result.requestId : sharedReference.flagged ? sharedReference.requestId : result.requestId,
+    };
+  });
+  const passing = results.filter((result) => result.status === "pass");
+  const recommendedTechnique = passing.find((result) => result.technique !== failedTechnique)?.technique ?? passing[0]?.technique ?? null;
+  const summary = sharedReference.flagged
+    ? "One or more selected reference images raised the concern, so a prompt-structure change alone is unlikely to help."
+    : recommendedTechnique && recommendedTechnique !== failedTechnique
+      ? `${recommendedTechnique} passed this advisory comparison while the submitted ${failedTechnique} path did not.`
+      : passing.length
+        ? `${passing.length} of four prompt structures passed this advisory comparison.`
+        : "No prompt structure passed the advisory comparison. Review the named context before paying for another image request.";
+  const comparisonId = uuidV7();
+  const checkedAt = nowIso();
+  const version = "prompt-technique-safety-v1";
+  await appendAuditEvent(env, user.streamId, "worker:policy", "GenerationPreflightRequested", { preflight_id: comparisonId, document_id: projection.documentId, document_revision: documentRevision, request_key: `prompt-technique-comparison:${documentRevision}`, kind: "prompt_technique_comparison", prompt_technique: failedTechnique, source_surface: input.sourceSurface ?? "generation-failure", preflight_version: version });
+  await appendAuditEvent(env, user.streamId, "worker:policy", "GenerationPreflightCompleted", { preflight_id: comparisonId, document_id: projection.documentId, document_revision: documentRevision, request_key: `prompt-technique-comparison:${documentRevision}`, kind: "prompt_technique_comparison", prompt_technique: failedTechnique, status: results.some((result) => result.status === "pass") ? "review" : "blocked", probe_results: results.map((result) => ({ id: `prompt-technique:${result.technique}`, status: result.status === "pass" ? "pass" : result.status === "review" ? "warning" : "unknown", severity: result.status === "pass" ? "info" : "warning", block_ids: result.blockIds, reference_ids: result.referenceIds, categories: result.categories })), estimated_tokens: 0, estimated_cost_microusd: 0, estimated_seconds: Math.max(...results.map((result) => result.latencyMs), 0) / 1000, provider_status: "moderation-only", image_generation_calls: 0, reference_probe_count: references.length, recommended_prompt_technique: recommendedTechnique, preflight_version: version });
+  return { comparisonId, documentId: projection.documentId, documentRevision, failedTechnique, recommendedTechnique, summary, results, referenceCount: references.length, imageGenerationCalls: 0, checkedAt, version };
+}
 
 export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:GenerationPreflightInput,options:{appendEvents?:boolean;allowCache?:boolean}={}):Promise<GenerationReadiness>{
   await ensureSchema(env);const checkedAt=nowIso();const technique=normalizePromptTechnique(input.promptTechnique);const events=await readEvents(env,user.streamId);const projection=foldEvents(events,Number.POSITIVE_INFINITY,input.documentId);const snapshot=input.snapshot&&Object.keys(input.snapshot).length?input.snapshot:snapshotFor(projection);const documentRevision=String(input.documentRevision||documentGenerationRevision({snapshot,sourceBlockVersions:projection.blocks.map((block)=>({block_id:block.id,version:block.sourceEvents.length})),documentId:projection.documentId}));const requestKey=String(input.requestKey||`${input.kind}:${documentRevision}:${input.sourcePreviewId||"document"}:${technique}`);const cacheKey=`${GENERATION_PREFLIGHT_VERSION}:${requestKey}`;
@@ -72,6 +186,12 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
 export async function handleGenerationReadiness(request:Request,env:WorkerEnv,path=""){
   await ensureSchema(env);const auth=await requireUser(request,env,request.method==="GET"?"viewer":"creator");if(auth.response||!auth.user)return auth.response!;const user=auth.user;
   if(path==="provider/refresh"&&request.method==="POST"){const consent=requireConsent(user);if(consent)return consent;const cleared=emptyProvider("Provider status was cleared for a fresh readiness check. Credit availability will be confirmed by the next billable image request.");await writeProviderHealth(env,cleared);await appendAuditEvent(env,user.streamId,"worker:policy","ProviderHealthObserved",{status:cleared.status,scope:cleared.scope,source:"manual-refresh",observed_at:cleared.observedAt,expires_at:cleared.expiresAt});return Response.json({provider:cleared});}
+  if(path==="prompt-techniques"&&request.method==="POST"){
+    const consent=requireConsent(user);if(consent)return consent;
+    const input=await request.json() as PromptTechniqueComparisonInput;
+    if(!input.documentId||input.failedPrompt&&input.failedPrompt.length>32_000)return Response.json({error:"prompt_technique_comparison_input_required"},{status:400});
+    try{return Response.json({comparison:await comparePromptTechniqueSafety(env,user,input)});}catch(error){const detail=classifyProviderFailure(error);return Response.json({error:detail.code,message:detail.message},{status:detail.httpStatus??500});}
+  }
   if(path||request.method!=="POST")return new Response("Method not allowed",{status:405});const consent=requireConsent(user);if(consent)return consent;const input=await request.json() as GenerationPreflightInput;if(!["preview","generate","preview_fan","generate_fan"].includes(input.kind)||!input.documentId)return Response.json({error:"generation_preflight_input_required"},{status:400});
   try{return Response.json({readiness:await preflightGeneration(env,user,input,{appendEvents:true,allowCache:true})});}catch(error){const detail=classifyProviderFailure(error);return Response.json({error:detail.code,message:detail.message},{status:detail.httpStatus??500});}
 }

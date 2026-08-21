@@ -220,7 +220,7 @@ function correlatedFailureDetail(events: Awaited<ReturnType<typeof readEvents>>)
 }
 
 function correlatedModerationPromptRef(events: Awaited<ReturnType<typeof readEvents>>) {
-  const failureEvent=[...events].reverse().find((event)=>event.type==="GenerationFailed"&&event.payload.prompt_ref);
+  const failureEvent=[...events].reverse().find((event)=>(event.type==="GenerationFailed"||event.type==="DocumentRenderFailed")&&event.payload.prompt_ref);
   return failureEvent?.payload.prompt_ref?String(failureEvent.payload.prompt_ref):null;
 }
 
@@ -300,7 +300,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     }
     delete payload.expectedSequence; delete payload.jobInputRef;
     if(row.kind==="render_document"){
-      const checkpoint=parseResult(row);for(const key of ["artifactId","providerJobId","artifactPlan","plannerModel","plannerResponseId","plannerLatencyMs","plannerUsage","renderedItems"] as const)if(checkpoint[key]!==undefined)payload[key]=checkpoint[key];if(checkpoint.providerJobId&&checkpoint.reservationId)payload.reservationId=checkpoint.reservationId;
+      const checkpoint=parseResult(row);for(const key of ["artifactId","providerJobId","providerModel","providerStatusUrl","providerResponseUrl","providerCancelUrl","artifactPlan","plannerModel","plannerResponseId","plannerLatencyMs","plannerUsage","plannerInput","renderedItems","videoInputReceipt"] as const)if(checkpoint[key]!==undefined)payload[key]=checkpoint[key];if(checkpoint.providerJobId&&checkpoint.reservationId)payload.reservationId=checkpoint.reservationId;
     }
     payload.action = row.kind; payload.documentId = row.document_id; payload.sourceSurface = row.source_surface;
     payload.correlationId = row.correlation_id; payload.clientId = `server:document-job:${row.kind}`;
@@ -310,7 +310,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const detail = !response.ok
       ? body.errorDetail && typeof body.errorDetail === "object" ? body.errorDetail as ProviderFailureDetail : applicationFailureDetail(String(body.error ?? "document_job_failed"), body.scope, response.status)
       : null;
-    const terminalResult = { ...safeResult({...body,followupJobId:followup?.job_id}), ...(detail ? { errorDetail: publicFailureDetail(detail) } : {}), stage: response.ok ? "completed" : "failed", progressMessage: response.ok ? "The operation finished." : failureProgressMessage(detail) };
+    const terminalResult = { ...(response.ok?{}:parseResult(row)), ...safeResult({...body,followupJobId:followup?.job_id}), ...(detail ? { errorDetail: publicFailureDetail(detail) } : {}), stage: response.ok ? "completed" : "failed", progressMessage: response.ok ? "The operation finished." : failureProgressMessage(detail) };
     await finishDocumentJob(env, row, response.ok ? "completed" : "failed", terminalResult, response.ok ? null : detail?.message ?? String(body.error ?? "document_job_failed"), completedAt);
   } catch (error) {
     const completedAt = new Date().toISOString(); const detail = classifyProviderFailure(error);
@@ -396,6 +396,23 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     return Response.json({ job: serializeJob(updated!) });
   }
 
+  if (path.endsWith("/retry") && request.method === "POST") {
+    const jobId = decodeURIComponent(path.slice(0, -6).replace(/\/$/, "")); const target = await readJob(env, user.userId, jobId);
+    if (!target) return Response.json({ error: "job_not_found" }, { status: 404 });
+    const previous = parseResult(target); const correlated = (await readEvents(env, user.streamId)).filter((event) => event.correlationId === target.correlation_id);
+    const failedEvent = [...correlated].reverse().find((event) => event.type === "DocumentRenderFailed" && event.payload.provider_job_id);
+    const requestedEvent = correlated.find((event) => event.type === "DocumentRenderRequested");
+    const providerJobId = String(previous.providerJobId ?? failedEvent?.payload.provider_job_id ?? "");
+    const artifactId = String(previous.artifactId ?? failedEvent?.payload.artifact_id ?? requestedEvent?.payload.artifact_id ?? "");
+    if (target.kind !== "render_document" || target.status !== "failed" || !providerJobId || !artifactId) return Response.json({ error: "resumable_provider_job_required" }, { status: 409 });
+    const requestPayload = parseRequest(target); const artifactKind = String(requestPayload.artifactKind ?? failedEvent?.payload.artifact_kind ?? "");
+    const providerModel = String(previous.providerModel ?? (artifactKind === "video" ? env.FAL_REFERENCE_VIDEO_MODEL ?? "bytedance/seedance-2.5/reference-to-video" : ""));
+    const result:Record<string,unknown> = { ...previous, artifactId, providerJobId, providerModel, stage: "queued", progressMessage: "Recovering the saved Fal render without submitting a second paid video." };delete result.errorDetail;delete result.dismissedAt;delete result.reservationId;
+    const updated = await env.DB.prepare("UPDATE document_jobs SET status='queued',correlation_id=?,result_json=?,error_message=NULL,completed_at=NULL,lease_expires_at=NULL,notified_at=NULL,updated_at=? WHERE job_id=? AND owner_id=? AND status='failed'").bind(jobId, JSON.stringify(result), now, jobId, user.userId).run();
+    if (Number(updated.meta.changes ?? 0) !== 1) return Response.json({ error: "job_retry_conflict" }, { status: 409 });
+    const queued=await readJob(env,user.userId,jobId);context?.waitUntil(driveDocumentQueue(env,user));return Response.json({job:serializeJob(queued!),reusedProviderRequest:true},{status:202});
+  }
+
   if (path.endsWith("/run") && request.method === "POST") {
     const consent = requireConsent(user); if (consent) return consent;
     const jobId = decodeURIComponent(path.slice(0, -4).replace(/\/$/, "")); const existing = await readJob(env, user.userId, jobId);
@@ -415,8 +432,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
 
   if (request.method === "GET") {
     const requestedJob = path ? await readJob(env, user.userId, decodeURIComponent(path)) : null;
-    const recentTerminalAfter = new Date(Date.now() - 7 * 86_400_000).toISOString();
-    const readVisibleJobs = () => env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND (status IN ('queued','running','committing') OR notified_at IS NULL OR (kind IN ('preview','generate','prompt_fan') AND status IN ('failed','partial') AND completed_at>=?)) ORDER BY CASE WHEN status IN ('queued','running','committing') THEN 0 ELSE 1 END,requested_at DESC LIMIT 120").bind(user.userId, recentTerminalAfter).all<DocumentJobRow>();
+    const readVisibleJobs = () => env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND (status IN ('queued','running','committing') OR notified_at IS NULL OR (kind IN ('preview','generate','prompt_fan','render_document') AND status IN ('failed','partial') AND expires_at>?)) ORDER BY CASE WHEN status IN ('queued','running','committing') THEN 0 ELSE 1 END,requested_at DESC LIMIT 120").bind(user.userId, now).all<DocumentJobRow>();
     let rows = path ? requestedJob ? [requestedJob] : [] : (await readVisibleJobs()).results;
     let reconciled = false;
     const repairCandidates = rows.filter((row) => row.status === "failed" && /Wrong number of parameter bindings/i.test(row.error_message ?? ""));

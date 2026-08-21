@@ -1,5 +1,6 @@
 import type { WorkerEnv } from "./runtime.ts";
 import type { ImageReference } from "./openai-adapter.ts";
+import type { PromptTechnique } from "../src/model/prompt-structures.ts";
 import { providerErrorFromResponse } from "./provider-errors.ts";
 
 type ModerationResult = { flagged?: boolean; categories?: Record<string, boolean>; category_scores?: Record<string, number> };
@@ -92,5 +93,75 @@ export async function moderateExactImagePrompt(env: WorkerEnv, prompt: string, r
     available: true, flagged, categories: [...categories].sort(), scores, blockIds: [], referenceIds: [...referenceIds], model,
     requestId: flaggedRequestId ?? requestIds[0] ?? null, requestIds, probeCount: probes.length, latencyMs,
     coverage: references.length ? "text-and-images" : "text",
+  };
+}
+
+export type PromptTechniqueModerationResult = {
+  technique: PromptTechnique;
+  flagged: boolean;
+  categories: string[];
+  scores: Record<string, number>;
+  requestId: string | null;
+  latencyMs: number;
+};
+
+/**
+ * Compare all four exact prompt representations without making an image request.
+ * Text is sent as one moderation batch; each selected image is checked once and
+ * shared across the four results so reference pixels are never multiplied by the
+ * number of prompt techniques.
+ */
+export async function moderatePromptTechniqueSet(
+  env: WorkerEnv,
+  prompts: Array<{ technique: PromptTechnique; prompt: string }>,
+  references: ImageReference[],
+  signal?: AbortSignal,
+) {
+  if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
+  const textResponse = await requestModeration(env, prompts.map((entry) => entry.prompt), signal);
+  const perPromptLatency = Math.round(textResponse.latencyMs / Math.max(1, prompts.length));
+  const promptResults: PromptTechniqueModerationResult[] = prompts.map((entry, index) => {
+    const result = textResponse.body.results?.[index];
+    const summary = summarize(result ? [result] : []);
+    return { technique: entry.technique, ...summary, requestId: textResponse.requestId, latencyMs: perPromptLatency };
+  });
+
+  const categories = new Set<string>();
+  const scores: Record<string, number> = {};
+  const referenceIds = new Set<string>();
+  const requestIds: string[] = [];
+  let flagged = false;
+  let latencyMs = 0;
+  let flaggedRequestId: string | null = null;
+  let model = textResponse.body.model ?? "omni-moderation-latest";
+  for (const reference of references) {
+    const result = await requestModeration(env, [{ type: "image_url", image_url: { url: `data:${reference.mimeType};base64,${bytesToBase64(reference.bytes)}` } }], signal);
+    const summary = summarize(result.body.results ?? []);
+    latencyMs += result.latencyMs;
+    model = result.body.model ?? model;
+    if (result.requestId) requestIds.push(result.requestId);
+    for (const category of summary.categories) categories.add(category);
+    for (const [category, score] of Object.entries(summary.scores)) scores[category] = Math.max(scores[category] ?? 0, score);
+    if (!summary.flagged) continue;
+    flagged = true;
+    flaggedRequestId ??= result.requestId;
+    referenceIds.add(reference.referenceId ?? reference.blockId ?? reference.label ?? reference.source);
+  }
+  return {
+    promptResults,
+    references: {
+      flagged,
+      categories: [...categories].sort(),
+      scores,
+      referenceIds: [...referenceIds],
+      requestId: flaggedRequestId ?? requestIds[0] ?? null,
+      requestIds,
+      probeCount: references.length,
+      latencyMs,
+      model,
+      coverage: references.length ? "images" as const : "none" as const,
+    },
+    textRequestId: textResponse.requestId,
+    textModel: textResponse.body.model ?? "omni-moderation-latest",
   };
 }

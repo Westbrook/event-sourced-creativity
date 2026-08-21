@@ -13,6 +13,7 @@ import {
   documentJobMaxAttempts,
 } from "../src/model/document-jobs.ts";
 import { documentJobCompletionBindings } from "../worker/document-job-sql.ts";
+import { failedGenerationInputInspection } from "../src/model/generation-inputs.ts";
 import { readFile } from "node:fs/promises";
 
 const job = (patch = {}) => ({
@@ -25,6 +26,8 @@ const job = (patch = {}) => ({
   documentRevision: "rev-one",
   requestKey: "preview:rev-one",
   sourcePreviewId: null,
+  promptTechnique: "prose",
+  promptFanId: null,
   parentJobId: null,
   fanKind: null,
   members: [],
@@ -114,6 +117,10 @@ test("gives creators durable cancellation and administrators a force-fail escape
   ]);
   assert.match(jobsApi,/path\.endsWith\("\/cancel"\)/);
   assert.match(jobsApi,/path\.endsWith\("\/force-fail"\)/);
+  assert.match(jobsApi,/path\.endsWith\("\/retry"\)/);
+  assert.match(jobsApi,/event\.correlationId === target\.correlation_id/);
+  assert.match(jobsApi,/failedEvent\?\.payload\.provider_job_id/);
+  assert.match(jobsApi,/SET status='queued',correlation_id=\?/);
   assert.match(jobsApi,/user\.role !== "admin"/);
   assert.match(jobsApi,/SET status='committing'/);
   assert.match(jobsApi,/status IN \('running','committing'\)/);
@@ -124,6 +131,7 @@ test("gives creators durable cancellation and administrators a force-fail escape
   assert.match(actions,/Stop generation/);
   assert.match(actions,/Force fail/);
   assert.match(store,/stopDocumentJob\(jobId:string,force=false\)/);
+  assert.match(store,/recoverDocumentRender\(jobId:string\)/);
 });
 
 test("identifies the exact document state independently of object key order", () => {
@@ -164,6 +172,25 @@ test("keeps terminal failures visible until their durable notice is dismissed",(
   assert.equal(documentJobFailureVisible(job({status:"partial",dismissedAt:null})),true);
   assert.equal(documentJobFailureVisible(job({status:"failed",dismissedAt:"2026-08-14T12:00:00.000Z"})),false);
   assert.equal(documentJobFailureVisible(job({status:"completed",dismissedAt:null})),false);
+});
+
+test("keeps failed attempts inspectable from their retained prompt and frozen compile",()=>{
+  const events=[
+    {eventId:"compile-1",streamId:"s",sequence:10,occurredAt:"2026-08-12T00:00:01.000Z",recordedAt:"2026-08-12T00:00:01.000Z",actor:"worker:compiler",clientId:"test",correlationId:"c",causationId:null,compensatesEventId:null,schemaVersion:1,type:"ContextCompiled",payload:{document_id:"doc-1",generation_id:"generation-1",prompt_technique:"bullets",context_hash:"hash-1",compiled_snapshot:{facts:[{block_id:"subject-1",properties:{text:"A librarian"}}]},source_block_versions:[{block_id:"subject-1",version:2}],reference_inputs:[{label:"Opening frame",pixels_submitted:true}],used_uploaded_reference_pixels:true}},
+    {eventId:"failure-1",streamId:"s",sequence:11,occurredAt:"2026-08-12T00:00:02.000Z",recordedAt:"2026-08-12T00:00:02.000Z",actor:"worker:generator",clientId:"test",correlationId:"c",causationId:"compile-1",compensatesEventId:null,schemaVersion:1,type:"GenerationFailed",payload:{document_id:"doc-1",generation_id:"generation-1",prompt_technique:"bullets",prompt_ref:"failed-prompt",error_code:"safety_rejected",error_category:"safety"}},
+  ];
+  const inspection=failedGenerationInputInspection(job({kind:"generate",status:"failed",promptTechnique:"bullets",moderationPromptRef:"failed-prompt",attemptCount:1,result:{appendedEventIds:["compile-1","failure-1"]},errorDetail:{code:"safety_rejected",category:"safety",scope:"request",action:"edit_request",message:"Rejected",retryable:false,retryAfterMs:null,requestId:"req_1",httpStatus:400}}),events,{"failed-prompt":"Exact failed provider prompt"});
+  assert.equal(inspection.outcome,"failed");assert.equal(inspection.prompt,"Exact failed provider prompt");assert.equal(inspection.retained,true);assert.equal(inspection.receipt.frozen_inputs[0].context_hash,"hash-1");assert.equal(inspection.receipt.frozen_inputs[0].used_reference_pixels,true);assert.equal(inspection.receipt.failures[0].event_id,"failure-1");assert.equal(inspection.receipt.technical_error.requestId,"req_1");
+});
+
+test("exposes retained document failure history to document and Canvas surfaces",async()=>{
+  const [jobsApi,eventsApi,actions,canvas,inputDialog]=await Promise.all([
+    readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8"),readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),readFile(new URL("../src/components/generation-actions.ts",import.meta.url),"utf8"),readFile(new URL("../src/canvas/canvas-application.ts",import.meta.url),"utf8"),readFile(new URL("../src/components/generation-input-dialog.ts",import.meta.url),"utf8"),
+  ]);
+  assert.match(jobsApi,/kind IN \('preview','generate','prompt_fan','render_document'\)/);assert.match(jobsApi,/expires_at>\?/);assert.match(jobsApi,/response\.ok\?\{\}:parseResult\(row\)/);
+  assert.match(eventsApi,/retainFailurePrompt/);assert.doesNotMatch(eventsApi,/detail\.category==="safety"\?providerFailurePrompt/);
+  assert.match(actions,/Failed generation attempts/);assert.match(actions,/Inspect failed inputs/);assert.match(actions,/Review all \$\{allFailures\.length\} failed attempts/);assert.match(actions,/failedGenerationInputInspection/);
+  assert.match(canvas,/Failed attempts/);assert.match(canvas,/#documentOutputFailures/);assert.match(canvas,/failedGenerationInputInspection/);assert.match(inputDialog,/retained inputs captured before the attempt failed/i);
 });
 
 test("keeps adaptive suggestion receipts associated with the private submitted intent",async()=>{

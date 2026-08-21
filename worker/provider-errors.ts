@@ -34,6 +34,11 @@ export function providerFailurePrompt(input: unknown) {
 }
 
 const errorRecord = (value: unknown) => value && typeof value === "object" ? value as Record<string, unknown> : {};
+const providerErrorRecord=(value:unknown)=>{
+  const root=errorRecord(value);const direct=errorRecord(root.error??root);const detail=Array.isArray(root.detail)?errorRecord(root.detail[0]):{};
+  if(Object.keys(detail).length){const context=errorRecord(detail.ctx);const extra=errorRecord(context.extra_info);return{...detail,message:String(detail.msg??detail.message??direct.message??"provider_request_failed"),code:String(detail.type??detail.code??extra.reason??direct.code??"")};}
+  return direct;
+};
 
 function durationMs(value: string | null) {
   if (!value) return null;
@@ -55,7 +60,7 @@ export function providerRetryAfterMs(response?: Response) {
 
 export function classifyProviderFailure(input: unknown, response?: Response, providerBody?: unknown): ProviderFailureDetail {
   if (input instanceof ProviderRequestError) return input.detail;
-  const body = errorRecord(errorRecord(providerBody).error ?? providerBody);
+  const body = providerErrorRecord(providerBody);
   const message = String(body.message ?? (input instanceof Error ? input.message : "provider_request_failed"));
   const status = response?.status ?? null;
   const providerCode = String(body.code ?? body.type ?? "").trim();
@@ -114,7 +119,7 @@ export function classifyProviderFailure(input: unknown, response?: Response, pro
         : message,
     retryable: category === "network" || category === "rate_limit" || category === "server" || category === "canceled",
     retryAfterMs: providerRetryAfterMs(response),
-    requestId: response?.headers.get("x-request-id") ?? response?.headers.get("openai-request-id") ?? null,
+    requestId: response?.headers.get("x-fal-request-id") ?? response?.headers.get("x-request-id") ?? response?.headers.get("openai-request-id") ?? null,
     httpStatus: status,
   };
 }
@@ -141,7 +146,7 @@ export function applicationFailureDetail(code: string, scope?: unknown, status: 
 }
 
 export function providerErrorFromResponse(response: Response, body: unknown, fallback: string, preparedPrompt: string | null = null) {
-  const record = errorRecord(errorRecord(body).error ?? body);
+  const record = providerErrorRecord(body);
   return new ProviderRequestError(classifyProviderFailure(new Error(String(record.message ?? fallback)), response, body), preparedPrompt);
 }
 

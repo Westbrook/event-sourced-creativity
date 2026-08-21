@@ -1,4 +1,5 @@
 import type { WorkerEnv } from "./runtime.ts";
+import { ApiError, createFalClient } from "@fal-ai/client";
 import { BLOCK_TYPES, type AdaptiveStructure, type BlockKind, type ReferencePixelMode } from "../src/model/block-types.ts";
 import type { LiveReplayPlan } from "../src/model/live-replay.ts";
 import { buildBoundedPromptRepresentation, buildReferencePromptDirectives, buildSpatialPromptDirectives, normalizePromptTechnique, type PromptReferenceDescriptor, type PromptTechnique } from "../src/model/prompt-structures.ts";
@@ -13,14 +14,14 @@ type OpenAIError = { message?: string; type?: string; code?: string | null; para
 type OpenAIResponse = { id?: string; model?: string; output_text?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; error?: OpenAIError };
 type OpenAIImageUsage = { input_tokens?: number; output_tokens?: number; total_tokens?: number; input_tokens_details?: { text_tokens?: number; image_tokens?: number } };
 type OpenAIImageResponse = { created?: number; data?: Array<{ b64_json?: string; revised_prompt?: string }>; usage?: OpenAIImageUsage; error?: OpenAIError };
-type FalQueueStatus = "IN_QUEUE" | "IN_PROGRESS" | "COMPLETED";
-type FalQueueResponse = { status?: FalQueueStatus; request_id?: string; queue_position?: number; logs?: Array<{ message?: string; timestamp?: string }>; metrics?: { inference_time?: number }; error?: OpenAIError };
+type FalQueueStatus = "IN_QUEUE" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | "CANCELLED";
+type FalQueueResponse = { status?: FalQueueStatus; request_id?: string; response_url?:string; status_url?:string; cancel_url?:string; queue_position?: number; logs?: Array<{ message?: string; timestamp?: string }>; metrics?: { inference_time?: number }; error?: OpenAIError };
 type FalVideoFile = { url?: string; content_type?: string; file_name?: string; file_size?: number };
 type FalVideoResponse = { video?: FalVideoFile; data?: { video?: FalVideoFile }; error?: OpenAIError };
 type OpenAIImageStreamEvent = { type?: string; b64_json?: string; created_at?: number; size?: string; output_format?: ImageOutputFormat; partial_image_index?: number; usage?: OpenAIImageUsage; error?: { message?: string } };
 export type CreativeChatMutation = { operation: "create" | "edit" | "remove"; target_block_id: string | null; type: BlockKind; subtype: string; instruction: string; handle: string; reference_pixel_mode: ReferencePixelMode | "unchanged"; image_format: { aspect_ratio:string; width:number; height:number } | null };
 export type CreativeChatResponse = { reply: string; mutations: CreativeChatMutation[]; preview_direction: string; preview_worthy: boolean };
-export type ImageReference = { bytes: Uint8Array; mimeType: string; blockId?: string; referenceId?: string; label?: string; mode?: ReferencePixelMode; source: "uploaded-reference" | "ideation-preview" | "locked-study" };
+export type ImageReference = { bytes: Uint8Array; mimeType: string; blockId?: string; referenceId?: string; label?: string; mode?: ReferencePixelMode; source: "uploaded-reference" | "ideation-preview" | "locked-study"; provider?:string|null; providerModel?:string|null; providerRequestId?:string|null; providerMediaUrl?:string|null };
 export type ImageOutputFormat = "png" | "jpeg" | "webp";
 export type CreativeImagePartial = { bytes: Uint8Array; index: number; mimeType: string; width: number; height: number };
 export type CreativeImageOptions = {
@@ -34,12 +35,26 @@ export type CreativeImageOptions = {
   promptTechnique?: PromptTechnique;
   /** Internal evaluation/provider bridge. The caller must retain the compiler receipt. */
   preparedPrompt?: string;
+  /** Ideogram-only routing. Native captions are deterministic; expanded plain text delegates rewriting to Fal. */
+  ideogramPromptMode?: "native_caption" | "expanded_plain";
+  /** Ideogram-only prompt expansion override. Production native captions default to None. */
+  ideogramExpansionModel?: "None" | "Medium" | "Large";
+  /** Evaluation-only native-caption emphasis profile. */
+  ideogramCaptionStrategy?: "balanced" | "spatial_strict" | "material_explicit" | "spatial_material" | "all_facts" | "composition_lock" | "semantic_checklist" | "constraint_first" | "compact_literal" | "literal_contract" | "production_director" | "shot_plan" | "clean_editorial";
+  /** Evaluation-only immutable candidate identity. Production callers omit this. */
+  ideogramAdapterVersion?: string;
+  /** Evaluation-only Fal image-to-image transformation-strength override. */
+  ideogramReferenceStrength?: number;
+  /** Evaluation-only deterministic Fal seed. Retained in the provider receipt. */
+  ideogramSeed?: number;
   signal?: AbortSignal;
   onStage?: (stage:string,message:string) => void | Promise<void>;
 };
 export type LiveReplayPlanningContext = { stage: ReplayDevelopmentStage; lockedStudies: Array<{ kind: CreativeStudyKind; label: string; lockSummary: string; lockedDecisions: LiveReplayPlan["development"]["locked_decisions"] }>; experienceProfile?:ReplayExperienceId };
-export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; signal?:AbortSignal };
-export type CreativeVideoOptions = { seconds:4|8|10; size:"1280x720"|"720x1280"; providerJobId?:string; signal?:AbortSignal; onStage?:(stage:string,message:string)=>void|Promise<void>; onReceipt?:(receipt:{providerJobId:string;provider:string;model:string})=>void|Promise<void> };
+export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; videoSeconds?:4|8|10; videoSize?:"1280x720"|"720x1280"; signal?:AbortSignal };
+export type VideoReference = { bytes:Uint8Array; mimeType:string; blockId:string; referenceId:string; label:string; mode:ReferencePixelMode; sequence:number|null; shotDirection:string; cameraDirection:string; framePrompt:string; sourceArtifactId:string|null; sourceArtifactItemId:string|null; sourceArtifactKind:string|null; storyboardTitle:string; provider?:string|null; providerModel?:string|null; providerRequestId?:string|null; providerMediaUrl?:string|null };
+export type CreativeVideoPreparedReceipt = { provider:string; model:string; submittedPrompt:string; parameters:Record<string,unknown>; referenceInputs:Array<Record<string,unknown>>; usedReferencePixels:boolean };
+export type CreativeVideoOptions = { seconds:4|8|10; size:"1280x720"|"720x1280"; resolution?:"480p"|"720p"; generateAudio?:boolean; endUserId?:string; referencePromptProfile?:"standard"|"positive-only"; providerJobId?:string; providerModel?:string; providerStatusUrl?:string; providerResponseUrl?:string; providerCancelUrl?:string; references?:VideoReference[]; signal?:AbortSignal; onStage?:(stage:string,message:string)=>void|Promise<void>; onPrepared?:(receipt:CreativeVideoPreparedReceipt)=>void|Promise<void>; onReceipt?:(receipt:{providerJobId:string;provider:string;model:string;providerStatusUrl:string;providerResponseUrl:string;providerCancelUrl:string})=>void|Promise<void> };
 
 const outputSchema = {
   type: "object",
@@ -347,15 +362,28 @@ const artifactInstructions:Record<DocumentArtifactKind,string>={
 
 export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");const started=Date.now();const itemCount=Math.max(1,Math.min(12,Math.floor(Number(input.options?.itemCount??(kind==="slides"?7:kind==="storyboard"?6:kind==="short_story"?3:1)))));
-  const instructions=`You transform a durable creative document into a ${kind.replaceAll("_"," ")} for an end user. ${artifactInstructions[kind]} Treat include and prefer blocks as positive direction; treat avoid and prohibit blocks as negative constraints, never as subjects to feature. Respect every block's spatial scope and authority. Do not mention blocks, events, schemas, or internal implementation. Return exactly ${itemCount} ordered item${itemCount===1?"":"s"}.`;
-  const providerInput=JSON.stringify({document_title:input.documentTitle,creative_context:input.snapshot,audience:input.options?.audience??"general",tone:input.options?.tone??"derived from the document"});
+  const videoContract=kind==="video"?` The requested output is exactly ${input.options?.videoSeconds??4} seconds in ${input.options?.videoSize==="720x1280"?"9:16 portrait":"16:9 landscape"}. The motion prompt must fit that duration; do not claim or imply a different runtime. Preserve ordered storyboard shots as chronology, compressing their beats into the available runtime without dropping named continuity.`:"";
+  const instructions=`You transform a durable creative document into a ${kind.replaceAll("_"," ")} for an end user. ${artifactInstructions[kind]}${videoContract} Treat include and prefer blocks as positive direction; treat avoid and prohibit blocks as negative constraints, never as subjects to feature. Respect every block's spatial scope and authority. Do not mention blocks, events, schemas, or internal implementation. Return exactly ${itemCount} ordered item${itemCount===1?"":"s"}.`;
+  const providerInput=JSON.stringify({document_title:input.documentTitle,creative_context:input.snapshot,audience:input.options?.audience??"general",tone:input.options?.tone??"derived from the document",...(kind==="video"?{video:{duration_seconds:input.options?.videoSeconds??4,frame:input.options?.videoSize??"1280x720",aspect_ratio:input.options?.videoSize==="720x1280"?"9:16":"16:9"}}:{})});
   const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),signal:input.options?.signal,body:JSON.stringify({model:env.OPENAI_MODEL??"gpt-5.6-terra",instructions,input:providerInput,text:{verbosity:"medium",format:{type:"json_schema",name:`document_${kind}`,strict:true,schema:documentArtifactSchema(kind)}},reasoning:{effort:"low"},max_output_tokens:kind==="short_story"?6000:kind==="slides"?6500:kind==="storyboard"?4000:3000,store:false,safety_identifier:await safetyIdentifier(userId)})});
   const body=await response.json() as OpenAIResponse;if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`,`Document ${kind} instructions:\n${instructions}\n\nCreative context:\n${providerInput}`);const raw=responseText(body);if(!raw)throw new Error("provider_returned_no_output");const output=parseDocumentArtifactContent(raw) as DocumentArtifactDraft|null;if(!output)throw new Error("provider_returned_invalid_json");const rawItems=(JSON.parse(raw) as {items?:unknown[]}).items??[];if(!output.content_markdown.trim()||output.items.length!==itemCount||kind==="slides"&&(!output.presentation?.footerLabel||!slideDeckCopyIsDistinct(rawItems)||rawItems.some((item)=>!slideCopyIsDistinct(item))||output.items.some((item)=>!item.title.trim()||!item.body.trim()||!item.slide||!slideVisualIsComplete(item.slide))))throw new Error("provider_returned_incomplete_document_artifact");
-  return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output,raw,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
+  return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output,raw,inputReceipt:{instructions,providerInput:JSON.parse(providerInput) as Record<string,unknown>},latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
 const falHeaders=(env:WorkerEnv)=>({authorization:`Key ${env.FAL_KEY}`,"content-type":"application/json"});
 const falVideoEndpoint=(model:string)=>`https://queue.fal.run/${model}`;
+const falQueueApplication=(model:string)=>{
+  const parts=model.split("/").map((part)=>part.trim()).filter(Boolean);const length=parts[0]==="workflows"||parts[0]==="comfy"?3:2;
+  if(parts.length<length)throw new Error("fal_video_model_invalid");return parts.slice(0,length).join("/");
+};
+const trustedFalQueueUrl=(value:string,fallback:string)=>{
+  const candidate=value.trim()||fallback;let url:URL;try{url=new URL(candidate);}catch{throw new Error("fal_queue_url_invalid");}
+  if(url.protocol!=="https:"||url.hostname!=="queue.fal.run")throw new Error("fal_queue_url_untrusted");return url.toString();
+};
+const falVideoQueueUrls=(model:string,providerJobId:string,receipt:Partial<FalQueueResponse>={})=>{
+  const base=`https://queue.fal.run/${falQueueApplication(model)}/requests/${encodeURIComponent(providerJobId)}`;
+  return{statusUrl:trustedFalQueueUrl(String(receipt.status_url??""),`${base}/status`),responseUrl:trustedFalQueueUrl(String(receipt.response_url??""),base),cancelUrl:trustedFalQueueUrl(String(receipt.cancel_url??""),`${base}/cancel`)};
+};
 const falErrorFromResponse=(response:Response,body:unknown,fallback:string,prompt:string)=>{
   const error=providerErrorFromResponse(response,body,fallback,prompt);return new ProviderRequestError({...error.detail,code:error.detail.code.startsWith("fal_")?error.detail.code:`fal_${error.detail.code}`},prompt);
 };
@@ -370,27 +398,113 @@ const trustedFalMediaUrl=(value:string)=>{
   if(url.protocol!=="https:"||url.hostname!=="fal.media"&&!url.hostname.endsWith(".fal.media"))throw new Error("provider_returned_untrusted_video_url");
   return url.toString();
 };
-async function cancelFalVideo(env:WorkerEnv,model:string,providerJobId:string){
-  try{await fetch(`${falVideoEndpoint(model)}/requests/${encodeURIComponent(providerJobId)}/cancel`,{method:"PUT",headers:falHeaders(env)});}catch{/* Cancellation is best-effort; the durable job still records the local stop. */}
+const isSeedanceReferenceVideo=(model:string)=>model==="bytedance/seedance-2.5/reference-to-video";
+const videoReferenceToken=(model:string,index:number)=>isSeedanceReferenceVideo(model)?`@Image${index+1}`:`<IMAGE_REF_${index}>`;
+const videoReferenceProvenance=(references:VideoReference[],model:string,profile:"standard"|"positive-only")=>{
+  if(!references.length)return"";
+  if(profile==="positive-only")return `REFERENCE PROVENANCE\nEvery attached image is an authorized creative reference depicting an adult fictional character created for this project. Use each numbered image only for its assigned creative role and preserve the established character continuity and art direction.\nReference syntax for this provider: ${references.map((_,index)=>videoReferenceToken(model,index)).join(", ")}.`;
+  const syntheticStoryboard=references.every((reference)=>reference.sourceArtifactKind==="storyboard"&&Boolean(reference.sourceArtifactId));
+  const provenance=syntheticStoryboard
+    ? "Every attached image is a system-generated storyboard frame for this fictional production. Every depicted person and face is a fictional, synthetic character—not a photograph of, or biometric reference to, a real person or public figure. Do not identify, infer, or introduce a real person."
+    : "These images are authorized creative references for this project. Do not identify, infer, or introduce a real person or public figure from a depicted face; use each image only for the explicitly assigned fictional creative role.";
+  return `IDENTITY AND REFERENCE PROVENANCE\n${provenance}\nPreserve fictional character continuity without converting any face into a real-world identity. This provenance statement describes the source material; it does not override any provider safety policy.\nReference syntax for this provider: ${references.map((_,index)=>videoReferenceToken(model,index)).join(", ")}.`;
+};
+const videoReferencePrompt=(references:VideoReference[],model:string,profile:"standard"|"positive-only")=>{
+  if(!references.length)return"";
+  const lines=references.map((reference,index)=>{
+    const shot=reference.sequence?`Storyboard shot ${reference.sequence}`:`Reference image ${index+1}`;
+    const direction=[reference.shotDirection,reference.cameraDirection,reference.framePrompt].map((value)=>value.trim()).filter(Boolean).join(" Camera and continuity: ");
+    const role=reference.sequence
+      ? "controls the fictional character appearance, wardrobe, environment state, composition, and action continuity for this point in the ordered storyboard"
+      : "controls only the explicitly described subject, environment, composition, palette, or style";
+    return `${videoReferenceToken(model,index)} — ${shot}${reference.storyboardTitle?` from “${reference.storyboardTitle}”`:""} — ${reference.label}. This reference ${role}${profile==="standard"?"; do not copy incidental text, artifacts, or unintended identities":""}.${direction?` ${direction}`:""}`;
+  });
+  return `REFERENCE ROLES AND ORDER\nThe provider receives the actual pixels in this exact order. Preserve recognizable fictional subjects, locations, props, palette, and continuity from them. When entries are storyboard frames, treat their order as shot chronology and follow each shot direction. Do not interchange the ${profile==="standard"?"role or identity":"creative role"} assigned to one numbered reference with another.\n${lines.join("\n")}`;
+};
+const videoReferenceReceipt=async(reference:VideoReference,index:number,transport="pending")=>{
+  const stableBytes=new Uint8Array(reference.bytes.byteLength);stableBytes.set(reference.bytes);const digest=await crypto.subtle.digest("SHA-256",stableBytes.buffer);const sha256=Array.from(new Uint8Array(digest),(byte)=>byte.toString(16).padStart(2,"0")).join("");
+  return{index:index+1,block_id:reference.blockId,reference_id:reference.referenceId,label:reference.label,mode:reference.mode,mime_type:reference.mimeType,byte_length:reference.bytes.length,sha256,storyboard_sequence:reference.sequence,shot_direction:reference.shotDirection||null,camera_direction:reference.cameraDirection||null,frame_prompt:reference.framePrompt||null,source_artifact_id:reference.sourceArtifactId,source_artifact_item_id:reference.sourceArtifactItemId,source_artifact_kind:reference.sourceArtifactKind,storyboard_title:reference.storyboardTitle||null,pixels_submitted:true,provider_reference_mode:"pixel",provider_downgrade_reason:null,transport,original_provider_asset_reused:transport==="original-fal-url"};
+};
+async function cancelFalVideo(env:WorkerEnv,model:string,providerJobId:string,cancelUrl?:string){
+  try{const urls=falVideoQueueUrls(model,providerJobId,{cancel_url:cancelUrl});await fetch(urls.cancelUrl,{method:"PUT",headers:falHeaders(env)});}catch{/* Cancellation is best-effort; the durable job still records the local stop. */}
+}
+
+type FalJsonRead<T>={body:T;raw:string;malformed:boolean};
+const falBodyExcerpt=(raw:string)=>raw.trim().replace(/\s+/g," ").slice(0,500);
+async function readFalJson<T extends Record<string,unknown>>(response:Response):Promise<FalJsonRead<T>>{
+  const raw=await response.text();if(!raw.trim())return{body:{} as T,raw,malformed:false};
+  try{return{body:JSON.parse(raw) as T,raw,malformed:false};}catch{return{body:{} as T,raw,malformed:true};}
+}
+function falInvalidResponseError(code:string,phase:string,response:Response,read:FalJsonRead<Record<string,unknown>>,prompt:string,requestId:string|null=null){
+  const contentType=response.headers.get("content-type")??"not supplied";const excerpt=falBodyExcerpt(read.raw);
+  return new ProviderRequestError({code,category:"server",scope:"provider",action:"retry",message:`Fal returned ${read.raw.trim()?"an incomplete or non-JSON":"an empty"} ${phase} response (HTTP ${response.status}; content type ${contentType})${excerpt?`: ${excerpt}`:"."} The application preserved the prepared input and will not report this as a document-content error.`,retryable:true,retryAfterMs:1_000,requestId:requestId??response.headers.get("x-fal-request-id"),httpStatus:response.status},prompt);
+}
+async function readFalQueueResponse<T extends Record<string,unknown>>(url:string,init:RequestInit,phase:string,prompt:string,requestId:string|null=null):Promise<{response:Response;body:T;malformed:boolean}>{
+  for(let attempt=1;attempt<=3;attempt+=1){
+    const response=await openAIRequest(url,init);const read=await readFalJson<T>(response);
+    if(!response.ok){if(response.status===405)throw new ProviderRequestError({code:"fal_queue_route_method_not_allowed",category:"server",scope:"provider",action:"retry",message:`Fal rejected the ${phase} queue route with HTTP 405. The provider request ID and exact inputs were preserved; retrying can resume the already-paid render through Fal's application-level queue URL.`,retryable:true,retryAfterMs:1_000,requestId,httpStatus:405},prompt);const providerBody=read.malformed||!read.raw.trim()?{error:{message:`Fal returned HTTP ${response.status} without a usable JSON error receipt${falBodyExcerpt(read.raw)?`: ${falBodyExcerpt(read.raw)}`:"."}`}}:read.body;throw falErrorFromResponse(response,providerBody,`fal_${response.status}`,prompt);}
+    if(!read.malformed&&read.raw.trim())return{response,body:read.body,malformed:false};
+    if(attempt<3){await wait(250*attempt,init.signal??undefined);continue;}
+    throw falInvalidResponseError(`fal_${phase}_response_invalid`,phase,response,read as FalJsonRead<Record<string,unknown>>,prompt,requestId);
+  }
+  throw new Error("fal_response_retry_exhausted");
+}
+const trustedFalImageUrl=(value:unknown)=>{try{const url=new URL(String(value??""));return url.protocol==="https:"&&(url.hostname==="fal.media"||url.hostname.endsWith(".fal.media"))?url.toString():"";}catch{return"";}};
+const sha256Bytes=async(bytes:Uint8Array)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new Uint8Array(bytes).buffer)),(byte)=>byte.toString(16).padStart(2,"0")).join("");
+async function originalFalReferenceUrl(env:WorkerEnv,reference:VideoReference,signal?:AbortSignal){
+  if(reference.provider!=="fal")return"";let candidate=trustedFalImageUrl(reference.providerMediaUrl);
+  if(!candidate&&reference.providerRequestId&&reference.providerModel?.startsWith("ideogram/")){
+    try{const url=`https://queue.fal.run/${falQueueApplication(reference.providerModel)}/requests/${encodeURIComponent(reference.providerRequestId)}`;const response=await openAIRequest(url,{method:"GET",headers:falHeaders(env),signal});if(response.ok){const read=await readFalJson<Record<string,unknown>>(response);const images=Array.isArray(read.body.images)?read.body.images:[];candidate=trustedFalImageUrl((images[0] as Record<string,unknown>|undefined)?.url);}}catch{/* Fall through to a fresh Fal storage upload. */}
+  }
+  if(!candidate)return"";
+  try{const response=await openAIRequest(candidate,{method:"GET",signal});if(!response.ok)return"";const contentType=response.headers.get("content-type")??"";if(contentType&&!contentType.startsWith("image/"))return"";const source=new Uint8Array(await response.arrayBuffer());if(!source.length)return"";const [sourceHash,storedHash]=await Promise.all([sha256Bytes(source),sha256Bytes(reference.bytes)]);return sourceHash===storedHash?candidate:"";}catch{return"";}
+}
+async function uploadFalVideoReferences(env:WorkerEnv,references:VideoReference[],prompt:string,options:CreativeVideoOptions){
+  if(!references.length)return{urls:[] as string[],transports:[] as string[]};const client=createFalClient({credentials:env.FAL_KEY});const urls:string[]=[];const transports:string[]=[];
+  for(let index=0;index<references.length;index+=1){
+    const reference=references[index];const original=await originalFalReferenceUrl(env,reference,options.signal);if(original){urls.push(original);transports.push("original-fal-url");await options.onStage?.("preparing-references",`Reference ${index+1} of ${references.length} reuses its byte-verified original Fal asset.`);continue;}await options.onStage?.("uploading-references",`Uploading reference ${index+1} of ${references.length} through Fal's short-lived media transport.`);
+    try{const bytes=new Uint8Array(reference.bytes).buffer as ArrayBuffer;urls.push(await client.storage.upload(new Blob([bytes],{type:reference.mimeType}),{lifecycle:{expiresIn:"1d"}}));transports.push("fal-storage-upload");}
+    catch(error){
+      if(error instanceof ApiError){const response=new Response(null,{status:error.status||502,headers:error.requestId?{"x-fal-request-id":error.requestId}:{}});throw falErrorFromResponse(response,error.body??{error:{message:error.message}},`fal_reference_upload_${error.status||"failed"}`,prompt);}
+      const detail=classifyProviderFailure(error);throw new ProviderRequestError({...detail,code:"fal_reference_upload_failed",message:`Fal could not stage ${reference.label||`reference ${index+1}`} for video generation. ${detail.message}`,requestId:detail.requestId},prompt);
+    }
+  }
+  return{urls,transports};
 }
 
 export async function generateCreativeVideo(env:WorkerEnv,prompt:string,options:CreativeVideoOptions) {
   if(!env.FAL_KEY)throw new ProviderRequestError({code:"video_provider_not_configured",category:"authentication",scope:"account",action:"check_credentials",message:"Fal video generation is not configured for this environment.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:503});
   const provider=env.FORMA_VIDEO_PROVIDER??"fal";if(provider!=="fal")throw new ProviderRequestError({code:"video_provider_unsupported",category:"access",scope:"provider",action:"check_credentials",message:`The configured video provider ${provider} is not supported by this build.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:503});
   const cleanPrompt=prompt.trim();if(!cleanPrompt)throw new ProviderRequestError({code:"video_prompt_required",category:"provider",scope:"request",action:"edit_request",message:"The document did not produce a usable motion prompt.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
-  if(cleanPrompt.length>20_000)throw new ProviderRequestError({code:"video_prompt_too_long",category:"provider",scope:"request",action:"edit_request",message:`The prepared motion prompt is ${cleanPrompt.length.toLocaleString()} characters; Gemini Omni Flash accepts at most 20,000. Shorten unusually long document instructions before retrying.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400},cleanPrompt);
-  const started=Date.now();const model=env.FAL_VIDEO_MODEL??"google/gemini-omni-flash";let providerJobId=options.providerJobId??"";
+  const references=options.references??[];const model=options.providerModel??(references.length?(env.FAL_REFERENCE_VIDEO_MODEL??"bytedance/seedance-2.5/reference-to-video"):(env.FAL_VIDEO_MODEL??"bytedance/seedance-2.5/text-to-video"));const maxReferenceBytes=isSeedanceReferenceVideo(model)?30*1024*1024:8*1024*1024;for(const reference of references){if(!reference.bytes.length||!reference.mimeType.startsWith("image/"))throw new ProviderRequestError({code:"video_reference_invalid",category:"provider",scope:"request",action:"edit_request",message:`${reference.label||"A video reference"} is not a usable image. Replace it before retrying.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});if(reference.bytes.length>maxReferenceBytes)throw new ProviderRequestError({code:"video_reference_too_large",category:"provider",scope:"request",action:"edit_request",message:`${reference.label||"A video reference"} is larger than the provider's ${Math.round(maxReferenceBytes/1024/1024)} MB reference-image limit. Resize it before retrying.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});}
+  // Provider partner validation is pixel-side and cannot be predicted from words such as
+  // “face” or “character”. Preserve every user-approved pixel reference and let the
+  // provider return an inspectable validation receipt if it cannot process a specific asset.
+  const providerReferences=references;const referencePromptProfile=options.referencePromptProfile??"standard";const referenceDirective=videoReferencePrompt(providerReferences,model,referencePromptProfile);const provenanceDirective=videoReferenceProvenance(references,model,referencePromptProfile);const runtimeDirective=`OUTPUT CONTRACT\nCreate exactly ${options.seconds} seconds of ${options.size==="720x1280"?"9:16 portrait":"16:9 landscape"} video. Fit every described beat within that runtime; do not follow any conflicting duration written elsewhere in the creative context.`;const submittedPrompt=[runtimeDirective,provenanceDirective,referenceDirective,"MOTION AND STORY DIRECTION\n"+cleanPrompt].filter(Boolean).join("\n\n");
+  if(submittedPrompt.length>20_000)throw new ProviderRequestError({code:"video_prompt_too_long",category:"provider",scope:"request",action:"edit_request",message:`The prepared motion prompt is ${submittedPrompt.length.toLocaleString()} characters; the video provider accepts at most 20,000. Shorten unusually long document instructions before retrying.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400},submittedPrompt);
+  const started=Date.now();let providerJobId=options.providerJobId??"";let providerStatusUrl=options.providerStatusUrl??"",providerResponseUrl=options.providerResponseUrl??"",providerCancelUrl=options.providerCancelUrl??"";let referenceReceipts=await Promise.all(references.map((reference,index)=>videoReferenceReceipt(reference,index,providerJobId?"provider-job-resume":"pending")));const aspectRatio=options.size==="720x1280"?"9:16":"16:9";const resolution=options.resolution??"720p";const generateAudio=options.generateAudio??true;const endUserId=options.endUserId?await safetyIdentifier(options.endUserId):"";let providerParameters:Record<string,unknown>={aspect_ratio:aspectRatio,duration:options.seconds};
   try{
     if(!providerJobId){
-      await options.onStage?.("submitting","Submitting the motion prompt to Fal for a synchronized video and audio render.");
-      const created=await openAIRequest(falVideoEndpoint(model),{method:"POST",headers:falHeaders(env),signal:options.signal,body:JSON.stringify({prompt:cleanPrompt,aspect_ratio:options.size==="720x1280"?"9:16":"16:9",duration:options.seconds})});const receipt=await created.json() as FalQueueResponse;if(!created.ok)throw falErrorFromResponse(created,receipt,`fal_${created.status}`,cleanPrompt);providerJobId=String(receipt.request_id??"");if(!providerJobId)throw new Error("provider_returned_no_video_job");await options.onReceipt?.({providerJobId,provider:"fal",model});
+      const staged=await uploadFalVideoReferences(env,providerReferences,submittedPrompt,options);const imageUrls=staged.urls;referenceReceipts=await Promise.all(references.map((reference,index)=>videoReferenceReceipt(reference,index,staged.transports[index]??"fal-storage-upload")));const uniqueTransports=[...new Set(staged.transports)];const imageTransport=uniqueTransports.length===1?uniqueTransports[0]??"none":uniqueTransports.length?"mixed":"none";
+      providerParameters={aspect_ratio:aspectRatio,duration:options.seconds,...(isSeedanceReferenceVideo(model)?{resolution,generate_audio:generateAudio,end_user_id_supplied:Boolean(endUserId),reference_syntax:"@ImageN",reference_prompt_profile:referencePromptProfile,identity_provenance:references.every((reference)=>reference.sourceArtifactKind==="storyboard")?"fictional-synthetic-storyboard":"authorized-creative-reference",reference_requested_count:references.length,provider_pixel_count:providerReferences.length}:{}),...(providerReferences.length?{image_count:providerReferences.length,image_transport:imageTransport,original_provider_asset_count:staged.transports.filter((transport)=>transport==="original-fal-url").length,uploaded_asset_count:staged.transports.filter((transport)=>transport==="fal-storage-upload").length,reference_order:"storyboard-sequence-then-document-position"}:{})};
+      await options.onPrepared?.({provider:"fal",model,submittedPrompt,parameters:providerParameters,referenceInputs:referenceReceipts,usedReferencePixels:references.length>0});
+      await options.onStage?.("submitting",providerReferences.length?`Submitting the motion prompt and ${providerReferences.length} staged reference image${providerReferences.length===1?"":"s"} to Fal.`:"Submitting the motion prompt to Fal for a synchronized video and audio render.");
+      const providerInput=isSeedanceReferenceVideo(model)?{prompt:submittedPrompt,aspect_ratio:aspectRatio,duration:options.seconds,resolution,generate_audio:generateAudio,...(endUserId?{end_user_id:endUserId}:{}),...(providerReferences.length?{image_urls:imageUrls}:{})}:{prompt:submittedPrompt,aspect_ratio:aspectRatio,duration:options.seconds,...(providerReferences.length?{image_urls:imageUrls}:{})};
+      const created=await openAIRequest(falVideoEndpoint(model),{method:"POST",headers:falHeaders(env),signal:options.signal,body:JSON.stringify(providerInput)});const read=await readFalJson<FalQueueResponse & Record<string,unknown>>(created);if(!created.ok){const body=read.malformed||!read.raw.trim()?{error:{message:`Fal returned HTTP ${created.status} without a usable JSON submission receipt${falBodyExcerpt(read.raw)?`: ${falBodyExcerpt(read.raw)}`:"."}`}}:read.body;throw falErrorFromResponse(created,body,`fal_${created.status}`,submittedPrompt);}providerJobId=String(read.body.request_id??created.headers.get("x-fal-request-id")??"");if(!providerJobId)throw falInvalidResponseError("fal_submission_receipt_missing","submission",created,read as FalJsonRead<Record<string,unknown>>,submittedPrompt);const queueUrls=falVideoQueueUrls(model,providerJobId,read.body);providerStatusUrl=queueUrls.statusUrl;providerResponseUrl=queueUrls.responseUrl;providerCancelUrl=queueUrls.cancelUrl;await options.onReceipt?.({providerJobId,provider:"fal",model,providerStatusUrl,providerResponseUrl,providerCancelUrl});
+    }else{
+      await options.onPrepared?.({provider:"fal",model,submittedPrompt,parameters:providerParameters,referenceInputs:referenceReceipts,usedReferencePixels:references.length>0});
     }
+    const resumeUrls=falVideoQueueUrls(model,providerJobId,{status_url:providerStatusUrl,response_url:providerResponseUrl,cancel_url:providerCancelUrl});providerStatusUrl=resumeUrls.statusUrl;providerResponseUrl=resumeUrls.responseUrl;providerCancelUrl=resumeUrls.cancelUrl;if(options.providerJobId)await options.onReceipt?.({providerJobId,provider:"fal",model,providerStatusUrl,providerResponseUrl,providerCancelUrl});
     const deadline=Date.now()+15*60_000;let state:FalQueueResponse={request_id:providerJobId,status:"IN_QUEUE"};
     while(state.status!=="COMPLETED"){
       if(options.signal?.aborted)throw new DOMException("The operation was aborted.","AbortError");if(Date.now()>deadline)throw new ProviderRequestError({code:"video_generation_timeout",category:"server",scope:"provider",action:"retry",message:"Fal did not finish within fifteen minutes. The durable request receipt can be retried without starting a duplicate render.",retryable:true,retryAfterMs:30_000,requestId:providerJobId,httpStatus:null});
-      const checked=await openAIRequest(`${falVideoEndpoint(model)}/requests/${encodeURIComponent(providerJobId)}/status?logs=1`,{method:"GET",headers:falHeaders(env),signal:options.signal});state=await checked.json() as FalQueueResponse;if(!checked.ok)throw falErrorFromResponse(checked,state,`fal_${checked.status}`,cleanPrompt);if(state.status!=="COMPLETED"){await options.onStage?.(state.status==="IN_QUEUE"?"queued":"rendering",falVideoStatusMessage(state));await wait(5_000,options.signal);}
+      const checked=await readFalQueueResponse<FalQueueResponse & Record<string,unknown>>(`${providerStatusUrl}${providerStatusUrl.includes("?")?"&":"?"}logs=1`,{method:"GET",headers:falHeaders(env),signal:options.signal},"status",submittedPrompt,providerJobId);state=checked.body;if(state.status==="FAILED"||state.status==="CANCELLED")throw new ProviderRequestError({code:`fal_video_${state.status.toLowerCase()}`,category:"provider",scope:"request",action:state.status==="FAILED"?"edit_request":"retry",message:`Fal marked video request ${providerJobId.slice(0,8)} as ${state.status.toLowerCase()}. Review the retained input receipt before retrying.`,retryable:state.status==="CANCELLED",retryAfterMs:state.status==="CANCELLED"?1_000:null,requestId:providerJobId,httpStatus:422},submittedPrompt);if(!state.status||!["IN_QUEUE","IN_PROGRESS","COMPLETED"].includes(state.status))throw new ProviderRequestError({code:"fal_status_receipt_invalid",category:"server",scope:"provider",action:"retry",message:"Fal returned a status receipt without a recognized queue state. The durable provider request ID was preserved for retry.",retryable:true,retryAfterMs:1_000,requestId:providerJobId,httpStatus:checked.response.status},submittedPrompt);if(state.response_url||state.status_url||state.cancel_url){const queueUrls=falVideoQueueUrls(model,providerJobId,{response_url:state.response_url??providerResponseUrl,status_url:state.status_url??providerStatusUrl,cancel_url:state.cancel_url??providerCancelUrl});providerStatusUrl=queueUrls.statusUrl;providerResponseUrl=queueUrls.responseUrl;providerCancelUrl=queueUrls.cancelUrl;}if(state.status!=="COMPLETED"){await options.onStage?.(state.status==="IN_QUEUE"?"queued":"rendering",falVideoStatusMessage(state));await wait(5_000,options.signal);}
     }
-    await options.onStage?.("downloading","Video rendered. Saving the playable result.");const resultResponse=await openAIRequest(`${falVideoEndpoint(model)}/requests/${encodeURIComponent(providerJobId)}`,{method:"GET",headers:falHeaders(env),signal:options.signal});const result=await resultResponse.json() as FalVideoResponse;if(!resultResponse.ok)throw falErrorFromResponse(resultResponse,result,`fal_${resultResponse.status}`,cleanPrompt);const video=result.video??result.data?.video;const mediaUrl=trustedFalMediaUrl(String(video?.url??""));const content=await openAIRequest(mediaUrl,{method:"GET",signal:options.signal});if(!content.ok)throw falErrorFromResponse(content,{},`fal_media_${content.status}`,cleanPrompt);const bytes=new Uint8Array(await content.arrayBuffer());if(!bytes.length)throw new Error("provider_returned_empty_video");const mimeType=String(video?.content_type??content.headers.get("content-type")??"video/mp4");if(!mimeType.startsWith("video/"))throw new Error("provider_returned_invalid_video_type");
-    return{providerJobId,provider:"fal",model,bytes,mimeType,seconds:options.seconds,size:options.size,latencyMs:Date.now()-started,costMicrousd:options.seconds*125_000};
-  }catch(error){if(options.signal?.aborted&&providerJobId)await cancelFalVideo(env,model,providerJobId);throw error;}
+    await options.onStage?.("finalizing","Provider processing finished. Validating the final result receipt before reporting a usable video.");let resultRead:{response:Response;body:FalVideoResponse & Record<string,unknown>;malformed:boolean};try{resultRead=await readFalQueueResponse<FalVideoResponse & Record<string,unknown>>(providerResponseUrl,{method:"GET",headers:falHeaders(env),signal:options.signal},"result",submittedPrompt,providerJobId);}catch(error){if(error instanceof ProviderRequestError&&error.detail.category==="safety")throw new ProviderRequestError({...error.detail,probe:"fal-seedance-result-partner-validation"},error.preparedPrompt??submittedPrompt);throw error;}const result=resultRead.body;const video=result.video??result.data?.video;const mediaUrl=trustedFalMediaUrl(String(video?.url??""));await options.onStage?.("downloading","The provider accepted the final result. Saving the playable video.");const content=await openAIRequest(mediaUrl,{method:"GET",signal:options.signal});if(!content.ok)throw falErrorFromResponse(content,{},`fal_media_${content.status}`,submittedPrompt);const bytes=new Uint8Array(await content.arrayBuffer());if(!bytes.length)throw new ProviderRequestError({code:"fal_video_empty",category:"server",scope:"provider",action:"retry",message:"Fal completed the request but returned an empty video file.",retryable:true,retryAfterMs:1_000,requestId:providerJobId,httpStatus:content.status},submittedPrompt);const mimeType=String(video?.content_type??content.headers.get("content-type")??"video/mp4");if(!mimeType.startsWith("video/"))throw new ProviderRequestError({code:"fal_video_type_invalid",category:"server",scope:"provider",action:"retry",message:`Fal completed the request but returned ${mimeType||"an unknown media type"} instead of video.`,retryable:true,retryAfterMs:1_000,requestId:providerJobId,httpStatus:content.status},submittedPrompt);
+    const costPerSecond=isSeedanceReferenceVideo(model)?(resolution==="480p"?220_500:473_000):(providerReferences.length?130_000:125_000);return{providerJobId,provider:"fal",model,providerStatusUrl,providerResponseUrl,providerCancelUrl,bytes,mimeType,seconds:options.seconds,size:options.size,latencyMs:Date.now()-started,costMicrousd:options.seconds*costPerSecond,submittedPrompt,providerParameters,referenceInputs:referenceReceipts,usedReferencePixels:providerReferences.length>0};
+  }catch(error){
+    if(options.signal?.aborted&&providerJobId)await cancelFalVideo(env,model,providerJobId,providerCancelUrl);
+    if(error instanceof ProviderRequestError&&error.detail.category==="safety"&&references.length)throw new ProviderRequestError({...error.detail,contributingBlockIds:[...new Set(references.map((reference)=>reference.blockId).filter(Boolean))],contributingReferenceIds:[...new Set(references.map((reference)=>reference.referenceId).filter(Boolean))],probe:error.detail.probe??"fal-seedance-reference-partner-validation"},error.preparedPrompt??submittedPrompt);
+    throw error;
+  }
 }

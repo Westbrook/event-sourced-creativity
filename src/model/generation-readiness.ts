@@ -48,6 +48,35 @@ export type GenerationReadiness = {
   version: string;
 };
 
+export type PromptTechniqueSafetyResult = {
+  technique: PromptTechnique;
+  status: "pass" | "review" | "unknown";
+  summary: string;
+  prompt: string;
+  promptLength: number;
+  compacted: boolean;
+  categories: string[];
+  blockIds: string[];
+  referenceIds: string[];
+  coverage: "text" | "text-and-images";
+  latencyMs: number;
+  requestId: string | null;
+};
+
+export type PromptTechniqueSafetyComparison = {
+  comparisonId: string;
+  documentId: string;
+  documentRevision: string;
+  failedTechnique: PromptTechnique;
+  recommendedTechnique: PromptTechnique | null;
+  summary: string;
+  results: PromptTechniqueSafetyResult[];
+  referenceCount: number;
+  imageGenerationCalls: 0;
+  checkedAt: string;
+  version: string;
+};
+
 export const generationReadinessReservation = (kind: GenerationReadinessKind) => kind === "preview" ? 24_000 : kind === "generate" ? 32_000 : kind === "preview_fan" ? 96_000 : 128_000;
 export const generationReadinessSeconds = (kind: GenerationReadinessKind) => kind === "preview" ? 25 : kind === "generate" ? 55 : kind === "preview_fan" ? 95 : 210;
 export const generationReadinessCostMicrousd = (kind: GenerationReadinessKind) => kind === "preview" ? 18_000 : kind === "generate" ? 90_000 : kind === "preview_fan" ? 72_000 : 360_000;

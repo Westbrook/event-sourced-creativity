@@ -20,7 +20,8 @@ export async function readGeneratedImageReference(env:WorkerEnv,ownerId:string,m
   if(!key.startsWith(`${ownerPrefix(ownerId)}/`))return null;
   const object=await env.MEDIA.get(key);if(!object)return null;
   const headers=new Headers();object.writeHttpMetadata(headers);const mimeType=headers.get("content-type")??"image/png";if(!mimeType.startsWith("image/"))return null;
-  return{bytes:new Uint8Array(await new Response(object.body).arrayBuffer()),mimeType};
+  const metadata=object.customMetadata??{};const providerMediaUrl=String(metadata.providerMediaUrl??"").trim();
+  return{bytes:new Uint8Array(await new Response(object.body).arrayBuffer()),mimeType,provider:String(metadata.provider??"")||null,providerModel:String(metadata.providerModel??metadata.model??"")||null,providerRequestId:String(metadata.providerRequestId??"")||null,providerMediaUrl:providerMediaUrl||null};
 }
 
 export async function uploadMedia(request: Request, env: WorkerEnv) {

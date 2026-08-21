@@ -7,6 +7,7 @@ import { retrieveFewShotExemplars, type RetrievedExemplar } from "../model/index
 import { BLOCK_GROUPS, BLOCK_TYPES, blockIntentFor, blockTypeDefinition, suggestedSubtype, type BlockKind } from "../model/block-types";
 import { spatialScopeLabel } from "../model/spatial-scope";
 import { DEFAULT_IMAGE_FORMAT, IMAGE_FORMAT_PRESETS, imageFormatForPreset, type ImageFormat } from "../model/image-format";
+import { documentContextBlockFromRoute } from "../model/routes";
 import "./context-block";
 import "./output-card";
 import "./project-rail";
@@ -26,9 +27,20 @@ export class FormaWorkspace extends FormaElement {
   #uploading = false; #pendingUpload: File | null = null; #uploadDocumentId = ""; #rightsConfirmed = false;
   #referenceFindingKinds = new Set<ReferenceFindingKind>(DEFAULT_REFERENCE_FINDINGS);
   #projectSettings=false;#projectName="";#projectState="active";#deleteDocument=false;
+  #linkedBlockId="";
 
   protected override updated() {
     this.querySelectorAll<HTMLDialogElement>("dialog.workspace-modal").forEach((dialog)=>{if(!dialog.open)dialog.showModal();});
+    const linkedBlockId=documentContextBlockFromRoute(this.store.route.get())??"";
+    if(linkedBlockId&&linkedBlockId!==this.#linkedBlockId){
+      this.#linkedBlockId=linkedBlockId;
+      this.store.patchUi({focusBlockId:linkedBlockId});
+      window.requestAnimationFrame(()=>{
+        const target=this.querySelector<HTMLElement>(`[data-block-id="${CSS.escape(linkedBlockId)}"]`);
+        target?.scrollIntoView({behavior:"smooth",block:"center"});
+        target?.focus({preventScroll:true});
+      });
+    }else if(!linkedBlockId)this.#linkedBlockId="";
   }
 
   #beginBlock() {

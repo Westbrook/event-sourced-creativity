@@ -1,14 +1,17 @@
 import { html, nothing } from "lit";
 import { outputQualityLabel, type CreativeOutput } from "../model/events";
 import { generationFailureGuidance } from "../model/document-jobs";
+import { outputGenerationInputInspection } from "../model/generation-inputs";
 import { PROMPT_TECHNIQUE_DEFINITIONS, type PromptPreferenceScope, type PromptTechnique } from "../model/prompt-structures";
 import { copyTextToClipboard, FormaElement, icon } from "./forma-element";
+import "./generation-input-dialog";
 import "./output-visual";
 
 export class PromptFanReview extends FormaElement {
   static properties = { fanId: { type: String } };
   fanId = "";
   #open = false;
+  #inputId = "";
   #scope: PromptPreferenceScope = "document";
   #promptCopy: { key: string; ok: boolean } | null = null;
 
@@ -71,6 +74,7 @@ export class PromptFanReview extends FormaElement {
     const folder = projection.membership[projection.documentId]?.collectionId;
     const preference = this.store.promptTechniquePreference();
     const promotable = fanOutputs.filter((output) => !output.standalone);
+    const inputOutput = fanOutputs.find((output) => output.id === this.#inputId);
     return html`<div class="prompt-fan-review-trigger-wrap"><button class="prompt-fan-review-trigger" aria-haspopup="dialog" @click=${() => this.#show(fanId, fanOutputs)}>${icon("compare")}<span>Compare & promote</span><small>${fanOutputs.length} ready${failed ? ` · ${failed} failed` : complete<4?` · ${4-complete} running`:""}${standalone ? ` · ${standalone} standalone` : ""}</small></button></div>
       ${this.#open ? html`<dialog class="modal prompt-fan-dialog" closedby="any" aria-labelledby="prompt-fan-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) this.#close(); }} @cancel=${(event: Event) => { event.preventDefault(); this.#close(); }} @close=${() => { if (this.#open) { this.#open = false; this.requestUpdate(); } }}>
         <section class="modal-card prompt-fan-card">
@@ -87,12 +91,12 @@ export class PromptFanReview extends FormaElement {
               <p>${definition.description}</p>
               <div class="prompt-fan-image">${output ? html`<forma-output-visual .output=${output} .fanOutputs=${fanOutputs} .interactive=${true}></forma-output-visual>` : failedHere ? html`<div class="prompt-fan-pending failed">${icon("close")}<span><b>${failureGuidance.title}</b><small>${failureGuidance.summary}${failureRequestId?` Request ${failureRequestId}.`:""}</small></span></div>` : html`<div class="prompt-fan-pending">${icon("clock")}<span>${member?.status==="running"?"Generating on the server":member?.status==="queued"||fanJob?"Queued on the server":"No recorded result"}</span></div>`}</div>
               ${failedHere&&failureCategory==="safety"?failurePrompt?html`<details class="prompt-fan-failure-prompt"><summary>Review submitted prompt</summary><div class="prompt-copy-heading"><p>Exact private request sent to the generation workflow.</p><button type="button" class="button ghost compact" @click=${()=>this.#copyPrompt(failurePrompt,definition.id)}>${this.#promptCopy?.key===definition.id&&this.#promptCopy.ok?`${icon("check")} Copied`:"Copy prompt"}</button></div><pre>${failurePrompt}</pre>${this.#promptCopy?.key===definition.id?html`<span class=${`prompt-copy-status ${this.#promptCopy.ok?"success":"error"}`} role="status">${this.#promptCopy.ok?"Prompt copied to the clipboard.":"The prompt could not be copied. Select the text above and copy it manually."}</span>`:nothing}</details>`:html`<p class="prompt-fan-failure-prompt-unavailable">Submitted prompt was not retained for this earlier failure.</p>`:nothing}
-              ${output ? html`<footer><span><b>${outputQualityLabel(output)}</b><small>${output.modelId} · ${Math.max(0, Math.round(output.latency / 100) / 10)}s</small></span><div class="prompt-fan-output-actions"><button class="button secondary compact" ?disabled=${output.standalone} @click=${() => this.store.promotePromptFanOutputs(fanId, [output.id])}>${output.standalone ? "Promoted" : "Promote image"}</button><button class="button ghost compact" @click=${() => this.store.preferPromptTechnique(definition.id as PromptTechnique, this.#scope, { fanId, outputId: output.id })}>${preferred ? "Keep as default" : "Use as default"}</button></div></footer>${prompt ? html`<details><summary>Inspect prepared ${definition.shortLabel.toLowerCase()} prompt</summary><pre>${prompt}</pre></details>` : nothing}` : nothing}
+              ${output ? html`<footer><span><b>${outputQualityLabel(output)}</b><small>${output.modelId} · ${Math.max(0, Math.round(output.latency / 100) / 10)}s</small></span><div class="prompt-fan-output-actions"><button class="button secondary compact" ?disabled=${output.standalone} @click=${() => this.store.promotePromptFanOutputs(fanId, [output.id])}>${output.standalone ? "Promoted" : "Promote image"}</button><button class="button ghost compact" @click=${() => this.store.preferPromptTechnique(definition.id as PromptTechnique, this.#scope, { fanId, outputId: output.id })}>${preferred ? "Keep as default" : "Use as default"}</button><button class="button ghost compact" @click=${()=>{this.#inputId=output.id;this.requestUpdate();}}>Inspect inputs</button></div></footer>${prompt ? html`<details><summary>Inspect prepared ${definition.shortLabel.toLowerCase()} prompt</summary><pre>${prompt}</pre></details>` : nothing}` : nothing}
             </article>`;
           })}</div>
           <footer><p>${complete === 4 ? failed ? `${fanOutputs.length} image${fanOutputs.length===1?"":"s"} ready and ${failed} failed. Failures are terminal and remain part of this comparison receipt.` : `${standalone || "No"} image${standalone === 1 ? "" : "s"} promoted. The complete fan remains one comparison in history.` : `${complete} of 4 prompt processes finished. Remaining jobs continue if this dialog or page closes.`}</p><div><button class="button primary" ?disabled=${!promotable.length} @click=${() => this.store.promotePromptFanOutputs(fanId, promotable.map((output) => output.id))}>${promotable.length ? `Promote all ${promotable.length}` : "No images to promote"}</button><button class="button secondary" @click=${this.#close}>Done</button></div></footer>
         </section>
-      </dialog>` : nothing}`;
+      </dialog>` : nothing}${inputOutput?html`<forma-generation-input-dialog .open=${true} .inspection=${outputGenerationInputInspection(inputOutput,this.store.events.get(),this.store.content.get())} @generation-input-close=${()=>{this.#inputId="";this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}`;
   }
 }
 

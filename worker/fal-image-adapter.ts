@@ -4,6 +4,8 @@ import { moderateExactImagePrompt } from "./openai-moderation.ts";
 import { classifyProviderFailure, ProviderRequestError, providerErrorFromResponse } from "./provider-errors.ts";
 import { normalizePromptTechnique } from "../src/model/prompt-structures.ts";
 import { priceFalIdeogramImageBreakdownMicrousd, type FalIdeogramRenderingSpeed } from "./replay-cost.ts";
+import { buildIdeogramPrompt, classifyIdeogramPromptFocus, IDEOGRAM_PROMPT_ADAPTER_VERSION } from "./ideogram-prompt-adapter.ts";
+import { buildIdeogramCaption, IDEOGRAM_CAPTION_ADAPTER_VERSION } from "./ideogram-caption-adapter.ts";
 
 type FalQueueState = {
   status?: "IN_QUEUE" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | "CANCELLED";
@@ -20,7 +22,9 @@ type FalImageFile = { url?: string; content_type?: string; width?: number; heigh
 type FalImageResult = { images?: FalImageFile[]; timings?: Record<string,number>; seed?: number; has_nsfw_concepts?: boolean[]; prompt?: string; error?: unknown };
 
 export const FAL_IDEOGRAM_ADAPTER_ID="fal-ideogram-v4";
-export const FAL_IDEOGRAM_ADAPTER_VERSION="v6";
+export const FAL_IDEOGRAM_ADAPTER_VERSION="v52";
+export const FAL_IDEOGRAM_CAPTION_STRATEGY="production_director" as const;
+export const FAL_IDEOGRAM_REFERENCE_STRENGTHS={inspiration:.99,preserve_composition:.88,preserve_subject:.3,preserve_style:.72,default:.9} as const;
 const FAL_IMAGE_TIMEOUT_MS=10*60*1000;
 
 export function falIdeogramAdapterReadiness(env:WorkerEnv){return{configured:Boolean(env.FAL_KEY?.trim()),fal:Boolean(env.FAL_KEY?.trim()),missing:env.FAL_KEY?.trim()?[]:["Fal key"]};}
@@ -38,10 +42,25 @@ const bytesToBase64=(bytes:Uint8Array)=>{
 };
 const dataUri=(reference:ImageReference)=>`data:${reference.mimeType};base64,${bytesToBase64(reference.bytes)}`;
 const outputFormat=(format:ImageOutputFormat|undefined):"jpeg"|"png"=>format==="png"?"png":"jpeg";
-const renderingSpeed=(quality:CreativeImageOptions["quality"]):FalIdeogramRenderingSpeed=>quality==="low"?"TURBO":quality==="medium"?"BALANCED":"QUALITY";
+export const falRenderingSpeed=(quality:CreativeImageOptions["quality"]):FalIdeogramRenderingSpeed=>quality==="high"?"QUALITY":"BALANCED";
 export type FalIdeogramExpansionModel="None"|"Medium"|"Large";
-export const falExpansionModel=(quality:CreativeImageOptions["quality"]):FalIdeogramExpansionModel=>quality==="low"?"Medium":"Large";
-export const falReferenceStrength=(reference:ImageReference)=>reference.mode==="preserve_subject"?.35:reference.mode==="preserve_style"?.68:reference.mode==="preserve_composition"?.8:reference.mode==="inspiration"?.9:.8;
+export const falExpansionModel=(quality:CreativeImageOptions["quality"],promptMode:CreativeImageOptions["ideogramPromptMode"]="expanded_plain",requested?:CreativeImageOptions["ideogramExpansionModel"]):FalIdeogramExpansionModel=>requested??(promptMode==="expanded_plain"?(quality==="high"?"Large":"Medium"):"None");
+export const falExpansionModelForRequest=(env:WorkerEnv,quality:CreativeImageOptions["quality"],model:string,promptMode:CreativeImageOptions["ideogramPromptMode"]="expanded_plain",requested?:CreativeImageOptions["ideogramExpansionModel"]):FalIdeogramExpansionModel=>{
+  if(requested)return requested;
+  if(promptMode!=="expanded_plain")return"None";
+  return model===(env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast")?"Medium":"Large";
+};
+export const falReferenceStrength=(reference:ImageReference,override?:number)=>Number.isFinite(override)?Math.max(0,Math.min(1,Number(override))):reference.mode&&reference.mode in FAL_IDEOGRAM_REFERENCE_STRENGTHS?FAL_IDEOGRAM_REFERENCE_STRENGTHS[reference.mode as keyof typeof FAL_IDEOGRAM_REFERENCE_STRENGTHS]:FAL_IDEOGRAM_REFERENCE_STRENGTHS.default;
+export const falImageModelForRequest=(env:WorkerEnv,quality:CreativeImageOptions["quality"],references:ImageReference[],direction:Record<string,unknown>)=>{
+  if(references.length)return env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image";
+  const scene=String(direction.scene??"");
+  // A low-quality material study still asks the model to resolve a person,
+  // action, counted composition, and multiple judgeable surfaces. The fast
+  // endpoint repeatedly reduced these to unattended still lifes, so route
+  // this semantically complex class through the standard endpoint.
+  const complexLowStudy=quality==="low"&&classifyIdeogramPromptFocus(scene,false,false,0)==="material";
+  return quality==="low"&&!complexLowStudy?(env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast"):(env.FAL_IMAGE_MODEL??"ideogram/v4");
+};
 
 export function validateFalImageSize(size:string){
   const match=/^(\d+)x(\d+)$/.exec(size);if(!match)return{valid:false,width:0,height:0,reason:"Use WIDTHxHEIGHT dimensions."};
@@ -91,14 +110,16 @@ export async function generateFalCreativeImage(env:WorkerEnv,userId:string,snaps
   const references=validateImageReferences(options.references??[]);
   if(references.length>1)throw new ProviderRequestError({code:"fal_multiple_reference_images_unsupported",category:"provider",scope:"request",action:"edit_request",message:"The Ideogram V4 image-to-image adapter accepts one reference image. Use the OpenAI image adapter for this multi-reference request.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
   if(options.outputFormat==="webp")throw new ProviderRequestError({code:"fal_webp_output_unsupported",category:"provider",scope:"request",action:"edit_request",message:"The Ideogram V4 adapter returns JPEG or PNG. Choose one of those formats or use the OpenAI image adapter.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
-  const promptTechnique=normalizePromptTechnique(options.promptTechnique);const prompt=options.preparedPrompt?.trim()||buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:0});const started=Date.now();
+  const promptTechnique=normalizePromptTechnique(options.promptTechnique);const canonicalPrompt=options.preparedPrompt?.trim()||buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:0});const promptMode=options.ideogramPromptMode??"expanded_plain";const ideogramCaptionStrategy=options.ideogramCaptionStrategy??FAL_IDEOGRAM_CAPTION_STRATEGY;const adaptation=promptMode==="expanded_plain"?buildIdeogramPrompt(snapshot,direction,canonicalPrompt,references,{size,quality,promptTechnique,ideogramCaptionStrategy}):buildIdeogramCaption(snapshot,direction,canonicalPrompt,references,{size,quality,promptTechnique,ideogramCaptionStrategy});const prompt=adaptation.prompt;const promptAdapterVersion=promptMode==="expanded_plain"?IDEOGRAM_PROMPT_ADAPTER_VERSION:IDEOGRAM_CAPTION_ADAPTER_VERSION;const started=Date.now();
+  if("valid" in adaptation&&!adaptation.valid)throw new ProviderRequestError({code:"ideogram_caption_invalid",category:"provider",scope:"request",action:"edit_request",message:`The Ideogram caption compiler produced an invalid provider prompt: ${adaptation.issues.join("; ")}`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400},prompt);
   await options.onStage?.("safety-review","Reviewing the exact image prompt and selected reference pixels.");
   let moderation:Awaited<ReturnType<typeof moderateExactImagePrompt>>;try{moderation=await moderateExactImagePrompt(env,prompt,references,options.signal);}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
   if(moderation.flagged)throw new ProviderRequestError({code:"safety_preflight_flagged",category:"safety",scope:"request",action:"edit_request",message:`A preflight review identified likely safety concerns${moderation.categories.length?` in ${moderation.categories.join(", ")}`:""}. Review the exact prompt and contributing context before retrying.`,retryable:false,retryAfterMs:null,requestId:moderation.requestId,httpStatus:400,riskCategories:moderation.categories,contributingReferenceIds:moderation.referenceIds,probe:"exact-prompt-and-reference-moderation"},prompt);
 
-  const model=references.length?(env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image"):(quality==="low"?(env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast"):(env.FAL_IMAGE_MODEL??"ideogram/v4"));
-  const speed=renderingSpeed(quality);const expansionModel=falExpansionModel(quality);const format=outputFormat(options.outputFormat);const input:Record<string,unknown>={prompt,expansion_model:expansionModel,image_size:{width:sizeResult.width,height:sizeResult.height},rendering_speed:speed,num_images:1,enable_safety_checker:true,output_format:format};
-  if(references[0]){input.image_url=dataUri(references[0]);input.strength=falReferenceStrength(references[0]);}
+  const model=falImageModelForRequest(env,quality,references,direction);
+  const speed=falRenderingSpeed(quality);const expansionModel=falExpansionModelForRequest(env,quality,model,promptMode,options.ideogramExpansionModel);const format=outputFormat(options.outputFormat);const input:Record<string,unknown>={prompt,expansion_model:expansionModel,image_size:{width:sizeResult.width,height:sizeResult.height},rendering_speed:speed,acceleration:"none",num_images:1,sync_mode:false,enable_safety_checker:true,output_format:format};
+  if(Number.isFinite(options.ideogramSeed))input.seed=Math.max(0,Math.min(2_147_483_647,Math.floor(Number(options.ideogramSeed))));
+  if(references[0]){input.image_url=dataUri(references[0]);input.strength=falReferenceStrength(references[0],options.ideogramReferenceStrength);}
   await options.onStage?.("provider-submit",`Submitting to ${model}.`);
   const submitted=await falJson(env,falEndpoint(model),{method:"POST",headers:falHeaders(env),body:JSON.stringify(input),signal:options.signal},prompt) as FalQueueState;
   const requestId=String(submitted.request_id??"");if(!requestId)throw new ProviderRequestError({code:"fal_provider_returned_no_request_id",category:"provider",scope:"request",action:"retry",message:"Fal accepted no durable request identifier, so the image cannot be tracked safely.",retryable:true,retryAfterMs:2_000,requestId:null,httpStatus:502},prompt);
@@ -123,5 +144,5 @@ export async function generateFalCreativeImage(env:WorkerEnv,userId:string,snaps
   if(!imageResponse.ok)throw falError(imageResponse,{},`fal_image_download_${imageResponse.status}`,prompt,requestId);
   const bytes=new Uint8Array(await imageResponse.arrayBuffer());if(!bytes.byteLength)throw new ProviderRequestError({code:"fal_provider_returned_empty_image",category:"provider",scope:"request",action:"retry",message:"Fal returned an empty image file.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
   const width=Number(image.width??sizeResult.width),height=Number(image.height??sizeResult.height);const mimeType=image.content_type??imageResponse.headers.get("content-type")??(format==="png"?"image/png":"image/jpeg");if(!mimeType.startsWith("image/"))throw new ProviderRequestError({code:"fal_provider_returned_non_image",category:"provider",scope:"request",action:"retry",message:"Fal returned a non-image media type for an image request.",retryable:true,retryAfterMs:2_000,requestId,httpStatus:502},prompt);
-  return{provider:"fal" as const,adapterId:FAL_IDEOGRAM_ADAPTER_ID,adapterVersion:FAL_IDEOGRAM_ADAPTER_VERSION,providerRequestId:requestId,model,prompt,promptTechnique,bytes,revisedPrompt:result.prompt&&result.prompt!==prompt?result.prompt:null,createdAt:null,latencyMs:Date.now()-started,usage:{inputTokens:0,outputTokens:0,totalTokens:0,textInputTokens:0,imageInputTokens:0},width,height,mimeType,quality,usedReference:references.length>0,referenceCount:references.length,referenceInputs:references.map((reference)=>({source:reference.source,blockId:reference.blockId??null,referenceId:reference.referenceId??null,label:reference.label??null,mode:reference.mode??null})),safetyProbeCount:moderation.probeCount,safetyCoverage:moderation.coverage,safetyRequestIds:moderation.requestIds,partialCount:0,outputFormat:format,outputCompression:null,seed:Number.isFinite(result.seed)?Number(result.seed):null,nsfwDetected:Boolean(result.has_nsfw_concepts?.some(Boolean)),renderingSpeed:speed,expansionModel,costBreakdown:priceFalIdeogramImageBreakdownMicrousd(model,width,height,speed,expansionModel),costPrecision:"provider-pixel-and-expansion-rate-estimate" as const};
+  return{provider:"fal" as const,adapterId:FAL_IDEOGRAM_ADAPTER_ID,adapterVersion:options.ideogramAdapterVersion??FAL_IDEOGRAM_ADAPTER_VERSION,providerRequestId:requestId,providerMediaUrl:image.url,model,prompt,canonicalPrompt,promptTechnique,promptMode,promptAdapterVersion,promptAdaptation:adaptation,bytes,revisedPrompt:result.prompt&&result.prompt!==prompt?result.prompt:null,createdAt:null,latencyMs:Date.now()-started,usage:{inputTokens:0,outputTokens:0,totalTokens:0,textInputTokens:0,imageInputTokens:0},width,height,mimeType,quality,usedReference:references.length>0,referenceCount:references.length,referenceInputs:references.map((reference)=>({source:reference.source,blockId:reference.blockId??null,referenceId:reference.referenceId??null,label:reference.label??null,mode:reference.mode??null,strength:falReferenceStrength(reference,options.ideogramReferenceStrength)})),safetyProbeCount:moderation.probeCount,safetyCoverage:moderation.coverage,safetyRequestIds:moderation.requestIds,partialCount:0,outputFormat:format,outputCompression:null,seed:Number.isFinite(result.seed)?Number(result.seed):null,nsfwDetected:Boolean(result.has_nsfw_concepts?.some(Boolean)),renderingSpeed:speed,expansionModel,costBreakdown:priceFalIdeogramImageBreakdownMicrousd(model,width,height,speed,expansionModel),costPrecision:"provider-pixel-rate-estimate" as const};
 }

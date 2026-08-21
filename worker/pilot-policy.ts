@@ -220,7 +220,7 @@ export async function settleCostBudget(env: WorkerEnv, userId: string, reservedM
 
 export async function releaseCostBudget(env: WorkerEnv, userId: string, reservedMicrousd: number) { await settleCostBudget(env, userId, reservedMicrousd, 0); }
 
-export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: "prompt" | "provider-output" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact", content: string) {
+export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: "prompt" | "provider-output" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input", content: string) {
   const contentId = uuidV7(); const createdAt = new Date(); const days = intEnv(env.FORMA_RETENTION_DAYS, 30); const expiresAt = new Date(createdAt.getTime() + days * 86_400_000);
   await env.DB.prepare("INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES (?,?,?,?,?,?,NULL)").bind(contentId, ownerId, kind, content, createdAt.toISOString(), expiresAt.toISOString()).run();
   return { contentId, expiresAt: expiresAt.toISOString() };

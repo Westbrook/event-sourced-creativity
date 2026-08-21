@@ -73,6 +73,7 @@ export type DocumentArtifact = {
   title: string;
   summary: string;
   contentRef: string | null;
+  inputRef?: string | null;
   itemCount: number;
   items: DocumentArtifactItem[];
   mediaUrl: string | null;

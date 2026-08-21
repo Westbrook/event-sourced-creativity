@@ -336,7 +336,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
         const rawItems = Array.isArray(p.items) ? p.items : [];
         artifacts.set(id, {
           id, documentId: String(p.document_id ?? state.documentId), kind,
-          title: String(p.title ?? "Untitled artifact"), summary: String(p.summary ?? ""), contentRef: p.content_ref ? String(p.content_ref) : null,
+          title: String(p.title ?? "Untitled artifact"), summary: String(p.summary ?? ""), contentRef: p.content_ref ? String(p.content_ref) : null, inputRef:p.input_ref?String(p.input_ref):null,
           itemCount: Number(p.item_count ?? rawItems.length),
           items: rawItems.map((value, index) => { const item=asRecord(value); return { id:String(item.id??`${id}-${index+1}`),title:String(item.title??`Part ${index+1}`),body:String(item.body??""),notes:String(item.notes??""),imagePrompt:String(item.image_prompt??""),mediaUrl:item.media_url?String(item.media_url):null,mediaType:item.media_type?String(item.media_type):null,width:item.width?Number(item.width):null,height:item.height?Number(item.height):null,focalPoint:normalizeImageFocalPoint(item.focal_point),slide:item.slide?normalizeSlideVisual(item.slide,item,index):null }; }),
           mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null,
