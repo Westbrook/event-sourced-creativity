@@ -8,6 +8,7 @@ import {
   DOCUMENT_JOB_STALE_AFTER_MS,
   documentGenerationRequestKey,
   documentGenerationRevision,
+  documentJobIsStale,
   documentJobTerminal,
   documentJobMaxAttempts,
   type DocumentJobError,
@@ -92,9 +93,23 @@ async function finishDocumentJob(env: WorkerEnv, row: DocumentJobRow, status: "c
   return env.DB.prepare(statement).bind(...bindings).run();
 }
 
-function serializeJob(row: DocumentJobRow) {
+function queueRecoveryPresentation(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | null) {
+  if (!recoveryBlocker) return null;
+  if (row.job_id === recoveryBlocker.job_id) return {
+    stage: "recovering",
+    progressMessage: "The server is recovering this interrupted operation before continuing the queue.",
+  };
+  if (row.status === "queued") return {
+    stage: "queue-recovery",
+    progressMessage: "An earlier operation lost contact. The server is recovering it before this render starts.",
+  };
+  return null;
+}
+
+function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | null = null) {
   const parsed = parseResult(row); const result = row.result_json ? parsed : null; const request = parseRequest(row); const identity = generationRequestIdentity(row.kind, request, row.document_id);
   const members = Array.isArray(parsed.members) ? parsed.members : [];
+  const recovery = queueRecoveryPresentation(row, recoveryBlocker);
   const visibleResult = row.kind === "render_document" && request.artifactKind
     ? { ...(result ?? {}), artifactKind: String(parsed.artifactKind ?? request.artifactKind) }
     : result;
@@ -104,7 +119,7 @@ function serializeJob(row: DocumentJobRow) {
     parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result: visibleResult, error: row.error_message, errorDetail: errorDetailFromResult(parsed), moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
     requestedAt: row.requested_at, startedAt: row.started_at, completedAt: row.completed_at, notifiedAt: row.notified_at,
     leaseExpiresAt: row.lease_expires_at, updatedAt: row.updated_at,
-    stage: String(parsed.stage ?? row.status), progressMessage: String(parsed.progressMessage ?? ""),
+    stage: recovery?.stage ?? String(parsed.stage ?? row.status), progressMessage: recovery?.progressMessage ?? String(parsed.progressMessage ?? ""),
   };
 }
 
@@ -138,9 +153,7 @@ async function readJob(env: WorkerEnv, ownerId: string, jobId: string) {
 }
 
 function rowIsStale(row: DocumentJobRow, now = Date.now()) {
-  if (row.status !== "running" && row.status !== "committing") return false;
-  const leaseExpires = Date.parse(row.lease_expires_at ?? ""); const updated = Date.parse(row.updated_at);
-  return Number.isFinite(leaseExpires) && leaseExpires <= now || Number.isFinite(updated) && updated <= now - DOCUMENT_JOB_STALE_AFTER_MS;
+  return documentJobIsStale({ status: row.status, leaseExpiresAt: row.lease_expires_at, updatedAt: row.updated_at }, now);
 }
 
 async function updateJobProgress(env: WorkerEnv, row: DocumentJobRow, stage: string, progressMessage: string, patch:Record<string,unknown>={}) {
@@ -323,7 +336,14 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
 async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
   for (let count = 0; count < 50; count += 1) {
     const running = await env.DB.prepare("SELECT job_id FROM document_jobs WHERE owner_id=? AND stream_id=? AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId).first<{ job_id: string }>();
-    if (running) return;
+    if (running) {
+      const active = await readJob(env, user.userId, running.job_id);
+      if (!active) continue;
+      if (!rowIsStale(active)) return;
+      const recovered = await runDocumentJob(env, user, active.job_id);
+      if (!recovered || recovered.status === "queued" || recovered.status === "running" || recovered.status === "committing") return;
+      continue;
+    }
     const next = await env.DB.prepare("SELECT job_id FROM document_jobs WHERE owner_id=? AND stream_id=? AND kind!='prompt_fan' AND status='queued' ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId).first<{ job_id: string }>();
     if (!next) return;
     const job = await runDocumentJob(env, user, next.job_id);
@@ -449,8 +469,11 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       const refreshed = path ? await readJob(env, user.userId, decodeURIComponent(path)) : null;
       rows = path ? refreshed ? [refreshed] : [] : (await readVisibleJobs()).results;
     }
+    const activeBlocker = await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId).first<DocumentJobRow>();
+    const recoveryBlocker = activeBlocker && rowIsStale(activeBlocker) ? activeBlocker : null;
+    if (recoveryBlocker) context?.waitUntil(driveDocumentQueue(env, user));
     if (path && !rows.length) return Response.json({ error: "job_not_found" }, { status: 404 });
-    return Response.json(path ? { job: serializeJob(rows[0]) } : { jobs: rows.map(serializeJob) });
+    return Response.json(path ? { job: serializeJob(rows[0], recoveryBlocker) } : { jobs: rows.map((row) => serializeJob(row, recoveryBlocker)) });
   }
 
   if (path || request.method !== "POST") return new Response("Method not allowed", { status: 405 });

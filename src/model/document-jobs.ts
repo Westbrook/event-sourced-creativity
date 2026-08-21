@@ -62,7 +62,7 @@ export type DocumentJobProgress = {
 type ProgressPhase = { id: string; label: string; stages: string[] };
 
 const IMAGE_PROGRESS: ProgressPhase[] = [
-  { id: "queue", label: "Queue", stages: ["queued"] },
+  { id: "queue", label: "Queue", stages: ["queued", "queue-recovery", "recovering"] },
   { id: "plan", label: "Plan", stages: ["preparing", "compiling", "planning", "processing"] },
   { id: "review", label: "Review", stages: ["safety-review"] },
   { id: "render", label: "Render", stages: ["provider-wait", "rendering"] },
@@ -70,28 +70,28 @@ const IMAGE_PROGRESS: ProgressPhase[] = [
 ];
 
 const FAN_PROGRESS: ProgressPhase[] = [
-  { id: "queue", label: "Queue", stages: ["queued"] },
+  { id: "queue", label: "Queue", stages: ["queued", "queue-recovery", "recovering"] },
   { id: "prepare", label: "Prepare ×4", stages: ["preparing", "compiling", "planning", "processing", "safety-review"] },
   { id: "render", label: "Render ×4", stages: ["provider-wait", "rendering"] },
   { id: "save", label: "Save", stages: ["saving", "committing"] },
 ];
 
 const TEXT_ARTIFACT_PROGRESS: ProgressPhase[] = [
-  { id: "queue", label: "Queue", stages: ["queued", "preparing"] },
+  { id: "queue", label: "Queue", stages: ["queued", "queue-recovery", "recovering", "preparing"] },
   { id: "structure", label: "Structure", stages: ["planning"] },
   { id: "write", label: "Write", stages: ["writing"] },
   { id: "save", label: "Save", stages: ["saving", "committing"] },
 ];
 
 const STORYBOARD_PROGRESS: ProgressPhase[] = [
-  { id: "queue", label: "Queue", stages: ["queued", "preparing"] },
+  { id: "queue", label: "Queue", stages: ["queued", "queue-recovery", "recovering", "preparing"] },
   { id: "structure", label: "Structure", stages: ["planning"] },
   { id: "render", label: "Render frames", stages: ["rendering-frames", "safety-review", "provider-wait", "rendering"] },
   { id: "save", label: "Save", stages: ["saving", "committing"] },
 ];
 
 const VIDEO_PROGRESS: ProgressPhase[] = [
-  { id: "queue", label: "Queue", stages: ["queued", "preparing"] },
+  { id: "queue", label: "Queue", stages: ["queued", "queue-recovery", "recovering", "preparing"] },
   { id: "structure", label: "Structure", stages: ["planning", "preparing-video"] },
   { id: "submit", label: "Submit", stages: ["uploading-references", "submitting"] },
   { id: "render", label: "Render", stages: ["rendering"] },
@@ -111,6 +111,7 @@ export function documentJobProgress(job: DocumentJob): DocumentJobProgress {
           ? STORYBOARD_PROGRESS
           : TEXT_ARTIFACT_PROGRESS;
   const stage = job.status === "committing" ? "committing" : job.stage || job.status;
+  const recoveringQueue = stage === "queue-recovery" || stage === "recovering";
   let activeIndex = phases.findIndex((phase) => phase.stages.includes(stage));
   if (activeIndex < 0) activeIndex = job.status === "queued" ? 0 : Math.min(1, phases.length - 1);
   const fanCompleted = job.kind === "prompt_fan" ? Number(job.result?.completedCount ?? job.members.filter((member) => member.status === "completed").length) : 0;
@@ -121,7 +122,7 @@ export function documentJobProgress(job: DocumentJob): DocumentJobProgress {
   const phaseStart = activeIndex / phases.length * 100;
   const phaseSpan = 100 / phases.length;
   let phaseFraction = job.status === "queued" ? .18 : .42;
-  let detail: string | null = null;
+  let detail: string | null = recoveringQueue ? job.progressMessage || "Recovering an interrupted queue operation" : null;
 
   if (providerPercent) {
     const value = Math.max(0, Math.min(99, Number(providerPercent[1])));
@@ -142,7 +143,7 @@ export function documentJobProgress(job: DocumentJob): DocumentJobProgress {
     : Math.max(job.status === "queued" ? 3 : 8, Math.min(95, Math.round(phaseStart + phaseSpan * phaseFraction)));
   return {
     percent,
-    label: phases[activeIndex]?.label ?? "Working",
+    label: recoveringQueue ? "Recovering queue" : phases[activeIndex]?.label ?? "Working",
     detail,
     steps: phases.map((phase, index) => ({ id: phase.id, label: phase.label, state: index < activeIndex ? "complete" : index === activeIndex ? "active" : "pending" })),
   };

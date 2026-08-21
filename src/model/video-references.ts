@@ -15,6 +15,7 @@ export type VideoReferencePreflightItem = {
   label: string;
   shotDirection: string;
   cameraDirection: string;
+  framePrompt: string;
   mediaUrl: string;
   focalPoint: unknown;
 };
@@ -45,7 +46,7 @@ export function videoReferencePreflight(blocks:CreativeBlock[],events:CreativeEv
   const items=activeBlocks.filter((block)=>Boolean(text(block.properties.media_url))).map((block):VideoReferencePreflightItem=>{
     const mode=referencePixelMode(block.properties.pixel_reference_mode);const sequence=Number(block.properties.storyboard_frame_index);const sourceArtifactKind=text(block.properties.source_artifact_kind);const referenceSetKind=text(block.properties.reference_set_kind);const isStoryboardFrame=sourceArtifactKind==="storyboard"||referenceSetKind==="storyboard";
     const label=text(block.properties.storyboard_shot_title)||text(block.properties.label)||block.handle;const shotDirection=text(block.properties.storyboard_shot_direction)||text(block.properties.text);const cameraDirection=text(block.properties.storyboard_camera_direction);const framePrompt=text(block.properties.storyboard_frame_prompt);
-    return{block,mode,sendsPixels:sendsReferencePixels(mode),rightsConfirmed:rights.has(text(block.properties.reference_id)),isStoryboardFrame,storyboardId:text(block.properties.source_artifact_id)||text(block.properties.reference_set_id)||text(block.properties.context_set_id),storyboardTitle:text(block.properties.storyboard_title)||"Storyboard",sequence:Number.isFinite(sequence)&&sequence>0?sequence:null,frameCount:Number.isFinite(Number(block.properties.storyboard_frame_count))?Number(block.properties.storyboard_frame_count):null,label,shotDirection,cameraDirection,mediaUrl:text(block.properties.media_url),focalPoint:block.properties.focal_point};
+    return{block,mode,sendsPixels:sendsReferencePixels(mode),rightsConfirmed:rights.has(text(block.properties.reference_id)),isStoryboardFrame,storyboardId:text(block.properties.source_artifact_id)||text(block.properties.reference_set_id)||text(block.properties.context_set_id),storyboardTitle:text(block.properties.storyboard_title)||"Storyboard",sequence:Number.isFinite(sequence)&&sequence>0?sequence:null,frameCount:Number.isFinite(Number(block.properties.storyboard_frame_count))?Number(block.properties.storyboard_frame_count):null,label,shotDirection,cameraDirection,framePrompt,mediaUrl:text(block.properties.media_url),focalPoint:block.properties.focal_point};
   }).sort((left,right)=>{
     if(left.isStoryboardFrame!==right.isStoryboardFrame)return left.isStoryboardFrame?-1:1;
     if(left.storyboardId&&left.storyboardId===right.storyboardId)return(left.sequence??Number.POSITIVE_INFINITY)-(right.sequence??Number.POSITIVE_INFINITY);

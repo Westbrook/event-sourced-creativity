@@ -99,6 +99,21 @@ test("projects durable image and document-render checkpoints into honest progres
   const fan=documentJobProgress(job({kind:"prompt_fan",status:"running",stage:"running",result:{completedCount:2},members:[]}));
   assert.equal(fan.label,"Render ×4");
   assert.equal(fan.detail,"2 of 4 prompt approaches finished");
+
+  const recovering=documentJobProgress(job({kind:"render_document",status:"queued",stage:"queue-recovery",result:{artifactKind:"slides"},progressMessage:"An earlier operation lost contact. The server is recovering it before this render starts."}));
+  assert.equal(recovering.label,"Recovering queue");
+  assert.equal(recovering.steps[0].state,"active");
+  assert.match(recovering.detail,/recovering it before this render starts/i);
+});
+
+test("recovers an expired running job before advancing queued document renders",async()=>{
+  const jobsApi=await readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8");
+  assert.match(jobsApi,/if \(!rowIsStale\(active\)\) return;/);
+  assert.match(jobsApi,/const recovered = await runDocumentJob\(env, user, active\.job_id\);/);
+  assert.match(jobsApi,/if \(recoveryBlocker\) context\?\.waitUntil\(driveDocumentQueue\(env, user\)\);/);
+  assert.match(jobsApi,/stage: "queue-recovery"/);
+  assert.match(jobsApi,/An earlier operation lost contact\. The server is recovering it before this render starts\./);
+  assert.doesNotMatch(jobsApi,/if \(running\) return;/);
 });
 
 test("keeps pending artifact identity visible before its first worker checkpoint",async()=>{
