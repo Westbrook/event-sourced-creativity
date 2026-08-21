@@ -1,4 +1,4 @@
-CREATE TABLE `budget_reservations` (
+CREATE TABLE IF NOT EXISTS `budget_reservations` (
 	`reservation_id` text PRIMARY KEY NOT NULL,
 	`owner_id` text NOT NULL,
 	`stream_id` text NOT NULL,
@@ -14,9 +14,9 @@ CREATE TABLE `budget_reservations` (
 	`updated_at` text NOT NULL
 );
 --> statement-breakpoint
-CREATE INDEX `idx_budget_reservations_owner_status` ON `budget_reservations` (`owner_id`,`status`,`created_at`);--> statement-breakpoint
-CREATE INDEX `idx_budget_reservations_correlation` ON `budget_reservations` (`correlation_id`);--> statement-breakpoint
-CREATE TABLE `canvas_governance_requirements` (
+CREATE INDEX IF NOT EXISTS `idx_budget_reservations_owner_status` ON `budget_reservations` (`owner_id`,`status`,`created_at`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `idx_budget_reservations_correlation` ON `budget_reservations` (`correlation_id`);--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS `canvas_governance_requirements` (
 	`requirement_id` text PRIMARY KEY NOT NULL,
 	`status` text NOT NULL,
 	`approved_by_user_id` text,
