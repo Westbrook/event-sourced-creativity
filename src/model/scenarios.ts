@@ -50,12 +50,12 @@ const baseTypes: Record<ScenarioKey, Array<[string, string]>> = {
   ],
   "document-artifacts": [
     ["user","ProjectCreated"],["user","DocumentCreated"],["user","EmptyCanvasChosen"],
-    ...DOCUMENT_ARTIFACT_KINDS.flatMap(()=>[["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderCompleted"],["user","DocumentArtifactViewed"]] as Array<[string,string]>),
+    ...DOCUMENT_ARTIFACT_KINDS.flatMap(()=>[["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderCompleted"],["user","DocumentArtifactViewed"],["user","BlockCreated"]] as Array<[string,string]>),
     ["user","DocumentArtifactExported"],["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderFailed"],
   ],
   "output-workbench": [
-    ["user","ProjectCreated"],["user","DocumentCreated"],["user","DocumentViewVisited"],["user","GenerationRequested"],["worker:compiler","ContextCompiled"],["worker:generator","IdeationPreviewCompleted"],["user","IdeationPromoted"],["user","GenerationRequested"],["worker:compiler","ContextCompiled"],["worker:generator","GenerationCompleted"],
-    ...DOCUMENT_ARTIFACT_KINDS.flatMap(()=>[["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderCompleted"],["user","DocumentArtifactViewed"]] as Array<[string,string]>),
+    ["user","ProjectCreated"],["user","DocumentCreated"],["user","DocumentViewVisited"],["user","GenerationRequested"],["worker:compiler","ContextCompiled"],["worker:generator","IdeationPreviewCompleted"],["user","IdeationPromoted"],["user","GenerationRequested"],["worker:compiler","ContextCompiled"],["worker:generator","GenerationCompleted"],["user","BlockCreated"],
+    ...DOCUMENT_ARTIFACT_KINDS.flatMap(()=>[["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderCompleted"],["user","DocumentArtifactViewed"],["user","BlockCreated"]] as Array<[string,string]>),
     ["user","DocumentArtifactExported"],["user","CollectionCreated"],["user","CollectionItemAdded"],["user","ObjectSaved"],["user","AttentionEpisodeObserved"],
   ],
   "library-canvas": [
@@ -511,6 +511,12 @@ function payloadFor(type: string, i: number, key: ScenarioKey, cycle: number): R
     const viewedOrdinal=Math.max(0,patternPrefix.filter(([,eventType])=>eventType==="DocumentArtifactViewed").length-1);
     const kindFor=(ordinal:number)=>DOCUMENT_ARTIFACT_KINDS[Math.min(ordinal,DOCUMENT_ARTIFACT_KINDS.length-1)];
     const artifactId=(kind:string)=>`artifact-${key}-${cycle}-${kind}`;
+    if(type==="BlockCreated"){
+      const inputOrdinal=Math.max(0,patternPrefix.filter(([,eventType])=>eventType==="BlockCreated").length-1);
+      if(key==="output-workbench"&&inputOrdinal===0)return{block_id:`block-${key}-${cycle}-image-input`,project_id:"project-long-horizon",document_id:documentId,type:"reference",handle:`reference/generated-${cycle}`,position:`z${String(i).padStart(8,"0")}`,source_output_id:objectId,properties:{label:"Selected full-quality image",text:"Use this selected generation as visual inspiration for the next output.",source_output_id:objectId,source_generation_id:generationId,source_document_id:documentId,media_url:`/api/media/replay%2Fgenerated%2F${objectId}.png`,media_type:"image/png",pixel_reference_mode:"inspiration",intent:"include",authority:"authored",weight:.8,input_mode:"full_output",created_from:"output-workbench"}};
+      const artifactKind=kindFor(key==="output-workbench"?inputOrdinal-1:inputOrdinal),sourceArtifactId=artifactId(artifactKind);const semantics={short_story:{type:"message",subtype:"Narrative source",role:"sequence"},scene:{type:"message",subtype:"Scripted scene",role:"scene"},slides:{type:"message",subtype:"Presentation source",role:"slide_chapter"},storyboard:{type:"composition",subtype:"Storyboard sequence",role:"sequence"},video:{type:"motion",subtype:"Rendered motion",role:"sequence"}}[artifactKind];
+      return{block_id:`block-${key}-${cycle}-${artifactKind}-input`,project_id:"project-long-horizon",document_id:documentId,type:semantics.type,handle:`${semantics.type}/${artifactKind}-output-${cycle}`,position:`z${String(i).padStart(8,"0")}`,source_artifact_id:sourceArtifactId,source_artifact_kind:artifactKind,properties:{label:replayOutputBrief(artifactKind).title,text:`The complete retained ${artifactKind.replaceAll("_"," ")} output remains available here as authored source material.`,subtype:semantics.subtype,source_artifact_id:sourceArtifactId,source_artifact_kind:artifactKind,source_document_id:documentId,artifact_item_count:artifactKind==="slides"?7:artifactKind==="storyboard"?6:1,input_mode:"full_output",intent:"include",authority:"authored",weight:.9,context_set_id:`context-${sourceArtifactId}`,copied_as_context_set:true,semantic_isolation:true,combined_context_memberships:[{contextSetId:`context-${sourceArtifactId}`,name:replayOutputBrief(artifactKind).title,role:semantics.role,target:`${replayOutputBrief(artifactKind).title} continuity`,application:artifactKind==="scene"?"co_locate":"ordered",relativity:1,memberOrder:0}],created_from:"document-artifact-viewer"}};
+    }
     if(type==="DocumentRenderRequested"){
       const kind=kindFor(requestedOrdinal);return{artifact_id:artifactId(kind),artifact_kind:kind,document_id:documentId,project_id:"project-long-horizon",job_kind:"render_document",item_count:kind==="slides"?7:kind==="storyboard"?6:1,source_surface:requestedOrdinal%2?"canvas":"document",video_seconds:kind==="video"?4:null,video_size:kind==="video"?"1280x720":null,paid_media_confirmed:kind==="storyboard"||kind==="video",request_key:`render:${documentId}:${kind}:revision-${cycle}`,output_brief:replayOutputBrief(kind)};
     }

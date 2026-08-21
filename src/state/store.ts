@@ -15,7 +15,7 @@ import { canvasIdFromRoute } from "../canvas/routes";
 import { canvasProjectId, foldCanvasEvents, type CanvasContextSet, type CanvasProjection } from "../canvas/model";
 import type { GenerationReadiness, GenerationReadinessKind, PromptTechniqueSafetyComparison } from "../model/generation-readiness";
 import { parseDocumentArtifactContent, type DocumentArtifactKind } from "../model/document-artifacts";
-import { storyboardFrameContextEvents } from "../model/storyboard-context";
+import { artifactContextEvents, imageOutputContextEvents } from "../model/output-context";
 import { combinedContextGroups, combinedContextRoleForBlockType } from "../model/combined-context";
 
 type Listener = () => void;
@@ -301,16 +301,25 @@ export class FormaStore {
     const appended=await this.appendBatch(events);if(!appended.length)return null;const copiedRootId=ids.get(root.id)!;this.patchUi({focusBlockId:copiedRootId});this.toast(blocks.length===1?"Reusable block added to the open document.":`${blocks.length} connected blocks added as one context set.`);return{rootBlockId:copiedRootId,blockCount:blocks.length,relationCount:events.length-blocks.length};
   }
 
-  async addStoryboardFramesAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer"){
+  async addArtifactAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer"){
     const projection=this.projection.get();const artifact=projection.libraryArtifacts.find((candidate)=>candidate.id===artifactId);
-    if(!artifact||artifact.kind!=="storyboard"){this.toast("That storyboard is no longer available.");return null;}
-    const document=projection.documents.find((candidate)=>candidate.id===destinationDocumentId);if(!document){this.toast("Choose an available document before adding storyboard context.");return null;}
-    const existingSourceItemIds=projection.libraryBlocks.filter((block)=>block.documentId===destinationDocumentId&&block.properties.source_artifact_id===artifact.id).map((block)=>String(block.properties.source_artifact_item_id??"")).filter(Boolean);
-    const content=parseDocumentArtifactContent(this.content.get()[artifact.contentRef??""]);const result=storyboardFrameContextEvents(artifact,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content,existingSourceItemIds,positionStart:this.head.get()+1});
-    if(!result.availableFrameCount){this.toast("This storyboard does not contain any finished images yet.");return null;}
-    if(!result.blockIds.length){this.toast("Every storyboard frame is already available as document context.");return{blockCount:0,availableFrameCount:result.availableFrameCount};}
+    if(!artifact){this.toast("That output is no longer available.");return null;}
+    const document=projection.documents.find((candidate)=>candidate.id===destinationDocumentId);if(!document){this.toast("Choose an available document before adding output context.");return null;}
+    const existingBlocks=projection.libraryBlocks.filter((block)=>block.documentId===destinationDocumentId&&block.properties.source_artifact_id===artifact.id);const existingRoot=existingBlocks.find((block)=>!block.properties.source_artifact_item_id);const existingSourceItemIds=existingBlocks.map((block)=>String(block.properties.source_artifact_item_id??"")).filter(Boolean);const contextSetId=String(existingRoot?.properties.context_set_id??"")||undefined;
+    const content=parseDocumentArtifactContent(this.content.get()[artifact.contentRef??""]);const result=artifactContextEvents(artifact,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content,existingRootBlockId:existingRoot?.id,existingSourceItemIds,contextSetId,positionStart:this.head.get()+1});
+    if(!result.blockIds.length){this.toast("This complete output is already available as document input.");return{blockCount:0,availableMemberCount:result.availableMemberCount};}
     const appended=await this.appendBatch(result.events,{rebaseAttempts:6});const created=appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;
-    this.patchUi({focusBlockId:result.blockIds[0]??""});this.toast(`${created} storyboard frame${created===1?" is":"s are"} now available as ordered visual context.`);return{blockCount:created,availableFrameCount:result.availableFrameCount};
+    this.patchUi({focusBlockId:result.blockIds[0]??existingRoot?.id??""});this.toast(`${artifact.title} is now reusable document input${artifact.kind==="storyboard"?" with its finished frames kept in order":""}.`);return{blockCount:created,availableMemberCount:result.availableMemberCount};
+  }
+
+  async addStoryboardFramesAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer"){return this.addArtifactAsContext(artifactId,destinationDocumentId,sourceSurface);}
+
+  async addImageOutputAsContext(outputId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="output-card"){
+    const projection=this.projection.get();const output=projection.libraryOutputs.find((candidate)=>candidate.id===outputId);if(!output){this.toast("That generated image is no longer available.");return null;}
+    const document=projection.documents.find((candidate)=>candidate.id===destinationDocumentId);if(!document){this.toast("Choose an available document before using this image as input.");return null;}
+    if(projection.libraryBlocks.some((block)=>block.documentId===destinationDocumentId&&block.properties.source_output_id===output.id)){this.toast("This image is already available as document input.");return{blockCount:0};}
+    const result=imageOutputContextEvents(output,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,positionStart:this.head.get()+1});if(!result.events.length){this.toast("The generated image has no durable media to use as input.");return null;}
+    const appended=await this.appendBatch(result.events,{rebaseAttempts:6});const created=appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;this.patchUi({focusBlockId:result.blockIds[0]??""});this.toast("The generated image is now a pixel-capable Reference input.");return{blockCount:created};
   }
 
   async hot(event: EventInput, options: { keepalive?: boolean } = {}) {

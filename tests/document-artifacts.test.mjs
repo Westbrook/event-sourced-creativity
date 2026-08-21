@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { applySlideStylePreset, defaultSlidePresentation, DOCUMENT_ARTIFACT_KINDS, normalizeSlideDeckItems, normalizeSlidePresentation, parseDocumentArtifactContent, SLIDE_STYLE_PRESETS, slideCopyIsDistinct, slideCopyIsNearDuplicate, slideCopyIssues, slideDeckCopyIsDistinct, slideDeckCopyIssues, slideVisualIsComplete } from "../src/model/document-artifacts.ts";
+import { applySlideStylePreset, defaultSlidePresentation, documentArtifactValidationIssues, DOCUMENT_ARTIFACT_KINDS, normalizeSlideDeckItems, normalizeSlidePresentation, parseDocumentArtifactContent, SLIDE_STYLE_PRESETS, slideCopyIsDistinct, slideCopyIsNearDuplicate, slideCopyIssues, slideDeckCopyIsDistinct, slideDeckCopyIssues, slideVisualIsComplete } from "../src/model/document-artifacts.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { buildComprehensiveScenario, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
 import { evaluateReplayCoverage } from "../src/model/replay-coverage.ts";
-import { generateCreativeVideo } from "../worker/openai-adapter.ts";
+import { generateCreativeVideo, generateDocumentArtifact } from "../worker/openai-adapter.ts";
 import { artifactGenerationInputInspection, outputGenerationInputInspection } from "../src/model/generation-inputs.ts";
 
 const event=(sequence,type,payload,actor=type.startsWith("DocumentRender")?"worker:renderer":"user")=>({eventId:`e${sequence}`,streamId:"s",sequence,occurredAt:"2026-08-19T12:00:00.000Z",recordedAt:"2026-08-19T12:00:00.000Z",actor,clientId:"test",correlationId:"c",causationId:null,compensatesEventId:null,schemaVersion:1,type,payload});
@@ -71,6 +71,23 @@ test("normalizes repeated narrative copy across the complete slide deck",()=>{
   const normalized=normalizeSlideDeckItems(items);assert.deepEqual(normalized[1]?.slide?.bullets,["The group chooses a cautious route"]);assert.equal(slideDeckCopyIsDistinct(normalized),true);
 });
 
+test("reports exact slide contract failures without rejecting intentionally bodyless slides",()=>{
+  const bodyless=parseDocumentArtifactContent(JSON.stringify({title:"Deck",summary:"Visual",content_markdown:"# Deck",presentation,items:[{title:"One clear claim",body:"",notes:"Speak to the evidence.",image_prompt:"",context_group_ids:[],slide:{layout:"metric",kicker:"Evidence",bullets:[],visual:{kind:"metric",label:"Confidence",value:"82%",data:[]}}}]}));
+  assert.deepEqual(documentArtifactValidationIssues("slides",bodyless,{itemCount:1}),[]);
+  const incomplete=parseDocumentArtifactContent(JSON.stringify({title:"Document-derived editorial",summary:"Broken",content_markdown:"",presentation:{...presentation,footer_label:"Document-derived editorial"},items:[{title:"",body:"",notes:"",image_prompt:"",context_group_ids:[],slide:{layout:"bars",kicker:"",bullets:[],visual:{kind:"bars",label:"",value:"",data:[]}}}]}));
+  const codes=new Set(documentArtifactValidationIssues("slides",incomplete,{itemCount:2,contextGroupIds:["group-1"]}).map((issue)=>issue.code));
+  for(const code of ["missing_content","wrong_item_count","missing_context_group","missing_footer_label","missing_title","incomplete_visual","missing_visible_claim"])assert.equal(codes.has(code),true,code);
+});
+
+test("repairs an incomplete provider slide plan once and retains exact validation receipts",async()=>{
+  const originalFetch=globalThis.fetch;const requests=[];
+  const incomplete={title:"Field study",summary:"A broken first pass",content_markdown:"# Field study",presentation:{...presentation,footer_label:"Field study"},items:[{title:"",body:"",notes:"",image_prompt:"",context_group_ids:[],slide:{layout:"split",kicker:"",bullets:[],visual:{kind:"bars",label:"",value:"",data:[]}}}]};
+  const repaired={title:"Field study",summary:"A resolved deck",content_markdown:"# Field study\n\nOne clear progression.",presentation:{...presentation,footer_label:"Field study"},items:[{title:"Protect the opening",body:"",notes:"Explain why the field remains visible.",image_prompt:"No raster image.",context_group_ids:[],slide:{layout:"metric",kicker:"Evidence",bullets:[],visual:{kind:"metric",label:"Open field",value:"82%",data:[]}}}]};
+  globalThis.fetch=async(_input,init={})=>{const request=JSON.parse(String(init.body));requests.push(request);const output=requests.length===1?incomplete:repaired;return Response.json({id:`response-${requests.length}`,model:"gpt-test",output_text:JSON.stringify(output),usage:{input_tokens:100,output_tokens:50,total_tokens:150}});};
+  try{const result=await generateDocumentArtifact({OPENAI_API_KEY:"test",OPENAI_MODEL:"gpt-test"},"user-1","slides",{documentTitle:"Field study",snapshot:{facts:[],relationships:[]},options:{itemCount:1}});assert.equal(requests.length,2);assert.equal(requests[1].text.format.name,"document_slides_repair");assert.equal(result.output.items[0]?.title,"Protect the opening");assert.equal(result.inputReceipt.validation.repair_attempted,true);assert.ok(result.inputReceipt.validation.initial_issues.some((issue)=>issue.code==="missing_title"));assert.deepEqual(result.inputReceipt.validation.repair_issues,[]);assert.deepEqual(result.usage,{inputTokens:200,outputTokens:100,totalTokens:300});}
+  finally{globalThis.fetch=originalFetch;}
+});
+
 test("keeps text, structured slides, storyboard, and video rendering behind durable server jobs",async()=>{
   const [adapter,jobs,events,store,component,slideComponent,deckComponent,canvas,styles]=await Promise.all([
     readFile(new URL("../worker/openai-adapter.ts",import.meta.url),"utf8"),
@@ -85,14 +102,14 @@ test("keeps text, structured slides, storyboard, and video rendering behind dura
   ]);
   assert.match(adapter,/queue\.fal\.run/);assert.match(adapter,/DEFAULT_REFERENCE_VIDEO_MODEL/);assert.match(adapter,/VIDEO_ADAPTER_CONTRACT/);assert.match(adapter,/@Image/);assert.match(adapter,/end_user_id/);assert.match(adapter,/request_id/);assert.match(adapter,/providerJobId/);assert.match(adapter,/generateDocumentArtifact/);
   assert.match(adapter,/slidePresentationSchema/);assert.match(adapter,/footer_label/);assert.match(adapter,/style_preset/);assert.match(adapter,/SLIDE_STYLE_PRESET_IDS/);assert.match(adapter,/SLIDE_VISUAL_KINDS/);assert.match(adapter,/not a request for raster slide images/i);assert.match(adapter,/Never put process language/);
-  assert.match(adapter,/Never emit empty bullets/);assert.match(adapter,/Do not repeat or closely restate/);assert.match(adapter,/punctuation, quotation marks, line breaks/);assert.match(adapter,/review every slide against every other slide/i);assert.match(adapter,/slideCopyIsDistinct/);assert.match(adapter,/slideDeckCopyIsDistinct/);
+  assert.match(adapter,/Never emit empty bullets/);assert.match(adapter,/Do not repeat or closely restate/);assert.match(adapter,/punctuation, quotation marks, line breaks/);assert.match(adapter,/review every slide against every other slide/i);assert.match(adapter,/documentArtifactValidationIssues/);assert.match(adapter,/document_slides_repair/);assert.match(adapter,/one bounded repair pass/i);
   assert.match(jobs,/render_document/);assert.match(jobs,/providerJobId/);assert.match(jobs,/renderedItems/);
   assert.match(events,/DocumentRenderRequested/);assert.match(events,/DocumentRenderCompleted/);assert.match(events,/DocumentRenderFailed/);
   assert.match(events,/document-artifact-input/);assert.match(events,/input_ref/);assert.match(events,/videoPixelReferences/);assert.match(events,/used_reference_pixels/);
   assert.match(events,/artifact_media_target_not_found/);assert.match(store,/renderDocumentArtifact/);assert.match(store,/targetKind:"artifact"/);assert.match(component,/I understand, continue/);assert.match(component,/VIDEO_ADAPTER_CONTRACT\.label/);assert.match(component,/Inspect inputs/);assert.match(component,/Saving…":"Stop/);assert.match(component,/forma-video-reference-preflight/);assert.match(component,/reference-to-video/);assert.match(component,/No reference pixels will leave storage/);
   assert.match(component,/document-artifact-reader-content/);assert.match(styles,/\.document-artifact-reader-content \{ min-height: 0; overflow: auto;/);assert.match(styles,/\.document-artifact-reader \{ min-height: 0; overflow: hidden;/);
   assert.match(component,/#createdAt\(artifact:DocumentArtifact\)/);assert.match(component,/event\.eventId===artifact\.sourceEventId/);assert.match(component,/class="document-artifact-created"/);assert.match(component,/>Created \$\{/);assert.match(styles,/\.document-artifact-created \{/);
-  assert.match(component,/Add \$\{remaining\} frame/);assert.match(component,/addStoryboardFramesAsContext/);assert.match(store,/storyboardFrameContextEvents/);assert.match(canvas,/canvas-selection-storyboard/);
+  assert.match(component,/Use \$\{documentArtifactDefinition\(artifact\.kind\)\.label\.toLowerCase\(\)\} as input/);assert.match(component,/addArtifactAsContext/);assert.match(store,/artifactContextEvents/);assert.match(canvas,/artifactContextEvents/);assert.match(canvas,/imageOutputContextEvents/);
   assert.match(component,/forma-presentation-slide/);assert.match(slideComponent,/presentation-visual-bars/);assert.match(canvas,/forma-presentation-slide/);assert.match(styles,/\.presentation-slide/);assert.match(styles,/aspect-ratio: 16\s*\/\s*9/);
   for(const source of [component,canvas]){assert.match(source,/forma-presentation-deck/);assert.match(source,/\.preferenceKey=\$\{artifact\.id\}/);assert.match(source,/\.deckTitle=\$\{artifact\.title\}/);assert.match(source,/\.documentId=\$\{artifact\.documentId\}/);}assert.match(deckComponent,/Show deck label/);assert.match(deckComponent,/Slide style/);assert.match(deckComponent,/SLIDE_STYLE_PRESETS\.map/);assert.match(deckComponent,/slide-style-changed/);assert.match(deckComponent,/DECK_STYLE_PREFERENCE/);assert.match(deckComponent,/List/);assert.match(deckComponent,/Slideshow/);assert.match(deckComponent,/Download PDF/);assert.match(deckComponent,/createPresentationPdf/);assert.match(deckComponent,/application\/pdf/);assert.match(deckComponent,/DocumentArtifactExported/);assert.match(deckComponent,/ArrowLeft/);assert.match(deckComponent,/ArrowRight/);assert.match(deckComponent,/Previous/);assert.match(deckComponent,/Next/);assert.match(deckComponent,/normalizeSlideDeckItems/);assert.match(deckComponent,/writeSlideFooterLabelPreference/);assert.match(slideComponent,/presentation\.footerLabel/);assert.match(slideComponent,/style-\$\{presentation\.stylePreset\}/);assert.doesNotMatch(slideComponent,/>\$\{presentation\.theme\}</);
   assert.match(styles,/\.presentation-deck-frame \{[^}]*aspect-ratio: 16\/9;/);assert.match(styles,/\.presentation-deck-frame \.presentation-slide \{ aspect-ratio: auto;/);
@@ -195,6 +212,7 @@ test("classifies an empty Fal submission without a request receipt instead of le
 test("replay laboratory semantically covers every document artifact",()=>{
   const events=buildComprehensiveScenario();const coverage=evaluateReplayCoverage(events,SCENARIO_EVENT_TYPES);const check=coverage.checks.find((item)=>item.key==="document-artifact-rendering");
   assert.equal(check?.passed,true);assert.equal(coverage.passed,true);
+  assert.equal(coverage.checks.find((item)=>item.key==="output-as-input")?.passed,true);
   const repetitive=events.map((entry)=>entry.type!=="DocumentRenderCompleted"||entry.payload.artifact_kind!=="slides"?entry:{...entry,payload:{...entry.payload,items:entry.payload.items.map((item,index)=>index?item:{...item,body:'“Careful,” says the librarian. Then: “Show me what you found.”',slide:{...item.slide,bullets:['“Careful,” says the librarian\nThen: “Show me what you found']}})}});const repetitiveCoverage=evaluateReplayCoverage(repetitive,SCENARIO_EVENT_TYPES);
   assert.equal(repetitiveCoverage.checks.find((item)=>item.key==="document-artifact-rendering")?.passed,false);
   const repeatedAcrossSlides=events.map((entry)=>entry.type!=="DocumentRenderCompleted"||entry.payload.artifact_kind!=="slides"?entry:{...entry,payload:{...entry.payload,items:entry.payload.items.map((item,index,items)=>index===1?{...item,body:items[0].body}:item)}});const repeatedDeckCoverage=evaluateReplayCoverage(repeatedAcrossSlides,SCENARIO_EVENT_TYPES);

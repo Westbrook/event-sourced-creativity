@@ -10,6 +10,8 @@ export type StoryboardContextOptions = {
   positionStart?: number;
   positionPrefix?: string;
   contextSetId?: string;
+  contextRootBlockId?: string;
+  memberOrderOffset?: number;
   sourceCanvasId?: string;
   sourceCanvasItemIds?: string[];
   idFactory?: () => string;
@@ -38,7 +40,7 @@ export function storyboardFrameContextEvents(artifact: DocumentArtifact, options
   const pending = available.filter(({ item }) => !existing.has(item.id));
   const contextSetId = options.contextSetId ?? idFactory();
   const records = pending.map(({ item, index }) => ({ item, index, blockId: idFactory(), referenceId: idFactory() }));
-  const rootBlockId = records[0]?.blockId ?? "";
+  const rootBlockId = options.contextRootBlockId ?? records[0]?.blockId ?? "";
   const events: EventInput[] = [];
   for (const [ordinal, record] of records.entries()) {
     const authored = options.content?.items[record.index];
@@ -119,7 +121,7 @@ export function storyboardFrameContextEvents(artifact: DocumentArtifact, options
             target: `${artifact.title} ordered shot sequence`,
             application: "ordered",
             relativity: 1,
-            memberOrder: record.index,
+            memberOrder: record.index + (options.memberOrderOffset ?? 0),
             sourceCanvasId: options.sourceCanvasId ?? "",
           }],
           semantic_isolation: true,

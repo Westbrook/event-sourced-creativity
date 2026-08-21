@@ -209,6 +209,30 @@ export function slideVisualIsComplete(slide:SlideVisualData){
   return slide.visual.data.length>=2&&slide.visual.data.every((datum)=>Boolean(contentKey(datum.label)));
 }
 
+export type DocumentArtifactValidationIssue={code:string;path:string;message:string};
+
+export function documentArtifactValidationIssues(kind:DocumentArtifactKind,output:DocumentArtifactDraft|null,options:{itemCount:number;contextGroupIds?:string[]}):DocumentArtifactValidationIssue[]{
+  if(!output)return[{code:"invalid_json",path:"$",message:"The provider response was not a valid artifact object."}];
+  const issues:DocumentArtifactValidationIssue[]=[];const add=(code:string,path:string,message:string)=>issues.push({code,path,message});const expectedGroups=options.contextGroupIds??[];const knownGroups=new Set(expectedGroups);const assignedGroups=output.items.flatMap((item)=>item.context_group_ids??[]);
+  if(!output.content_markdown.trim())add("missing_content","content_markdown","The durable readable output is empty.");
+  if(output.items.length!==options.itemCount)add("wrong_item_count","items",`Expected ${options.itemCount} items but received ${output.items.length}.`);
+  for(const groupId of expectedGroups)if(!assignedGroups.includes(groupId))add("missing_context_group","items.context_group_ids",`Combined Context ${groupId} was not assigned to any item.`);
+  for(const groupId of assignedGroups)if(!knownGroups.has(groupId))add("unknown_context_group","items.context_group_ids",`Unknown Combined Context ${groupId} was assigned.`);
+  if(kind!=="slides")return issues;
+  if(!output.presentation?.footerLabel?.trim())add("missing_footer_label","presentation.footer_label","The deck needs a document-derived footer label.");
+  for(const groupId of expectedGroups){const positions=output.items.flatMap((item,index)=>(item.context_group_ids??[]).includes(groupId)?[index]:[]);if(!positions.every((position,index)=>index===0||position===positions[index-1]!+1))add("split_context_group","items.context_group_ids",`Combined Context ${groupId} must occupy one slide or a contiguous chapter.`);}
+  output.items.forEach((item,index)=>{
+    const path=`items.${index}`;
+    if(!item.title.trim())add("missing_title",`${path}.title`,"Every slide needs a title.");
+    if(!item.slide){add("missing_slide",`${path}.slide`,"Every slide needs structured visual data.");return;}
+    if(!slideVisualIsComplete(item.slide))add("incomplete_visual",`${path}.slide.visual`,"The slide visual group is incomplete or still contains scaffolding.");
+    if(!item.body.trim()&&!item.slide.bullets.length&&!item.slide.visual.value.trim()&&!item.slide.visual.data.length)add("missing_visible_claim",path,"The slide has no body, bullets, metric, or visual claim.");
+    for(const duplicate of slideCopyIssues(item))add("duplicate_slide_copy",`${path}.${duplicate.secondPath}`,`This repeats ${path}.${duplicate.firstPath}: “${duplicate.second}”.`);
+  });
+  for(const duplicate of slideDeckCopyIssues(output.items))add("duplicate_deck_copy",`items.${duplicate.secondSlide}.${duplicate.secondPath}`,`This repeats items.${duplicate.firstSlide}.${duplicate.firstPath}: “${duplicate.second}”.`);
+  return issues;
+}
+
 export const defaultSlidePresentation = (stylePreset:SlideStylePresetId="gallery"): SlidePresentation => {
   const preset=slideStylePresetDefinition(stylePreset);return{aspectRatio:"16:9",theme:"Document-derived editorial",footerLabel:"",stylePreset,mode:preset.mode,palette:{...preset.palette}};
 };
