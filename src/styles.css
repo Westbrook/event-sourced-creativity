@@ -1740,6 +1740,7 @@ forma-presentation-deck { display: block; width: 100%; min-width: 0; }
 .presentation-deck-style { display: inline-flex; min-width: 0; align-items: center; gap: .5rem; color: var(--muted); font: 650 var(--type-caption) var(--sans); }
 .presentation-deck-style select { width: auto; min-width: 8.5rem; min-height: 2.25rem; padding-block: .35rem; font: inherit; }
 .presentation-deck-count { flex: none; color: var(--muted); font-size: var(--type-caption); white-space: nowrap; }
+.presentation-deck-export { display: inline-flex; flex: none; align-items: center; gap: .4rem; white-space: nowrap; }
 .presentation-deck-frame { display: block; width: 100%; min-width: 0; overflow: hidden; aspect-ratio: 16/9; background: var(--paper); box-shadow: 0 .75rem 2.5rem color-mix(in srgb,var(--ink) 10%,transparent); }
 .presentation-deck-frame forma-presentation-slide,.presentation-deck-frame .presentation-slide { width: 100%; height: 100%; min-height: 0; }
 .presentation-deck-frame .presentation-slide { aspect-ratio: auto; }
@@ -1760,6 +1761,11 @@ forma-presentation-deck { display: block; width: 100%; min-width: 0; }
 .presentation-deck--slideshow { display: grid; height: 100%; min-height: 0; grid-template-rows: auto minmax(0,1fr); overflow: hidden; }
 .presentation-deck--slideshow .presentation-deck-stage { height: 100%; min-height: 0; grid-template-rows: minmax(0,1fr) auto auto; overflow: auto; padding-block: 1rem; container: presentation-deck-stage / size; }
 .presentation-deck--slideshow .presentation-deck-stage > .presentation-deck-frame { width: clamp(10rem,calc(177.78cqh - 12.5rem),68rem); max-width: 100%; height: auto; max-height: none; }
+@media (max-width: 46rem) {
+  .presentation-deck-toolbar { align-items: stretch; flex-direction: column; }
+  .presentation-deck-toolbar > div { flex-wrap: wrap; justify-content: space-between; }
+  .presentation-deck-export { margin-inline-start: auto; }
+}
 
 forma-presentation-slide { display: block; min-width: 0; }
 .presentation-slide { position: relative; display: grid; box-sizing: border-box; width: 100%; min-width: 0; aspect-ratio: 16/9; grid-template-rows: auto minmax(0,1fr) auto; gap: clamp(.35rem,1.3cqi,1rem); overflow: hidden; padding: clamp(.65rem,3.4cqi,2.5rem); color: var(--slide-ink); background: var(--slide-bg); container: presentation-slide / inline-size; isolation: isolate; }
