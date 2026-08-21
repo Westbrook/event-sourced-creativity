@@ -211,6 +211,38 @@ export function slideVisualIsComplete(slide:SlideVisualData){
 
 export type DocumentArtifactValidationIssue={code:string;path:string;message:string};
 
+export type DocumentArtifactContextGroupContract={id:string;alias:string};
+export type DocumentArtifactContextGroupResolution={
+  rawAssignments:string[][];
+  canonicalAssignments:string[][];
+  unknownAssignments:string[];
+  deterministicallyAssigned:boolean;
+};
+
+/**
+ * Provider output may refer only to the short-lived aliases exposed in its
+ * request. Durable Combined Context IDs are owned by the application and are
+ * resolved here rather than delegated to a language model. A one-item artifact
+ * (notably video and scene) necessarily receives every current group.
+ */
+export function resolveDocumentArtifactContextGroups(output:DocumentArtifactDraft|null,contracts:DocumentArtifactContextGroupContract[]):{output:DocumentArtifactDraft|null;receipt:DocumentArtifactContextGroupResolution}{
+  const rawAssignments=output?.items.map((item)=>[...new Set(item.context_group_ids??[])])??[];
+  if(!output)return{output,receipt:{rawAssignments,canonicalAssignments:[],unknownAssignments:[],deterministicallyAssigned:false} satisfies DocumentArtifactContextGroupResolution};
+  const durableByReference=new Map<string,string>();
+  for(const contract of contracts){durableByReference.set(contract.alias,contract.id);durableByReference.set(contract.id,contract.id);}
+  const unknown=new Set<string>();
+  const singleItem=output.items.length===1;
+  const items=output.items.map((item,index)=>{
+    const resolved=singleItem
+      ? contracts.map((contract)=>contract.id)
+      : rawAssignments[index]!.flatMap((reference)=>{const id=durableByReference.get(reference);if(id)return[id];unknown.add(reference);return[];});
+    if(singleItem)for(const reference of rawAssignments[index]!)if(!durableByReference.has(reference))unknown.add(reference);
+    return{...item,context_group_ids:[...new Set(resolved)]};
+  });
+  const canonicalAssignments=items.map((item)=>item.context_group_ids??[]);
+  return{output:{...output,items},receipt:{rawAssignments,canonicalAssignments,unknownAssignments:[...unknown],deterministicallyAssigned:singleItem&&contracts.length>0} satisfies DocumentArtifactContextGroupResolution};
+}
+
 export function documentArtifactValidationIssues(kind:DocumentArtifactKind,output:DocumentArtifactDraft|null,options:{itemCount:number;contextGroupIds?:string[]}):DocumentArtifactValidationIssue[]{
   if(!output)return[{code:"invalid_json",path:"$",message:"The provider response was not a valid artifact object."}];
   const issues:DocumentArtifactValidationIssue[]=[];const add=(code:string,path:string,message:string)=>issues.push({code,path,message});const expectedGroups=options.contextGroupIds??[];const knownGroups=new Set(expectedGroups);const assignedGroups=output.items.flatMap((item)=>item.context_group_ids??[]);
