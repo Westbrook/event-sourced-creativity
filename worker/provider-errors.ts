@@ -67,11 +67,13 @@ export function classifyProviderFailure(input: unknown, response?: Response, pro
   const lower = `${providerCode} ${message}`.toLowerCase();
   const promptTooLong = /prompt.*(?:string too long|maximum length)|(?:string too long|maximum length).*prompt/.test(lower);
   const imageCardinalityExceeded = /number of images \(\d+\) exceeds maximum of \d+/.test(lower);
+  const audioCopyright = /\b(?:audio|soundtrack|music|song|lyrics?|score)\b/.test(lower)
+    && /\b(?:copyright|protected|rights?|licensed|sensitive content)\b/.test(lower);
   let category: ProviderFailureCategory = "unknown";
   let scope: ProviderFailureScope = "unknown";
   let action: ProviderFailureAction = "none";
 
-  if (/safety|content[_ -]?policy|moderation|request was rejected/.test(lower)) {
+  if (audioCopyright || /safety|content[_ -]?policy|moderation|request was rejected/.test(lower)) {
     category = "safety"; scope = "request"; action = "edit_request";
   } else if (promptTooLong || imageCardinalityExceeded) {
     category = "provider"; scope = "request"; action = "edit_request";
@@ -121,6 +123,7 @@ export function classifyProviderFailure(input: unknown, response?: Response, pro
     retryAfterMs: providerRetryAfterMs(response),
     requestId: response?.headers.get("x-fal-request-id") ?? response?.headers.get("x-request-id") ?? response?.headers.get("openai-request-id") ?? null,
     httpStatus: status,
+    ...(audioCopyright ? { riskCategories: ["audio-copyright"] } : {}),
   };
 }
 

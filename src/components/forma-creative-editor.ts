@@ -6,6 +6,7 @@ import { sampleImageFile } from "../model/image-sample";
 import { focalPointCss } from "../model/focal-point";
 import { positionImageAtFocalPoint } from "../model/image-focus";
 import { icon } from "./forma-element";
+import { ensureModalDialog } from "./modal-dialog";
 import { AlternativeStudio } from "./forma-studio-alternatives";
 import { spatialScopeLabel } from "../model/spatial-scope";
 import "./spatial-scope-editor";
@@ -83,9 +84,9 @@ export class FormaCreativeEditor extends AlternativeStudio {
 
   protected override updated() {
     const create = this.querySelector<HTMLDialogElement>(".creative-add-dialog");
-    if (this.#creating && create && !create.open) create.showModal();
+    if (this.#creating) ensureModalDialog(create);
     const reference = this.querySelector<HTMLDialogElement>(".creative-reference-dialog");
-    if (this.#pendingReference && reference && !reference.open) reference.showModal();
+    if (this.#pendingReference) ensureModalDialog(reference);
   }
 
   #openCreate(type: BlockKind = "direction", intent: BlockIntent = "include") {

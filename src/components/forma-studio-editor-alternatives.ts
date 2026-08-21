@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import type { CreativeBlock, EventInput } from "../model/events";
 import { BLOCK_INTENTS, BLOCK_TYPES, blockIntentFor, blockTypeDefinition, isBlockIntent, isBlockKind, suggestedSubtype, type AdaptiveStructure, type BlockKind } from "../model/block-types";
 import { icon } from "./forma-element";
+import { ensureModalDialog } from "./modal-dialog";
 import { AlternativeStudio } from "./forma-studio-alternatives";
 import { spatialScopeLabel } from "../model/spatial-scope";
 import "./spatial-scope-editor";
@@ -39,7 +40,7 @@ const makeSlug=(value:string)=>value.toLowerCase().replace(/[^a-z0-9]+/g,"-").re
 export class FormaRealityLayers extends AlternativeStudio {
   #category:"all"|RealityCategory="all";#dropActive=false;#selectedBlockId="";#creating=false;
   #newType:BlockKind="direction";#newSubtype=suggestedSubtype("direction");#newHandle="";#newText="";#newWeight=.68;
-  protected override updated(){const dialog=this.querySelector<HTMLDialogElement>(".layer-create-dialog");if(dialog&&!dialog.open)dialog.showModal();}
+  protected override updated(){ensureModalDialog(this.querySelector<HTMLDialogElement>(".layer-create-dialog"));}
   #closeCreate(){this.querySelector<HTMLDialogElement>(".layer-create-dialog")?.close();this.#creating=false;this.requestUpdate();}
   async #activate(reality:Reality,source:"button"|"drop"){const p=this.store.projection.get();if(p.blocks.some((block)=>block.properties.reality_id===reality.id)){this.store.toast(`${reality.label} is already active.`);return;}const id=crypto.randomUUID();const appended=await this.store.append({type:"BlockCreated",payload:{block_id:id,document_id:p.documentId,type:reality.type,handle:`${reality.type}/${makeSlug(reality.label)}`,position:`z${String(this.store.head.get()+1).padStart(5,"0")}`,properties:{text:reality.text,subtype:reality.subtype,weight:.68,authority:"authored",reality_id:reality.id,created_from:"reality-layers",activation_method:source}}});if(appended.length){this.#selectedBlockId=id;this.store.patchUi({focusBlockId:id});this.requestUpdate();}}
   async #createLayer(event:SubmitEvent){event.preventDefault();const text=this.#newText.trim();if(!text)return;const p=this.store.projection.get();const id=crypto.randomUUID();const handle=this.#newHandle.trim()||`${this.#newType}/${makeSlug(text)}`;const appended=await this.store.append({type:"BlockCreated",payload:{block_id:id,document_id:p.documentId,type:this.#newType,handle,position:`z${String(this.store.head.get()+1).padStart(5,"0")}`,properties:{text,subtype:this.#newSubtype,weight:this.#newWeight,authority:"authored",created_from:"reality-layers",activation_method:"custom-layer"}}});if(appended.length){this.#selectedBlockId=id;this.#newHandle="";this.#newText="";this.#newWeight=.68;this.#closeCreate();}}

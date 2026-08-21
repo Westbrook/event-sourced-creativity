@@ -74,14 +74,14 @@ The palette is neutral and artwork-first. It follows the browser and operating-s
 | Surface | `#ffffff` | `#191a18` | Inputs, dialogs, and necessary bounded regions |
 | Subtle surface | `#f0f0ec` | `#242521` | Quiet controls and secondary grouped content |
 | Ink | `#171717` | `#f3f3ef` | Primary text and strong controls |
-| Muted ink | `#686864` | `#aaa9a2` | Supporting copy and metadata |
+| Muted ink | `#50504b` | `#b8b8b1` | Supporting copy and metadata |
 | Hairline | `#deded8` | `#343530` | Necessary boundaries |
-| Strong line | `#bcbcb5` | `#555650` | Inputs and selected structural boundaries |
-| Accent | `#315fe8` | `#8ca9ff` | Focus, links, selected states, and primary emphasis |
+| Strong line | `#8a8a84` | `#777873` | Inputs and selected structural boundaries |
+| Accent | `#2445af` | `#abc0ff` | Focus, links, selected states, and primary emphasis |
 | Accent wash | `#e9eeff` | `#202d52` | Selected backgrounds and focus support |
-| Success | `#287a4b` | `#72d499` | Completed and healthy states |
-| Warning | `#9a6419` | `#e2ae62` | Incomplete or attention states |
-| Danger | `#a3382b` | `#ff8b80` | Destructive actions and failures |
+| Success | `#1b5232` | `#89e0ab` | Completed and healthy states |
+| Warning | `#6d4510` | `#f0bd75` | Incomplete or attention states |
+| Danger | `#852c22` | `#ffaaa2` | Destructive actions and failures |
 
 Use semantic foreground tokens for filled controls (`--on-strong`, `--on-accent`) rather than assuming white text. Native form controls inherit the active `color-scheme`. Fixed dark media stages and operational inspection consoles may remain dark in both modes when a stable viewing environment materially helps evaluate the content.
 
@@ -104,7 +104,7 @@ Recommended scale:
 | Role | Size | Line height |
 | --- | --- | --- |
 | Display | `clamp(2.75rem, 7vw, 6.5rem)` | `0.95` |
-| Page title | `clamp(2rem, 4vw, 4.25rem)` | `1` |
+| Page title | `clamp(1.85rem, 3.25vw, 3.25rem)` | `1` |
 | Section title | `clamp(1.375rem, 2vw, 2rem)` | `1.15` |
 | Subheading | `1.125rem` | `1.3` |
 | Body | `1rem` | `1.6` |
@@ -185,7 +185,7 @@ Administrative tools may expose more detail and denser tables, but should still 
 - Secondary: surface with a balanced hairline.
 - Ghost: no container until hover or focus.
 - Destructive: danger text or fill, spatially separated from primary progress actions.
-- Minimum target size is 40px; icon-only targets are at least 36px square and have an accessible name.
+- Minimum interactive target size is 44px by 44px; icon-only controls meet the same target and always have an accessible name.
 - Button labels use sentence case.
 
 ### Forms
@@ -223,16 +223,90 @@ Use a card only when the item is independently actionable or movable. Otherwise 
 
 ### Dialogs and transient feedback
 
-- Dialogs use one white surface over a dimmed, blurred backdrop.
+- Dialogs use one preference-reactive, high-contrast surface over a dimmed,
+  blurred backdrop; never hard-code a light surface in dark mode.
 - Clicking the backdrop closes dismissible dialogs; use `closedby="any"` where supported.
 - Toasts must remain available above dialogs or be repeated inside the active dialog.
 - Modal headings are direct. Avoid ceremonial eyebrow copy.
+- Use the browser's native modal top layer; declarative `open` alone does not
+  establish modal accessibility or keep transient content above a spatial canvas.
+- All applications must call the same native-modal foundation. That shared
+  contract names the dialog from its real heading, handles declarative `open`,
+  and is protected against route-specific reimplementations by regression tests.
+- Never use `window.prompt()`, `alert()`, or a blocking native confirmation for
+  product interactions. Reuse accessible, themed dialog behavior instead.
 
 ### Status, metadata, and provenance
 
 - Status chips are compact, sentence case, and textually explicit.
 - IDs and model names use monospace only where they help verification.
 - Provenance and event details should be one disclosure away from the primary creative experience unless the user is in an administrative view.
+
+## Atomic component architecture
+
+The application demonstrates its real production components at
+`/laboratory/design-system`. The inventory is cumulative:
+
+1. **Foundations:** preference-reactive semantic color tokens, the spacing scale,
+   browser-respecting typography, balanced shape, focus visibility, and motion policy.
+2. **Atoms:** consistently sized buttons, status badges, icons, labels, and
+   explicit loading, disabled, error, and success states.
+3. **Molecules:** accessible fields with labels/help/errors, actionable metrics,
+   output summaries, navigation choices, and progressive disclosures.
+4. **Organisms:** complete output composition, user-authorized reference policy,
+   meaningful empty states, contextual next actions, galleries, and shared dialogs.
+5. **Templates:** Creative, Canvas, Operations, and Laboratory shells that share
+   alignment and primitives while expressing their distinct tasks.
+
+Atoms and molecules are store-independent and emit semantic DOM events. A
+component demonstration must render the same implementation shipped in the
+product, not a static duplicate assembled only for documentation. Project
+creation, Canvas onboarding, creator intelligence, and operational reporting
+are production consumers of those same button, field, status, metric, and
+empty-state components.
+
+Application patterns are shown as clearly labeled, isolated compositions of
+those same real production primitives. Navigation, collections, media, prompt
+fans, presentations, output formats, generation choices, and project rails use
+synthetic examples; their full application elements are never mounted. This
+keeps demonstrations useful without reading project data, issuing provider
+requests, changing routes, or competing with the current document.
+
+Composition-heavy cards, page headers, list items, notices, and disclosures
+accept genuine authored default and named slots for semantic headings, media,
+context, actions, and noninteractive disclosure summaries. Attribute shorthand
+remains available, and the Laboratory presents both forms side by side. These
+five components share one token-driven adopted stylesheet; native form controls,
+transparent layout wrappers, overlays, and production-critical atoms remain in
+light DOM. Authored controls preserve their own native interaction semantics,
+and notice actions never become part of an announced live region.
+
+The Custom Elements Manifest is the machine-readable companion to this visual
+inventory. Keep both generated manifests current with `pnpm cem`, and require
+`pnpm cem:check` when component contracts change so documentation, tooling,
+and independent application consumers discover the same reusable elements,
+actual named/default content slots, theme tokens, and render-root boundaries.
+
+## Just-in-time, intent-reactive delivery
+
+The same durable document can legitimately support a structured editor, a
+conversation, a guided interview, a visual board, or an output-first review.
+Those surfaces are not separate products or data models: they adapt the visible
+controls to the user's current job while preserving the complete work.
+
+- On an empty document, invite a clear intention instead of presenting every
+  available generation control as equally urgent.
+- Once creative decisions exist, offer a fast draft or another useful output
+  format; do not suggest comparison before comparable outcomes exist.
+- When a promising draft exists, make a full-quality continuation clear.
+- When work fails, explain and inspect that failure before suggesting additional
+  paid activity.
+- When meaningful finished work exists, offer reuse, export, comparison, or the
+  next appropriate format rather than indefinitely demanding more inputs.
+- Recommendations must be bounded, explainable through authored state, and
+  dismissible; they may not mutate context, spend money, or infer taste alone.
+- An advanced control stays accessible through one stable disclosure even when
+  the just-in-time surface does not show it immediately.
 
 ## Responsive behavior
 
@@ -247,14 +321,19 @@ Use a card only when the item is independently actionable or movable. Otherwise 
 
 ## Accessibility baseline
 
-- Meet WCAG 2.2 AA contrast for text, controls, states, and focus indicators.
+- Design and verify against WCAG 2.1 Level AAA contrast: at least 7:1 for normal text and 4.5:1 for large text; meaningful control and focus boundaries reach at least 3:1.
 - Preserve semantic headings in a logical order.
 - Every control has an accessible name and visible focus treatment.
-- Interactive targets are at least 40px where practical.
+- Interactive targets are at least 44px by 44px, including compact, icon-only, disclosure, filter, and navigation controls.
 - Do not disable zoom or override the browser’s root font size.
 - Errors describe what happened and how to recover.
 - Live progress and completion feedback is announced without stealing focus.
 - Reduced-motion preferences remove nonessential animation.
+
+Accessibility conformance cannot be established by a token palette or component
+checklist alone. Validate complete workflows, keyboard order, zoom, assistive
+technology, and current Section 508 / EN 301 549 requirements before claiming
+formal product-wide compliance.
 
 ## Content style
 

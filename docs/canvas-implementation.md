@@ -12,8 +12,14 @@ Canvas is a separately routed and separately bundled project application over th
 - One primary Add action and a compact project-intent prompt. Sending clears the composer immediately while the asynchronous LLM fabric works over every document and reusable block in the active project. Completed suggestion sets accumulate as individually dismissible cards associated with the intent and durable job receipt that produced them; they never replace earlier unread suggestions, and every proposed action remains inert until the user selects it.
 - Contextual heads-up actions appear beside the current selection. Compare exists only for two or more images; combining and document preparation operate on the exact selected set. Closing the heads-up display clears selection only, while destructive removal remains a separately labeled action.
 - Selecting multiple ideas also reveals a contextual organization menu. A person can compact the selection into a grid, arrange it in a row or column, or group it by content type. Each arrangement is one synchronized, undoable action; it changes presentation coordinates only and never treats spatial placement as creative truth.
-- Selecting one or more generation or reference images reveals contextual smaller/larger controls. Resizing preserves aspect ratio and visual center, uses the same per-property HLC geometry registers and action-grouped history as movement, and is therefore collaborative, offline-retryable, and undoable. Every resize carries one extractable presentation receipt with source provenance, before/after frames, relative area change, and selected-item context. The receipt explicitly classifies size as organizational evidence—not generation context—while naming influence, attention, and comparison priority as possible future interpretations rather than present facts.
-- Canvas rendering is deliberately two-stroke. `Create document` first turns the selected realities into an editable document card without calling an image provider. `Render…` on that card then offers one draft, one full-quality image, a four-way draft fan, or a four-way full-quality fan. The card follows durable job progress and replaces its prepared state with the latest standalone or grouped result.
+- Every selected card exposes subtle interior corner-resize handles. Image and
+  reference cards preserve their aspect ratio; text and document cards adapt to
+  their assigned frame. Match-size operations can normalize mixed selections
+  while preserving an associated arrangement. Geometry uses the same per-property
+  HLC registers and action-grouped history as movement, so resizing remains
+  optimistic, offline-retryable, and undoable. Every resize carries an
+  extractable organizational receipt without changing generation semantics.
+- Canvas rendering is deliberately two-stroke. `Create document` first turns the selected realities into an editable document card without calling a provider. `Render…` on that card then offers a draft image, a full-quality image, a four-way draft or full-quality fan, a short story, a screen scene, a presentation, a storyboard, or a video. Narrative, presentation, storyboard, and video options open the same complete document-output composer used elsewhere, including audience, tone, frame or slide count, video duration and orientation, pixel-reference policy, and explicit paid-operation consent. The card follows durable job progress and keeps every finished standalone, grouped, or document-artifact result available.
 - `ContextSetFormalized` can be promoted back onto the board as a reusable composite context. Nested contexts expand to their cited sources during compilation rather than flattening provenance.
 - Draw creates a project-scoped Sketch block before accepting strokes, so a gesture is immediately reusable in documents, other boards, and generation context.
 - Authored blocks and reference-extraction receipts are projected into view-only subject, location, palette, mood, composition, material, and lighting facets. These probes rank and organize but never silently author context.
@@ -24,10 +30,15 @@ Canvas is a separately routed and separately bundled project application over th
 - IndexedDB authoring queue capped at 10,000 operations or 50 MB, warning at 80%; generation remains online-only. Complete action batches carry a monotonic client action sequence and batch index, while `client_event_id` receipts make response-loss retries idempotent.
 - Every Canvas render first appends or reuses an explicit single-document `ContextSetFormalized`. Spatial arrangement is carried as provenance and explicitly marked non-semantic; image work cannot start as a side effect of selection or document preparation.
 - Ephemeral `BroadcastChannel` presence that cannot append or fetch durable events.
-- Visible Canvas sessions refresh the authoritative server stream on a bounded interval, so remote durable edits appear without a page reload during internal review. Local writes use a single cross-tab Web Locks flusher and the `canvas_sync` admission path; unrelated stream-head movement can no longer force a person to repeat an edit.
-- Project membership receipts for users and teams; server admission restricts membership changes to administrators during the internal review.
+- Visible Canvas sessions refresh only bounded event deltas; idle polls neither
+  hydrate all private language nor republish unchanged UI. Local writes use a
+  single cross-tab Web Locks flusher and the `canvas_sync` admission path;
+  unrelated stream-head movement cannot force a person to repeat an edit.
+- Project membership receipts describe intended users and teams. They do not
+  send invitations or create cross-account access until project-owned ACLs and
+  shared project sequencing exist.
 - Report space with proposal, vote, accept, reject, and restore semantics. Arranger outputs cannot mutate authored Canvas state.
-- Operations sync inspector and Replay Laboratory coverage for shared sources, convergence, document-first rendering across all four render modes, report space, governance, lifecycle, and presence minimization.
+- Operations sync inspector and Replay Laboratory coverage for shared sources, convergence, document-first rendering across all image and document-artifact formats, report space, governance, lifecycle, and presence minimization.
 
 ## Deliberately blocked
 

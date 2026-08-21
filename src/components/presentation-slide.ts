@@ -1,6 +1,6 @@
 import { html, nothing } from "lit";
 import { defaultSlidePresentation, normalizeSlideItem, normalizeSlidePresentation, normalizeSlideVisual, slideVisualIsComplete, type DocumentArtifactDraftItem, type SlidePresentation, type SlideVisualData } from "../model/document-artifacts";
-import { FormaElement } from "./forma-element";
+import { FormaPresentationalElement } from "./presentational-element";
 
 const channel=(hex:string,index:number)=>Number.parseInt(hex.slice(index,index+2),16)/255;
 const luminance=(hex:string)=>{const values=[1,3,5].map((index)=>{const value=channel(hex,index);return value<=.03928?value/12.92:((value+.055)/1.055)**2.4;});return .2126*(values[0]??0)+.7152*(values[1]??0)+.0722*(values[2]??0);};
@@ -11,7 +11,7 @@ const SLIDE_FOOTER_LABEL_PREFERENCE="forma:slides:footer-label";
 export const readSlideFooterLabelPreference=()=>{try{return localStorage.getItem(SLIDE_FOOTER_LABEL_PREFERENCE)!=="hidden";}catch{return true;}};
 export const writeSlideFooterLabelPreference=(visible:boolean)=>{try{localStorage.setItem(SLIDE_FOOTER_LABEL_PREFERENCE,visible?"visible":"hidden");}catch{/* The active viewer still applies the preference when storage is unavailable. */}};
 
-export class PresentationSlide extends FormaElement {
+export class PresentationSlide extends FormaPresentationalElement {
   static properties={item:{attribute:false},presentation:{attribute:false},index:{type:Number},total:{type:Number},compact:{type:Boolean},showFooterLabel:{type:Boolean,attribute:"show-footer-label"}};
   item:DocumentArtifactDraftItem={title:"",body:"",notes:"",image_prompt:"",slide:null};presentation:SlidePresentation|null=null;index=0;total=1;compact=false;showFooterLabel=true;
   #visual(slide:SlideVisualData){

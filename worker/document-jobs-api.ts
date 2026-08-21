@@ -9,6 +9,7 @@ import {
   documentGenerationRequestKey,
   documentGenerationRevision,
   documentJobIsStale,
+  documentJobCanRecoverProviderRender,
   documentJobTerminal,
   documentJobMaxAttempts,
   type DocumentJobError,
@@ -74,7 +75,9 @@ function errorDetailFromResult(result: Record<string, unknown>): DocumentJobErro
 
 function failureProgressMessage(detail: ProviderFailureDetail | DocumentJobError | null) {
   if (!detail) return "The operation failed.";
-  if (detail.category === "safety") return "Safety checks stopped this image. Change the request or reference before retrying.";
+  if (detail.category === "safety") return detail.riskCategories?.includes("audio-copyright") || /\baudio\b.*\bcopyright\b/i.test(detail.message)
+    ? "The provider rejected generated audio. Start a silent video instead of recovering the rejected render."
+    : "Safety checks stopped this generation. Change the request or reference before retrying.";
   if (detail.action === "review_budget") return detail.scope === "workspace" ? "The workspace generation budget is exhausted." : "Your generation budget is exhausted.";
   if (detail.category === "quota") return `The OpenAI ${detail.scope === "project" || detail.scope === "organization" ? detail.scope : "account"} limit prevents generation.`;
   if (detail.category === "authentication") return "The configured OpenAI credential was rejected.";
@@ -421,12 +424,14 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const jobId = decodeURIComponent(path.slice(0, -6).replace(/\/$/, "")); const target = await readJob(env, user.userId, jobId);
     if (!target) return Response.json({ error: "job_not_found" }, { status: 404 });
     const previous = parseResult(target); const correlated = (await readEvents(env, user.streamId)).filter((event) => event.correlationId === target.correlation_id);
+    const failure=errorDetailFromResult(previous)??correlatedFailureDetail(correlated);
     const failedEvent = [...correlated].reverse().find((event) => event.type === "DocumentRenderFailed" && event.payload.provider_job_id);
     const requestedEvent = correlated.find((event) => event.type === "DocumentRenderRequested");
     const providerJobId = String(previous.providerJobId ?? failedEvent?.payload.provider_job_id ?? "");
     const artifactId = String(previous.artifactId ?? failedEvent?.payload.artifact_id ?? requestedEvent?.payload.artifact_id ?? "");
-    if (target.kind !== "render_document" || target.status !== "failed" || !providerJobId || !artifactId) return Response.json({ error: "resumable_provider_job_required" }, { status: 409 });
     const requestPayload = parseRequest(target); const artifactKind = String(requestPayload.artifactKind ?? failedEvent?.payload.artifact_kind ?? "");
+    if(!documentJobCanRecoverProviderRender({...serializeJob(target),result:{...previous,providerJobId,artifactKind},errorDetail:failure}))return Response.json({error:"provider_job_not_retryable",message:"This provider request reached a terminal failure and cannot be resumed. Review the saved inputs and start a changed render.",...(failure?{errorDetail:publicFailureDetail({...failure,probe:failure.probe??undefined})}:{})},{status:409});
+    if (target.kind !== "render_document" || target.status !== "failed" || !providerJobId || !artifactId) return Response.json({ error: "resumable_provider_job_required" }, { status: 409 });
     const providerModel = String(previous.providerModel ?? (artifactKind === "video" ? env.FAL_REFERENCE_VIDEO_MODEL ?? DEFAULT_REFERENCE_VIDEO_MODEL : ""));
     const result:Record<string,unknown> = { ...previous, artifactId, providerJobId, providerModel, stage: "queued", progressMessage: "Recovering the saved Fal render without submitting a second paid video." };delete result.errorDetail;delete result.dismissedAt;delete result.reservationId;
     const updated = await env.DB.prepare("UPDATE document_jobs SET status='queued',correlation_id=?,result_json=?,error_message=NULL,completed_at=NULL,lease_expires_at=NULL,notified_at=NULL,updated_at=? WHERE job_id=? AND owner_id=? AND status='failed'").bind(jobId, JSON.stringify(result), now, jobId, user.userId).run();

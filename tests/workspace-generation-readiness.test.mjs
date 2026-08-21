@@ -1,0 +1,127 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import { runReadyImageGeneration } from "../src/model/generation-intent.ts";
+
+const harness = (status, { acknowledged = false, summary, reject } = {}) => {
+  const calls = [];
+  const requestKey = "generation:document-revision:preview";
+  const readiness = status === null ? null : {
+    requestKey,
+    status,
+    summary: summary ?? `${status} provider state`,
+  };
+  const executor = {
+    async ensureGenerationReadiness(kind, options) {
+      calls.push({ action: "preflight", kind, options });
+      if (reject) throw new Error(reject);
+      return readiness;
+    },
+    generationRiskAcknowledged(key) {
+      calls.push({ action: "acknowledgement", requestKey: key });
+      return acknowledged;
+    },
+    async preview(sourceSurface) { calls.push({ action: "preview", sourceSurface }); },
+    async generate(options) { calls.push({ action: "generate", options }); },
+    toast(message) { calls.push({ action: "toast", message }); },
+  };
+  return { executor, calls, requestKey };
+};
+
+test("suggested drafts are queued only after their document-specific preflight succeeds", async () => {
+  const { executor, calls } = harness("ready");
+  const started = await runReadyImageGeneration(executor, "preview", {
+    sourceSurface: "document-next-step",
+  });
+
+  assert.equal(started, true);
+  assert.deepEqual(calls, [
+    {
+      action: "preflight",
+      kind: "preview",
+      options: { sourcePreviewId: null, sourceSurface: "document-next-step" },
+    },
+    { action: "preview", sourceSurface: "document-next-step" },
+  ]);
+});
+
+test("suggested refinements preserve the exact approved draft through preflight and generation", async () => {
+  const { executor, calls } = harness("ready");
+  const started = await runReadyImageGeneration(executor, "generate", {
+    sourceSurface: "document-next-step",
+    sourcePreviewId: "approved-draft",
+  });
+
+  assert.equal(started, true);
+  assert.deepEqual(calls, [
+    {
+      action: "preflight",
+      kind: "generate",
+      options: { sourcePreviewId: "approved-draft", sourceSurface: "document-next-step" },
+    },
+    {
+      action: "generate",
+      options: { sourceSurface: "document-next-step", sourcePreviewId: "approved-draft" },
+    },
+  ]);
+});
+
+test("suggested paid work fails closed when blocked, checking, unknown, or unavailable", async () => {
+  for (const status of ["blocked", "checking", "unknown", null]) {
+    const { executor, calls } = harness(status, { summary: "Provider credits are unavailable." });
+    const started = await runReadyImageGeneration(executor, "preview", {
+      sourceSurface: "document-next-step",
+    });
+
+    assert.equal(started, false, `status ${String(status)} must not enqueue provider work`);
+    assert.equal(calls.some((call) => call.action === "preview" || call.action === "generate"), false);
+    assert.equal(calls.at(-1).action, "toast");
+    assert.equal(calls.at(-1).message, status === null
+      ? "Generation readiness could not be confirmed."
+      : "Provider credits are unavailable.");
+  }
+});
+
+test("a review-required suggestion cannot spend until its exact request has been acknowledged", async () => {
+  const blocked = harness("review");
+  assert.equal(await runReadyImageGeneration(blocked.executor, "generate", {
+    sourceSurface: "document-next-step",
+    sourcePreviewId: "draft-1",
+  }), false);
+  assert.equal(blocked.calls.some((call) => call.action === "generate"), false);
+  assert.deepEqual(blocked.calls.at(-1), {
+    action: "toast",
+    message: "Review and acknowledge the generation warning in the document controls first.",
+  });
+
+  const approved = harness("review", { acknowledged: true });
+  assert.equal(await runReadyImageGeneration(approved.executor, "generate", {
+    sourceSurface: "document-next-step",
+    sourcePreviewId: "draft-1",
+  }), true);
+  assert.deepEqual(approved.calls.at(-1), {
+    action: "generate",
+    options: { sourceSurface: "document-next-step", sourcePreviewId: "draft-1" },
+  });
+});
+
+test("a failed preflight never starts paid work and explains the connection problem", async () => {
+  const { executor, calls } = harness("ready", { reject: "The readiness service is offline." });
+  const started = await runReadyImageGeneration(executor, "preview", {
+    sourceSurface: "document-next-step",
+  });
+
+  assert.equal(started, false);
+  assert.equal(calls.some((call) => call.action === "preview" || call.action === "generate"), false);
+  assert.deepEqual(calls.at(-1), {
+    action: "toast",
+    message: "The readiness service is offline.",
+  });
+});
+
+test("every paid next-step recommendation uses the shared readiness dispatcher", async () => {
+  const workspace = await readFile(new URL("../src/components/forma-workspace.ts", import.meta.url), "utf8");
+  assert.match(workspace, /action\.id==="make-draft"[^\n]*runReadyImageGeneration\(this\.store,"preview"/);
+  assert.match(workspace, /action\.id==="refine-image"[^\n]*runReadyImageGeneration\(this\.store,"generate"/);
+  assert.doesNotMatch(workspace, /action\.id==="(?:make-draft|refine-image)"[^\n]*this\.store\.(?:preview|generate)\(/);
+});

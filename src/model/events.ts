@@ -63,7 +63,9 @@ export type CreativeProject = {
   collectionCount: number;
   blockCount: number;
   outputCount: number;
+  artifactCount: number;
   recentGenerations: GenerationHistoryItem[];
+  recentArtifacts: DocumentArtifact[];
 };
 
 export type CreativeCollection = {
@@ -215,7 +217,7 @@ const itemId = (value: unknown) => {
 };
 
 export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFINITY, selectedDocumentId = "", selectedProjectId = ""): CreativeProjection {
-  const projects = new Map<string, Omit<CreativeProject, "documentCount" | "collectionCount" | "blockCount" | "outputCount" | "recentGenerations">>();
+  const projects = new Map<string, Omit<CreativeProject, "documentCount" | "collectionCount" | "blockCount" | "outputCount" | "artifactCount" | "recentGenerations" | "recentArtifacts">>();
   const blocks = new Map<string, CreativeBlock>();
   const blockRelations = new Map<string, CreativeBlockRelation>();
   const documents = new Map<string, CreativeDocument>();
@@ -224,6 +226,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   const outputs = new Map<string, CreativeOutput>();
   const artifacts = new Map<string, DocumentArtifact>();
   const generationCanvas = new Map<string,{canvasId:string;contextSetId:string}>();
+  const documentCompiles = new Map<string, Record<string, unknown>>();
   const previewOutputByEvent = new Map<string, string>();
   const annotations = new Map<string, Record<string, unknown>>();
   const families = new Map<string, Record<string, unknown>>();
@@ -239,6 +242,15 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
     latestCompile: null, brief: null, presentedBriefItems: new Set(),
     annotations: [], families: [], preferences: [], conditions: [], lastSession: null, currentSessionId: null, sessionOpen: false,
   };
+  const familyProjectId = (payload: Record<string, unknown>, objectId = "") => {
+    const explicit = String(payload.project_id ?? "");
+    if (explicit) return explicit;
+    const output = objectId ? outputs.get(objectId) : undefined;
+    return (output ? documents.get(output.documentId)?.projectId : undefined) ?? state.projectId;
+  };
+  const scopedFamilyKey = (id: string, projectId: string) => `${projectId}\u0000${id}`;
+  const scopedFamily = (id: string, payload: Record<string, unknown>, objectId = "") =>
+    families.get(scopedFamilyKey(id, familyProjectId(payload, objectId)));
 
   for (const event of events) {
     if (event.sequence > asOf) break;
@@ -316,7 +328,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "CollectionItemAdded": { const id = itemId(p.item_ref); if (id) membership[id] = { collectionId: String(p.collection_id), position: String(p.position ?? "a0") }; break; }
       case "CollectionItemRemoved": delete membership[itemId(p.item_ref)]; break;
       case "CollectionItemMoved": { const id = itemId(p.item_ref); if (id) membership[id] = { collectionId: String(p.to_collection_id), position: String(p.position ?? "a0") }; break; }
-      case "ContextCompiled": {state.latestCompile=p;const snapshot=asRecord(p.compiled_snapshot);const canvas=asRecord(snapshot.canvas);const generationId=String(p.generation_id??"");if(generationId&&canvas.canvas_id)generationCanvas.set(generationId,{canvasId:String(canvas.canvas_id),contextSetId:String(canvas.context_set_id??"")});break;}
+      case "ContextCompiled": {const snapshot=asRecord(p.compiled_snapshot);const snapshotDocument=asRecord(snapshot.document);const documentId=String(p.document_id??snapshotDocument.id??state.documentId??"");if(documentId)documentCompiles.set(documentId,p);if(!documentId||documentId===state.documentId)state.latestCompile=p;const canvas=asRecord(snapshot.canvas);const generationId=String(p.generation_id??"");if(generationId&&canvas.canvas_id)generationCanvas.set(generationId,{canvasId:String(canvas.canvas_id),contextSetId:String(canvas.context_set_id??"")});break;}
       case "IdeationPreviewCompleted": {
         const id=String(p.object_id??(Array.isArray(p.object_ids)?p.object_ids[0]:"")??"")||`draft-${String(p.generation_id??event.eventId)}`;
         previewOutputByEvent.set(event.eventId,id);
@@ -366,23 +378,23 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "AnnotationAdded": annotations.set(String(p.annotation_id), p); break;
       case "AnnotationRetracted": annotations.delete(String(p.annotation_id)); break;
       case "FamilyDeclared": {
-        const id = String(p.family_id); const current = families.get(id);
-        families.set(id, { ...current, ...p, authority: "inferred", members: Array.isArray(current?.members) ? current.members : [], source_events: [...(Array.isArray(current?.source_events) ? current.source_events : []), event.eventId], superseded: false });
+        const id = String(p.family_id); const projectId = familyProjectId(p); const key = scopedFamilyKey(id, projectId); const current = families.get(key);
+        families.set(key, { ...current, ...p, project_id: projectId, authority: "inferred", members: Array.isArray(current?.members) ? current.members : [], source_events: [...(Array.isArray(current?.source_events) ? current.source_events : []), event.eventId], superseded: false });
         break;
       }
-      case "FamilyAnchorSet": { const f = families.get(String(p.family_id)); if (f) { Object.assign(f, p); f.source_events = [...(Array.isArray(f.source_events) ? f.source_events : []), event.eventId]; } break; }
+      case "FamilyAnchorSet": { const f = scopedFamily(String(p.family_id), p, String(p.object_id ?? "")); if (f) { Object.assign(f, p); f.source_events = [...(Array.isArray(f.source_events) ? f.source_events : []), event.eventId]; } break; }
       case "FamilyMembershipAsserted": {
-        const familyId = String(p.family_id); const f = families.get(familyId); if (!f) break;
-        const objectId = String(p.object_id); const members = Array.isArray(f.members) ? f.members.map(asRecord).filter((member) => String(member.object_id) !== objectId) : [];
+        const familyId = String(p.family_id); const objectId = String(p.object_id); const f = scopedFamily(familyId, p, objectId); if (!f) break;
+        const members = Array.isArray(f.members) ? f.members.map(asRecord).filter((member) => String(member.object_id) !== objectId) : [];
         members.push({ ...p, object_id: objectId, claim_ref: p.claim_ref ?? `family-membership:${familyId}:${objectId}`, event_id: event.eventId, authority: "inferred" }); f.members = members; f.source_events = [...(Array.isArray(f.source_events) ? f.source_events : []), event.eventId];
         break;
       }
       case "ClaimSuperseded": {
         const claimRef = String(p.claim_ref ?? "");
         if (claimRef.startsWith("family-membership:")) {
-          const [, familyId, ...objectParts] = claimRef.split(":"); const f = families.get(familyId); const objectId = objectParts.join(":");
+          const [, familyId, ...objectParts] = claimRef.split(":"); const objectId = objectParts.join(":"); const f = scopedFamily(familyId, p, objectId);
           if (f && Array.isArray(f.members)) { f.members = f.members.map(asRecord).filter((member) => String(member.object_id) !== objectId); f.corrected_claims = [...(Array.isArray(f.corrected_claims) ? f.corrected_claims : []), claimRef]; }
-        } else if (claimRef.startsWith("family:")) { const f = families.get(claimRef.slice(7)); if (f) { f.superseded = true; f.superseded_by = p.new_event_id ?? p.replacement_ref ?? null; } }
+        } else if (claimRef.startsWith("family:")) { const f = scopedFamily(claimRef.slice(7), p); if (f) { f.superseded = true; f.superseded_by = p.new_event_id ?? p.replacement_ref ?? null; } }
         break;
       }
       case "PreferenceAuthored": preferences.set(String(p.preference_id), { ...p, authority: "authored" }); break;
@@ -407,6 +419,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   const selectedDocument=selectedDocumentId?visibleDocuments.find((document)=>document.id===selectedDocumentId):undefined;
   if(selectedDocument){state.documentId=selectedDocument.id;state.documentTitle=selectedDocument.title;}
   else if(!visibleDocumentIds.has(state.documentId)){const fallback=visibleDocuments[0];state.documentId=fallback?.id??"";state.documentTitle=fallback?.title??"No document open";state.latestCompile=null;}
+  if(state.documentId)state.latestCompile=documentCompiles.get(state.documentId)??null;
   state.blocks = state.libraryBlocks.filter((block) => block.scope==="document"&&block.documentId === state.documentId);
   const visibleBlockIds=new Set(state.libraryBlocks.map((block)=>block.id));const documentBlockIds=new Set(state.blocks.map((block)=>block.id));
   state.libraryBlockRelations=[...blockRelations.values()].filter((relation)=>!relation.removed&&relation.projectId===state.projectId&&visibleBlockIds.has(relation.fromBlockId)&&visibleBlockIds.has(relation.toBlockId));
@@ -416,15 +429,31 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   state.outputs = state.libraryOutputs.filter((output) => output.documentId === state.documentId);
   state.libraryArtifacts = [...artifacts.values()].filter((artifact) => !documents.has(artifact.documentId) || visibleDocumentIds.has(artifact.documentId)).sort((a,b)=>b.sequence-a.sequence);
   state.artifacts = state.libraryArtifacts.filter((artifact)=>artifact.documentId===state.documentId);
-  state.annotations = [...annotations.values()]; state.families = [...families.values()]; state.preferences = [...preferences.values()]; state.conditions = [...conditions.values()];
-  state.projects=[...projects.values()].map((project)=>{const projectDocuments=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed);const documentIds=new Set(projectDocuments.map((document)=>document.id));const projectOutputs=[...outputs.values()].filter((output)=>documentIds.has(output.documentId)&&!output.discarded);const history=generationHistoryItems(projectOutputs);return{...project,documentCount:projectDocuments.length,collectionCount:[...collections.values()].filter((collection)=>collection.projectId===project.id&&!collection.removed).length,blockCount:[...blocks.values()].filter((block)=>block.projectId===project.id&&!block.removed&&(block.scope==="library"||block.scope==="canvas"||documentIds.has(block.documentId))).length,outputCount:history.length,recentGenerations:history.slice(0,2)};}).sort((a,b)=>a.id===state.projectId?-1:b.id===state.projectId?1:b.lastSequence-a.lastSequence);
-  if(!state.projects.length&&state.projectId){const history=generationHistoryItems(state.libraryOutputs);state.projects=[{id:state.projectId,name:state.projectName,state:state.projectState,createdSequence:0,lastSequence:0,documentCount:state.documents.length,collectionCount:state.collections.length,blockCount:state.libraryBlocks.length,outputCount:history.length,recentGenerations:history.slice(0,2)}];}
+  const visibleOutputIds = new Set(state.libraryOutputs.map((output) => output.id));
+  state.families = [...families.values()].flatMap((family) => {
+    if (String(family.project_id ?? "") !== state.projectId) return [];
+    const originalMembers = Array.isArray(family.members) ? family.members.map(asRecord) : [];
+    const members = originalMembers.filter((member) => visibleOutputIds.has(String(member.object_id ?? "")));
+    const anchorId = String(family.object_id ?? "");
+    if (originalMembers.length && !members.length && (!anchorId || !visibleOutputIds.has(anchorId))) return [];
+    const scoped: Record<string, unknown> = { ...family, members };
+    if (anchorId && !visibleOutputIds.has(anchorId)) {
+      const replacement = String(members[0]?.object_id ?? "");
+      if (replacement) scoped.object_id = replacement;
+      else delete scoped.object_id;
+    }
+    return [scoped];
+  });
+  state.annotations = [...annotations.values()]; state.preferences = [...preferences.values()]; state.conditions = [...conditions.values()];
+  state.projects=[...projects.values()].map((project)=>{const projectDocuments=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed);const documentIds=new Set(projectDocuments.map((document)=>document.id));const projectOutputs=[...outputs.values()].filter((output)=>documentIds.has(output.documentId)&&!output.discarded);const projectArtifacts=[...artifacts.values()].filter((artifact)=>documentIds.has(artifact.documentId)).sort((left,right)=>right.sequence-left.sequence);const history=generationHistoryItems(projectOutputs);return{...project,documentCount:projectDocuments.length,collectionCount:[...collections.values()].filter((collection)=>collection.projectId===project.id&&!collection.removed).length,blockCount:[...blocks.values()].filter((block)=>block.projectId===project.id&&!block.removed&&(block.scope==="library"||block.scope==="canvas"||documentIds.has(block.documentId))).length,outputCount:history.length+projectArtifacts.length,artifactCount:projectArtifacts.length,recentGenerations:history.slice(0,2),recentArtifacts:projectArtifacts.slice(0,2)};}).sort((a,b)=>a.id===state.projectId?-1:b.id===state.projectId?1:b.lastSequence-a.lastSequence);
+  if(!state.projects.length&&state.projectId){const history=generationHistoryItems(state.libraryOutputs);state.projects=[{id:state.projectId,name:state.projectName,state:state.projectState,createdSequence:0,lastSequence:0,documentCount:state.documents.length,collectionCount:state.collections.length,blockCount:state.libraryBlocks.length,outputCount:history.length+state.libraryArtifacts.length,artifactCount:state.libraryArtifacts.length,recentGenerations:history.slice(0,2),recentArtifacts:state.libraryArtifacts.slice(0,2)}];}
   return state;
 }
 
 export const shortEventType = (type: string) => type.replace(/([a-z])([A-Z])/g, "$1 $2");
 export function eventCategory(type: string) {
   if (/^(Canvas|Stroke|ContextSet)/.test(type)) return "canvas";
+  if (/^Document(?:Render|Artifact)/.test(type)) return "generation";
   if (/^(Block|Document|Project)/.test(type)) return "document";
   if (type.startsWith("Collection")) return "collection";
   if (/Generation|Ideation|DocumentRender|DocumentArtifact|ContextCompiled|Model|Adapter|Capability|PromptTechnique/.test(type)) return "generation";

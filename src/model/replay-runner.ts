@@ -2,8 +2,8 @@ import type { CreativeEvent, CreativeProjection } from "./events.ts";
 import { DOCUMENT_VIEW_LABELS, documentViewForSurface } from "./document-view-signals.ts";
 import { documentSlug, type DocumentView } from "./routes.ts";
 
-export type ReplayApplication = "creative" | "canvas" | "operations";
-export type ReplaySurfaceKind = "projects" | "project" | "document" | "library" | "sessions" | "scout" | "memory" | "canvas" | "operations";
+export type ReplayApplication = "creative" | "canvas" | "operations" | "laboratory";
+export type ReplaySurfaceKind = "projects" | "project" | "document" | "artifact" | "library" | "sessions" | "scout" | "memory" | "canvas" | "operations" | "laboratory";
 
 export type ReplaySurface = {
   application: ReplayApplication;
@@ -21,6 +21,10 @@ const visibleSystemEvents = new Set([
   "GenerationRequested",
   "GenerationCompleted",
   "GenerationFailed",
+  "DocumentRenderCompleted",
+  "DocumentRenderFailed",
+  "GenerationBlockedBeforeProvider",
+  "JobAttemptInterrupted",
   "IdeationPreviewCompleted",
   "ImageFocalPointCalculated",
   "ExtractionCompleted",
@@ -125,6 +129,17 @@ function canvasSurface(event: CreativeEvent, events: CreativeEvent[]): ReplaySur
 export function replaySurfaceForEvent(event: CreativeEvent, projection: CreativeProjection, events: CreativeEvent[]): ReplaySurface {
   const payload = event.payload;
   const source = text(payload.source_surface ?? payload.created_from).toLowerCase();
+  if(event.type==="ApplicationViewVisited"){
+    const application=text(payload.application);const surface=text(payload.surface??payload.route_family);
+    if(application==="laboratory"){const route=/design/.test(surface)?"/laboratory/design-system":/adapter/.test(surface)?"/laboratory/image-adapters":/focal/.test(surface)?"/laboratory/focal-points":"/laboratory/replay";const label=/design/.test(surface)?"Design system":/adapter/.test(surface)?"Image adapters":/focal/.test(surface)?"Focal points":"Replay laboratory";return{application:"laboratory",kind:"laboratory",label,route,targetLabel:label};}
+    if(application==="operations"){const analytics=/analytics/.test(surface);const governance=/governance|system/.test(surface);const permissions=/permissions/.test(surface);const label=analytics?"Product analytics":governance?"System governance":permissions?"Producer permissions":"Event operations";return{application:"operations",kind:"operations",label,route:analytics?"/operations/analytics":governance?"/operations":permissions?"/operations/events/permissions":"/operations/events",targetLabel:label};}
+    if(application==="canvas")return{application:"canvas",kind:"canvas",label:"Project canvases",route:"/canvas",targetLabel:"Shared project context"};
+    if(application==="creative"&&/library/.test(surface))return{application:"creative",kind:"library",label:"Library",route:"/library",targetLabel:"Reusable creative context"};
+    if(application==="creative"&&/projects/.test(surface))return{application:"creative",kind:"projects",label:"Projects",route:"/projects",targetLabel:projection.projectName};
+  }
+  if(/^(DocumentRenderRequested|DocumentRenderCompleted|DocumentRenderFailed|DocumentArtifactViewed|DocumentArtifactExported)$/.test(event.type)){
+    const kind=text(payload.artifact_kind).replaceAll("_"," ")||"deliverable";const title=text(payload.title??(payload.output_brief&&typeof payload.output_brief==="object"?(payload.output_brief as Record<string,unknown>).title:""))||kind;const artifactId=text(payload.artifact_id);const label=event.type==="DocumentRenderFailed"&&payload.video_mock_boundary===true?"Video plan · approval required":`${kind[0]?.toUpperCase()??""}${kind.slice(1)}`;const completed=event.type!=="DocumentRenderRequested"&&event.type!=="DocumentRenderFailed"&&projection.libraryArtifacts.some((artifact)=>artifact.id===artifactId);return{application:"creative",kind:"artifact",label,route:artifactId&&completed?`/library/artifact/${encodeURIComponent(artifactId)}/${documentSlug(title)||"creative-output"}`:documentSurface(event,projection,events).route,targetLabel:title};
+  }
   if (text(payload.report_space) === "scout") return { application: "creative", kind: "scout", label: "Scout", route: "/scout", targetLabel: text(payload.label ?? payload.summary ?? payload.observation_id) || "Scout observation" };
   const correlatedCanvasEvent = /^(GenerationRequested|GenerationCompleted|GenerationFailed|ContextCompiled)$/.test(event.type) ? [...events].reverse().find((candidate) => candidate.sequence <= event.sequence && candidate.correlationId === event.correlationId && (text(candidate.payload.canvas_id) || /^(Canvas|Stroke|ContextSetFormalized|Proposal|VoteCast)/.test(candidate.type))) : undefined;
   if (correlatedCanvasEvent) return canvasSurface({ ...event, payload: { ...payload, canvas_id: text(correlatedCanvasEvent.payload.canvas_id) } }, events);

@@ -3,10 +3,10 @@
 :root {
   color-scheme: light dark;
   --ink: light-dark(#171717, #f3f3ef);
-  --ink-muted: light-dark(#686864, #aaa9a2);
-  --muted: light-dark(#686864, #aaa9a2);
+  --ink-muted: light-dark(#50504b, #b8b8b1);
+  --muted: light-dark(#50504b, #b8b8b1);
   --line: light-dark(#deded8, #343530);
-  --line-strong: light-dark(#bcbcb5, #555650);
+  --line-strong: light-dark(#8a8a84, #777873);
   --paper: light-dark(#f7f7f4, #10110f);
   --panel: light-dark(#fff, #191a18);
   --panel-2: light-dark(#f0f0ec, #242521);
@@ -16,13 +16,13 @@
   --forest-2: light-dark(#343434, #d5d5cf);
   --mint: light-dark(#e9ece8, #243029);
   --acid: light-dark(#dfe7ff, #2a3963);
-  --orange: light-dark(#315fe8, #8ca9ff);
+  --orange: light-dark(#2445af, #abc0ff);
   --orange-soft: light-dark(#e9eeff, #202d52);
-  --blue: light-dark(#315fe8, #8ca9ff);
-  --success: light-dark(#287a4b, #72d499);
-  --warning: light-dark(#9a6419, #e2ae62);
+  --blue: light-dark(#2445af, #abc0ff);
+  --success: light-dark(#1b5232, #89e0ab);
+  --warning: light-dark(#6d4510, #f0bd75);
   --warning-soft: light-dark(#fff5e6, #3d2c16);
-  --danger: light-dark(#a3382b, #ff8b80);
+  --danger: light-dark(#852c22, #ffaaa2);
   --on-strong: light-dark(#fff, #171717);
   --on-accent: light-dark(#fff, #111a35);
   --on-dark: #fff;
@@ -30,12 +30,34 @@
   --admin-chrome-hover: #242424;
   --admin-chrome-line: #3a3a3a;
   --admin-chrome-muted: #bdbdb8;
-  --admin-chrome-subtle: #92928e;
+  --admin-chrome-subtle: #a5a59f;
   --fixed-dark: #171717;
   --fixed-dark-panel: #242424;
   --fixed-dark-ink: #f3f3ef;
   --fixed-dark-muted: #bdbdb8;
   --fixed-dark-accent: #a9baff;
+  /* Semantic aliases are the stable public contract; legacy color names remain compatible. */
+  --text: var(--ink);
+  --text-muted: var(--muted);
+  --surface: var(--panel);
+  --surface-subtle: var(--panel-2);
+  --accent: var(--orange);
+  --accent-soft: var(--orange-soft);
+  --accent-strong: light-dark(#2445af, #abc0ff);
+  --positive: var(--success);
+  --fixed-dark-copy: var(--fixed-dark-ink);
+  --radius-small: .375rem;
+  --radius-medium: .625rem;
+  --radius-large: 1rem;
+  --space-1: .25rem;
+  --space-2: .5rem;
+  --space-3: .75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+  --topbar-height: 4rem;
   --shadow: 0 24px 72px light-dark(rgba(23, 23, 23, .14), rgba(0, 0, 0, .5));
   --sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
   --serif: var(--sans);
@@ -56,6 +78,47 @@
   --page-content-max: 110rem;
   --page-section-space: clamp(3rem, 6vw, 6rem);
   --page-bottom-space: 8rem;
+
+  /* Public, scoped design-system contract. Consumers may override any token on
+   * an element or subtree without taking ownership of the user's color scheme. */
+  --forma-color-canvas: var(--paper);
+  --forma-color-surface: var(--panel);
+  --forma-color-surface-subtle: var(--panel-2);
+  --forma-color-text: var(--ink);
+  --forma-color-text-muted: light-dark(#50504b, #b8b8b1);
+  --forma-color-border: var(--line);
+  --forma-color-border-strong: light-dark(#8a8a84, #777873);
+  --forma-color-accent: var(--accent);
+  --forma-color-accent-subtle: var(--accent-soft);
+  --forma-color-accent-text: light-dark(#2445af, #abc0ff);
+  --forma-color-positive: var(--positive);
+  --forma-color-positive-text: light-dark(#1b5232, #a3ebbd);
+  --forma-color-warning: var(--warning);
+  --forma-color-warning-text: light-dark(#6d4510, #f0bd75);
+  --forma-color-danger: var(--danger);
+  --forma-color-danger-text: light-dark(#852c22, #ffaaa2);
+  --forma-color-on-strong: var(--on-strong);
+  --forma-color-on-accent: var(--on-accent);
+  --forma-font-family: var(--sans);
+  --forma-font-family-mono: var(--mono);
+  --forma-font-size-body: var(--type-body);
+  --forma-font-size-supporting: var(--type-small);
+  --forma-space-1: var(--space-1);
+  --forma-space-2: var(--space-2);
+  --forma-space-3: var(--space-3);
+  --forma-space-4: var(--space-4);
+  --forma-space-5: var(--space-5);
+  --forma-space-6: var(--space-6);
+  --forma-space-8: var(--space-8);
+  --forma-radius-small: var(--radius-small);
+  --forma-radius-medium: var(--radius-medium);
+  --forma-radius-large: var(--radius-large);
+  --forma-control-min-size: 2.75rem;
+  --forma-focus-ring-width: .1875rem;
+  --forma-focus-ring-color: var(--forma-color-accent);
+  --forma-duration-fast: 120ms;
+  --forma-duration-normal: 180ms;
+  --forma-ease-standard: cubic-bezier(.2, 0, 0, 1);
 }
 
 * { box-sizing: border-box; }
@@ -828,6 +891,17 @@ forma-output-visual { position: absolute; inset: 0; display: grid; min-width: 0;
 .replay-builder { display: flex; align-items: end; justify-content: space-between; gap: 30px; }
 .replay-builder h2 { margin-bottom: 8px; font-size: var(--type-title); }
 .replay-builder p { max-width: 670px; color: var(--muted); }
+.reverse-workflow-builder { display: grid; align-items: stretch; gap: 16px; margin-top: 22px; padding: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; }
+.reverse-workflow-builder .builder-control-fields { display: grid; min-width: 0; grid-template-columns: repeat(auto-fit,minmax(min(12rem,100%),1fr)); gap: 12px; }
+.reverse-workflow-builder .builder-control-fields label { display: grid; min-width: 0; gap: 5px; color: var(--muted); font: var(--type-caption) var(--mono); }
+.reverse-workflow-builder .builder-control-fields input,.reverse-workflow-builder .builder-control-fields select { width: 100%; min-width: 0; padding: 8px; color: var(--ink); background: #fff; border: 1px solid var(--line-strong); border-radius: 5px; font: var(--type-body) var(--sans); }
+.reverse-workflow-builder .actual-replay-seed,.reverse-workflow-builder .replay-coverage { width: 100%; }
+.reverse-workflow-builder > .button { justify-self: start; }
+.reverse-workflow-builder .reverse-workflow-steps { display: block; padding: 0 15px 15px; }
+.reverse-workflow-steps h3 { margin: 16px 0 8px; font: 600 var(--type-body) var(--sans); }
+.reverse-workflow-steps ol { display: grid; gap: 10px; margin: 0; padding-left: 24px; }
+.reverse-workflow-steps li p { margin: 3px 0; }
+.reverse-workflow-steps small { color: var(--muted); font-size: var(--type-caption); }
 .builder-controls { display: flex; min-width: 0; align-items: flex-end; flex-direction: column; justify-content: end; gap: 8px; }
 .builder-controls > div { display: flex; min-width: 0; align-items: flex-end; gap: 8px; }
 .builder-control-fields label { min-width: 0; flex: 1 1 10rem; }

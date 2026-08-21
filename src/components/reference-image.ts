@@ -2,6 +2,7 @@ import { html } from "lit";
 import { focalPointCss } from "../model/focal-point";
 import { positionImageAtFocalPoint } from "../model/image-focus";
 import { FormaElement } from "./forma-element";
+import { ensureModalDialog } from "./modal-dialog";
 
 export class ReferenceImage extends FormaElement {
   static properties = { src: { type: String }, alt: { type: String }, compact: { type: Boolean }, separateOpenControl:{type:Boolean,attribute:"separate-open-control"}, focalPoint:{attribute:false}, targetId:{type:String}, referenceId:{type:String} };
@@ -9,7 +10,7 @@ export class ReferenceImage extends FormaElement {
 
   protected override updated() {
     const dialog = this.querySelector<HTMLDialogElement>(".reference-viewer");
-    if (this.#open && dialog && !dialog.open) dialog.showModal();
+    if (this.#open) ensureModalDialog(dialog);
   }
 
   #close() { this.querySelector<HTMLDialogElement>(".reference-viewer")?.close(); this.#open = false; this.requestUpdate(); }

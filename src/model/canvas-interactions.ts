@@ -61,6 +61,8 @@ export function canvasInteractionIdsForEvent(event:Pick<CreativeEvent,"type"|"pa
   if(event.type==="ContextSetFormalized")return["context_combined"];
   if(event.type==="DocumentCreated"&&p.created_from==="canvas-selection")return["document_prepared"];
   if(event.type==="GenerationRequested"&&p.source_surface==="canvas")return["render_started"];
+  if(event.type==="DocumentRenderRequested"&&text(p.source_surface).startsWith("canvas"))return["render_started"];
+  if(event.type==="DocumentArtifactViewed"&&text(p.source_surface).startsWith("canvas"))return["document_outputs_opened"];
   if(event.type==="ComparisonOpened"&&text(p.source_surface).startsWith("canvas"))return["comparison_opened"];
   if(event.type==="ObjectViewed"&&text(p.source_surface).startsWith("canvas"))return p.interaction==="navigate"?["fan_image_navigated"]:["image_opened"];
   if(event.type==="MembershipAdded")return["member_added"];

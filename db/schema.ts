@@ -150,6 +150,21 @@ export const shares = sqliteTable(
   (table) => [uniqueIndex("idx_shares_token_hash").on(table.tokenHash), index("idx_shares_owner").on(table.ownerId, table.createdAt)],
 );
 
+/** Immutable resource and exact-media authorization attached to a private share. */
+export const shareScopes = sqliteTable(
+  "share_scopes",
+  {
+    shareId: text("share_id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    resourceKind: text("resource_kind").notNull(),
+    resourceId: text("resource_id").notNull(),
+    projectId: text("project_id").notNull(),
+    mediaKeysJson: text("media_keys_json").notNull().default("[]"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("idx_share_scopes_owner_resource").on(table.ownerId, table.resourceKind, table.resourceId)],
+);
+
 /** Short-lived, one-use proof that a human admin explicitly accepted a paid replay run. */
 export const replayApprovals = sqliteTable(
   "replay_approvals",

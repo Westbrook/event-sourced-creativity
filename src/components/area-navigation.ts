@@ -1,30 +1,27 @@
 import { html, nothing } from "lit";
 import { FormaElement } from "./forma-element";
+import { applicationDefinition } from "../platform/applications";
 
 type Area = "intelligence" | "operations" | "laboratory";
 
-const intelligence = [
-  { id: "sessions", href: "/sessions", label: "Re-entry", description: "Resume witnessed work" },
-  { id: "scout", href: "/scout", label: "Scout", description: "Investigate trajectories" },
-  { id: "memory", href: "/memory", label: "Taste & time", description: "Manage preference and future memory" },
-] as const;
-
-const operations = [
-  { id: "system", href: "/operations", label: "System & governance", description: "Policies, gates, and operational health" },
-  { id: "analytics", href: "/operations/analytics", label: "Analytics", description: "Find product improvements and creative outcome evidence" },
-  { id: "canvas", href: "/operations/canvas", label: "Canvas governance", description: "Review and approve Canvas release requirements" },
-  { id: "stream", href: "/operations/events", label: "Durable stream", description: "Inspect immutable event envelopes and projections" },
-  { id: "permissions", href: "/operations/events/permissions", label: "Permissions", description: "Review producer and concurrency boundaries" },
-  { id: "sync", href: "/operations/events/sync", label: "Canvas sync", description: "Inspect convergence and offline operation delivery" },
-] as const;
-
-const laboratory = [
-  { id: "replay", href: "/laboratory/replay", label: "Replay", description: "Rehearse theoretical and provider-backed workflows" },
-  { id: "image-adapters", href: "/laboratory/image-adapters", label: "Image adapters", description: "Preview provider routing, capabilities, costs, and qualification" },
-  { id: "focal-points", href: "/laboratory/focal-points", label: "Focal points", description: "Compare image focal-point calculations" },
-] as const;
+const intelligenceIds = new Set(["sessions", "scout", "memory"]);
 
 export class AreaNavigation extends FormaElement {
+  #revealedLocation = "";
+
+  protected override updated() {
+    const location = `${this.getAttribute("area") ?? ""}:${this.getAttribute("active") ?? ""}`;
+    if (location === this.#revealedLocation) return;
+    const scroller = this.querySelector<HTMLElement>(".area-navigation > div");
+    const current = scroller?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!scroller || !current) return;
+    this.#revealedLocation = location;
+    const viewport = scroller.getBoundingClientRect();
+    const target = current.getBoundingClientRect();
+    if (target.right > viewport.right) scroller.scrollLeft += target.right - viewport.right;
+    else if (target.left < viewport.left) scroller.scrollLeft -= viewport.left - target.left;
+  }
+
   #go(event: MouseEvent, href: string) {
     event.preventDefault();
     this.store.setRoute(href);
@@ -37,10 +34,10 @@ export class AreaNavigation extends FormaElement {
     const active = this.getAttribute("active") ?? "";
     const session = this.store.session.get();
     const items = area === "operations"
-      ? operations.filter((item) => item.id === "system" || session?.user.role === "admin")
+      ? applicationDefinition("operations").navigation.filter((item) => item.id === "system" || session?.user.role === "admin")
       : area === "laboratory"
-        ? laboratory.filter(() => session?.user.role === "admin")
-        : intelligence;
+        ? applicationDefinition("laboratory").navigation.filter(() => session?.user.role === "admin")
+        : applicationDefinition("creative").navigation.filter((item) => intelligenceIds.has(item.id));
     const label = area === "operations" ? "Operations" : area === "laboratory" ? "Laboratory" : "Creative intelligence";
     const administrative = area === "operations" || area === "laboratory";
     const classes = `area-navigation${administrative ? " area-navigation--administrative" : ""} area-navigation--${area}`;

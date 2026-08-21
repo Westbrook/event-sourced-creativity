@@ -5,6 +5,7 @@ import {
   documentGenerationRequestKey,
   documentGenerationRevision,
   documentJobActionLabel,
+  documentJobFailure,
   documentJobFailureVisible,
   documentJobProgress,
   documentJobTerminal,
@@ -172,6 +173,12 @@ test("explains safety, application budgets, and project quotas without suggestin
   assert.match(generationFailureGuidance({...base,code:"budget_hard_cap_reached",scope:"user",action:"review_budget"}).title,/Your generation budget/);
   assert.match(generationFailureGuidance(base).title,/OpenAI project limit/);
   assert.equal(generationFailureGuidance({...base,category:"rate_limit",action:"wait_and_retry",retryable:true,retryAfterMs:2500}).retryAllowed,true);
+  const legacyFal=documentJobFailure(job({status:"failed",error:"fal_422"}));
+  assert.equal(legacyFal?.httpStatus,422);
+  assert.match(generationFailureGuidance(legacyFal,"fal_422").summary,/duration, frame, reference images, and submitted prompt/i);
+  assert.equal(generationFailureGuidance(legacyFal,"fal_422").retryAllowed,false);
+  assert.match(generationFailureGuidance({...base,code:"fal_422",category:"safety",scope:"request",action:"edit_request",httpStatus:422}).title,/Safety checks/);
+  assert.doesNotMatch(generationFailureGuidance(null,"provider_unavailable").summary,/provider_unavailable/);
 });
 
 test("keeps every terminal D1 placeholder paired with one binding",()=>{

@@ -1,4 +1,7 @@
 import type { PromptTechnique } from "../src/model/prompt-structures.ts";
+import { compileContextAdaptationSections, partitionContextAdaptationFactScopes, requiredContextAdaptationFacts, type ContextAdaptationPriority } from "../src/model/context-adaptation.ts";
+import { combinedContextGroups, combinedContextMemberships } from "../src/model/combined-context.ts";
+import { promptFactIsActive } from "../src/model/prompt-policy.ts";
 import type { CreativeImageOptions, ImageReference } from "./openai-adapter.ts";
 
 type CreativeFact={
@@ -8,6 +11,7 @@ type CreativeFact={
   intent?:unknown;
   effect?:unknown;
   active?:unknown;
+  locked?:unknown;
   properties?:unknown;
 };
 
@@ -19,13 +23,18 @@ const record=(value:unknown):Record<string,unknown>=>value&&typeof value==="obje
 const factProperties=(fact:CreativeFact)=>record(fact.properties);
 const factText=(fact:CreativeFact)=>{
   const properties=factProperties(fact);
-  return clean(properties.text??properties.instruction??properties.description??properties.value??properties.label,700);
+  const structural=properties.exact_text??properties.lens??properties.camera_direction??properties.lighting??properties.brand_name??properties.motion??properties.materials??properties.palette??properties.safe_area??properties.font_family;
+  const normalizedStructural=Array.isArray(structural)?structural.join(", "):structural&&typeof structural==="object"?JSON.stringify(structural):structural;
+  const primary=properties.text??properties.instruction??properties.description??properties.value??properties.label??normalizedStructural;
+  const colors=Array.isArray(properties.colors)?properties.colors.map((value)=>clean(value,35)).filter(Boolean):[];
+  const palette=Array.isArray(properties.palette)?properties.palette.map((value)=>clean(value,80)).filter(Boolean):[];
+  return clean([...new Set([primary,...colors,...palette].map((value)=>clean(value,700)).filter(Boolean))].join(" · "),700);
 };
 const factType=(fact:CreativeFact)=>clean(fact.type??fact.role,80).toLowerCase();
 const factIntent=(fact:CreativeFact)=>clean(fact.intent??fact.effect??factProperties(fact).intent,40).toLowerCase();
 const factWeight=(fact:CreativeFact)=>Number(factProperties(fact).weight??1);
 const isAvoid=(fact:CreativeFact)=>[factIntent(fact),clean(fact.effect,40).toLowerCase(),factType(fact)].some((value)=>["avoid","prohibit","must_not_include","exclusion"].includes(value));
-const factsFrom=(snapshot:Record<string,unknown>)=>Array.isArray(snapshot.facts)?(snapshot.facts as CreativeFact[]).filter((fact)=>fact&&fact.active!==false&&factText(fact)):[];
+const factsFrom=(snapshot:Record<string,unknown>)=>Array.isArray(snapshot.facts)?(snapshot.facts as CreativeFact[]).filter((fact)=>fact&&promptFactIsActive(fact)&&(factText(fact)||fact.locked===true||factProperties(fact).locked===true||factProperties(fact).required===true||factProperties(fact).authority==="locked")):[];
 const percent=(value:unknown)=>`${Math.round(Math.max(0,Math.min(1,Number(value??0)))*100)}%`;
 
 function scopeLabel(fact:CreativeFact){
@@ -106,13 +115,15 @@ function referenceDirective(reference:ImageReference|undefined){
 }
 
 function boundedPrompt(lines:string[]){
-  const normalized=unique(lines);let prompt=normalized.join("\n");if(prompt.length<=IDEOGRAM_PROMPT_MAX_CHARS)return{prompt,compacted:false};
-  const kept:string[]=[];let used=0;for(const line of normalized){const remaining=IDEOGRAM_PROMPT_MAX_CHARS-used-(kept.length?1:0);if(remaining<=0)break;const value=line.length<=remaining?line:`${line.slice(0,Math.max(0,remaining-1)).trimEnd()}…`;if(value){kept.push(value);used+=value.length+(kept.length>1?1:0);}}
-  prompt=kept.join("\n");return{prompt,compacted:true};
+  const normalized=[...new Set(lines.map((line)=>line.replace(/\s+/g," ").trim()).filter(Boolean))];const priorityFor=(line:string):ContextAdaptationPriority=>/^(?:PRIMARY SUCCESS TEST|MANDATORY (?:PRIMARY SUBJECT|ACTION EVIDENCE|AUTHORED DECISION)|COMBINED CONTEXT —|TARGET-SCOPED EXCLUSION —|FINAL (?:READ|VISUAL CHECK|COMPOSITION CHECK)|REFERENCE —|EXCLUDE:|TEXT(?: — REQUIRED)?:|FRAMING LOCK:|REGION —|DELIVERY(?: QUALITY CONTROL)?:)/.test(line)?"required":/^(?:CREATIVE GOAL|SETTING|COMPOSITION|SHOT GEOMETRY|DIRECTED GEOMETRY|MATERIALS|VISIBLE ACCEPTANCE CHECKLIST)/.test(line)?"important":"optional";
+  const compiled=compileContextAdaptationSections(normalized.map((content,index)=>({id:`image-direction-${index+1}`,content,priority:priorityFor(content)})),IDEOGRAM_PROMPT_MAX_CHARS,"\n");
+  return{prompt:compiled.prompt,compacted:compiled.compacted,valid:compiled.valid,issues:compiled.issues.map((issue)=>issue.message)};
 }
 
 export type IdeogramPromptAdaptation={
   prompt:string;
+  valid:boolean;
+  issues:string[];
   adapterVersion:string;
   strategy:NonNullable<CreativeImageOptions["ideogramCaptionStrategy"]>;
   canonicalPromptLength:number;
@@ -120,6 +131,7 @@ export type IdeogramPromptAdaptation={
   compacted:boolean;
   promptTechnique:PromptTechnique;
   includedBlockIds:string[];
+  omittedBlockIds:string[];
   mandatorySubjectBlockIds:string[];
   mandatorySubjectRepeated:boolean;
   omittedOptionalTypography:boolean;
@@ -144,13 +156,23 @@ export function buildIdeogramPrompt(
   const scoped=positive.filter((fact)=>scopeLabel(fact)&&factType(fact)!=="format");const typography=positive.filter((fact)=>factType(fact)==="typography");const subjectFacts=positive.filter((fact)=>factType(fact)==="subject");
   const scene=clean(direction.scene,900);const exactText=typography.map((fact)=>quoteText(factText(fact))).find(Boolean)??"";
   const typographyRequired=typography.some((fact)=>factIntent(fact)==="include"||factWeight(fact)>=.7)||/(typograph|display text|lettering|key art)/i.test(scene);
-  const primarySubject=joinedFactValues(subjectFacts),setting=joinedFacts(facts,"setting"),composition=joinedFacts(facts,"composition"),material=joinedFacts(facts,"material");const benignStoryContextApplied=Boolean(typographyRequired&&exactText);
-  const ratio=clean(options.size??"",40).replace("x"," × ");const paletteFacts=positive.filter((fact)=>factType(fact)==="palette"),palette=!paletteFacts.length?(Array.isArray(direction.palette)?direction.palette.map((item)=>clean(item,80)).filter(Boolean).join(", "):clean(direction.palette,400)):"";
+  const primarySubject=unique(subjectFacts.flatMap((fact)=>{const memberships=combinedContextMemberships(factProperties(fact));return memberships.length?memberships.map((membership)=>`${membership.role.replaceAll("_"," ")} “${membership.target}”: ${factText(fact)}`):[factText(fact)];})).join("; "),setting=joinedFacts(facts,"setting"),composition=joinedFacts(facts,"composition"),material=joinedFacts(facts,"material");const benignStoryContextApplied=Boolean(typographyRequired&&exactText);
+  const ratio=clean(options.size??"",40).replace("x"," × ");const paletteFacts=positive.filter((fact)=>factType(fact)==="palette"),ungroupedPaletteFacts=paletteFacts.filter((fact)=>!combinedContextMemberships(factProperties(fact)).length&&!scopeLabel(fact)),palette=!paletteFacts.length?(Array.isArray(direction.palette)?direction.palette.map((item)=>clean(item,80)).filter(Boolean).join(", "):clean(direction.palette,400)):"";
   const primaryTypes=new Set(["direction","subject","setting","composition","mood","palette","material","lighting","style","typography","format"]);
-  const additional=unique(positive.filter((fact)=>!primaryTypes.has(factType(fact))&&!scopeLabel(fact)).map((fact)=>`${factType(fact)||"requirement"}: ${factText(fact)}`));
+  const additional=unique(positive.filter((fact)=>!primaryTypes.has(factType(fact))&&!scopeLabel(fact)&&!combinedContextMemberships(factProperties(fact)).length).map((fact)=>`${factType(fact)||"requirement"}: ${factText(fact)}`));
+  const factsById=new Map(facts.map((fact)=>[clean(fact.block_id,160),fact]));
+  const groupLines=combinedContextGroups(snapshot).map((group)=>{const members=group.members.filter((member)=>!factsById.has(member.blockId)||!isAvoid(factsById.get(member.blockId)!));return`COMBINED CONTEXT — ${group.role.replaceAll("_"," ")} “${clean(group.target,120)}”: Keep ${members.map((member)=>`${clean(member.role,45)} “${clean(factsById.has(member.blockId)?factText(factsById.get(member.blockId)!):member.label,220)}”`).join("; ")} together only on this target; ${clean(group.application,45).replaceAll("_"," ")}; do not transfer their attributes to unrelated subjects.`;});
+  const authoredHardDecisions=requiredContextAdaptationFacts(snapshot);
+  const mandatoryDecisions=authoredHardDecisions.filter((decision)=>!isAvoid(decision.fact as CreativeFact));
+  const hardExclusions=authoredHardDecisions.filter((decision)=>isAvoid(decision.fact as CreativeFact));
+  const hardDecisionByFact=new Map(authoredHardDecisions.map((decision)=>[decision.fact,decision]));
+  const negativeDirection=(fact:CreativeFact)=>hardDecisionByFact.get(fact as Record<string,unknown>)?.direction??factText(fact);
+  const mandatoryLines=[...mandatoryDecisions.map((decision)=>{const membership=combinedContextMemberships(decision.properties)[0];return`MANDATORY AUTHORED DECISION — ${clean(decision.type,60).toUpperCase()}${membership?` for ${membership.role.replaceAll("_"," ")} “${clean(membership.target,120)}”`:""}: ${decision.direction}.`;}),...((Array.isArray(snapshot.standing_constraints)?snapshot.standing_constraints:[]) as Array<Record<string,unknown>>).filter((item)=>["affirm","include","required"].includes(clean(item.polarity,30).toLowerCase())).map((item)=>`MANDATORY AUTHORED DECISION — ${clean(item.axis??"PREFERENCE",60).toUpperCase()}: ${clean(item.value,500)}.`)];
+  const negativeScopes=partitionContextAdaptationFactScopes(negative);
+  const scopedExclusionLines=negativeScopes.scoped.flatMap(({fact,memberships})=>memberships.map((membership)=>`TARGET-SCOPED EXCLUSION — ${membership.role.replaceAll("_"," ")} “${clean(membership.target,120)}”: Exclude ${negativeDirection(fact)} only from this target; other targets are unaffected.`));
   const exclusions=unique([
-    ...negative.map(factText),
-    ...((Array.isArray(snapshot.standing_constraints)?snapshot.standing_constraints:[]) as Array<Record<string,unknown>>).filter((item)=>["avoid","prohibit"].includes(clean(item.polarity,30).toLowerCase())).map((item)=>clean(item.value,500)),
+    ...negativeScopes.global.map(negativeDirection),
+    ...((Array.isArray(snapshot.standing_constraints)?snapshot.standing_constraints:[]) as Array<Record<string,unknown>>).filter((item)=>["avoid","prohibit","forbid"].includes(clean(item.polarity,30).toLowerCase())).map((item)=>clean(item.value,500)),
   ]);
   const regionLines=scoped.map((fact)=>`REGION — ${scopeLabel(fact)}: Confine ${factType(fact)||"decision"} “${factText(fact)}” to this region. Do not extend its subject, palette, material, lighting, or other visible effects beyond the named boundary; preserve the authored treatment elsewhere.`);
   const literal=literalStrategies.has(strategy),director=["production_director","shot_plan","clean_editorial"].includes(strategy),compositionFirst=["composition_lock","literal_contract","shot_plan"].includes(strategy),checklist=["semantic_checklist","literal_contract"].includes(strategy),constraintsFirst=["constraint_first","production_director","clean_editorial"].includes(strategy),compact=strategy==="compact_literal";
@@ -166,14 +188,17 @@ export function buildIdeogramPrompt(
     constraintsFirst?exclusionLine:"",
     sentence("CREATIVE GOAL",scene||clean(direction.title,300)||clean(canonicalPrompt,900)),
     primarySubject?(frameLine?`MANDATORY ACTION EVIDENCE: Depict ${primarySubject} through the exact edge-limited framing below. The active hands or permitted body area must visibly perform the named action; do not substitute unattended objects.`:`MANDATORY PRIMARY SUBJECT AND ACTION: Prominently and unmistakably depict ${primarySubject}. If a person or professional is named, visibly show that person actively performing the named action. Do not substitute an object-only still life, unattended tools, or an environment-only scene.`):"",
-    benignStoryContextApplied?"BENIGN STORY CONTEXT: This is fictional editorial artwork about the named professional or creative activity. Depict every person as a safe adult actively engaged in that work. The exact words below are only the artwork's title.":"",
+    benignStoryContextApplied?`BENIGN STORY CONTEXT: This is fictional editorial artwork about the named professional or creative activity. Depict every person as a safe ${/\badult\b/i.test(primarySubject)&&!/\b(?:child|children|minor|teen|toddler|infant|baby)\b/i.test(primarySubject)?"adult ":""}fictional character while preserving any explicitly authored age. The exact words below are only the artwork's title.`:"",
     sentence("SETTING",setting),
     !compositionFirst?compositionLine:"",
     !compositionFirst?directedComposition:"",
     !compositionFirst&&literal?frameLine:"",
     ...regionLines,
+    ...groupLines,
+    ...scopedExclusionLines,
+    ...mandatoryLines,
     !compact?sentence("MOOD",joinedFacts(facts,"mood")):"",
-    sentence("PALETTE",joinedFacts(facts,"palette")||palette),
+    sentence("PALETTE",joinedFactValues(ungroupedPaletteFacts)||palette),
     material?`MATERIALS — VISIBLE AND DISTINCT: ${material}. Show every named material on an appropriate authored object; do not collapse materials into color alone.`:"",
     director&&focus==="material"?"SUBJECT SCALE: Use a medium or medium-wide view. The principal people, action, and judging surfaces together occupy roughly 55–75% of the square. Avoid distant figures, excessive empty darkness, or an environment-dominated establishing shot.":"",
     director&&/after closing/i.test(setting)?"SETTING STATE: Make “after closing” visually provable with folded or shuttered stalls, empty aisles, and no customers; keep the named participants as the only active people.":"",
@@ -188,15 +213,18 @@ export function buildIdeogramPrompt(
     !director&&literal&&composition?`FINAL COMPOSITION CHECK: Preserve exactly this authored structure — ${composition}. Do not trade it away for a more conventional crop or arrangement.`:"",
     director?"DELIVERY QUALITY CONTROL: One resolved image only. Use a deliberate square crop with no dead zones. Include only named supporting objects. No contact sheet, split screen, inset, footer, border, annotation, presentation mockup, watermark, artist mark, or signature-like flourish.":"DELIVERY: One complete image only; no contact sheet, split-screen comparison, inset, footer, border, annotation, or presentation mockup.",
   ].filter(Boolean) as string[];
-  const bounded=boundedPrompt(lines);return{
+  const bounded=boundedPrompt(lines);for(const decision of [...mandatoryDecisions,...hardExclusions])if(!decision.direction)bounded.issues.push(`mandatory ${decision.type} decision ${decision.blockId||"without identifier"} has no representable authorial value`);const coveredFacts=facts.filter((fact)=>{const value=factText(fact);const quoted=factType(fact)==="typography"?quoteText(value):"";return Boolean(value&&bounded.prompt.includes(value))||Boolean(quoted&&bounded.prompt.includes(quoted));});return{
     prompt:bounded.prompt,
+    valid:bounded.valid&&bounded.issues.length===0,
+    issues:bounded.issues,
     adapterVersion:IDEOGRAM_PROMPT_ADAPTER_VERSION,
     strategy,
     canonicalPromptLength:canonicalPrompt.length,
     providerPromptLength:bounded.prompt.length,
     compacted:bounded.compacted,
     promptTechnique:(options.promptTechnique??"prose") as PromptTechnique,
-    includedBlockIds:facts.map((fact)=>clean(fact.block_id,160)).filter(Boolean),
+    includedBlockIds:coveredFacts.map((fact)=>clean(fact.block_id,160)).filter(Boolean),
+    omittedBlockIds:facts.filter((fact)=>!coveredFacts.includes(fact)).map((fact)=>clean(fact.block_id,160)).filter(Boolean),
     mandatorySubjectBlockIds:subjectFacts.map((fact)=>clean(fact.block_id,160)).filter(Boolean),
     mandatorySubjectRepeated:Boolean(primarySubject&&(bounded.prompt.includes("MANDATORY PRIMARY SUBJECT AND ACTION:")||bounded.prompt.includes("MANDATORY ACTION EVIDENCE:"))&&(bounded.prompt.includes("FINAL VISUAL CHECK:")||bounded.prompt.includes("FINAL READ:"))),
     omittedOptionalTypography:Boolean(typography.length&&!typographyRequired),

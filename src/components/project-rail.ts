@@ -1,6 +1,6 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
-import { isDocumentViewRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, routePathname, withDocumentInRoute } from "../model/routes";
+import { documentViewFromRoute, isDocumentViewRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, routePathname, withDocumentInRoute } from "../model/routes";
 import { generationHistoryItems } from "../model/events";
 import "./collection-tree";
 
@@ -44,7 +44,7 @@ export class ProjectRail extends FormaElement {
    const libraryLinks: Array<{ view: LibraryView; label: string; count?: number; glyph: string }> = [
      { view: "all", label: "Library overview", glyph: "⌂" },
       { view: "blocks", label: quiet ? "Reusable ideas" : "Reusable blocks", count: projection.libraryBlocks.length, glyph: "▦" },
-      { view: "outputs", label: quiet ? "Recent results" : "Recent outputs", count: generationHistoryItems(projection.libraryOutputs).length, glyph: "▧" },
+      { view: "outputs", label: quiet ? "Recent results" : "Recent outputs", count: generationHistoryItems(projection.libraryOutputs).length + projection.libraryArtifacts.length, glyph: "▧" },
       { view: "families", label: quiet ? "Visual families" : "Aesthetic families", count: projection.families.filter((family) => !family.superseded).length, glyph: "◌" },
    ];
 
@@ -66,7 +66,7 @@ export class ProjectRail extends FormaElement {
         <section class="rail-project-card" aria-labelledby="rail-project-name">
           <div class="rail-project-heading"><span class="project-monogram">${projection.projectName.slice(0,1).toUpperCase() || "P"}</span><div><span class="eyebrow">Current project</span><h2 id="rail-project-name">${projection.projectName}</h2></div>${quiet?nothing:html`<span class=${`project-status ${projection.projectState}`}>${projection.projectState}</span>`}</div>
           ${quiet?nothing:html`<div class="rail-project-meta"><span><b>${projection.documents.length}</b> document${projection.documents.length===1?"":"s"}</span><span><b>${projection.collections.length}</b> collection${projection.collections.length===1?"":"s"}</span></div>`}
-          <div class="rail-project-actions"><a href="/projects" @click=${(event:MouseEvent)=>this.#go(event,"/projects")}>All projects</a>${surface==="studio"&&pathname==="/"?html`<button @click=${this.#editProject}>${icon("edit")} Edit project</button>`:nothing}</div>
+          <div class="rail-project-actions"><a href="/projects" @click=${(event:MouseEvent)=>this.#go(event,"/projects")}>All projects</a>${surface==="studio"&&documentViewFromRoute(route)==="document"?html`<button @click=${this.#editProject}>${icon("edit")} Edit project</button>`:nothing}</div>
         </section>
 
         <nav class="rail-links rail-destinations" aria-label="Project destinations">
@@ -87,7 +87,7 @@ export class ProjectRail extends FormaElement {
 
         ${quiet?nothing:html`<div class="rail-note"><span>${icon("info")}</span><p><b>No auto-filing.</b> Collections are deliberate. Search and aesthetic families remain derived views.</p></div>`}
 
-        ${quiet?nothing:html`<footer class="rail-stream"><span class="rail-live-dot"></span><div><b>Creative history</b><small>#${this.store.head.get()} · ${this.store.loading.get() ? "syncing" : "caught up"}</small></div>${this.store.session.get()?.user.role==="admin"?html`<a href="/operations/events" @click=${(event:MouseEvent)=>this.#go(event,"/operations/events")}>Review</a>`:nothing}</footer>`}
+        ${quiet?nothing:html`<footer class="rail-stream"><span class="rail-live-dot"></span><div><b>${this.store.loading.get()?"Synchronizing changes":"Your work is saved"}</b><small>${this.store.loading.get()?"Checking the latest project state":"Changes remain recoverable"}</small></div>${this.store.session.get()?.user.role==="admin"?html`<a href="/operations/events" @click=${(event:MouseEvent)=>this.#go(event,"/operations/events")}>Review</a>`:nothing}</footer>`}
       </div>`}
     </aside>`;
   }

@@ -4,6 +4,7 @@ import { generationFailureGuidance } from "../model/document-jobs";
 import { outputGenerationInputInspection } from "../model/generation-inputs";
 import { PROMPT_TECHNIQUE_DEFINITIONS, type PromptPreferenceScope, type PromptTechnique } from "../model/prompt-structures";
 import { copyTextToClipboard, FormaElement, icon } from "./forma-element";
+import { ensureModalDialog } from "./modal-dialog";
 import "./generation-input-dialog";
 import "./output-visual";
 
@@ -17,7 +18,7 @@ export class PromptFanReview extends FormaElement {
 
   protected override updated() {
     const dialog = this.querySelector<HTMLDialogElement>(".prompt-fan-dialog");
-    if (this.#open && dialog && !dialog.open) dialog.showModal();
+    if (this.#open) ensureModalDialog(dialog);
   }
 
   #close() {

@@ -37,7 +37,7 @@ test("builds and replays theoretical long streams deterministically", () => {
 test("offers one exact-length application tour containing every workflow narrative", () => {
   const first=buildReplayScenario("complete-application-tour",1_000);const second=buildReplayScenario("complete-application-tour",1_000);
   assert.equal(first.length,1_000);assert.deepEqual(first,second);assert.equal(first[0].sequence,1);assert.equal(first.at(-1).sequence,1_000);
-  for(const scenario of SCENARIOS)assert.ok(first.some((event)=>event.correlationId.includes(`corr-${scenario.key}-`)),`${scenario.label} is absent from the complete tour`);
+  for(const scenario of SCENARIOS)assert.ok(first.some((event)=>event.payload.narrative_scenario===scenario.key&&String(event.payload.workflow_id??"").includes(scenario.key)),`${scenario.label} is absent from the complete tour`);
   assert.equal(REPLAY_SCENARIOS[0].key,"complete-application-tour");
 });
 
@@ -80,7 +80,10 @@ test("replay narratives cover the complete authorized event and block vocabulary
   ]);
   const permissionSection=worker.match(/const USER_EVENTS[\s\S]*?const COMMUTATIVE/)?.[0]??"";
   const authorized=new Set([...permissionSection.matchAll(/"([A-Z][A-Za-z]+)"/g)].map((match)=>match[1]));
-  authorized.add("ConditionSet");authorized.add("ObjectCritiqued");
+  authorized.add("ConditionSet");authorized.add("ObjectCritiqued");authorized.add("IntentDeclared");
+  const genericUserEvents=worker.match(/const USER_EVENTS[\s\S]*?const PRODUCER_EVENTS/)?.[0]??"";
+  assert.doesNotMatch(genericUserEvents,/"IntentDeclared"/);
+  assert.match(worker,/body\.action==="declare_intent"/);
   assert.deepEqual([...authorized].filter((type)=>!SCENARIO_EVENT_TYPES.includes(type)),[]);
   assert.deepEqual(SCENARIO_EVENT_TYPES.filter((type)=>!authorized.has(type)),[]);
   const blockEvents=buildScenario("document-evolution",1000).filter((event)=>event.type==="BlockCreated");
@@ -342,7 +345,7 @@ test("opens otherwise passive generation and reference images in contained dialo
     readFile(new URL("../src/components/forma-project-contents.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/components/forma-shared-view.ts",import.meta.url),"utf8"),
   ]);
-  assert.match(visual,/interactive/);assert.match(visual,/generated-image-viewer/);assert.match(visual,/showModal\(\)/);assert.match(visual,/closedby="any"/);
+  assert.match(visual,/interactive/);assert.match(visual,/generated-image-viewer/);assert.match(visual,/ensureModalDialog/);assert.match(visual,/closedby="any"/);
   assert.match(reference,/reference-viewer/);assert.match(reference,/closedby="any"/);
   assert.match(creative,/\.interactive=\$\{true\}/);assert.match(creative,/forma-reference-image/);
   assert.match(projectContents,/\.interactive=\$\{true\}/);assert.match(shared,/\.interactive=\$\{true\}/);
@@ -426,11 +429,11 @@ test("runs the Phase 6 pilot from event-derived sessions instead of brief fixtur
   ]);
   assert.match(eventsApi, /open_session/); assert.match(eventsApi, /close_session/); assert.match(eventsApi, /compose_brief/); assert.match(eventsApi, /declare_intent/);
   assert.doesNotMatch(eventsApi, /brief-today/);
-  assert.match(store, /composeBrief/); assert.match(sessions, /event-derived/); assert.match(sessions, /Dosage curve/);
+  assert.match(store, /composeBrief/); assert.match(sessions, /recent creative action/); assert.match(sessions, /Dosage curve/);
   assert.match(briefModel, /PHASE6_MIN_CLOSED_SESSIONS/); assert.match(briefModel, /rejectedPathMemory/); assert.match(briefModel, /phase6GateMetrics/);
   assert.match(briefModel, /destination/); assert.match(sessions, /new_document_id/); assert.match(sessions, /data-target-ref/);
   const startBlank = sessions.match(/async #startBlank[\s\S]*?\n {2}}/)?.[0] ?? "";
-  assert.match(startBlank, /DocumentCreated/); assert.doesNotMatch(startBlank, /BlockCreated/); assert.match(sessions, /Name it before it enters the stream/);
+  assert.match(startBlank, /DocumentCreated/); assert.doesNotMatch(startBlank, /BlockCreated/); assert.match(sessions, /Give your new document a name/);
   assert.match(eventsApi, /DocumentRenamed/); assert.match(classification, /DocumentRenamed,user_content/); assert.match(workspace, /Rename document/);
   assert.match(workspace, /This document is empty/); assert.match(workspace, /New authored block/); assert.match(contextBlock, /block-editor/);
   assert.match(contextBlock, /forma-reference-image/); assert.match(library, /forma-reference-image/); assert.match(referenceImage, /<img/);
@@ -439,7 +442,7 @@ test("runs the Phase 6 pilot from event-derived sessions instead of brief fixtur
   assert.match(contextBlock, /text\/forma-block-id/); assert.match(contextBlock, /BlockRemoved/); assert.match(contextBlock, /Explore palettes/);
   assert.match(palettePicker, /palette_strategy/); assert.match(palettePicker, /getImageData/); assert.match(palettePicker, /source_reference_block_id/);
   assert.doesNotMatch(palettePicker, /type=["']color/); assert.match(palettePicker, /next click replaces swatch/i);
-  assert.match(referenceImage, /showModal/); assert.match(palettePicker, /showModal/); assert.match(referenceImage, /closedby="any"/); assert.match(palettePicker, /closedby="any"/);
+  assert.match(referenceImage, /ensureModalDialog/); assert.match(palettePicker, /ensureModalDialog/); assert.match(referenceImage, /closedby="any"/); assert.match(palettePicker, /closedby="any"/);
   assert.match(sessions, /PhaseGateReviewed/); assert.match(eventsApi, /PhaseGateReviewed/); assert.match(classification, /PhaseGateReviewed,human_judgment/);
 });
 
@@ -480,7 +483,7 @@ test("operationalizes bounded Scout and reversible ranking-only taste memory", a
   assert.match(scoutPage, /ObservationJudged/); assert.match(scoutPage, /Promote to document/); assert.match(store, /runScout/);
   assert.match(eventsApi, /standing_constraints/); assert.match(eventsApi, /ranking_only:true/); assert.match(eventsApi, /half_life_days:60/);
   assert.match(tasteModel, /PreferenceAuthored/); assert.match(tasteModel, /PreferenceRevoked/); assert.match(tasteModel, /FactRetracted/);
-  assert.match(memoryPage, /Affirm as standing/); assert.match(memoryPage, /Forget inference/); assert.match(memoryPage, /Bi-temporal history/);
+  assert.match(memoryPage, /Save this preference/); assert.match(memoryPage, /Dismiss suggestion/); assert.match(memoryPage, /Bi-temporal history/);
   assert.match(outputCard, /ObjectCritiqued|critiqueObject/); assert.match(coverage, /Phase 8.*Operational pilot/); assert.match(coverage, /Phase 9.*Evaluation/);
   const userPermissions = eventsApi.match(/const USER_EVENTS[\s\S]*?\]\);/)?.[0] ?? "";
   assert.doesNotMatch(userPermissions, /ObjectCritiqued|Deferred|ConditionSet|ConditionFired|Resurfaced/); assert.match(eventsApi, /Deferred/); assert.match(classification, /ConditionFired,behavioral,structured_only,worker:scheduler/);
@@ -537,7 +540,7 @@ test("connects the final Library and Studio affordances to explicit destinations
     readFile(new URL("../src/model/block-types.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/openai-adapter.ts",import.meta.url),"utf8"),
   ]);
-  assert.match(library,/Use in open document/);assert.match(library,/focused preview/i);assert.match(library,/Generated with this block/);assert.match(library,/Open family lightbox/);
+  assert.match(library,/Use in open document/);assert.match(library,/focused preview/i);assert.match(library,/Created using this decision/);assert.match(library,/Open family lightbox/);
   assert.match(library,/Keep for reuse/);assert.match(library,/A four-image fan remains one result/);assert.doesNotMatch(library,/Project contents|Open in Studio/);
   assert.match(contents,/Project contents/);assert.match(contents,/>Open \$\{icon\("arrow"\)\}/);assert.match(contents,/openDocument/);
   assert.match(eventsModel,/DocumentOpened/);assert.match(eventsApi,/DocumentOpened/);assert.match(store,/openDocument/);assert.match(classification,/DocumentOpened,behavioral/);
@@ -570,7 +573,7 @@ test("keeps account, project, document, intelligence, operations, and laboratory
   assert.match(applications,/label: "Creative"/);assert.match(applications,/label: "Operations"/);assert.match(applications,/label: "Laboratory"/);assert.match(applications,/label: "Projects"/);assert.match(applications,/label: "Create"/);assert.match(applications,/label: "Re-entry"/);assert.match(applications,/label: "Taste & time"/);
   assert.match(shell,/class="account-nav"/);assert.match(shell,/application-switcher/);assert.match(shell,/Durable stream/);assert.match(shell,/Laboratory/);
   assert.match(shell,/class="global-nav area-navigation area-navigation--administrative area-navigation--creative"/);assert.match(shell,/<span>Creative<\/span>/);assert.match(shell,/\$\{creativeNavigation\}[\s\S]*\$\{this\.store\.error/);assert.doesNotMatch(shell,/\$\{isCreative\?html`<nav class="global-nav"/);
-  assert.match(rail,/rail-project-card/);assert.match(rail,/rail-dock/);assert.match(rail,/aria-controls="project-rail-content"/);assert.match(rail,/Project destinations/);assert.match(rail,/Project library/);assert.match(rail,/Creative history/);
+  assert.match(rail,/rail-project-card/);assert.match(rail,/rail-dock/);assert.match(rail,/aria-controls="project-rail-content"/);assert.match(rail,/Project destinations/);assert.match(rail,/Project library/);assert.match(rail,/Your work is saved/);
   assert.match(navigation,/aria-label="Document views"/);assert.doesNotMatch(navigation,/Project-level|studio-project-overview/);assert.match(navigation,/studio-breadcrumbs/);assert.match(navigation,/Projects/);
   assert.doesNotMatch(contents,/forma-studio-mode-nav|forma-studio-navigator/);assert.match(library,/Project library/);assert.match(rail,/surface==="library"\?"\/library":"\/studio\/project"/);assert.match(collections,/setRoute\(this\.destination\)/);
   for(const [source,active] of [[sessions,"sessions"],[scout,"scout"],[memory,"memory"]])assert.match(source,new RegExp(`forma-area-navigation area="intelligence" active="${active}"`));

@@ -1,6 +1,6 @@
 # Forma information architecture review
 
-**Status:** Implemented baseline · 2026-08-11
+**Status:** Cross-application product baseline · 2026-08-21
 
 ## Product model
 
@@ -10,10 +10,12 @@ Forma's strongest information-architecture asset is that its durable model alrea
 Account
 └── Projects
     ├── Collections (authored organization)
+    ├── Project canvases (spatial, project-level synthesis)
     ├── Documents
     │   ├── Context blocks
-    │   ├── Outputs
-    │   └── Document views
+    │   ├── Combined Contexts and ordered reference sets
+    │   ├── Images, stories, scenes, slides, storyboards, and video
+    │   └── Complete alternate document views
     └── Project library (derived discovery + deliberate keeping)
 ```
 
@@ -23,10 +25,11 @@ Creative intelligence operates across witnessed work without silently changing t
 Re-entry → Scout → Taste & time
 ```
 
-Administration observes and governs the system without competing with creative destinations:
+Operations and Laboratory observe the system without competing with creative destinations:
 
 ```text
-System & governance → Event operations
+Operations: System & governance → Analytics → Event operations
+Laboratory: Replay → Image adapters → Focal points → Design system
 ```
 
 ## Strengths retained
@@ -34,7 +37,16 @@ System & governance → Event operations
 - Projects are durable boundaries rather than cosmetic folders.
 - Documents remain the unit of creative context and output generation.
 - Collections are explicitly authored; search, family detection, and ranking stay derived.
-- The six Studio document views expose different ways to author the same replayable document rather than separate document formats. Creative Editor deliberately hides stream and provenance machinery while preserving the same complete projection and authored operations.
+- Studio document views expose different ways to author the same complete
+  document rather than separate document formats. Creative Editor and Chat
+  deliberately hide stream and provenance machinery while preserving identical
+  durable context and outcomes.
+- Canvas remains project-level: it composes documents, reusable blocks, images,
+  narrative outputs, presentations, storyboards, motion, and authored folders
+  without implying that spatial placement itself changes generation.
+- Stories, scenes, slides, storyboards, and video are first-class project
+  outcomes; project cards, Library, document views, and Canvas can all discover
+  and reuse them.
 - Re-entry, Scout, and Taste & time preserve distinct authority boundaries: resume, investigate, and remember.
 - Event operations remains outside the creative workspace and is role-gated.
 
@@ -58,6 +70,11 @@ System & governance → Event operations
 | Focus view existed only as a device preference | A focused workspace could not be shared, refreshed predictably, or traversed with browser history | Appending `/focus` to any canonical document-view route restores the focused presentation and preserves it across lens or document changes |
 | Event-operation tabs existed only as component state | Refreshing or sharing the page silently returned to the stream table | Durable stream, Replay laboratory, and Permissions use `/admin/events/stream`, `/admin/events/replay`, and `/admin/events/permissions` |
 | Library previews existed only as component-local dialog state | A block, output, or aesthetic family could not be shared, refreshed, or traversed with browser history | Stable previews use `/library/block/{id}/{optional-name}`, `/library/output/{id}`, and `/library/family/{id}/{optional-name}`; archive import remains session-only because browsers cannot restore a local file selection |
+| The Library and project cards privileged images over every other result | Stories, scenes, presentations, storyboards, and videos appeared to disappear outside their source document | Project previews, project counts, Library discovery, and focused `/library/artifact/{id}/{optional-name}` routes now include every durable outcome |
+| Canvas rendered stories and motion through a smaller parallel workflow | Audience, tone, frame counts, duration, reference policy, and consent varied by entry point | Canvas format selection now delegates to the same complete document-output composer and confirmation contract |
+| Public share links were wider than their apparent document boundary | One link could expose unrelated account data or media | Immutable document/project share scopes authorize only the exact owner-scoped media manifest present when the share was created |
+| Membership controls looked like active collaboration | A creator could believe an invitation granted another account real access | The interface now describes intended membership truthfully until server-owned project ACLs and shared synchronization exist |
+| Technical implementation appeared before the user's creative task | Sequence counts, compiler labels, provider names, and storage vocabulary competed with the work | Creative surfaces foreground authored decisions, outcomes, contextual next actions, and inspectable disclosures instead |
 
 ## Primary navigation
 

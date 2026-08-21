@@ -1,5 +1,6 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { FormaElement, icon } from "./forma-element";
+import { ensureModalDialog } from "./modal-dialog";
 
 type CollectionDialog = { mode: "create" | "rename"; parentId: string | null; collectionId: string | null; current: string };
 
@@ -14,7 +15,7 @@ export class CollectionTree extends FormaElement {
   #openMenuId = "";
 
   protected override updated() {
-    const dialog=this.querySelector<HTMLDialogElement>(".collection-dialog");if(dialog&&!dialog.open)dialog.showModal();
+    ensureModalDialog(this.querySelector<HTMLDialogElement>(".collection-dialog"));
   }
 
   #openCreate(parentId: string | null = null) {
@@ -63,18 +64,18 @@ export class CollectionTree extends FormaElement {
 
   override render() {
     const p=this.store.projection.get();const roots=p.collections.filter((collection)=>!collection.parentId);const children=(id:string)=>p.collections.filter((collection)=>collection.parentId===id);const activeCollection=p.collections.find((collection)=>collection.id===this.store.ui.focusCollectionId);const subjectId=this.itemKind==="block"?this.itemId:p.documentId;const currentMembership=subjectId?p.membership[subjectId]:undefined;const subjectName=this.itemKind==="block"?(this.itemLabel||"this block"):"the open document";const fileLabel=this.itemKind==="block"?"File this block":"File open document";
-    const node=(collection:typeof p.collections[number],level:number):TemplateResult=>html`<li role="treeitem" aria-level=${level} aria-expanded=${children(collection.id).length?"true":undefined} aria-current=${this.store.ui.focusCollectionId===collection.id?"true":undefined} class=${this.store.ui.focusCollectionId===collection.id?"brief-focus":""} data-collection-id=${collection.id} tabindex="0">
-      <div class="tree-row"><span>${icon("folder")}</span><button class="tree-name" title=${`Filter project contents to ${collection.handle}`} @click=${()=>this.#openCollection(collection.id)}>${collection.handle}</button><span class="tree-count">${Object.values(p.membership).filter((membership)=>membership.collectionId===collection.id).length}</span><button class="tree-more" aria-label=${`Open actions for ${collection.handle}`} title="Collection actions" aria-haspopup="menu" aria-controls=${this.#menuId(collection.id)} aria-expanded=${this.#openMenuId===collection.id} @click=${(event:MouseEvent)=>this.#toggleMenu(event,collection.id)}>•••</button></div>
-      <div id=${this.#menuId(collection.id)} class="tree-menu" popover="auto" role="menu" aria-label=${`${collection.handle} actions`} @toggle=${(event:Event)=>this.#menuToggle(event,collection.id)}>
-        <button role="menuitem" @click=${()=>this.#fromMenu(collection.id,()=>this.#openRename(collection.id,collection.handle))}>${icon("edit")} Rename</button>
-        <button role="menuitem" @click=${()=>this.#fromMenu(collection.id,()=>this.#openCreate(collection.id))}>${icon("plus")} New nested collection</button>
+    const node=(collection:typeof p.collections[number]):TemplateResult=>html`<li class=${this.store.ui.focusCollectionId===collection.id?"brief-focus":""} data-collection-id=${collection.id}>
+      <div class="tree-row"><span aria-hidden="true">${icon("folder")}</span><button type="button" class="tree-name" title=${`Filter project contents to ${collection.handle}`} aria-current=${this.store.ui.focusCollectionId===collection.id?"true":nothing} @click=${()=>this.#openCollection(collection.id)}>${collection.handle}</button><span class="tree-count">${Object.values(p.membership).filter((membership)=>membership.collectionId===collection.id).length}</span><button type="button" class="tree-more" aria-label=${`Open actions for ${collection.handle}`} title="Collection actions" aria-controls=${this.#menuId(collection.id)} aria-expanded=${this.#openMenuId===collection.id} @click=${(event:MouseEvent)=>this.#toggleMenu(event,collection.id)}>•••</button></div>
+      <div id=${this.#menuId(collection.id)} class="tree-menu" popover="auto" role="group" aria-label=${`${collection.handle} actions`} @toggle=${(event:Event)=>this.#menuToggle(event,collection.id)}>
+        <button type="button" @click=${()=>this.#fromMenu(collection.id,()=>this.#openRename(collection.id,collection.handle))}>${icon("edit")} Rename</button>
+        <button type="button" @click=${()=>this.#fromMenu(collection.id,()=>this.#openCreate(collection.id))}>${icon("plus")} New nested collection</button>
         <hr>
-        <button role="menuitem" ?disabled=${!subjectId||currentMembership?.collectionId===collection.id} title=${!subjectId?`Save ${subjectName} before filing`:currentMembership?.collectionId===collection.id?`${this.itemKind==="block"?"Block":"Document"} is already filed here`:`Place ${subjectName} in this collection`} @click=${()=>this.#fromMenu(collection.id,()=>{void this.#moveItem(collection.id);})}>${icon("folder")} ${fileLabel}</button>
+        <button type="button" ?disabled=${!subjectId||currentMembership?.collectionId===collection.id} title=${!subjectId?`Save ${subjectName} before filing`:currentMembership?.collectionId===collection.id?`${this.itemKind==="block"?"Block":"Document"} is already filed here`:`Place ${subjectName} in this collection`} @click=${()=>this.#fromMenu(collection.id,()=>{void this.#moveItem(collection.id);})}>${icon("folder")} ${fileLabel}</button>
       </div>
-      ${children(collection.id).length?html`<ul role="group">${children(collection.id).map((child)=>node(child,level+1))}</ul>`:nothing}
+      ${children(collection.id).length?html`<ul>${children(collection.id).map((child)=>node(child))}</ul>`:nothing}
     </li>`;
     const parent=this.#dialog?.parentId?p.collections.find((collection)=>collection.id===this.#dialog?.parentId):null;
-    return html`<div class="tree-heading"><div><span>Collections</span><small>Open one to filter project contents</small></div><button class="icon-button" aria-label="Create top-level collection" title="Create top-level collection" @click=${()=>this.#openCreate()}>${icon("plus")}</button></div>${activeCollection?html`<div class="collection-rail-filter" role="status"><span>Filtering by <b>${activeCollection.handle}</b></span><button type="button" @click=${this.#clearCollection}>Clear</button></div>`:nothing}<ul class="collection-tree" role="tree" aria-label="Collections">${roots.length?roots.map((collection)=>node(collection,1)):html`<li class="tree-empty">No collections yet</li>`}</ul>
+    return html`<div class="tree-heading"><div><span>Collections</span><small>Open one to filter project contents</small></div><button class="icon-button" aria-label="Create top-level collection" title="Create top-level collection" @click=${()=>this.#openCreate()}>${icon("plus")}</button></div>${activeCollection?html`<div class="collection-rail-filter" role="status"><span>Filtering by <b>${activeCollection.handle}</b></span><button type="button" @click=${this.#clearCollection}>Clear</button></div>`:nothing}<ul class="collection-tree" aria-label="Collections">${roots.length?roots.map((collection)=>node(collection)):html`<li class="tree-empty">No collections yet</li>`}</ul>
       ${this.#dialog?html`<dialog class="modal collection-dialog" closedby="any" aria-labelledby="collection-dialog-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#dismiss();}} @cancel=${(event:Event)=>{event.preventDefault();this.#dismiss();}} @close=${()=>{if(this.#dialog){this.#dialog=null;this.requestUpdate();}}}><form class="modal-card collection-form" @submit=${this.#save}><button type="button" class="icon-button modal-close" aria-label="Close collection dialog" @click=${this.#dismiss}>${icon("close")}</button><span class="eyebrow">Authored organization</span><h2 id="collection-dialog-title">${this.#dialog.mode==="rename"?"Rename collection":parent?`New collection inside ${parent.handle}`:"New top-level collection"}</h2><p>Collections are deliberate filing decisions shared by documents and reusable blocks. Nothing is added or moved automatically.</p><label>Collection name<input maxlength="80" required placeholder="e.g. client explorations" .value=${this.#handle} @input=${(event:InputEvent)=>{this.#handle=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label><footer><button type="button" class="button ghost" @click=${this.#dismiss}>Cancel</button><button class="button primary" ?disabled=${!this.#handle.trim()}>${this.#dialog.mode==="rename"?"Save name":"Create collection"}</button></footer></form></dialog>`:nothing}`;
   }
 }

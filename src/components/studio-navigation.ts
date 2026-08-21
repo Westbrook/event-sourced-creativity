@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
+import { ensureModalDialog } from "./modal-dialog";
 import { documentFocusFromRoute, isDocumentViewRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import { generationHistoryItemIsDraft, generationHistoryItems, generationHistoryMix, outputQualityLabel } from "../model/events";
 import "./reference-image";
@@ -57,7 +58,7 @@ export class StudioModeNav extends FormaElement {
 
   protected override updated() {
     const dialog = this.querySelector<HTMLDialogElement>(".context-set-picker-dialog");
-    if (dialog && !dialog.open) dialog.showModal();
+    ensureModalDialog(dialog);
 
     const active = (this.getAttribute("active") ?? "document") as StudioMode;
     if (active !== this.#revealedMode) {

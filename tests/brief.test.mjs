@@ -65,6 +65,25 @@ test("continuity and gate metrics derive from witnessed events", () => {
   assert.ok(sessionContinuityDelta(history).eventCount >= 2);
 });
 
+test("re-entry reports creative changes instead of locks, probes, budgets, or unrelated lifetime view switches", () => {
+  const history = [
+    event(1, "DocumentViewVisited", { view: "guided" }),
+    event(2, "DocumentViewVisited", { view: "chat" }),
+    event(3, "SessionClosed", { snapshot_ref: { head: 3 } }),
+    event(4, "CanvasLockAcquired", { canvas_id: "canvas" }),
+    event(5, "BudgetReserved", { amount: 200 }),
+    event(6, "DocumentViewVisited", { view: "document" }),
+    event(7, "DocumentViewVisited", { view: "board" }),
+    event(8, "BlockPropertyEdited", { block_id: "decision" }),
+    event(9, "GenerationCompleted", { document_id: "document" }),
+  ];
+  const delta = sessionContinuityDelta(history);
+  assert.equal(delta.eventCount, 2);
+  assert.deepEqual(delta.eventTypes, ["BlockPropertyEdited", "GenerationCompleted"]);
+  assert.deepEqual(delta.documentViews, ["document", "board"]);
+  assert.equal(delta.viewTransitions, 1);
+});
+
 test("session projection clears a closed brief and tracks active boundaries", () => {
   const history = eligibleHistory(); const brief = composeReentryBrief(history, "brief-1"); assert.ok(brief.payload);
   const active = foldEvents([...history, event(13, "BriefComposed", brief.payload)]);

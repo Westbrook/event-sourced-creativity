@@ -44,16 +44,16 @@ test("the Library and Canvas scenario proves reuse before generation",()=>{
   assert.ok(events.some((event)=>event.type==="ProposalIssued"&&event.payload.report_space===true));
 });
 
-test("Do all the things advances every narrative fairly and enforces semantic coverage",()=>{
+test("Do all the things advances coherent goal-owned chapters and enforces semantic coverage",()=>{
   const events=buildComprehensiveScenario();
   const byScenario=new Map(SCENARIOS.map((scenario)=>[scenario.key,events.filter((event)=>event.payload.narrative_scenario===scenario.key)]));
   for(const scenario of SCENARIOS)assert.equal(byScenario.get(scenario.key)?.length,scenarioEventCount(scenario.key),scenario.key);
-  const firstSequences=SCENARIOS.map((scenario)=>byScenario.get(scenario.key)?.[0]?.sequence??Infinity);
-  assert.ok(Math.max(...firstSequences)-Math.min(...firstSequences)<=SCENARIOS.length*2);
+  for(const scenario of SCENARIOS){const chapter=byScenario.get(scenario.key)??[];assert.ok(chapter.every((event,index)=>event.payload.narrative_position===index+1));assert.ok(chapter.every((event,index)=>index===0||event.sequence===chapter[index-1].sequence+1),`${scenario.key} should remain one coherent creator chapter`);}
+  const byId=new Map(events.map((event)=>[event.eventId,event]));assert.ok(events.every((event)=>!event.causationId||byId.get(event.causationId)?.payload.workflow_id===event.payload.workflow_id));
   assert.deepEqual(new Set(events.map((event)=>event.payload.experience_area)),new Set(["document","library-canvas","canvas","outputs","intelligence","operations"]));
   const coverage=evaluateReplayCoverage(events,SCENARIO_EVENT_TYPES);
   assert.equal(coverage.passed,true,JSON.stringify(coverage.checks.filter((check)=>!check.passed)));
-  for(const key of ["balanced-creative-tour","purpose-built-outputs","library-canvas-journey"])assert.equal(coverage.checks.find((check)=>check.key===key)?.passed,true,key);
+  for(const key of ["balanced-creative-tour","workflow-causal-integrity","intent-vector-lifecycle","unfinished-intent-recovery","one-context-many-outputs","artifact-first-reconstruction","purpose-built-outputs","library-canvas-journey"])assert.equal(coverage.checks.find((check)=>check.key===key)?.passed,true,key);
 
   const withoutLibraryJourney=events.filter((event)=>event.payload.narrative_scenario!=="library-canvas");
   const degraded=evaluateReplayCoverage(withoutLibraryJourney,SCENARIO_EVENT_TYPES);

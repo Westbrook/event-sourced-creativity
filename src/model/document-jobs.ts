@@ -95,7 +95,7 @@ const VIDEO_PROGRESS: ProgressPhase[] = [
   { id: "structure", label: "Structure", stages: ["planning", "preparing-video"] },
   { id: "submit", label: "Submit", stages: ["uploading-references", "submitting"] },
   { id: "render", label: "Render", stages: ["rendering"] },
-  { id: "save", label: "Save", stages: ["downloading", "saving", "committing"] },
+  { id: "save", label: "Save", stages: ["finalizing", "downloading", "saving", "committing"] },
 ];
 
 /** A UI-safe estimate from durable job checkpoints; it never implies provider precision we do not have. */
@@ -185,13 +185,43 @@ export function documentJobFailure(job: DocumentJob) {
   const stored = job.errorDetail ?? job.members.find((member) => member.error)?.error ?? null;
   if (stored) return stored;
   const message = job.error ?? ""; const lower = message.toLowerCase();
+  const falStatus = lower.match(/^fal_(\d{3})$/);
+  if (falStatus) {
+    const status = Number(falStatus[1]);
+    const editable = status === 400 || status === 422;
+    return {
+      code: lower,
+      category: status >= 500 ? "server" : "provider",
+      scope: editable ? "request" : "provider",
+      action: editable ? "edit_request" : "retry",
+      message: editable
+        ? "The video provider could not accept the selected request settings or image references."
+        : `The video provider returned HTTP ${status} without a detailed error receipt.`,
+      retryable: !editable,
+      retryAfterMs: null,
+      requestId: null,
+      httpStatus: status,
+    } satisfies DocumentJobError;
+  }
   if (/safety|moderation|request was rejected/.test(lower)) return { code: "safety_rejected", category: "safety", scope: "request", action: "edit_request", message, retryable: false, retryAfterMs: null, requestId: message.match(/req_[a-z0-9]+/i)?.[0] ?? null, httpStatus: 400 } satisfies DocumentJobError;
   if (/budget.*hard.*cap|quota|credit/.test(lower)) return { code: "budget_hard_cap_reached", category: "quota", scope: "user", action: "review_budget", message, retryable: false, retryAfterMs: null, requestId: null, httpStatus: 429 } satisfies DocumentJobError;
   return null;
 }
 
+/** A saved provider request can only be resumed after a genuinely recoverable transport/result failure. */
+export function documentJobCanRecoverProviderRender(job: DocumentJob) {
+  if (job.kind !== "render_document" || job.status !== "failed" || job.result?.artifactKind !== "video" || !job.result?.providerJobId) return false;
+  const failure = documentJobFailure(job);
+  return Boolean(failure?.retryable && failure.category !== "safety" && failure.httpStatus !== 400 && failure.httpStatus !== 422);
+}
+
 export function generationFailureGuidance(detail: DocumentJobError | null, fallback = "") : GenerationFailureGuidance {
-  if (!detail) return { title: "The generation could not be completed", summary: fallback || "The server returned an error without a provider receipt.", actionLabel: null, actionUrl: null, retryAllowed: true };
+  if (!detail) {
+    const machineOnly = /^[a-z][a-z\d]*(?:_[a-z\d]+)+$/i.test(fallback.trim());
+    return { title: "The generation could not be completed", summary: fallback && !machineOnly ? fallback : "The provider could not complete this request. Review the saved inputs and technical receipt before trying again.", actionLabel: null, actionUrl: null, retryAllowed: true };
+  }
+  if (detail.category === "safety" && (detail.riskCategories?.includes("audio-copyright") || /\baudio\b.*\bcopyright\b/i.test(detail.message))) return { title: "The generated soundtrack was rejected", summary: "The provider flagged generated audio as a potential copyright issue. Create a silent video, or explicitly choose original environmental ambience without music or voices. This rejected provider render cannot be recovered.", actionLabel: null, actionUrl: null, retryAllowed: false };
+  if (detail.code.startsWith("fal_") && detail.category !== "safety" && (detail.httpStatus === 400 || detail.httpStatus === 422)) return { title: "The video settings or references were not accepted", summary: "Review the requested duration, frame, reference images, and submitted prompt before trying again. The complete failed-attempt receipt remains available.", actionLabel: null, actionUrl: null, retryAllowed: false };
   if (detail.code === "video_provider_not_configured") return { title: "Fal video generation is not configured", summary: "Add a valid server-side Fal key before retrying this video. Other document renderers remain available.", actionLabel: "Review Fal keys", actionUrl: "https://fal.ai/dashboard/keys", retryAllowed: false };
   if (detail.code.startsWith("fal_") && detail.category === "authentication") return { title: "The Fal credential was rejected", summary: "Replace the server-side Fal key, then retry this video. The app will not keep retrying an invalid credential.", actionLabel: "Review Fal keys", actionUrl: "https://fal.ai/dashboard/keys", retryAllowed: false };
   if (detail.code.startsWith("fal_") && detail.category === "quota") return { title: "The Fal account cannot fund this video", summary: "Add credits or resolve the Fal account limit before retrying the paid render.", actionLabel: "Review Fal billing", actionUrl: "https://fal.ai/dashboard/billing", retryAllowed: false };

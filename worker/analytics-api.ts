@@ -15,7 +15,7 @@ export async function handleAnalytics(request:Request,env:WorkerEnv){
     env.DB.prepare("SELECT * FROM events ORDER BY stream_id,sequence LIMIT ?").bind(MAX_ANALYTICS_EVENTS+1).all<Record<string,unknown>>(),
   ]);
   const users=new Map(userRows.results.map((row)=>[String(row.user_id),{name:String(row.display_name),email:String(row.email)}]));const personas=new Map(personaRows.results.map((row)=>[String(row.fictional_stream_id),{id:String(row.fictional_user_id),name:String(row.display_name)}]));const grouped=new Map<string,ReturnType<typeof serializeEvent>[]>();
-  for(const row of eventRows.results.slice(0,MAX_ANALYTICS_EVENTS)){const event=serializeEvent(row);grouped.set(event.streamId,[...(grouped.get(event.streamId)??[]),event]);}
+  for(const row of eventRows.results.slice(0,MAX_ANALYTICS_EVENTS)){const event=serializeEvent(row);const bucket=grouped.get(event.streamId);if(bucket)bucket.push(event);else grouped.set(event.streamId,[event]);}
   const streams:AnalyticsStream[]=[...grouped.entries()].map(([streamId,events])=>{const persona=personas.get(streamId);const inferredId=streamId.startsWith("creative:")?streamId.slice("creative:".length):streamId;const user=users.get(inferredId);return{streamId,userId:persona?.id??inferredId,userName:persona?.name??user?.name??"Unknown creator",userEmail:user?.email,organizationId:"forma",organizationName:"Forma workspace",fictional:Boolean(persona),events};});
   const report=buildAnalyticsReport(streams,{rangeDays,includeSynthetic,truncated:eventRows.results.length>MAX_ANALYTICS_EVENTS,pricingVersion:LIVE_REPLAY_PRICING_VERSION});return Response.json({report},{headers:{"cache-control":"private, no-store"}});
 }

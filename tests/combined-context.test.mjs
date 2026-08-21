@@ -31,7 +31,8 @@ test("every prompt language carries the same Combined Context semantics",()=>{
   const prose=buildProsePrompt(snapshot,direction,[]),bullets=buildBulletPrompt(snapshot,direction,[]),structured=buildStructuredPrompt(snapshot,direction,[]),xml=buildXmlPrompt(snapshot,direction,[]);
   assert.match(prose,/Combined-context isolation map/);assert.match(prose,/Mara field kit/);
   assert.match(bullets,/Combined contexts/);assert.match(bullets,/92% group relativity/);
-  assert.equal(structured.context_groups.length,1);assert.equal(structured.context_groups[0].target,"Mara");assert.deepEqual(structured.user_edited_layout.regions.slice(0,3).map((region)=>region.context_group_ids),[["group-mara"],["group-mara"],["group-mara"]]);
+  assert.equal(structured.context_groups.length,1);assert.equal(structured.context_groups[0].target,"Mara");assert.equal(structured.context_groups[0].context_key,"context_group_1");assert.deepEqual(structured.user_edited_layout.regions.slice(0,3).map((region)=>region.context_group_ids),[["context_group_1"],["context_group_1"],["context_group_1"]]);
+  for(const prompt of [prose,bullets,JSON.stringify(structured),xml])assert.doesNotMatch(prompt,/group-mara|subject-mara|wardrobe-mara|prop-mara|canvas-1|doc-1/,"provider-facing group semantics use request-local aliases instead of durable IDs");
   assert.match(xml,/<context-groups>/);assert.match(xml,/Mara field kit/);
 });
 

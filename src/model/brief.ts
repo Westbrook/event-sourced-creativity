@@ -1,6 +1,7 @@
 import { foldEvents, type CreativeEvent } from "./events.ts";
 import { DOCUMENT_VIEW_LABELS, documentViewWorkflow } from "./document-view-signals.ts";
-import { withDocumentInRoute, type DocumentView } from "./routes.ts";
+import { libraryFocusRoute, withDocumentInRoute, type DocumentView } from "./routes.ts";
+import { unfinishedIntentTrajectories } from "./intent-trajectories.ts";
 
 export const PHASE6_MIN_CLOSED_SESSIONS = 3;
 export const PHASE6_MIN_IMPRESSIONS = 10;
@@ -8,7 +9,7 @@ const REJECTED_PATH_STALENESS_EVENTS = 30;
 
 export type BriefDestination = {
   route: string;
-  view: "comparison" | "context-block" | "collection";
+  view: "comparison" | "context-block" | "collection" | "document";
   ref_id: string;
   object_ids?: string[];
   document_id?: string;
@@ -17,14 +18,14 @@ export type BriefDestination = {
 
 export type BriefItem = {
   item_id: string;
-  item_type: "comparison" | "thread" | "collection";
+  item_type: "comparison" | "thread" | "collection" | "intent";
   ref_id: string;
   rank: number;
   title: string;
   summary: string;
   rationale_ref: string;
   source_event_refs: string[];
-  authority: "inferred";
+  authority: "inferred" | "explicit";
   destination: BriefDestination;
 };
 
@@ -41,6 +42,7 @@ export type BriefEligibility = {
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const list = (value: unknown) => Array.isArray(value) ? value.map(String) : [];
 const round = (value: number, precision = 4) => Number(value.toFixed(precision));
+const witnessedCreatorIntents = (events: CreativeEvent[]) => unfinishedIntentTrajectories(events).filter((trajectory) => trajectory.authority === "explicit" || trajectory.authority === "authored" && trajectory.expectedOutputKind !== "context" && trajectory.steps.some((step) => (step.actor === "user" || step.actor.startsWith("user:")) && /^(GenerationRequested|DocumentRenderRequested)$/.test(step.type)));
 
 function openComparisons(events: CreativeEvent[]) {
   const settled = new Set(events.filter((event) => /^(ObjectSaved|ObjectDiscarded)$/.test(event.type)).map((event) => String(event.payload.object_id ?? "")));
@@ -49,30 +51,35 @@ function openComparisons(events: CreativeEvent[]) {
 
 export function briefEligibility(events: CreativeEvent[]): BriefEligibility {
   const closedSessions = events.filter((event) => event.type === "SessionClosed").length;
-  const unresolvedThreads = openComparisons(events).length;
+  const explicitIntentions = witnessedCreatorIntents(events).filter((trajectory) => (trajectory.interrupted || trajectory.status === "ready") && trajectory.sourceEventIds.length > 1);
+  const unresolvedThreads = openComparisons(events).length + explicitIntentions.length;
   const dormantProjects = events.filter((event) => event.type === "ProjectStateChanged" && event.payload.state === "dormant").length;
   const hasDormantOrUnresolved = unresolvedThreads > 0 || dormantProjects > 0;
+  const requiredClosedSessions = explicitIntentions.length ? 1 : PHASE6_MIN_CLOSED_SESSIONS;
   const reasons: string[] = [];
-  if (closedSessions < PHASE6_MIN_CLOSED_SESSIONS) reasons.push(`${PHASE6_MIN_CLOSED_SESSIONS - closedSessions} more closed session${PHASE6_MIN_CLOSED_SESSIONS - closedSessions === 1 ? "" : "s"}`);
+  if (closedSessions < requiredClosedSessions) reasons.push(`${requiredClosedSessions - closedSessions} more closed session${requiredClosedSessions - closedSessions === 1 ? "" : "s"}`);
   if (!hasDormantOrUnresolved) reasons.push("one dormant project or unresolved comparison");
-  return { eligible: reasons.length === 0, closedSessions, requiredClosedSessions: PHASE6_MIN_CLOSED_SESSIONS, unresolvedThreads, dormantProjects, hasDormantOrUnresolved, reasons };
+  return { eligible: reasons.length === 0, closedSessions, requiredClosedSessions, unresolvedThreads, dormantProjects, hasDormantOrUnresolved, reasons };
 }
 
 export function sessionContinuityDelta(events: CreativeEvent[]) {
   const close = events.filter((event) => event.type === "SessionClosed").at(-1);
   const snapshot = record(close?.payload.snapshot_ref);
   const snapshotHead = Number(snapshot.head ?? close?.sequence ?? 0);
-  const excluded = /^(SessionOpened|SessionClosed|BriefComposed|BriefItemPresented)$/;
-  const changes = events.filter((event) => event.sequence > snapshotHead && !excluded.test(event.type));
+  const recent = events.filter((event) => event.sequence > snapshotHead);
+  const excluded = /^(SessionOpened|SessionClosed|BriefComposed|BriefItemPresented|Budget(?:Reserved|Released|Exceeded)|AdapterVersioned|CapabilityDeclared|ContextCompiled|CanvasLock(?:Acquired|Released)|CanvasInteractionRecorded|ApplicationViewVisited|DocumentViewVisited|AttentionEpisodeObserved|ProviderProbe(?:Started|Completed|Failed)|ShareLink(?:Created|Revoked))$/;
+  const changes = recent.filter((event) => !excluded.test(event.type) && (event.actor === "user" || /(?:Completed|Failed|Resurfaced)$/.test(event.type)));
   const workflow = documentViewWorkflow(events);
-  const changedViews = [...new Set(changes.filter((event) => event.type === "DocumentViewVisited").map((event) => String(event.payload.view)))].filter(Boolean);
+  const viewVisits = recent.filter((event) => event.type === "DocumentViewVisited").map((event) => String(event.payload.view)).filter(Boolean);
+  const changedViews = [...new Set(viewVisits)];
+  const recentTransitions = viewVisits.reduce((count, view, index) => count + (index > 0 && view !== viewVisits[index - 1] ? 1 : 0), 0);
   return {
     snapshotHead,
     eventCount: changes.length,
     eventTypes: [...new Set(changes.map((event) => event.type))].sort(),
     sourceEventRefs: changes.slice(-12).map((event) => event.eventId),
     documentViews: changedViews,
-    viewTransitions: workflow.transitions,
+    viewTransitions: recentTransitions,
     lastDocumentView: workflow.lastView?.view ?? null,
     preferredDocumentView: workflow.preferredView?.view ?? null,
   };
@@ -101,6 +108,14 @@ function candidates(events: CreativeEvent[]): BriefItem[] {
     return { route: withDocumentInRoute(base, documentId, title), document_id: documentId, document_view: documentView };
   };
   const items: Array<BriefItem & { lastSequence: number }> = [];
+  for (const trajectory of witnessedCreatorIntents(events)) {
+    if (!trajectory.nextAction || !trajectory.documentId) continue;
+    const location = destinationFor(trajectory.documentId);
+    const source = trajectory.sourceEventIds.at(-1) ?? "";
+    const readyArtifact = trajectory.status === "ready" ? trajectory.artifactIds.at(-1) : undefined;
+    const destination: BriefDestination = readyArtifact ? { ...location, route: libraryFocusRoute("artifact", readyArtifact, trajectory.title), view: "document", ref_id: trajectory.documentId } : { ...location, view: "document", ref_id: trajectory.documentId };
+    items.push({ item_id: `intent:${trajectory.id}`, item_type: "intent", ref_id: trajectory.id, rank: 0, title: trajectory.nextAction.label, summary: `${trajectory.nextAction.reason} ${readyArtifact ? "Open the finished result directly" : `Resume in ${DOCUMENT_VIEW_LABELS[location.document_view]}`}; review remains your choice.`, rationale_ref: `event:${source}`, source_event_refs: trajectory.sourceEventIds.slice(-4), authority: "explicit", destination, lastSequence: trajectory.lastSequence });
+  }
   const comparisons = openComparisons(events);
   const comparison = comparisons.at(-1);
   if (comparison) {
@@ -127,7 +142,8 @@ function candidates(events: CreativeEvent[]): BriefItem[] {
     items.push({ item_id: `collection:${collection.id}`, item_type: "collection", ref_id: collection.handle, rank: 0, title: `Return to ${collection.handle}`, summary: "This authored collection groups active context into one re-entry point.", rationale_ref: `event:${latest?.eventId ?? collection.id}`, source_event_refs: related.slice(-4).map((event) => event.eventId), authority: "inferred", destination: { route: "/library", view: "collection", ref_id: collection.id }, lastSequence: latest?.sequence ?? 0 });
   }
   const rejected = new Set(rejectedPathMemory(events).filter((entry) => entry.active).map((entry) => entry.refId));
-  return items.filter((item) => !rejected.has(item.item_id) && !rejected.has(item.ref_id)).sort((a, b) => b.lastSequence - a.lastSequence || a.item_id.localeCompare(b.item_id)).slice(0, 3).map((candidate, index) => ({ item_id: candidate.item_id, item_type: candidate.item_type, ref_id: candidate.ref_id, rank: index + 1, title: candidate.title, summary: candidate.summary, rationale_ref: candidate.rationale_ref, source_event_refs: candidate.source_event_refs, authority: candidate.authority, destination: candidate.destination }));
+  const genericEvidenceReady = events.filter((event) => event.type === "SessionClosed").length >= PHASE6_MIN_CLOSED_SESSIONS;
+  return items.filter((item) => genericEvidenceReady || item.item_type === "intent").filter((item) => !rejected.has(item.item_id) && !rejected.has(item.ref_id)).sort((a, b) => Number(b.authority === "explicit") - Number(a.authority === "explicit") || b.lastSequence - a.lastSequence || a.item_id.localeCompare(b.item_id)).slice(0, 3).map((candidate, index) => ({ item_id: candidate.item_id, item_type: candidate.item_type, ref_id: candidate.ref_id, rank: index + 1, title: candidate.title, summary: candidate.summary, rationale_ref: candidate.rationale_ref, source_event_refs: candidate.source_event_refs, authority: candidate.authority, destination: candidate.destination }));
 }
 
 export function composeReentryBrief(events: CreativeEvent[], briefId: string) {

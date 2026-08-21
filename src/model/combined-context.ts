@@ -1,3 +1,5 @@
+import { promptFactIsActive } from "./prompt-policy.ts";
+
 export const COMBINED_CONTEXT_ROLES = ["character","location","object","wardrobe","scene","sequence","slide_chapter","message","visual_system","custom"] as const;
 export type CombinedContextRole = typeof COMBINED_CONTEXT_ROLES[number];
 export const COMBINED_CONTEXT_APPLICATIONS = ["isolate","co_locate","ordered","recur"] as const;
@@ -76,7 +78,7 @@ export function combinedContextMemberships(properties:Record<string,unknown>):Co
 const factLabel=(fact:Record<string,unknown>)=>{const properties=record(fact.properties);return String(properties.text??properties.label??fact.handle??fact.type??"decision");};
 
 export function combinedContextGroups(snapshot:Record<string,unknown>):CombinedContextGroup[]{
-  const facts=(Array.isArray(snapshot.facts)?snapshot.facts:[]).map(record).filter((fact)=>fact.active!==false);const grouped=new Map<string,CombinedContextGroup>();
+  const facts=(Array.isArray(snapshot.facts)?snapshot.facts:[]).map(record).filter(promptFactIsActive);const grouped=new Map<string,CombinedContextGroup>();
   for(const fact of facts){const properties=record(fact.properties);for(const membership of combinedContextMemberships(properties)){const existing=grouped.get(membership.contextSetId)??{id:membership.contextSetId,name:membership.name,role:membership.role,target:membership.target,application:membership.application,relativity:membership.relativity,members:[]};existing.relativity=Math.max(existing.relativity,membership.relativity);existing.members.push({blockId:String(fact.block_id??""),label:factLabel(fact),role:String(fact.role??fact.type??"decision"),relativity:membership.relativity,order:membership.memberOrder});grouped.set(membership.contextSetId,existing);}}
   return[...grouped.values()].map((group)=>({...group,members:group.members.sort((left,right)=>left.order-right.order||left.blockId.localeCompare(right.blockId))})).sort((left,right)=>left.name.localeCompare(right.name)||left.id.localeCompare(right.id));
 }

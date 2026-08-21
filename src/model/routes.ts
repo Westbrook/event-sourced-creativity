@@ -1,5 +1,5 @@
 export type DocumentView = "document" | "board" | "guided" | "layers" | "adaptive" | "editor" | "chat";
-export type LibraryFocusKind = "block" | "output" | "family";
+export type LibraryFocusKind = "block" | "output" | "artifact" | "family";
 export type LibraryFocus = { kind: LibraryFocusKind; id: string };
 export type LibraryBlockEditorTarget = { blockId: string | null };
 
@@ -16,7 +16,7 @@ const legacyDocumentViews: Record<string, DocumentView> = {
 
 const routeUrl = (route: string) => new URL(route, "https://forma.local");
 const documentViews = new Set<DocumentView>(["document", "board", "guided", "layers", "adaptive", "editor", "chat"]);
-const libraryFocusKinds = new Set<LibraryFocusKind>(["block", "output", "family"]);
+const libraryFocusKinds = new Set<LibraryFocusKind>(["block", "output", "artifact", "family"]);
 const safeDecode = (value: string) => { try { return decodeURIComponent(value); } catch { return value; } };
 
 export function routePathname(route: string) {
@@ -101,6 +101,7 @@ export function libraryRootRoute(route: string) {
 export function withDocumentInRoute(route: string, documentId: string, documentName = "") {
   const parts = documentRouteParts(route);
   if (!parts) return route;
+  if (!documentId.trim()) return "/projects";
   const slug = documentSlug(documentName);
   const viewSuffix = parts.view === "document" ? slug === "focus" ? "/view/document" : "" : `/view/${parts.view}`;
   const focusSuffix = parts.focused ? "/focus" : "";

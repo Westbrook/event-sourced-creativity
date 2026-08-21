@@ -6,6 +6,7 @@ import { sampleImageFile } from "../model/image-sample";
 import { libraryBlockEditorFromRoute, libraryBlockEditorRoute } from "../model/routes";
 import { DEFAULT_IMAGE_FORMAT, IMAGE_FORMAT_PRESETS, imageAspectRatioLabel, imageFormatForPreset, normalizeImageFormat, type ImageFormat } from "../model/image-format";
 import { FormaElement, icon } from "./forma-element";
+import { ensureModalDialog } from "./modal-dialog";
 import "./collection-tree";
 import "./reference-image";
 
@@ -39,7 +40,7 @@ export class LibraryBlockEditor extends FormaElement {
   #browserCollapsed=false;
   #filingCollapsed=false;
 
-  protected override updated(){const dialog=this.querySelector<HTMLDialogElement>(".library-block-remove-dialog");if(dialog&&!dialog.open)dialog.showModal();const target=this.#target();if(target.blockId&&!this.store.loading.get()&&!this.#selected()){this.store.setRoute(libraryBlockEditorRoute(),{replace:true});this.store.toast("That reusable block is no longer available. Start a new one or choose another block.");}}
+  protected override updated(){ensureModalDialog(this.querySelector<HTMLDialogElement>(".library-block-remove-dialog"));const target=this.#target();if(target.blockId&&!this.store.loading.get()&&!this.#selected()){this.store.setRoute(libraryBlockEditorRoute(),{replace:true});this.store.toast("That reusable block is no longer available. Start a new one or choose another block.");}}
 
   #target(){return libraryBlockEditorFromRoute(this.store.route.get())??{blockId:null};}
   #selected(){const id=this.#target().blockId;return id?this.store.projection.get().libraryBlocks.find((block)=>block.id===id):undefined;}

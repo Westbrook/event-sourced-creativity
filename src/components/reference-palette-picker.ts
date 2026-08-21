@@ -1,5 +1,6 @@
 import { html } from "lit";
 import { FormaElement, icon } from "./forma-element";
+import { ensureModalDialog } from "./modal-dialog";
 import { focalPointCss } from "../model/focal-point";
 import { positionImageAtFocalPoint } from "../model/image-focus";
 
@@ -19,7 +20,7 @@ export class ReferencePalettePicker extends FormaElement {
   referenceBlockId = ""; referenceId = ""; mediaUrl = ""; label = "Reference"; colors: string[] = [];focalPoint:unknown=null;
   #strategy: PaletteStrategy = "extracted"; #sampled: string[] = []; #sampleCursor = 0; #lastSample = "";
 
-  protected override firstUpdated() { this.querySelector<HTMLDialogElement>(".palette-picker")?.showModal(); }
+  protected override firstUpdated() { ensureModalDialog(this.querySelector<HTMLDialogElement>(".palette-picker")); }
 
   #base() { return this.colors.length ? this.colors.slice(0,6) : ["#24242b","#7f716b","#c79670","#e7d5b9"]; }
   #palette(strategy = this.#strategy) {

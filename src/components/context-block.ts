@@ -3,6 +3,7 @@ import { FormaElement, icon } from "./forma-element";
 import type { CreativeBlock } from "../model/events";
 import { BLOCK_INTENTS, blockIntentFor, blockTypeDefinition, type BlockIntent } from "../model/block-types";
 import { COMBINED_CONTEXT_APPLICATION_DEFINITIONS, COMBINED_CONTEXT_ROLE_DEFINITIONS, combinedContextMemberships, type CombinedContextApplication, type CombinedContextMembership, type CombinedContextRole } from "../model/combined-context";
+import { requestDialogText } from "./modal-dialog";
 import "./reference-image";
 import "./reference-palette-picker";
 import "./reference-findings";
@@ -30,9 +31,10 @@ export class ContextBlock extends FormaElement {
     const appended = await this.store.append({ type: "BlockPropertyEdited", payload: { block_id: this.block.id, property_path: this.block.properties.text !== undefined ? "text" : "label", old_value: current, new_value: next } });
     if (appended.length) this.#cancelEdit();
   }
-  #rename() {
-    const next = window.prompt("Rename handle", this.block.handle)?.trim();
-    if (next && next !== this.block.handle) void this.store.append({ type: "BlockRenamed", payload: { block_id: this.block.id, old_handle: this.block.handle, new_handle: next, reason: "user" } });
+  async #rename() {
+    const previous = this.block.handle;
+    const next = await requestDialogText({ title: "Rename this creative decision", label: "Name", value: previous, confirmLabel: "Save name" });
+    if (next && next !== previous) await this.store.append({ type: "BlockRenamed", payload: { block_id: this.block.id, old_handle: previous, new_handle: next, reason: "user" } });
   }
   #commitOrder(list: CreativeBlock[]) {
     const events = list.map((block,index)=>({type:"BlockPropertyEdited",payload:{block_id:block.id,property_path:"position",old_value:block.position,new_value:`p${String(index).padStart(4,"0")}`}})).filter((event)=>event.payload.old_value!==event.payload.new_value);

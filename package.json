@@ -2,15 +2,18 @@
   "name": "forma-creative-studio",
   "version": "0.2.0",
   "private": true,
+  "customElements": "./custom-elements.json",
   "packageManager": "pnpm@11.16.0",
   "engines": {
     "node": ">=22.13.0"
   },
   "scripts": {
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
-    "build": "node build/clean-dist.mjs && WRANGLER_LOG_PATH=.wrangler/wrangler.log vite build",
+    "build": "node scripts/generate-custom-elements-manifest.mjs && node build/clean-dist.mjs && WRANGLER_LOG_PATH=.wrangler/wrangler.log vite build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite preview",
-    "test": "node build/clean-dist.mjs && vite build && node --experimental-strip-types --test tests/*.test.mjs",
+    "test": "node scripts/generate-custom-elements-manifest.mjs && node build/clean-dist.mjs && vite build && node --experimental-strip-types --test tests/*.test.mjs",
+    "cem": "node scripts/generate-custom-elements-manifest.mjs",
+    "cem:check": "node scripts/generate-custom-elements-manifest.mjs --check",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern dist",
     "replay": "node --experimental-strip-types scripts/replay.mjs",

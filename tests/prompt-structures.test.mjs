@@ -22,6 +22,7 @@ test("compiles four stable prompt languages from one canonical document",()=>{
   assert.match(prompts.bullets,/Document decisions:/);assert.match(prompts.bullets,/Decision 1/);assert.match(prompts.bullets,/Intent: avoid/);
   const json=JSON.parse(prompts.json);assert.equal(json.operation,"generate_image");assert.equal(json.aspect_ratio,"3:2");assert.equal(json.use_reference_images,1);assert.equal(json.reference_images[0].image.input_index,0);assert.equal(json.user_edited_layout.regions.length,3);assert.deepEqual(json.user_edited_layout.regions[0].bbox,{x0:.6,x1:.9,y0:.2,y1:.75});assert.equal(json.user_edited_layout.regions[1].color_palette[0].r,185);
   assert.match(prompts.xml,/^<\?xml version=/);assert.match(prompts.xml,/<image-generation-prompt schema-version="1">/);assert.match(prompts.xml,/<user-edited-layout>/);assert.match(prompts.xml,/people under 20 years old/);
+  for(const [technique,prompt] of Object.entries(prompts))assert.doesNotMatch(prompt,/subject-1|palette-1|avoid-1|doc-1|ref-1|relation-1/,`${technique} must preserve meaning without leaking durable document identities`);
 });
 
 test("keeps JSON and XML structures deterministic while allowing missing optional data",()=>{

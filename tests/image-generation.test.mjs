@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { buildCreativeImagePrompt, buildPixelReferenceDirectives, buildSpatialDirectives, generateCreativeDirection, generateCreativeImage } from "../worker/openai-adapter.ts";
+import { buildCreativeImagePrompt, buildPixelReferenceDirectives, buildSpatialDirectives, generateCreativeDirection, generateCreativeImage, respondToCreativeChat, structureAdaptiveContext } from "../worker/openai-adapter.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { providerFailurePrompt } from "../worker/provider-errors.ts";
 
@@ -30,15 +30,16 @@ test("turns every spatial block scope into an explicit image-generation directiv
     {block_id:"paused-1",role:"material",intent:"include",active:false,properties:{text:"polished chrome",weight:0}},
   ]};
   const directives=buildSpatialDirectives(snapshot);
-  assert.equal(directives.length,4);
+  assert.equal(directives.length,3);
   assert.match(directives[0],/left 62%, top 18%, width 28%, height 54%/);
   assert.match(directives[1],/around the subject “glass vessel”/);
   assert.match(directives[2],/quiet upper-left field/);
-  assert.match(directives[3],/Do not apply material “polished chrome”/);
+  assert.doesNotMatch(directives.join(" "),/polished chrome/);
   const prompt=buildCreativeImagePrompt(snapshot,{title:"Spatial study"});
   assert.match(prompt,/Spatial application map/);
   assert.match(prompt,/spatial scope.*requirements/i);
   assert.match(prompt,/quiet upper-left field/);
+  assert.doesNotMatch(prompt,/polished chrome/);
 });
 
 test("calls the direct Image API with gpt-image-2, project attribution, and decodes one private image",async()=>{
@@ -137,6 +138,41 @@ test("preserves planner instructions and context when moderation stops before im
       const submitted=providerFailurePrompt(error)??"";assert.match(submitted,/creative-direction planner instructions/i);assert.match(submitted,/Planning receipt/);assert.equal(error.detail.category,"safety");return true;
     });
   }finally{globalThis.fetch=originalFetch;}
+});
+
+test("all creative assistants exclude muted decisions while preserving editable identities and isolated group meaning",async()=>{
+  const originalFetch=globalThis.fetch;const requests=[];
+  const membership={context_set_id:"private-group",name:"Lead character",role:"character",target:"Mara",application:"isolate",relativity:.9,member_order:0,source_canvas_id:"private-canvas"};
+  const blocks=[
+    {id:"active-block",block_id:"active-block",type:"subject",properties:{text:"Mara in a rust rain shell",weight:.9,combined_context_memberships:[membership],content_ref:"private-content"},source_event_refs:["private-event"]},
+    {id:"muted-block",block_id:"muted-block",type:"subject",active:false,properties:{text:"suppressed unsafe content",weight:.8,combined_context_memberships:[membership]}},
+    {id:"weightless-block",block_id:"weightless-block",type:"direction",properties:{text:"zero-weight hidden content",weight:0,combined_context_memberships:[membership]}},
+  ];
+  const results=[
+    {title:"Field study",rationale:"Keep Mara recognizable.",scene:"Mara crosses the field.",palette:["#704214","#D8C8A7","#344B43"],next_moves:["Refine the shell","Keep the field quiet"]},
+    {reply:"Mara keeps the rust rain shell.",mutations:[],preview_direction:"Mara crosses the field in her rust rain shell.",preview_worthy:false},
+    {interpretation:"A field portrait",active_decision:{type:"subject",label:"Mara",prompt:"Clarify Mara's role",why:"She anchors the scene."},suggested_blocks:[],hidden_until_later:[]},
+  ];
+  globalThis.fetch=async(_url,init)=>{requests.push(JSON.parse(String(init.body)));return Response.json({id:`response-${requests.length}`,model:"gpt-test",output_text:JSON.stringify(results[requests.length-1]),usage:{input_tokens:20,output_tokens:10,total_tokens:30}});};
+  try{
+    await generateCreativeDirection({OPENAI_API_KEY:"test-only"},"user-1",{document:{title:"Field study"},facts:blocks,context_groups:[{id:"private-group"}]});
+    await respondToCreativeChat({OPENAI_API_KEY:"test-only"},"user-1",{documentTitle:"Field study",blocks,history:[],message:"Keep Mara's rain shell."});
+    await structureAdaptiveContext({OPENAI_API_KEY:"test-only"},"user-1",{documentTitle:"Field study",blocks,intent:"Strengthen Mara's portrait."});
+  }finally{globalThis.fetch=originalFetch;}
+  assert.equal(requests.length,3);
+  for(const request of requests){
+    const providerInput=JSON.parse(request.input),serialized=JSON.stringify(providerInput);
+    assert.match(request.instructions,/Work only from active, authorized creative decisions/);
+    assert.match(serialized,/Mara in a rust rain shell/);
+    assert.doesNotMatch(serialized,/suppressed unsafe content|zero-weight hidden content|private-group|private-event|private-canvas|private-content/);
+    assert.equal(providerInput.combined_context_plan.length,1);
+    assert.equal(providerInput.combined_context_plan[0].context_key,"context_group_1");
+    assert.equal(providerInput.combined_context_plan[0].target,"Mara");
+  }
+  assert.doesNotMatch(requests[0].input,/active-block/,"a rendering planner needs semantic request-local aliases, not durable block identifiers");
+  assert.equal(JSON.parse(requests[0].input).facts[0].decision_key,"decision_1");
+  assert.equal(JSON.parse(requests[1].input).blocks[0].id,"active-block");
+  assert.equal(JSON.parse(requests[2].input).blocks.length,1);
 });
 
 test("documents project attribution for every direct OpenAI request",async()=>{

@@ -39,8 +39,13 @@ export const uuidV7 = () => {
   return `${time.slice(0, 8)}-${time.slice(8)}-7${hex.slice(0, 3)}-${variant}${hex.slice(5, 7)}-${hex.slice(7, 19)}`;
 };
 
-export async function ensureSchema(env: WorkerEnv) {
-  await env.DB.batch([
+const initializedSchemas = new WeakMap<D1Database, Promise<void>>();
+
+/** Run schema bootstrap once per database binding and worker isolate. */
+export function ensureSchema(env: WorkerEnv): Promise<void> {
+  const initialized = initializedSchemas.get(env.DB);
+  if (initialized) return initialized;
+  const initialization = env.DB.batch([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (
       event_id TEXT PRIMARY KEY NOT NULL, stream_id TEXT NOT NULL, sequence INTEGER NOT NULL,
       occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL, actor TEXT NOT NULL, client_id TEXT NOT NULL,
@@ -70,6 +75,8 @@ export async function ensureSchema(env: WorkerEnv) {
     env.DB.prepare("CREATE TABLE IF NOT EXISTS shares (share_id TEXT PRIMARY KEY NOT NULL, token_hash TEXT NOT NULL, owner_id TEXT NOT NULL, stream_id TEXT NOT NULL, expires_at TEXT NOT NULL, revoked_at TEXT, created_at TEXT NOT NULL)"),
     env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_shares_token_hash ON shares(token_hash)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares(owner_id, created_at)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS share_scopes (share_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, resource_kind TEXT NOT NULL, resource_id TEXT NOT NULL, project_id TEXT NOT NULL, media_keys_json TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_share_scopes_owner_resource ON share_scopes(owner_id, resource_kind, resource_id)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS replay_approvals (approval_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, confirmation_version TEXT NOT NULL, seed TEXT NOT NULL, requested_at TEXT NOT NULL, expires_at TEXT NOT NULL, consumed_at TEXT)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_replay_approvals_owner_expiry ON replay_approvals(owner_id, expires_at)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS replay_cost_authorizations (approval_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, pricing_version TEXT NOT NULL, estimated_microusd INTEGER NOT NULL, reserved_microusd INTEGER NOT NULL, maximum_microusd INTEGER NOT NULL, allow_user_overage INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)"),
@@ -96,7 +103,12 @@ export async function ensureSchema(env: WorkerEnv) {
     env.DB.prepare("CREATE TABLE IF NOT EXISTS generation_preflights (preflight_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, stream_id TEXT NOT NULL, document_id TEXT NOT NULL, request_key TEXT NOT NULL, status TEXT NOT NULL, result_json TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, UNIQUE(owner_id,request_key))"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_generation_preflights_owner_document ON generation_preflights(owner_id,document_id,expires_at)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS canvas_governance_requirements (requirement_id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, approved_by_user_id TEXT, approved_by_name TEXT, approved_at TEXT, evidence_ref TEXT, details_json TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL)"),
-  ]);
+  ]).then(() => undefined).catch((error: unknown) => {
+    initializedSchemas.delete(env.DB);
+    throw error;
+  });
+  initializedSchemas.set(env.DB, initialization);
+  return initialization;
 }
 
 export function makeEvent(streamId: string, sequence: number, actor: string, clientId: string, correlationId: string, type: string, payload: Record<string, unknown>, options: { causationId?: string | null; compensatesEventId?: string | null } = {}): EventRow {

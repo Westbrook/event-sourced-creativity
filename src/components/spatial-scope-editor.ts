@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import type { CreativeBlock } from "../model/events";
 import { WHOLE_DOCUMENT_SCOPE, formatSpatialPath, normalizeSpatialScope, parseSpatialPath, spatialScopeLabel, type SpatialScope, type SpatialScopeKind } from "../model/spatial-scope";
 import { FormaElement, icon } from "./forma-element";
+import { ensureModalDialog } from "./modal-dialog";
 import { focalPointCss } from "../model/focal-point";
 import { positionImageAtFocalPoint } from "../model/image-focus";
 
@@ -54,7 +55,7 @@ export class SpatialScopeEditor extends FormaElement {
 
   protected override updated() {
     const dialog = this.querySelector<HTMLDialogElement>(".spatial-scope-dialog");
-    if (this.#open && dialog && !dialog.open) dialog.showModal();
+    if (this.#open) ensureModalDialog(dialog);
   }
 
   #openEditor() {

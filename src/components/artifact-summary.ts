@@ -1,0 +1,30 @@
+import { html, nothing } from "lit";
+import { documentArtifactDefinition, type DocumentArtifact } from "../model/document-artifacts";
+import { focalPointCss } from "../model/focal-point";
+import { icon } from "./icons";
+import { FormaPresentationalElement } from "./presentational-element";
+import "./presentation-slide";
+
+/** One reusable visual summary for every non-image creative result. */
+export class FormaArtifactSummary extends FormaPresentationalElement {
+  static properties = { artifact: { attribute: false }, compact: { type: Boolean } };
+  artifact?: DocumentArtifact; compact = false;
+
+  override render() {
+    const artifact = this.artifact;
+    if (!artifact) return nothing;
+    const definition = documentArtifactDefinition(artifact.kind);
+    const first = artifact.items[0];
+    const media = artifact.kind === "video" && artifact.mediaUrl
+      ? html`<video preload="metadata" muted playsinline src=${artifact.mediaUrl} aria-label=${artifact.title}></video>`
+      : artifact.kind === "storyboard" && artifact.items.some((item) => item.mediaUrl)
+        ? html`<div class="artifact-summary-frames">${artifact.items.filter((item) => item.mediaUrl).slice(0, 4).map((item) => html`<img src=${item.mediaUrl!} alt=${item.title} loading="lazy" decoding="async" style=${focalPointCss(item.focalPoint)}>` )}</div>`
+        : artifact.kind === "slides" && first
+          ? html`<forma-presentation-slide .item=${{ title: first.title, body: first.body, notes: first.notes, image_prompt: first.imagePrompt, slide: first.slide }} .presentation=${artifact.presentation} .index=${0} .total=${artifact.itemCount} .compact=${true}></forma-presentation-slide>`
+          : html`<div class="artifact-summary-copy"><span aria-hidden="true">${icon(artifact.kind === "scene" ? "play" : "story")}</span><p>${artifact.summary}</p></div>`;
+    return html`<div class=${`artifact-summary artifact-summary--${artifact.kind}${this.compact ? " compact" : ""}`} aria-label=${`${definition.label}: ${artifact.title}`}>${media}</div>`;
+  }
+}
+
+if (!customElements.get("forma-artifact-summary")) customElements.define("forma-artifact-summary", FormaArtifactSummary);
+declare global { interface HTMLElementTagNameMap { "forma-artifact-summary": FormaArtifactSummary; } }

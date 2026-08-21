@@ -1,7 +1,9 @@
 import { applySlideStylePreset, defaultSlidePresentation, normalizeSlideDeckItems, normalizeSlidePresentation, normalizeSlideVisual, slideVisualIsComplete, type DocumentArtifactDraftItem, type SlidePresentation, type SlideVisualData } from "./document-artifacts.ts";
 
-const PAGE_WIDTH=960;
-const PAGE_HEIGHT=540;
+export const PRESENTATION_PDF_PAGE_WIDTH=960;
+export const PRESENTATION_PDF_PAGE_HEIGHT=540;
+const PAGE_WIDTH=PRESENTATION_PDF_PAGE_WIDTH;
+const PAGE_HEIGHT=PRESENTATION_PDF_PAGE_HEIGHT;
 const TEXT_LEFT=54;
 const TEXT_WIDTH=500;
 const VISUAL_LEFT=604;
@@ -9,12 +11,16 @@ const VISUAL_WIDTH=302;
 
 export type PresentationPdfOptions={title?:string;showFooterLabel?:boolean};
 export type PresentationPdfResult={bytes:Uint8Array;filename:string;pageCount:number};
+export type PresentationPdfRenderedPage={width:number;height:number;bytes:Uint8Array;text?:string};
 
 const replacements:Record<string,string>={"\u2018":"'","\u2019":"'","\u201a":",","\u201c":"\"","\u201d":"\"","\u2013":"-","\u2014":"-","\u2026":"...","\u2022":"-","\u00b7":"-","\u00a0":" ","\u00ae":"(R)","\u00a9":"(C)","\u2122":"TM"};
 const ascii=(value:unknown)=>String(value??"").normalize("NFKD").replace(/[\u2018\u2019\u201a\u201c\u201d\u2013\u2014\u2026\u2022\u00b7\u00a0\u00ae\u00a9\u2122]/g,(character)=>replacements[character]??"").replace(/[\u0300-\u036f]/g,"").replace(/[^\x20-\x7e\n]/g,"").replace(/[ \t]+/g," ").trim();
 const literal=(value:unknown)=>ascii(value).replaceAll("\\","\\\\").replaceAll("(","\\(").replaceAll(")","\\)");
 const number=(value:number)=>Number(value.toFixed(3)).toString();
 const byteLength=(value:string)=>new TextEncoder().encode(value).byteLength;
+const encode=(value:string)=>new TextEncoder().encode(value);
+const combine=(parts:readonly Uint8Array[])=>{const result=new Uint8Array(parts.reduce((total,part)=>total+part.byteLength,0));let offset=0;for(const part of parts){result.set(part,offset);offset+=part.byteLength;}return result;};
+const utf16=(value:string)=>`FEFF${Array.from({length:value.length},(_,index)=>value.charCodeAt(index).toString(16).padStart(4,"0")).join("").toUpperCase()}`;
 const hex=(value:string)=>/^#[0-9a-f]{6}$/i.test(value)?value:"#000000";
 const rgb=(value:string)=>{const color=hex(value);return[1,3,5].map((index)=>Number.parseInt(color.slice(index,index+2),16)/255) as [number,number,number];};
 const mix=(left:string,right:string,weight:number)=>{const a=rgb(left),b=rgb(right),ratio=Math.max(0,Math.min(1,weight));return`#${a.map((channel,index)=>Math.round((channel*(1-ratio)+(b[index]??0)*ratio)*255).toString(16).padStart(2,"0")).join("")}`;};
@@ -88,7 +94,85 @@ const pdf=(pages:string[],title:string)=>{
   return new TextEncoder().encode(body);
 };
 
+const renderedPdf=(pages:PresentationPdfRenderedPage[],title:string)=>{
+  const objects:Uint8Array[]=[];
+  const add=(value:string|Uint8Array)=>{objects.push(typeof value==="string"?encode(value):value);return objects.length;};
+  const catalog=add("<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> >>");
+  add("");
+  const lines=pages.map((page)=>(page.text??"").split(/\r?\n/).map((line)=>line.trim()).filter(Boolean));
+  const characters=[...new Set(lines.flatMap((entries)=>entries.flatMap((entry)=>Array.from(entry))))];
+  const groups=Array.from({length:Math.max(1,Math.ceil(characters.length/255))},(_,index)=>characters.slice(index*255,(index+1)*255));
+  const glyphs=new Map<string,{font:string;code:string}>();
+  const fonts=groups.map((entries,index)=>{
+    const name=`F${index+1}`;
+    const mappings=entries.map((character,position)=>{
+      const code=(position+1).toString(16).padStart(2,"0").toUpperCase();
+      glyphs.set(character,{font:name,code});
+      return`<${code}> <${utf16(character).slice(4)}>`;
+    });
+    const ranges=Array.from({length:Math.ceil(mappings.length/100)},(_,position)=>mappings.slice(position*100,(position+1)*100)).map((group)=>`${group.length} beginbfchar\n${group.join("\n")}\nendbfchar`).join("\n");
+    const cmap=`/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n/CMapName /FormaUnicode${index+1} def\n/CMapType 2 def\n1 begincodespacerange\n<00> <FF>\nendcodespacerange${ranges?`\n${ranges}`:""}\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend`;
+    const unicode=add(`<< /Length ${byteLength(cmap)} >>\nstream\n${cmap}\nendstream`);
+    const id=add(`<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding /ToUnicode ${unicode} 0 R >>`);
+    return{name,id};
+  });
+  const pageIds:number[]=[];
+
+  pages.forEach((page,index)=>{
+    if(!Number.isSafeInteger(page.width)||page.width<1||!Number.isSafeInteger(page.height)||page.height<1||!page.bytes.byteLength)throw new TypeError("A rendered presentation page must contain compressed RGB pixels and valid dimensions.");
+    const imageName=`Im${index+1}`;
+    const image=add(combine([
+      encode(`<< /Type /XObject /Subtype /Image /Width ${page.width} /Height ${page.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Interpolate false /Length ${page.bytes.byteLength} >>\nstream\n`),
+      page.bytes,
+      encode("\nendstream"),
+    ]));
+
+    // Lossless pixels preserve appearance; invisible text keeps search and
+    // copy useful. Explicit ToUnicode maps retain accents, CJK, and emoji even
+    // in PDF readers that ignore marked-content ActualText.
+    const semantics=lines[index]!.map((line,lineIndex)=>{
+      const runs:Array<{font:string;codes:string[]}>=[];
+      for(const character of line){
+        const glyph=glyphs.get(character);
+        if(!glyph)continue;
+        const previous=runs.at(-1);
+        if(previous?.font===glyph.font)previous.codes.push(glyph.code);
+        else runs.push({font:glyph.font,codes:[glyph.code]});
+      }
+      const content=runs.map((run)=>`/${run.font} 1 Tf\n<${run.codes.join("")}> Tj`).join("\n");
+      return`/Span << /ActualText <${utf16(`${line}\n`)}> >> BDC\nBT\n3 Tr\n1 0 0 1 0 ${Math.max(0,PAGE_HEIGHT-lineIndex-1)} Tm\n${content}\nET\nEMC`;
+    }).join("\n");
+    const stream=`q\n${PAGE_WIDTH} 0 0 ${PAGE_HEIGHT} 0 0 cm\n/${imageName} Do\nQ${semantics?`\n${semantics}`:""}`;
+    const content=add(`<< /Length ${byteLength(stream)} >>\nstream\n${stream}\nendstream`);
+    const entry=add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << ${fonts.map((font)=>`/${font.name} ${font.id} 0 R`).join(" ")} >> /XObject << /${imageName} ${image} 0 R >> >> /Contents ${content} 0 R >>`);
+    pageIds.push(entry);
+  });
+
+  objects[1]=encode(`<< /Type /Pages /Kids [${pageIds.map((id)=>`${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`);
+  const info=add(`<< /Title <${utf16(title)}> /Creator (Forma high-fidelity slideshow PDF export) >>`);
+  const parts:Uint8Array[]=[encode("%PDF-1.4\n%Forma\n")];
+  const offsets=[0];
+  let offset=parts[0]!.byteLength;
+
+  objects.forEach((object,index)=>{
+    offsets.push(offset);
+    const header=encode(`${index+1} 0 obj\n`),footer=encode("\nendobj\n");
+    parts.push(header,object,footer);
+    offset+=header.byteLength+object.byteLength+footer.byteLength;
+  });
+
+  const xrefOffset=offset;
+  parts.push(encode(`xref\n0 ${objects.length+1}\n0000000000 65535 f \n${offsets.slice(1).map((entry)=>`${String(entry).padStart(10,"0")} 00000 n `).join("\n")}\ntrailer\n<< /Size ${objects.length+1} /Root ${catalog} 0 R /Info ${info} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`));
+  return combine(parts);
+};
+
 export const presentationPdfFilename=(title:string)=>`${ascii(title).toLocaleLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"slide-deck"}.pdf`;
+
+export function createPresentationPdfFromRenderedSlides(pages:PresentationPdfRenderedPage[],options:PresentationPdfOptions={}):PresentationPdfResult{
+  if(!pages.length)throw new TypeError("At least one rendered presentation slide is required.");
+  const title=String(options.title??"").trim()||"Slide deck";
+  return{bytes:renderedPdf(pages,title),filename:presentationPdfFilename(title),pageCount:pages.length};
+}
 
 export function createPresentationPdf(items:DocumentArtifactDraftItem[],value:SlidePresentation|null,options:PresentationPdfOptions={}):PresentationPdfResult{
   const normalizedItems=normalizeSlideDeckItems(items),generated=normalizeSlidePresentation(value)??defaultSlidePresentation(),presentation=applySlideStylePreset(generated,generated.stylePreset),title=ascii(options.title)||presentation.footerLabel||normalizedItems[0]?.title||"Slide deck";

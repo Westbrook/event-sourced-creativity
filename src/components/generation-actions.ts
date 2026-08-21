@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import { isDraftOutput, type CreativeBlock, type CreativeOutput } from "../model/events";
 import { documentJobActionLabel, documentJobFailure, documentJobFailureVisible, generationFailureGuidance, type DocumentJob } from "../model/document-jobs";
 import { copyTextToClipboard, FormaElement, icon } from "./forma-element";
+import { ensureModalDialog } from "./modal-dialog";
 import { promptTechniqueDefinition, type PromptTechnique } from "../model/prompt-structures";
 import { generationReadinessBlocks, generationReadinessLabel, type GenerationReadiness, type GenerationReadinessKind, type PromptTechniqueSafetyComparison, type PromptTechniqueSafetyResult } from "../model/generation-readiness";
 import { documentImageFormat, imageAspectRatioLabel } from "../model/image-format";
@@ -30,13 +31,13 @@ export class GenerationActions extends FormaElement {
 
   protected override updated(){
     const dialog=this.querySelector<HTMLDialogElement>(".generation-queue-dialog");
-    if(this.#queueOpen&&dialog&&!dialog.open)dialog.showModal();
+    if(this.#queueOpen)ensureModalDialog(dialog);
     const details=this.querySelector<HTMLDialogElement>(".generation-details-dialog");
-    if(this.#detailsOpen&&details&&!details.open)details.showModal();
+    if(this.#detailsOpen)ensureModalDialog(details);
     const failures=this.querySelector<HTMLDialogElement>(".generation-failures-dialog");
-    if(this.#failuresOpen&&failures&&!failures.open)failures.showModal();
+    if(this.#failuresOpen)ensureModalDialog(failures);
     const diagnostic=this.querySelector<HTMLDialogElement>(".generation-safety-dialog");
-    if(this.#safetyDiagnosticOpen&&diagnostic&&!diagnostic.open)diagnostic.showModal();
+    if(this.#safetyDiagnosticOpen)ensureModalDialog(diagnostic);
     const selected=this.selected??this.store.projection.get().outputs.find((output)=>output.id===this.store.ui.selectedOutputId)??this.store.projection.get().outputs[0]??null;const sourcePreviewId=isDraftOutput(selected)?selected?.id:null;const technique=this.store.promptTechniquePreference().technique;const signature=[this.store.documentGenerationRevision(),sourcePreviewId??"document",technique,this.source].join(":");
     if(signature!==this.#readinessSignature){this.#readinessSignature=signature;window.clearTimeout(this.#readinessTimer);this.#readinessTimer=window.setTimeout(()=>void this.#warmReadiness(sourcePreviewId,technique),450);}
   }

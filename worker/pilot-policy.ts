@@ -46,13 +46,18 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
   await ensureSchema(env);
   const identity = identityFromRequest(request);
   if (!identity) return { response: Response.json({ error: "authentication_required" }, { status: 401 }), user: null };
-  const now = new Date().toISOString();
-  const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM users").first<{ count: number }>();
-  const adminEmails = new Set((env.FORMA_ADMIN_EMAILS ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
-  const initialRole: PilotRole = adminEmails.has(identity.email) || Number(count?.count ?? 0) === 0 ? "admin" : "creator";
-  await env.DB.prepare("INSERT OR IGNORE INTO users (user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,?,?)").bind(identity.userId, identity.email, identity.displayName, initialRole, now, now).run();
-  await env.DB.prepare("UPDATE users SET email=?, display_name=?, updated_at=? WHERE user_id=?").bind(identity.email, identity.displayName, now, identity.userId).run();
-  const row = await env.DB.prepare("SELECT * FROM users WHERE user_id=?").bind(identity.userId).first<Record<string, unknown>>();
+  let row = await env.DB.prepare("SELECT * FROM users WHERE user_id=?").bind(identity.userId).first<Record<string, unknown>>();
+  if (!row) {
+    const now = new Date().toISOString();
+    const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM users").first<{ count: number }>();
+    const adminEmails = new Set((env.FORMA_ADMIN_EMAILS ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
+    const initialRole: PilotRole = adminEmails.has(identity.email) || Number(count?.count ?? 0) === 0 ? "admin" : "creator";
+    await env.DB.prepare("INSERT OR IGNORE INTO users (user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,?,?)").bind(identity.userId, identity.email, identity.displayName, initialRole, now, now).run();
+    row = await env.DB.prepare("SELECT * FROM users WHERE user_id=?").bind(identity.userId).first<Record<string, unknown>>();
+  } else if (row.email !== identity.email || row.display_name !== identity.displayName) {
+    await env.DB.prepare("UPDATE users SET email=?, display_name=?, updated_at=? WHERE user_id=?").bind(identity.email, identity.displayName, new Date().toISOString(), identity.userId).run();
+    row = { ...row, email: identity.email, display_name: identity.displayName };
+  }
   const principal: PilotUser = { userId: String(row?.user_id), email: String(row?.email), displayName: String(row?.display_name), role: String(row?.role) as PilotRole, consentVersion: row?.consent_version ? String(row.consent_version) : null, consentedAt: row?.consented_at ? String(row.consented_at) : null, streamId: `creative:${identity.userId}` };
   if (roleRank[principal.role] < roleRank[minimum]) return { response: Response.json({ error: "insufficient_role", required: minimum, role: principal.role }, { status: 403 }), user: null, principal, impersonation:null };
   const impersonation=options.account==="principal"?null:await activeImpersonation(request,env,principal);const user=impersonation?.fictionalUser??principal;

@@ -1,5 +1,6 @@
 import { referencePixelMode, sendsReferencePixels, type ReferencePixelMode } from "./block-types.ts";
 import type { CreativeBlock, CreativeEvent } from "./events.ts";
+import { promptFactIsActive } from "./prompt-policy.ts";
 import { VIDEO_ADAPTER_CONTRACT } from "./video-adapter.ts";
 
 export type VideoReferencePreflightItem = {
@@ -42,7 +43,7 @@ export function videoReferencePreflight(blocks:CreativeBlock[],events:CreativeEv
     const referenceId=text(event.payload.reference_id);if(!referenceId)continue;
     if(event.type==="RightsAsserted"||event.type==="ReferenceIngested"&&Boolean(event.payload.rights_class))rights.add(referenceId);
   }
-  const activeBlocks=blocks.filter((block)=>block.type==="reference"&&!block.removed&&Number(block.properties.weight??.5)>0);const unavailablePixelCount=activeBlocks.filter((block)=>sendsReferencePixels(referencePixelMode(block.properties.pixel_reference_mode))&&!text(block.properties.media_url)).length;
+  const activeBlocks=blocks.filter((block)=>block.type==="reference"&&!block.removed&&promptFactIsActive(block));const unavailablePixelCount=activeBlocks.filter((block)=>sendsReferencePixels(referencePixelMode(block.properties.pixel_reference_mode))&&!text(block.properties.media_url)).length;
   const items=activeBlocks.filter((block)=>Boolean(text(block.properties.media_url))).map((block):VideoReferencePreflightItem=>{
     const mode=referencePixelMode(block.properties.pixel_reference_mode);const sequence=Number(block.properties.storyboard_frame_index);const sourceArtifactKind=text(block.properties.source_artifact_kind);const referenceSetKind=text(block.properties.reference_set_kind);const isStoryboardFrame=sourceArtifactKind==="storyboard"||referenceSetKind==="storyboard";
     const label=text(block.properties.storyboard_shot_title)||text(block.properties.label)||block.handle;const shotDirection=text(block.properties.storyboard_shot_direction)||text(block.properties.text);const cameraDirection=text(block.properties.storyboard_camera_direction);const framePrompt=text(block.properties.storyboard_frame_prompt);

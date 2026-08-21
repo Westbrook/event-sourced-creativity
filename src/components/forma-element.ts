@@ -1,20 +1,16 @@
-import { LitElement } from "lit";
 import { store } from "../state/store";
+import { FormaPresentationalElement } from "./presentational-element";
 
-export abstract class FormaElement extends LitElement {
+export { FormaPresentationalElement } from "./presentational-element";
+export { icon } from "./icons";
+
+/** Application-connected organisms rerender when their shared projection changes. */
+export abstract class FormaElement extends FormaPresentationalElement {
   protected store = store;
   #unsubscribe?: () => void;
-  protected override createRenderRoot() { return this; }
   override connectedCallback() { super.connectedCallback(); this.#unsubscribe = this.store.subscribe(() => this.requestUpdate()); }
   override disconnectedCallback() { this.#unsubscribe?.(); super.disconnectedCallback(); }
 }
-
-export const icon = (name: string) => {
-  const icons: Record<string, string> = {
-    spark: "✦", search: "⌕", undo: "↶", redo: "↷", share: "↗", lock: "⌁", unlock: "⌁", dots: "⠿", plus: "+", close: "×", play: "▶", pause: "Ⅱ", step: "↦", download: "⇩", compare: "◫", pin: "⌖", check: "✓", branch: "⌘", info: "i", replay: "↻", folder: "▱", clock: "◷", admin: "⌬", arrow: "→", eye: "◉", edit: "✎", trash: "⌫", image: "▧", menu: "☰",
-  };
-  return icons[name] ?? "•";
-};
 
 export function downloadJson(filename: string, value: unknown) {
   const blob = new Blob([JSON.stringify(value, null, 2)], { type: "application/json" });

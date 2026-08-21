@@ -39,7 +39,7 @@ export class ReferencePixelPolicy extends FormaElement {
       <label>
         <span class="sr-only">How should generation models use this reference?</span>
         <select .value=${selected} ?disabled=${block.locked} @change=${(event:Event)=>this.#change((event.target as HTMLSelectElement).value as ReferencePixelMode)}>
-          ${REFERENCE_PIXEL_MODES.map((option)=>html`<option value=${option.id}>${option.label}</option>`)}
+          ${REFERENCE_PIXEL_MODES.map((option)=>html`<option value=${option.id} ?selected=${option.id===selected}>${option.label}</option>`)}
         </select>
       </label>
       <p>${definition.description}</p>

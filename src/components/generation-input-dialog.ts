@@ -1,11 +1,12 @@
 import { html, nothing } from "lit";
 import type { GenerationInputInspection } from "../model/generation-inputs";
 import { copyTextToClipboard, FormaElement, icon } from "./forma-element";
+import { ensureModalDialog } from "./modal-dialog";
 
 export class GenerationInputDialog extends FormaElement {
   static properties={open:{type:Boolean},inspection:{attribute:false}};
   open=false;inspection:GenerationInputInspection|null=null;
-  protected override updated(){const dialog=this.renderRoot.querySelector<HTMLDialogElement>("dialog");if(this.open&&dialog&&!dialog.open)dialog.showModal();if(!this.open&&dialog?.open)dialog.close();}
+  protected override updated(){const dialog=this.renderRoot.querySelector<HTMLDialogElement>("dialog");if(this.open&&dialog&&!dialog.open)ensureModalDialog(dialog);if(!this.open&&dialog?.open)dialog.close();}
   #close(){this.open=false;this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.dispatchEvent(new CustomEvent("generation-input-close",{bubbles:true,composed:true}));this.requestUpdate();}
   #backdrop(event:MouseEvent){if(event.target===event.currentTarget)this.#close();}
   async #copy(value:string,label:string){const copied=await copyTextToClipboard(value);this.store.toast(copied?`${label} copied.`:`${label} could not be copied.`);}
