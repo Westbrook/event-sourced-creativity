@@ -46,7 +46,8 @@ test("keeps one image dialog open while keyboard navigation traverses a prompt f
     readFile(new URL("../src/styles.css",import.meta.url),"utf8"),
   ]);
   assert.match(visual,/event\.key!=="ArrowLeft"&&event\.key!=="ArrowRight"/);
-  assert.match(visual,/#navigateFan\(event\.key==="ArrowLeft"\?-1:1,"keyboard"\)/);
+  assert.match(visual,/const previous=this\.matches\(":dir\(rtl\)"\)\?"ArrowRight":"ArrowLeft"/);
+  assert.match(visual,/#navigateFan\(event\.key===previous\?-1:1,"keyboard"\)/);
   assert.match(visual,/PROMPT_TECHNIQUES\.indexOf/);
   assert.match(visual,/type:"ComparisonOpened"/);
   assert.match(visual,/type:"ObjectViewed"/);

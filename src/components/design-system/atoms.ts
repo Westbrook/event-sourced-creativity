@@ -3,6 +3,8 @@ import { icon } from "../icons";
 import { FormaPresentationalElement } from "../presentational-element";
 import { defineFormaElements, emitFormaEvent, type FormaButtonVariant, type FormaSize, type FormaTone } from "./contracts";
 
+const iconActionMessageKeys: Record<string, string> = { dots: "action.more", close: "action.close", search: "field.search", save: "action.save", open: "action.open" };
+
 /**
  * @tag forma-ui-icon
  * @summary Render the shared visual vocabulary, decorative by default.
@@ -26,7 +28,7 @@ export class FormaUiIconButton extends FormaPresentationalElement {
   static properties = { label: { type: String }, iconName: { type: String, attribute: "icon-name" }, variant: { type: String }, disabled: { type: Boolean }, pressed: { type: Boolean }, expanded: { type: Boolean }, controls: { type: String }, value: { type: String } };
   label = ""; iconName = "dots"; variant: FormaButtonVariant = "ghost"; disabled = false; pressed?: boolean; expanded?: boolean; controls = ""; value = "";
   #press() { if (!this.disabled) emitFormaEvent(this, "forma-press", { value: this.value }); }
-  override render() { const name = this.label || (this.iconName === "dots" ? "More actions" : this.iconName.replace(/[-_]+/g, " ").replace(/^./, (letter) => letter.toLocaleUpperCase()) || "Action"); return html`<button type="button" class=${`icon-button ui-icon-button ui-icon-button--${this.variant}`} aria-label=${name} aria-pressed=${typeof this.pressed === "boolean" ? String(this.pressed) : nothing} aria-expanded=${typeof this.expanded === "boolean" ? String(this.expanded) : nothing} aria-controls=${this.controls || nothing} ?disabled=${this.disabled} @click=${this.#press}><span aria-hidden="true">${icon(this.iconName)}</span></button>`; }
+  override render() { const name = this.label || (iconActionMessageKeys[this.iconName] ? this.i18n.t(iconActionMessageKeys[this.iconName]) : this.iconName.replace(/[-_]+/g, " ").replace(/^./, (letter) => letter.toLocaleUpperCase(this.i18n.locale)) || this.i18n.t("action.default")); return html`<button type="button" class=${`icon-button ui-icon-button ui-icon-button--${this.variant}`} aria-label=${name} aria-pressed=${typeof this.pressed === "boolean" ? String(this.pressed) : nothing} aria-expanded=${typeof this.expanded === "boolean" ? String(this.expanded) : nothing} aria-controls=${this.controls || nothing} ?disabled=${this.disabled} @click=${this.#press}><span aria-hidden="true">${icon(this.iconName)}</span></button>`; }
 }
 
 /**
@@ -38,7 +40,7 @@ export class FormaUiIconButton extends FormaPresentationalElement {
 export class FormaUiAvatar extends FormaPresentationalElement {
   static properties = { name: { type: String }, initials: { type: String }, src: { type: String }, size: { type: String } };
   name = ""; initials = ""; src = ""; size: FormaSize = "medium";
-  override render() { const letters = this.initials || this.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toLocaleUpperCase(); return html`<span class=${`ui-avatar ui-avatar--${this.size}`} role=${this.src ? nothing : "img"} aria-label=${this.src ? nothing : this.name || "Unnamed person"}>${this.src ? html`<img src=${this.src} alt=${this.name || "Person"} loading="lazy" decoding="async">` : letters || "?"}</span>`; }
+  override render() { const letters = this.src ? "" : this.initials || this.name.normalize("NFC").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => this.i18n.firstGrapheme(part)).join("").toLocaleUpperCase(this.i18n.locale); return html`<span class=${`ui-avatar ui-avatar--${this.size}`} role=${this.src ? nothing : "img"} aria-label=${this.src ? nothing : this.name || this.i18n.t("avatar.unnamed")}>${this.src ? html`<img src=${this.src} alt=${this.name || this.i18n.t("avatar.person")} loading="lazy" decoding="async">` : letters || "?"}</span>`; }
 }
 
 /**
@@ -52,8 +54,8 @@ export class FormaUiAvatar extends FormaPresentationalElement {
 export class FormaUiChip extends FormaPresentationalElement {
   static properties = { label: { type: String }, value: { type: String }, tone: { type: String }, selected: { type: Boolean }, removable: { type: Boolean }, disabled: { type: Boolean } };
   label = ""; value = ""; tone: FormaTone = "neutral"; selected = false; removable = false; disabled = false;
-  #activate() { if (this.disabled) return; if (this.removable) emitFormaEvent(this, "forma-remove", { value: this.value || this.label }); else { this.selected = !this.selected; emitFormaEvent(this, "forma-change", { value: this.value || this.label, selected: this.selected }); } }
-  override render() { const label = this.label || "Filter"; return html`<button type="button" class=${`ui-chip ui-chip--${this.tone}${this.selected ? " is-selected" : ""}`} ?disabled=${this.disabled} aria-pressed=${this.removable ? nothing : String(this.selected)} aria-label=${this.removable ? `Remove ${label}` : nothing} @click=${this.#activate}><span>${label}</span>${this.removable ? html`<span aria-hidden="true">${icon("close")}</span>` : nothing}</button>`; }
+  #activate() { if (this.disabled) return; if (this.removable) emitFormaEvent(this, "forma-remove", { value: this.value }); else { this.selected = !this.selected; emitFormaEvent(this, "forma-change", { value: this.value, selected: this.selected }); } }
+  override render() { const label = this.label || this.i18n.t("filter.label"); return html`<button type="button" class=${`ui-chip ui-chip--${this.tone}${this.selected ? " is-selected" : ""}`} ?disabled=${this.disabled} aria-pressed=${this.removable ? nothing : String(this.selected)} aria-label=${this.removable ? this.i18n.t("filter.remove", "", { label }) : nothing} @click=${this.#activate}><span>${label}</span>${this.removable ? html`<span aria-hidden="true">${icon("close")}</span>` : nothing}</button>`; }
 }
 
 /**
@@ -76,8 +78,8 @@ export class FormaUiStatus extends FormaPresentationalElement {
  */
 export class FormaUiSpinner extends FormaPresentationalElement {
   static properties = { label: { type: String }, size: { type: String } };
-  label = "Loading"; size: FormaSize = "medium";
-  override render() { return html`<span class=${`ui-spinner ui-spinner--${this.size}`} role="status" aria-live="polite"><span class="ui-spinner-mark" aria-hidden="true"></span><span class="sr-only">${this.label}</span></span>`; }
+  label = ""; size: FormaSize = "medium";
+  override render() { return html`<span class=${`ui-spinner ui-spinner--${this.size}`} role="status" aria-live="polite"><span class="ui-spinner-mark" aria-hidden="true"></span><span class="sr-only">${this.label || this.i18n.t("status.loading")}</span></span>`; }
 }
 
 /**
@@ -88,8 +90,8 @@ export class FormaUiSpinner extends FormaPresentationalElement {
  */
 export class FormaUiProgress extends FormaPresentationalElement {
   static properties = { label: { type: String }, value: { type: Number }, max: { type: Number }, indeterminate: { type: Boolean }, showValue: { type: Boolean, attribute: "show-value" } };
-  label = "Progress"; value = 0; max = 100; indeterminate = false; showValue = false;
-  override render() { const maximum = Number.isFinite(this.max) ? Math.max(1, this.max) : 100; const bounded = Number.isFinite(this.value) ? Math.max(0, Math.min(maximum, this.value)) : 0; return html`<label class="ui-progress"><span>${this.label}${this.showValue && !this.indeterminate ? html`<span aria-hidden="true">${Math.round(bounded / maximum * 100)}%</span>` : nothing}</span><progress max=${maximum} value=${this.indeterminate ? nothing : bounded}></progress></label>`; }
+  label = ""; value = 0; max = 100; indeterminate = false; showValue = false;
+  override render() { const maximum = Number.isFinite(this.max) ? Math.max(1, this.max) : 100; const bounded = Number.isFinite(this.value) ? Math.max(0, Math.min(maximum, this.value)) : 0; return html`<label class="ui-progress"><span>${this.label || this.i18n.t("status.progress")}${this.showValue && !this.indeterminate ? html`<span aria-hidden="true">${this.i18n.number(bounded / maximum, { style: "percent", maximumFractionDigits: 0 })}</span>` : nothing}</span><progress max=${maximum} value=${this.indeterminate ? nothing : bounded}></progress></label>`; }
 }
 
 /**
@@ -150,6 +152,9 @@ export class FormaUiSkeleton extends FormaPresentationalElement {
  * @cssprop {<color>} --forma-color-on-accent - Foreground on filled accent surfaces.
  * @cssprop {<font-family>} --forma-font-family - Shared component typeface.
  * @cssprop {<font-family>} --forma-font-family-mono - Code and keyboard-shortcut typeface.
+ * @cssprop {<length>} --forma-heading-letter-spacing - Script-aware heading tracking.
+ * @cssprop {<number>} --forma-heading-line-height - Script-aware minimum heading line height.
+ * @cssprop {<number>} --forma-body-line-height - Comfortable, script-aware body line height.
  * @cssprop {<length>} --forma-font-size-body - Browser-scaled component body text.
  * @cssprop {<length>} --forma-font-size-supporting - Readable labels and supporting copy.
  * @cssprop {<length>} --forma-space-1 - First inherited spacing step.

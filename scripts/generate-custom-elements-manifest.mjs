@@ -11,9 +11,10 @@ if (configuration.error) throw new Error(ts.flattenDiagnosticMessageText(configu
 const parsed = ts.parseJsonConfigFileContent(configuration.config, ts.sys, root);
 const program = ts.createProgram({ rootNames: parsed.fileNames, options: parsed.options });
 const checker = program.getTypeChecker();
+const compareMachine = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 const sources = program.getSourceFiles()
   .filter((source) => !source.isDeclarationFile && source.fileName.startsWith(`${root}/src/`))
-  .sort((left, right) => left.fileName.localeCompare(right.fileName));
+  .sort((left, right) => compareMachine(left.fileName, right.fileName));
 
 const modulePath = (source) => path.relative(root, source.fileName).split(path.sep).join("/");
 const propertyName = (node) => {
@@ -141,6 +142,59 @@ function observedAttributes(node) {
   return member?.initializer ? arrayItems(member.initializer).filter(ts.isStringLiteralLike).map((entry) => entry.text) : [];
 }
 
+const attributeNameForProperty = (name) => name.replace(/[A-Z]/g, (value) => `-${value.toLowerCase()}`);
+const publicFieldDescriptions = {
+  action: "Author-supplied, localized visible follow-up action.",
+  actions: "Property-only actions with author-localized labels and descriptions and locale-invariant values.",
+  active: "Whether this item represents the currently active state.",
+  autocomplete: "Native browser autocomplete hint.",
+  busy: "Whether an action is currently in progress.",
+  busyLabel: "Author-supplied, localized announcement while an action is in progress.",
+  checked: "Current native checked state.",
+  compact: "Whether the compact presentation is requested.",
+  controls: "ID of the element controlled by this action.",
+  detail: "Author-supplied, localized supporting explanation.",
+  disabled: "Whether user interaction is disabled.",
+  error: "Author-supplied, localized validation or error message.",
+  eyebrow: "Author-supplied, localized supporting heading.",
+  expanded: "Whether the controlled content is expanded.",
+  form: "ID of the associated native HTML form.",
+  formatLocale: "Canonical BCP 47 locale used for human-readable dates and numbers.",
+  heading: "Author-supplied, localized heading text.",
+  help: "Author-supplied, localized supporting instructions.",
+  iconName: "Stable, locale-invariant icon identifier.",
+  label: "Author-supplied, localized visible label or accessible action name.",
+  items: "Property-only navigation items with author-localized labels and descriptions and locale-invariant values.",
+  max: "Native maximum permitted value.",
+  maxLength: "Maximum permitted length of an authored input value.",
+  messages: "Property-only author-supplied localized message overrides inherited by descendant components.",
+  min: "Native minimum permitted value.",
+  minLength: "Minimum required length of an authored input value.",
+  name: "Stable native form field or technical identifier; never translate machine identifiers.",
+  options: "Property-only options with author-localized labels and descriptions and locale-invariant values.",
+  placeholder: "Author-supplied, localized input hint.",
+  pressed: "Current toggle-button pressed state.",
+  readOnly: "Whether the native control can be read but not edited.",
+  required: "Whether a native form value is required.",
+  rows: "Number of visible native textarea rows.",
+  selected: "Whether this item is selected.",
+  step: "Native numeric input step.",
+  timeZone: "IANA time zone used for human-readable dates.",
+  tone: "Stable semantic visual-tone identifier.",
+  type: "Stable native control or form behavior identifier.",
+  value: "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels.",
+  variant: "Stable visual-variant identifier.",
+};
+
+function documentedAttributes(node) {
+  const results = new Map();
+  for (const entry of tagsOf(node, "attr")) {
+    const match = entry.match(/^\{([^}]+)\}\s+([^\s]+)(?:\s*-\s*([\s\S]+))?$/);
+    if (match) results.set(match[2], { type: match[1], description: match[3]?.trim() || "" });
+  }
+  return results;
+}
+
 function fieldsOf(node, properties) {
   const results = new Map();
   const observed = new Set(observedAttributes(node));
@@ -162,14 +216,14 @@ function fieldsOf(node, properties) {
         field.attribute = property.attribute;
         if (property.reflects) field.reflects = true;
       }
-      if (!property && observed.has(name.toLowerCase())) {
-        field.attribute = name.toLowerCase();
+      const observedName = attributeNameForProperty(name);
+      if (!property && observed.has(observedName)) {
+        field.attribute = observedName;
         field.reflects = node.members.some((item) => ts.isSetAccessorDeclaration(item) && propertyName(item.name) === name);
       }
-      if (name === "label" && !node.name?.text.includes("Icon") || name === "label" && node.name?.text === "FormaUiIconButton") {
-        field.description ||= "Provide a meaningful visible label or accessible action name.";
-      }
-      if (name === "name") field.description ||= "Native form field name; required when this value should appear in FormData.";
+      field.description ||= name === "name" && node.name?.text === "FormaUiAvatar"
+        ? "Author-supplied human name used for an accessible image label and localized initials."
+        : publicFieldDescriptions[name];
       results.set(name, field);
     } else if (ts.isMethodDeclaration(member) && !["render", "connectedCallback", "disconnectedCallback", "attributeChangedCallback", "firstUpdated", "updated", "createRenderRoot"].includes(name)) {
       const method = { kind: "method", name };
@@ -189,11 +243,12 @@ function fieldsOf(node, properties) {
     if (options.reflects) field.reflects = true;
     results.set(name, field);
   }
-  return [...results.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return [...results.values()].sort((left, right) => compareMachine(left.name, right.name));
 }
 
 function attributesOf(node, properties, members) {
   const byName = new Map();
+  const documented = documentedAttributes(node);
   for (const [name, options] of properties) {
     if (options.attribute === false) continue;
     const member = members.find((item) => item.name === name);
@@ -204,14 +259,20 @@ function attributesOf(node, properties, members) {
   }
   for (const name of observedAttributes(node)) {
     if (!byName.has(name)) {
-      const member = members.find((item) => item.name.toLowerCase() === name);
+      const member = members.find((item) => item.attribute === name || attributeNameForProperty(item.name) === name);
       const attribute = { name, fieldName: member?.name ?? name, type: member?.type ?? { text: "string" } };
       if (member?.default !== undefined) attribute.default = String(member.default);
       if (member?.description) attribute.description = member.description;
       byName.set(name, attribute);
     }
   }
-  return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  for (const [name, metadata] of documented) {
+    const attribute = byName.get(name);
+    if (!attribute) continue;
+    if (metadata.description) attribute.description = metadata.description;
+    if (metadata.type && (!attribute.type?.text || attribute.type.text === "unknown")) attribute.type = { text: metadata.type };
+  }
+  return [...byName.values()].sort((left, right) => compareMachine(left.name, right.name));
 }
 
 function eventNames(expression) {
@@ -272,7 +333,7 @@ function eventsOf(node) {
     ts.forEachChild(child, visit);
   };
   visit(node);
-  return [...found.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return [...found.values()].sort((left, right) => compareMachine(left.name, right.name));
 }
 
 function cssPropertiesOf(node) {
@@ -288,7 +349,7 @@ function cssPropertiesOf(node) {
     if (description) property.description = description.trim();
     entries.set(property.name, property);
   }
-  return [...entries.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return [...entries.values()].sort((left, right) => compareMachine(left.name, right.name));
 }
 
 function inheritsFrom(node, name) {
@@ -331,12 +392,12 @@ function slotsOf(node) {
   for (const name of rendered) {
     if (!entries.has(name)) throw new Error(`${node.name?.text ?? "Element"} renders an undocumented slot "${name || "(default)"}"`);
   }
-  return [...entries.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return [...entries.values()].sort((left, right) => compareMachine(left.name, right.name));
 }
 
 function categoryFor(name, file) {
   if (name === "forma-component-catalog") return "organism";
-  if (name === "forma-ui-theme") return "foundation";
+  if (name === "forma-ui-theme" || name === "forma-ui-locale") return "foundation";
   if (["forma-ui-empty-state", "forma-ui-dialog", "forma-ui-page-header", "forma-ui-popover", "forma-ui-card"].includes(name)) return "organism";
   if (["forma-ui-button", "forma-ui-badge", "forma-ui-link"].includes(name) || file.endsWith("/atoms.ts")) return "atom";
   if (name.startsWith("forma-ui-")) return "molecule";
@@ -349,7 +410,37 @@ function moduleFor(name) {
   return modules.get(name);
 }
 
-for (const registration of [...registrations.values()].sort((left, right) => left.name.localeCompare(right.name))) {
+const authorTextAttributes = new Set(["label", "heading", "detail", "help", "error", "placeholder", "action", "busy-label", "summary", "trigger", "confirm", "cancel", "eyebrow"]);
+const invariantValueElements = new Set(["forma-ui-button", "forma-ui-icon-button", "forma-ui-chip", "forma-ui-checkbox", "forma-ui-switch", "forma-ui-radio-group", "forma-ui-select", "forma-ui-segmented-control", "forma-ui-tabs", "forma-ui-list-item", "forma-ui-card", "forma-ui-page-header", "forma-ui-notice"]);
+const internalMessagesByTag = {
+  "forma-ui-button": ["action.default", "action.working", "action.busy"],
+  "forma-ui-icon-button": ["action.more", "action.close", "field.search", "action.save", "action.open", "action.default"],
+  "forma-ui-avatar": ["avatar.unnamed", "avatar.person"],
+  "forma-ui-chip": ["filter.label", "filter.remove"],
+  "forma-ui-spinner": ["status.loading"],
+  "forma-ui-progress": ["status.progress"],
+  "forma-ui-link": ["navigation.openLink", "navigation.opensInNewTab"],
+  "forma-ui-field": ["field.text"],
+  "forma-ui-search": ["field.search", "field.clearSearch"],
+  "forma-ui-textarea": ["field.text"],
+  "forma-ui-select": ["field.choose"],
+  "forma-ui-checkbox": ["field.option"],
+  "forma-ui-switch": ["field.setting"],
+  "forma-ui-radio-group": ["field.choose"],
+  "forma-ui-number-field": ["field.number"],
+  "forma-ui-segmented-control": ["field.choose"],
+  "forma-ui-tabs": ["navigation.sections"],
+  "forma-ui-breadcrumbs": ["navigation.breadcrumbs"],
+  "forma-ui-pagination": ["navigation.pagination", "navigation.previous", "navigation.next", "navigation.page"],
+  "forma-ui-toolbar": ["navigation.actions"],
+  "forma-ui-notice": ["notice.dismiss"],
+  "forma-ui-disclosure": ["disclosure.more"],
+  "forma-ui-copy-button": ["clipboard.copy", "clipboard.success", "clipboard.failure"],
+  "forma-ui-popover": ["popover.open"],
+  "forma-ui-dialog": ["dialog.heading", "dialog.open", "dialog.confirm", "dialog.cancel", "dialog.close"],
+};
+
+for (const registration of [...registrations.values()].sort((left, right) => compareMachine(left.name, right.name))) {
   const node = classByName.get(registration.className);
   const file = modulePath(node.getSourceFile());
   const module = moduleFor(file);
@@ -388,11 +479,26 @@ for (const registration of [...registrations.values()].sort((left, right) => lef
   if (slots.length) declaration.slots = slots;
   if (registration.name.startsWith("forma-ui-") || applicationDemonstration) declaration.demos = [{ url: `/laboratory/design-system#${registration.name}` }];
   else if (registration.name === "forma-component-catalog") declaration.demos = [{ url: "/laboratory/design-system" }];
+  const optionCollections = ["options", "items", "actions"].filter((name) => members.some((member) => member.kind === "field" && member.name === name));
+  const localizedAttributes = attributes.filter((attribute) => authorTextAttributes.has(attribute.name) || registration.name === "forma-ui-avatar" && attribute.name === "name").map((attribute) => attribute.name);
+  const stableValues = [...optionCollections.map((name) => `${name}[].value`), ...(invariantValueElements.has(registration.name) && members.some((member) => member.name === "value") ? ["value"] : [])];
+  const localization = registration.name.startsWith("forma-ui-") || applicationDemonstration || registration.name === "forma-component-catalog"
+    ? {
+      documentationIdPrefix: `component.${registration.name}`,
+      authorTextAttributes: localizedAttributes,
+      authorOwnedSlots: slots.map((slot) => slot.name),
+      ...(optionCollections.length ? { optionTextPaths: optionCollections.flatMap((name) => [`${name}[].label`, `${name}[].description`]) } : {}),
+      ...(stableValues.length ? { invariantValuePaths: stableValues } : {}),
+      ...(registration.name === "forma-ui-locale" ? { authorCatalogProperties: ["messages"] } : {}),
+      ...(internalMessagesByTag[registration.name]?.length ? { internalMessages: internalMessagesByTag[registration.name] } : {}),
+    }
+    : undefined;
   declaration["x-forma"] = {
     category: categoryFor(registration.name, file),
     renderRoot: shadow ? "shadow" : "light",
     stateful,
     ...(applicationDemonstration ? { demonstration: "isolated-composition" } : {}),
+    ...(localization ? { i18n: localization } : {}),
   };
   module.declarations.push(declaration);
   module.exports.push({ kind: "js", name: registration.className, declaration: { name: registration.className, module: file } });
@@ -419,12 +525,38 @@ for (const name of ["FormaPresentationalElement", "FormaSlottedElement", "FormaE
 }
 
 for (const module of modules.values()) {
-  module.declarations.sort((left, right) => left.name.localeCompare(right.name));
+  module.declarations.sort((left, right) => compareMachine(left.name, right.name));
   const exports = new Map(module.exports.map((entry) => [`${entry.kind}:${entry.name}`, entry]));
-  module.exports = [...exports.values()].sort((left, right) => `${left.kind}:${left.name}`.localeCompare(`${right.kind}:${right.name}`));
+  module.exports = [...exports.values()].sort((left, right) => compareMachine(`${left.kind}:${left.name}`, `${right.kind}:${right.name}`));
 }
 
-const manifest = { schemaVersion: "2.1.0", readme: "README.md", modules: [...modules.values()].sort((left, right) => left.path.localeCompare(right.path)) };
+const manifest = {
+  schemaVersion: "2.1.0",
+  readme: "README.md",
+  "x-forma": {
+    i18n: {
+      schemaVersion: 1,
+      sourceLocale: "en",
+      defaultLocale: "en",
+      supportedLocales: ["en", "fr", "ar"],
+      fallback: "lookup",
+      delivery: "bundled-runtime",
+      scopeElement: "forma-ui-locale",
+      messageIdVersion: 1,
+      documentationIds: {
+        title: "component.{tag}.title",
+        summary: "component.{tag}.summary",
+        usage: "component.{tag}.usage",
+        namedSlotDescription: "component.{tag}.slot.named.{name}.description",
+        defaultSlotDescription: "component.{tag}.slot.$default.description",
+        attributeDescription: "component.{tag}.attribute.{name}.description",
+        eventDescription: "component.{tag}.event.{name}.description",
+        cssPropertyDescription: "component.{tag}.css.{name}.description",
+      },
+    },
+  },
+  modules: [...modules.values()].sort((left, right) => compareMachine(left.path, right.path)),
+};
 const contents = `${JSON.stringify(manifest, null, 2)}\n`;
 const destinations = [path.join(root, "custom-elements.json"), path.join(root, "public", "custom-elements.json")];
 

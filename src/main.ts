@@ -1,5 +1,6 @@
 import "./styles.css";
 import "./design-system.css";
+import "./components/design-system/locale-bootstrap";
 import "./components/forma-shell";
 
 declare global {

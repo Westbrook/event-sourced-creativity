@@ -63,7 +63,7 @@ export class FormaUiCard extends FormaSlottedElement {
       <slot name="heading">${this.heading ? this.#heading() : nothing}</slot>
       ${this.detail ? html`<p>${this.detail}</p>` : nothing}
       <slot></slot>
-      <div class="ui-card-actions"><slot name="actions">${this.action ? html`<button type="button" class="button secondary" @click=${() => emitFormaEvent(this, "forma-action", { value: this.value || this.heading || this.querySelector('[slot="heading"]')?.textContent?.trim() || "" })}>${this.action}</button>` : nothing}</slot></div>
+      <div class="ui-card-actions"><slot name="actions">${this.action ? html`<button type="button" class="button secondary" @click=${() => emitFormaEvent(this, "forma-action", { value: this.value })}>${this.action}</button>` : nothing}</slot></div>
     </article>`;
   }
 }
@@ -89,7 +89,7 @@ export class FormaUiListItem extends FormaSlottedElement {
         ${this.detail ? html`<span class="ui-list-item-detail">${this.detail}</span>` : nothing}
         <slot></slot>
       </div>
-      <div class="ui-list-item-trailing"><slot name="trailing">${this.action ? html`<button type="button" class="button ghost" @click=${() => emitFormaEvent(this, "forma-action", { value: this.value || this.label || this.querySelector('[slot="heading"]')?.textContent?.trim() || "" })}>${this.action}</button>` : nothing}</slot></div>
+      <div class="ui-list-item-trailing"><slot name="trailing">${this.action ? html`<button type="button" class="button ghost" @click=${() => emitFormaEvent(this, "forma-action", { value: this.value })}>${this.action}</button>` : nothing}</slot></div>
     </div>`;
   }
 }
@@ -107,8 +107,8 @@ export class FormaUiListItem extends FormaSlottedElement {
  * @cssprop {<length>} --forma-heading-size - Scoped page-heading size.
  */
 export class FormaUiPageHeader extends FormaSlottedElement {
-  static properties = { heading: { type: String }, detail: { type: String }, eyebrow: { type: String }, action: { type: String }, level: { type: Number } };
-  heading = ""; detail = ""; eyebrow = ""; action = ""; level = 1;
+  static properties = { heading: { type: String }, detail: { type: String }, eyebrow: { type: String }, action: { type: String }, value: { type: String }, level: { type: Number } };
+  heading = ""; detail = ""; eyebrow = ""; action = ""; value = ""; level = 1;
   #heading() { switch (Math.max(1, Math.min(6, Math.trunc(this.level)))) { case 1: return html`<h1>${this.heading}</h1>`; case 2: return html`<h2>${this.heading}</h2>`; case 3: return html`<h3>${this.heading}</h3>`; case 4: return html`<h4>${this.heading}</h4>`; case 5: return html`<h5>${this.heading}</h5>`; default: return html`<h6>${this.heading}</h6>`; } }
   override render() {
     return html`<header class="ui-page-header">
@@ -118,7 +118,7 @@ export class FormaUiPageHeader extends FormaSlottedElement {
         ${this.detail ? html`<p>${this.detail}</p>` : nothing}
         <slot></slot>
       </div>
-      <div class="ui-page-header-actions"><slot name="actions">${this.action ? html`<button type="button" class="button primary" @click=${() => emitFormaEvent(this, "forma-action", { value: this.action })}>${this.action}</button>` : nothing}</slot></div>
+      <div class="ui-page-header-actions"><slot name="actions">${this.action ? html`<button type="button" class="button primary" @click=${() => emitFormaEvent(this, "forma-action", { value: this.value })}>${this.action}</button>` : nothing}</slot></div>
     </header>`;
   }
 }

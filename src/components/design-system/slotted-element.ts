@@ -1,4 +1,5 @@
 import { css, LitElement } from "lit";
+import { FormaLocaleController } from "./localization";
 
 /**
  * One adopted stylesheet is shared by every composition-oriented shadow root.
@@ -122,8 +123,8 @@ const compositionStyles = css`
   ::slotted(h5), ::slotted(h6) {
     font-family: var(--forma-font-family, var(--sans));
     font-weight: 600;
-    letter-spacing: -.04em;
-    line-height: 1.2;
+    letter-spacing: var(--forma-heading-letter-spacing, -.04em);
+    line-height: max(var(--forma-heading-line-height, .98), 1.2);
   }
   .ui-card :is(h1, h2, h3, h4, h5, h6),
   .ui-card slot[name="heading"]::slotted(:is(h1, h2, h3, h4, h5, h6)) {
@@ -248,4 +249,6 @@ const compositionStyles = css`
 /** Store-independent composition base with genuine slots and one shared adopted stylesheet. */
 export abstract class FormaSlottedElement extends LitElement {
   static override styles = compositionStyles;
+  #locale?: FormaLocaleController;
+  protected get i18n() { return this.#locale ||= new FormaLocaleController(this); }
 }

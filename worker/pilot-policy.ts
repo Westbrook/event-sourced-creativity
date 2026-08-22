@@ -276,6 +276,7 @@ export async function loadPrivateContent(env: WorkerEnv, ownerId: string) {
 }
 
 export async function handleSession(request: Request, env: WorkerEnv, _context?: WorkerExecutionContext) {
+  void _context;
   const auth = await requireUser(request, env); if (auth.response || !auth.user) return auth.response!; const user = auth.user;
   if (request.method === "POST") {
     const body = await request.json() as { action?: string; ownershipConfirmed?: boolean; providerProcessingConfirmed?: boolean };

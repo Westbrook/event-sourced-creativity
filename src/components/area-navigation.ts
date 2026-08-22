@@ -10,7 +10,7 @@ export class AreaNavigation extends FormaElement {
   #revealedLocation = "";
 
   protected override updated() {
-    const location = `${this.getAttribute("area") ?? ""}:${this.getAttribute("active") ?? ""}`;
+    const location = `${this.getAttribute("area") ?? ""}:${this.getAttribute("active") ?? ""}:${this.i18n.locale}:${this.matches(":dir(rtl)")}`;
     if (location === this.#revealedLocation) return;
     const scroller = this.querySelector<HTMLElement>(".area-navigation > div");
     const current = scroller?.querySelector<HTMLElement>('[aria-current="page"]');
@@ -38,12 +38,12 @@ export class AreaNavigation extends FormaElement {
       : area === "laboratory"
         ? applicationDefinition("laboratory").navigation.filter(() => session?.user.role === "admin")
         : applicationDefinition("creative").navigation.filter((item) => intelligenceIds.has(item.id));
-    const label = area === "operations" ? "Operations" : area === "laboratory" ? "Laboratory" : "Creative intelligence";
+    const label = area === "operations" ? this.i18n.t("shell.operations") : area === "laboratory" ? this.i18n.t("shell.laboratory") : this.i18n.t("shell.intelligence", "Creative intelligence");
     const administrative = area === "operations" || area === "laboratory";
     const classes = `area-navigation${administrative ? " area-navigation--administrative" : ""} area-navigation--${area}`;
     return html`<nav class=${classes} aria-label=${label}>
       <span>${label}</span>
-      <div>${items.map((item) => html`<a href=${item.href} title=${item.description} class=${active === item.id ? "active" : ""} aria-current=${active === item.id ? "page" : nothing} @click=${(event:MouseEvent)=>this.#go(event,item.href)}>${item.label}</a>`)}</div>
+      <div>${items.map((item) => html`<a href=${item.href} title=${this.i18n.t("shell.description." + item.id, item.description)} class=${active === item.id ? "active" : ""} aria-current=${active === item.id ? "page" : nothing} @click=${(event:MouseEvent)=>this.#go(event,item.href)}>${this.i18n.t("shell.navigation." + item.id, item.label)}</a>`)}</div>
     </nav>`;
   }
 }

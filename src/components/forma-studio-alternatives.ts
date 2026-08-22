@@ -10,7 +10,7 @@ import "./event-inspector";
 import "./spatial-scope-editor";
 import "./document-generations";
 
-const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 42) || "untitled";
+const slug = (value: string, id = "") => value.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 42) || (id ? `decision-${id.slice(0, 8)}` : "untitled");
 
 export type AlternativeMode = "board" | "guided" | "layers" | "adaptive" | "editor";
 
@@ -95,7 +95,7 @@ export class FormaContextBoard extends AlternativeStudio {
         block_id: id,
         document_id: projection.documentId,
         type: this.#type,
-        handle: `${this.#type}/${slug(text)}`,
+        handle: `${this.#type}/${slug(text, id)}`,
         position: `z${String(this.store.head.get() + 1).padStart(5, "0")}`,
         properties: { text, subtype: this.#subtype, weight: .65, authority: "authored", created_from: "context-board" },
       },
@@ -247,7 +247,8 @@ export class FormaGuidedBrief extends AlternativeStudio {
         const oldSubtype = String(current.properties.subtype ?? suggestedSubtype(field.type));
         if (oldSubtype !== subtype) events.push({ type: "BlockPropertyEdited", payload: { block_id: current.id, property_path: "subtype", old_value: oldSubtype, new_value: subtype, source_surface: "guided-brief" } });
       } else {
-        events.push({ type: "BlockCreated", payload: { block_id: crypto.randomUUID(), document_id: projection.documentId, type: field.type, handle: `${field.type}/${slug(value)}`, position: `z${String(this.store.head.get() + events.length + 1).padStart(5, "0")}`, properties: { text: value, subtype, weight: .68, authority: "authored", created_from: "guided-brief" } } });
+        const id = crypto.randomUUID();
+        events.push({ type: "BlockCreated", payload: { block_id: id, document_id: projection.documentId, type: field.type, handle: `${field.type}/${slug(value, id)}`, position: `z${String(this.store.head.get() + events.length + 1).padStart(5, "0")}`, properties: { text: value, subtype, weight: .68, authority: "authored", created_from: "guided-brief" } } });
       }
     }
     return events;

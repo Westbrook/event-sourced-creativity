@@ -1,6 +1,32 @@
 {
   "schemaVersion": "2.1.0",
   "readme": "README.md",
+  "x-forma": {
+    "i18n": {
+      "schemaVersion": 1,
+      "sourceLocale": "en",
+      "defaultLocale": "en",
+      "supportedLocales": [
+        "en",
+        "fr",
+        "ar"
+      ],
+      "fallback": "lookup",
+      "delivery": "bundled-runtime",
+      "scopeElement": "forma-ui-locale",
+      "messageIdVersion": 1,
+      "documentationIds": {
+        "title": "component.{tag}.title",
+        "summary": "component.{tag}.summary",
+        "usage": "component.{tag}.usage",
+        "namedSlotDescription": "component.{tag}.slot.named.{name}.description",
+        "defaultSlotDescription": "component.{tag}.slot.$default.description",
+        "attributeDescription": "component.{tag}.attribute.{name}.description",
+        "eventDescription": "component.{tag}.event.{name}.description",
+        "cssPropertyDescription": "component.{tag}.css.{name}.description"
+      }
+    }
+  },
   "modules": [
     {
       "kind": "javascript-module",
@@ -313,7 +339,12 @@
             "category": "application",
             "renderRoot": "light",
             "stateful": true,
-            "demonstration": "isolated-composition"
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-area-navigation",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -366,7 +397,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "compact"
+              "attribute": "compact",
+              "description": "Whether the compact presentation is requested."
             }
           ],
           "attributes": [
@@ -376,7 +408,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether the compact presentation is requested."
             }
           ],
           "demos": [
@@ -388,7 +421,12 @@
             "category": "application",
             "renderRoot": "light",
             "stateful": false,
-            "demonstration": "isolated-composition"
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-artifact-summary",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -507,7 +545,12 @@
             "category": "application",
             "renderRoot": "light",
             "stateful": true,
-            "demonstration": "isolated-composition"
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-collection-tree",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -623,7 +666,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -632,7 +675,8 @@
                 "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
               },
               "default": "\"neutral\"",
-              "attribute": "tone"
+              "attribute": "tone",
+              "description": "Stable semantic visual-tone identifier."
             }
           ],
           "attributes": [
@@ -643,7 +687,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "tone",
@@ -651,7 +695,8 @@
               "type": {
                 "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
               },
-              "default": "\"neutral\""
+              "default": "\"neutral\"",
+              "description": "Stable semantic visual-tone identifier."
             }
           ],
           "cssProperties": [
@@ -684,7 +729,14 @@
           "x-forma": {
             "category": "atom",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-badge",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": []
+            }
           }
         },
         {
@@ -706,7 +758,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "busy"
+              "attribute": "busy",
+              "description": "Whether an action is currently in progress."
             },
             {
               "kind": "field",
@@ -714,8 +767,9 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Working\"",
-              "attribute": "busy-label"
+              "default": "\"\"",
+              "attribute": "busy-label",
+              "description": "Author-supplied, localized announcement while an action is in progress."
             },
             {
               "kind": "field",
@@ -724,7 +778,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "compact"
+              "attribute": "compact",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "kind": "field",
@@ -733,7 +788,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "controls"
+              "attribute": "controls",
+              "description": "ID of the element controlled by this action."
             },
             {
               "kind": "field",
@@ -742,7 +798,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "disabled"
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
             },
             {
               "kind": "field",
@@ -750,7 +807,8 @@
               "type": {
                 "text": "boolean | undefined"
               },
-              "attribute": "expanded"
+              "attribute": "expanded",
+              "description": "Whether the controlled content is expanded."
             },
             {
               "kind": "field",
@@ -759,7 +817,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "form"
+              "attribute": "form",
+              "description": "ID of the associated native HTML form."
             },
             {
               "kind": "field",
@@ -768,7 +827,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "icon-name"
+              "attribute": "icon-name",
+              "description": "Stable, locale-invariant icon identifier."
             },
             {
               "kind": "field",
@@ -778,7 +838,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -788,7 +848,7 @@
               },
               "default": "\"\"",
               "attribute": "name",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "kind": "field",
@@ -796,7 +856,8 @@
               "type": {
                 "text": "boolean | undefined"
               },
-              "attribute": "pressed"
+              "attribute": "pressed",
+              "description": "Current toggle-button pressed state."
             },
             {
               "kind": "field",
@@ -805,7 +866,8 @@
                 "text": "\"button\" | \"submit\" | \"reset\""
               },
               "default": "\"button\"",
-              "attribute": "type"
+              "attribute": "type",
+              "description": "Stable native control or form behavior identifier."
             },
             {
               "kind": "field",
@@ -814,7 +876,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             },
             {
               "kind": "field",
@@ -823,7 +886,8 @@
                 "text": "\"danger\" | \"primary\" | \"secondary\" | \"ghost\""
               },
               "default": "\"secondary\"",
-              "attribute": "variant"
+              "attribute": "variant",
+              "description": "Stable visual-variant identifier."
             }
           ],
           "attributes": [
@@ -833,7 +897,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether an action is currently in progress."
             },
             {
               "name": "busy-label",
@@ -841,7 +906,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Working\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized announcement while an action is in progress."
             },
             {
               "name": "compact",
@@ -849,7 +915,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "name": "controls",
@@ -857,7 +924,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "ID of the element controlled by this action."
             },
             {
               "name": "disabled",
@@ -865,14 +933,16 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether user interaction is disabled."
             },
             {
               "name": "expanded",
               "fieldName": "expanded",
               "type": {
                 "text": "boolean | undefined"
-              }
+              },
+              "description": "Whether the controlled content is expanded."
             },
             {
               "name": "form",
@@ -880,7 +950,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "ID of the associated native HTML form."
             },
             {
               "name": "icon-name",
@@ -888,7 +959,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Stable, locale-invariant icon identifier."
             },
             {
               "name": "label",
@@ -897,7 +969,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "name",
@@ -906,14 +978,15 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "name": "pressed",
               "fieldName": "pressed",
               "type": {
                 "text": "boolean | undefined"
-              }
+              },
+              "description": "Current toggle-button pressed state."
             },
             {
               "name": "type",
@@ -921,7 +994,8 @@
               "type": {
                 "text": "\"button\" | \"submit\" | \"reset\""
               },
-              "default": "\"button\""
+              "default": "\"button\"",
+              "description": "Stable native control or form behavior identifier."
             },
             {
               "name": "value",
@@ -929,7 +1003,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             },
             {
               "name": "variant",
@@ -937,7 +1012,8 @@
               "type": {
                 "text": "\"danger\" | \"primary\" | \"secondary\" | \"ghost\""
               },
-              "default": "\"secondary\""
+              "default": "\"secondary\"",
+              "description": "Stable visual-variant identifier."
             }
           ],
           "events": [
@@ -974,7 +1050,23 @@
           "x-forma": {
             "category": "atom",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-button",
+              "authorTextAttributes": [
+                "busy-label",
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "invariantValuePaths": [
+                "value"
+              ],
+              "internalMessages": [
+                "action.default",
+                "action.working",
+                "action.busy"
+              ]
+            }
           }
         },
         {
@@ -996,7 +1088,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "action"
+              "attribute": "action",
+              "description": "Author-supplied, localized visible follow-up action."
             },
             {
               "kind": "field",
@@ -1005,7 +1098,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "detail"
+              "attribute": "detail",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "kind": "field",
@@ -1014,7 +1108,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "heading"
+              "attribute": "heading",
+              "description": "Author-supplied, localized heading text."
             },
             {
               "kind": "field",
@@ -1023,7 +1118,8 @@
                 "text": "string"
               },
               "default": "\"spark\"",
-              "attribute": "icon-name"
+              "attribute": "icon-name",
+              "description": "Stable, locale-invariant icon identifier."
             },
             {
               "kind": "field",
@@ -1042,7 +1138,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible follow-up action."
             },
             {
               "name": "detail",
@@ -1050,7 +1147,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "name": "heading",
@@ -1058,7 +1156,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized heading text."
             },
             {
               "name": "icon-name",
@@ -1066,7 +1165,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"spark\""
+              "default": "\"spark\"",
+              "description": "Stable, locale-invariant icon identifier."
             },
             {
               "name": "level",
@@ -1106,7 +1206,16 @@
           "x-forma": {
             "category": "organism",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-empty-state",
+              "authorTextAttributes": [
+                "action",
+                "detail",
+                "heading"
+              ],
+              "authorOwnedSlots": []
+            }
           }
         },
         {
@@ -1128,7 +1237,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "autocomplete"
+              "attribute": "autocomplete",
+              "description": "Native browser autocomplete hint."
             },
             {
               "kind": "field",
@@ -1137,7 +1247,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "disabled"
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
             },
             {
               "kind": "field",
@@ -1146,7 +1257,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "error"
+              "attribute": "error",
+              "description": "Author-supplied, localized validation or error message."
             },
             {
               "kind": "field",
@@ -1155,7 +1267,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "form"
+              "attribute": "form",
+              "description": "ID of the associated native HTML form."
             },
             {
               "kind": "field",
@@ -1164,7 +1277,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "help"
+              "attribute": "help",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "kind": "field",
@@ -1184,7 +1298,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -1193,7 +1307,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "max"
+              "attribute": "max",
+              "description": "Native maximum permitted value."
             },
             {
               "kind": "field",
@@ -1202,7 +1317,8 @@
                 "text": "number"
               },
               "default": "0",
-              "attribute": "max-length"
+              "attribute": "max-length",
+              "description": "Maximum permitted length of an authored input value."
             },
             {
               "kind": "field",
@@ -1211,7 +1327,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "min"
+              "attribute": "min",
+              "description": "Native minimum permitted value."
             },
             {
               "kind": "field",
@@ -1220,7 +1337,8 @@
                 "text": "number"
               },
               "default": "0",
-              "attribute": "min-length"
+              "attribute": "min-length",
+              "description": "Minimum required length of an authored input value."
             },
             {
               "kind": "field",
@@ -1230,7 +1348,7 @@
               },
               "default": "\"\"",
               "attribute": "name",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "kind": "field",
@@ -1248,7 +1366,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "placeholder"
+              "attribute": "placeholder",
+              "description": "Author-supplied, localized input hint."
             },
             {
               "kind": "field",
@@ -1257,7 +1376,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "readonly"
+              "attribute": "readonly",
+              "description": "Whether the native control can be read but not edited."
             },
             {
               "kind": "field",
@@ -1266,7 +1386,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "required"
+              "attribute": "required",
+              "description": "Whether a native form value is required."
             },
             {
               "kind": "field",
@@ -1275,7 +1396,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "step"
+              "attribute": "step",
+              "description": "Native numeric input step."
             },
             {
               "kind": "field",
@@ -1284,7 +1406,8 @@
                 "text": "string"
               },
               "default": "\"text\"",
-              "attribute": "type"
+              "attribute": "type",
+              "description": "Stable native control or form behavior identifier."
             },
             {
               "kind": "field",
@@ -1293,7 +1416,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -1303,7 +1427,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Native browser autocomplete hint."
             },
             {
               "name": "disabled",
@@ -1311,7 +1436,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether user interaction is disabled."
             },
             {
               "name": "error",
@@ -1319,7 +1445,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized validation or error message."
             },
             {
               "name": "form",
@@ -1327,7 +1454,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "ID of the associated native HTML form."
             },
             {
               "name": "help",
@@ -1335,7 +1463,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "name": "input-mode",
@@ -1353,7 +1482,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "max",
@@ -1361,7 +1490,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Native maximum permitted value."
             },
             {
               "name": "max-length",
@@ -1369,7 +1499,8 @@
               "type": {
                 "text": "number"
               },
-              "default": "0"
+              "default": "0",
+              "description": "Maximum permitted length of an authored input value."
             },
             {
               "name": "min",
@@ -1377,7 +1508,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Native minimum permitted value."
             },
             {
               "name": "min-length",
@@ -1385,7 +1517,8 @@
               "type": {
                 "text": "number"
               },
-              "default": "0"
+              "default": "0",
+              "description": "Minimum required length of an authored input value."
             },
             {
               "name": "name",
@@ -1394,7 +1527,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "name": "pattern",
@@ -1410,7 +1543,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized input hint."
             },
             {
               "name": "readonly",
@@ -1418,7 +1552,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether the native control can be read but not edited."
             },
             {
               "name": "required",
@@ -1426,7 +1561,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether a native form value is required."
             },
             {
               "name": "step",
@@ -1434,7 +1570,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Native numeric input step."
             },
             {
               "name": "type",
@@ -1442,7 +1579,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"text\""
+              "default": "\"text\"",
+              "description": "Stable native control or form behavior identifier."
             },
             {
               "name": "value",
@@ -1450,7 +1588,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -1494,7 +1633,20 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-field",
+              "authorTextAttributes": [
+                "error",
+                "help",
+                "label",
+                "placeholder"
+              ],
+              "authorOwnedSlots": [],
+              "internalMessages": [
+                "field.text"
+              ]
+            }
           }
         },
         {
@@ -1516,7 +1668,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "detail"
+              "attribute": "detail",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "kind": "field",
@@ -1526,7 +1679,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -1535,7 +1688,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -1545,7 +1699,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "name": "label",
@@ -1554,7 +1709,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "value",
@@ -1562,7 +1717,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "cssProperties": [
@@ -1585,7 +1741,15 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-metric",
+              "authorTextAttributes": [
+                "detail",
+                "label"
+              ],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -1705,7 +1869,7 @@
               },
               "default": "\"\"",
               "attribute": "name",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Author-supplied human name used for an accessible image label and localized initials."
             },
             {
               "kind": "field",
@@ -1742,7 +1906,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Author-supplied human name used for an accessible image label and localized initials."
             },
             {
               "name": "size",
@@ -1781,7 +1945,18 @@
           "x-forma": {
             "category": "atom",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-avatar",
+              "authorTextAttributes": [
+                "name"
+              ],
+              "authorOwnedSlots": [],
+              "internalMessages": [
+                "avatar.unnamed",
+                "avatar.person"
+              ]
+            }
           }
         },
         {
@@ -1803,7 +1978,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "disabled"
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
             },
             {
               "kind": "field",
@@ -1813,7 +1989,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -1831,7 +2007,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "selected"
+              "attribute": "selected",
+              "description": "Whether this item is selected."
             },
             {
               "kind": "field",
@@ -1840,7 +2017,8 @@
                 "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
               },
               "default": "\"neutral\"",
-              "attribute": "tone"
+              "attribute": "tone",
+              "description": "Stable semantic visual-tone identifier."
             },
             {
               "kind": "field",
@@ -1849,7 +2027,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -1859,7 +2038,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether user interaction is disabled."
             },
             {
               "name": "label",
@@ -1868,7 +2048,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "removable",
@@ -1884,7 +2064,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether this item is selected."
             },
             {
               "name": "tone",
@@ -1892,7 +2073,8 @@
               "type": {
                 "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
               },
-              "default": "\"neutral\""
+              "default": "\"neutral\"",
+              "description": "Stable semantic visual-tone identifier."
             },
             {
               "name": "value",
@@ -1900,7 +2082,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -1939,7 +2122,21 @@
           "x-forma": {
             "category": "atom",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-chip",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "invariantValuePaths": [
+                "value"
+              ],
+              "internalMessages": [
+                "filter.label",
+                "filter.remove"
+              ]
+            }
           }
         },
         {
@@ -1962,7 +2159,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -1982,7 +2179,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "vertical",
@@ -2008,7 +2205,14 @@
           "x-forma": {
             "category": "atom",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-divider",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": []
+            }
           }
         },
         {
@@ -2030,7 +2234,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "label"
+              "attribute": "label",
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -2040,7 +2245,7 @@
               },
               "default": "\"spark\"",
               "attribute": "name",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "kind": "field",
@@ -2059,7 +2264,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "name",
@@ -2068,7 +2274,7 @@
                 "text": "string"
               },
               "default": "\"spark\"",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "name": "size",
@@ -2099,7 +2305,14 @@
           "x-forma": {
             "category": "atom",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-icon",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": []
+            }
           }
         },
         {
@@ -2121,7 +2334,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "controls"
+              "attribute": "controls",
+              "description": "ID of the element controlled by this action."
             },
             {
               "kind": "field",
@@ -2130,7 +2344,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "disabled"
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
             },
             {
               "kind": "field",
@@ -2138,7 +2353,8 @@
               "type": {
                 "text": "boolean | undefined"
               },
-              "attribute": "expanded"
+              "attribute": "expanded",
+              "description": "Whether the controlled content is expanded."
             },
             {
               "kind": "field",
@@ -2147,7 +2363,8 @@
                 "text": "string"
               },
               "default": "\"dots\"",
-              "attribute": "icon-name"
+              "attribute": "icon-name",
+              "description": "Stable, locale-invariant icon identifier."
             },
             {
               "kind": "field",
@@ -2157,7 +2374,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -2165,7 +2382,8 @@
               "type": {
                 "text": "boolean | undefined"
               },
-              "attribute": "pressed"
+              "attribute": "pressed",
+              "description": "Current toggle-button pressed state."
             },
             {
               "kind": "field",
@@ -2174,7 +2392,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             },
             {
               "kind": "field",
@@ -2183,7 +2402,8 @@
                 "text": "\"danger\" | \"primary\" | \"secondary\" | \"ghost\""
               },
               "default": "\"ghost\"",
-              "attribute": "variant"
+              "attribute": "variant",
+              "description": "Stable visual-variant identifier."
             }
           ],
           "attributes": [
@@ -2193,7 +2413,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "ID of the element controlled by this action."
             },
             {
               "name": "disabled",
@@ -2201,14 +2422,16 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether user interaction is disabled."
             },
             {
               "name": "expanded",
               "fieldName": "expanded",
               "type": {
                 "text": "boolean | undefined"
-              }
+              },
+              "description": "Whether the controlled content is expanded."
             },
             {
               "name": "icon-name",
@@ -2216,7 +2439,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"dots\""
+              "default": "\"dots\"",
+              "description": "Stable, locale-invariant icon identifier."
             },
             {
               "name": "label",
@@ -2225,14 +2449,15 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "pressed",
               "fieldName": "pressed",
               "type": {
                 "text": "boolean | undefined"
-              }
+              },
+              "description": "Current toggle-button pressed state."
             },
             {
               "name": "value",
@@ -2240,7 +2465,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             },
             {
               "name": "variant",
@@ -2248,7 +2474,8 @@
               "type": {
                 "text": "\"danger\" | \"primary\" | \"secondary\" | \"ghost\""
               },
-              "default": "\"ghost\""
+              "default": "\"ghost\"",
+              "description": "Stable visual-variant identifier."
             }
           ],
           "events": [
@@ -2280,7 +2507,25 @@
           "x-forma": {
             "category": "atom",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-icon-button",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "invariantValuePaths": [
+                "value"
+              ],
+              "internalMessages": [
+                "action.more",
+                "action.close",
+                "field.search",
+                "action.save",
+                "action.open",
+                "action.default"
+              ]
+            }
           }
         },
         {
@@ -2312,7 +2557,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             }
           ],
           "attributes": [
@@ -2331,7 +2576,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             }
           ],
           "cssProperties": [
@@ -2354,7 +2599,14 @@
           "x-forma": {
             "category": "atom",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-kbd",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": []
+            }
           }
         },
         {
@@ -2384,9 +2636,9 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Progress\"",
+              "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -2395,7 +2647,8 @@
                 "text": "number"
               },
               "default": "100",
-              "attribute": "max"
+              "attribute": "max",
+              "description": "Native maximum permitted value."
             },
             {
               "kind": "field",
@@ -2413,7 +2666,8 @@
                 "text": "number"
               },
               "default": "0",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -2431,8 +2685,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Progress\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "max",
@@ -2440,7 +2694,8 @@
               "type": {
                 "text": "number"
               },
-              "default": "100"
+              "default": "100",
+              "description": "Native maximum permitted value."
             },
             {
               "name": "show-value",
@@ -2456,7 +2711,8 @@
               "type": {
                 "text": "number"
               },
-              "default": "0"
+              "default": "0",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "cssProperties": [
@@ -2479,7 +2735,17 @@
           "x-forma": {
             "category": "atom",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-progress",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "internalMessages": [
+                "status.progress"
+              ]
+            }
           }
         },
         {
@@ -2551,7 +2817,12 @@
           "x-forma": {
             "category": "atom",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-skeleton",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         },
         {
@@ -2572,9 +2843,9 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Loading\"",
+              "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -2593,8 +2864,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Loading\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "size",
@@ -2620,7 +2891,17 @@
           "x-forma": {
             "category": "atom",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-spinner",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "internalMessages": [
+                "status.loading"
+              ]
+            }
           }
         },
         {
@@ -2642,7 +2923,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "icon-name"
+              "attribute": "icon-name",
+              "description": "Stable, locale-invariant icon identifier."
             },
             {
               "kind": "field",
@@ -2652,7 +2934,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -2670,7 +2952,8 @@
                 "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
               },
               "default": "\"neutral\"",
-              "attribute": "tone"
+              "attribute": "tone",
+              "description": "Stable semantic visual-tone identifier."
             }
           ],
           "attributes": [
@@ -2680,7 +2963,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Stable, locale-invariant icon identifier."
             },
             {
               "name": "label",
@@ -2689,7 +2973,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "live",
@@ -2705,7 +2989,8 @@
               "type": {
                 "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
               },
-              "default": "\"neutral\""
+              "default": "\"neutral\"",
+              "description": "Stable semantic visual-tone identifier."
             }
           ],
           "cssProperties": [
@@ -2733,7 +3018,14 @@
           "x-forma": {
             "category": "atom",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-status",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": []
+            }
           }
         },
         {
@@ -2788,6 +3080,11 @@
             }
           ],
           "cssProperties": [
+            {
+              "name": "--forma-body-line-height",
+              "syntax": "<number>",
+              "description": "Comfortable, script-aware body line height."
+            },
             {
               "name": "--forma-color-accent",
               "syntax": "<color>",
@@ -2929,6 +3226,16 @@
               "description": "Readable labels and supporting copy."
             },
             {
+              "name": "--forma-heading-letter-spacing",
+              "syntax": "<length>",
+              "description": "Script-aware heading tracking."
+            },
+            {
+              "name": "--forma-heading-line-height",
+              "syntax": "<number>",
+              "description": "Script-aware minimum heading line height."
+            },
+            {
               "name": "--forma-radius-large",
               "syntax": "<length>",
               "description": "Modal and large-surface corner radius."
@@ -2987,7 +3294,12 @@
           "x-forma": {
             "category": "foundation",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-theme",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -3205,7 +3517,12 @@
           "x-forma": {
             "category": "organism",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-component-catalog",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -3250,9 +3567,9 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Copy\"",
+              "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -3261,7 +3578,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -3271,8 +3589,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Copy\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "value",
@@ -3280,7 +3598,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -3307,7 +3626,19 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-copy-button",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "internalMessages": [
+                "clipboard.copy",
+                "clipboard.success",
+                "clipboard.failure"
+              ]
+            }
           }
         },
         {
@@ -3328,7 +3659,7 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Cancel\"",
+              "default": "\"\"",
               "attribute": "cancel"
             },
             {
@@ -3337,7 +3668,7 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Confirm\"",
+              "default": "\"\"",
               "attribute": "confirm"
             },
             {
@@ -3347,7 +3678,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "detail"
+              "attribute": "detail",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "kind": "field",
@@ -3355,8 +3687,9 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Dialog\"",
-              "attribute": "heading"
+              "default": "\"\"",
+              "attribute": "heading",
+              "description": "Author-supplied, localized heading text."
             },
             {
               "kind": "field",
@@ -3371,9 +3704,8 @@
               "kind": "field",
               "name": "trigger",
               "type": {
-                "text": "string"
+                "text": "string | undefined"
               },
-              "default": "\"Open dialog\"",
               "attribute": "trigger"
             }
           ],
@@ -3384,7 +3716,7 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Cancel\""
+              "default": "\"\""
             },
             {
               "name": "confirm",
@@ -3392,7 +3724,7 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Confirm\""
+              "default": "\"\""
             },
             {
               "name": "detail",
@@ -3400,7 +3732,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "name": "heading",
@@ -3408,7 +3741,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Dialog\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized heading text."
             },
             {
               "name": "open",
@@ -3422,9 +3756,8 @@
               "name": "trigger",
               "fieldName": "trigger",
               "type": {
-                "text": "string"
-              },
-              "default": "\"Open dialog\""
+                "text": "string | undefined"
+              }
             }
           ],
           "events": [
@@ -3470,7 +3803,25 @@
           "x-forma": {
             "category": "organism",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-dialog",
+              "authorTextAttributes": [
+                "cancel",
+                "confirm",
+                "detail",
+                "heading",
+                "trigger"
+              ],
+              "authorOwnedSlots": [],
+              "internalMessages": [
+                "dialog.heading",
+                "dialog.open",
+                "dialog.confirm",
+                "dialog.cancel",
+                "dialog.close"
+              ]
+            }
           }
         },
         {
@@ -3492,7 +3843,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "detail"
+              "attribute": "detail",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "kind": "field",
@@ -3509,9 +3861,9 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"More information\"",
+              "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -3530,7 +3882,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "name": "group",
@@ -3546,8 +3899,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"More information\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "open",
@@ -3592,7 +3945,21 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "shadow",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-disclosure",
+              "authorTextAttributes": [
+                "detail",
+                "label"
+              ],
+              "authorOwnedSlots": [
+                "",
+                "summary"
+              ],
+              "internalMessages": [
+                "disclosure.more"
+              ]
+            }
           }
         },
         {
@@ -3614,7 +3981,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "detail"
+              "attribute": "detail",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "kind": "field",
@@ -3632,7 +4000,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "heading"
+              "attribute": "heading",
+              "description": "Author-supplied, localized heading text."
             },
             {
               "kind": "field",
@@ -3650,7 +4019,18 @@
                 "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
               },
               "default": "\"neutral\"",
-              "attribute": "tone"
+              "attribute": "tone",
+              "description": "Stable semantic visual-tone identifier."
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -3660,7 +4040,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "name": "dismissible",
@@ -3676,7 +4057,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized heading text."
             },
             {
               "name": "live",
@@ -3692,7 +4074,17 @@
               "type": {
                 "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
               },
-              "default": "\"neutral\""
+              "default": "\"neutral\"",
+              "description": "Stable semantic visual-tone identifier."
+            },
+            {
+              "name": "value",
+              "fieldName": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -3747,7 +4139,26 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "shadow",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-notice",
+              "authorTextAttributes": [
+                "detail",
+                "heading"
+              ],
+              "authorOwnedSlots": [
+                "",
+                "actions",
+                "heading",
+                "leading"
+              ],
+              "invariantValuePaths": [
+                "value"
+              ],
+              "internalMessages": [
+                "notice.dismiss"
+              ]
+            }
           }
         },
         {
@@ -3768,7 +4179,8 @@
               "type": {
                 "text": "{ label: string; value: string; disabled?: boolean; description?: string }[]"
               },
-              "default": "[]"
+              "default": "[]",
+              "description": "Property-only actions with author-localized labels and descriptions and locale-invariant values."
             },
             {
               "kind": "field",
@@ -3777,7 +4189,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "detail"
+              "attribute": "detail",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "kind": "field",
@@ -3786,7 +4199,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "heading"
+              "attribute": "heading",
+              "description": "Author-supplied, localized heading text."
             },
             {
               "kind": "field",
@@ -3794,9 +4208,9 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Open options\"",
+              "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             }
           ],
           "attributes": [
@@ -3806,7 +4220,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "name": "heading",
@@ -3814,7 +4229,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized heading text."
             },
             {
               "name": "label",
@@ -3822,8 +4238,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Open options\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
             }
           ],
           "events": [
@@ -3862,7 +4278,26 @@
           "x-forma": {
             "category": "organism",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-popover",
+              "authorTextAttributes": [
+                "detail",
+                "heading",
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "optionTextPaths": [
+                "actions[].label",
+                "actions[].description"
+              ],
+              "invariantValuePaths": [
+                "actions[].value"
+              ],
+              "internalMessages": [
+                "popover.open"
+              ]
+            }
           }
         }
       ],
@@ -3972,7 +4407,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "checked"
+              "attribute": "checked",
+              "description": "Current native checked state."
             },
             {
               "kind": "field",
@@ -3981,7 +4417,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "disabled"
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
             },
             {
               "kind": "field",
@@ -3990,7 +4427,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "form"
+              "attribute": "form",
+              "description": "ID of the associated native HTML form."
             },
             {
               "kind": "field",
@@ -3999,7 +4437,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "help"
+              "attribute": "help",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "kind": "field",
@@ -4009,7 +4448,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -4019,7 +4458,7 @@
               },
               "default": "\"\"",
               "attribute": "name",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "kind": "field",
@@ -4028,7 +4467,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "required"
+              "attribute": "required",
+              "description": "Whether a native form value is required."
             },
             {
               "kind": "field",
@@ -4037,7 +4477,8 @@
                 "text": "string"
               },
               "default": "\"on\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -4047,7 +4488,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Current native checked state."
             },
             {
               "name": "disabled",
@@ -4055,7 +4497,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether user interaction is disabled."
             },
             {
               "name": "form",
@@ -4063,7 +4506,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "ID of the associated native HTML form."
             },
             {
               "name": "help",
@@ -4071,7 +4515,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "name": "label",
@@ -4080,7 +4525,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "name",
@@ -4089,7 +4534,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "name": "required",
@@ -4097,7 +4542,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether a native form value is required."
             },
             {
               "name": "value",
@@ -4105,7 +4551,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"on\""
+              "default": "\"on\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -4137,7 +4584,21 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-checkbox",
+              "authorTextAttributes": [
+                "help",
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "invariantValuePaths": [
+                "value"
+              ],
+              "internalMessages": [
+                "field.option"
+              ]
+            }
           }
         },
         {
@@ -4159,7 +4620,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "disabled"
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
             },
             {
               "kind": "field",
@@ -4168,7 +4630,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "form"
+              "attribute": "form",
+              "description": "ID of the associated native HTML form."
             },
             {
               "kind": "field",
@@ -4177,7 +4640,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "help"
+              "attribute": "help",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "kind": "field",
@@ -4187,7 +4651,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -4196,7 +4660,8 @@
                 "text": "number"
               },
               "default": "Number.NaN",
-              "attribute": "max"
+              "attribute": "max",
+              "description": "Native maximum permitted value."
             },
             {
               "kind": "field",
@@ -4205,7 +4670,8 @@
                 "text": "number"
               },
               "default": "Number.NaN",
-              "attribute": "min"
+              "attribute": "min",
+              "description": "Native minimum permitted value."
             },
             {
               "kind": "field",
@@ -4215,7 +4681,7 @@
               },
               "default": "\"\"",
               "attribute": "name",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "kind": "field",
@@ -4224,7 +4690,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "required"
+              "attribute": "required",
+              "description": "Whether a native form value is required."
             },
             {
               "kind": "field",
@@ -4233,7 +4700,8 @@
                 "text": "number"
               },
               "default": "1",
-              "attribute": "step"
+              "attribute": "step",
+              "description": "Native numeric input step."
             },
             {
               "kind": "field",
@@ -4242,7 +4710,8 @@
                 "text": "number"
               },
               "default": "0",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -4252,7 +4721,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether user interaction is disabled."
             },
             {
               "name": "form",
@@ -4260,7 +4730,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "ID of the associated native HTML form."
             },
             {
               "name": "help",
@@ -4268,7 +4739,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "name": "label",
@@ -4277,7 +4749,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "max",
@@ -4285,7 +4757,8 @@
               "type": {
                 "text": "number"
               },
-              "default": "Number.NaN"
+              "default": "Number.NaN",
+              "description": "Native maximum permitted value."
             },
             {
               "name": "min",
@@ -4293,7 +4766,8 @@
               "type": {
                 "text": "number"
               },
-              "default": "Number.NaN"
+              "default": "Number.NaN",
+              "description": "Native minimum permitted value."
             },
             {
               "name": "name",
@@ -4302,7 +4776,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "name": "required",
@@ -4310,7 +4784,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether a native form value is required."
             },
             {
               "name": "step",
@@ -4318,7 +4793,8 @@
               "type": {
                 "text": "number"
               },
-              "default": "1"
+              "default": "1",
+              "description": "Native numeric input step."
             },
             {
               "name": "value",
@@ -4326,7 +4802,8 @@
               "type": {
                 "text": "number"
               },
-              "default": "0"
+              "default": "0",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -4360,7 +4837,18 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-number-field",
+              "authorTextAttributes": [
+                "help",
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "internalMessages": [
+                "field.number"
+              ]
+            }
           }
         },
         {
@@ -4382,7 +4870,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "disabled"
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
             },
             {
               "kind": "field",
@@ -4391,7 +4880,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "form"
+              "attribute": "form",
+              "description": "ID of the associated native HTML form."
             },
             {
               "kind": "field",
@@ -4400,7 +4890,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "help"
+              "attribute": "help",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "kind": "field",
@@ -4410,7 +4901,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -4420,7 +4911,7 @@
               },
               "default": "\"\"",
               "attribute": "name",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "kind": "field",
@@ -4428,7 +4919,8 @@
               "type": {
                 "text": "{ label: string; value: string; disabled?: boolean; description?: string }[]"
               },
-              "default": "[]"
+              "default": "[]",
+              "description": "Property-only options with author-localized labels and descriptions and locale-invariant values."
             },
             {
               "kind": "field",
@@ -4437,7 +4929,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "required"
+              "attribute": "required",
+              "description": "Whether a native form value is required."
             },
             {
               "kind": "field",
@@ -4446,7 +4939,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -4456,7 +4950,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether user interaction is disabled."
             },
             {
               "name": "form",
@@ -4464,7 +4959,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "ID of the associated native HTML form."
             },
             {
               "name": "help",
@@ -4472,7 +4968,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "name": "label",
@@ -4481,7 +4978,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "name",
@@ -4490,7 +4987,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "name": "required",
@@ -4498,7 +4995,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether a native form value is required."
             },
             {
               "name": "value",
@@ -4506,7 +5004,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -4538,7 +5037,26 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-radio-group",
+              "authorTextAttributes": [
+                "help",
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "optionTextPaths": [
+                "options[].label",
+                "options[].description"
+              ],
+              "invariantValuePaths": [
+                "options[].value",
+                "value"
+              ],
+              "internalMessages": [
+                "field.choose"
+              ]
+            }
           }
         },
         {
@@ -4560,7 +5078,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "disabled"
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
             },
             {
               "kind": "field",
@@ -4569,7 +5088,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "form"
+              "attribute": "form",
+              "description": "ID of the associated native HTML form."
             },
             {
               "kind": "field",
@@ -4578,7 +5098,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "help"
+              "attribute": "help",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "kind": "field",
@@ -4586,9 +5107,9 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Search\"",
+              "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -4598,7 +5119,7 @@
               },
               "default": "\"\"",
               "attribute": "name",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "kind": "field",
@@ -4607,7 +5128,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "placeholder"
+              "attribute": "placeholder",
+              "description": "Author-supplied, localized input hint."
             },
             {
               "kind": "field",
@@ -4616,7 +5138,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -4626,7 +5149,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether user interaction is disabled."
             },
             {
               "name": "form",
@@ -4634,7 +5158,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "ID of the associated native HTML form."
             },
             {
               "name": "help",
@@ -4642,7 +5167,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "name": "label",
@@ -4650,8 +5176,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Search\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "name",
@@ -4660,7 +5186,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "name": "placeholder",
@@ -4668,7 +5194,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized input hint."
             },
             {
               "name": "value",
@@ -4676,7 +5203,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -4722,7 +5250,20 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-search",
+              "authorTextAttributes": [
+                "help",
+                "label",
+                "placeholder"
+              ],
+              "authorOwnedSlots": [],
+              "internalMessages": [
+                "field.search",
+                "field.clearSearch"
+              ]
+            }
           }
         },
         {
@@ -4744,7 +5285,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "disabled"
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
             },
             {
               "kind": "field",
@@ -4753,7 +5295,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "error"
+              "attribute": "error",
+              "description": "Author-supplied, localized validation or error message."
             },
             {
               "kind": "field",
@@ -4762,7 +5305,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "form"
+              "attribute": "form",
+              "description": "ID of the associated native HTML form."
             },
             {
               "kind": "field",
@@ -4771,7 +5315,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "help"
+              "attribute": "help",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "kind": "field",
@@ -4781,7 +5326,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -4791,7 +5336,7 @@
               },
               "default": "\"\"",
               "attribute": "name",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "kind": "field",
@@ -4799,7 +5344,8 @@
               "type": {
                 "text": "{ label: string; value: string; disabled?: boolean; description?: string }[]"
               },
-              "default": "[]"
+              "default": "[]",
+              "description": "Property-only options with author-localized labels and descriptions and locale-invariant values."
             },
             {
               "kind": "field",
@@ -4808,7 +5354,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "placeholder"
+              "attribute": "placeholder",
+              "description": "Author-supplied, localized input hint."
             },
             {
               "kind": "field",
@@ -4817,7 +5364,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "required"
+              "attribute": "required",
+              "description": "Whether a native form value is required."
             },
             {
               "kind": "field",
@@ -4826,7 +5374,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -4836,7 +5385,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether user interaction is disabled."
             },
             {
               "name": "error",
@@ -4844,7 +5394,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized validation or error message."
             },
             {
               "name": "form",
@@ -4852,7 +5403,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "ID of the associated native HTML form."
             },
             {
               "name": "help",
@@ -4860,7 +5412,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "name": "label",
@@ -4869,7 +5422,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "name",
@@ -4878,7 +5431,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "name": "placeholder",
@@ -4886,7 +5439,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized input hint."
             },
             {
               "name": "required",
@@ -4894,7 +5448,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether a native form value is required."
             },
             {
               "name": "value",
@@ -4902,7 +5457,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -4934,7 +5490,28 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-select",
+              "authorTextAttributes": [
+                "error",
+                "help",
+                "label",
+                "placeholder"
+              ],
+              "authorOwnedSlots": [],
+              "optionTextPaths": [
+                "options[].label",
+                "options[].description"
+              ],
+              "invariantValuePaths": [
+                "options[].value",
+                "value"
+              ],
+              "internalMessages": [
+                "field.choose"
+              ]
+            }
           }
         },
         {
@@ -4956,7 +5533,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "checked"
+              "attribute": "checked",
+              "description": "Current native checked state."
             },
             {
               "kind": "field",
@@ -4965,7 +5543,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "disabled"
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
             },
             {
               "kind": "field",
@@ -4974,7 +5553,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "form"
+              "attribute": "form",
+              "description": "ID of the associated native HTML form."
             },
             {
               "kind": "field",
@@ -4983,7 +5563,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "help"
+              "attribute": "help",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "kind": "field",
@@ -4993,7 +5574,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -5003,7 +5584,7 @@
               },
               "default": "\"\"",
               "attribute": "name",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "kind": "field",
@@ -5012,7 +5593,8 @@
                 "text": "string"
               },
               "default": "\"on\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -5022,7 +5604,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Current native checked state."
             },
             {
               "name": "disabled",
@@ -5030,7 +5613,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether user interaction is disabled."
             },
             {
               "name": "form",
@@ -5038,7 +5622,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "ID of the associated native HTML form."
             },
             {
               "name": "help",
@@ -5046,7 +5631,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "name": "label",
@@ -5055,7 +5641,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "name",
@@ -5064,7 +5650,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "name": "value",
@@ -5072,7 +5658,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"on\""
+              "default": "\"on\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -5104,7 +5691,21 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-switch",
+              "authorTextAttributes": [
+                "help",
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "invariantValuePaths": [
+                "value"
+              ],
+              "internalMessages": [
+                "field.setting"
+              ]
+            }
           }
         },
         {
@@ -5126,7 +5727,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "autocomplete"
+              "attribute": "autocomplete",
+              "description": "Native browser autocomplete hint."
             },
             {
               "kind": "field",
@@ -5135,7 +5737,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "disabled"
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
             },
             {
               "kind": "field",
@@ -5144,7 +5747,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "error"
+              "attribute": "error",
+              "description": "Author-supplied, localized validation or error message."
             },
             {
               "kind": "field",
@@ -5153,7 +5757,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "form"
+              "attribute": "form",
+              "description": "ID of the associated native HTML form."
             },
             {
               "kind": "field",
@@ -5162,7 +5767,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "help"
+              "attribute": "help",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "kind": "field",
@@ -5172,7 +5778,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -5181,7 +5787,8 @@
                 "text": "number"
               },
               "default": "0",
-              "attribute": "max-length"
+              "attribute": "max-length",
+              "description": "Maximum permitted length of an authored input value."
             },
             {
               "kind": "field",
@@ -5191,7 +5798,7 @@
               },
               "default": "\"\"",
               "attribute": "name",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "kind": "field",
@@ -5200,7 +5807,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "placeholder"
+              "attribute": "placeholder",
+              "description": "Author-supplied, localized input hint."
             },
             {
               "kind": "field",
@@ -5209,7 +5817,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "readonly"
+              "attribute": "readonly",
+              "description": "Whether the native control can be read but not edited."
             },
             {
               "kind": "field",
@@ -5218,7 +5827,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "required"
+              "attribute": "required",
+              "description": "Whether a native form value is required."
             },
             {
               "kind": "field",
@@ -5227,7 +5837,8 @@
                 "text": "number"
               },
               "default": "4",
-              "attribute": "rows"
+              "attribute": "rows",
+              "description": "Number of visible native textarea rows."
             },
             {
               "kind": "field",
@@ -5236,7 +5847,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -5246,7 +5858,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Native browser autocomplete hint."
             },
             {
               "name": "disabled",
@@ -5254,7 +5867,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether user interaction is disabled."
             },
             {
               "name": "error",
@@ -5262,7 +5876,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized validation or error message."
             },
             {
               "name": "form",
@@ -5270,7 +5885,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "ID of the associated native HTML form."
             },
             {
               "name": "help",
@@ -5278,7 +5894,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting instructions."
             },
             {
               "name": "label",
@@ -5287,7 +5904,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "max-length",
@@ -5295,7 +5912,8 @@
               "type": {
                 "text": "number"
               },
-              "default": "0"
+              "default": "0",
+              "description": "Maximum permitted length of an authored input value."
             },
             {
               "name": "name",
@@ -5304,7 +5922,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Native form field name; required when this value should appear in FormData."
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
             },
             {
               "name": "placeholder",
@@ -5312,7 +5930,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized input hint."
             },
             {
               "name": "readonly",
@@ -5320,7 +5939,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether the native control can be read but not edited."
             },
             {
               "name": "required",
@@ -5328,7 +5948,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether a native form value is required."
             },
             {
               "name": "rows",
@@ -5336,7 +5957,8 @@
               "type": {
                 "text": "number"
               },
-              "default": "4"
+              "default": "4",
+              "description": "Number of visible native textarea rows."
             },
             {
               "name": "value",
@@ -5344,7 +5966,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -5383,7 +6006,20 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-textarea",
+              "authorTextAttributes": [
+                "error",
+                "help",
+                "label",
+                "placeholder"
+              ],
+              "authorOwnedSlots": [],
+              "internalMessages": [
+                "field.text"
+              ]
+            }
           }
         }
       ],
@@ -5525,7 +6161,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "action"
+              "attribute": "action",
+              "description": "Author-supplied, localized visible follow-up action."
             },
             {
               "kind": "field",
@@ -5534,7 +6171,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "detail"
+              "attribute": "detail",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "kind": "field",
@@ -5543,7 +6181,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "eyebrow"
+              "attribute": "eyebrow",
+              "description": "Author-supplied, localized supporting heading."
             },
             {
               "kind": "field",
@@ -5552,7 +6191,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "heading"
+              "attribute": "heading",
+              "description": "Author-supplied, localized heading text."
             },
             {
               "kind": "field",
@@ -5570,7 +6210,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -5580,7 +6221,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible follow-up action."
             },
             {
               "name": "detail",
@@ -5588,7 +6230,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "name": "eyebrow",
@@ -5596,7 +6239,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting heading."
             },
             {
               "name": "heading",
@@ -5604,7 +6248,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized heading text."
             },
             {
               "name": "level",
@@ -5620,7 +6265,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -5679,7 +6325,26 @@
           "x-forma": {
             "category": "organism",
             "renderRoot": "shadow",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-card",
+              "authorTextAttributes": [
+                "action",
+                "detail",
+                "eyebrow",
+                "heading"
+              ],
+              "authorOwnedSlots": [
+                "",
+                "actions",
+                "eyebrow",
+                "heading",
+                "media"
+              ],
+              "invariantValuePaths": [
+                "value"
+              ]
+            }
           }
         },
         {
@@ -5748,7 +6413,12 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-cluster",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         },
         {
@@ -5770,7 +6440,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "action"
+              "attribute": "action",
+              "description": "Author-supplied, localized visible follow-up action."
             },
             {
               "kind": "field",
@@ -5779,7 +6450,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "detail"
+              "attribute": "detail",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "kind": "field",
@@ -5788,7 +6460,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "icon-name"
+              "attribute": "icon-name",
+              "description": "Stable, locale-invariant icon identifier."
             },
             {
               "kind": "field",
@@ -5798,7 +6471,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -5807,7 +6480,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -5817,7 +6491,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible follow-up action."
             },
             {
               "name": "detail",
@@ -5825,7 +6500,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "name": "icon-name",
@@ -5833,7 +6509,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Stable, locale-invariant icon identifier."
             },
             {
               "name": "label",
@@ -5842,7 +6519,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "value",
@@ -5850,7 +6527,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -5895,7 +6573,24 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "shadow",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-list-item",
+              "authorTextAttributes": [
+                "action",
+                "detail",
+                "label"
+              ],
+              "authorOwnedSlots": [
+                "",
+                "heading",
+                "leading",
+                "trailing"
+              ],
+              "invariantValuePaths": [
+                "value"
+              ]
+            }
           }
         },
         {
@@ -5917,7 +6612,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "action"
+              "attribute": "action",
+              "description": "Author-supplied, localized visible follow-up action."
             },
             {
               "kind": "field",
@@ -5926,7 +6622,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "detail"
+              "attribute": "detail",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "kind": "field",
@@ -5935,7 +6632,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "eyebrow"
+              "attribute": "eyebrow",
+              "description": "Author-supplied, localized supporting heading."
             },
             {
               "kind": "field",
@@ -5944,7 +6642,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "heading"
+              "attribute": "heading",
+              "description": "Author-supplied, localized heading text."
             },
             {
               "kind": "field",
@@ -5954,6 +6653,16 @@
               },
               "default": "1",
               "attribute": "level"
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -5963,7 +6672,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible follow-up action."
             },
             {
               "name": "detail",
@@ -5971,7 +6681,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting explanation."
             },
             {
               "name": "eyebrow",
@@ -5979,7 +6690,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting heading."
             },
             {
               "name": "heading",
@@ -5987,7 +6699,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Author-supplied, localized heading text."
             },
             {
               "name": "level",
@@ -5996,6 +6709,15 @@
                 "text": "number"
               },
               "default": "1"
+            },
+            {
+              "name": "value",
+              "fieldName": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -6050,7 +6772,25 @@
           "x-forma": {
             "category": "organism",
             "renderRoot": "shadow",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-page-header",
+              "authorTextAttributes": [
+                "action",
+                "detail",
+                "eyebrow",
+                "heading"
+              ],
+              "authorOwnedSlots": [
+                "",
+                "actions",
+                "eyebrow",
+                "heading"
+              ],
+              "invariantValuePaths": [
+                "value"
+              ]
+            }
           }
         },
         {
@@ -6119,7 +6859,12 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-stack",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         },
         {
@@ -6162,7 +6907,8 @@
               },
               "default": "\"neutral\"",
               "attribute": "tone",
-              "reflects": true
+              "reflects": true,
+              "description": "Stable semantic visual-tone identifier."
             }
           ],
           "attributes": [
@@ -6188,7 +6934,8 @@
               "type": {
                 "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
               },
-              "default": "\"neutral\""
+              "default": "\"neutral\"",
+              "description": "Stable semantic visual-tone identifier."
             }
           ],
           "cssProperties": [
@@ -6216,7 +6963,12 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-surface",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -6321,6 +7073,137 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/design-system/localization.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaUiLocale",
+          "tagName": "forma-ui-locale",
+          "customElement": true,
+          "summary": "Scope translated component messages, writing direction, and regional formatting.",
+          "description": "Non-rendering, composable language and formatting scope.",
+          "superclass": {
+            "name": "HTMLElement",
+            "package": "global:"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "formatLocale",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "format-locale",
+              "reflects": true,
+              "description": "Canonical BCP 47 locale used for human-readable dates and numbers."
+            },
+            {
+              "kind": "field",
+              "name": "messages",
+              "type": {
+                "text": "Readonly<Record<string, string>>"
+              },
+              "description": "Property-only author-supplied localized message overrides inherited by descendant components."
+            },
+            {
+              "kind": "field",
+              "name": "timeZone",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "time-zone",
+              "reflects": true,
+              "description": "IANA time zone used for human-readable dates."
+            }
+          ],
+          "attributes": [
+            {
+              "name": "dir",
+              "fieldName": "dir",
+              "type": {
+                "text": "string"
+              },
+              "description": "Explicit ltr, rtl, or auto writing-direction override."
+            },
+            {
+              "name": "format-locale",
+              "fieldName": "formatLocale",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "BCP 47 regional locale used for human-readable numbers and dates."
+            },
+            {
+              "name": "lang",
+              "fieldName": "lang",
+              "type": {
+                "text": "string"
+              },
+              "description": "Canonical BCP 47 language used by authored and component content."
+            },
+            {
+              "name": "time-zone",
+              "fieldName": "timeZone",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "IANA time zone used for human-readable dates."
+            }
+          ],
+          "events": [
+            {
+              "name": "forma-locale-change",
+              "type": {
+                "text": "CustomEvent<{ locale: string; direction: string }>"
+              },
+              "description": "The effective locale or writing direction changed. Bubbles and crosses component boundaries."
+            }
+          ],
+          "demos": [
+            {
+              "url": "/laboratory/design-system#forma-ui-locale"
+            }
+          ],
+          "x-forma": {
+            "category": "foundation",
+            "renderRoot": "light",
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-locale",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": [],
+              "authorCatalogProperties": [
+                "messages"
+              ]
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-ui-locale",
+          "declaration": {
+            "name": "FormaUiLocale",
+            "module": "src/components/design-system/localization.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaUiLocale",
+          "declaration": {
+            "name": "FormaUiLocale",
+            "module": "src/components/design-system/localization.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/design-system/navigation.ts",
       "declarations": [
         {
@@ -6341,7 +7224,8 @@
               "type": {
                 "text": "{ label: string; value: string; disabled?: boolean; description?: string }[]"
               },
-              "default": "[]"
+              "default": "[]",
+              "description": "Property-only navigation items with author-localized labels and descriptions and locale-invariant values."
             },
             {
               "kind": "field",
@@ -6349,9 +7233,9 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Breadcrumb\"",
+              "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             }
           ],
           "attributes": [
@@ -6361,8 +7245,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Breadcrumb\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
             }
           ],
           "events": [
@@ -6389,7 +7273,24 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-breadcrumbs",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "optionTextPaths": [
+                "items[].label",
+                "items[].description"
+              ],
+              "invariantValuePaths": [
+                "items[].value"
+              ],
+              "internalMessages": [
+                "navigation.breadcrumbs"
+              ]
+            }
           }
         },
         {
@@ -6430,7 +7331,7 @@
               },
               "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             }
           ],
           "attributes": [
@@ -6457,7 +7358,7 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             }
           ],
           "events": [
@@ -6484,7 +7385,18 @@
           "x-forma": {
             "category": "atom",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-link",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "internalMessages": [
+                "navigation.openLink",
+                "navigation.opensInNewTab"
+              ]
+            }
           }
         },
         {
@@ -6505,9 +7417,9 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Pagination\"",
+              "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -6535,8 +7447,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Pagination\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "page",
@@ -6579,7 +7491,20 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-pagination",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "internalMessages": [
+                "navigation.pagination",
+                "navigation.previous",
+                "navigation.next",
+                "navigation.page"
+              ]
+            }
           }
         },
         {
@@ -6601,7 +7526,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "disabled"
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
             },
             {
               "kind": "field",
@@ -6609,9 +7535,9 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Choose an option\"",
+              "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -6619,7 +7545,8 @@
               "type": {
                 "text": "{ label: string; value: string; disabled?: boolean; description?: string }[]"
               },
-              "default": "[]"
+              "default": "[]",
+              "description": "Property-only options with author-localized labels and descriptions and locale-invariant values."
             },
             {
               "kind": "field",
@@ -6628,7 +7555,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -6638,7 +7566,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether user interaction is disabled."
             },
             {
               "name": "label",
@@ -6646,8 +7575,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Choose an option\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "value",
@@ -6655,7 +7584,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -6687,7 +7617,25 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-segmented-control",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "optionTextPaths": [
+                "options[].label",
+                "options[].description"
+              ],
+              "invariantValuePaths": [
+                "options[].value",
+                "value"
+              ],
+              "internalMessages": [
+                "field.choose"
+              ]
+            }
           }
         },
         {
@@ -6708,9 +7656,9 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Sections\"",
+              "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -6718,7 +7666,8 @@
               "type": {
                 "text": "{ label: string; value: string; disabled?: boolean; description?: string }[]"
               },
-              "default": "[]"
+              "default": "[]",
+              "description": "Property-only options with author-localized labels and descriptions and locale-invariant values."
             },
             {
               "kind": "field",
@@ -6727,7 +7676,8 @@
                 "text": "string"
               },
               "default": "\"\"",
-              "attribute": "value"
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "attributes": [
@@ -6737,8 +7687,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Sections\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "value",
@@ -6746,7 +7696,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"\""
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
             }
           ],
           "events": [
@@ -6778,7 +7729,25 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-tabs",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "optionTextPaths": [
+                "options[].label",
+                "options[].description"
+              ],
+              "invariantValuePaths": [
+                "options[].value",
+                "value"
+              ],
+              "internalMessages": [
+                "navigation.sections"
+              ]
+            }
           }
         },
         {
@@ -6799,7 +7768,8 @@
               "type": {
                 "text": "{ label: string; value: string; disabled?: boolean; description?: string }[]"
               },
-              "default": "[]"
+              "default": "[]",
+              "description": "Property-only actions with author-localized labels and descriptions and locale-invariant values."
             },
             {
               "kind": "field",
@@ -6807,9 +7777,9 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Actions\"",
+              "default": "\"\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             }
           ],
           "attributes": [
@@ -6819,8 +7789,8 @@
               "type": {
                 "text": "string"
               },
-              "default": "\"Actions\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
             }
           ],
           "events": [
@@ -6847,7 +7817,24 @@
           "x-forma": {
             "category": "molecule",
             "renderRoot": "light",
-            "stateful": false
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-toolbar",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "optionTextPaths": [
+                "actions[].label",
+                "actions[].description"
+              ],
+              "invariantValuePaths": [
+                "actions[].value"
+              ],
+              "internalMessages": [
+                "navigation.actions"
+              ]
+            }
           }
         }
       ],
@@ -6998,7 +7985,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "compact"
+              "attribute": "compact",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "kind": "field",
@@ -7081,7 +8069,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "name": "document-id",
@@ -7133,7 +8122,12 @@
             "category": "application",
             "renderRoot": "light",
             "stateful": true,
-            "demonstration": "isolated-composition"
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-document-artifacts",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -8356,7 +9350,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "compact"
+              "attribute": "compact",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "kind": "field",
@@ -8364,7 +9359,8 @@
               "type": {
                 "text": "CreativeOutput | null"
               },
-              "default": "null"
+              "default": "null",
+              "description": "Whether this item is selected."
             },
             {
               "kind": "field",
@@ -8383,7 +9379,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "name": "source",
@@ -8403,7 +9400,12 @@
             "category": "application",
             "renderRoot": "light",
             "stateful": true,
-            "demonstration": "isolated-composition"
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-generation-actions",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -8536,7 +9538,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "compact"
+              "attribute": "compact",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "kind": "field",
@@ -8555,7 +9558,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "name": "surface",
@@ -8725,7 +9729,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "compact"
+              "attribute": "compact",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "kind": "field",
@@ -8758,7 +9763,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "read-only"
+              "attribute": "read-only",
+              "description": "Whether the native control can be read but not edited."
             }
           ],
           "attributes": [
@@ -8768,7 +9774,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "name": "interactive",
@@ -8784,7 +9791,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether the native control can be read but not edited."
             }
           ],
           "events": [
@@ -8805,7 +9813,12 @@
             "category": "application",
             "renderRoot": "light",
             "stateful": true,
-            "demonstration": "isolated-composition"
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-output-visual",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -8868,7 +9881,8 @@
               "type": {
                 "text": "DocumentArtifactDraftItem[]"
               },
-              "default": "[]"
+              "default": "[]",
+              "description": "Property-only navigation items with author-localized labels and descriptions and locale-invariant values."
             },
             {
               "kind": "field",
@@ -8949,7 +9963,19 @@
             "category": "application",
             "renderRoot": "light",
             "stateful": true,
-            "demonstration": "isolated-composition"
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-presentation-deck",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": [],
+              "optionTextPaths": [
+                "items[].label",
+                "items[].description"
+              ],
+              "invariantValuePaths": [
+                "items[].value"
+              ]
+            }
           }
         }
       ],
@@ -8995,7 +10021,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "compact"
+              "attribute": "compact",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "kind": "field",
@@ -9048,7 +10075,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "name": "index",
@@ -9084,7 +10112,12 @@
             "category": "application",
             "renderRoot": "light",
             "stateful": false,
-            "demonstration": "isolated-composition"
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-presentation-slide",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -9165,7 +10198,12 @@
             "category": "application",
             "renderRoot": "light",
             "stateful": true,
-            "demonstration": "isolated-composition"
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-project-rail",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -9233,7 +10271,12 @@
             "category": "application",
             "renderRoot": "light",
             "stateful": true,
-            "demonstration": "isolated-composition"
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-prompt-fan-review",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -9279,7 +10322,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "compact"
+              "attribute": "compact",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "kind": "field",
@@ -9297,7 +10341,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether the compact presentation is requested."
             }
           ],
           "demos": [
@@ -9309,7 +10354,12 @@
             "category": "application",
             "renderRoot": "light",
             "stateful": true,
-            "demonstration": "isolated-composition"
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-prompt-fan-visual",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -9423,7 +10473,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "compact"
+              "attribute": "compact",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "kind": "field",
@@ -9485,7 +10536,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "name": "referenceid",
@@ -9545,7 +10597,12 @@
             "category": "application",
             "renderRoot": "light",
             "stateful": true,
-            "demonstration": "isolated-composition"
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-reference-image",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
           }
         }
       ],
@@ -9608,7 +10665,7 @@
               },
               "default": "\"Reference\"",
               "attribute": "label",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "kind": "field",
@@ -9646,7 +10703,7 @@
                 "text": "string"
               },
               "default": "\"Reference\"",
-              "description": "Provide a meaningful visible label or accessible action name."
+              "description": "Author-supplied, localized visible label or accessible action name."
             },
             {
               "name": "mediaurl",
@@ -9730,7 +10787,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "compact"
+              "attribute": "compact",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "kind": "field",
@@ -9749,7 +10807,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether the compact presentation is requested."
             },
             {
               "name": "surface",
@@ -9966,7 +11025,8 @@
                 "text": "boolean"
               },
               "default": "false",
-              "attribute": "disabled"
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
             },
             {
               "kind": "field",
@@ -9994,7 +11054,8 @@
               "type": {
                 "text": "boolean"
               },
-              "default": "false"
+              "default": "false",
+              "description": "Whether user interaction is disabled."
             },
             {
               "name": "document-id",

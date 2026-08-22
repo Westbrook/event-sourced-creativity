@@ -27,7 +27,7 @@ export type OutputContextResult = {
   availableMemberCount: number;
 };
 
-const slug = (value: string) => value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 52) || "output";
+const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 52) || "output";
 const sharedPayload = (options: OutputContextOptions) => ({
   project_id: options.projectId,
   document_id: options.documentId,
