@@ -175,10 +175,72 @@ export function serializeEvent(row: Record<string, unknown>): EventRow {
 
 export const EVENT_PAGE_SIZE = 2000;
 
+export type EventReadProfile = "projects" | "workspace";
+
+/** Project cards do not need the account's engagement, audit, or canvas history. */
+export const PROJECT_BOOTSTRAP_EVENT_TYPES = [
+  "ProjectCreated", "ProjectOpened", "ProjectRenamed", "ProjectStateChanged",
+  "DocumentCreated", "DocumentForked", "DocumentOpened", "DocumentRenamed",
+  "DocumentRemoved", "DocumentRestored", "BlockCreated", "BlockRemoved",
+  "BlockRestored", "BlockRehomed", "CollectionCreated", "CollectionRemoved",
+  "CollectionRestored", "IdeationPreviewCompleted", "GenerationCompleted",
+  "DocumentRenderCompleted", "ObjectDiscarded", "ObjectPinned", "ObjectUnpinned",
+  "ObjectSaved", "AddedToLibrary", "RemovedFromLibrary", "PromptFanOutputPromoted",
+  "ImageFocalPointCalculated",
+] as const;
+
+/** These receipts do not participate in either the creative or Canvas projections. */
+export const PROJECTION_IGNORED_EVENT_TYPES = [
+  "AttentionEpisodeObserved", "ApplicationViewVisited", "CanvasInteractionRecorded",
+  "DocumentViewVisited", "ObjectViewed", "ComparisonOpened",
+  "GenerationPreflightRequested", "GenerationPreflightCompleted", "ValidationFailed",
+] as const;
+
 export async function readEventPage(env: WorkerEnv, streamId: string, afterSequence = 0, limit = EVENT_PAGE_SIZE) {
   const pageSize=Math.max(1,Math.min(EVENT_PAGE_SIZE,Math.floor(limit)));
   const result=await env.DB.prepare("SELECT * FROM events WHERE stream_id=? AND sequence>? ORDER BY sequence ASC LIMIT ?").bind(streamId,Math.max(0,Math.floor(afterSequence)),pageSize).all<Record<string,unknown>>();
   return result.results.map(serializeEvent);
+}
+
+/** Keep a transport page and its head on the same consistent D1 snapshot. */
+export async function readEventPageWithHead(env: WorkerEnv, streamId: string, afterSequence = 0, limit = EVENT_PAGE_SIZE) {
+  const after = Math.max(0, Math.floor(afterSequence));
+  const pageSize = Math.max(1, Math.min(EVENT_PAGE_SIZE, Math.floor(limit)));
+  const [page, current] = await env.DB.batch<Record<string, unknown>>([
+    env.DB.prepare("SELECT * FROM events WHERE stream_id=? AND sequence>? ORDER BY sequence ASC LIMIT ?")
+      .bind(streamId, after, pageSize),
+    env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?")
+      .bind(streamId),
+  ]);
+  const events = (page?.results ?? []).map(serializeEvent);
+  const head = Number(current?.results[0]?.head ?? 0);
+  const nextAfter = Number(events.at(-1)?.sequence ?? after);
+  return { events, head, nextAfter, hasMore: nextAfter < head };
+}
+
+/** Read a route-specific page and its authoritative stream head in one D1 round trip. */
+export async function readProfileEventPage(
+  env: WorkerEnv,
+  streamId: string,
+  profile: EventReadProfile,
+  afterSequence = 0,
+  limit = 5000,
+) {
+  const pageSize = Math.max(1, Math.min(5000, Math.floor(limit)));
+  const eventTypes = profile === "projects" ? PROJECT_BOOTSTRAP_EVENT_TYPES : PROJECTION_IGNORED_EVENT_TYPES;
+  const placeholders = eventTypes.map(() => "?").join(",");
+  const operator = profile === "projects" ? "IN" : "NOT IN";
+  const index = profile === "projects" ? " INDEXED BY idx_events_stream_type" : "";
+  const [page, current] = await env.DB.batch<Record<string, unknown>>([
+    env.DB.prepare(`SELECT * FROM events${index} WHERE stream_id=? AND sequence>? AND type ${operator} (${placeholders}) ORDER BY sequence ASC LIMIT ?`)
+      .bind(streamId, Math.max(0, Math.floor(afterSequence)), ...eventTypes, pageSize),
+    env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(streamId),
+  ]);
+  const events = (page?.results ?? []).map(serializeEvent);
+  const head = Number(current?.results[0]?.head ?? 0);
+  // Excluded telemetry can trail the final useful event; advance past it.
+  const nextAfter = events.length < pageSize ? head : Number(events.at(-1)?.sequence ?? afterSequence);
+  return { events, head, nextAfter, hasMore: nextAfter < head, profile };
 }
 
 /** Read a complete stream in bounded D1 pages. Callers that only need transport pages should use readEventPage. */

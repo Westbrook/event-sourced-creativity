@@ -5,6 +5,7 @@ import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isD
 import { APPLICATIONS, applicationDefinition, applicationIdFromRoute, creativeCreationHref, navigationItemActive } from "../platform/applications";
 import { canvasFocusFromRoute } from "../canvas/routes";
 import { ensureModalDialog } from "./modal-dialog";
+import { completeRoutePopulation } from "../performance";
 import "./forma-attention-observer";
 
 export class FormaShell extends FormaElement {
@@ -37,7 +38,7 @@ export class FormaShell extends FormaElement {
     });
     this.#dialogObserver.observe(this, { subtree: true, childList: true, attributes: true, attributeFilter: ["open"] });
     void loadRouteComponent(location.pathname);
-    if (!this.store.events.get().length) void this.store.load();
+    if (!location.pathname.startsWith("/share/")&&!this.store.events.get().length) void this.store.load();
   }
   override disconnectedCallback() { this.#dialogObserver?.disconnect(); window.removeEventListener("keydown", this.#keydown); window.removeEventListener("popstate", this.#pop); window.removeEventListener("forma-route-changed", this.#routeChanged); super.disconnectedCallback(); }
 
@@ -50,7 +51,7 @@ export class FormaShell extends FormaElement {
     } catch { /* The toast remains a fixed fallback when popovers are unavailable. */ }
   }
 
-  protected override updated() { for(const dialog of this.querySelectorAll<HTMLDialogElement>(".command-dialog,.consent-modal,.impersonation-confirm-dialog,dialog[data-shell-modal]"))ensureModalDialog(dialog);this.#raiseToast();this.#observeApplicationView(this.store.route.get());this.#observeDocumentView(this.store.route.get()); }
+  protected override updated() { for(const dialog of this.querySelectorAll<HTMLDialogElement>(".command-dialog,.consent-modal,.impersonation-confirm-dialog,dialog[data-shell-modal]"))ensureModalDialog(dialog);this.#raiseToast();if(!this.store.loading.get()&&this.store.events.get().length&&this.store.routeDataReady())completeRoutePopulation(this.store.route.get());this.#observeApplicationView(this.store.route.get());this.#observeDocumentView(this.store.route.get()); }
 
   #observeApplicationView(path:string){
     if(this.store.loading.get()||!this.store.events.get().length)return;
@@ -185,7 +186,7 @@ export class FormaShell extends FormaElement {
       ${creativeNavigation}${canvasNavigation}
       ${this.store.error.get() ? html`<div class="error-banner" role="alert"><b>${simplifiedEditor ? "Your work could not be loaded." : "Durable stream unavailable."}</b> ${this.store.error.get()} <button @click=${() => this.store.load()}>Retry</button></div>` : nothing}
       <a class="skip-link" href="#main-content">Skip to main content</a>
-      <main id="main-content" tabindex="-1" aria-busy=${this.store.loading.get()&&!this.store.events.get().length?"true":"false"}>${this.store.loading.get()&&!this.store.events.get().length?html`<section class="application-loading" role="status"><span aria-hidden="true"></span><div><b>Opening your ${application.label.toLowerCase()} workspace</b><p>Your saved projects and creative work are being restored.</p></div></section>`:this.#page()}</main>
+      <main id="main-content" tabindex="-1" aria-busy=${this.store.loading.get()&&!this.store.events.get().length||!this.store.routeDataReady()?"true":"false"}>${this.store.loading.get()&&!this.store.events.get().length||!this.store.routeDataReady()?html`<section class="application-loading" role="status"><span aria-hidden="true"></span><div><b>Opening your ${application.label.toLowerCase()} workspace</b><p>Your saved projects and creative work are being restored.</p></div></section>`:this.#page()}</main>
       ${this.store.ui.toast ? html`<div class="toast" role="status" aria-live="polite" popover="manual">${icon("check")} ${this.store.ui.toast}</div>` : nothing}
       ${this.store.ui.commandOpen ? this.#commands() : nothing}
       ${this.store.ui.shareOpen ? this.#share() : nothing}

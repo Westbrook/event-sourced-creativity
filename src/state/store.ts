@@ -18,6 +18,8 @@ import { parseDocumentArtifactContent, type DocumentArtifactKind } from "../mode
 import { artifactContextEvents, imageOutputContextEvents } from "../model/output-context";
 import { combinedContextGroups, combinedContextRoleForBlockType } from "../model/combined-context";
 import type { VideoAudioMode, VideoDurationSeconds } from "../model/video-adapter";
+import { beginRoutePopulation, completeBackgroundHydration, performanceRouteFamily, recordEventPage, recordPopulationSource, recordSessionReady } from "../performance";
+import { matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
 
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
@@ -70,9 +72,12 @@ export class FormaStore {
   #focalAppendQueue: Promise<void> = Promise.resolve();
   #jobPollTimer = 0;
   #jobsSyncing = false;
+  #jobSyncScope = "";
+  #jobResyncRequested = false;
   #jobPollFailures = 0;
   #jobPollIssueNotified = false;
   #jobsDriving = new Set<string>();
+  #jobDetails = new Map<string, DocumentJob>();
   #jobStarts = new Set<string>();
   #readinessInFlight = new Set<string>();
   #readinessAcknowledgements = new Set<string>();
@@ -80,12 +85,24 @@ export class FormaStore {
   #pendingAdaptiveIntents = new Map<string,string>();
   #dismissedAdaptiveSuggestions = new Set<string>();
   #impersonationConfirmation?: (confirmed:boolean)=>void;
+  #historyProfile: AccountSnapshotProfile = "full";
+  #historyUpgrade?: Promise<void>;
+  #contentHydration?: Promise<void>;
+  #focalBackfillTimer = 0;
 
   constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){this.#flushPendingJobNotices();void this.syncDocumentJobs();}});}
 
   subscribe(listener: Listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   notify() { this.#listeners.forEach((listener) => listener()); }
-  #publishAppended(events:CreativeEvent[]){if(events.length){window.dispatchEvent(new CustomEvent("forma-events-appended",{detail:{events}}));if(!this.session.get()?.impersonation)queueMicrotask(()=>this.#backfillImageFocalPoints());}}
+  #publishAppended(events:CreativeEvent[]){
+    if(!events.length)return;
+    window.dispatchEvent(new CustomEvent("forma-events-appended",{detail:{events}}));
+    const needsImageMaintenance=events.some((event)=>["GenerationCompleted","IdeationPreviewCompleted","DocumentRenderCompleted","ReferenceIngested","BlockCreated"].includes(event.type));
+    if(needsImageMaintenance&&!this.session.get()?.impersonation){
+      window.clearTimeout(this.#focalBackfillTimer);
+      this.#focalBackfillTimer=window.setTimeout(()=>this.#backfillImageFocalPoints(),3_000);
+    }
+  }
   #hasFocalPoint(targetKind:"generation"|"reference"|"artifact",targetId:string){const projection=this.projection.get();const point=targetKind==="generation"?(projection.libraryOutputs.find((output)=>output.id===targetId)?.focalPoint??projection.outputs.find((output)=>output.id===targetId)?.focalPoint):targetKind==="artifact"?projection.libraryArtifacts.flatMap((artifact)=>artifact.items).find((item)=>item.id===targetId)?.focalPoint:normalizeImageFocalPoint(projection.libraryBlocks.find((block)=>block.id===targetId)?.properties.focal_point??projection.blocks.find((block)=>block.id===targetId)?.properties.focal_point);return point?.method===CURRENT_FOCAL_POINT_METHOD;}
   #backfillImageFocalPoints(){
     const projection=this.projection.get();const seen=new Set<string>();
@@ -143,11 +160,100 @@ export class FormaStore {
   #jobResultVisible(job:DocumentJob){if(document.visibilityState!=="visible")return false;if(job.sourceSurface==="canvas"&&this.route.get().startsWith("/canvas"))return true;if(!isDocumentViewRoute(this.route.get())||documentIdFromRoute(this.route.get())!==job.documentId)return false;const view=documentViewFromRoute(this.route.get());if(job.kind==="chat")return view==="chat";if(job.kind==="structure_adaptive")return view==="adaptive";return true;}
   #jobNotice(job:DocumentJob){const title=this.projection.get().documents.find((document)=>document.id===job.documentId)?.title??"your document";const labels:Record<DocumentJobKind,string>={preview:"Draft generation",generate:"Full-quality generation",prompt_fan:"Fan generation",chat:"Creative chat",structure_adaptive:"Adaptive planning",extract_reference:"Reference analysis",render_document:"Document render"};if(job.status==="partial"&&job.kind==="prompt_fan"){const completed=Number(job.result?.completedCount??0),failed=Number(job.result?.failedCount??0);return`Fan generation finished partially for ${title}: ${completed} image${completed===1?"":"s"} ready and ${failed} failed. Open the comparison for details.`;}if(job.status==="failed"){const detail=documentJobFailure(job);const guidance=generationFailureGuidance(detail,job.error??"");return`${labels[job.kind]} could not finish for ${title}. ${guidance.title}. ${guidance.summary}${detail?.requestId?` Request ${detail.requestId}.`:""}`;}const ready:Record<DocumentJobKind,string>={preview:"A draft image is ready",generate:"A full-quality image is ready",prompt_fan:"A four-image fan is ready",chat:"A chat response is ready",structure_adaptive:"An adaptive plan is ready",extract_reference:"Reference analysis is ready",render_document:"A new document artifact is ready"};return`${ready[job.kind]} in ${title}.`;}
   async #ackJob(jobId:string){try{await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/ack`,{method:"POST"});}catch{/* A later poll can offer the notice again. */}}
+  async loadDocumentJobDetail(jobId:string){
+    const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
+    const cached=this.#jobDetails.get(jobId);
+    if(cached&&cached.updatedAt===current?.updatedAt)return cached;
+    const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}`);
+    const body=await response.json() as {job?:DocumentJob;error?:string};
+    if(!response.ok||!body.job)throw new Error(body.error??"The retained generation inputs could not be loaded.");
+    this.#jobDetails.set(jobId,body.job);
+    if(this.#jobDetails.size>24)this.#jobDetails.delete(this.#jobDetails.keys().next().value!);
+    this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));
+    this.notify();
+    return body.job;
+  }
   async dismissDocumentJobFailure(jobId:string){try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/dismiss`,{method:"POST"},"dismiss this generation issue");const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok||!body.job)throw new Error(body.error??"Generation issue could not be dismissed");this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast("Generation notice dismissed. Its retained inputs remain in this document’s failure history.");this.notify();return true;}catch(error){this.toast(error instanceof Error?error.message:"Generation issue could not be dismissed");return false;}}
   async recoverDocumentRender(jobId:string){try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/retry`,{method:"POST"},"recover this completed provider render");const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok||!body.job)throw new Error(body.error??"The saved provider render could not be recovered");this.documentJobs.set([body.job,...this.documentJobs.get().filter((job)=>job.jobId!==jobId)]);this.toast("Recovering the saved Fal video. No second paid video was submitted.");this.notify();this.#driveDocumentJobs(this.documentJobs.get());this.#scheduleJobPoll(800);return true;}catch(error){this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}}
   async stopDocumentJob(jobId:string,force=false){try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/${force?"force-fail":"cancel"}`,{method:"POST"},force?"force-fail this document operation":"stop this document operation");const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok||!body.job){const messages:Record<string,string>={job_finalizing:"This operation is already finalizing and can no longer be stopped.",admin_required:"Only an administrator can force-fail an operation."};throw new Error(messages[body.error??""]??body.error??"The operation could not be stopped");}this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast(force?"Operation force-failed. Its audit receipt and released budget remain available.":"Operation stopped. Any reserved application budget was released.");await Promise.all([this.syncDocumentJobs(),this.refreshSession()]);return true;}catch(error){this.toast(error instanceof Error?error.message:"The operation could not be stopped");return false;}}
   #flushPendingJobNotices(){if(document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;const jobs=this.#pendingJobNotices.splice(0);this.toast(jobs.length===1?this.#jobNotice(jobs[0]):`${jobs.length} background document operations finished.`);for(const job of jobs)void this.#ackJob(job.jobId);}
-  async #readEventPages(after=0){let cursor=Math.max(0,after),head=cursor,first=true;const events:CreativeEvent[]=[];let content:Record<string,string>={};for(let page=0;page<500;page+=1){const response=await fetch(`/api/events?after=${cursor}&limit=2000&content=${first&&after===0?1:0}`);if(!response.ok)throw new Error(`Event stream returned ${response.status}`);const body=await response.json() as {events?:CreativeEvent[];content?:Record<string,string>;head?:number;nextAfter?:number;hasMore?:boolean};const received=body.events??[];events.push(...received);if(body.content)content={...content,...body.content};head=Math.max(0,Number(body.head??head));const next=Math.max(cursor,Number(body.nextAfter??received.at(-1)?.sequence??cursor));const hasMore=body.hasMore??next<head;if(hasMore&&next<=cursor)throw new Error("Event stream pagination did not advance");cursor=next;first=false;if(!hasMore){if(after>0&&events.some((event)=>Object.entries(event.payload).some(([key,value])=>/(?:^|_)(?:content|prompt|intent|input|response|message)_ref$/.test(key)&&typeof value==="string"&&!this.content.get()[value]))){const hydration=await fetch(`/api/events?after=${head}&limit=1&content=1`);if(hydration.ok){const hydrated=await hydration.json() as {content?:Record<string,string>};content={...content,...(hydrated.content??{})};}}return{events,content,head};}}throw new Error("Event stream exceeded the supported pagination window");}
+  async #readEventPages(after=0){return this.#readEventStream(after,"full",after===0);}
+  async #readEventStream(after:number,profile:AccountSnapshotProfile,includeContent=false){
+    let cursor=Math.max(0,after),head=cursor,first=true,initialHead=Number.POSITIVE_INFINITY;
+    const events:CreativeEvent[]=[];let content:Record<string,string>={};
+    for(let page=0;page<500;page+=1){
+      const limit=profile==="full"?2000:5000;
+      const selection=profile==="full"?"":`&profile=${profile}`;
+      const response=await fetch(`/api/events?after=${cursor}&limit=${limit}&content=${first&&includeContent?1:0}${selection}`);
+      if(!response.ok)throw new Error(`Event stream returned ${response.status}`);
+      const body=await response.json() as {events?:CreativeEvent[];content?:Record<string,string>;head?:number;nextAfter?:number;hasMore?:boolean};
+      const responseHead=Math.max(0,Number(body.head??head));
+      head=first?responseHead:Math.max(head,responseHead);
+      if(first)initialHead=head;
+      const received=(body.events??[]).filter((event)=>event.sequence<=initialHead);events.push(...received);recordEventPage(received.length);
+      if(body.content)content={...content,...body.content};
+      const next=Math.min(initialHead,Math.max(cursor,Number(body.nextAfter??received.at(-1)?.sequence??cursor)));
+      const hasMore=(body.hasMore??next<head)&&next<initialHead;
+      if(hasMore&&next<=cursor)throw new Error("Event stream pagination did not advance");
+      cursor=next;first=false;
+      if(!hasMore){
+        if(profile==="full"&&after>0&&events.some((event)=>Object.entries(event.payload).some(([key,value])=>/(?:^|_)(?:content|prompt|intent|input|response|message|statement|condition|note|output|direction)_ref$/.test(key)&&typeof value==="string"&&!this.content.get()[value]))){
+          const hydration=await fetch(`/api/events?after=${head}&limit=1&content=1`);
+          if(hydration.ok){const hydrated=await hydration.json() as {content?:Record<string,string>};content={...content,...(hydrated.content??{})};}
+        }
+        return{events,content,head:Math.min(head,initialHead)};
+      }
+    }
+    throw new Error("Event stream exceeded the supported pagination window");
+  }
+
+  #profileForRoute(path:string):AccountSnapshotProfile{
+    const family=performanceRouteFamily(path);
+    if(family==="projects")return"projects";
+    if(["operations","laboratory","sessions","scout","memory"].includes(family))return"full";
+    return"workspace";
+  }
+
+  routeDataReady(path=this.route.get()){
+    const rank=(value:AccountSnapshotProfile)=>value==="full"?2:value==="workspace"?1:0;
+    return rank(this.#historyProfile)>=rank(this.#profileForRoute(path));
+  }
+
+  #snapshotIdentity(session:PilotSession):AccountSnapshotIdentity{
+    return{userId:session.user.userId,policyVersion:session.policy.version,accepted:session.policy.accepted,impersonating:Boolean(session.impersonation)};
+  }
+
+  async #upgradeHistory(profile:AccountSnapshotProfile){
+    const rank=(value:AccountSnapshotProfile)=>value==="full"?2:value==="workspace"?1:0;
+    if(rank(this.#historyProfile)>=rank(profile))return;
+    if(this.#historyUpgrade){await this.#historyUpgrade;if(rank(this.#historyProfile)>=rank(profile))return;}
+    const upgrade=(async()=>{
+      const incoming=profile==="full"?await this.#readEventPages(0):await this.#readEventStream(0,profile,false);
+      const merged=new Map(incoming.events.map((event)=>[event.eventId,event]));
+      for(const event of this.events.get())merged.set(event.eventId,event);
+      this.events.set([...merged.values()].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));
+      if(Object.keys(incoming.content).length)this.content.set({...this.content.get(),...incoming.content});
+      this.head.set(Math.max(this.head.get(),incoming.head));
+      this.#historyProfile=profile;
+      if(profile!=="projects")completeBackgroundHydration(this.events.get().length,profile);
+      this.notify();
+      const session=this.session.get();if(session)void writeAccountSnapshot(this.#snapshotIdentity(session),this.events.get(),this.head.get(),profile);
+    })();
+    this.#historyUpgrade=upgrade;
+    try{await upgrade;}finally{if(this.#historyUpgrade===upgrade)this.#historyUpgrade=undefined;}
+  }
+
+  async #hydrateVisiblePrivateContent(){
+    if(Object.keys(this.content.get()).length||this.#contentHydration)return this.#contentHydration;
+    const hydration=(async()=>{
+      const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1`);
+      if(!response.ok)throw new Error(`Private content returned ${response.status}`);
+      const body=await response.json() as {content?:Record<string,string>};
+      if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}
+    })();
+    this.#contentHydration=hydration;
+    try{await hydration;}finally{if(this.#contentHydration===hydration)this.#contentHydration=undefined;}
+  }
   #clientEventIds(events:CreativeEvent[]){return new Set(events.map((event)=>String(event.payload.client_event_id??"")).filter(Boolean));}
   #mergeConfirmed(appended:CreativeEvent[],head=this.head.get(),remember=false){
     const known=new Set(this.events.get().map((event)=>event.eventId));const fresh=appended.filter((event)=>!known.has(event.eventId));
@@ -173,16 +279,17 @@ export class FormaStore {
     this.appendFailure.set(error||((body.rejected?.length??0)>0?body.rejected!.map((item)=>item.reason).join("; "):""));this.notify();
     return{appended,rejected:body.rejected??[],head:body.head??this.head.get(),retryable,error};
   }
-  async #refreshEvents(){const previous=this.events.get();const known=new Set(previous.map((event)=>event.eventId));const after=previous.at(-1)?.sequence??0;let replace=after===0;let body=await this.#readEventPages(after);if(body.head<after){body=await this.#readEventPages(0);replace=true;}if(!replace&&!body.events.length&&body.head===after&&!Object.keys(body.content).length)return false;const complete=replace?body.events:[...previous,...body.events.filter((event)=>!known.has(event.eventId))];this.events.set(complete);const confirmedClientIds=this.#clientEventIds(complete);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));if(Object.keys(body.content).length)this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#publishAppended(complete.filter((event)=>!known.has(event.eventId)));return true;}
+  async #refreshEvents(){const previous=this.events.get();const known=new Set(previous.map((event)=>event.eventId));const after=this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();let replace=after===0;let body=await this.#readEventPages(after);if(body.head<after){body=await this.#readEventPages(0);replace=true;this.#historyProfile="full";}if(!replace&&!body.events.length&&body.head===after&&!Object.keys(body.content).length)return false;const complete=replace?body.events:[...previous,...body.events.filter((event)=>!known.has(event.eventId))];this.events.set(complete);const confirmedClientIds=this.#clientEventIds(complete);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));if(Object.keys(body.content).length)this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#publishAppended(complete.filter((event)=>!known.has(event.eventId)));return true;}
   async refreshEvents(){if(await this.#refreshEvents())this.notify();}
-  #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);this.#jobPollTimer=window.setTimeout(()=>void this.syncDocumentJobs(),delay);}
+  #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
+  #jobScope(path=this.route.get()){const documentId=documentIdFromRoute(path);return performanceRouteFamily(path)==="projects"?"?scope=active":documentId?`?document=${encodeURIComponent(documentId)}`:"";}
   #driveDocumentJobs(jobs:DocumentJob[]){const next=[...jobs].filter((job)=>job.kind!=="prompt_fan"&&(job.status==="queued"||job.status==="running"||job.status==="committing")).sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId))[0];if(next&&(next.status==="queued"||documentJobIsStale(next))&&!this.#jobsDriving.has(next.jobId))void this.#driveDocumentJob(next);}
   async #driveDocumentJob(job:DocumentJob){this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}
-  async syncDocumentJobs(){if(this.#jobsSyncing)return;this.#jobsSyncing=true;try{const response=await fetch("/api/document-jobs");if(!response.ok)throw new Error(`Job status returned ${response.status}`);const body=await response.json() as {jobs?:DocumentJob[]};const previous=new Map(this.documentJobs.get().map((job)=>[job.jobId,job]));const jobs=body.jobs??[];this.documentJobs.set(jobs);this.#jobPollFailures=0;this.#jobPollIssueNotified=false;
-      const terminalChanges=jobs.filter((job)=>documentJobTerminal(job)&&(previous.get(job.jobId)?.status!==job.status||!previous.has(job.jobId)));const fanProgress=jobs.some((job)=>job.kind==="prompt_fan"&&previous.get(job.jobId)?.updatedAt!==job.updatedAt);const completed=terminalChanges.filter((job)=>!job.notifiedAt&&!job.parentJobId);if(terminalChanges.length||fanProgress)await Promise.all([this.#refreshEvents(),this.refreshSession()]);this.#syncAdaptiveSuggestionSets(jobs);
+  async syncDocumentJobs(){const scope=this.#jobScope();if(this.#jobsSyncing){if(scope!==this.#jobSyncScope)this.#jobResyncRequested=true;return;}this.#jobsSyncing=true;this.#jobSyncScope=scope;try{const response=await fetch(`/api/document-jobs${scope}`);if(!response.ok)throw new Error(`Job status returned ${response.status}`);const body=await response.json() as {jobs?:DocumentJob[]};if(this.#jobScope()!==scope){this.#jobResyncRequested=true;return;}const previous=new Map(this.documentJobs.get().map((job)=>[job.jobId,job]));const jobs=(body.jobs??[]).map((job)=>{const detail=this.#jobDetails.get(job.jobId);if(detail&&detail.updatedAt===job.updatedAt)return{...job,result:detail.result};if(detail)this.#jobDetails.delete(job.jobId);return job;});this.documentJobs.set(jobs);this.#jobPollFailures=0;this.#jobPollIssueNotified=false;
+      const terminalChanges=jobs.filter((job)=>documentJobTerminal(job)&&(previous.has(job.jobId)?previous.get(job.jobId)?.status!==job.status:!job.notifiedAt&&!job.parentJobId));const fanProgress=jobs.some((job)=>job.kind==="prompt_fan"&&previous.has(job.jobId)&&previous.get(job.jobId)?.updatedAt!==job.updatedAt);const completed=terminalChanges.filter((job)=>!job.notifiedAt&&!job.parentJobId);if(terminalChanges.length||fanProgress)await Promise.all([this.#refreshEvents(),this.refreshSession()]);this.#syncAdaptiveSuggestionSets(jobs);
       for(const job of completed){if(job.kind==="structure_adaptive"&&job.status==="completed"&&job.result?.structure)this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId);continue;}if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);}
-      this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(jobs.some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")?1_500:10_000);
-    }catch{this.#jobPollFailures+=1;if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}this.#scheduleJobPoll(5_000);}finally{this.#jobsSyncing=false;}}
+      this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(jobs.some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")?1_500:60_000);
+    }catch{this.#jobPollFailures+=1;if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}this.#scheduleJobPoll(5_000);}finally{this.#jobsSyncing=false;if(this.#jobResyncRequested||this.#jobScope()!==scope){this.#jobResyncRequested=false;queueMicrotask(()=>void this.syncDocumentJobs());}}}
   async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string){const documentId=documentIdOverride??this.projection.get().documentId;const requestKey=String(payload.requestKey??"");if(requestKey&&this.#jobStarts.has(requestKey))throw new Error("This exact image request is already being queued.");if(requestKey){this.#jobStarts.add(requestKey);this.notify();}try{const action=kind==="preview"?"start a draft image":kind==="generate"?"start a full-quality image":kind==="prompt_fan"?"start a four-image prompt fan":`start ${kind.replaceAll("_"," ")}`;const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action);const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness};if(body.readiness&&requestKey)this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});if(!response.ok||!body.job)throw new Error(body.message??body.error??"Document operation could not be started");const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);if(requestKey)this.#readinessAcknowledgements.delete(requestKey);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);return{job:body.job,reused:Boolean(body.reused)};}finally{if(requestKey){this.#jobStarts.delete(requestKey);this.notify();}}}
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   toast(message: string) { this.ui.toast = message; this.notify(); window.setTimeout(() => { if (this.ui.toast === message) { this.ui.toast = ""; this.notify(); } }, 2800); }
@@ -209,8 +316,16 @@ export class FormaStore {
     if (current !== routedPath) {
       if (options.replace) history.replaceState({}, "", routedPath);
       else history.pushState({}, "", routedPath);
+      if(!this.loading.get()){
+        beginRoutePopulation(routedPath);
+        recordPopulationSource("memory",this.events.get().length);
+      }
     }
     this.route.set(routedPath); this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath } }));
+    const required=this.#profileForRoute(routedPath);
+    if(required!==this.#historyProfile&&this.#historyProfile!=="full")void this.#upgradeHistory(required).catch((error)=>{console.warn("[forma-performance]",JSON.stringify({phase:"history-upgrade",message:error instanceof Error?error.message:"history_upgrade_failed"}));});
+    if(required!=="projects"&&!this.loading.get())requestAnimationFrame(()=>void this.#hydrateVisiblePrivateContent().catch(()=>undefined));
+    if(!this.loading.get()&&this.#jobScope(current)!==this.#jobScope(routedPath))requestAnimationFrame(()=>void this.syncDocumentJobs());
   }
 
   async syncDocumentFromRoute(path = this.route.get()) {
@@ -241,14 +356,46 @@ export class FormaStore {
   async forgetAttentionSignals(){window.dispatchEvent(new Event("forma-attention-forget"));const appended=await this.append({type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:this.head.get(),reason:"user-requested",device_ledger_cleared:true}});if(appended.length)this.toast("Attention episodes were forgotten and excluded from Scout and Memory.");return appended;}
 
   async load() {
+    const path=this.route.get();const profile=this.#profileForRoute(path);const started=performance.now();
+    beginRoutePopulation(path);
     this.loading.set(true); this.notify();
     try {
-      await this.refreshSession();
-      const body=await this.#readEventPages(0);
-      this.events.set(body.events); this.content.set(body.content); this.head.set(body.head); this.error.set("");
-      await this.syncDocumentFromRoute(this.route.get());
-      await this.syncDocumentJobs();
-      if(!this.session.get()?.impersonation)queueMicrotask(()=>this.#backfillImageFocalPoints());
+      // Both authenticated requests can travel to the edge concurrently. Cached
+      // account data remains invisible until the fresh server session verifies it.
+      const snapshotsPromise=readAccountSnapshots();
+      const sessionPromise=this.refreshSession();
+      const live=snapshotsPromise.then(async(snapshots)=>{
+        if(snapshots.length){
+          const verified=await sessionPromise;
+          const snapshot=matchingAccountSnapshot(snapshots,this.#snapshotIdentity(verified),profile);
+          if(snapshot)return this.#readEventStream(snapshot.head,snapshot.profile,false);
+        }
+        return this.#readEventStream(0,profile,profile==="full");
+      });
+      const [session,snapshots]=await Promise.all([sessionPromise,snapshotsPromise]);
+      recordSessionReady(started);
+      const identity=this.#snapshotIdentity(session);
+      const cached=matchingAccountSnapshot(snapshots,identity,profile);
+      if(cached){
+        this.events.set(cached.events);this.head.set(cached.head);this.#historyProfile=cached.profile;
+        recordPopulationSource("indexeddb",cached.events.length);
+        void live.then(async(current)=>{
+          if(current.head<cached.head){const restored=await this.#readEventStream(0,profile,profile==="full");this.events.set(restored.events);this.content.set(restored.content);this.head.set(restored.head);this.#historyProfile=profile;this.notify();}
+          else if(current.head>cached.head){const merged=new Map([...this.events.get(),...current.events].map((event)=>[event.eventId,event]));this.events.set([...merged.values()].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));if(Object.keys(current.content).length)this.content.set({...this.content.get(),...current.content});this.head.set(current.head);this.#publishAppended(current.events);this.notify();void writeAccountSnapshot(identity,this.events.get(),this.head.get(),this.#historyProfile);}
+        }).catch((error)=>console.warn("[forma-performance]",JSON.stringify({phase:"cache-revalidation",message:error instanceof Error?error.message:"cache_revalidation_failed"})));
+      }else{
+        const body=await live;
+        this.events.set(body.events);this.content.set(body.content);this.head.set(body.head);this.#historyProfile=profile;
+        recordPopulationSource("miss",body.events.length);
+        void writeAccountSnapshot(identity,body.events,body.head,profile);
+      }
+      this.error.set("");this.loading.set(false);this.notify();
+      requestAnimationFrame(()=>{
+        void this.syncDocumentFromRoute(this.route.get());
+        void this.syncDocumentJobs();
+        if(profile!=="projects")void this.#hydrateVisiblePrivateContent().catch(()=>undefined);
+        if(profile==="projects")window.setTimeout(()=>void this.#upgradeHistory("workspace").catch(()=>undefined),1_500);
+      });
     } catch (error) { this.error.set(error instanceof Error ? error.message : "Unable to load event stream"); }
     finally { this.loading.set(false); this.notify(); }
   }
@@ -414,8 +561,15 @@ export class FormaStore {
   async openProject(projectId:string,destination="/") {
     const projection=this.projection.get();if(!projectId||projectId===projection.projectId){this.setRoute(destination);return true;}
     const target=projection.projects.find((project)=>project.id===projectId);if(!target){this.toast("That project is no longer available.");return false;}
-    const appended=await this.append({type:"ProjectOpened",payload:{project_id:projectId,previous_project_id:projection.projectId,source_surface:"projects"}});
-    if(!appended.length)return false;this.patchUi({focusBlockId:"",focusCollectionId:"",selectedOutputId:"",compareOpen:false});this.setRoute(destination);this.toast(`${target.name} opened in Studio.`);return true;
+    const previousRoute=this.route.get(),clientEventId=crypto.randomUUID(),now=new Date().toISOString();
+    const input:EventInput={type:"ProjectOpened",payload:{project_id:projectId,previous_project_id:projection.projectId,source_surface:"projects",client_event_id:clientEventId}};
+    const optimistic:CreativeEvent={eventId:`optimistic:${clientEventId}`,streamId:"optimistic:project",sequence:this.head.get()+1,occurredAt:now,recordedAt:now,actor:"user",clientId:"web:project-optimistic",correlationId:clientEventId,causationId:null,compensatesEventId:null,schemaVersion:1,type:input.type,payload:input.payload};
+    this.optimisticEvents.set([...this.optimisticEvents.get(),optimistic]);
+    this.patchUi({focusBlockId:"",focusCollectionId:"",selectedOutputId:"",compareOpen:false});this.setRoute(destination);
+    const appended=await this.append(input,{rebaseAttempts:6,silent:true});
+    this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>event.eventId!==optimistic.eventId));
+    if(!appended.length){this.setRoute(previousRoute,{replace:true});this.toast("That project could not be opened. Your current workspace was restored.");return false;}
+    this.notify();this.toast(`${target.name} opened in Studio.`);return true;
   }
 
   async openDocument(documentId: string, destination="/", sourceSurface?: string) {

@@ -208,7 +208,7 @@ test("packages first-class HTML entry points for every named application route",
   const rootEntry = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
   const shareEntry = await readFile(new URL("../dist/client/share/index.html", import.meta.url), "utf8");
   assert.match(rootEntry, /data-forma-route-module="\/"/); assert.match(shareEntry, /data-forma-application="creative"/);
-  assert.match(config, /manifest: true/); assert.match(config, /run_worker_first: \["\/\*"\]/); assert.match(worker, /resolveServerRoute\(url\.pathname\)/); assert.match(worker, /x-forma-route-family/); assert.doesNotMatch(worker, /entryPath=.*index\.html/); assert.match(applications,/resolveServerRoute/);assert.match(applications,/\/document\\\/\[\^\/\]\+/);assert.match(applications,/\/library\\\//);
+  assert.match(config, /manifest: true/); assert.match(config, /run_worker_first: \["\/\*", "!\/assets\/\*"\]/); assert.match(worker, /resolveServerRoute\(url\.pathname\)/); assert.match(worker, /x-forma-route-family/); assert.doesNotMatch(worker, /entryPath=.*index\.html/); assert.match(applications,/resolveServerRoute/);assert.match(applications,/\/document\\\/\[\^\/\]\+/);assert.match(applications,/\/library\\\//);
   assert.match(plugin,/SITE_ROUTE_ENTRIES/);assert.match(routeLoader,/\.\/apps\/creative\/entry/);assert.match(routeLoader,/\.\/apps\/operations\/entry/);assert.match(routeLoader,/\.\/apps\/laboratory\/entry/);
   assert.match(shell, /addEventListener\("forma-route-changed", this\.#routeChanged\)/); assert.match(shell, /loadRouteComponent\(path\)/);
   assert.match(shell,/forma-creative-application/);assert.match(shell,/forma-operations-application/);assert.match(shell,/forma-laboratory-application/);

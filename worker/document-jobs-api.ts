@@ -109,17 +109,19 @@ function queueRecoveryPresentation(row: DocumentJobRow, recoveryBlocker: Documen
   return null;
 }
 
-function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | null = null) {
+function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | null = null, detail = true) {
   const parsed = parseResult(row); const result = row.result_json ? parsed : null; const request = parseRequest(row); const identity = generationRequestIdentity(row.kind, request, row.document_id);
   const members = Array.isArray(parsed.members) ? parsed.members : [];
   const recovery = queueRecoveryPresentation(row, recoveryBlocker);
   const visibleResult = row.kind === "render_document" && request.artifactKind
     ? { ...(result ?? {}), artifactKind: String(parsed.artifactKind ?? request.artifactKind) }
     : result;
+  const summarizedResult = detail || !visibleResult ? visibleResult
+    : Object.fromEntries(Object.entries(visibleResult).filter(([key]) => !["plannerInput", "videoInputReceipt", "artifactPlan"].includes(key)));
   return {
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
     requestedSequence: Number(row.requested_sequence), documentRevision: identity.documentRevision, requestKey: identity.requestKey, sourcePreviewId: identity.sourcePreviewId, promptTechnique: identity.promptTechnique, promptFanId: identity.promptFanId,
-    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result: visibleResult, error: row.error_message, errorDetail: errorDetailFromResult(parsed), moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
+    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result: summarizedResult, error: row.error_message, errorDetail: errorDetailFromResult(parsed), moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
     requestedAt: row.requested_at, startedAt: row.started_at, completedAt: row.completed_at, notifiedAt: row.notified_at,
     leaseExpiresAt: row.lease_expires_at, updatedAt: row.updated_at,
     stage: recovery?.stage ?? String(parsed.stage ?? row.status), progressMessage: recovery?.progressMessage ?? String(parsed.progressMessage ?? ""),
@@ -383,9 +385,13 @@ async function stopGenerationJob(env: WorkerEnv, user: PilotUser, target: Docume
 
 export async function handleDocumentJobs(request: Request, env: WorkerEnv, path = "", context?: WorkerExecutionContext) {
   await ensureSchema(env); const auth = await requireUser(request, env, request.method === "GET" ? "viewer" : "creator"); if (auth.response || !auth.user) return auth.response!; const user = auth.user;
-  await reconcileFailedBudgetReservations(env,user);
   const now = new Date().toISOString();
-  await env.DB.prepare("UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)").bind(now, user.userId, now).run();
+  // Polling is an observation. Do not force the D1 primary to reconcile and
+  // rewrite historical jobs every time an idle browser checks its status.
+  if(request.method!=="GET"){
+    await reconcileFailedBudgetReservations(env,user);
+    await env.DB.prepare("UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)").bind(now, user.userId, now).run();
+  }
 
   if ((path.endsWith("/cancel") || path.endsWith("/force-fail")) && request.method === "POST") {
     const force = path.endsWith("/force-fail");
@@ -458,27 +464,58 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
 
   if (request.method === "GET") {
     const requestedJob = path ? await readJob(env, user.userId, decodeURIComponent(path)) : null;
-    const readVisibleJobs = () => env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND (status IN ('queued','running','committing') OR notified_at IS NULL OR (kind IN ('preview','generate','prompt_fan','render_document') AND status IN ('failed','partial') AND expires_at>?)) ORDER BY CASE WHEN status IN ('queued','running','committing') THEN 0 ELSE 1 END,requested_at DESC LIMIT 120").bind(user.userId, now).all<DocumentJobRow>();
+    if(path&&requestedJob&&documentJobTerminal(requestedJob)&&Date.parse(requestedJob.expires_at)<=Date.now())return Response.json({error:"job_not_found"},{status:404});
+    const query = new URL(request.url).searchParams;
+    const activeOnly = query.get("scope") === "active";
+    const documentScope = query.get("document")?.trim().slice(0, 160) ?? "";
+    // Failure checkpoints remain durable, but large provider/planner inputs
+    // belong to the explicitly requested detail view, not every idle poll.
+    const readVisibleJobs = () => env.DB.prepare(`SELECT job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,
+      CASE WHEN json_extract(request_json,'$.documentRevision') IS NULL THEN request_json ELSE json_object(
+        'documentRevision',json_extract(request_json,'$.documentRevision'),'requestKey',json_extract(request_json,'$.requestKey'),
+        'sourcePreviewId',json_extract(request_json,'$.sourcePreviewId'),'promptTechnique',json_extract(request_json,'$.promptTechnique'),
+        'promptFanId',json_extract(request_json,'$.promptFanId'),'parentJobId',json_extract(request_json,'$.parentJobId'),
+        'fanKind',json_extract(request_json,'$.fanKind'),'artifactKind',json_extract(request_json,'$.artifactKind')
+      ) END AS request_json,
+      json_remove(result_json,'$.plannerInput','$.videoInputReceipt','$.artifactPlan') AS result_json,
+      error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at
+      FROM document_jobs WHERE owner_id=? AND (status IN ('queued','running','committing') OR (notified_at IS NULL AND expires_at>?) OR (kind IN ('preview','generate','prompt_fan','render_document') AND status IN ('failed','partial') AND expires_at>?))
+      AND (?=0 OR status IN ('queued','running','committing') OR notified_at IS NULL)
+      AND (?='' OR status IN ('queued','running','committing') OR notified_at IS NULL OR document_id=?)
+      ORDER BY CASE WHEN status IN ('queued','running','committing') THEN 0 ELSE 1 END,requested_at DESC LIMIT 120`).bind(user.userId, now, now, Number(activeOnly), documentScope, documentScope).all<DocumentJobRow>();
     let rows = path ? requestedJob ? [requestedJob] : [] : (await readVisibleJobs()).results;
     let reconciled = false;
     const repairCandidates = rows.filter((row) => row.status === "failed" && /Wrong number of parameter bindings/i.test(row.error_message ?? ""));
     if (repairCandidates.length) {
       const events = await readEvents(env, user.streamId);
-      for (const row of repairCandidates) if (await repairMisreportedTerminalJob(env, row, events)) reconciled = true;
+      for (const row of repairCandidates) {
+        const retained = path ? row : await readJob(env, user.userId, row.job_id);
+        if (retained && await repairMisreportedTerminalJob(env, retained, events)) reconciled = true;
+      }
     }
-    const parents = rows.filter((row) => row.kind === "prompt_fan");
+    const parents = rows.filter((row) => row.kind === "prompt_fan" && ["queued","running","committing"].includes(row.status));
     for (const parent of parents) await reconcilePromptFanParent(env, user.userId, parent.job_id);
     reconciled = reconciled || parents.length > 0;
-    for (const row of rows) if (rowIsStale(row) && row.attempt_count >= documentJobMaxAttempts(row.kind)) { await failStaleJob(env, user, row); reconciled = true; }
+    for (const row of rows) if (rowIsStale(row) && row.attempt_count >= documentJobMaxAttempts(row.kind)) {
+      // A compact list row must never replace the retained recovery checkpoint.
+      const retained = path ? row : await readJob(env, user.userId, row.job_id);
+      if (retained && rowIsStale(retained) && retained.attempt_count >= documentJobMaxAttempts(retained.kind)) {
+        await failStaleJob(env, user, retained);
+        reconciled = true;
+      }
+    }
     if (reconciled) {
       const refreshed = path ? await readJob(env, user.userId, decodeURIComponent(path)) : null;
       rows = path ? refreshed ? [refreshed] : [] : (await readVisibleJobs()).results;
     }
-    const activeBlocker = await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId).first<DocumentJobRow>();
+    const visibleBlocker = [...rows].filter((row)=>row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
+    const activeBlocker = path
+      ? await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId).first<DocumentJobRow>()
+      : visibleBlocker;
     const recoveryBlocker = activeBlocker && rowIsStale(activeBlocker) ? activeBlocker : null;
     if (recoveryBlocker) context?.waitUntil(driveDocumentQueue(env, user));
     if (path && !rows.length) return Response.json({ error: "job_not_found" }, { status: 404 });
-    return Response.json(path ? { job: serializeJob(rows[0], recoveryBlocker) } : { jobs: rows.map((row) => serializeJob(row, recoveryBlocker)) });
+    return Response.json(path ? { job: serializeJob(rows[0], recoveryBlocker) } : { jobs: rows.map((row) => serializeJob(row, recoveryBlocker, false)) });
   }
 
   if (path || request.method !== "POST") return new Response("Method not allowed", { status: 405 });
