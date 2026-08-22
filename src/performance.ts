@@ -8,11 +8,16 @@ type RoutePopulation = {
   populatedMs: number;
   routeLatencyMs: number;
   sessionMs: number;
+  sessionSource: "document" | "request" | null;
+  sessionServerMs: number | null;
   apiRequests: number;
   apiTransferBytes: number;
   apiServerMs: number;
   apiBreakdown: Array<{ path: string; requests: number; durationMs: number; serverMs: number; transferBytes: number }>;
   ttfbMs: number | null;
+  responseEndMs: number | null;
+  firstAssetMs: number | null;
+  assetHeadStartMs: number | null;
   fcpMs: number | null;
   lcpMs: number | null;
   inpMs: number | null;
@@ -29,6 +34,9 @@ const metrics = {
   sessionMs: 0,
   populationStartedAt: 0,
   ttfbMs: null as number | null,
+  responseEndMs: null as number | null,
+  firstAssetMs: null as number | null,
+  assetHeadStartMs: null as number | null,
   fcpMs: null as number | null,
   lcpMs: null as number | null,
   inpMs: null as number | null,
@@ -77,6 +85,25 @@ function installFieldMetrics() {
   if (navigation?.responseStart) {
     metrics.ttfbMs = rounded(navigation.responseStart);
     root().formaTtfbMs = String(metrics.ttfbMs);
+  }
+  if (navigation?.responseEnd) {
+    metrics.responseEndMs = rounded(navigation.responseEnd);
+    root().formaResponseEndMs = String(metrics.responseEndMs);
+    const assets = performance.getEntriesByType("resource").filter((entry) => {
+      try {
+        const url = new URL(entry.name);
+        return url.origin === location.origin && url.pathname.startsWith("/assets/") && /\.(?:js|css)$/.test(url.pathname) && entry.startTime > 0;
+      } catch {
+        return false;
+      }
+    });
+    const first = assets.reduce((earliest, entry) => Math.min(earliest, entry.startTime), Number.POSITIVE_INFINITY);
+    if (Number.isFinite(first)) {
+      metrics.firstAssetMs = rounded(first);
+      metrics.assetHeadStartMs = rounded(navigation.responseEnd - first);
+      root().formaFirstAssetMs = String(metrics.firstAssetMs);
+      root().formaAssetHeadStartMs = String(metrics.assetHeadStartMs);
+    }
   }
 
   observe("paint", (entry) => {
@@ -141,13 +168,16 @@ export function beginRoutePopulation(path: string) {
   root().formaCache = "miss";
   delete root().formaPopulatedMs;
   delete root().formaRouteLatencyMs;
+  delete root().formaSessionSource;
+  delete root().formaSessionServerMs;
   metrics.completed.clear();
   performance.mark("forma:population-start");
 }
 
-export function recordSessionReady(startedAt: number) {
+export function recordSessionReady(startedAt: number, source: "document" | "request" = "request") {
   metrics.sessionMs = rounded(performance.now() - startedAt);
   root().formaSessionMs = String(metrics.sessionMs);
+  root().formaSessionSource = source;
   root().formaPhase = "events";
   performance.mark("forma:session-ready");
 }
@@ -213,11 +243,16 @@ export function completeRoutePopulation(path: string, retry = 0) {
       populatedMs,
       routeLatencyMs:rounded(populatedMs-metrics.populationStartedAt),
       sessionMs:metrics.sessionMs,
+      sessionSource:root().formaSessionSource==="document"?"document":root().formaSessionSource==="request"?"request":null,
+      sessionServerMs:root().formaSessionServerMs===undefined?null:Number(root().formaSessionServerMs),
       apiRequests:metrics.resources.length,
       apiTransferBytes:metrics.resources.reduce((total,resource)=>total+resource.transferBytes,0),
       apiServerMs:rounded(metrics.resources.reduce((total,resource)=>total+resource.serverMs,0)),
       apiBreakdown,
       ttfbMs: metrics.ttfbMs,
+      responseEndMs: metrics.responseEndMs,
+      firstAssetMs: metrics.firstAssetMs,
+      assetHeadStartMs: metrics.assetHeadStartMs,
       fcpMs: metrics.fcpMs,
       lcpMs: metrics.lcpMs,
       inpMs: metrics.inpMs,

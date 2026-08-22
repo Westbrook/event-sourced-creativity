@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import worker from "../dist/server/index.js";
 import { foldEvents } from "../src/model/events.ts";
 import { performanceRouteFamily } from "../src/performance.ts";
+import { consumeSessionBootstrap } from "../src/state/session-bootstrap.ts";
 
 function measuredDatabase() {
   const sqlite = new DatabaseSync(":memory:");
@@ -69,6 +70,29 @@ async function productionWorker() {
   assert.equal((await request("/api/events?after=0&limit=2000&content=0")).status, 200);
   database.reset();
   return { database, environment, request };
+}
+
+function htmlAssets(environment) {
+  const html = '<!doctype html><html><head><script type="module" src="/assets/main.js"></script><link rel="stylesheet" href="/assets/main.css"></head><body><forma-shell></forma-shell></body></html>';
+  const requests = [];
+  environment.ASSETS.fetch = async (request) => {
+    requests.push(request);
+    return new Response(request.method === "HEAD" ? null : html, {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "public, max-age=3600",
+        "content-length": String(new TextEncoder().encode(html).length),
+        etag: '"public-shell"',
+        "last-modified": "Wed, 21 Aug 2026 12:00:00 GMT",
+      },
+    });
+  };
+  return { html, requests };
+}
+
+function embeddedSession(html) {
+  const match = /<script id="forma-session-bootstrap" type="application\/json" data-server-ms="([\d.]+)">([\s\S]*?)<\/script>/.exec(html);
+  return match ? { serverMs: Number(match[1]), session: JSON.parse(match[2]), raw: match[2] } : null;
 }
 
 function addTerminalPromptFans(sqlite, count = 2) {
@@ -147,6 +171,211 @@ test("steady-state account sessions use three read-only D1 calls", async () => {
   assert.equal(database.writeCount(), 0);
   assert.match(response.headers.get("server-timing") ?? "", /app;dur=/);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
+});
+
+test("private app HTML streams a fresh authenticated session before the application shell", async () => {
+  const { database, environment, request } = await productionWorker();
+  const assets = htmlAssets(environment);
+  const response = await request("/projects", { headers: { "if-none-match": '"public-shell"' } });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.match(response.headers.get("vary") ?? "", /Cookie/i);
+  assert.match(response.headers.get("vary") ?? "", /oai-authenticated-user-id/i);
+  assert.equal(response.headers.has("etag"), false);
+  assert.equal(response.headers.has("content-length"), false);
+  assert.equal(response.headers.has("last-modified"), false);
+  assert.equal(response.headers.get("x-forma-route-family"), "/projects");
+  assert.equal(assets.requests[0].headers.has("if-none-match"), false);
+
+  const reader = response.body.getReader();
+  const prefix = new TextDecoder().decode((await reader.read()).value);
+  assert.match(prefix, /<script type="module" src="\/assets\/main\.js">/);
+  assert.match(prefix, /<link rel="stylesheet"/);
+  assert.match(prefix, /<body>$/);
+  assert.doesNotMatch(prefix, /forma-shell|forma-session-bootstrap/);
+
+  let suffix = "";
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    suffix += new TextDecoder().decode(chunk.value);
+  }
+  const bootstrap = embeddedSession(suffix);
+  assert.ok(bootstrap);
+  assert.equal(bootstrap.session.user.userId, "dev-local-creative");
+  assert.equal(bootstrap.session.policy.accepted, true);
+  assert.equal(bootstrap.session.impersonation, null);
+  assert.ok(Number.isFinite(bootstrap.serverMs));
+  assert.ok(suffix.indexOf("forma-session-bootstrap") < suffix.indexOf("<forma-shell>"));
+  assert.equal(database.calls.length, 3, `expected one authenticated navigation with 3 D1 reads; got ${database.calls.length}`);
+  assert.equal(database.writeCount(), 0);
+});
+
+test("streamed impersonation preserves fictional identity, actor billing, and cache isolation", async () => {
+  const { database, environment, request } = await productionWorker();
+  htmlAssets(environment);
+  const now = new Date().toISOString();
+  const expires = new Date(Date.now() + 3_600_000).toISOString();
+  database.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)")
+    .run("fictional-user", "fictional@example.com", "Fictional creative", "creator", "pilot-2026-08-10", now, now, now);
+  database.sqlite.prepare("INSERT INTO replay_personas(persona_id,session_id,owner_id,fictional_user_id,fictional_stream_id,display_name,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)")
+    .run("persona-1", "replay-1", "dev-local-creative", "fictional-user", "creative:fictional-user", "Fictional creative", "ready", now, now);
+  database.sqlite.prepare("INSERT INTO impersonation_sessions(impersonation_id,actor_user_id,persona_id,fictional_user_id,replay_session_id,status,started_at,expires_at) VALUES(?,?,?,?,?,?,?,?)")
+    .run("imp-1", "dev-local-creative", "persona-1", "fictional-user", "replay-1", "active", now, expires);
+  database.sqlite.prepare("UPDATE budget_counters SET used_tokens=? WHERE scope=? AND scope_id=?")
+    .run(314, "user", "dev-local-creative");
+  database.reset();
+
+  const response = await request("/projects", { headers: { cookie: "forma_impersonation=imp-1" } });
+  const embedded = embeddedSession(await response.text());
+  assert.ok(embedded);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.equal(embedded.session.user.userId, "fictional-user");
+  assert.equal(embedded.session.user.billingUserId, "dev-local-creative");
+  assert.equal(embedded.session.impersonation.active, true);
+  assert.equal(embedded.session.impersonation.actor.userId, "dev-local-creative");
+  assert.equal(embedded.session.impersonation.fictionalUser.userId, "fictional-user");
+  assert.equal(embedded.session.budgets.user.used, 314);
+  assert.equal(embedded.session.canvas.access, false);
+  assert.equal(database.calls.length, 4);
+
+  const { matchingAccountSnapshot } = await import("../src/state/account-cache.ts");
+  const identity = { userId: "fictional-user", policyVersion: embedded.session.policy.version, accepted: true, impersonating: true };
+  const snapshot = { key: `fictional-user:${identity.policyVersion}:v1`, userId: identity.userId, policyVersion: identity.policyVersion, profile: "workspace", head: 1, events: [{}], savedAt: Date.now(), schemaVersion: 1 };
+  assert.equal(matchingAccountSnapshot([snapshot], identity, "workspace"), null);
+});
+
+test("HTML resource discovery starts while server authentication is still pending", async () => {
+  const { environment, request } = await productionWorker();
+  htmlAssets(environment);
+  const prepare = environment.DB.prepare;
+  let resume;
+  const gate = new Promise((resolve) => { resume = resolve; });
+  environment.DB.prepare = (sql) => {
+    const statement = prepare.call(environment.DB, sql);
+    if (!/SELECT \* FROM users WHERE user_id=\?/i.test(sql)) return statement;
+    return {
+      bind(...values) {
+        const bound = statement.bind(...values);
+        return { async first() { await gate; return bound.first(); } };
+      },
+    };
+  };
+
+  const response = await request("/projects");
+  const reader = response.body.getReader();
+  const first = new TextDecoder().decode((await reader.read()).value);
+  assert.match(first, /\/assets\/main\.js/);
+  assert.match(first, /\/assets\/main\.css/);
+  assert.doesNotMatch(first, /forma-session-bootstrap|forma-shell/);
+
+  resume();
+  let remaining = "";
+  while (true) {
+    const part = await reader.read();
+    if (part.done) break;
+    remaining += new TextDecoder().decode(part.value);
+  }
+  assert.ok(embeddedSession(remaining));
+  assert.match(remaining, /<forma-shell>/);
+});
+
+test("public sharing, HEAD requests, and unauthenticated HTML never contain another user's session", async () => {
+  const { database, environment, request } = await productionWorker();
+  htmlAssets(environment);
+
+  for (const [path, options] of [["/share/public-token", undefined], ["/share", undefined], ["/projects", { method: "HEAD" }]]) {
+    database.reset();
+    const response = await request(path, options);
+    assert.equal(response.headers.get("cache-control"), "public, max-age=3600");
+    assert.equal(response.headers.get("etag"), '"public-shell"');
+    assert.equal(database.calls.length, 0, `${path} must not access account data`);
+    assert.doesNotMatch(await response.text(), /forma-session-bootstrap/);
+  }
+
+  database.reset();
+  const anonymous = await worker.fetch(new Request("https://anonymous.forma.example/projects"), environment, { waitUntil() {} });
+  assert.equal(anonymous.headers.get("cache-control"), "public, max-age=3600");
+  assert.equal(database.calls.length, 0);
+  assert.doesNotMatch(await anonymous.text(), /forma-session-bootstrap/);
+});
+
+test("streamed session JSON escapes hostile account names without losing trusted identity", async () => {
+  const { environment, request } = await productionWorker();
+  htmlAssets(environment);
+  const displayName = '</script><script>alert("private-account")</script>&\u2028';
+  const response = await request("/projects", {
+    headers: {
+      "oai-authenticated-user-id": "dev-local-creative",
+      "oai-authenticated-user-email": "creative@local.forma",
+      "oai-authenticated-user-full-name": encodeURIComponent(displayName),
+      "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
+    },
+  });
+  const html = await response.text();
+  const bootstrap = embeddedSession(html);
+
+  assert.ok(bootstrap);
+  assert.equal(bootstrap.session.user.displayName, displayName);
+  assert.match(bootstrap.raw, /\\u003c\/script\\u003e/);
+  assert.match(bootstrap.raw, /\\u0026\\u2028/);
+  assert.equal((html.match(/<script\b/g) ?? []).length, 2);
+});
+
+test("embedded sessions are consumed once and malformed payloads fail closed", () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const session = {
+    user: { userId: "private-account" },
+    policy: { version: "pilot-2026-08-10", accepted: false },
+    provider: { configured: false },
+    budgets: { user: {}, workspace: {} },
+    impersonation: null,
+  };
+
+  try {
+    for (const [source, expected] of [
+      [JSON.stringify(session), session],
+      ["{broken", null],
+      [JSON.stringify({ ...session, user: {} }), null],
+      [JSON.stringify({ ...session, policy: { version: session.policy.version } }), null],
+      [JSON.stringify({ ...session, budgets: { user: {} } }), null],
+    ]) {
+      let removed = false;
+      const node = { textContent: source, dataset: { serverMs: "143.5" }, remove() { removed = true; } };
+      const dataset = {};
+      Object.defineProperty(globalThis, "document", {
+        configurable: true,
+        value: { querySelector: () => removed ? null : node, documentElement: { dataset } },
+      });
+
+      assert.deepEqual(consumeSessionBootstrap(), expected);
+      assert.equal(removed, true);
+      assert.equal(consumeSessionBootstrap(), null);
+      assert.equal(dataset.formaSessionServerMs, expected ? "143.5" : undefined);
+    }
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "document", previous);
+    else delete globalThis.document;
+  }
+});
+
+test("failed embedded authentication preserves the original application shell", async () => {
+  const { environment, request } = await productionWorker();
+  htmlAssets(environment);
+  const prepare = environment.DB.prepare;
+  environment.DB.prepare = (sql) => {
+    const statement = prepare.call(environment.DB, sql);
+    if (!/SELECT \* FROM users WHERE user_id=\?/i.test(sql)) return statement;
+    return { bind() { return { async first() { throw new Error("temporary database outage"); } }; } };
+  };
+
+  const response = await request("/projects");
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.match(html, /<forma-shell><\/forma-shell>/);
+  assert.doesNotMatch(html, /forma-session-bootstrap/);
 });
 
 test("route-specific projects are complete, private, and fetched in one D1 batch", async () => {

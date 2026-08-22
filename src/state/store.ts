@@ -19,6 +19,7 @@ import { combinedContextGroups, combinedContextRoleForBlockType } from "../model
 import type { VideoAudioMode, VideoDurationSeconds } from "../model/video-adapter";
 import { beginRoutePopulation, completeBackgroundHydration, performanceRouteFamily, recordEventPage, recordPopulationSource, recordSessionReady } from "../performance";
 import { matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
+import { consumeSessionBootstrap } from "./session-bootstrap";
 
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
@@ -360,10 +361,11 @@ export class FormaStore {
     beginRoutePopulation(path);
     this.loading.set(true); this.notify();
     try {
-      // Both authenticated requests can travel to the edge concurrently. Cached
-      // account data remains invisible until the fresh server session verifies it.
+      // The document's streamed session is verified on this exact request. Cached
+      // account data remains invisible until that authoritative identity is known.
       const snapshotsPromise=readAccountSnapshots();
-      const sessionPromise=this.refreshSession();
+      const bootstrap=consumeSessionBootstrap();
+      const sessionPromise=bootstrap?Promise.resolve(this.#applySession(bootstrap)):this.refreshSession();
       const live=snapshotsPromise.then(async(snapshots)=>{
         if(snapshots.length){
           const verified=await sessionPromise;
@@ -373,7 +375,7 @@ export class FormaStore {
         return this.#readEventStream(0,profile,profile==="full");
       });
       const [session,snapshots]=await Promise.all([sessionPromise,snapshotsPromise]);
-      recordSessionReady(started);
+      recordSessionReady(started,bootstrap?"document":"request");
       const identity=this.#snapshotIdentity(session);
       const cached=matchingAccountSnapshot(snapshots,identity,profile);
       if(cached){
@@ -399,9 +401,11 @@ export class FormaStore {
     finally { this.loading.set(false); this.notify(); }
   }
 
+  #applySession(body:PilotSession){const previousUserId=this.session.get()?.user.userId;this.session.set(body);if(body.impersonation){this.ui.attentionCapture=false;this.ui.attentionPaused=true;}else if(previousUserId!==body.user.userId){this.ui.attentionCapture=readAttentionPreference(body.user.userId);this.ui.attentionPaused=false;}this.notify();return body;}
+
   async refreshSession() {
     const response = await fetch("/api/session"); const body = await response.json() as PilotSession & { error?: string };
-    if (!response.ok) throw new Error(body.error ?? "Authentication required");const previousUserId=this.session.get()?.user.userId;this.session.set(body);if(body.impersonation){this.ui.attentionCapture=false;this.ui.attentionPaused=true;}else if(previousUserId!==body.user.userId){this.ui.attentionCapture=readAttentionPreference(body.user.userId);this.ui.attentionPaused=false;} this.notify(); return body;
+    if (!response.ok) throw new Error(body.error ?? "Authentication required");return this.#applySession(body);
   }
 
   async acceptTerms() {

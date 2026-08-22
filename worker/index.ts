@@ -10,6 +10,7 @@ import { handleAnalytics } from "./analytics-api";
 import { handleGenerationReadiness } from "./generation-readiness";
 import { handleCanvasGovernance } from "./canvas-governance-api";
 import { handleImageAdapters } from "./image-adapters-api";
+import { streamNavigationSession } from "./session-bootstrap";
 
 async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const url=new URL(request.url);
@@ -39,7 +40,13 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       const route=resolveServerRoute(url.pathname);
       if(route){
         const entryUrl=new URL(route.entryPath,url);
-        const response=await env.ASSETS.fetch(new Request(entryUrl,request));
+        const trustedIdentity=Boolean(request.headers.get("oai-authenticated-user-id")&&request.headers.get("oai-authenticated-user-email")||request.headers.get("cf-access-authenticated-user-email")||url.hostname==="localhost"||url.hostname==="127.0.0.1");
+        const personalize=request.method==="GET"&&!url.pathname.startsWith("/share")&&trustedIdentity;
+        const authenticatedStarted=performance.now();
+        const authenticated=personalize?handleSession(request,env,context).catch(()=>null):null;
+        const asset=await env.ASSETS.fetch(personalize?new Request(entryUrl):new Request(entryUrl,request));
+        const encoding=(asset.headers.get("content-encoding")??"identity").trim().toLowerCase();
+        const response=personalize&&asset.ok&&asset.body&&/text\/html/i.test(asset.headers.get("content-type")??"")&&encoding==="identity"?streamNavigationSession(asset,authenticated!,authenticatedStarted):asset;
         const headers=new Headers(response.headers);
         headers.set("x-forma-route-family",route.canonicalFamily);
         headers.set("x-forma-application",route.application);
