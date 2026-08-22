@@ -13,6 +13,11 @@ type RoutePopulation = {
   sessionSource: "document" | "prefetch" | "preload" | "request" | null;
   sessionServerMs: number | null;
   sessionHeadStartMs: number | null;
+  routeDataSource: "prefetch" | null;
+  routePrefetchPath: string | null;
+  routePrefetchStartedMs: number | null;
+  routePrefetchAdoptedMs: number | null;
+  routePrefetchHeadStartMs: number | null;
   privateContentState: string | null;
   privateContentReadyMs: number | null;
   navigationSource: "worker" | "static" | null;
@@ -30,7 +35,7 @@ type RoutePopulation = {
   cls: number;
 };
 
-type RecordedResource = { path: string; durationMs: number; serverMs: number; transferBytes: number; decodedBytes: number };
+type RecordedResource = { name: string; startTime: number; path: string; durationMs: number; serverMs: number; transferBytes: number; decodedBytes: number };
 
 const metrics = {
   routeFamily: "unknown",
@@ -110,6 +115,22 @@ function observe(type: string, callback: (entry: PerformanceEntry) => void, opti
   }
 }
 
+function recordApiResource(resource: PerformanceResourceTiming) {
+  let url: URL;
+  try { url = new URL(resource.name); } catch { return; }
+  if (url.origin !== location.origin || !url.pathname.startsWith("/api/")) return;
+  if (metrics.resources.some((item) => item.name === resource.name && item.startTime === resource.startTime)) return;
+  const path = url.pathname.startsWith("/api/media/") ? "/api/media/:key"
+    : url.pathname.startsWith("/api/shared/") ? "/api/shared/:token"
+    : url.pathname.startsWith("/api/document-jobs/") ? "/api/document-jobs/:job"
+    : url.pathname;
+  const serverMs = rounded(Number(resource.serverTiming?.find((timing) => timing.name === "app")?.duration ?? 0));
+  metrics.resources.push({ name: resource.name, startTime: resource.startTime, path, durationMs: rounded(resource.duration), serverMs, transferBytes: resource.transferSize, decodedBytes: resource.decodedBodySize });
+  if (metrics.resources.length > 80) metrics.resources.shift();
+  root().formaApiRequests = String(metrics.resources.length);
+  root().formaApiPaths = [...new Set(metrics.resources.map((item) => item.path))].join(",");
+}
+
 function installFieldMetrics() {
   const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
   if(navigation){metrics.navigationSource=navigation.serverTiming?.some((entry)=>entry.name==="app")?"worker":"static";root().formaNavigationSource=metrics.navigationSource;}
@@ -170,21 +191,7 @@ function installFieldMetrics() {
     root().formaInpMs = String(metrics.inpMs);
   }, { durationThreshold: 16 });
 
-  observe("resource", (entry) => {
-    const resource = entry as PerformanceResourceTiming;
-    let url: URL;
-    try { url = new URL(resource.name); } catch { return; }
-    if (url.origin !== location.origin || !url.pathname.startsWith("/api/")) return;
-    const path = url.pathname.startsWith("/api/media/") ? "/api/media/:key"
-      : url.pathname.startsWith("/api/shared/") ? "/api/shared/:token"
-      : url.pathname.startsWith("/api/document-jobs/") ? "/api/document-jobs/:job"
-      : url.pathname;
-    const serverMs = rounded(Number(resource.serverTiming?.find((timing) => timing.name === "app")?.duration ?? 0));
-    metrics.resources.push({ path, durationMs: rounded(resource.duration), serverMs, transferBytes: resource.transferSize, decodedBytes: resource.decodedBodySize });
-    if (metrics.resources.length > 80) metrics.resources.shift();
-    root().formaApiRequests = String(metrics.resources.length);
-    root().formaApiPaths = [...new Set(metrics.resources.map((item) => item.path))].join(",");
-  });
+  observe("resource", (entry) => recordApiResource(entry as PerformanceResourceTiming));
 }
 
 export function beginRoutePopulation(path: string) {
@@ -199,12 +206,18 @@ export function beginRoutePopulation(path: string) {
   metrics.sessionMs = 0;
   metrics.resources = [];
   metrics.cache = "miss";
+  const target=globalThis as typeof globalThis&{__formaInitialRouteData?:{path:string}};
+  if(target.__formaInitialRouteData?.path!==metrics.routePath){delete target.__formaInitialRouteData;delete root().formaRoutePrefetchStartedMs;}
   root().formaPhase = "session";
   root().formaRouteFamily = family;
   root().formaRouteSurface = surface;
   root().formaCache = "miss";
   root().formaApiRequests = "0";
   delete root().formaApiPaths;
+  delete root().formaRouteDataSource;
+  delete root().formaRoutePrefetchPath;
+  delete root().formaRoutePrefetchAdoptedMs;
+  delete root().formaRoutePrefetchHeadStartMs;
   delete root().formaHistoryProfile;
   delete root().formaPrivateContentState;
   delete root().formaPrivateContentReadyMs;
@@ -299,6 +312,8 @@ export function completeRoutePopulation(path: string, retry = 0) {
     }
     if (!meaningful || metrics.completed.has(surface) || metrics.routeSurface !== surface || metrics.routePath !== pathname || (location.pathname.replace(/\/+$/, "") || "/") !== pathname) return;
     metrics.completed.add(surface);
+    const prefetched=[root().formaSessionSource&&root().formaSessionSource!=="document"?"/api/session":null,root().formaRouteDataSource==="prefetch"?root().formaRoutePrefetchPath:null];
+    for(const endpoint of prefetched){if(!endpoint)continue;const resource=performance.getEntriesByName(new URL(endpoint,location.href).href,"resource").at(-1) as PerformanceResourceTiming|undefined;if(resource)recordApiResource(resource);}
     const populatedMs = rounded(performance.now());
     root().formaPopulatedMs = String(populatedMs);
     root().formaRouteLatencyMs = String(rounded(populatedMs-metrics.populationStartedAt));
@@ -329,6 +344,11 @@ export function completeRoutePopulation(path: string, retry = 0) {
       sessionSource:root().formaSessionSource==="document"?"document":root().formaSessionSource==="prefetch"?"prefetch":root().formaSessionSource==="preload"?"preload":root().formaSessionSource==="request"?"request":null,
       sessionServerMs:root().formaSessionServerMs===undefined?null:Number(root().formaSessionServerMs),
       sessionHeadStartMs:root().formaSessionHeadStartMs===undefined?null:Number(root().formaSessionHeadStartMs),
+      routeDataSource:root().formaRouteDataSource==="prefetch"?"prefetch":null,
+      routePrefetchPath:root().formaRoutePrefetchPath??null,
+      routePrefetchStartedMs:root().formaRoutePrefetchStartedMs===undefined?null:Number(root().formaRoutePrefetchStartedMs),
+      routePrefetchAdoptedMs:root().formaRoutePrefetchAdoptedMs===undefined?null:Number(root().formaRoutePrefetchAdoptedMs),
+      routePrefetchHeadStartMs:root().formaRoutePrefetchHeadStartMs===undefined?null:Number(root().formaRoutePrefetchHeadStartMs),
       privateContentState:root().formaPrivateContentState ?? null,
       privateContentReadyMs:root().formaPrivateContentReadyMs===undefined?null:Number(root().formaPrivateContentReadyMs),
       navigationSource:metrics.navigationSource,

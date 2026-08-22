@@ -17,7 +17,7 @@ import { unfinishedIntentTrajectories } from "../src/model/intent-trajectories.t
 import { performanceRouteFamily, performanceRouteSurface } from "../src/performance.ts";
 import { matchingAccountSnapshot } from "../src/state/account-cache.ts";
 import { routeCapabilities } from "../src/state/route-capabilities.ts";
-import { consumeSessionBootstrap, consumeSessionPrefetch } from "../src/state/session-bootstrap.ts";
+import { consumeRoutePrefetch, consumeSessionBootstrap, consumeSessionPrefetch } from "../src/state/session-bootstrap.ts";
 
 function measuredDatabase() {
   const sqlite = new DatabaseSync(":memory:");
@@ -298,6 +298,112 @@ test("static HTML starts one authenticated session immediately without touching 
 
   const share = await readFile(new URL("../dist/client/share/index.html", import.meta.url), "utf8");
   assert.doesNotMatch(share, /forma-static-session-prefetch/);
+});
+
+test("administrative entries prefetch only their own read-only endpoint after verified authorization", async () => {
+  const entries = new Map([
+    ["/operations/analytics", "/api/analytics?days=30&includeSynthetic=false"],
+    ["/operations/canvas", "/api/canvas-governance"],
+    ["/operations/events", "/api/events?audit=1&limit=150"],
+    ["/operations/events/stream", "/api/events?audit=1&limit=150"],
+    ["/admin/events", "/api/events?audit=1&limit=150"],
+    ["/admin/events/stream", "/api/events?audit=1&limit=150"],
+    ["/laboratory/image-adapters", "/api/image-adapters"],
+  ]);
+
+  for (const [pathname, endpoint] of entries) {
+    const html = await readFile(new URL(`../dist/client${pathname}/index.html`, import.meta.url), "utf8");
+    const match = /<script id="forma-static-route-prefetch">([\s\S]*?)<\/script>/.exec(html);
+    assert.ok(match, pathname);
+    assert.ok(match.index < html.indexOf('<script type="module"'), pathname);
+
+    for (const [role, impersonation, expected] of [["admin", null, 1], ["creator", null, 0], ["admin", { personaId: "other" }, 0]]) {
+      const calls = [];
+      const response = new Response("{}", { status: 200 });
+      const context = {
+        location: { pathname },
+        document: { documentElement: { dataset: {} } },
+        performance: { now: () => 26.34 },
+        window: { __formaInitialSession: Promise.resolve(Response.json({ user: { role }, impersonation })) },
+        fetch(url) { calls.push(url); return Promise.resolve(response); },
+      };
+      runInNewContext(match[1], context);
+      const prefetched = await context.window.__formaInitialRouteData.pending;
+      assert.equal(calls.length, expected, `${pathname} ${role} impersonating=${Boolean(impersonation)}`);
+      assert.equal(prefetched, expected ? response : null);
+      if (expected) {
+        assert.deepEqual(calls, [endpoint]);
+        assert.equal(context.document.documentElement.dataset.formaRoutePrefetchStartedMs, "26.3");
+      }
+    }
+  }
+
+  for (const pathname of ["/projects", "/share", "/laboratory", "/laboratory/replay", "/admin/events/replay"]) {
+    const html = await readFile(new URL(`../dist/client${pathname}/index.html`, import.meta.url), "utf8");
+    assert.doesNotMatch(html, /forma-static-route-prefetch/, pathname);
+  }
+  const root = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
+  assert.doesNotMatch(root, /forma-static-route-prefetch/);
+});
+
+test("early route data is authorized, route-exact, and consumed once without stale reuse", async () => {
+  const previous = Object.fromEntries(["location", "document", "__formaInitialRouteData"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const dataset = {};
+  const response = new Response("{}");
+  try {
+    Object.defineProperty(globalThis, "location", { configurable: true, writable: true, value: { pathname: "/operations/analytics/" } });
+    Object.defineProperty(globalThis, "document", { configurable: true, writable: true, value: { documentElement: { dataset } } });
+    const put = (path = "/operations/analytics", url = "/api/analytics?days=30&includeSynthetic=false", pending = Promise.resolve(response)) => {
+      Object.defineProperty(globalThis, "__formaInitialRouteData", { configurable: true, writable: true, value: { path, url, pending } });
+    };
+
+    dataset.formaRoutePrefetchStartedMs = String(Math.max(0.1, performance.now() - 15));
+    put();
+    const first = consumeRoutePrefetch("/api/analytics?days=30&includeSynthetic=false");
+    assert.ok(first);
+    assert.equal(consumeRoutePrefetch("/api/analytics?days=30&includeSynthetic=false"), null);
+    assert.equal(await first, response);
+    assert.equal(dataset.formaRouteDataSource, "prefetch");
+    assert.equal(dataset.formaRoutePrefetchPath, "/api/analytics?days=30&includeSynthetic=false");
+    assert.ok(Number(dataset.formaRoutePrefetchHeadStartMs) > 0);
+
+    put();
+    assert.equal(consumeRoutePrefetch("/api/analytics?days=7&includeSynthetic=false"), null);
+    assert.equal(globalThis.__formaInitialRouteData, undefined);
+    assert.equal(consumeRoutePrefetch("/api/analytics?days=30&includeSynthetic=false"), null);
+
+    put("/operations/events");
+    assert.equal(consumeRoutePrefetch("/api/analytics?days=30&includeSynthetic=false"), null);
+    assert.equal(globalThis.__formaInitialRouteData, undefined);
+
+    put();
+    assert.equal(consumeRoutePrefetch("/api/analytics?days=30&includeSynthetic=false", { impersonating: true }), null);
+    assert.equal(globalThis.__formaInitialRouteData, undefined);
+
+    put("/operations/analytics", "/api/analytics?days=30&includeSynthetic=false", Promise.resolve(null));
+    assert.equal(await consumeRoutePrefetch("/api/analytics?days=30&includeSynthetic=false"), null);
+
+    put("/operations/analytics", "/api/analytics?days=30&includeSynthetic=false", {});
+    assert.equal(consumeRoutePrefetch("/api/analytics?days=30&includeSynthetic=false"), null);
+  } finally {
+    for (const [key, descriptor] of Object.entries(previous)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  }
+});
+
+test("background visits and unrelated job polling begin after meaningful route population", async () => {
+  const shell = await readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8");
+  const store = await readFile(new URL("../src/state/store.ts", import.meta.url), "utf8");
+  assert.match(shell, /addEventListener\("forma-performance", this\.#populated\)/);
+  assert.match(shell, /removeEventListener\("forma-performance", this\.#populated\)/);
+  assert.match(shell, /dataset\.formaPhase !== "populated"/);
+  assert.doesNotMatch(shell, /completeRoutePopulation\(this\.store\.route\.get\(\)\);this\.#observeApplicationView/);
+  assert.match(store, /#syncVisibleJobs\(path=this\.route\.get\(\)\)/);
+  assert.match(store, /routeCapabilities\(path\)\.jobHistory/);
+  assert.match(store, /else this\.#scheduleJobPoll\(1_200\)/);
+  assert.match(store, /documentViewFromRoute\(path\)==="chat"\)void sessionPromise\.then/);
 });
 
 test("the early authenticated session request can only be adopted once", () => {

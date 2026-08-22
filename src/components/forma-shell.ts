@@ -34,7 +34,14 @@ export class FormaShell extends FormaElement {
     const path = (event as CustomEvent<{ path?: string }>).detail?.path ?? `${location.pathname}${location.search}${location.hash}`;
     void loadRouteComponent(path);
     if (!this.store.loading.get()) void this.store.syncDocumentFromRoute(path);
-    this.#observeApplicationView(path);this.#observeDocumentView(path);
+  };
+  #populated = () => {
+    const path = this.store.route.get();
+    window.setTimeout(() => {
+      if (!this.isConnected || this.store.route.get() !== path || document.documentElement.dataset.formaPhase !== "populated") return;
+      this.#observeApplicationView(path);
+      this.#observeDocumentView(path);
+    }, 0);
   };
   #pop = () => { this.store.setRoute(`${location.pathname}${location.search}${location.hash}`); };
   #changeLocale = async (event: Event) => {
@@ -59,7 +66,7 @@ export class FormaShell extends FormaElement {
   }
 
   override connectedCallback() {
-    super.connectedCallback(); window.addEventListener("keydown", this.#keydown); window.addEventListener("popstate", this.#pop); window.addEventListener("forma-route-changed", this.#routeChanged);
+    super.connectedCallback(); window.addEventListener("keydown", this.#keydown); window.addEventListener("popstate", this.#pop); window.addEventListener("forma-route-changed", this.#routeChanged); window.addEventListener("forma-performance", this.#populated);
     this.#dialogObserver = new MutationObserver((records) => {
       const dialogChanged = records.some((record) => record.type === "attributes" || [...record.addedNodes].some((node) => node instanceof Element && (node.matches("dialog") || node.querySelector("dialog"))));
       if (dialogChanged) queueMicrotask(() => this.#raiseToast());
@@ -70,7 +77,7 @@ export class FormaShell extends FormaElement {
     if(shared){beginRoutePopulation(location.pathname);recordPopulationSource("miss",0);}
     else if(!this.store.events.get().length)void this.store.load();
   }
-  override disconnectedCallback() { this.#dialogObserver?.disconnect(); window.removeEventListener("keydown", this.#keydown); window.removeEventListener("popstate", this.#pop); window.removeEventListener("forma-route-changed", this.#routeChanged); super.disconnectedCallback(); }
+  override disconnectedCallback() { this.#dialogObserver?.disconnect(); window.removeEventListener("keydown", this.#keydown); window.removeEventListener("popstate", this.#pop); window.removeEventListener("forma-route-changed", this.#routeChanged); window.removeEventListener("forma-performance", this.#populated); super.disconnectedCallback(); }
 
   #raiseToast() {
     const toast = this.querySelector<HTMLElement>(".toast[popover]");
@@ -81,7 +88,7 @@ export class FormaShell extends FormaElement {
     } catch { /* The toast remains a fixed fallback when popovers are unavailable. */ }
   }
 
-  protected override updated() { for(const dialog of this.querySelectorAll<HTMLDialogElement>(".command-dialog,.consent-modal,.impersonation-confirm-dialog,dialog[data-shell-modal]"))ensureModalDialog(dialog);this.#raiseToast();if(!this.store.loading.get()&&this.store.events.get().length&&this.store.routeDataReady())completeRoutePopulation(this.store.route.get());this.#observeApplicationView(this.store.route.get());this.#observeDocumentView(this.store.route.get());this.#revealApplication(); }
+  protected override updated() { for(const dialog of this.querySelectorAll<HTMLDialogElement>(".command-dialog,.consent-modal,.impersonation-confirm-dialog,dialog[data-shell-modal]"))ensureModalDialog(dialog);this.#raiseToast();if(!this.store.loading.get()&&this.store.events.get().length&&this.store.routeDataReady())completeRoutePopulation(this.store.route.get());this.#revealApplication(); }
 
   #revealApplication() {
     const application = `${applicationIdFromRoute(this.store.route.get())}:${this.i18n.locale}:${this.matches(":dir(rtl)")}`;
@@ -97,7 +104,7 @@ export class FormaShell extends FormaElement {
   }
 
   #observeApplicationView(path:string){
-    if(this.store.loading.get()||!this.store.events.get().length)return;
+    if(document.documentElement.dataset.formaPhase!=="populated"||this.store.loading.get()||!this.store.events.get().length)return;
     const pathname=path.split(/[?#]/)[0]||"/";const application=applicationIdFromRoute(pathname);const projection=this.store.projection.get();const documentId=documentIdFromRoute(pathname)??"";
     const routeFamily=documentId?"document":pathname.startsWith("/operations/events")?"operations-events":pathname.startsWith("/operations/analytics")?"operations-analytics":pathname.startsWith("/operations")?"operations-system":pathname.startsWith("/laboratory/replay")?"laboratory-replay":pathname.startsWith("/laboratory")?"laboratory-home":pathname.startsWith("/canvas/")?"canvas-workspace":pathname==="/canvas"?"canvas-home":pathname.startsWith("/library")?"library":pathname.startsWith("/sessions")?"sessions":pathname.startsWith("/scout")?"scout":pathname.startsWith("/memory")?"memory":pathname.startsWith("/projects")?"projects":"creative-workspace";
     const focused=documentId?documentFocusFromRoute(pathname):application==="canvas"?canvasFocusFromRoute(pathname):undefined;const visitKey=`${routeFamily}:${documentId}:${documentViewFromRoute(pathname)??""}:${focused===true?"focus":"standard"}`;if(visitKey===this.#lastObservedApplicationView)return;this.#lastObservedApplicationView=visitKey;
@@ -107,7 +114,7 @@ export class FormaShell extends FormaElement {
   #observeDocumentView(path: string) {
     const view = documentViewFromRoute(path);
     if (!view) { this.#lastObservedDocumentView = ""; return; }
-    if (this.store.loading.get() || !this.store.events.get().length) return;
+    if (document.documentElement.dataset.formaPhase !== "populated" || this.store.loading.get() || !this.store.events.get().length) return;
     const projection = this.store.projection.get();
     const documentId = documentIdFromRoute(path) ?? projection.documentId;
     if (!documentId) return;

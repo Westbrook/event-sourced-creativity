@@ -17,6 +17,7 @@ import { CREATIVE_STUDY_DEFINITIONS, type CreativeStudyKind, type ReplayDevelopm
 import { DEFAULT_REPLAY_EXPERIENCE, REPLAY_EXPERIENCE_PROFILES, replayExperienceDefinition, type ReplayExperienceId } from "../model/replay-experiences";
 import { summarizeIntentTrajectories } from "../model/intent-trajectories";
 import { buildNothingToSomethingWorkflow, DEFAULT_REPLAY_WORK_PRODUCTS, REPLAY_OUTPUT_KINDS, reverseEngineerWorkProduct, type FinishedWorkProduct, type ReplayOutputKind } from "../model/replay-workflows";
+import { consumeRoutePrefetch } from "../state/session-bootstrap";
 import "./icons-authoring";
 import "./icons-history";
 
@@ -73,9 +74,9 @@ export class FormaAdminEvents extends FormaElement {
     const query=new URLSearchParams({audit:"1",limit:"150"});if(older&&this.#auditBefore){query.set("before",String(this.#auditBefore));query.set("asOf",String(this.#auditHead));}
     if(this.#actor!=="all")query.set("actor",this.#actor);if(this.#type.trim())query.set("type",this.#type.trim());if(this.#correlation.trim())query.set("correlation",this.#correlation.trim());
     try{
-      const response=await fetch(`/api/events?${query}`,{signal:controller.signal});const body=await response.json() as {events?:CreativeEvent[];head?:number;total?:number;matched?:number;actors?:string[];nextBefore?:number|null;error?:string};
+      const url=`/api/events?${query}`;const prefetched=consumeRoutePrefetch(url,{impersonating:Boolean(this.store.session.get()?.impersonation)});const response=(prefetched?await prefetched:null)??await fetch(url,{signal:controller.signal});const body=await response.json() as {events?:CreativeEvent[];head?:number;total?:number;matched?:number;actors?:string[];nextBefore?:number|null;error?:string};
       if(!response.ok)throw new Error(body.error??`Audit inspection returned ${response.status}`);if(request!==this.#auditRequest)return;
-      const received=body.events??[];this.#auditEvents=older?[...received,...this.#auditEvents]:received;if(older)this.#eventLimit+=150;
+      const received=body.events??[];const owner=`creative:${this.store.session.get()?.user.userId??""}`;if(received.some((event)=>event.streamId!==owner))throw new Error("Audit inspection returned events for another account");this.#auditEvents=older?[...received,...this.#auditEvents]:received;if(older)this.#eventLimit+=150;
       if(!older)this.#auditHead=Math.max(0,Number(body.head??0));this.#auditTotal=Math.max(0,Number(body.total??0));this.#auditMatched=Math.max(0,Number(body.matched??0));this.#auditActors=(body.actors??[]).map(String);this.#auditBefore=body.nextBefore??null;this.#auditResolved=true;
       document.documentElement.dataset.formaAuditEventCount=String(this.#auditEvents.length);document.documentElement.dataset.formaAuditTotal=String(this.#auditTotal);document.documentElement.dataset.formaAuditMatched=String(this.#auditMatched);
     }catch(error){if(controller.signal.aborted||request!==this.#auditRequest)return;this.#auditError=error instanceof Error?error.message:"The audit stream could not be inspected";this.#auditResolved=true;}

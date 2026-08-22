@@ -94,7 +94,7 @@ export class FormaStore {
   #contentHydration?: Promise<void>;
   #focalBackfillTimer = 0;
 
-  constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&this.session.get()&&this.events.get().length){this.#flushPendingJobNotices();void this.syncDocumentJobs();}});}
+  constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&this.session.get()&&this.events.get().length){this.#flushPendingJobNotices();this.#syncVisibleJobs();}});}
 
   subscribe(listener: Listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   notify() { this.#listeners.forEach((listener) => listener()); }
@@ -294,6 +294,7 @@ export class FormaStore {
   async #refreshEvents(){const previous=this.events.get();const known=new Set(previous.map((event)=>event.eventId));const after=this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();let replace=after===0;let body=await this.#readEventPages(after);if(body.head<after){body=await this.#readEventPages(0);replace=true;this.#historyProfile="full";}if(!replace&&!body.events.length&&body.head===after&&!Object.keys(body.content).length)return false;const complete=replace?body.events:[...previous,...body.events.filter((event)=>!known.has(event.eventId))];this.events.set(complete);const confirmedClientIds=this.#clientEventIds(complete);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));if(Object.keys(body.content).length)this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#publishAppended(complete.filter((event)=>!known.has(event.eventId)));return true;}
   async refreshEvents(){if(await this.#refreshEvents())this.notify();}
   #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
+  #syncVisibleJobs(path=this.route.get()){if(path!==this.route.get())return;if(routeCapabilities(path).jobHistory||this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing"))void this.syncDocumentJobs();else this.#scheduleJobPoll(1_200);}
   #jobScope(path=this.route.get()){const documentId=documentIdFromRoute(path);return documentId?`?document=${encodeURIComponent(documentId)}`:routeCapabilities(path).jobHistory?"":"?scope=active";}
   #driveDocumentJobs(jobs:DocumentJob[]){const next=[...jobs].filter((job)=>job.kind!=="prompt_fan"&&(job.status==="queued"||job.status==="running"||job.status==="committing")).sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId))[0];if(next&&(next.status==="queued"||documentJobIsStale(next))&&!this.#jobsDriving.has(next.jobId))void this.#driveDocumentJob(next);}
   async #driveDocumentJob(job:DocumentJob){this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}
@@ -339,7 +340,7 @@ export class FormaStore {
     const required=this.#profileForRoute(routedPath);
     if(eventProfileRank(this.#historyProfile)<eventProfileRank(required))void this.#upgradeHistory(required).catch((error)=>{console.warn("[forma-performance]",JSON.stringify({phase:"history-upgrade",message:error instanceof Error?error.message:"history_upgrade_failed"}));});
     if(routeCapabilities(routedPath).privateContent&&!this.loading.get())requestAnimationFrame(()=>void this.#hydrateVisiblePrivateContent().catch(()=>undefined));
-    if(!this.loading.get()&&this.#jobScope(current)!==this.#jobScope(routedPath))requestAnimationFrame(()=>void this.syncDocumentJobs());
+    if(!this.loading.get()&&this.#jobScope(current)!==this.#jobScope(routedPath))requestAnimationFrame(()=>this.#syncVisibleJobs(routedPath));
   }
 
   async syncDocumentFromRoute(path = this.route.get()) {
@@ -382,6 +383,7 @@ export class FormaStore {
       const bootstrap=consumeSessionBootstrap();
       const prefetched=consumeSessionPrefetch();
       const sessionPromise=bootstrap?Promise.resolve(this.#applySession(bootstrap)):this.refreshSession(prefetched);
+      if(documentViewFromRoute(path)==="chat")void sessionPromise.then((verified)=>{if(this.session.get()?.user.userId!==verified.user.userId||this.route.get()!==path)return;return this.#hydrateVisiblePrivateContent();}).catch(()=>undefined);
       const live=snapshotsPromise.then(async(snapshots)=>{
         if(snapshots.length){
           const verified=await sessionPromise;
@@ -410,7 +412,7 @@ export class FormaStore {
       this.error.set("");this.loading.set(false);this.notify();
       requestAnimationFrame(()=>{
         void this.syncDocumentFromRoute(this.route.get());
-        void this.syncDocumentJobs();
+        this.#syncVisibleJobs(this.route.get());
         if(routeCapabilities(this.route.get()).privateContent)void this.#hydrateVisiblePrivateContent().catch(()=>undefined);
       });
     } catch (error) { this.error.set(error instanceof Error ? error.message : "Unable to load event stream"); }
