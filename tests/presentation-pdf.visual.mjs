@@ -26,7 +26,9 @@ const { PNG }=pngModule.default??pngModule;
 const { default:pixelmatch }=await import(pathToFileURL(resolvePackage("pixelmatch")).href);
 
 const base={style:"nocturne",layout:"split",visual:"bars"};
-const cases=quick?[base]:[
+const reported={style:"editorial",layout:"cover",visual:"diagram",content:"format-question",pages:7,via:"deck"};
+const cases=quick?[reported]:[
+  reported,
   ...["gallery","editorial","nocturne","field-notes"].map((style)=>({...base,style})),
   ...["cover","statement","columns","metric","timeline","closing"].map((layout)=>({...base,layout})),
   ...["hero-type","metric","timeline","diagram","color-field"].map((visual)=>({...base,visual})),
@@ -53,7 +55,8 @@ try{
     const diff=resolve(output,`diff-${name}.png`);
 
     await page.evaluate((configuration)=>window.configurePresentationPdfFixture(configuration),entry);
-    const slide=page.locator(".presentation-slide");
+    const slides=page.locator(".presentation-slide:visible");
+    const slide=slides.first();
     await slide.waitFor({state:"visible"});
     await page.evaluate(()=>document.fonts.ready);
     const actualPresentation=await slide.evaluate((element)=>({classes:element.className,text:element.innerText,foreground:getComputedStyle(element).color,accent:getComputedStyle(element).getPropertyValue("--slide-accent").trim()}));
@@ -73,26 +76,54 @@ try{
       });
       console.log(JSON.stringify(diagnostics));
     }
-    await slide.screenshot({path:screenshot,animations:"disabled"});
+    if(entry.via==="deck"){
+      const [download]=await Promise.all([
+        page.waitForEvent("download",{timeout:60_000}),
+        page.getByRole("button",{name:"Download PDF"}).click(),
+      ]);
+      await download.saveAs(pdf);
+      const pageInfo=execFileSync("pdfinfo",[pdf],{encoding:"utf8"});
+      if(!new RegExp(`^Pages:\\s+${entry.pages}$`,"m").test(pageInfo))throw new Error(`${name}: the downloaded PDF did not retain all ${entry.pages} slides.`);
+    }else{
+      await page.getByRole("button",{name:"Export visual fidelity fixture"}).click();
+      await page.waitForFunction(()=>document.querySelector("#status")?.textContent!=="Rendering…",null,{timeout:15_000});
+      const state=await page.evaluate(()=>({status:document.querySelector("#status")?.textContent??"",pdf:document.querySelector("#pdf-output")?.textContent??""}));
+      if(!state.pdf)throw new Error(`${name}: ${state.status}`);
+      await writeFile(pdf,Buffer.from(state.pdf,"base64"));
+    }
 
-    await page.getByRole("button",{name:"Export visual fidelity fixture"}).click();
-    await page.waitForFunction(()=>document.querySelector("#status")?.textContent!=="Rendering…",null,{timeout:15_000});
-    const state=await page.evaluate(()=>({status:document.querySelector("#status")?.textContent??"",pdf:document.querySelector("#pdf-output")?.textContent??""}));
-    if(!state.pdf)throw new Error(`${name}: ${state.status}`);
-    await writeFile(pdf,Buffer.from(state.pdf,"base64"));
-    execFileSync("pdftoppm",["-f","1","-singlefile","-r","144","-png",pdf,prefix]);
+    const pageCount=entry.via==="deck"?entry.pages:1;
+    for(let index=0;index<pageCount;index+=1){
+      const suffix=index?`-page-${index+1}`:"";
+      const browserImage=screenshot.replace(/\.png$/,`${suffix}.png`);
+      const exportedPrefix=`${prefix}${suffix}`;
+      const diffImage=diff.replace(/\.png$/,`${suffix}.png`);
+      await slides.nth(index).screenshot({path:browserImage,animations:"disabled"});
+      execFileSync("pdftoppm",["-f",String(index+1),"-singlefile","-r","144","-png",pdf,exportedPrefix]);
 
-    const actual=PNG.sync.read(await readFile(screenshot));
-    const exported=PNG.sync.read(await readFile(`${prefix}.png`));
-    if(actual.width!==exported.width||actual.height!==exported.height)throw new Error(`${name}: browser and PDF dimensions differ (${actual.width}×${actual.height} vs. ${exported.width}×${exported.height}).`);
+      const actual=PNG.sync.read(await readFile(browserImage));
+      const exported=PNG.sync.read(await readFile(`${exportedPrefix}.png`));
+      if(actual.width!==exported.width||actual.height!==exported.height)throw new Error(`${name}${suffix}: browser and PDF dimensions differ (${actual.width}×${actual.height} vs. ${exported.width}×${exported.height}).`);
 
-    const comparison=new PNG({width:actual.width,height:actual.height});
-    const changed=pixelmatch(actual.data,exported.data,comparison.data,actual.width,actual.height,{threshold:.1,includeAA:false});
-    const ratio=changed/(actual.width*actual.height);
-    await writeFile(diff,PNG.sync.write(comparison));
-    console.log(`${name}: ${(ratio*100).toFixed(3)}% visually different (${changed} pixels)`);
-    if(ratio>.0125)failures.push({name,ratio,changed});
+      const comparison=new PNG({width:actual.width,height:actual.height});
+      const changed=pixelmatch(actual.data,exported.data,comparison.data,actual.width,actual.height,{threshold:.1,includeAA:false});
+      const ratio=changed/(actual.width*actual.height);
+      await writeFile(diffImage,PNG.sync.write(comparison));
+      console.log(`${name}${suffix}: ${(ratio*100).toFixed(3)}% visually different (${changed} pixels)`);
+      if(ratio>.0125)failures.push({name:`${name}${suffix}`,ratio,changed});
+    }
   }
+
+  await page.evaluate(async(configuration)=>{
+    await window.configurePresentationPdfFixture({...configuration,pages:1});
+    window.CompressionStream=undefined;
+  },reported);
+  let unexpectedDownload=false;
+  page.on("download",()=>{unexpectedDownload=true;});
+  await page.getByRole("button",{name:"Download PDF"}).click();
+  await page.waitForFunction(()=>document.querySelector("#status")?.value.includes("could not preserve your slide design"),null,{timeout:15_000});
+  if(unexpectedDownload)throw new Error("A failed high-fidelity capture downloaded an incompatible PDF.");
+  console.log("Verified failed captures never download an incompatible PDF.");
 }finally{
   await browser.close();
 }

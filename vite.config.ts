@@ -20,7 +20,9 @@ const localBindingConfig = {
     // Every navigation is classified by the Worker before an asset or SPA
     // fallback is considered. This keeps refreshes and copied deep links on the
     // same application entry point as client-side navigation.
-    run_worker_first: ["/*"],
+    // Keep navigation/API routing in the Worker while immutable bundles stay
+    // at the visitor's nearest edge instead of paying a Worker invocation.
+    run_worker_first: ["/*", "!/assets/*"],
   },
   d1_databases: d1
     ? [

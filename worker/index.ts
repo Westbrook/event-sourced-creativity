@@ -11,10 +11,9 @@ import { handleGenerationReadiness } from "./generation-readiness";
 import { handleCanvasGovernance } from "./canvas-governance-api";
 import { handleImageAdapters } from "./image-adapters-api";
 
-export default {
-  async fetch(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
+async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const url=new URL(request.url);
-    if(url.pathname==="/api/session")return handleSession(request,env);
+    if(url.pathname==="/api/session")return handleSession(request,env,context);
     if(url.pathname==="/api/impersonation")return handleImpersonation(request,env);
     if(url.pathname==="/api/admin/users")return handleAdminUsers(request,env);
     if(url.pathname==="/api/analytics")return handleAnalytics(request,env);
@@ -55,5 +54,15 @@ export default {
     if(assetRequest)return env.ASSETS.fetch(request);
     if(request.method!=="GET"&&request.method!=="HEAD")return new Response("Method not allowed",{status:405});
     return new Response("Page not found",{status:404,headers:{"content-type":"text/plain; charset=utf-8"}});
+}
+
+export default {
+  async fetch(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
+    const started=performance.now();
+    const response=await routeRequest(request,env,context);
+    const headers=new Headers(response.headers);
+    headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
+    if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");
+    return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
   },
 };

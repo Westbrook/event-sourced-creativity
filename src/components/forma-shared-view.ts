@@ -1,6 +1,7 @@
 import { html, LitElement, nothing } from "lit";
 import { documentArtifactDefinition, type DocumentArtifact } from "../model/document-artifacts";
 import type { CreativeOutput } from "../model/events";
+import { FormaLocaleController } from "./design-system/localization";
 import "./artifact-summary";
 import "./output-visual";
 
@@ -10,6 +11,7 @@ type SharedResult = { kind: "image"; sequence: number; outputs: CreativeOutput[]
 export class FormaSharedView extends LitElement {
   static properties = { token: { type: String } };
   token = ""; #loading = true; #error = ""; #projection: SharedProjection | null = null; #expiresAt = "";
+  #i18n = new FormaLocaleController(this);
   protected override createRenderRoot() { return this; }
   override connectedCallback() { super.connectedCallback(); void this.#load(); }
   async #load() {
@@ -34,25 +36,29 @@ export class FormaSharedView extends LitElement {
   #artifactDetails(artifact: DocumentArtifact) {
     if (artifact.kind === "video" && artifact.mediaUrl) return html`<video controls playsinline preload="metadata" src=${artifact.mediaUrl}></video>`;
     if (artifact.kind === "slides") return html`<div class="shared-slide-list">${artifact.items.map((item, index) => html`<forma-presentation-slide .item=${{ title: item.title, body: item.body, notes: item.notes, image_prompt: item.imagePrompt, slide: item.slide }} .presentation=${artifact.presentation} .index=${index} .total=${artifact.itemCount} .compact=${true}></forma-presentation-slide>`)}</div>`;
-    return html`<ol class=${artifact.kind === "storyboard" ? "shared-storyboard-list" : "shared-narrative-list"}>${artifact.items.map((item) => html`<li>${item.mediaUrl ? html`<img src=${item.mediaUrl} alt=${item.title} loading="lazy">` : nothing}<b>${item.title}</b>${item.body ? html`<p>${item.body}</p>` : nothing}${item.notes ? html`<small>${item.notes}</small>` : nothing}</li>`)}</ol>`;
+    return html`<ol class=${artifact.kind === "storyboard" ? "shared-storyboard-list" : "shared-narrative-list"}>${artifact.items.map((item) => html`<li>${item.mediaUrl ? html`<img src=${item.mediaUrl} alt=${item.title} loading="lazy">` : nothing}<b dir="auto">${item.title}</b>${item.body ? html`<p dir="auto">${item.body}</p>` : nothing}${item.notes ? html`<small dir="auto">${item.notes}</small>` : nothing}</li>`)}</ol>`;
   }
 
   #result(result: SharedResult, projection: SharedProjection) {
     if (result.kind === "artifact") {
       const artifact = result.artifact;
       const definition = documentArtifactDefinition(artifact.kind);
-      return html`<section class="shared-output shared-artifact"><forma-artifact-summary .artifact=${artifact} .compact=${true}></forma-artifact-summary><div class="shared-result-description"><b>${artifact.title}</b><small>${definition.label} · ${artifact.itemCount} ${artifact.kind === "slides" ? "slides" : artifact.kind === "storyboard" ? "shots" : artifact.itemCount === 1 ? "part" : "parts"}</small></div><details class="shared-result-details"><summary>View ${definition.label.toLowerCase()}</summary>${this.#artifactDetails(artifact)}</details></section>`;
+      const label = this.#i18n.t(`artifact.${artifact.kind}.label`, definition.label);
+      const unit = artifact.kind === "slides" ? "slides" : artifact.kind === "storyboard" ? "shots" : "parts";
+      const count = this.#i18n.plural(`shared.${unit}`, artifact.itemCount, `{count} ${unit === "parts" ? "part" : unit === "shots" ? "shot" : "slide"}`, `{count} ${unit}`);
+      return html`<section class="shared-output shared-artifact"><forma-artifact-summary .artifact=${artifact} .compact=${true}></forma-artifact-summary><div class="shared-result-description"><b dir="auto">${artifact.title}</b><small>${label} · ${count}</small></div><details class="shared-result-details"><summary>${this.#i18n.t("shared.view", "View {format}", { format: label })}</summary>${this.#artifactDetails(artifact)}</details></section>`;
     }
     const fan = result.outputs.length > 1;
-    return html`<section class=${`shared-output${fan ? " shared-output-fan" : ""}`}><div class="shared-output-images">${result.outputs.map((output) => output.mediaUrl ? html`<forma-output-visual .output=${output} .fanOutputs=${projection.outputs} .interactive=${true} .readOnly=${true}></forma-output-visual>` : html`<span class="shared-output-empty">Image unavailable</span>`)}</div><div class="shared-result-description"><b>${fan ? `${result.outputs.length} creative alternatives` : result.outputs[0]?.purpose === "ideate" ? "Exploration draft" : "Finished image"}</b><small>${fan ? "One result shown through different prompt approaches" : "Generated from the shared creative direction"}</small></div></section>`;
+    return html`<section class=${`shared-output${fan ? " shared-output-fan" : ""}`}><div class="shared-output-images">${result.outputs.map((output) => output.mediaUrl ? html`<forma-output-visual .output=${output} .fanOutputs=${projection.outputs} .interactive=${true} .readOnly=${true}></forma-output-visual>` : html`<span class="shared-output-empty">${this.#i18n.t("shared.imageUnavailable", "Image unavailable")}</span>`)}</div><div class="shared-result-description"><b>${fan ? this.#i18n.plural("shared.alternatives", result.outputs.length, "{count} creative alternative", "{count} creative alternatives") : result.outputs[0]?.purpose === "ideate" ? this.#i18n.t("shared.exploration", "Exploration draft") : this.#i18n.t("shared.finishedImage", "Finished image")}</b><small>${fan ? this.#i18n.t("shared.alternativesDetail", "One result shown through different prompt approaches") : this.#i18n.t("shared.generatedDetail", "Generated from the shared creative direction")}</small></div></section>`;
   }
 
   override render() {
-    if (this.#loading) return html`<main class="shared-view"><div class="shared-status" role="status">Opening this shared creative document…</div></main>`;
-    if (this.#error || !this.#projection) return html`<main class="shared-view"><div class="shared-status"><span>Link unavailable</span><h1>This view has expired or been revoked.</h1><p>No project data was returned.</p></div></main>`;
+    if (this.#loading) return html`<main class="shared-view"><div class="shared-status" role="status">${this.#i18n.t("shared.loading", "Opening this shared creative document…")}</div></main>`;
+    if (this.#error || !this.#projection) return html`<main class="shared-view"><div class="shared-status"><span>${this.#i18n.t("shared.unavailable", "Link unavailable")}</span><h1>${this.#i18n.t("shared.expired", "This view has expired or been revoked.")}</h1><p>${this.#i18n.t("shared.noData", "No project data was returned.")}</p></div></main>`;
     const p = this.#projection;
     const results = this.#results(p);
-    return html`<main class="shared-view"><header><div class="brand"><span class="brand-mark">F</span><span>Forma</span></div><span>Private · view only · expires ${new Date(this.#expiresAt).toLocaleString()}</span></header><section class="shared-hero"><h1>${p.documentTitle}</h1><p>${p.projectName} · A private, read-only view of this document and its creative results.</p></section><section class="shared-grid"><div><h2>Creative direction</h2>${p.blocks.map((block) => html`<article><small>${block.type}</small><h3>${block.handle}</h3>${typeof block.properties.media_url === "string" ? html`<img class="shared-reference-image" src=${block.properties.media_url} alt=${block.handle} loading="lazy">` : nothing}<p>${String(block.properties.text ?? block.properties.label ?? "A retained creative decision")}</p></article>`)}</div><aside><h2>Creative results</h2>${results.length ? results.map((result) => this.#result(result, p)) : html`<p>No results have been shared yet.</p>`}</aside></section><footer>This link provides access only to the selected document and can be revoked immediately.</footer></main>`;
+    const expires = this.#expiresAt ? this.#i18n.date(new Date(this.#expiresAt), { dateStyle: "medium", timeStyle: "short" }) : "";
+    return html`<main class="shared-view"><header><div class="brand"><span class="brand-mark">F</span><span>Forma</span></div><span>${this.#i18n.t("shared.expires", "Private · view only · expires {date}", { date: expires })}</span></header><section class="shared-hero"><h1 dir="auto">${p.documentTitle}</h1><p><bdi dir="auto">${p.projectName}</bdi> · ${this.#i18n.t("shared.description", "A private, read-only view of this document and its creative results.")}</p></section><section class="shared-grid"><div><h2>${this.#i18n.t("shared.direction", "Creative direction")}</h2>${p.blocks.map((block) => html`<article><small dir="ltr">${block.type}</small><h3 dir="auto">${block.handle}</h3>${typeof block.properties.media_url === "string" ? html`<img class="shared-reference-image" src=${block.properties.media_url} alt=${block.handle} loading="lazy">` : nothing}<p dir="auto">${String(block.properties.text ?? block.properties.label ?? this.#i18n.t("shared.retainedDecision", "A retained creative decision"))}</p></article>`)}</div><aside><h2>${this.#i18n.t("shared.results", "Creative results")}</h2>${results.length ? results.map((result) => this.#result(result, p)) : html`<p>${this.#i18n.t("shared.noResults", "No results have been shared yet.")}</p>`}</aside></section><footer>${this.#i18n.t("shared.footer", "This link provides access only to the selected document and can be revoked immediately.")}</footer></main>`;
   }
 }
 customElements.define("forma-shared-view", FormaSharedView);

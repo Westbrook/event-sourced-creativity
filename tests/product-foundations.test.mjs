@@ -172,7 +172,7 @@ test("the standalone atomic-design laboratory and artifact deep links remain ser
   assert.doesNotMatch(presentational, /state\/store|\.store/);
   assert.match(presentation, /extends FormaPresentationalElement/);
   for (const level of ["Foundations", "Atoms", "Molecules", "Organisms", "Templates"]) assert.match(lab, new RegExp(level));
-  assert.match(shell, /Skip to main content/);
+  assert.match(shell, /this\.i18n\.t\("shell\.skip"\)/);
 });
 
 test("documented primitives power actual Creative, Canvas, intelligence, and Operations surfaces",async()=>{
@@ -280,5 +280,5 @@ test("one modal foundation gives every Canvas, output, and Laboratory dialog an 
     assert.match(source, /ensureModalDialog/);
     assert.doesNotMatch(source, /\.showModal\(/);
   }
-  assert.match(shell, /aria-label="Search Forma or run a command"/);
+  assert.match(shell, /aria-label=\$\{this\.i18n\.t\("shell\.command"\)\}/);
 });

@@ -1,6 +1,6 @@
 import { handleEvents } from "./events-api";
 import { loadPrivateContent, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, requireConsent, requireUser, storePrivateContent, type PilotUser } from "./pilot-policy";
-import { appendAuditEvent, ensureSchema, readEvents, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
+import { appendAuditEvent, ensureSchema, readCorrelatedEvents, readEvents, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { foldEvents } from "../src/model/events";
 import {
   DOCUMENT_JOB_HEARTBEAT_MS,
@@ -109,17 +109,19 @@ function queueRecoveryPresentation(row: DocumentJobRow, recoveryBlocker: Documen
   return null;
 }
 
-function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | null = null) {
+function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | null = null, detail = true) {
   const parsed = parseResult(row); const result = row.result_json ? parsed : null; const request = parseRequest(row); const identity = generationRequestIdentity(row.kind, request, row.document_id);
   const members = Array.isArray(parsed.members) ? parsed.members : [];
   const recovery = queueRecoveryPresentation(row, recoveryBlocker);
   const visibleResult = row.kind === "render_document" && request.artifactKind
     ? { ...(result ?? {}), artifactKind: String(parsed.artifactKind ?? request.artifactKind) }
     : result;
+  const summarizedResult = detail || !visibleResult ? visibleResult
+    : Object.fromEntries(Object.entries(visibleResult).filter(([key]) => !["plannerInput", "videoInputReceipt", "artifactPlan"].includes(key)));
   return {
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
     requestedSequence: Number(row.requested_sequence), documentRevision: identity.documentRevision, requestKey: identity.requestKey, sourcePreviewId: identity.sourcePreviewId, promptTechnique: identity.promptTechnique, promptFanId: identity.promptFanId,
-    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result: visibleResult, error: row.error_message, errorDetail: errorDetailFromResult(parsed), moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
+    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result: summarizedResult, error: row.error_message, errorDetail: errorDetailFromResult(parsed), moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
     requestedAt: row.requested_at, startedAt: row.started_at, completedAt: row.completed_at, notifiedAt: row.notified_at,
     leaseExpiresAt: row.lease_expires_at, updatedAt: row.updated_at,
     stage: recovery?.stage ?? String(parsed.stage ?? row.status), progressMessage: recovery?.progressMessage ?? String(parsed.progressMessage ?? ""),
@@ -130,7 +132,9 @@ async function reconcilePromptFanParent(env: WorkerEnv, ownerId: string, parentI
   const parent = await readJob(env, ownerId, parentId); if (!parent || parent.kind !== "prompt_fan") return parent;
   if (parent.status === "canceled" || errorDetailFromResult(parseResult(parent))?.code === "force_failed_by_admin") return parent;
   const request = parseRequest(parent); const childIds = Array.isArray(request.childJobIds) ? request.childJobIds.map(String).filter(Boolean).slice(0, 4) : [];
-  const children = (await Promise.all(childIds.map((jobId) => readJob(env, ownerId, jobId)))).filter((row): row is DocumentJobRow => Boolean(row));
+  const childRows=childIds.length?(await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND job_id IN (${childIds.map(()=>"?").join(",")})`).bind(ownerId,...childIds).all<DocumentJobRow>()).results:[];
+  const childrenById=new Map(childRows.map((row)=>[row.job_id,row]));
+  const children=childIds.map((jobId)=>childrenById.get(jobId)).filter((row):row is DocumentJobRow=>Boolean(row));
   const members = children.map((child) => {
     const childRequest = parseRequest(child); const childResult = parseResult(child);
     return { jobId: child.job_id, promptTechnique: normalizePromptTechnique(childRequest.promptTechnique), status: child.status, error: errorDetailFromResult(childResult), moderationPromptRef: childResult.moderationPromptRef ? String(childResult.moderationPromptRef) : null, attemptCount: Number(child.attempt_count), updatedAt: child.updated_at };
@@ -281,13 +285,13 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   if (row.kind === "prompt_fan") return reconcilePromptFanParent(env, user.userId, row.job_id);
   if (documentJobTerminal({ status: row.status })) return row;
 
-  const existingEvents = await readEvents(env, user.streamId);
+  const existingEvents = await readCorrelatedEvents(env, user.streamId, [row.correlation_id]);
   const finished = operationFinished(existingEvents, row);
   if (finished) {
     const now = new Date().toISOString(); const status: DocumentJobStatus = finished.failed ? "failed" : "completed";let followup:DocumentJobRow|null=null;
     if(!finished.failed&&row.kind==="chat"){const reasoned=finished.correlated.find((event)=>event.type==="AssistantReasoned"&&event.payload.preview_queued&&event.payload.preview_direction_ref);if(reasoned)followup=await queueFollowupPreview(env,user,row,{kind:"preview",documentId:row.document_id,sourceSurface:"chat",payload:{directionRef:reasoned.payload.preview_direction_ref,directionModel:reasoned.payload.model_id,sourceChatTurnId:reasoned.payload.turn_id}});}
     const failureDetail = finished.failed ? correlatedFailureDetail(finished.correlated) : null;const moderationPromptRef=finished.failed?correlatedModerationPromptRef(finished.correlated):null;
-    const result = { ...safeResult({ head: existingEvents.at(-1)?.sequence ?? 0,previewQueued:Boolean(followup),followupJobId:followup?.job_id,moderationPromptRef }, finished.correlated.map((event) => event.eventId)), ...(failureDetail ? { errorDetail: failureDetail } : {}), stage: status, progressMessage: finished.failed ? failureProgressMessage(failureDetail) : "The operation finished." };
+    const result = { ...safeResult({ head: await streamHead(env,user.streamId),previewQueued:Boolean(followup),followupJobId:followup?.job_id,moderationPromptRef }, finished.correlated.map((event) => event.eventId)), ...(failureDetail ? { errorDetail: failureDetail } : {}), stage: status, progressMessage: finished.failed ? failureProgressMessage(failureDetail) : "The operation finished." };
     await finishDocumentJob(env, row, status, result, failureDetail?.message ?? (finished.failed ? "operation_failed" : null), now, false);
     await reconcileParentForChild(env, row);
     return readJob(env, user.userId, jobId);
@@ -383,9 +387,13 @@ async function stopGenerationJob(env: WorkerEnv, user: PilotUser, target: Docume
 
 export async function handleDocumentJobs(request: Request, env: WorkerEnv, path = "", context?: WorkerExecutionContext) {
   await ensureSchema(env); const auth = await requireUser(request, env, request.method === "GET" ? "viewer" : "creator"); if (auth.response || !auth.user) return auth.response!; const user = auth.user;
-  await reconcileFailedBudgetReservations(env,user);
   const now = new Date().toISOString();
-  await env.DB.prepare("UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)").bind(now, user.userId, now).run();
+  // Polling is an observation. Do not force the D1 primary to reconcile and
+  // rewrite historical jobs every time an idle browser checks its status.
+  if(request.method!=="GET"&&(!path||path.endsWith("/retry"))){
+    await reconcileFailedBudgetReservations(env,user);
+    await env.DB.prepare("UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)").bind(now, user.userId, now).run();
+  }
 
   if ((path.endsWith("/cancel") || path.endsWith("/force-fail")) && request.method === "POST") {
     const force = path.endsWith("/force-fail");
@@ -423,7 +431,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   if (path.endsWith("/retry") && request.method === "POST") {
     const jobId = decodeURIComponent(path.slice(0, -6).replace(/\/$/, "")); const target = await readJob(env, user.userId, jobId);
     if (!target) return Response.json({ error: "job_not_found" }, { status: 404 });
-    const previous = parseResult(target); const correlated = (await readEvents(env, user.streamId)).filter((event) => event.correlationId === target.correlation_id);
+    const previous = parseResult(target); const correlated = (await readCorrelatedEvents(env,user.streamId,[target.correlation_id])).filter((event) => event.correlationId === target.correlation_id);
     const failure=errorDetailFromResult(previous)??correlatedFailureDetail(correlated);
     const failedEvent = [...correlated].reverse().find((event) => event.type === "DocumentRenderFailed" && event.payload.provider_job_id);
     const requestedEvent = correlated.find((event) => event.type === "DocumentRenderRequested");
@@ -458,27 +466,58 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
 
   if (request.method === "GET") {
     const requestedJob = path ? await readJob(env, user.userId, decodeURIComponent(path)) : null;
-    const readVisibleJobs = () => env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND (status IN ('queued','running','committing') OR notified_at IS NULL OR (kind IN ('preview','generate','prompt_fan','render_document') AND status IN ('failed','partial') AND expires_at>?)) ORDER BY CASE WHEN status IN ('queued','running','committing') THEN 0 ELSE 1 END,requested_at DESC LIMIT 120").bind(user.userId, now).all<DocumentJobRow>();
+    if(path&&requestedJob&&documentJobTerminal(requestedJob)&&Date.parse(requestedJob.expires_at)<=Date.now())return Response.json({error:"job_not_found"},{status:404});
+    const query = new URL(request.url).searchParams;
+    const activeOnly = query.get("scope") === "active";
+    const documentScope = query.get("document")?.trim().slice(0, 160) ?? "";
+    // Failure checkpoints remain durable, but large provider/planner inputs
+    // belong to the explicitly requested detail view, not every idle poll.
+    const readVisibleJobs = () => env.DB.prepare(`SELECT job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,
+      CASE WHEN json_extract(request_json,'$.documentRevision') IS NULL THEN request_json ELSE json_object(
+        'documentRevision',json_extract(request_json,'$.documentRevision'),'requestKey',json_extract(request_json,'$.requestKey'),
+        'sourcePreviewId',json_extract(request_json,'$.sourcePreviewId'),'promptTechnique',json_extract(request_json,'$.promptTechnique'),
+        'promptFanId',json_extract(request_json,'$.promptFanId'),'parentJobId',json_extract(request_json,'$.parentJobId'),
+        'fanKind',json_extract(request_json,'$.fanKind'),'artifactKind',json_extract(request_json,'$.artifactKind')
+      ) END AS request_json,
+      json_remove(result_json,'$.plannerInput','$.videoInputReceipt','$.artifactPlan') AS result_json,
+      error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at
+      FROM document_jobs WHERE owner_id=? AND (status IN ('queued','running','committing') OR (notified_at IS NULL AND expires_at>?) OR (kind IN ('preview','generate','prompt_fan','render_document') AND status IN ('failed','partial') AND expires_at>?))
+      AND (?=0 OR status IN ('queued','running','committing') OR notified_at IS NULL)
+      AND (?='' OR status IN ('queued','running','committing') OR notified_at IS NULL OR document_id=?)
+      ORDER BY CASE WHEN status IN ('queued','running','committing') THEN 0 ELSE 1 END,requested_at DESC LIMIT 120`).bind(user.userId, now, now, Number(activeOnly), documentScope, documentScope).all<DocumentJobRow>();
     let rows = path ? requestedJob ? [requestedJob] : [] : (await readVisibleJobs()).results;
     let reconciled = false;
     const repairCandidates = rows.filter((row) => row.status === "failed" && /Wrong number of parameter bindings/i.test(row.error_message ?? ""));
     if (repairCandidates.length) {
-      const events = await readEvents(env, user.streamId);
-      for (const row of repairCandidates) if (await repairMisreportedTerminalJob(env, row, events)) reconciled = true;
+      const events = await readCorrelatedEvents(env,user.streamId,repairCandidates.map((row)=>row.correlation_id));
+      for (const row of repairCandidates) {
+        if(!operationFinished(events,row))continue;
+        const retained = path ? row : await readJob(env, user.userId, row.job_id);
+        if (retained && await repairMisreportedTerminalJob(env, retained, events)) reconciled = true;
+      }
     }
-    const parents = rows.filter((row) => row.kind === "prompt_fan");
-    for (const parent of parents) await reconcilePromptFanParent(env, user.userId, parent.job_id);
-    reconciled = reconciled || parents.length > 0;
-    for (const row of rows) if (rowIsStale(row) && row.attempt_count >= documentJobMaxAttempts(row.kind)) { await failStaleJob(env, user, row); reconciled = true; }
+    const parents = rows.filter((row) => row.kind === "prompt_fan" && ["queued","running","committing"].includes(row.status));
+    for(const parent of parents){const updated=await reconcilePromptFanParent(env,user.userId,parent.job_id);if(!updated||updated.status!==parent.status||updated.result_json!==parent.result_json||updated.error_message!==parent.error_message||updated.completed_at!==parent.completed_at)reconciled=true;}
+    for (const row of rows) if (rowIsStale(row) && row.attempt_count >= documentJobMaxAttempts(row.kind)) {
+      // A compact list row must never replace the retained recovery checkpoint.
+      const retained = path ? row : await readJob(env, user.userId, row.job_id);
+      if (retained && rowIsStale(retained) && retained.attempt_count >= documentJobMaxAttempts(retained.kind)) {
+        await failStaleJob(env, user, retained);
+        reconciled = true;
+      }
+    }
     if (reconciled) {
       const refreshed = path ? await readJob(env, user.userId, decodeURIComponent(path)) : null;
       rows = path ? refreshed ? [refreshed] : [] : (await readVisibleJobs()).results;
     }
-    const activeBlocker = await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId).first<DocumentJobRow>();
+    const visibleBlocker = [...rows].filter((row)=>row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
+    const activeBlocker = path
+      ? await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId).first<DocumentJobRow>()
+      : visibleBlocker;
     const recoveryBlocker = activeBlocker && rowIsStale(activeBlocker) ? activeBlocker : null;
     if (recoveryBlocker) context?.waitUntil(driveDocumentQueue(env, user));
     if (path && !rows.length) return Response.json({ error: "job_not_found" }, { status: 404 });
-    return Response.json(path ? { job: serializeJob(rows[0], recoveryBlocker) } : { jobs: rows.map((row) => serializeJob(row, recoveryBlocker)) });
+    return Response.json(path ? { job: serializeJob(rows[0], recoveryBlocker) } : { jobs: rows.map((row) => serializeJob(row, recoveryBlocker, false)) });
   }
 
   if (path || request.method !== "POST") return new Response("Method not allowed", { status: 405 });

@@ -30,8 +30,8 @@ test("artifact forms bind native datalists to event-backed Audience and Tone inp
   assert.match(component,/<datalist id=\$\{toneListId\}>/);
   assert.match(component,/#rememberedAudiences\.add\(audience\)/);
   assert.match(component,/#rememberedTones\.add\(tone\)/);
-  assert.match(store,/encodeURIComponent\(audience\?\.toLocaleLowerCase\(\)\?\?"general"\)/);
-  assert.match(store,/encodeURIComponent\(tone\?\.toLocaleLowerCase\(\)\?\?"document-derived"\)/);
+  assert.match(store,/encodeURIComponent\(audience\?\.toLowerCase\(\)\?\?"general"\)/);
+  assert.match(store,/encodeURIComponent\(tone\?\.toLowerCase\(\)\?\?"document-derived"\)/);
   assert.match(events,/DocumentRenderRequested[^\n]*audience:audience\|\|null,tone:tone\|\|null/);
   assert.match(events,/document_render_guidance_too_long/);
 });

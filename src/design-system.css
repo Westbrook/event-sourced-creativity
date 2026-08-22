@@ -15,8 +15,9 @@
 body {
   color: var(--ink);
   background: var(--paper);
-  font-family: var(--sans);
+  font-family: var(--forma-font-family, var(--sans));
   font-weight: 400;
+  line-height: var(--forma-body-line-height, var(--leading-copy));
 }
 
 h1,
@@ -27,14 +28,14 @@ h5,
 h6,
 .brand,
 .account-popover b {
-  font-family: var(--sans);
+  font-family: var(--forma-font-family, var(--sans));
   font-weight: 600;
-  letter-spacing: -.04em;
+  letter-spacing: var(--forma-heading-letter-spacing, -.04em);
 }
 
-h1 { line-height: .98; }
-h2 { line-height: 1.12; }
-h3 { line-height: 1.25; }
+h1 { line-height: var(--forma-heading-line-height, .98); }
+h2 { line-height: max(var(--forma-heading-line-height, .98), 1.12); }
+h3 { line-height: max(var(--forma-heading-line-height, .98), 1.25); }
 
 :focus-visible {
   outline: 3px solid color-mix(in srgb, var(--orange) 78%, var(--panel));
@@ -122,6 +123,127 @@ h3 { line-height: 1.25; }
   border-color: var(--orange);
   outline: 3px solid var(--orange-soft);
   outline-offset: 0;
+}
+
+@supports (appearance: base-select) and selector(::picker(select)) {
+  :where(select:not([multiple]):not([size]), select:not([multiple])[size="1"]) {
+    appearance: base-select;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--forma-space-2, .5rem);
+    cursor: pointer;
+  }
+
+  :is(.block-subtype, .block-intent) :is(select:not([multiple]):not([size]), select:not([multiple])[size="1"]) {
+    padding-inline: .6rem;
+  }
+
+  :where(select:not([multiple]):not([size]), select:not([multiple])[size="1"]):disabled {
+    cursor: not-allowed;
+    opacity: .6;
+  }
+
+  :where(select:not([multiple]):not([size]), select:not([multiple])[size="1"])::picker(select) {
+    appearance: base-select;
+    max-block-size: min(24rem, calc(100dvh - 2rem));
+    padding: var(--forma-space-1, .25rem);
+    color: inherit;
+    background-color: inherit;
+    border: 1px solid;
+    border-color: inherit;
+    border-radius: var(--forma-radius-medium, var(--radius-medium));
+    box-shadow: var(--shadow);
+  }
+
+  :where(select:not([multiple]):not([size]), select:not([multiple])[size="1"])::picker-icon {
+    flex: none;
+    margin-inline-start: auto;
+    color: currentColor;
+    opacity: .72;
+    transition: rotate var(--forma-duration-fast, 120ms) var(--forma-ease-standard, ease);
+  }
+
+  :where(select:not([multiple]):not([size]), select:not([multiple])[size="1"]):open::picker-icon {
+    rotate: 180deg;
+  }
+
+  :where(select:not([multiple]):not([size]) option, select:not([multiple])[size="1"] option) {
+    display: flex;
+    min-block-size: var(--forma-control-min-size, 2.75rem);
+    align-items: center;
+    gap: var(--forma-space-3, .75rem);
+    padding-inline: var(--forma-space-3, .75rem);
+    color: inherit;
+    background: transparent;
+    border-radius: var(--forma-radius-small, var(--radius-small));
+    cursor: pointer;
+  }
+
+  :where(select:not([multiple]):not([size]) option, select:not([multiple])[size="1"] option):hover {
+    background: var(--forma-color-surface-subtle, var(--panel-2));
+  }
+
+  :where(select:not([multiple]):not([size]) option, select:not([multiple])[size="1"] option):focus-visible {
+    outline: var(--forma-focus-ring-width, 3px) solid var(--forma-focus-ring-color, var(--orange));
+    outline-offset: -3px;
+  }
+
+  :where(select:not([multiple]):not([size]) option, select:not([multiple])[size="1"] option):checked {
+    color: var(--forma-color-accent-text, var(--orange));
+    background: var(--forma-color-accent-subtle, var(--orange-soft));
+    font-weight: 600;
+  }
+
+  :where(select:not([multiple]):not([size]) option, select:not([multiple])[size="1"] option)::checkmark {
+    order: 1;
+    margin-inline-start: auto;
+    color: currentColor;
+  }
+
+  :where(select:not([multiple]):not([size]) option, select:not([multiple])[size="1"] option):disabled {
+    color: var(--forma-color-text-muted, var(--muted));
+    cursor: not-allowed;
+    opacity: .6;
+  }
+
+  :where(select:not([multiple]):not([size]) optgroup, select:not([multiple])[size="1"] optgroup) {
+    padding: var(--forma-space-1, .25rem) var(--forma-space-2, .5rem);
+    color: var(--forma-color-text-muted, var(--muted));
+    font-size: var(--forma-font-size-supporting, var(--type-small));
+    font-style: normal;
+    font-weight: 600;
+  }
+
+  :where(select:not([multiple]):not([size]) optgroup > option, select:not([multiple])[size="1"] optgroup > option) {
+    color: var(--forma-color-text, var(--ink));
+    font-weight: 400;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :where(select:not([multiple]):not([size]), select:not([multiple])[size="1"])::picker-icon {
+      transition: none;
+    }
+  }
+
+  @media (forced-colors: active) {
+    :where(select:not([multiple]):not([size]), select:not([multiple])[size="1"])::picker(select) {
+      color: CanvasText;
+      background: Canvas;
+      border-color: CanvasText;
+      box-shadow: none;
+    }
+
+    :where(select:not([multiple]):not([size]) option, select:not([multiple])[size="1"] option):checked {
+      color: HighlightText;
+      background: Highlight;
+      forced-color-adjust: none;
+    }
+
+    :where(select:not([multiple]):not([size]) option, select:not([multiple])[size="1"] option):disabled {
+      color: GrayText;
+      opacity: 1;
+    }
+  }
 }
 
 textarea { line-height: 1.55; }
@@ -3401,7 +3523,7 @@ img, video, canvas { max-width: 100%; }
 @media (max-width: 480px) {
   .topbar { padding-inline: .5rem; }
   .command-trigger { display: none; }
-  .account-popover { right: .5rem; }
+  .account-popover { inset-inline-end: .5rem; }
   .composer .generation-actions.compact { grid-template-columns: repeat(2,minmax(0, 1fr)); }
   .condition-author,
   .taste-signal,
@@ -3829,7 +3951,7 @@ forma-ui-button .button { max-width: 100%; }
 .ui-field--invalid > :is(input,textarea,select) { border-color: var(--forma-color-danger,var(--danger)); }
 .ui-metric { display: grid; gap: .4rem; margin: 0; color: var(--forma-color-text,var(--ink)); }
 .ui-metric dt { color: var(--forma-color-text-muted,var(--muted)); font-size: var(--type-small); }
-.ui-metric dd { display: grid; gap: var(--forma-space-2,var(--space-2)); margin: 0; font-size: clamp(1.6rem,3.5vw,2.6rem); font-weight: 650; letter-spacing: -.055em; line-height: 1; }
+.ui-metric dd { display: grid; gap: var(--forma-space-2,var(--space-2)); margin: 0; font-size: clamp(1.6rem,3.5vw,2.6rem); font-weight: 650; letter-spacing: var(--forma-script-letter-spacing,-.055em); line-height: var(--forma-script-heading-line-height,1); }
 .ui-metric-detail { display: block; color: var(--forma-color-text-muted,var(--muted)); font-size: var(--forma-font-size-supporting,var(--type-small)); font-weight: 400; letter-spacing: normal; line-height: 1.5; }
 .ui-empty-state { display: grid; justify-items: start; gap: .65rem; max-width: 34rem; padding-block: clamp(var(--forma-space-6,var(--space-6)),5vw,4rem); }
 .ui-empty-state > span { display: grid; width: 2.75rem; height: 2.75rem; place-items: center; color: var(--forma-color-accent,var(--accent)); background: var(--forma-color-accent-subtle,var(--accent-soft)); border-radius: var(--forma-radius-medium,var(--radius-medium)); }
@@ -3870,7 +3992,7 @@ forma-ui-button .button { max-width: 100%; }
 .design-foundation-grid,.design-molecule-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(18rem,100%),1fr)); gap: clamp(1.5rem,4vw,3rem); }
 .design-foundation-grid article { display: grid; align-content: start; gap: .6rem; }
 .design-foundation-grid article h3,.design-foundation-grid article p { margin: 0; }
-.design-type-display { font-size: clamp(1.5rem,3vw,2.25rem); font-weight: 600; letter-spacing: -.05em; }
+.design-type-display { font-size: clamp(1.5rem,3vw,2.25rem); font-weight: 600; letter-spacing: var(--forma-script-letter-spacing,-.05em); line-height: var(--forma-script-heading-line-height,1.08); }
 .design-type-body,.design-foundation-grid small { color: var(--muted); }
 .design-spacing-scale { display: grid; gap: .55rem; }
 .design-spacing-scale > div { display: flex; min-height: 1.5rem; align-items: center; gap: .75rem; }

@@ -144,7 +144,12 @@ export async function appendEvents(env: WorkerEnv, events: EventRow[], options: 
 
 export async function readEventsByClientEventIds(env:WorkerEnv,streamId:string,clientEventIds:string[]){
   const ids=[...new Set(clientEventIds.filter(Boolean))];const events=new Map<string,EventRow>();
-  for(let offset=0;offset<ids.length;offset+=200){const page=ids.slice(offset,offset+200),placeholders=page.map(()=>"?").join(",");const result=await env.DB.prepare(`SELECT r.client_event_id,e.* FROM event_client_receipts r JOIN events e ON e.event_id=r.event_id WHERE r.stream_id=? AND r.client_event_id IN (${placeholders})`).bind(streamId,...page).all<Record<string,unknown>>();for(const row of result.results)events.set(String(row.client_event_id),serializeEvent(row));}
+  if(!ids.length)return events;
+  // D1 permits 100 bound values per statement; reserve one for the stream.
+  const statements=[];
+  for(let offset=0;offset<ids.length;offset+=99){const page=ids.slice(offset,offset+99),placeholders=page.map(()=>"?").join(",");statements.push(env.DB.prepare(`SELECT r.client_event_id,e.* FROM event_client_receipts r JOIN events e ON e.event_id=r.event_id WHERE r.stream_id=? AND r.client_event_id IN (${placeholders})`).bind(streamId,...page));}
+  const results=statements.length===1?[await statements[0].all<Record<string,unknown>>()]:await env.DB.batch<Record<string,unknown>>(statements);
+  for(const result of results)for(const row of result.results)events.set(String(row.client_event_id),serializeEvent(row));
   return events;
 }
 
@@ -173,12 +178,83 @@ export function serializeEvent(row: Record<string, unknown>): EventRow {
   return { eventId: String(row.event_id), streamId: String(row.stream_id), sequence: Number(row.sequence), occurredAt: String(row.occurred_at), recordedAt: String(row.recorded_at), actor: String(row.actor), clientId: String(row.client_id), correlationId: String(row.correlation_id), causationId: row.causation_id ? String(row.causation_id) : null, compensatesEventId: row.compensates_event_id ? String(row.compensates_event_id) : null, schemaVersion: Number(row.schema_version), type: String(row.type), payload: JSON.parse(String(row.payload)) as Record<string, unknown> };
 }
 
+/** Recover job receipts without replaying an account's entire event ledger. */
+export async function readCorrelatedEvents(env:WorkerEnv,streamId:string,correlationIds:string[]){
+  const ids=[...new Set(correlationIds.filter(Boolean))];if(!ids.length)return[] as EventRow[];
+  const statements=[];
+  for(let offset=0;offset<ids.length;offset+=99){const page=ids.slice(offset,offset+99);statements.push(env.DB.prepare(`SELECT * FROM events INDEXED BY idx_events_correlation WHERE stream_id=? AND correlation_id IN (${page.map(()=>"?").join(",")}) ORDER BY sequence ASC`).bind(streamId,...page));}
+  const pages=statements.length===1?[await statements[0].all<Record<string,unknown>>()]:await env.DB.batch<Record<string,unknown>>(statements);
+  return pages.flatMap((page)=>page.results.map(serializeEvent)).sort((left,right)=>left.sequence-right.sequence);
+}
+
 export const EVENT_PAGE_SIZE = 2000;
+
+export type EventReadProfile = "projects" | "workspace";
+
+/** Project cards do not need the account's engagement, audit, or canvas history. */
+export const PROJECT_BOOTSTRAP_EVENT_TYPES = [
+  "ProjectCreated", "ProjectOpened", "ProjectRenamed", "ProjectStateChanged",
+  "DocumentCreated", "DocumentForked", "DocumentOpened", "DocumentRenamed",
+  "DocumentRemoved", "DocumentRestored", "BlockCreated", "BlockRemoved",
+  "BlockRestored", "BlockRehomed", "CollectionCreated", "CollectionRemoved",
+  "CollectionRestored", "IdeationPreviewCompleted", "GenerationCompleted",
+  "DocumentRenderCompleted", "ObjectDiscarded", "ObjectPinned", "ObjectUnpinned",
+  "ObjectSaved", "AddedToLibrary", "RemovedFromLibrary", "PromptFanOutputPromoted",
+  "ImageFocalPointCalculated",
+] as const;
+
+/** These receipts do not participate in either the creative or Canvas projections. */
+export const PROJECTION_IGNORED_EVENT_TYPES = [
+  "AttentionEpisodeObserved", "ApplicationViewVisited", "CanvasInteractionRecorded",
+  "DocumentViewVisited", "ObjectViewed", "ComparisonOpened",
+  "GenerationPreflightRequested", "GenerationPreflightCompleted", "ValidationFailed",
+] as const;
 
 export async function readEventPage(env: WorkerEnv, streamId: string, afterSequence = 0, limit = EVENT_PAGE_SIZE) {
   const pageSize=Math.max(1,Math.min(EVENT_PAGE_SIZE,Math.floor(limit)));
   const result=await env.DB.prepare("SELECT * FROM events WHERE stream_id=? AND sequence>? ORDER BY sequence ASC LIMIT ?").bind(streamId,Math.max(0,Math.floor(afterSequence)),pageSize).all<Record<string,unknown>>();
   return result.results.map(serializeEvent);
+}
+
+/** Keep a transport page and its head on the same consistent D1 snapshot. */
+export async function readEventPageWithHead(env: WorkerEnv, streamId: string, afterSequence = 0, limit = EVENT_PAGE_SIZE) {
+  const after = Math.max(0, Math.floor(afterSequence));
+  const pageSize = Math.max(1, Math.min(EVENT_PAGE_SIZE, Math.floor(limit)));
+  const [page, current] = await env.DB.batch<Record<string, unknown>>([
+    env.DB.prepare("SELECT * FROM events WHERE stream_id=? AND sequence>? ORDER BY sequence ASC LIMIT ?")
+      .bind(streamId, after, pageSize),
+    env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?")
+      .bind(streamId),
+  ]);
+  const events = (page?.results ?? []).map(serializeEvent);
+  const head = Number(current?.results[0]?.head ?? 0);
+  const nextAfter = Number(events.at(-1)?.sequence ?? after);
+  return { events, head, nextAfter, hasMore: nextAfter < head };
+}
+
+/** Read a route-specific page and its authoritative stream head in one D1 round trip. */
+export async function readProfileEventPage(
+  env: WorkerEnv,
+  streamId: string,
+  profile: EventReadProfile,
+  afterSequence = 0,
+  limit = 5000,
+) {
+  const pageSize = Math.max(1, Math.min(5000, Math.floor(limit)));
+  const eventTypes = profile === "projects" ? PROJECT_BOOTSTRAP_EVENT_TYPES : PROJECTION_IGNORED_EVENT_TYPES;
+  const placeholders = eventTypes.map(() => "?").join(",");
+  const operator = profile === "projects" ? "IN" : "NOT IN";
+  const index = profile === "projects" ? " INDEXED BY idx_events_stream_type" : "";
+  const [page, current] = await env.DB.batch<Record<string, unknown>>([
+    env.DB.prepare(`SELECT * FROM events${index} WHERE stream_id=? AND sequence>? AND type ${operator} (${placeholders}) ORDER BY sequence ASC LIMIT ?`)
+      .bind(streamId, Math.max(0, Math.floor(afterSequence)), ...eventTypes, pageSize),
+    env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(streamId),
+  ]);
+  const events = (page?.results ?? []).map(serializeEvent);
+  const head = Number(current?.results[0]?.head ?? 0);
+  // Excluded telemetry can trail the final useful event; advance past it.
+  const nextAfter = events.length < pageSize ? head : Number(events.at(-1)?.sequence ?? afterSequence);
+  return { events, head, nextAfter, hasMore: nextAfter < head, profile };
 }
 
 /** Read a complete stream in bounded D1 pages. Callers that only need transport pages should use readEventPage. */

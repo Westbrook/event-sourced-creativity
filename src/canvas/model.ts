@@ -1,4 +1,3 @@
-import * as Y from "yjs";
 import type { CreativeEvent } from "../model/events";
 
 export type CanvasHlc = { pt: number; c: number; site: string };
@@ -210,7 +209,7 @@ const tuple = (value: unknown): readonly [string, number] | null => Array.isArra
 const opKey = (value: readonly [string, number]) => `${value[0]}:${String(value[1]).padStart(12, "0")}`;
 const fallbackHlc = (event: CreativeEvent): CanvasHlc => ({ pt: Date.parse(event.occurredAt) || event.sequence, c: event.sequence, site: event.clientId });
 const normalizeHlc = (value: unknown, event: CreativeEvent): CanvasHlc => { const input=record(value);return{pt:Number(input.pt??fallbackHlc(event).pt),c:Number(input.c??fallbackHlc(event).c),site:String(input.site??event.clientId)}; };
-export const compareCanvasHlc = (left: CanvasHlc, right: CanvasHlc) => left.pt-right.pt || left.c-right.c || left.site.localeCompare(right.site);
+export const compareCanvasHlc = (left: CanvasHlc, right: CanvasHlc) => left.pt-right.pt || left.c-right.c || left.site.localeCompare(right.site,"en-US");
 const sourceKind = (value: unknown): CanvasSourceKind => ["block","document","output","artifact","reference","sketch","context"].includes(String(value)) ? String(value) as CanvasSourceKind : "block";
 const numeric = (value: unknown, fallback: number) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 
@@ -237,11 +236,10 @@ export function foldCanvasText(events: CreativeEvent[], objectId: string, field 
     for(const raw of Array.isArray(operation.ops)?operation.ops:[]){const op=record(raw);const ins=record(op.ins);const del=record(op.del);const id=tuple(ins.id);const target=tuple(del.target);if(id)inserts.set(opKey(id),{id,left:tuple(ins.left),right:tuple(ins.right),chars:String(ins.chars??"")});if(target)deletes.push({target,len:Math.max(0,Number(del.len??0))});}
   }
   const children=new Map<string,TextInsert[]>();for(const insert of inserts.values()){const parent=insert.left?opKey(insert.left):"root";children.set(parent,[...(children.get(parent)??[]),insert]);}
-  for(const values of children.values())values.sort((a,b)=>opKey(a.id).localeCompare(opKey(b.id)));
+  for(const values of children.values())values.sort((a,b)=>opKey(a.id).localeCompare(opKey(b.id),"en-US"));
   const ordered:TextInsert[]=[];const visit=(parent:string)=>{for(const child of children.get(parent)??[]){ordered.push(child);visit(opKey(child.id));}};visit("root");
   const deleted=new Map<string,number>();for(const removal of deletes)deleted.set(opKey(removal.target),Math.max(deleted.get(opKey(removal.target))??0,removal.len));
-  const doc=new Y.Doc();const text=doc.getText(field);for(const insert of ordered){const count=deleted.get(opKey(insert.id))??0;text.insert(text.length,insert.chars.slice(Math.min(count,insert.chars.length)));}
-  return text.toString();
+  return ordered.map((insert)=>{const count=deleted.get(opKey(insert.id))??0;return insert.chars.slice(Math.min(count,insert.chars.length));}).join("");
 }
 
 export function canvasTextReplacementOperations(events: CreativeEvent[], objectId: string, nextValue: string, site: string, counter = Date.now()) {

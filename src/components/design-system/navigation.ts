@@ -12,9 +12,9 @@ import { defineFormaElements, emitFormaEvent, nextFormaId, type FormaOption } fr
  */
 export class FormaUiSegmentedControl extends FormaPresentationalElement {
   static properties = { label: { type: String }, value: { type: String }, disabled: { type: Boolean }, options: { attribute: false } };
-  label = "Choose an option"; value = ""; disabled = false; options: FormaOption[] = [];
+  label = ""; value = ""; disabled = false; options: FormaOption[] = [];
   #choose(value: string) { if (this.disabled || value === this.value) return; this.value = value; emitFormaEvent(this, "forma-change", { value }); }
-  override render() { return html`<div class="ui-segmented" role="group" aria-label=${this.label}>${this.options.map((option) => html`<button type="button" aria-pressed=${String(option.value === this.value)} ?disabled=${this.disabled || (option.disabled ?? false)} @click=${() => this.#choose(option.value)}>${option.label}</button>`)}</div>`; }
+  override render() { return html`<div class="ui-segmented" role="group" aria-label=${this.label || this.i18n.t("field.choose")}>${this.options.map((option) => html`<button type="button" aria-pressed=${String(option.value === this.value)} ?disabled=${this.disabled || (option.disabled ?? false)} @click=${() => this.#choose(option.value)}>${option.label}</button>`)}</div>`; }
 }
 
 /**
@@ -26,10 +26,10 @@ export class FormaUiSegmentedControl extends FormaPresentationalElement {
  */
 export class FormaUiTabs extends FormaPresentationalElement {
   static properties = { label: { type: String }, value: { type: String }, options: { attribute: false } };
-  label = "Sections"; value = ""; options: FormaOption[] = []; #id = nextFormaId("tabs");
+  label = ""; value = ""; options: FormaOption[] = []; #id = nextFormaId("tabs");
   #select(value: string) { if (value === this.value) return; this.value = value; emitFormaEvent(this, "forma-change", { value }); }
-  #keydown(event: KeyboardEvent) { const available = this.options.filter((option) => !option.disabled); if (!available.length || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const current = available.findIndex((option) => option.value === this.value); const index = event.key === "Home" ? 0 : event.key === "End" ? available.length - 1 : (Math.max(0, current) + (event.key === "ArrowRight" ? 1 : -1) + available.length) % available.length; const option = available[index]; const originalIndex = this.options.findIndex((candidate) => candidate.value === option.value); this.#select(option.value); void this.updateComplete.then(() => this.querySelector<HTMLButtonElement>(`#${this.#id}-tab-${originalIndex}`)?.focus()); }
-  override render() { const chosen = this.options.find((option) => option.value === this.value && !option.disabled) ?? this.options.find((option) => !option.disabled); const active = chosen?.value ?? ""; return html`<div class="ui-tabs"><div role="tablist" aria-label=${this.label} @keydown=${this.#keydown}>${this.options.map((option, index) => html`<button type="button" id=${`${this.#id}-tab-${index}`} role="tab" aria-selected=${String(option.value === active)} aria-controls=${`${this.#id}-panel-${index}`} tabindex=${option.value === active ? "0" : "-1"} ?disabled=${option.disabled ?? false} @click=${() => this.#select(option.value)}>${option.label}</button>`)}</div>${this.options.map((option, index) => html`<section id=${`${this.#id}-panel-${index}`} role="tabpanel" aria-labelledby=${`${this.#id}-tab-${index}`} tabindex="0" ?hidden=${option.value !== active}>${option.description || option.label}</section>`)}</div>`; }
+  #keydown(event: KeyboardEvent) { const available = this.options.filter((option) => !option.disabled); if (!available.length || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return; event.preventDefault(); const current = available.findIndex((option) => option.value === this.value); const direction = (event.key === "ArrowRight") === !this.matches(":dir(rtl)") ? 1 : -1; const index = event.key === "Home" ? 0 : event.key === "End" ? available.length - 1 : (Math.max(0, current) + direction + available.length) % available.length; const option = available[index]; const originalIndex = this.options.findIndex((candidate) => candidate.value === option.value); this.#select(option.value); void this.updateComplete.then(() => this.querySelector<HTMLButtonElement>(`#${this.#id}-tab-${originalIndex}`)?.focus()); }
+  override render() { const chosen = this.options.find((option) => option.value === this.value && !option.disabled) ?? this.options.find((option) => !option.disabled); const active = chosen?.value ?? ""; return html`<div class="ui-tabs"><div role="tablist" aria-label=${this.label || this.i18n.t("navigation.sections")} @keydown=${this.#keydown}>${this.options.map((option, index) => html`<button type="button" id=${`${this.#id}-tab-${index}`} role="tab" aria-selected=${String(option.value === active)} aria-controls=${`${this.#id}-panel-${index}`} tabindex=${option.value === active ? "0" : "-1"} ?disabled=${option.disabled ?? false} @click=${() => this.#select(option.value)}>${option.label}</button>`)}</div>${this.options.map((option, index) => html`<section id=${`${this.#id}-panel-${index}`} role="tabpanel" aria-labelledby=${`${this.#id}-tab-${index}`} tabindex="0" ?hidden=${option.value !== active}>${option.description || option.label}</section>`)}</div>`; }
 }
 
 /**
@@ -40,9 +40,9 @@ export class FormaUiTabs extends FormaPresentationalElement {
  */
 export class FormaUiBreadcrumbs extends FormaPresentationalElement {
   static properties = { label: { type: String }, items: { attribute: false } };
-  label = "Breadcrumb"; items: FormaOption[] = [];
+  label = ""; items: FormaOption[] = [];
   #navigate(event: MouseEvent, value: string) { if (!emitFormaEvent(this, "forma-navigate", { value }, { cancelable: true })) event.preventDefault(); }
-  override render() { return html`<nav class="ui-breadcrumbs" aria-label=${this.label}><ol>${this.items.map((item, index) => html`<li>${index === this.items.length - 1 ? html`<span aria-current="page">${item.label}</span>` : html`<a href=${item.value} @click=${(event: MouseEvent) => this.#navigate(event, item.value)}>${item.label}</a><span aria-hidden="true">/</span>`}</li>`)}</ol></nav>`; }
+  override render() { return html`<nav class="ui-breadcrumbs" aria-label=${this.label || this.i18n.t("navigation.breadcrumbs")}><ol>${this.items.map((item, index) => html`<li>${index === this.items.length - 1 ? html`<span aria-current="page">${item.label}</span>` : html`<a href=${item.value} @click=${(event: MouseEvent) => this.#navigate(event, item.value)}>${item.label}</a><span aria-hidden="true">/</span>`}</li>`)}</ol></nav>`; }
 }
 
 /**
@@ -53,9 +53,9 @@ export class FormaUiBreadcrumbs extends FormaPresentationalElement {
  */
 export class FormaUiPagination extends FormaPresentationalElement {
   static properties = { label: { type: String }, page: { type: Number }, total: { type: Number } };
-  label = "Pagination"; page = 1; total = 1;
+  label = ""; page = 1; total = 1;
   #change(page: number) { const total = Math.max(1, Math.trunc(this.total)); const next = Math.max(1, Math.min(total, page)); if (next === this.page) return; this.page = next; emitFormaEvent(this, "forma-change", { value: next }); }
-  override render() { const total = Math.max(1, Math.trunc(this.total)); const page = Math.max(1, Math.min(total, Math.trunc(this.page))); return html`<nav class="ui-pagination" aria-label=${this.label}><button type="button" ?disabled=${page <= 1} aria-label="Previous page" @click=${() => this.#change(page - 1)}>←</button><span aria-current="page">Page ${page} of ${total}</span><button type="button" ?disabled=${page >= total} aria-label="Next page" @click=${() => this.#change(page + 1)}>→</button></nav>`; }
+  override render() { const total = Math.max(1, Math.trunc(this.total)); const page = Math.max(1, Math.min(total, Math.trunc(this.page))); const rightToLeft = this.matches(":dir(rtl)"); return html`<nav class="ui-pagination" aria-label=${this.label || this.i18n.t("navigation.pagination")}><button type="button" ?disabled=${page <= 1} aria-label=${this.i18n.t("navigation.previous")} @click=${() => this.#change(page - 1)}>${rightToLeft ? "→" : "←"}</button><span aria-current="page">${this.i18n.t("navigation.page", "", { page: this.i18n.number(page), total: this.i18n.number(total) })}</span><button type="button" ?disabled=${page >= total} aria-label=${this.i18n.t("navigation.next")} @click=${() => this.#change(page + 1)}>${rightToLeft ? "←" : "→"}</button></nav>`; }
 }
 
 /**
@@ -66,8 +66,8 @@ export class FormaUiPagination extends FormaPresentationalElement {
  */
 export class FormaUiToolbar extends FormaPresentationalElement {
   static properties = { label: { type: String }, actions: { attribute: false } };
-  label = "Actions"; actions: FormaOption[] = [];
-  override render() { return html`<div class="ui-toolbar" role="group" aria-label=${this.label}>${this.actions.map((action) => html`<button type="button" ?disabled=${action.disabled ?? false} @click=${() => emitFormaEvent(this, "forma-action", { value: action.value })}>${action.label}</button>`)}</div>`; }
+  label = ""; actions: FormaOption[] = [];
+  override render() { return html`<div class="ui-toolbar" role="group" aria-label=${this.label || this.i18n.t("navigation.actions")}>${this.actions.map((action) => html`<button type="button" ?disabled=${action.disabled ?? false} @click=${() => emitFormaEvent(this, "forma-action", { value: action.value })}>${action.label}</button>`)}</div>`; }
 }
 
 /**
@@ -80,7 +80,7 @@ export class FormaUiLink extends FormaPresentationalElement {
   static properties = { label: { type: String }, href: { type: String }, external: { type: Boolean } };
   label = ""; href = "#"; external = false;
   #navigate(event: MouseEvent) { if (!emitFormaEvent(this, "forma-navigate", { value: this.href }, { cancelable: true })) event.preventDefault(); }
-  override render() { return html`<a class="ui-link" href=${this.href} target=${this.external ? "_blank" : nothing} rel=${this.external ? "noopener noreferrer" : nothing} @click=${this.#navigate}>${this.label || "Open link"}${this.external ? html`<span aria-hidden="true"> ${icon("share")}</span><span class="sr-only"> (opens in a new tab)</span>` : nothing}</a>`; }
+  override render() { return html`<a class="ui-link" href=${this.href} target=${this.external ? "_blank" : nothing} rel=${this.external ? "noopener noreferrer" : nothing} @click=${this.#navigate}>${this.label || this.i18n.t("navigation.openLink")}${this.external ? html`<span aria-hidden="true"> ${icon("share")}</span><span class="sr-only"> ${this.i18n.t("navigation.opensInNewTab")}</span>` : nothing}</a>`; }
 }
 
 const definitions = [

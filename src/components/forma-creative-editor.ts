@@ -66,7 +66,7 @@ const QUICK_TOOLS: readonly { type: BlockKind; intent: BlockIntent; label?: stri
   { type:"subject", intent:"avoid", label:"Avoid", description:"Keep an unwanted subject, mood, color, material, or other reality out." },
 ];
 const textFor = (item: CreativeBlock) => String(item.properties.text ?? item.properties.label ?? "Untitled");
-const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 42) || "item";
+const slug = (value: string, id = "") => value.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 42) || (id ? `decision-${id.slice(0, 8)}` : "item");
 const strengthFor = (weight: number) => weight >= .82 ? "lead" : weight >= .5 ? "balanced" : "supporting";
 const weightFor = (strength: string) => strength === "lead" ? .94 : strength === "supporting" ? .34 : .65;
 const intentCopy = (intent: BlockIntent) => intent === "prohibit" ? "Never use" : intent === "avoid" ? "Avoid" : intent === "prefer" ? "Prefer" : "Include";
@@ -142,7 +142,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
       const appended = await this.store.appendBatch([
         { type: "ReferenceIngested", payload: { reference_id: referenceId, source_type: "upload", source_ref: media.url, content_hash: media.key, rights_class: "asserted" } },
         { type: "RightsAsserted", payload: { reference_id: referenceId, rights_class: "owned_or_licensed", assertion_method: "explicit-upload-confirmation" } },
-        { type: "BlockCreated", payload: { block_id: itemId, document_id: projection.documentId, type: "reference", handle: `reference/${slug(file.name)}`, position: `e${String(this.store.head.get() + 1).padStart(6, "0")}`, properties: { reference_id: referenceId, label: file.name, media_url: media.url, subtype: "Mood", weight: .72, authority: "authored", pixel_reference_mode: "context_only", extraction_preferences: DEFAULT_REFERENCE_FINDINGS, extraction_status: sample ? "pending" : "unavailable", created_from: "creative-editor" } } },
+        { type: "BlockCreated", payload: { block_id: itemId, document_id: projection.documentId, type: "reference", handle: `reference/${slug(file.name, itemId)}`, position: `e${String(this.store.head.get() + 1).padStart(6, "0")}`, properties: { reference_id: referenceId, label: file.name, media_url: media.url, subtype: "Mood", weight: .72, authority: "authored", pixel_reference_mode: "context_only", extraction_preferences: DEFAULT_REFERENCE_FINDINGS, extraction_status: sample ? "pending" : "unavailable", created_from: "creative-editor" } } },
       ]);
       if (appended.length) {
         this.#selectedId = itemId;
@@ -169,7 +169,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
         block_id: id,
         document_id: projection.documentId,
         type: this.#newType,
-        handle: `${this.#newType}/${slug(text)}`,
+        handle: `${this.#newType}/${slug(text, id)}`,
         position: `e${String(this.store.head.get() + 1).padStart(6, "0")}`,
         properties: {
           text,
@@ -231,7 +231,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
         block_id: id,
         document_id: projection.documentId,
         type: item.type,
-        handle: `${item.type}/${slug(textFor(item))}-copy`,
+        handle: `${item.type}/${slug(textFor(item), id)}-copy`,
         position: `e${String(this.store.head.get() + 1).padStart(6, "0")}`,
         properties: { ...item.properties, authority: "authored", copied_from_block_id: item.id, created_from: "creative-editor" },
       },

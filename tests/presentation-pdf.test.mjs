@@ -102,6 +102,9 @@ test("exports the actual themed slide component instead of reconstructing its la
   assert.match(exporter,/CompressionStream\("deflate"\)/);
   assert.match(exporter,/EXPORT_SCALE=2/);
   assert.match(deck,/renderPresentationPdf\(items,presentation,options\)/);
-  assert.match(deck,/render_mode:highFidelity\?"browser-slide-capture":"compatible-vector"/);
+  assert.match(deck,/render_mode:"browser-slide-capture"/);
+  assert.doesNotMatch(deck,/\bcreatePresentationPdf\s*\(/);
+  assert.doesNotMatch(deck,/compatible-vector/);
+  assert.match(deck,/could not preserve your slide design/);
   assert.match(deck,/\?selected=\$\{preset\.id===selectedStyle\}/);
 });

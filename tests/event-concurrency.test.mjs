@@ -31,7 +31,8 @@ test("the client refreshes and rebases authored appends after stale heads",async
   assert.match(store,/this\.setRoute\(routedDestination\);\s*const appended=await this\.append/);
   assert.match(runtime,/sequence>\? ORDER BY sequence ASC LIMIT \?/);
   assert.match(runtime,/while\(events\.length<requested\)/);
-  assert.match(eventsApi,/readEventPage\(env,streamId,after,limit\)/);
+  assert.match(eventsApi,/readEventPageWithHead\(env,streamId,after,limit\)/);
+  assert.match(runtime,/export async function readEventPageWithHead/);
   assert.match(eventsApi,/streamHead\(env,streamId\)/);
   assert.match(store,/#readEventPages\(after=0\)/);
   assert.match(store,/hasMore&&next<=cursor/);

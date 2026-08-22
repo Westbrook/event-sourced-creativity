@@ -104,12 +104,12 @@ function canonicalContextValue(value: unknown): unknown {
         if (Number.isFinite(firstOrder) && Number.isFinite(secondOrder)) return firstOrder - secondOrder;
         const firstKey = text(first.block_id ?? first.id ?? first.type ?? "");
         const secondKey = text(second.block_id ?? second.id ?? second.type ?? "");
-        return firstKey.localeCompare(secondKey) || JSON.stringify(first).localeCompare(JSON.stringify(second));
+        return firstKey.localeCompare(secondKey, "en-US") || JSON.stringify(first).localeCompare(JSON.stringify(second), "en-US");
       });
     }
     return normalized;
   }
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, canonicalContextValue(item)]));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right, "en-US")).map(([key, item]) => [key, canonicalContextValue(item)]));
   return value;
 }
 

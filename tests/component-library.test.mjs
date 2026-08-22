@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { componentCatalog } from "../src/components/design-system/catalog.ts";
+import frenchMessages from "../src/components/design-system/locales/fr.ts";
+import arabicMessages from "../src/components/design-system/locales/ar.ts";
 
 const read = (relative) => readFile(new URL(relative, import.meta.url), "utf8");
 const [packageSource, manifestSource, publicManifestSource, shippedManifestSource, globalStyles, familyStyles, laboratoryStyles, catalogSource, applicationPreviewSource, labSource, librarySource, analyticsSource, collectionSource, baseSource, slottedBaseSource, layoutSource, feedbackSource, generatorSource] = await Promise.all([
@@ -65,10 +67,10 @@ test("the standard manifest documents every registered UI and application custom
   assert.equal(pkg.customElements, "./custom-elements.json");
   assert.equal(publicManifestSource, manifestSource);
   assert.equal(shippedManifestSource, manifestSource);
-  assert.ok(elements.length >= 98, "include the original application inventory and expanded component library");
-  assert.ok(elements.filter((element) => element.tagName.startsWith("forma-ui-")).length >= 40);
+  assert.ok(elements.length >= 99, "include the original application inventory, locale provider, and expanded component library");
+  assert.ok(elements.filter((element) => element.tagName.startsWith("forma-ui-")).length >= 41);
   assert.equal(new Set(elements.map((element) => element.tagName)).size, elements.length);
-  for (const tag of ["forma-shell", "forma-library", "forma-projects", "forma-analytics", "forma-design-system-lab", "forma-component-catalog", "forma-ui-theme", "forma-ui-dialog"]) {
+  for (const tag of ["forma-shell", "forma-library", "forma-projects", "forma-analytics", "forma-design-system-lab", "forma-component-catalog", "forma-ui-theme", "forma-ui-locale", "forma-ui-dialog"]) {
     assert.ok(declarationByTag.has(tag), `${tag} is documented`);
   }
   assert.ok(elements.every((element) => element.summary && element.description), "every element has readable machine-discoverable purpose");
@@ -104,17 +106,18 @@ test("genuine slots preserve authored semantics, shared styles, fallback behavio
 
   assert.match(layoutSource, /<slot name="heading">\$\{this\.heading \? this\.#heading\(\) : nothing\}<\/slot>/);
   assert.match(layoutSource, /this\.detail \? html`<p>\$\{this\.detail\}<\/p>` : nothing\}[\s\S]*?<slot><\/slot>/);
-  assert.match(layoutSource, /this\.querySelector\('\[slot="heading"\]'\)\?\.textContent\?\.trim\(\)/);
+  assert.match(layoutSource, /emitFormaEvent\(this, "forma-action", \{ value: this\.value \}\)/);
+  assert.doesNotMatch(layoutSource, /value:\s*this\.(heading|label)/);
   assert.doesNotMatch(layoutSource, /<h[1-6][^>]*>\s*<slot name="heading"/);
 
   assert.match(feedbackSource, /<div class="ui-notice-copy" role=/);
   assert.match(feedbackSource, /<div class="ui-notice-actions"><slot name="actions">/);
-  assert.match(feedbackSource, /<summary><slot name="summary">\$\{this\.label\}<\/slot><\/summary>/);
+  assert.match(feedbackSource, /<summary><slot name="summary">\$\{this\.label \|\| this\.i18n\.t\("disclosure\.more"\)\}<\/slot><\/summary>/);
   assert.match(feedbackSource, /if \(open && this\.group\)[\s\S]*?this\.getRootNode\(\)[\s\S]*?querySelectorAll<FormaUiDisclosure>\("forma-ui-disclosure"\)/);
   assert.match(feedbackSource, /peer !== this && peer\.group === this\.group[\s\S]*?details\.open = false/);
-  assert.match(feedbackSource, /querySelector\('\[slot="heading"\]'\)\?\.textContent\?\.trim\(\)/);
+  assert.match(feedbackSource, /emitFormaEvent\(this, "forma-dismiss", \{ value: this\.value \}\)/);
 
-  for (const tag of ["forma-ui-button", "forma-ui-field", "forma-ui-search", "forma-ui-select", "forma-ui-tabs", "forma-ui-popover", "forma-ui-dialog", "forma-ui-stack", "forma-ui-theme", "forma-ui-empty-state", "forma-ui-metric"]) {
+  for (const tag of ["forma-ui-button", "forma-ui-field", "forma-ui-search", "forma-ui-select", "forma-ui-tabs", "forma-ui-popover", "forma-ui-dialog", "forma-ui-stack", "forma-ui-theme", "forma-ui-locale", "forma-ui-empty-state", "forma-ui-metric"]) {
     assert.equal(declarationByTag.get(tag)["x-forma"].renderRoot, "light", `${tag} preserves its native/light-DOM behavior`);
   }
   assert.match(generatorSource, /documents slots without a shadow root/);
@@ -147,7 +150,7 @@ test("machine-readable attributes, options, defaults, themes, and event details 
 
   const theme = declarationByTag.get("forma-ui-theme");
   assert.ok(theme.cssProperties.length >= 35);
-  for (const token of ["--forma-focus-ring-color", "--forma-focus-ring-width", "--forma-font-size-supporting", "--forma-color-danger-text", "--forma-duration-normal", "--forma-control-min-size"]) {
+  for (const token of ["--forma-focus-ring-color", "--forma-focus-ring-width", "--forma-font-size-supporting", "--forma-color-danger-text", "--forma-duration-normal", "--forma-control-min-size", "--forma-heading-letter-spacing", "--forma-heading-line-height", "--forma-body-line-height"]) {
     assert.ok(theme.cssProperties.some((property) => property.name === token), `${token} is machine-discoverable`);
   }
   for (const name of ["density", "radius"]) {
@@ -156,6 +159,47 @@ test("machine-readable attributes, options, defaults, themes, and event details 
     assert.equal(member.reflects, true);
     assert.equal(typeof member.default, "string");
   }
+});
+
+test("scoped locale contracts separate translated authored content from invariant machine identifiers", async () => {
+  const localeSource = await read("../src/components/design-system/localization.ts");
+  const locale = declarationByTag.get("forma-ui-locale");
+  assert.equal(locale["x-forma"].category, "foundation");
+  assert.deepEqual(manifest["x-forma"].i18n.supportedLocales, ["en", "fr", "ar"]);
+  assert.equal(manifest["x-forma"].i18n.scopeElement, "forma-ui-locale");
+  for (const [attributeName, propertyName] of [["format-locale", "formatLocale"], ["time-zone", "timeZone"]]) {
+    const attribute = locale.attributes.find((candidate) => candidate.name === attributeName);
+    const property = locale.members.find((candidate) => candidate.name === propertyName);
+    assert.equal(attribute.fieldName, propertyName);
+    assert.equal(property.attribute, attributeName);
+    assert.equal(property.reflects, true);
+    assert.ok(attribute.description);
+  }
+  assert.ok(locale.members.some((member) => member.name === "messages" && !member.attribute));
+  for (const [tag, collection] of [["forma-ui-select", "options"], ["forma-ui-breadcrumbs", "items"], ["forma-ui-toolbar", "actions"]]) {
+    const metadata = declarationByTag.get(tag)["x-forma"].i18n;
+    assert.ok(metadata.optionTextPaths.includes(`${collection}[].label`));
+    assert.ok(metadata.invariantValuePaths.includes(`${collection}[].value`));
+  }
+  assert.ok(declarationByTag.get("forma-ui-card")["x-forma"].i18n.authorOwnedSlots.includes(""));
+  assert.ok(declarationByTag.get("forma-ui-avatar")["x-forma"].i18n.authorTextAttributes.includes("name"));
+  assert.deepEqual(declarationByTag.get("forma-ui-segmented-control")["x-forma"].i18n.internalMessages, ["field.choose"]);
+  assert.match(localeSource, /import\("\.\/locales\/fr"\)/);
+  assert.match(localeSource, /import\("\.\/locales\/ar"\)/);
+  assert.match(localeSource, /context-request/);
+  assert.match(localeSource, /Intl\.PluralRules/);
+  assert.match(localeSource, /Intl\.Segmenter/);
+  for (const entry of componentCatalog) {
+    for (const messages of [frenchMessages, arabicMessages]) {
+      assert.ok(messages[`component.${entry.tag}.title`], `${entry.tag} has a translated title`);
+      assert.ok(messages[`component.${entry.tag}.summary`], `${entry.tag} has a translated summary`);
+    }
+  }
+  for (const category of ["zero", "one", "two", "few", "many", "other"]) assert.ok(arabicMessages[`catalog.results.${category}`]);
+  assert.match(globalStyles, /:root:lang\(ar\)/);
+  assert.match(globalStyles, /--forma-script-letter-spacing:\s*0/);
+  assert.match(catalogSource, /<pre lang="en" dir="ltr">/);
+  assert.match(catalogSource, /catalog\.canonicalExample/);
 });
 
 test("human reference and manifest describe the same atomic component taxonomy", () => {
@@ -204,14 +248,14 @@ test("every application pattern has an isolated, truthful, accessible production
   assert.deepEqual(imports, ["lit"], "demonstrations cannot import application modules or the workspace store");
   assert.doesNotMatch(applicationPreviewSource, /this\.store|state\/store|fetch\(|setTimeout\(|localStorage|<img\b|<video\b|<canvas\b/);
   assert.doesNotMatch(applicationPreviewSource, /<h[1-3]\b|role="tree"|role="menu"|role="tablist"|<section\b[^>]*aria-label=/);
-  assert.match(applicationPreviewSource, /role="group" aria-label="Example Laboratory navigation"/);
+  assert.match(applicationPreviewSource, /role="group" aria-label=\$\{t\("pattern\.navigation", "Example Laboratory navigation"\)\}/);
   assert.match(applicationPreviewSource, /value="design-system"/);
-  assert.match(applicationPreviewSource, /role="list" aria-label="Sample collection hierarchy"/);
-  assert.match(applicationPreviewSource, /class="sr-only"> items<\/span>/);
+  assert.match(applicationPreviewSource, /role="list" aria-label=\$\{t\("pattern\.collectionHierarchy", "Sample collection hierarchy"\)\}/);
+  assert.match(applicationPreviewSource, /class="sr-only"> \$\{t\("pattern\.libraryItems"/);
   for (const approach of ["Prose", "Bullets", "JSON", "XML"]) assert.match(applicationPreviewSource, new RegExp(`"${approach}"`));
 
   assert.match(catalogSource, /entry\.previewKind === "application-composition"/);
-  assert.match(catalogSource, /renderApplicationPatternPreview\(entry\.tag\)/);
+  assert.match(catalogSource, /renderApplicationPatternPreview\(entry\.tag, this\.i18n\)/);
   assert.match(catalogSource, /Illustrative composition · application element not mounted/);
   assert.match(catalogSource, /Live loading announcement omitted to keep this reference quiet/);
   assert.match(catalogSource, /Every component API is real; application previews safely compose shared interface patterns/);
@@ -234,11 +278,11 @@ test("the reference remains route-lazy, store-independent, searchable, and inter
   assert.match(baseSource, /createRenderRoot\(\)\s*\{\s*return this/);
   assert.doesNotMatch(catalogSource, /\.\/forma-element|state\/store|this\.store/);
   assert.match(catalogSource, /extends FormaPresentationalElement/);
-  assert.match(catalogSource, /label="Search components"/);
+  assert.match(catalogSource, /\.label=\$\{this\.i18n\.t\("catalog\.searchLabel", "Search components"\)\}/);
   assert.match(catalogSource, /Browse by atomic level/);
   assert.match(catalogSource, /aria-live="polite"/);
   assert.match(catalogSource, /#openApis\.has\(entry\.tag\)\s*\?\s*this\.#api\(entry\)/);
-  assert.match(catalogSource, /<pre><code>\$\{entry\.example\}/);
+  assert.match(catalogSource, /<pre lang="en" dir="ltr"><code>\$\{entry\.example\}/);
   assert.match(catalogSource, /declaration\.slots/);
   assert.match(catalogSource, /Content slots/);
   assert.match(catalogSource, /Main content \(default\)/);
@@ -246,15 +290,16 @@ test("the reference remains route-lazy, store-independent, searchable, and inter
   assert.match(catalogSource, /Authored buttons and links keep their own native click and form behavior/);
   assert.match(catalogSource, /shadowRoot[\s\S]*?querySelectorAll\("slot"\)/);
   assert.match(catalogSource, /<h4 slot="heading">/);
-  assert.match(catalogSource, /role="img" aria-label="Soft blue and warm summer campaign color study"/);
+  assert.match(catalogSource, /role="img" aria-label=\$\{this\.i18n\.t\("sample\.campaignImage", "Soft blue and warm summer campaign color study"\)\}/);
   assert.match(catalogSource, /href="\/custom-elements\.json"/);
-  assert.match(catalogSource, /\.trim\(\)\.toLocaleLowerCase\(\)/);
+  assert.match(catalogSource, /toLocaleLowerCase\(this\.i18n\.locale\)/);
+  assert.match(catalogSource, /\\p\{Script=Latin\}/);
   assert.match(catalogSource, /this\.#query = event\.detail\.value/);
   assert.match(catalogSource, /customElements\.get\(tag\)/);
   assert.match(catalogSource, /loadComponentManifest\(\)/);
   assert.match(labSource, /<forma-component-catalog>/);
   assert.match(labSource, /administrative-page design-system-lab/);
-  assert.match(labSource, /<forma-ui-disclosure class="design-disclosure"><span slot="summary">Progressive disclosure<\/span>/);
+  assert.match(labSource, /<forma-ui-disclosure class="design-disclosure"><span slot="summary">\$\{this\.i18n\.t\("lab\.disclosure", "Progressive disclosure"\)\}<\/span>/);
   assert.match(labSource, /@forma-action=\$\{\(\) => this\.store\.setRoute\("\/projects"\)/);
   for (const level of ["Foundations", "Atoms", "Molecules", "Organisms", "Templates"]) assert.match(labSource, new RegExp(level));
 });
@@ -268,6 +313,42 @@ test("the component library is actually adopted by Library and Operations surfac
   assert.match(familyStyles, /\.analytics-readiness-outcomes/);
   assert.doesNotMatch(collectionSource, /role="tree"|role="treeitem"|role="menu"|role="menuitem"/);
   assert.match(collectionSource, /role="group" aria-label=\$\{`\$\{collection\.handle\} actions`\}/);
+});
+
+test("single-select pickers enhance progressively while preserving native forms and accessibility", async () => {
+  const formsSource = await read("../src/components/design-system/forms.ts");
+  const enhancement = familyStyles.match(/@supports \(appearance: base-select\) and selector\(::picker\(select\)\) \{([\s\S]*?)\n\}\n\ntextarea/);
+  assert.ok(enhancement, "custom picker styles require both select and picker support");
+
+  const [, rules] = enhancement;
+  assert.equal((rules.match(/\bappearance:\s*base-select/g) ?? []).length, 2, "both the select and its picker opt in");
+  assert.doesNotMatch(familyStyles.replace(enhancement[0], ""), /\bappearance:\s*base-select/, "unsupported browsers retain their existing native appearance");
+  assert.match(rules, /select:not\(\[multiple\]\):not\(\[size\]\)/);
+  assert.match(rules, /select:not\(\[multiple\]\)\[size="1"\]/);
+  assert.match(rules, /appearance:\s*base-select;\s*display:\s*inline-flex;\s*align-items:\s*center;\s*gap:\s*var\(--forma-space-2,\s*\.5rem\)/);
+  assert.match(rules, /:is\(\.block-subtype,\s*\.block-intent\)\s*:is\(select:not\(\[multiple\]\):not\(\[size\]\),\s*select:not\(\[multiple\]\)\[size="1"\]\)\s*\{\s*padding-inline:\s*\.6rem/);
+  assert.match(familyStyles, /\.block-subtype select,\s*\.block-intent select\s*\{[^}]*padding:\s*\.4rem 1\.8rem \.4rem \.6rem/, "native browsers retain the original compact arrow reserve");
+  assert.match(rules, /::picker\(select\)\s*\{[\s\S]*?appearance:\s*base-select/);
+  assert.match(rules, /::picker-icon\s*\{\s*flex:\s*none;\s*margin-inline-start:\s*auto/);
+  assert.match(rules, /:open::picker-icon\s*\{[\s\S]*?rotate:\s*180deg/);
+  assert.match(rules, /option\)[^\n]*\{[\s\S]*?min-block-size:\s*var\(--forma-control-min-size/);
+  assert.match(rules, /option\):focus-visible\s*\{[\s\S]*?--forma-focus-ring-color/);
+  assert.match(rules, /option\):checked\s*\{[\s\S]*?--forma-color-accent-subtle/);
+  assert.match(rules, /option\)::checkmark\s*\{[\s\S]*?margin-inline-start:\s*auto/);
+  assert.match(rules, /option\):disabled\s*\{[\s\S]*?cursor:\s*not-allowed/);
+  assert.match(rules, /select:not\(\[multiple\]\):not\(\[size\]\) optgroup/);
+  assert.match(rules, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?::picker-icon\s*\{[\s\S]*?transition:\s*none/);
+  assert.match(rules, /@media \(forced-colors: active\)[\s\S]*?background:\s*Highlight/);
+  assert.doesNotMatch(rules, /(?:^|\n)\s*option(?:[:\s,{])/, "datalist options must not receive picker-only styles");
+
+  const nativeSelect = formsSource.match(/<select\b[\s\S]*?<\/select>/)?.[0];
+  assert.ok(nativeSelect, "the design-system component renders a real native select");
+  assert.match(nativeSelect, /<option\b/);
+  assert.match(nativeSelect, /\?required=\$\{this\.required\}/);
+  assert.match(nativeSelect, /\?disabled=\$\{this\.disabled\}/);
+  assert.match(nativeSelect, /aria-describedby=/);
+  assert.match(nativeSelect, /@change=\$\{this\.#change\}/);
+  assert.doesNotMatch(nativeSelect, /<button\b|<selectedcontent\b/, "legacy HTML parsers keep standard select content");
 });
 
 test("theme defaults reach AAA text contrast and visible interactive boundaries", () => {

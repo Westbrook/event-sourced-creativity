@@ -92,6 +92,41 @@ adding or changing custom-element declarations; `pnpm cem:check` verifies the
 documented component inventory, real named/default slots, rendering boundaries,
 and inherited theme contract stay synchronized with the application.
 
+### Internationalized component infrastructure
+
+The application and component library include English, French, and Arabic.
+Language selection follows the browser preference initially, remains local to
+the current device, and stays available before privacy consent and on shared
+documents. Translations load only when their language is selected. Writing
+direction, keyboard navigation, accessible announcements, plural categories,
+numbers, dates, and script-aware typography update together.
+
+Use the non-rendering locale foundation to override the language or regional
+formatting for any composed subtree:
+
+```html
+<forma-ui-locale
+  lang="fr"
+  format-locale="fr-CA"
+  time-zone="America/Toronto"
+>
+  <forma-ui-button value="save-direction" label="Enregistrer"></forma-ui-button>
+</forma-ui-locale>
+```
+
+The corresponding JavaScript properties are `formatLocale` and `timeZone`.
+Assign a dictionary to the property-only `messages` API to override component
+messages within that scope. Nested locale scopes inherit parent settings and
+overrides unless they explicitly replace them.
+
+Authored headings, labels, descriptions, slot content, and option labels belong
+to the integrator and should be translated or preserved as authored. Element
+names, event names, CSS custom properties, routes, option values, action
+values, form field names, and persisted identifiers are stable machine
+contracts and must never be derived from translated text. The manifest exposes
+supported locales, message-ID patterns, content ownership, property-only
+collections, and invariant values through namespaced `x-forma.i18n` metadata.
+
 The Replay laboratory can export theoretical fixtures. Rebuild one from the
 command line with:
 

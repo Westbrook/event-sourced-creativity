@@ -1,4 +1,4 @@
-import { appendAuditEvent, ensureSchema, uuidV7, type WorkerEnv } from "./runtime";
+import { appendAuditEvent, ensureSchema, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { MICRO_USD_PER_USD } from "./replay-cost";
 import { readCanvasGovernance } from "./canvas-governance-policy";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter";
@@ -77,15 +77,35 @@ type BudgetReservationContext = { streamId?: string; correlationId?: string; ope
 
 async function ensureBudgetRow(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limit: number) {
   const now = new Date().toISOString();
-  await env.DB.prepare("INSERT OR IGNORE INTO budget_counters (scope,scope_id,period,used_tokens,reserved_tokens,hard_limit_tokens,updated_at) VALUES (?,?,?,0,0,?,?)").bind(scope, scopeId, period(), limit, now).run();
-  await env.DB.prepare("UPDATE budget_counters SET hard_limit_tokens=?, updated_at=? WHERE scope=? AND scope_id=? AND period=?").bind(limit, now, scope, scopeId, period()).run();
+  await env.DB.prepare(`INSERT INTO budget_counters (scope,scope_id,period,used_tokens,reserved_tokens,hard_limit_tokens,updated_at)
+    VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
+    SET hard_limit_tokens=excluded.hard_limit_tokens,updated_at=excluded.updated_at
+    WHERE budget_counters.hard_limit_tokens IS NOT excluded.hard_limit_tokens`)
+    .bind(scope, scopeId, period(), limit, now).run();
 }
 
 export async function readBudgets(env: WorkerEnv, userId: string) {
-  const limits = budgetLimits(env); await ensureBudgetRow(env, "user", userId, limits.user); await ensureBudgetRow(env, "workspace", "forma", limits.workspace);
-  const rows = await env.DB.prepare("SELECT scope,used_tokens,reserved_tokens,hard_limit_tokens FROM budget_counters WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma'))").bind(period(), userId).all<Record<string, unknown>>();
-  const map = Object.fromEntries(rows.results.map((row) => [String(row.scope), { used: Number(row.used_tokens), reserved: Number(row.reserved_tokens), limit: Number(row.hard_limit_tokens) }]));
-  return { period: period(), user: map.user ?? { used: 0, reserved: 0, limit: limits.user }, workspace: map.workspace ?? { used: 0, reserved: 0, limit: limits.workspace } };
+  const limits = budgetLimits(env);
+  const currentPeriod = period();
+  const select = () => env.DB.prepare("SELECT scope,used_tokens,reserved_tokens,hard_limit_tokens FROM budget_counters WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma'))").bind(currentPeriod, userId);
+  let rows = (await select().all<Record<string, unknown>>()).results;
+  const userRow = rows.find((row) => row.scope === "user");
+  const workspaceRow = rows.find((row) => row.scope === "workspace");
+  if (!userRow || !workspaceRow || Number(userRow.hard_limit_tokens) !== limits.user || Number(workspaceRow.hard_limit_tokens) !== limits.workspace) {
+    const now = new Date().toISOString();
+    const upsert = (scope: "user" | "workspace", scopeId: string, limit: number) => env.DB.prepare(`INSERT INTO budget_counters (scope,scope_id,period,used_tokens,reserved_tokens,hard_limit_tokens,updated_at)
+      VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
+      SET hard_limit_tokens=excluded.hard_limit_tokens,updated_at=excluded.updated_at
+      WHERE budget_counters.hard_limit_tokens IS NOT excluded.hard_limit_tokens`).bind(scope, scopeId, currentPeriod, limit, now);
+    const result = await env.DB.batch<Record<string, unknown>>([
+      upsert("user", userId, limits.user),
+      upsert("workspace", "forma", limits.workspace),
+      select(),
+    ]);
+    rows = result.at(-1)?.results ?? [];
+  }
+  const map = Object.fromEntries(rows.map((row) => [String(row.scope), { used: Number(row.used_tokens), reserved: Number(row.reserved_tokens), limit: Number(row.hard_limit_tokens) }]));
+  return { period: currentPeriod, user: map.user ?? { used: 0, reserved: 0, limit: limits.user }, workspace: map.workspace ?? { used: 0, reserved: 0, limit: limits.workspace } };
 }
 
 export async function reserveBudget(env: WorkerEnv, userId: string, tokens: number, context: BudgetReservationContext = {}) {
@@ -179,21 +199,34 @@ const costBudgetLimits = (env: WorkerEnv) => ({ user: moneyEnv(env.FORMA_USER_CO
 
 async function ensureCostBudgetRow(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limitMicrousd: number) {
   const now = new Date().toISOString();
-  await env.DB.prepare("INSERT OR IGNORE INTO cost_budget_counters (scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at) VALUES (?,?,?,0,0,?,?)").bind(scope, scopeId, period(), limitMicrousd, now).run();
-  await env.DB.prepare("UPDATE cost_budget_counters SET hard_limit_microusd=?,updated_at=? WHERE scope=? AND scope_id=? AND period=?").bind(limitMicrousd, now, scope, scopeId, period()).run();
+  await env.DB.prepare(`INSERT INTO cost_budget_counters (scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at)
+    VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
+    SET hard_limit_microusd=excluded.hard_limit_microusd,updated_at=excluded.updated_at
+    WHERE cost_budget_counters.hard_limit_microusd IS NOT excluded.hard_limit_microusd`)
+    .bind(scope, scopeId, period(), limitMicrousd, now).run();
 }
 
 export async function readCostBudgets(env: WorkerEnv, userId: string) {
   const limits = costBudgetLimits(env);
-  await ensureCostBudgetRow(env, "user", userId, limits.user);
-  await ensureCostBudgetRow(env, "workspace", "forma", limits.workspace);
-  const rows = await env.DB.prepare("SELECT scope,used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma'))").bind(period(), userId).all<Record<string, unknown>>();
-  const map = Object.fromEntries(rows.results.map((row) => {
+  const currentPeriod=period();
+  const select=()=>env.DB.prepare("SELECT scope,used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma'))").bind(currentPeriod,userId);
+  let rows=(await select().all<Record<string,unknown>>()).results;
+  const userRow=rows.find((row)=>row.scope==="user"),workspaceRow=rows.find((row)=>row.scope==="workspace");
+  if(!userRow||!workspaceRow||Number(userRow.hard_limit_microusd)!==limits.user||Number(workspaceRow.hard_limit_microusd)!==limits.workspace){
+    const now=new Date().toISOString();
+    const upsert=(scope:"user"|"workspace",scopeId:string,limit:number)=>env.DB.prepare(`INSERT INTO cost_budget_counters (scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at)
+      VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
+      SET hard_limit_microusd=excluded.hard_limit_microusd,updated_at=excluded.updated_at
+      WHERE cost_budget_counters.hard_limit_microusd IS NOT excluded.hard_limit_microusd`).bind(scope,scopeId,currentPeriod,limit,now);
+    const result=await env.DB.batch<Record<string,unknown>>([upsert("user",userId,limits.user),upsert("workspace","forma",limits.workspace),select()]);
+    rows=result.at(-1)?.results??[];
+  }
+  const map = Object.fromEntries(rows.map((row) => {
     const usedMicrousd = Number(row.used_microusd); const reservedMicrousd = Number(row.reserved_microusd); const limitMicrousd = Number(row.hard_limit_microusd);
     return [String(row.scope), { usedMicrousd, reservedMicrousd, limitMicrousd, remainingMicrousd: Math.max(0, limitMicrousd - usedMicrousd - reservedMicrousd) } satisfies CostBudgetSnapshot];
   }));
   const empty = (limitMicrousd: number): CostBudgetSnapshot => ({ usedMicrousd: 0, reservedMicrousd: 0, limitMicrousd, remainingMicrousd: limitMicrousd });
-  return { period: period(), currency: "USD" as const, user: map.user ?? empty(limits.user), workspace: map.workspace ?? empty(limits.workspace) };
+  return { period: currentPeriod, currency: "USD" as const, user: map.user ?? empty(limits.user), workspace: map.workspace ?? empty(limits.workspace) };
 }
 
 export async function reserveCostBudget(env: WorkerEnv, userId: string, requestedMicrousd: number, options: { maximumMicrousd: number; allowUserOverage: boolean }) {
@@ -228,18 +261,22 @@ export async function releaseCostBudget(env: WorkerEnv, userId: string, reserved
 
 export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: "prompt" | "provider-output" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input", content: string) {
   const contentId = uuidV7(); const createdAt = new Date(); const days = intEnv(env.FORMA_RETENTION_DAYS, 30); const expiresAt = new Date(createdAt.getTime() + days * 86_400_000);
-  await env.DB.prepare("INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES (?,?,?,?,?,?,NULL)").bind(contentId, ownerId, kind, content, createdAt.toISOString(), expiresAt.toISOString()).run();
+  const now=createdAt.toISOString();
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES (?,?,?,?,?,?,NULL)").bind(contentId, ownerId, kind, content, now, expiresAt.toISOString()),
+    env.DB.prepare("UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND expires_at<=?").bind(now,ownerId,now),
+  ]);
   return { contentId, expiresAt: expiresAt.toISOString() };
 }
 
 export async function loadPrivateContent(env: WorkerEnv, ownerId: string) {
   const now = new Date().toISOString();
-  await env.DB.prepare("UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND expires_at<=?").bind(now, ownerId, now).run();
   const rows = await env.DB.prepare("SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>?").bind(ownerId, now).all<{ content_id: string; content: string }>();
   return Object.fromEntries(rows.results.map((row) => [row.content_id, row.content]));
 }
 
-export async function handleSession(request: Request, env: WorkerEnv) {
+export async function handleSession(request: Request, env: WorkerEnv, _context?: WorkerExecutionContext) {
+  void _context;
   const auth = await requireUser(request, env); if (auth.response || !auth.user) return auth.response!; const user = auth.user;
   if (request.method === "POST") {
     const body = await request.json() as { action?: string; ownershipConfirmed?: boolean; providerProcessingConfirmed?: boolean };
@@ -248,8 +285,10 @@ export async function handleSession(request: Request, env: WorkerEnv) {
     await appendAuditEvent(env, user.streamId, "user", "ConsentAccepted", { policy_version: POLICY_VERSION, ownership_confirmed: true, external_provider_processing_confirmed: true });
     user.consentVersion = POLICY_VERSION; user.consentedAt = now;
   } else if (request.method !== "GET") return new Response("Method not allowed", { status: 405 });
-  const budgetUser=auth.principal??user;await reconcileFailedBudgetReservations(env,budgetUser);
-  return Response.json({ user, impersonation:auth.impersonation?{active:true,impersonationId:auth.impersonation.impersonationId,personaId:auth.impersonation.personaId,replaySessionId:auth.impersonation.replaySessionId,actor:auth.impersonation.actor,fictionalUser:auth.impersonation.fictionalUser,startedAt:auth.impersonation.startedAt,expiresAt:auth.impersonation.expiresAt}:null, policy: { version: POLICY_VERSION, accepted: user.consentVersion === POLICY_VERSION, passiveCapture: false, attentionCapture: { available: true, defaultOn: false, retentionDays: 14, rawInputCapture: false }, externalAssetsRequireAssertion: true, retentionDays: intEnv(env.FORMA_RETENTION_DAYS, 30), sharing: "private-expiring-revocable" }, canvas:await readCanvasGovernance(env,user.role), provider: { name: "OpenAI Responses · OpenAI + Fal image adapters · Fal video", model: env.OPENAI_IMAGE_MODEL ?? "gpt-image-2", plannerModel: env.OPENAI_MODEL ?? "gpt-5.6-terra", configured: Boolean(env.OPENAI_API_KEY), imageProvider:env.FORMA_IMAGE_PROVIDER??"openai", imageProviders:[{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",configured:Boolean(env.OPENAI_API_KEY)},{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4",previewModel:env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast",editModel:env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image",configured:Boolean(env.FAL_KEY)}], videoProvider: env.FORMA_VIDEO_PROVIDER??"fal", videoModel:env.FAL_VIDEO_MODEL??DEFAULT_VIDEO_MODEL, videoReferenceModel:env.FAL_REFERENCE_VIDEO_MODEL??DEFAULT_REFERENCE_VIDEO_MODEL, videoAdapterVersion:VIDEO_ADAPTER_CONTRACT.adapterVersion, videoConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY), videoApiSunset:null }, budgets: await readBudgets(env, budgetUser.userId) });
+  const budgetUser=auth.principal??user;
+  if(request.method==="POST")await reconcileFailedBudgetReservations(env,budgetUser);
+  const [canvas,budgets]=await Promise.all([readCanvasGovernance(env,user.role),readBudgets(env,budgetUser.userId)]);
+  return Response.json({ user, impersonation:auth.impersonation?{active:true,impersonationId:auth.impersonation.impersonationId,personaId:auth.impersonation.personaId,replaySessionId:auth.impersonation.replaySessionId,actor:auth.impersonation.actor,fictionalUser:auth.impersonation.fictionalUser,startedAt:auth.impersonation.startedAt,expiresAt:auth.impersonation.expiresAt}:null, policy: { version: POLICY_VERSION, accepted: user.consentVersion === POLICY_VERSION, passiveCapture: false, attentionCapture: { available: true, defaultOn: false, retentionDays: 14, rawInputCapture: false }, externalAssetsRequireAssertion: true, retentionDays: intEnv(env.FORMA_RETENTION_DAYS, 30), sharing: "private-expiring-revocable" }, canvas, provider: { name: "OpenAI Responses · OpenAI + Fal image adapters · Fal video", model: env.OPENAI_IMAGE_MODEL ?? "gpt-image-2", plannerModel: env.OPENAI_MODEL ?? "gpt-5.6-terra", configured: Boolean(env.OPENAI_API_KEY), imageProvider:env.FORMA_IMAGE_PROVIDER??"openai", imageProviders:[{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",configured:Boolean(env.OPENAI_API_KEY)},{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4",previewModel:env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast",editModel:env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image",configured:Boolean(env.FAL_KEY)}], videoProvider: env.FORMA_VIDEO_PROVIDER??"fal", videoModel:env.FAL_VIDEO_MODEL??DEFAULT_VIDEO_MODEL, videoReferenceModel:env.FAL_REFERENCE_VIDEO_MODEL??DEFAULT_REFERENCE_VIDEO_MODEL, videoAdapterVersion:VIDEO_ADAPTER_CONTRACT.adapterVersion, videoConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY), videoApiSunset:null }, budgets });
 }
 
 export async function handleImpersonation(request:Request,env:WorkerEnv){

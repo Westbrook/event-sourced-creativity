@@ -24,7 +24,7 @@ export type StoryboardContextResult = {
   availableFrameCount: number;
 };
 
-const slug = (value: string) => value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 52) || "storyboard";
+const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 52) || "storyboard";
 
 /**
  * Materialize each rendered storyboard frame as an independently editable,
