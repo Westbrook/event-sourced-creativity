@@ -67,6 +67,7 @@ export class FormaStore {
   #redo: HistoryGroup[] = [];
   #rememberedClientEventIds = new Set<string>();
   #appendPipeline:Promise<void> = Promise.resolve();
+  #navigationCommit:Promise<boolean>|null=null;
   #focalInFlight = new Set<string>();
   #focalAppendQueue: Promise<void> = Promise.resolve();
   #jobPollTimer = 0;
@@ -289,7 +290,7 @@ export class FormaStore {
       for(const job of completed){if(job.kind==="structure_adaptive"&&job.status==="completed"&&job.result?.structure)this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId);continue;}if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);}
       this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(jobs.some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")?1_500:60_000);
     }catch{this.#jobPollFailures+=1;if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}this.#scheduleJobPoll(5_000);}finally{this.#jobsSyncing=false;if(this.#jobResyncRequested||this.#jobScope()!==scope){this.#jobResyncRequested=false;queueMicrotask(()=>void this.syncDocumentJobs());}}}
-  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string){const documentId=documentIdOverride??this.projection.get().documentId;const requestKey=String(payload.requestKey??"");if(requestKey&&this.#jobStarts.has(requestKey))throw new Error("This exact image request is already being queued.");if(requestKey){this.#jobStarts.add(requestKey);this.notify();}try{const action=kind==="preview"?"start a draft image":kind==="generate"?"start a full-quality image":kind==="prompt_fan"?"start a four-image prompt fan":`start ${kind.replaceAll("_"," ")}`;const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action);const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness};if(body.readiness&&requestKey)this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});if(!response.ok||!body.job)throw new Error(body.message??body.error??"Document operation could not be started");const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);if(requestKey)this.#readinessAcknowledgements.delete(requestKey);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);return{job:body.job,reused:Boolean(body.reused)};}finally{if(requestKey){this.#jobStarts.delete(requestKey);this.notify();}}}
+  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string){const documentId=documentIdOverride??this.projection.get().documentId;const requestKey=String(payload.requestKey??"");if(requestKey&&this.#jobStarts.has(requestKey))throw new Error("This exact image request is already being queued.");if(requestKey){this.#jobStarts.add(requestKey);this.notify();}try{const navigation=this.#navigationCommit;await this.#appendPipeline;if(navigation&&!await navigation)throw new Error("The selected project could not be opened safely.");const action=kind==="preview"?"start a draft image":kind==="generate"?"start a full-quality image":kind==="prompt_fan"?"start a four-image prompt fan":`start ${kind.replaceAll("_"," ")}`;const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action);const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness};if(body.readiness&&requestKey)this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});if(!response.ok||!body.job)throw new Error(body.message??body.error??"Document operation could not be started");const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);if(requestKey)this.#readinessAcknowledgements.delete(requestKey);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);return{job:body.job,reused:Boolean(body.reused)};}finally{if(requestKey){this.#jobStarts.delete(requestKey);this.notify();}}}
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   toast(message: string) { this.ui.toast = message; this.notify(); window.setTimeout(() => { if (this.ui.toast === message) { this.ui.toast = ""; this.notify(); } }, 2800); }
   async confirmImpersonatedInteraction(action="change this fictional account"){
@@ -413,16 +414,16 @@ export class FormaStore {
     finally { this.busy.set(""); this.notify(); }
   }
 
-  async append(event: EventInput, options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean } = {}) {
+  async append(event: EventInput, options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean; background?: boolean } = {}) {
     return this.appendBatch([event], options);
   }
 
-  async appendBatch(events: EventInput[], options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean } = {}) {
+  async appendBatch(events: EventInput[], options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean; background?: boolean } = {}) {
     const pending=this.#appendPipeline.then(()=>this.#appendBatchNow(events,options));this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
   }
 
-  async #appendBatchNow(events: EventInput[], options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean } = {}) {
-    this.busy.set(events[0]?.type ?? "append"); this.appendFailure.set(""); this.notify();
+  async #appendBatchNow(events: EventInput[], options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean; background?: boolean } = {}) {
+    if(!options.background)this.busy.set(events[0]?.type ?? "append"); this.appendFailure.set(""); this.notify();
     try {
       let response:Response;let body:{ appended?: CreativeEvent[]; rejected?: Array<{ index?: number; type?: string; reason: string }>; head?: number; error?: string }={};
       const attempts=options.expected===undefined?Math.max(1,Math.min(6,options.rebaseAttempts??2)):1;
@@ -434,7 +435,7 @@ export class FormaStore {
       if (body.rejected?.length) {const reasons=[...new Set(body.rejected.map((item)=>`${item.type?`${item.type}: `:""}${item.reason}`))];this.appendFailure.set(reasons.join("; "));this.toast(documentViewFromRoute(this.route.get()) === "editor" ? `${body.rejected.length} change${body.rejected.length === 1 ? "" : "s"} could not be saved; the other changes are safe.` : `${body.rejected.length} event${body.rejected.length === 1 ? "" : "s"} rejected; valid events still appended.`);}
       return appended;
     } catch (error) { const message=error instanceof Error ? error.message : "Append failed";this.appendFailure.set(message);if(!options.silent)this.toast(message); return []; }
-    finally { this.busy.set(""); this.notify(); }
+    finally { if(!options.background)this.busy.set(""); this.notify(); }
   }
 
   async copyLibraryBlockSet(rootBlockId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="library"){
@@ -471,6 +472,7 @@ export class FormaStore {
   async hot(event: EventInput, options: { keepalive?: boolean } = {}) {
     if(this.session.get()?.impersonation)return;
     try {
+      if(!options.keepalive)await this.#appendPipeline;
       const response = await fetch("/api/events/hot", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "hot", event, events: [event], clientId: "web:lit" }), keepalive: options.keepalive });
       if (!response.ok) return;
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number };
@@ -563,8 +565,8 @@ export class FormaStore {
     const input:EventInput={type:"ProjectOpened",payload:{project_id:projectId,previous_project_id:projection.projectId,source_surface:"projects",client_event_id:clientEventId}};
     const optimistic:CreativeEvent={eventId:`optimistic:${clientEventId}`,streamId:"optimistic:project",sequence:this.head.get()+1,occurredAt:now,recordedAt:now,actor:"user",clientId:"web:project-optimistic",correlationId:clientEventId,causationId:null,compensatesEventId:null,schemaVersion:1,type:input.type,payload:input.payload};
     this.optimisticEvents.set([...this.optimisticEvents.get(),optimistic]);
-    this.patchUi({focusBlockId:"",focusCollectionId:"",selectedOutputId:"",compareOpen:false});this.setRoute(destination);
-    const appended=await this.append(input,{rebaseAttempts:6,silent:true});
+    this.patchUi({focusBlockId:"",focusCollectionId:"",selectedOutputId:"",compareOpen:false});const persisted=this.append(input,{rebaseAttempts:6,silent:true,background:true});const committed=persisted.then((events)=>events.length>0,()=>false);this.#navigationCommit=committed;this.setRoute(destination);
+    const appended=await persisted;if(this.#navigationCommit===committed)this.#navigationCommit=null;
     this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>event.eventId!==optimistic.eventId));
     if(!appended.length){this.setRoute(previousRoute,{replace:true});this.toast("That project could not be opened. Your current workspace was restored.");return false;}
     this.notify();this.toast(`${target.name} opened in Studio.`);return true;
@@ -574,8 +576,9 @@ export class FormaStore {
     const projection=this.projection.get();const target=projection.documents.find((document)=>document.id===documentId);const routedDestination = withDocumentInRoute(destination, documentId, target?.title ?? "");
     if(!documentId||documentId===projection.documentId){this.setRoute(routedDestination);return true;}
     if(!target){this.toast("That document is no longer available.");return false;}
-    const previousDocumentId=projection.documentId;this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});this.setRoute(routedDestination);
-    const appended=await this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:previousDocumentId,source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative")}},{rebaseAttempts:6,silent:true});
+    const previousDocumentId=projection.documentId;this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});
+    const persisted=this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:previousDocumentId,source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative")}},{rebaseAttempts:6,silent:true,background:true});const committed=persisted.then((events)=>events.length>0,()=>false);this.#navigationCommit=committed;this.setRoute(routedDestination);
+    const appended=await persisted;if(this.#navigationCommit===committed)this.#navigationCommit=null;
     if(appended.length)this.toast("Document opened.");return true;
   }
 

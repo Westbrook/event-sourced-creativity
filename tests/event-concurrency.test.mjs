@@ -28,7 +28,8 @@ test("the client refreshes and rebases authored appends after stale heads",async
   assert.match(store,/stageOptimisticCanvasEvents/);
   assert.match(store,/#appendPipeline/);
   assert.match(store,/this\.#appendPipeline\.then\(\(\)=>this\.#appendBatchNow/);
-  assert.match(store,/this\.setRoute\(routedDestination\);\s*const appended=await this\.append/);
+  assert.match(store,/const persisted=this\.append\(\{type:"DocumentOpened"/);
+  assert.match(store,/background:true\}\);const committed=persisted\.then\(\(events\)=>events\.length>0,\(\)=>false\);this\.#navigationCommit=committed;this\.setRoute\(routedDestination\)/);
   assert.match(runtime,/sequence>\? ORDER BY sequence ASC LIMIT \?/);
   assert.match(runtime,/while\(events\.length<requested\)/);
   assert.match(eventsApi,/readEventPageWithHead\(env,streamId,after,limit\)/);
@@ -36,6 +37,18 @@ test("the client refreshes and rebases authored appends after stale heads",async
   assert.match(eventsApi,/streamHead\(env,streamId\)/);
   assert.match(store,/#readEventPages\(after=0\)/);
   assert.match(store,/hasMore&&next<=cursor/);
+});
+
+test("project navigation remains interactive and commits before competing telemetry or paid work",async()=>{
+  const store=await readFile(new URL("../src/state/store.ts",import.meta.url),"utf8");
+
+  assert.match(store,/const persisted=this\.append\(input,\{rebaseAttempts:6,silent:true,background:true\}\);const committed=persisted\.then/);
+  assert.match(store,/if\(!options\.background\)this\.busy\.set\(events\[0\]\?\.type/);
+  assert.match(store,/finally \{ if\(!options\.background\)this\.busy\.set\(""\)/);
+  assert.match(store,/if\(!options\.keepalive\)await this\.#appendPipeline;/);
+  assert.match(store,/this\.#jobStarts\.add\(requestKey\);this\.notify\(\);\}try\{const navigation=this\.#navigationCommit;await this\.#appendPipeline;/);
+  assert.match(store,/if\(navigation&&!await navigation\)throw new Error/);
+  assert.match(store,/if\(!appended\.length\)\{this\.setRoute\(previousRoute,\{replace:true\}\)/);
 });
 
 test("document dialogs preserve their target document across background event refreshes",async()=>{
