@@ -11,7 +11,7 @@ import { moderateGenerationSnapshot, moderatePromptTechniqueSet } from "./openai
 import type { ImageReference } from "./openai-adapter.ts";
 import { readBudgets, requireConsent, requireUser, type PilotUser } from "./pilot-policy.ts";
 import { classifyProviderFailure, type ProviderFailureDetail } from "./provider-errors.ts";
-import { appendAuditEvent, ensureSchema, readEvents, uuidV7, type WorkerEnv } from "./runtime.ts";
+import { appendAuditEvent, ensureSchema, readWorkspaceEvents, uuidV7, type EventRow, type WorkerEnv } from "./runtime.ts";
 import { validateFalImageSize } from "./fal-image-adapter.ts";
 
 export type GenerationPreflightInput = { kind: GenerationReadinessKind; documentId: string; documentRevision?: string; requestKey?: string; sourcePreviewId?: string | null; promptTechnique?: PromptTechnique; snapshot?: Record<string, unknown>; force?: boolean; sourceSurface?: string };
@@ -54,7 +54,7 @@ const techniqueReferenceDescriptors = (references: ImageReference[]): PromptRefe
   source: reference.source,
 }));
 
-async function promptTechniqueReferences(env: WorkerEnv, ownerId: string, projection: ReturnType<typeof foldEvents>, events: Awaited<ReturnType<typeof readEvents>>, sourcePreviewId?: string | null) {
+async function promptTechniqueReferences(env: WorkerEnv, ownerId: string, projection: ReturnType<typeof foldEvents>, events: EventRow[], sourcePreviewId?: string | null) {
   const references: ImageReference[] = [];
   for (const block of projection.blocks) {
     if (block.type !== "reference" || Number(block.properties.weight ?? .5) <= 0 || !sendsReferencePixels(block.properties.pixel_reference_mode)) continue;
@@ -78,7 +78,7 @@ async function promptTechniqueReferences(env: WorkerEnv, ownerId: string, projec
 
 export async function comparePromptTechniqueSafety(env: WorkerEnv, user: PilotUser, input: PromptTechniqueComparisonInput): Promise<PromptTechniqueSafetyComparison> {
   if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
-  const events = await readEvents(env, user.streamId);
+  const events = await readWorkspaceEvents(env, user.streamId);
   const projection = foldEvents(events, Number.POSITIVE_INFINITY, input.documentId);
   if (!projection.documentId || projection.documentId !== input.documentId) throw new Error("document_not_found");
   const baseSnapshot = input.snapshot && Object.keys(input.snapshot).length ? input.snapshot : snapshotFor(projection);
@@ -155,7 +155,7 @@ export async function comparePromptTechniqueSafety(env: WorkerEnv, user: PilotUs
   return { comparisonId, documentId: projection.documentId, documentRevision, failedTechnique, recommendedTechnique, summary, results, referenceCount: references.length, imageGenerationCalls: 0, checkedAt, version };
 }
 
-export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:GenerationPreflightInput,options:{appendEvents?:boolean;allowCache?:boolean}={}):Promise<GenerationReadiness>{
+export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:GenerationPreflightInput,options:{appendEvents?:boolean;allowCache?:boolean;sourceEvents?:EventRow[]}={}):Promise<GenerationReadiness>{
   await ensureSchema(env);const checkedAt=nowIso();const technique=normalizePromptTechnique(input.promptTechnique);
   let prefetched:PreflightRow|null|undefined;
   if(options.allowCache!==false&&!input.force&&input.requestKey&&input.documentRevision&&input.documentId){
@@ -166,7 +166,7 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
       prefetched=null;
     }catch{prefetched=null;/* Recompute malformed cache rows. */}
   }
-  const events=await readEvents(env,user.streamId);const projection=foldEvents(events,Number.POSITIVE_INFINITY,input.documentId);const snapshot=input.snapshot&&Object.keys(input.snapshot).length?input.snapshot:snapshotFor(projection);const documentRevision=String(input.documentRevision||documentGenerationRevision({snapshot,sourceBlockVersions:projection.blocks.map((block)=>({block_id:block.id,version:block.sourceEvents.length})),documentId:projection.documentId}));const requestKey=String(input.requestKey||`${input.kind}:${documentRevision}:${input.sourcePreviewId||"document"}:${technique}`);const cacheKey=`${GENERATION_PREFLIGHT_VERSION}:${requestKey}`;
+  const events=options.sourceEvents??await readWorkspaceEvents(env,user.streamId);const projection=foldEvents(events,Number.POSITIVE_INFINITY,input.documentId);const snapshot=input.snapshot&&Object.keys(input.snapshot).length?input.snapshot:snapshotFor(projection);const documentRevision=String(input.documentRevision||documentGenerationRevision({snapshot,sourceBlockVersions:projection.blocks.map((block)=>({block_id:block.id,version:block.sourceEvents.length})),documentId:projection.documentId}));const requestKey=String(input.requestKey||`${input.kind}:${documentRevision}:${input.sourcePreviewId||"document"}:${technique}`);const cacheKey=`${GENERATION_PREFLIGHT_VERSION}:${requestKey}`;
   if(options.allowCache!==false&&!input.force){const cached=prefetched===undefined?await env.DB.prepare("SELECT result_json,expires_at FROM generation_preflights WHERE owner_id=? AND request_key=?").bind(user.userId,cacheKey).first<PreflightRow>():prefetched;if(cached&&Date.parse(cached.expires_at)>Date.now()){try{return{...JSON.parse(cached.result_json) as GenerationReadiness,cached:true};}catch{/* Recompute malformed cache rows. */}}}
   let previous:GenerationReadiness|null=null;const previousRow=await env.DB.prepare("SELECT result_json,expires_at FROM generation_preflights WHERE owner_id=? AND document_id=? ORDER BY created_at DESC LIMIT 1").bind(user.userId,projection.documentId).first<PreflightRow>();if(previousRow)try{previous=JSON.parse(previousRow.result_json) as GenerationReadiness;}catch{/* A malformed historical cache must not block a new check. */}
   const preflightId=uuidV7();const expiresAt=new Date(Date.now()+10*60_000).toISOString();const probes:GenerationReadinessProbe[]=[];const add=(probe:GenerationReadinessProbe)=>probes.push(probe);if(options.appendEvents!==false){if(previous&&previous.documentRevision!==documentRevision)await appendAuditEvent(env,user.streamId,"worker:policy","GenerationPreflightInvalidated",{preflight_id:previous.preflightId,document_id:projection.documentId,previous_document_revision:previous.documentRevision,document_revision:documentRevision,reason:"document-or-request-changed",source_surface:input.sourceSurface??"generation-controls",preflight_version:GENERATION_PREFLIGHT_VERSION});await appendAuditEvent(env,user.streamId,"worker:policy","GenerationPreflightRequested",{preflight_id:preflightId,document_id:projection.documentId,document_revision:documentRevision,request_key:requestKey,kind:input.kind,prompt_technique:technique,source_surface:input.sourceSurface??"generation-controls",preflight_version:GENERATION_PREFLIGHT_VERSION});}

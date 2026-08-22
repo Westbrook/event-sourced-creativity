@@ -411,6 +411,68 @@ test("budget limit changes preserve previously recorded spending", async () => {
   assert.ok(database.calls.some((call) => call.kind === "batch"));
 });
 
+test("uncached generation readiness folds only the complete workspace projection", async () => {
+  const { database, request } = await productionWorker();
+  const response = await request("/api/generation-readiness", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      kind: "preview", documentId: "doc-atmosphere", documentRevision: "uncached-revision",
+      requestKey: "preview:uncached-revision:document:prose", promptTechnique: "prose",
+    }),
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.readiness.status, "blocked");
+  assert.equal(body.readiness.cached, false);
+  for (const probe of ["application-budget", "provider-health", "image-format", "context-size", "reference-availability"]) {
+    assert.ok(body.readiness.probes.some((candidate) => candidate.id === probe), `missing safety probe ${probe}`);
+  }
+  const queries = database.calls.flatMap((call) => call.kind === "batch" ? call.statements.map((statement) => statement.sql) : [call.sql]);
+  assert.ok(queries.some((sql) => /FROM events.*type NOT IN/i.test(sql)), "readiness did not load the bounded workspace projection");
+  assert.equal(queries.some((sql) => /SELECT \* FROM events WHERE stream_id=\? AND sequence>\? ORDER BY sequence ASC LIMIT \?/i.test(sql)), false);
+});
+
+test("workspace projection preserves complete document state while excluding account telemetry", async () => {
+  const { request } = await productionWorker();
+  const full = await (await request("/api/events?after=0&limit=2000&content=0")).json();
+  const workspace = await (await request("/api/events?after=0&limit=5000&content=0&profile=workspace")).json();
+  assert.deepEqual(foldEvents(workspace.events, Number.POSITIVE_INFINITY, "doc-atmosphere"),
+    foldEvents(full.events, Number.POSITIVE_INFINITY, "doc-atmosphere"));
+});
+
+test("blocked document generation reuses one workspace projection for its forced safety preflight", async () => {
+  const { database, environment, request } = await productionWorker();
+  environment.OPENAI_API_KEY = "test-only";
+  const now = new Date().toISOString();
+  const expires = new Date(Date.now() + 3_600_000).toISOString();
+  database.sqlite.prepare("INSERT INTO provider_health(scope_key,status,scope,message,observed_at,expires_at,retry_after_ms,request_id) VALUES(?,?,?,?,?,?,?,?)")
+    .run("openai:default:gpt-image-2", "credits_blocked", "account", "Blocked for regression", now, expires, null, null);
+  database.reset();
+
+  const response = await request("/api/document-jobs", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      kind: "preview", documentId: "doc-atmosphere", sourceSurface: "performance-test",
+      payload: {
+        documentRevision: "revision-one", requestKey: "preview:revision-one:document:prose",
+        promptTechnique: "prose", snapshot: { facts: [], relationships: [], pins: [], tail: [] },
+      },
+    }),
+  });
+  const body = await response.json();
+  assert.equal(response.status, 409);
+  assert.equal(body.error, "generation_preflight_blocked");
+  assert.equal(body.readiness.status, "blocked");
+  assert.equal(body.readiness.probes.find((probe) => probe.id === "provider-health")?.status, "fail");
+
+  const statements = database.calls.flatMap((call) => call.kind === "batch" ? call.statements.map((statement) => statement.sql) : [call.sql]);
+  assert.equal(statements.filter((sql) => /FROM events[\s\S]*type\s+NOT\s+IN/i.test(sql)).length, 1);
+  assert.equal(statements.some((sql) => /SELECT \* FROM events WHERE stream_id=\? AND sequence>\? ORDER BY sequence ASC LIMIT \?/i.test(sql)), false);
+});
+
 test("cached generation readiness avoids replaying the entire creative stream", async () => {
   const { database, request } = await productionWorker();
   const owner = "dev-local-creative";

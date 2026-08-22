@@ -1,6 +1,6 @@
 import { handleEvents } from "./events-api";
 import { loadPrivateContent, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, requireConsent, requireUser, storePrivateContent, type PilotUser } from "./pilot-policy";
-import { appendAuditEvent, ensureSchema, readCorrelatedEvents, readEvents, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
+import { appendAuditEvent, ensureSchema, readCorrelatedEvents, readWorkspaceEvents, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { foldEvents } from "../src/model/events";
 import {
   DOCUMENT_JOB_HEARTBEAT_MS,
@@ -211,7 +211,7 @@ async function failStaleJob(env: WorkerEnv, user: PilotUser, row: DocumentJobRow
   if (Number(result.meta.changes ?? 0) === 1) { await releaseInterruptedAttempt(env, user, row, "execution_interrupted"); await reconcileParentForChild(env, row); }
 }
 
-function operationFinished(events: Awaited<ReturnType<typeof readEvents>>, row: DocumentJobRow) {
+function operationFinished(events: Awaited<ReturnType<typeof readWorkspaceEvents>>, row: DocumentJobRow) {
   const correlated = events.filter((event) => event.correlationId === row.correlation_id);
   const terminal = correlated.find((event) => {
     if (row.kind === "preview") return event.type === "IdeationPreviewCompleted" || event.type === "GenerationFailed";
@@ -225,7 +225,7 @@ function operationFinished(events: Awaited<ReturnType<typeof readEvents>>, row: 
   return terminal ? { failed, correlated } : null;
 }
 
-function correlatedFailureDetail(events: Awaited<ReturnType<typeof readEvents>>) {
+function correlatedFailureDetail(events: Awaited<ReturnType<typeof readWorkspaceEvents>>) {
   const failureEvent = [...events].reverse().find((event) => event.type === "GenerationFailed" || event.type === "ExtractionFailed" || event.type === "DocumentRenderFailed");
   if (!failureEvent) return null;
   const payload = failureEvent.payload;
@@ -240,12 +240,12 @@ function correlatedFailureDetail(events: Awaited<ReturnType<typeof readEvents>>)
   } satisfies DocumentJobError;
 }
 
-function correlatedModerationPromptRef(events: Awaited<ReturnType<typeof readEvents>>) {
+function correlatedModerationPromptRef(events: Awaited<ReturnType<typeof readWorkspaceEvents>>) {
   const failureEvent=[...events].reverse().find((event)=>(event.type==="GenerationFailed"||event.type==="DocumentRenderFailed")&&event.payload.prompt_ref);
   return failureEvent?.payload.prompt_ref?String(failureEvent.payload.prompt_ref):null;
 }
 
-async function repairMisreportedTerminalJob(env: WorkerEnv, row: DocumentJobRow, events: Awaited<ReturnType<typeof readEvents>>) {
+async function repairMisreportedTerminalJob(env: WorkerEnv, row: DocumentJobRow, events: Awaited<ReturnType<typeof readWorkspaceEvents>>) {
   if (row.status !== "failed" || !/Wrong number of parameter bindings/i.test(row.error_message ?? "")) return false;
   const finished = operationFinished(events, row); if (!finished) return false;
   const detail = finished.failed ? correlatedFailureDetail(finished.correlated) : null;
@@ -527,12 +527,12 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const kind = input.kind as DocumentJobKind; const payload = input.payload && typeof input.payload === "object" ? { ...input.payload } : {};
   if (kind !== "extract_reference" && !env.OPENAI_API_KEY) return Response.json({ error: "provider_not_configured" }, { status: 503 });
   if (JSON.stringify(payload).length > MAX_PAYLOAD_BYTES) return Response.json({ error: "document_job_payload_too_large" }, { status: 413 });
-  const events = await readEvents(env, user.streamId); const projection = foldEvents(events, Number.POSITIVE_INFINITY, input.documentId);
+  const events = await readWorkspaceEvents(env, user.streamId); const projection = foldEvents(events, Number.POSITIVE_INFINITY, input.documentId);
   const documentId = String(input.documentId ?? projection.documentId); const documentRecord = projection.documents.find((document) => document.id === documentId);
   if (!documentRecord) return Response.json({ error: "document_not_found" }, { status: 404 });
 
   if(kind==="preview"||kind==="generate"||kind==="prompt_fan"){
-    const readinessKind=kind==="prompt_fan"?`${fanKindFromRequest(payload)??"generate"}_fan` as const:kind;const readiness=await preflightGeneration(env,user,{kind:readinessKind,documentId,documentRevision:String(payload.documentRevision??""),requestKey:String(payload.requestKey??""),sourcePreviewId:typeof payload.sourcePreviewId==="string"?payload.sourcePreviewId:null,promptTechnique:normalizePromptTechnique(payload.promptTechnique),snapshot:payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:undefined,force:true,sourceSurface:String(input.sourceSurface??"generation-controls")},{appendEvents:true,allowCache:false});
+    const readinessKind=kind==="prompt_fan"?`${fanKindFromRequest(payload)??"generate"}_fan` as const:kind;const readiness=await preflightGeneration(env,user,{kind:readinessKind,documentId,documentRevision:String(payload.documentRevision??""),requestKey:String(payload.requestKey??""),sourcePreviewId:typeof payload.sourcePreviewId==="string"?payload.sourcePreviewId:null,promptTechnique:normalizePromptTechnique(payload.promptTechnique),snapshot:payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:undefined,force:true,sourceSurface:String(input.sourceSurface??"generation-controls")},{appendEvents:true,allowCache:false,sourceEvents:events});
     if(readiness.status==="blocked"){await appendAuditEvent(env,user.streamId,"worker:policy","GenerationBlockedBeforeProvider",{preflight_id:readiness.preflightId,document_id:documentId,document_revision:readiness.documentRevision,request_key:readiness.requestKey,kind:readiness.kind,status:readiness.status,blocking_probes:readiness.probes.filter((probe)=>probe.status==="fail").map((probe)=>probe.id),estimated_cost_avoided_microusd:readiness.estimatedCostMicrousd},uuidV7());return Response.json({error:"generation_preflight_blocked",message:readiness.summary,readiness},{status:409});}
     if(readiness.status==="review"&&payload.preflightAcknowledged!==true)return Response.json({error:"generation_preflight_review_required",message:readiness.summary,readiness},{status:428});
     if(readiness.status==="review")await appendAuditEvent(env,user.streamId,"worker:policy","GenerationRiskAcknowledged",{preflight_id:readiness.preflightId,document_id:documentId,document_revision:readiness.documentRevision,request_key:readiness.requestKey,kind:readiness.kind,warning_probes:readiness.probes.filter((probe)=>probe.status==="warning"||probe.status==="unknown").map((probe)=>probe.id),source_surface:String(input.sourceSurface??"generation-controls")});

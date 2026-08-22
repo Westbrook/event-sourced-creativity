@@ -257,6 +257,12 @@ export async function readProfileEventPage(
   return { events, head, nextAfter, hasMore: nextAfter < head, profile };
 }
 
+/** Load every projection-relevant account event without replaying telemetry. */
+export async function readWorkspaceEvents(env:WorkerEnv,streamId:string){
+  const events:EventRow[]=[];let after=0;
+  while(true){const page=await readProfileEventPage(env,streamId,"workspace",after,5000);events.push(...page.events);if(!page.hasMore)return events;after=page.nextAfter;}
+}
+
 /** Read a complete stream in bounded D1 pages. Callers that only need transport pages should use readEventPage. */
 export async function readEvents(env: WorkerEnv, streamId: string, limit = Number.POSITIVE_INFINITY) {
   const requested=Number.isFinite(limit)?Math.max(0,Math.floor(limit)):Number.POSITIVE_INFINITY;

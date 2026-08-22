@@ -125,3 +125,13 @@ test("every paid next-step recommendation uses the shared readiness dispatcher",
   assert.match(workspace, /action\.id==="refine-image"[^\n]*runReadyImageGeneration\(this\.store,"generate"/);
   assert.doesNotMatch(workspace, /action\.id==="(?:make-draft|refine-image)"[^\n]*this\.store\.(?:preview|generate)\(/);
 });
+
+test("compact document controls defer hidden fan checks without skipping their safety gates", async () => {
+  const controls = await readFile(new URL("../src/components/generation-actions.ts", import.meta.url), "utf8");
+  assert.match(controls, /kind\.includes\("fan"\)&&this\.compact&&!this\.#detailsOpen/);
+  assert.match(controls, /this\.#detailsOpen=true;this\.requestUpdate\(\);void this\.#warmReadiness/);
+  assert.match(controls, /requiredReadinessRows=this\.compact&&!this\.#detailsOpen\?readinessRows\.slice\(0,2\):readinessRows/);
+  assert.match(controls, /ensureGenerationReadiness\(row\.kind/);
+  assert.match(controls, /formaGenerationFirstResolvedMs/);
+  assert.match(controls, /formaGenerationResolvedMs/);
+});
