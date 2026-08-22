@@ -333,9 +333,9 @@ export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind:
   return { contentId, expiresAt: expiresAt.toISOString() };
 }
 
-export async function loadPrivateContent(env: WorkerEnv, ownerId: string, scope: "all" | "chat" = "all") {
+export async function loadPrivateContent(env: WorkerEnv, ownerId: string, scope: "all" | "chat" | "memory" = "all") {
   const now = new Date().toISOString();
-  const restricted = scope === "chat" ? " AND kind IN ('chat-user','chat-assistant')" : "";
+  const restricted = scope === "chat" ? " AND kind IN ('chat-user','chat-assistant')" : scope === "memory" ? " AND kind='condition'" : "";
   const rows = await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>?${restricted}`).bind(ownerId, now).all<{ content_id: string; content: string }>();
   return Object.fromEntries(rows.results.map((row) => [row.content_id, row.content]));
 }

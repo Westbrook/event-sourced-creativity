@@ -185,9 +185,9 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
         const page=await readProfileEventPage(env,streamId,profile,after,limit);
         return Response.json({...page,permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});
       }
-      const contentScope=url.searchParams.get("contentScope");if(contentScope!==null&&contentScope!=="chat")return Response.json({error:"invalid_content_scope"},{status:400});
+      const contentScope=url.searchParams.get("contentScope");if(contentScope!==null&&contentScope!=="chat"&&contentScope!=="memory")return Response.json({error:"invalid_content_scope"},{status:400});
       const limit=Math.max(1,Math.min(5000,Math.floor(Number(url.searchParams.get("limit")??5000))||5000));
-      const [page,content]=await Promise.all([readEventPageWithHead(env,streamId,after,limit),url.searchParams.get("content")==="0"?Promise.resolve(undefined):loadPrivateContent(env,ownerId,contentScope==="chat"?"chat":"all")]);
+      const [page,content]=await Promise.all([readEventPageWithHead(env,streamId,after,limit),url.searchParams.get("content")==="0"?Promise.resolve(undefined):loadPrivateContent(env,ownerId,contentScope==="chat"?"chat":contentScope==="memory"?"memory":"all")]);
       return Response.json({...page,...(content?{content}:{}),permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});
     }
     if(request.method!=="POST")return new Response("Method not allowed",{status:405});

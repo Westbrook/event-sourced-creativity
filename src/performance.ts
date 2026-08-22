@@ -246,7 +246,7 @@ export function recordRouteHistoryProfile(profile: string) {
   root().formaHistoryProfile = profile;
 }
 
-export function recordPrivateContentState(state: "pending" | "ready" | "unavailable" | "not-required", scope?: "chat" | "all") {
+export function recordPrivateContentState(state: "pending" | "ready" | "unavailable" | "not-required", scope?: "chat" | "memory" | "all") {
   root().formaPrivateContentState = state;
   if(scope)root().formaPrivateContentScope=scope;
   if (state === "ready") root().formaPrivateContentReadyMs = String(rounded(performance.now()));
@@ -302,8 +302,8 @@ export function completeRoutePopulation(path: string, retry = 0) {
     else if (surface === "laboratory-image-adapters") meaningful = Boolean(main?.querySelector("forma-image-adapter-lab .adapter-lab-status,forma-image-adapter-lab .adapter-lab-warning[role=alert]"));
     else if (surface === "laboratory-focal-points") meaningful = Boolean(main?.querySelector("forma-focal-point-lab .focal-lab-controls") && main.querySelector("forma-focal-point-lab .focal-lab-assets,forma-focal-point-lab .focal-lab-empty"));
     else if (surface === "laboratory-design-system") meaningful = Boolean(main?.querySelector("forma-design-system-lab .design-lab-content forma-component-catalog") && main.querySelector("forma-design-system-lab .design-lab-section"));
-    const shell=document.querySelector("forma-shell") as (HTMLElement & {store?:{projection?:{get:()=>{documentId?:string;conditions?:unknown[]}};canvasProjection?:{get:()=>{selectedCanvasId?:string}}}})|null;
-    if (family === "memory" && (shell?.store?.projection?.get().conditions?.length ?? 0) > 0 && root().formaPrivateContentState === "pending") meaningful = false;
+    const shell=document.querySelector("forma-shell") as (HTMLElement & {store?:{projection?:{get:()=>{documentId?:string;conditions?:unknown[]}};canvasProjection?:{get:()=>{selectedCanvasId?:string}};content?:{get:()=>Record<string,string>}}})|null;
+    if(family==="memory"&&root().formaPrivateContentState==="pending"){const conditions=shell?.store?.projection?.get().conditions??[];const content=shell?.store?.content?.get()??{};if(conditions.some((condition)=>{const ref=String((condition as {condition_ref?:unknown}).condition_ref??"");return Boolean(ref&&ref!=="three-new-generations"&&!content[ref]);}))meaningful=false;}
     if ((surface === "document-chat" || surface === "studio-chat") && root().formaPrivateContentState === "pending") meaningful = false;
     if(family==="document"){
       const requested=decodeURIComponent((path.split(/[?#]/)[0].split("/")[2]??""));

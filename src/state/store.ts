@@ -92,7 +92,7 @@ export class FormaStore {
   #historyProfile: AccountSnapshotProfile = "full";
   #historyUpgrade?: Promise<void>;
   #contentHydration?: Promise<void>;
-  #privateContentScope:"none"|"chat"|"all"="none";
+  #privateContentScope:"none"|"chat"|"memory"|"all"="none";
   #pendingPassiveJobPath="";
   #focalBackfillTimer = 0;
 
@@ -247,14 +247,14 @@ export class FormaStore {
   }
 
   async #hydrateVisiblePrivateContent():Promise<void>{
-    const required: "chat"|"all"=documentViewFromRoute(this.route.get())==="chat"?"chat":"all";
+    const required: "chat"|"memory"|"all"=routeCapabilities(this.route.get()).profile==="memory"?"memory":documentViewFromRoute(this.route.get())==="chat"?"chat":"all";
     if(this.#privateContentScope==="all"||this.#privateContentScope===required){recordPrivateContentState("ready",required);return;}
     const hydrationPath=this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/";
     const owner=this.session.get()?.user.userId;
-    if(this.#contentHydration){try{await this.#contentHydration;if(required==="all"&&String(this.#privateContentScope)!=="all")return this.#hydrateVisiblePrivateContent();if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("ready",required);}catch(error){if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("unavailable",required);throw error;}return;}
+    if(this.#contentHydration){try{await this.#contentHydration;if(String(this.#privateContentScope)!=="all"&&String(this.#privateContentScope)!==required)return this.#hydrateVisiblePrivateContent();if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("ready",required);}catch(error){if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("unavailable",required);throw error;}return;}
     recordPrivateContentState("pending",required);
     const hydration=(async()=>{
-      const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1${required==="chat"?"&contentScope=chat":""}`);
+      const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1${required!=="all"?`&contentScope=${required}`:""}`);
       if(!response.ok)throw new Error(`Private content returned ${response.status}`);
       const body=await response.json() as {content?:Record<string,string>};
       if(!owner||this.session.get()?.user.userId!==owner)throw new Error("Private content no longer belongs to the active account");
@@ -339,7 +339,7 @@ export class FormaStore {
       if(!this.loading.get()){
         beginRoutePopulation(routedPath);
         recordRouteHistoryProfile(this.#historyProfile);
-        const contentScope=documentViewFromRoute(routedPath)==="chat"?"chat":"all";recordPrivateContentState(routeCapabilities(routedPath).privateContent?(this.#privateContentScope==="all"||this.#privateContentScope===contentScope?"ready":"pending"):"not-required",routeCapabilities(routedPath).privateContent?contentScope:undefined);
+        const contentScope=routeCapabilities(routedPath).profile==="memory"?"memory":documentViewFromRoute(routedPath)==="chat"?"chat":"all";recordPrivateContentState(routeCapabilities(routedPath).privateContent?(this.#privateContentScope==="all"||this.#privateContentScope===contentScope?"ready":"pending"):"not-required",routeCapabilities(routedPath).privateContent?contentScope:undefined);
         recordPopulationSource("memory",this.events.get().length);
       }
     }

@@ -407,7 +407,8 @@ test("background visits and unrelated job polling begin after meaningful route p
   assert.match(store, /addEventListener\("forma-performance"/);
   assert.match(store, /this\.#scheduleJobPoll\(1_200\)/);
   assert.match(store, /documentViewFromRoute\(path\)==="chat"\)void sessionPromise\.then/);
-  assert.match(store, /contentScope=chat/);
+  assert.match(store, /contentScope=\$\{required\}/);
+  assert.match(store, /profile==="memory"\?"memory"/);
   assert.match(store, /this\.content\.set\(\{\.\.\.this\.content\.get\(\),\.\.\.body\.content\}\)/);
   assert.match(analytics, /#expandedEvidence=new Set<string>\(\)/);
   assert.match(analytics, /data-evidence-key=\$\{item\.key\}/);
@@ -848,6 +849,10 @@ test("chat retrieves only its owner's unexpired conversation content", async () 
   const insert = database.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES (?,?,?,?,?,?,?)");
   insert.run("chat-user-visible", "dev-local-creative", "chat-user", "Creator message", now, future, null);
   insert.run("chat-assistant-visible", "dev-local-creative", "chat-assistant", "Assistant reply", now, future, null);
+  insert.run("condition-visible", "dev-local-creative", "condition", "Remember this project", now, future, null);
+  insert.run("other-condition-hidden", "someone-else", "condition", "Another account's condition", now, future, null);
+  insert.run("expired-condition-hidden", "dev-local-creative", "condition", "Expired condition", now, new Date(Date.now()-86_400_000).toISOString(), null);
+  insert.run("redacted-condition-hidden", "dev-local-creative", "condition", "Redacted condition", now, future, now);
   insert.run("prompt-hidden", "dev-local-creative", "prompt", "x".repeat(24_000), now, future, null);
   insert.run("artifact-hidden", "dev-local-creative", "document-artifact-input", "Private artifact inputs", now, future, null);
   insert.run("other-chat-hidden", "someone-else", "chat-user", "Another account", now, future, null);
@@ -859,8 +864,14 @@ test("chat retrieves only its owner's unexpired conversation content", async () 
   assert.equal(scopedResponse.status, 200);
   assert.equal(scoped.content["chat-user-visible"], "Creator message");
   assert.equal(scoped.content["chat-assistant-visible"], "Assistant reply");
-  for (const id of ["prompt-hidden", "artifact-hidden", "other-chat-hidden", "redacted-chat-hidden"]) assert.equal(scoped.content[id], undefined, id);
+  for (const id of ["prompt-hidden", "artifact-hidden", "condition-visible", "other-chat-hidden", "redacted-chat-hidden"]) assert.equal(scoped.content[id], undefined, id);
   assert.equal(database.writeCount(), 0);
+
+  database.reset();
+  const memoryResponse=await request("/api/events?after=0&limit=1&content=1&contentScope=memory");
+  const memory=await memoryResponse.json();assert.equal(memoryResponse.status,200);assert.equal(memory.content["condition-visible"],"Remember this project");
+  for(const id of ["chat-user-visible","chat-assistant-visible","prompt-hidden","artifact-hidden","other-chat-hidden","other-condition-hidden","expired-condition-hidden","redacted-condition-hidden"])assert.equal(memory.content[id],undefined,id);
+  assert.equal(database.writeCount(),0);
 
   database.reset();
   const full = await (await request("/api/events?after=0&limit=1&content=1")).json();
