@@ -185,8 +185,9 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
         const page=await readProfileEventPage(env,streamId,profile,after,limit);
         return Response.json({...page,permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});
       }
+      const contentScope=url.searchParams.get("contentScope");if(contentScope!==null&&contentScope!=="chat")return Response.json({error:"invalid_content_scope"},{status:400});
       const limit=Math.max(1,Math.min(5000,Math.floor(Number(url.searchParams.get("limit")??5000))||5000));
-      const [page,content]=await Promise.all([readEventPageWithHead(env,streamId,after,limit),url.searchParams.get("content")==="0"?Promise.resolve(undefined):loadPrivateContent(env,ownerId)]);
+      const [page,content]=await Promise.all([readEventPageWithHead(env,streamId,after,limit),url.searchParams.get("content")==="0"?Promise.resolve(undefined):loadPrivateContent(env,ownerId,contentScope==="chat"?"chat":"all")]);
       return Response.json({...page,...(content?{content}:{}),permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});
     }
     if(request.method!=="POST")return new Response("Method not allowed",{status:405});
@@ -205,7 +206,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
     }
     if(body.action==="chat"){
       if(!env.OPENAI_API_KEY)return Response.json({error:"provider_not_configured"},{status:503});const message=body.message?.trim();if(!message||message.length>4000)return Response.json({error:"chat_message_required"},{status:400});
-      const livePreview=body.livePreview!==false;const sourceEvents=await readEvents(env,streamId);const projection=foldEvents(sourceEvents,Number.POSITIVE_INFINITY,body.documentId);const privateContent=await loadPrivateContent(env,ownerId);const reserved=12_000;const reservation=await reserveBudget(env,billingOwnerId,reserved,{streamId,correlationId:corr,operation:"creative-chat"});
+      const livePreview=body.livePreview!==false;const sourceEvents=await readEvents(env,streamId);const projection=foldEvents(sourceEvents,Number.POSITIVE_INFINITY,body.documentId);const privateContent=await loadPrivateContent(env,ownerId,"chat");const reserved=12_000;const reservation=await reserveBudget(env,billingOwnerId,reserved,{streamId,correlationId:corr,operation:"creative-chat"});
       if(!reservation.ok){const denied=makeEvent(streamId,current+1,"worker:policy",client,corr,"BudgetExceeded",{reason:"hard_cap_reached",scope:reservation.scope,reserved_tokens:0,operation:"creative-chat"});await insertEvent(env,denied).run();const detail=applicationFailureDetail("budget_hard_cap_reached",reservation.scope,429);return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail),scope:reservation.scope},{status:429});}
       const userStored=await storePrivateContent(env,ownerId,"chat-user",message);const turnId=uuidV7();const budgeted=makeEvent(streamId,current+1,"worker:policy",client,corr,"BudgetReserved",{operation:"creative-chat",reservation_id:reservation.reservationId,reserved_tokens:reserved,period:reservation.period,live_preview:livePreview});const userTurn=makeEvent(streamId,current+2,"user",client,corr,"ChatMessageSent",{turn_id:turnId,document_id:projection.documentId,content_ref:userStored.contentId,content_expires_at:userStored.expiresAt,source_surface:"chat",live_preview:livePreview},{causationId:budgeted.eventId});await env.DB.batch([budgeted,userTurn].map((event)=>insertEvent(env,event)));
       try{

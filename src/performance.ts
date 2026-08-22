@@ -18,7 +18,10 @@ type RoutePopulation = {
   routePrefetchStartedMs: number | null;
   routePrefetchAdoptedMs: number | null;
   routePrefetchHeadStartMs: number | null;
+  analyticsCache: string | null;
+  analyticsSourceRows: number | null;
   privateContentState: string | null;
+  privateContentScope: string | null;
   privateContentReadyMs: number | null;
   navigationSource: "worker" | "static" | null;
   apiRequests: number;
@@ -220,10 +223,13 @@ export function beginRoutePopulation(path: string) {
   delete root().formaRoutePrefetchHeadStartMs;
   delete root().formaHistoryProfile;
   delete root().formaPrivateContentState;
+  delete root().formaPrivateContentScope;
   delete root().formaPrivateContentReadyMs;
   delete root().formaAuditEventCount;
   delete root().formaAuditTotal;
   delete root().formaAuditMatched;
+  delete root().formaAnalyticsCache;
+  delete root().formaAnalyticsSourceRows;
   delete root().formaPopulatedMs;
   delete root().formaRouteLatencyMs;
   delete root().formaSessionSource;
@@ -240,8 +246,9 @@ export function recordRouteHistoryProfile(profile: string) {
   root().formaHistoryProfile = profile;
 }
 
-export function recordPrivateContentState(state: "pending" | "ready" | "unavailable" | "not-required") {
+export function recordPrivateContentState(state: "pending" | "ready" | "unavailable" | "not-required", scope?: "chat" | "all") {
   root().formaPrivateContentState = state;
+  if(scope)root().formaPrivateContentScope=scope;
   if (state === "ready") root().formaPrivateContentReadyMs = String(rounded(performance.now()));
 }
 
@@ -349,7 +356,10 @@ export function completeRoutePopulation(path: string, retry = 0) {
       routePrefetchStartedMs:root().formaRoutePrefetchStartedMs===undefined?null:Number(root().formaRoutePrefetchStartedMs),
       routePrefetchAdoptedMs:root().formaRoutePrefetchAdoptedMs===undefined?null:Number(root().formaRoutePrefetchAdoptedMs),
       routePrefetchHeadStartMs:root().formaRoutePrefetchHeadStartMs===undefined?null:Number(root().formaRoutePrefetchHeadStartMs),
+      analyticsCache:root().formaAnalyticsCache??null,
+      analyticsSourceRows:root().formaAnalyticsSourceRows===undefined?null:Number(root().formaAnalyticsSourceRows),
       privateContentState:root().formaPrivateContentState ?? null,
+      privateContentScope:root().formaPrivateContentScope ?? null,
       privateContentReadyMs:root().formaPrivateContentReadyMs===undefined?null:Number(root().formaPrivateContentReadyMs),
       navigationSource:metrics.navigationSource,
       apiRequests:metrics.resources.length,

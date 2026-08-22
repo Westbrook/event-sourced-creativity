@@ -314,7 +314,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const payload = JSON.parse(row.request_json) as Record<string, unknown>;
     const inputRef = String(payload.jobInputRef ?? "");
     if (inputRef) {
-      const privateContent = await loadPrivateContent(env, user.userId); const input = privateContent[inputRef];
+      const privateContent = await loadPrivateContent(env, user.userId, row.kind === "chat" ? "chat" : "all"); const input = privateContent[inputRef];
       if (typeof input !== "string") throw new Error("job_input_expired");
       if (row.kind === "chat") payload.message = input;
       if (row.kind === "structure_adaptive") payload.prompt = input;

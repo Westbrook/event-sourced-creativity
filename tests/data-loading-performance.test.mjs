@@ -396,14 +396,23 @@ test("early route data is authorized, route-exact, and consumed once without sta
 test("background visits and unrelated job polling begin after meaningful route population", async () => {
   const shell = await readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8");
   const store = await readFile(new URL("../src/state/store.ts", import.meta.url), "utf8");
+  const analytics = await readFile(new URL("../src/components/forma-analytics.ts", import.meta.url), "utf8");
   assert.match(shell, /addEventListener\("forma-performance", this\.#populated\)/);
   assert.match(shell, /removeEventListener\("forma-performance", this\.#populated\)/);
   assert.match(shell, /dataset\.formaPhase !== "populated"/);
   assert.doesNotMatch(shell, /completeRoutePopulation\(this\.store\.route\.get\(\)\);this\.#observeApplicationView/);
   assert.match(store, /#syncVisibleJobs\(path=this\.route\.get\(\)\)/);
   assert.match(store, /routeCapabilities\(path\)\.jobHistory/);
-  assert.match(store, /else this\.#scheduleJobPoll\(1_200\)/);
+  assert.match(store, /#pendingPassiveJobPath/);
+  assert.match(store, /addEventListener\("forma-performance"/);
+  assert.match(store, /this\.#scheduleJobPoll\(1_200\)/);
   assert.match(store, /documentViewFromRoute\(path\)==="chat"\)void sessionPromise\.then/);
+  assert.match(store, /contentScope=chat/);
+  assert.match(store, /this\.content\.set\(\{\.\.\.this\.content\.get\(\),\.\.\.body\.content\}\)/);
+  assert.match(analytics, /#expandedEvidence=new Set<string>\(\)/);
+  assert.match(analytics, /data-evidence-key=\$\{item\.key\}/);
+  assert.match(analytics, /\?open=\$\{expanded\} @toggle=\$\{this\.#toggleEvidence\}/);
+  assert.match(analytics, /expanded\?html`<div class="analytics-evidence-list"/);
 });
 
 test("the early authenticated session request can only be adopted once", () => {
@@ -752,6 +761,117 @@ test("analytics excludes fictional streams in SQL and batches all dashboard read
   database.reset();
   assert.equal((await request("/api/analytics?days=all")).status, 403);
   assert.equal(database.calls.some((call) => call.kind === "batch"), false);
+  assert.equal(database.writeCount(), 0);
+});
+
+test("analytics reuses immutable account evidence while every fresh report includes new events", async () => {
+  const { database, request } = await productionWorker();
+  const collaborator="analytics-collaborator";const created=new Date().toISOString();database.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,created_at,updated_at) VALUES (?,?,?,?,?,?)").run(collaborator,"collaborator@example.test","Original collaborator","creator",created,created);addCorrelatedTerminal(database.sqlite,`creative:${collaborator}`,"collaborator-seed",created);
+  const initial = await request("/api/analytics?days=all");
+  assert.equal(initial.status, 200);
+  assert.equal(initial.headers.get("x-forma-analytics-cache"), "miss");
+  const initialBody = await initial.json();
+  const full = database.calls.find((call) => call.kind === "batch")?.statements[2];
+  assert.ok(full);
+  const coldBytes = JSON.stringify(database.sqlite.prepare(full.sql).all(...full.values)).length;
+
+  database.reset();
+  const unchanged = await request("/api/analytics?days=all");
+  const unchangedBody = await unchanged.json();
+  assert.equal(unchanged.headers.get("x-forma-analytics-cache"), "delta");
+  assert.equal(unchanged.headers.get("x-forma-analytics-source-rows"), "0");
+  assert.equal(unchanged.headers.get("cache-control"), "private, no-store");
+  assert.match(unchanged.headers.get("server-timing") ?? "", /analytics-db;dur=.*analytics-fold;dur=.*app;dur=/);
+  assert.deepEqual(unchangedBody.report.source, initialBody.report.source);
+  assert.deepEqual(unchangedBody.report.totals, initialBody.report.totals);
+  const incremental = database.calls.find((call) => call.kind === "batch");
+  assert.equal(incremental?.statements.length, 3);
+  const delta = incremental.statements[2];
+  assert.match(delta.sql, /rowid>\?/);
+  assert.match(database.sqlite.prepare(`EXPLAIN QUERY PLAN ${delta.sql}`).all(...delta.values).map((step) => step.detail).join(" "), /INTEGER PRIMARY KEY \(rowid>\?\)/);
+  const deltaBytes = JSON.stringify(database.sqlite.prepare(delta.sql).all(...delta.values)).length;
+  assert.ok(deltaBytes < coldBytes / 20, `expected meaningful transfer reduction: ${coldBytes} -> ${deltaBytes}`);
+  assert.ok(database.calls.length <= 2);
+  assert.equal(database.writeCount(), 0);
+
+  addCorrelatedTerminal(database.sqlite, "creative:dev-local-creative", "analytics-new-event");
+  database.sqlite.prepare("UPDATE users SET display_name=? WHERE user_id=?").run("Renamed collaborator", collaborator);
+  database.reset();
+  const changed = await request("/api/analytics?days=all");
+  const changedBody = await changed.json();
+  assert.equal(changed.headers.get("x-forma-analytics-cache"), "delta");
+  assert.equal(changed.headers.get("x-forma-analytics-source-rows"), "1");
+  assert.equal(changedBody.report.source.eventCount, initialBody.report.source.eventCount + 1);
+  assert.ok(changedBody.report.dimensions.user.some((item) => item.label === "Renamed collaborator"));
+  assert.equal(database.writeCount(), 0);
+
+  database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("dev-local-creative");
+  database.reset();
+  assert.equal((await request("/api/analytics?days=all")).status, 403);
+  assert.equal(database.calls.some((call) => call.kind === "batch"), false);
+});
+
+test("analytics invalidates cached source when a fictional account becomes hidden or visible", async () => {
+  const { database, request } = await productionWorker();
+  const now = new Date().toISOString();
+  const fictional = "analytics-fictional";
+  database.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,created_at,updated_at) VALUES (?,?,?,?,?,?)").run(fictional, "fictional@example.test", "Fictional account", "creator", now, now);
+  addCorrelatedTerminal(database.sqlite, `creative:${fictional}`, "fictional-evidence", now);
+
+  const initial = await request("/api/analytics?days=all");
+  const initialReport = (await initial.json()).report;
+  assert.ok(initialReport.dimensions.user.some((item) => item.id === fictional));
+  database.sqlite.prepare("INSERT INTO replay_personas(persona_id,session_id,owner_id,fictional_user_id,fictional_stream_id,display_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run("analytics-persona", "analytics-replay", "dev-local-creative", fictional, `creative:${fictional}`, "Fictional account", "ready", now, now);
+
+  database.reset();
+  const hidden = await request("/api/analytics?days=all");
+  assert.equal(hidden.headers.get("x-forma-analytics-cache"), "miss");
+  assert.ok(!(await hidden.json()).report.dimensions.user.some((item) => item.id === fictional));
+
+  database.sqlite.prepare("UPDATE replay_personas SET status='preparing' WHERE persona_id=?").run("analytics-persona");
+  database.reset();
+  const visible = await request("/api/analytics?days=all");
+  assert.equal(visible.headers.get("x-forma-analytics-cache"), "miss");
+  assert.ok((await visible.json()).report.dimensions.user.some((item) => item.id === fictional));
+
+  database.sqlite.prepare("UPDATE replay_personas SET status='ready' WHERE persona_id=?").run("analytics-persona");
+  database.reset();
+  const synthetic = await request("/api/analytics?days=all&includeSynthetic=true");
+  assert.equal(synthetic.headers.get("x-forma-analytics-cache"), "miss");
+  assert.ok((await synthetic.json()).report.dimensions.user.some((item) => item.id === fictional));
+});
+
+test("chat retrieves only its owner's unexpired conversation content", async () => {
+  const { database, request } = await productionWorker();
+  const now = new Date().toISOString();
+  const future = new Date(Date.now() + 86_400_000).toISOString();
+  const insert = database.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES (?,?,?,?,?,?,?)");
+  insert.run("chat-user-visible", "dev-local-creative", "chat-user", "Creator message", now, future, null);
+  insert.run("chat-assistant-visible", "dev-local-creative", "chat-assistant", "Assistant reply", now, future, null);
+  insert.run("prompt-hidden", "dev-local-creative", "prompt", "x".repeat(24_000), now, future, null);
+  insert.run("artifact-hidden", "dev-local-creative", "document-artifact-input", "Private artifact inputs", now, future, null);
+  insert.run("other-chat-hidden", "someone-else", "chat-user", "Another account", now, future, null);
+  insert.run("redacted-chat-hidden", "dev-local-creative", "chat-user", "Redacted chat", now, future, now);
+
+  database.reset();
+  const scopedResponse = await request("/api/events?after=0&limit=1&content=1&contentScope=chat");
+  const scoped = await scopedResponse.json();
+  assert.equal(scopedResponse.status, 200);
+  assert.equal(scoped.content["chat-user-visible"], "Creator message");
+  assert.equal(scoped.content["chat-assistant-visible"], "Assistant reply");
+  for (const id of ["prompt-hidden", "artifact-hidden", "other-chat-hidden", "redacted-chat-hidden"]) assert.equal(scoped.content[id], undefined, id);
+  assert.equal(database.writeCount(), 0);
+
+  database.reset();
+  const full = await (await request("/api/events?after=0&limit=1&content=1")).json();
+  assert.equal(full.content["prompt-hidden"].length, 24_000);
+  assert.equal(full.content["artifact-hidden"], "Private artifact inputs");
+  assert.equal(full.content["other-chat-hidden"], undefined);
+  assert.ok(JSON.stringify(scoped.content).length < JSON.stringify(full.content).length / 100);
+  assert.equal(database.writeCount(), 0);
+
+  database.reset();
+  assert.equal((await request("/api/events?after=0&limit=1&content=1&contentScope=everything")).status, 400);
   assert.equal(database.writeCount(), 0);
 });
 

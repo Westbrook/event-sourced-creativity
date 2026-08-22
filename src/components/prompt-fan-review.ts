@@ -58,6 +58,7 @@ export class PromptFanReview extends FormaElement {
     this.fanId = fanId;
     this.#open = true;
     this.requestUpdate();
+    const content=this.store.content.get();const fan=this.store.documentJobs.get().find((job)=>job.kind==="prompt_fan"&&job.promptFanId===fanId);const reference=[...outputs.map((output)=>output.promptRef),...(fan?.members??[]).map((member)=>member.moderationPromptRef)].find((value)=>value&&!content[value]);if(reference)void this.store.ensurePrivateContent(reference).then(()=>this.requestUpdate());
     if (this.store.ui.instrumentation && outputs.length) void this.store.hot({ type: "ComparisonOpened", payload: { object_ids: outputs.map((output) => output.id), prompt_fan_id: fanId, source_surface: "prompt-fan-comparison" } });
   }
 

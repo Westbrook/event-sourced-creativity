@@ -92,9 +92,11 @@ export class FormaStore {
   #historyProfile: AccountSnapshotProfile = "full";
   #historyUpgrade?: Promise<void>;
   #contentHydration?: Promise<void>;
+  #privateContentScope:"none"|"chat"|"all"="none";
+  #pendingPassiveJobPath="";
   #focalBackfillTimer = 0;
 
-  constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&this.session.get()&&this.events.get().length){this.#flushPendingJobNotices();this.#syncVisibleJobs();}});}
+  constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&this.session.get()&&this.events.get().length){this.#flushPendingJobNotices();this.#syncVisibleJobs();}});window.addEventListener("forma-performance",()=>{if(!this.#pendingPassiveJobPath||this.route.get()!==this.#pendingPassiveJobPath||document.documentElement.dataset.formaPhase!=="populated")return;this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);});}
 
   subscribe(listener: Listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   notify() { this.#listeners.forEach((listener) => listener()); }
@@ -244,27 +246,32 @@ export class FormaStore {
     try{await upgrade;}finally{if(this.#historyUpgrade===upgrade)this.#historyUpgrade=undefined;}
   }
 
-  async #hydrateVisiblePrivateContent(){
-    if(Object.keys(this.content.get()).length){recordPrivateContentState("ready");return;}
+  async #hydrateVisiblePrivateContent():Promise<void>{
+    const required: "chat"|"all"=documentViewFromRoute(this.route.get())==="chat"?"chat":"all";
+    if(this.#privateContentScope==="all"||this.#privateContentScope===required){recordPrivateContentState("ready",required);return;}
     const hydrationPath=this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/";
-    if(this.#contentHydration){try{await this.#contentHydration;if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("ready");}catch(error){if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("unavailable");throw error;}return;}
-    recordPrivateContentState("pending");
+    const owner=this.session.get()?.user.userId;
+    if(this.#contentHydration){try{await this.#contentHydration;if(required==="all"&&String(this.#privateContentScope)!=="all")return this.#hydrateVisiblePrivateContent();if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("ready",required);}catch(error){if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("unavailable",required);throw error;}return;}
+    recordPrivateContentState("pending",required);
     const hydration=(async()=>{
-      const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1`);
+      const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1${required==="chat"?"&contentScope=chat":""}`);
       if(!response.ok)throw new Error(`Private content returned ${response.status}`);
       const body=await response.json() as {content?:Record<string,string>};
+      if(!owner||this.session.get()?.user.userId!==owner)throw new Error("Private content no longer belongs to the active account");
+      this.#privateContentScope=required;
       if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}
     })();
     this.#contentHydration=hydration;
     let state:"ready"|"unavailable"="unavailable";
-    try{await hydration;state="ready";}finally{if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState(state);if(this.#contentHydration===hydration)this.#contentHydration=undefined;}
+    try{await hydration;state="ready";}finally{if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState(state,required);if(this.#contentHydration===hydration)this.#contentHydration=undefined;}
   }
 
   async ensurePrivateContent(reference:string){
     if(!reference)return null;
+    const owner=this.session.get()?.user.userId;if(!owner)return null;
     const existing=this.content.get()[reference];if(typeof existing==="string")return existing;
     if(this.#contentHydration){try{await this.#contentHydration;}catch{/* A targeted retry below preserves the exact missing-reference contract. */}const hydrated=this.content.get()[reference];if(typeof hydrated==="string")return hydrated;}
-    try{const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1`);if(!response.ok)return null;const body=await response.json() as {content?:Record<string,string>};if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}return this.content.get()[reference]??null;}catch{return null;}
+    try{const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1`);if(!response.ok)return null;const body=await response.json() as {content?:Record<string,string>};if(this.session.get()?.user.userId!==owner)return null;this.#privateContentScope="all";if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}return this.content.get()[reference]??null;}catch{return null;}
   }
   #clientEventIds(events:CreativeEvent[]){return new Set(events.map((event)=>String(event.payload.client_event_id??"")).filter(Boolean));}
   #mergeConfirmed(appended:CreativeEvent[],head=this.head.get(),remember=false){
@@ -294,7 +301,7 @@ export class FormaStore {
   async #refreshEvents(){const previous=this.events.get();const known=new Set(previous.map((event)=>event.eventId));const after=this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();let replace=after===0;let body=await this.#readEventPages(after);if(body.head<after){body=await this.#readEventPages(0);replace=true;this.#historyProfile="full";}if(!replace&&!body.events.length&&body.head===after&&!Object.keys(body.content).length)return false;const complete=replace?body.events:[...previous,...body.events.filter((event)=>!known.has(event.eventId))];this.events.set(complete);const confirmedClientIds=this.#clientEventIds(complete);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));if(Object.keys(body.content).length)this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#publishAppended(complete.filter((event)=>!known.has(event.eventId)));return true;}
   async refreshEvents(){if(await this.#refreshEvents())this.notify();}
   #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
-  #syncVisibleJobs(path=this.route.get()){if(path!==this.route.get())return;if(routeCapabilities(path).jobHistory||this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing"))void this.syncDocumentJobs();else this.#scheduleJobPoll(1_200);}
+  #syncVisibleJobs(path=this.route.get()){if(path!==this.route.get())return;if(routeCapabilities(path).jobHistory||this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){this.#pendingPassiveJobPath="";void this.syncDocumentJobs();return;}window.clearTimeout(this.#jobPollTimer);if(document.documentElement.dataset.formaPhase==="populated"){this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);}else this.#pendingPassiveJobPath=path;}
   #jobScope(path=this.route.get()){const documentId=documentIdFromRoute(path);return documentId?`?document=${encodeURIComponent(documentId)}`:routeCapabilities(path).jobHistory?"":"?scope=active";}
   #driveDocumentJobs(jobs:DocumentJob[]){const next=[...jobs].filter((job)=>job.kind!=="prompt_fan"&&(job.status==="queued"||job.status==="running"||job.status==="committing")).sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId))[0];if(next&&(next.status==="queued"||documentJobIsStale(next))&&!this.#jobsDriving.has(next.jobId))void this.#driveDocumentJob(next);}
   async #driveDocumentJob(job:DocumentJob){this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}
@@ -332,15 +339,15 @@ export class FormaStore {
       if(!this.loading.get()){
         beginRoutePopulation(routedPath);
         recordRouteHistoryProfile(this.#historyProfile);
-        recordPrivateContentState(routeCapabilities(routedPath).privateContent?(Object.keys(this.content.get()).length?"ready":"pending"):"not-required");
+        const contentScope=documentViewFromRoute(routedPath)==="chat"?"chat":"all";recordPrivateContentState(routeCapabilities(routedPath).privateContent?(this.#privateContentScope==="all"||this.#privateContentScope===contentScope?"ready":"pending"):"not-required",routeCapabilities(routedPath).privateContent?contentScope:undefined);
         recordPopulationSource("memory",this.events.get().length);
       }
     }
-    this.route.set(routedPath); this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath } }));
+    this.route.set(routedPath);if(!this.loading.get()&&!routeCapabilities(routedPath).jobHistory&&!this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath=routedPath;}this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath } }));
     const required=this.#profileForRoute(routedPath);
     if(eventProfileRank(this.#historyProfile)<eventProfileRank(required))void this.#upgradeHistory(required).catch((error)=>{console.warn("[forma-performance]",JSON.stringify({phase:"history-upgrade",message:error instanceof Error?error.message:"history_upgrade_failed"}));});
     if(routeCapabilities(routedPath).privateContent&&!this.loading.get())requestAnimationFrame(()=>void this.#hydrateVisiblePrivateContent().catch(()=>undefined));
-    if(!this.loading.get()&&this.#jobScope(current)!==this.#jobScope(routedPath))requestAnimationFrame(()=>this.#syncVisibleJobs(routedPath));
+    if(!this.loading.get()&&(this.#jobScope(current)!==this.#jobScope(routedPath)||!routeCapabilities(routedPath).jobHistory))requestAnimationFrame(()=>this.#syncVisibleJobs(routedPath));
   }
 
   async syncDocumentFromRoute(path = this.route.get()) {
@@ -400,12 +407,12 @@ export class FormaStore {
         this.events.set(cached.events);this.head.set(cached.head);this.#historyProfile=cached.profile;
         recordPopulationSource("indexeddb",cached.events.length);
         void live.then(async(current)=>{
-          if(current.head<cached.head){const restored=await this.#readEventStream(0,profile,false);this.events.set(restored.events);this.content.set(restored.content);this.head.set(restored.head);this.#historyProfile=profile;this.notify();}
+          if(current.head<cached.head){const restored=await this.#readEventStream(0,profile,false);this.events.set(restored.events);this.content.set({...this.content.get(),...restored.content});this.head.set(restored.head);this.#historyProfile=profile;this.notify();}
           else if(current.head>cached.head){const merged=new Map([...this.events.get(),...current.events].map((event)=>[event.eventId,event]));this.events.set([...merged.values()].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));if(Object.keys(current.content).length)this.content.set({...this.content.get(),...current.content});this.head.set(current.head);this.#publishAppended(current.events);this.notify();void writeAccountSnapshot(identity,this.events.get(),this.head.get(),this.#historyProfile);}
         }).catch((error)=>console.warn("[forma-performance]",JSON.stringify({phase:"cache-revalidation",message:error instanceof Error?error.message:"cache_revalidation_failed"})));
       }else{
         const body=await live;
-        this.events.set(body.events);this.content.set(body.content);this.head.set(body.head);this.#historyProfile=profile;
+        this.events.set(body.events);this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#historyProfile=profile;
         recordPopulationSource("miss",body.events.length);
         void writeAccountSnapshot(identity,body.events,body.head,profile);
       }
@@ -419,7 +426,7 @@ export class FormaStore {
     finally { this.loading.set(false); this.notify(); }
   }
 
-  #applySession(body:PilotSession){const previousUserId=this.session.get()?.user.userId;this.session.set(body);if(body.impersonation){this.ui.attentionCapture=false;this.ui.attentionPaused=true;}else if(previousUserId!==body.user.userId){this.ui.attentionCapture=readAttentionPreference(body.user.userId);this.ui.attentionPaused=false;}this.notify();return body;}
+  #applySession(body:PilotSession){const previousUserId=this.session.get()?.user.userId;if(previousUserId&&previousUserId!==body.user.userId){this.content.set({});this.#privateContentScope="none";}this.session.set(body);if(body.impersonation){this.ui.attentionCapture=false;this.ui.attentionPaused=true;}else if(previousUserId!==body.user.userId){this.ui.attentionCapture=readAttentionPreference(body.user.userId);this.ui.attentionPaused=false;}this.notify();return body;}
 
   async refreshSession(prefetched:Promise<Response>|null=null) {
     const response = await (prefetched?prefetched.catch(()=>fetch("/api/session")):fetch("/api/session")); const body = await response.json() as PilotSession & { error?: string };
