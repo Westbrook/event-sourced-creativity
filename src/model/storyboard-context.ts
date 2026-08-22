@@ -99,6 +99,7 @@ export function storyboardFrameContextEvents(artifact: DocumentArtifact, options
           source_artifact_id: artifact.id,
           source_artifact_item_id: record.item.id,
           source_artifact_kind: artifact.kind,
+          context_group_ids: [...new Set([...(record.item.contextGroupIds ?? []), ...(authored?.context_group_ids ?? [])])],
           source_document_id: artifact.documentId,
           storyboard_frame_index: record.index + 1,
           storyboard_frame_count: available.length,

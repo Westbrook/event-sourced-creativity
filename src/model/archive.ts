@@ -1,4 +1,17 @@
 import type { CreativeEvent } from "./events";
+import { ownedMediaKey } from "./share-scope.ts";
+
+export type FormaArchiveMedia = {
+  sourceRef: string;
+  rightsClass: string;
+  artifactId?: string;
+  itemId?: string;
+  role?: string;
+  mediaType?: string;
+  narrativeOrder?: number;
+  generationOrder?: number;
+  durationSeconds?: number;
+};
 
 export type FormaArchive = {
   format: "forma-event-archive";
@@ -6,15 +19,60 @@ export type FormaArchive = {
   exportedAt: string;
   streamId: string;
   events: CreativeEvent[];
-  mediaManifest: Array<{ sourceRef: string; rightsClass: string }>;
+  mediaManifest: FormaArchiveMedia[];
 };
 
 export function exportArchive(events: CreativeEvent[]): FormaArchive {
+  const streamId = events[0]?.streamId ?? "empty";
+  const ownerId = streamId.startsWith("creative:") ? streamId.slice("creative:".length) : "";
+  const mediaManifest: FormaArchiveMedia[] = events.filter((event) => event.type === "ReferenceIngested")
+    .map((event) => ({ sourceRef: String(event.payload.source_ref ?? ""), rightsClass: String(event.payload.rights_class ?? "unknown") }))
+    .filter((entry) => !ownerId || !entry.sourceRef.startsWith("/api/media/") || Boolean(ownedMediaKey(entry.sourceRef, ownerId)));
+  const existingEntries = new Map(mediaManifest.map((entry, index) => [entry.sourceRef, index]));
+  const add = (url: unknown, entry: Omit<FormaArchiveMedia, "sourceRef" | "rightsClass">) => {
+    if (typeof url !== "string" || !/^\/api\/media\/[^?#]+$/.test(url)) return;
+    if (ownerId && !ownedMediaKey(url, ownerId)) return;
+    const existingIndex = existingEntries.get(url);
+    if (existingIndex !== undefined) {
+      const previous = mediaManifest[existingIndex]!;
+      mediaManifest[existingIndex] = { ...previous, ...entry, ...(previous.role ? { role: previous.role } : {}) };
+      return;
+    }
+    existingEntries.set(url, mediaManifest.length);
+    mediaManifest.push({ sourceRef: url, rightsClass: "account-generated", ...entry });
+  };
+  for (const event of events) {
+    const payload = event.payload;
+    if (event.type === "GenerationCompleted" || event.type === "IdeationPreviewCompleted") {
+      add(payload.media_url, { role: event.type === "IdeationPreviewCompleted" ? "generated-preview" : "generated-image", ...(payload.media_type ? { mediaType: String(payload.media_type) } : {}) });
+      continue;
+    }
+    if (event.type !== "DocumentRenderCompleted") continue;
+    const artifactId = String(payload.artifact_id ?? "");
+    const kind = String(payload.artifact_kind ?? "");
+    const items = (Array.isArray(payload.items) ? payload.items : []).flatMap((item) => item && typeof item === "object" && !Array.isArray(item) ? [item as Record<string, unknown>] : [])
+      .sort((left, right) => Number(left.narrative_order ?? Number.MAX_SAFE_INTEGER) - Number(right.narrative_order ?? Number.MAX_SAFE_INTEGER));
+    for (const item of items) add(item.media_url, {
+      ...(artifactId ? { artifactId } : {}),
+      ...(item.id ? { itemId: String(item.id) } : {}),
+      role: kind === "video" ? "video-scene" : kind === "storyboard" ? "storyboard-frame" : "artifact-media",
+      ...(item.media_type ? { mediaType: String(item.media_type) } : {}),
+      ...(Number(item.narrative_order) > 0 ? { narrativeOrder: Number(item.narrative_order) } : {}),
+      ...(Number(item.generation_order) > 0 ? { generationOrder: Number(item.generation_order) } : {}),
+      ...(Number(item.duration_seconds) > 0 ? { durationSeconds: Number(item.duration_seconds) } : {}),
+    });
+    add(payload.media_url, { ...(artifactId ? { artifactId } : {}), role: kind === "video" ? "video-output" : "artifact-media", ...(payload.media_type ? { mediaType: String(payload.media_type) } : {}) });
+    for (const asset of Array.isArray(payload.production_assets) ? payload.production_assets : []) {
+      if (!asset || typeof asset !== "object" || Array.isArray(asset)) continue;
+      const value = asset as Record<string, unknown>;
+      add(value.media_url, { ...(artifactId ? { artifactId } : {}), role: String(value.role ?? "production-asset"), ...(value.media_type ? { mediaType: String(value.media_type) } : {}) });
+    }
+  }
   return {
     format: "forma-event-archive", version: 1, exportedAt: new Date().toISOString(),
-    streamId: events[0]?.streamId ?? "empty",
+    streamId,
     events: structuredClone(events),
-    mediaManifest: events.filter((e) => e.type === "ReferenceIngested").map((e) => ({ sourceRef: String(e.payload.source_ref ?? ""), rightsClass: String(e.payload.rights_class ?? "unknown") })),
+    mediaManifest,
   };
 }
 

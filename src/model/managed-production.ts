@@ -96,6 +96,10 @@ export type ProductionClaim = {
   contextGroupIds: string[];
   storyboardSequence: number | null;
   palette?: string[];
+  artifactId?: string;
+  artifactItemId?: string;
+  ordinal?: number;
+  sourceKind?: "fact" | "artifact-item" | "standing-constraint";
 };
 
 export type ProductionReference = {
@@ -130,6 +134,7 @@ export type ProductionScene = {
   durationSeconds: VideoDurationSeconds;
   sourceClaimIds: string[];
   sourceBlockIds: string[];
+  sourceArtifactItemIds?: string[];
   contextGroupIds: string[];
   referenceIds: string[];
   dependsOn: string[];
@@ -147,6 +152,7 @@ export type ManagedProductionPlan = {
   format: ProductionFormat;
   team: ProductionTeam;
   claims: ProductionClaim[];
+  contextGroups: ReturnType<typeof combinedContextGroups>;
   continuityBible: ProductionContinuityBible;
   scenes: ProductionScene[];
   narrativeOrder: string[];
@@ -181,27 +187,79 @@ const asRecord = (value: unknown): Record<string, unknown> => value && typeof va
 const clean = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
 const unique = (values: Iterable<string>) => [...new Set([...values].map(clean).filter(Boolean))];
 const continuityTypes = new Set(["subject", "environment", "location", "wardrobe", "object", "prop", "palette", "lighting", "camera", "style", "material", "brand", "typography", "format"]);
-const negativeIntents = new Set(["avoid", "prohibit", "exclude"]);
+const negativeIntents = new Set(["avoid", "prohibit", "exclude", "must_not_include", "exclusion", "forbid"]);
+
+export function isNegativeProductionFact(fact: Record<string, unknown>) {
+  const properties = asRecord(fact.properties);
+  return [fact.intent, fact.effect, fact.polarity, properties.intent, properties.effect, properties.polarity, fact.type, fact.role]
+    .some((value) => negativeIntents.has(clean(value).toLowerCase()));
+}
 
 function factText(fact: Record<string, unknown>) {
   const properties = asRecord(fact.properties);
   const authoredPalette = Array.isArray(properties.palette) && properties.palette.length ? properties.palette : Array.isArray(properties.output_palette) && properties.output_palette.length ? properties.output_palette : null;
-  return unique([properties.text, properties.instruction, properties.description, properties.label, properties.value, properties.storyboard_shot_direction, properties.exact_text, authoredPalette ? authoredPalette.join(", ") : Array.isArray(properties.colors) ? properties.colors.join(", ") : "", fact.handle].map(clean)).join(" · ");
+  const authored = unique([properties.text, properties.instruction, properties.description, properties.label, properties.value, properties.storyboard_shot_direction, properties.video_scene_direction, properties.exact_text, authoredPalette ? authoredPalette.join(", ") : Array.isArray(properties.colors) ? properties.colors.join(", ") : ""].map(clean));
+  return (authored.length ? authored : unique([clean(fact.handle)])).join(" · ");
 }
 
 export function productionClaims(snapshot: Record<string, unknown>): ProductionClaim[] {
   const mandatory = new Set(requiredContextAdaptationFacts(snapshot).map((fact) => fact.blockId));
   const facts = (Array.isArray(snapshot.facts) ? snapshot.facts : []).filter(promptFactIsActive).map(asRecord);
-  return facts.flatMap((fact, index) => {
+  const materializedItems = new Set(facts.flatMap((fact) => {
+    const properties = asRecord(fact.properties);
+    const artifactId = clean(properties.source_artifact_id);
+    const itemId = clean(properties.source_artifact_item_id);
+    return artifactId && itemId ? [`${artifactId}\u0000${itemId}`] : [];
+  }));
+  const claims = facts.flatMap((fact, index): ProductionClaim[] => {
     const properties = asRecord(fact.properties);
     const text = factText(fact);
-    if (!text) return [];
     const blockId = clean(fact.block_id) || `source-${index + 1}`;
     const type = clean(fact.type || fact.role || "direction");
-    const rawSequence = Number(properties.storyboard_frame_index ?? properties.storyboard_sequence);
+    const rawSequence = Number(properties.storyboard_frame_index ?? properties.storyboard_sequence ?? properties.video_scene_index ?? properties.narrative_order);
     const storyboardSequence = Number.isSafeInteger(rawSequence) && rawSequence > 0 ? rawSequence : null;
-    const negative = negativeIntents.has(clean(fact.intent || properties.intent).toLowerCase()) || clean(fact.effect).toLowerCase() === "exclude";
+    const negative = isNegativeProductionFact(fact);
     const authoredPalette = Array.isArray(properties.palette) && properties.palette.length ? properties.palette : Array.isArray(properties.output_palette) ? properties.output_palette : [];
+    const contextGroupIds = unique([
+      ...combinedContextMemberships(properties).map((membership) => membership.contextSetId),
+      ...(Array.isArray(properties.context_group_ids) ? properties.context_group_ids.map(clean) : []),
+    ]);
+    const artifactId = clean(properties.source_artifact_id);
+    const artifactStructure = asRecord(properties.artifact_structure);
+    const artifactItems = Array.isArray(artifactStructure.items) ? artifactStructure.items.map(asRecord) : [];
+    if (artifactItems.length) {
+      return artifactItems.flatMap((item, itemIndex): ProductionClaim[] => {
+        const itemId = clean(item.source_artifact_item_id ?? item.id) || `item-${itemIndex + 1}`;
+        if (artifactId && materializedItems.has(`${artifactId}\u0000${itemId}`)) return [];
+        const slide = asRecord(item.slide);
+        const visual = asRecord(slide.visual);
+        const itemText = unique([
+          item.title, item.body, item.notes, item.image_prompt,
+          ...(Array.isArray(slide.bullets) ? slide.bullets : []),
+          slide.headline, slide.subheadline, visual.description, visual.caption,
+        ].map(clean)).join(" · ");
+        if (!itemText) return [];
+        const sequence = Number(item.narrative_order ?? item.storyboard_frame_index ?? item.video_scene_index ?? itemIndex + 1);
+        return [{
+          id: `claim:${blockId}:item:${itemId}`,
+          blockId,
+          type,
+          text: itemText,
+          required: mandatory.has(blockId),
+          continuity: false,
+          negative: negative || isNegativeProductionFact(item),
+          contextGroupIds: unique([...contextGroupIds, ...(Array.isArray(item.context_group_ids) ? item.context_group_ids.map(clean) : [])]),
+          storyboardSequence: Number.isSafeInteger(sequence) && sequence > 0 ? sequence : itemIndex + 1,
+          ...(authoredPalette.length ? { palette: unique(authoredPalette.map(clean)) } : {}),
+          ...(artifactId ? { artifactId } : {}),
+          artifactItemId: itemId,
+          ordinal: index * 1_000_000 + itemIndex,
+          sourceKind: "artifact-item",
+        }];
+      });
+    }
+    if (!text) return [];
+    const itemId = clean(properties.source_artifact_item_id);
     return [{
       id: `claim:${blockId}`,
       blockId,
@@ -210,11 +268,36 @@ export function productionClaims(snapshot: Record<string, unknown>): ProductionC
       required: mandatory.has(blockId),
       continuity: continuityTypes.has(type) && storyboardSequence === null,
       negative,
-      contextGroupIds: unique(combinedContextMemberships(properties).map((membership) => membership.contextSetId)),
+      contextGroupIds,
       storyboardSequence,
       ...(authoredPalette.length ? { palette: unique(authoredPalette.map(clean)) } : {}),
+      ...(artifactId ? { artifactId } : {}),
+      ...(itemId ? { artifactItemId: itemId } : {}),
+      ordinal: index * 1_000_000,
+      sourceKind: "fact",
     } satisfies ProductionClaim];
   });
+  const standing = (Array.isArray(snapshot.standing_constraints) ? snapshot.standing_constraints : []).map(asRecord)
+    .filter((constraint) => !constraint.authority || clean(constraint.authority).toLowerCase() === "authored")
+    .flatMap((constraint, index): ProductionClaim[] => {
+      const axis = clean(constraint.axis);
+      const value = clean(constraint.value);
+      if (!value) return [];
+      return [{
+        id: `claim:standing:${index + 1}`,
+        blockId: `standing:${index + 1}`,
+        type: axis || "direction",
+        text: axis ? `${axis}: ${value}` : value,
+        required: true,
+        continuity: continuityTypes.has(axis),
+        negative: isNegativeProductionFact(constraint),
+        contextGroupIds: [],
+        storyboardSequence: null,
+        ordinal: (facts.length + index) * 1_000_000,
+        sourceKind: "standing-constraint",
+      }];
+    });
+  return [...claims, ...standing];
 }
 
 function continuityBible(claims: ProductionClaim[]): ProductionContinuityBible {
@@ -233,6 +316,37 @@ function continuityBible(claims: ProductionClaim[]): ProductionContinuityBible {
   };
 }
 
+export type ProviderFacingProductionContinuity = Omit<ProductionContinuityBible, "requiredBlockIds">;
+export type ProviderFacingProductionTarget = { target: string; role: string; required: string[]; prohibitions: string[] };
+
+/** Resolve target-scoped decisions without exposing durable Combined Context IDs. */
+export function providerFacingProductionTargets(plan: Pick<ManagedProductionPlan, "claims"> & Partial<Pick<ManagedProductionPlan, "contextGroups">>, snapshot?: Record<string, unknown>): ProviderFacingProductionTarget[] {
+  const groups = new Map((snapshot ? combinedContextGroups(snapshot) : plan.contextGroups ?? []).map((group) => [group.id, group]));
+  const scoped = new Map<string, ProviderFacingProductionTarget>();
+  for (const claim of plan.claims) for (const groupId of claim.contextGroupIds) {
+    const group = groups.get(groupId);
+    if (!group || group.role === "sequence" || group.role === "slide_chapter") continue;
+    const key = `${group.role}\u0000${group.target}`;
+    const target = scoped.get(key) ?? { target: group.target, role: group.role, required: [], prohibitions: [] };
+    (claim.negative ? target.prohibitions : target.required).push(claim.text);
+    scoped.set(key, target);
+  }
+  return [...scoped.values()].map((target) => ({ ...target, required: unique(target.required), prohibitions: unique(target.prohibitions) }));
+}
+
+/** Authorial continuity may reach a provider; durable identifiers and another target's decisions may not. */
+export function providerFacingProductionContinuity(
+  plan: Pick<ManagedProductionPlan, "claims">,
+  scene?: Pick<ProductionScene, "contextGroupIds">,
+): ProviderFacingProductionContinuity {
+  const allowedGroups = new Set(scene?.contextGroupIds ?? []);
+  const scoped = scene
+    ? plan.claims.filter((claim) => !claim.contextGroupIds.length || claim.contextGroupIds.some((id) => allowedGroups.has(id)))
+    : plan.claims;
+  const bible = continuityBible(scoped);
+  return { subjects: bible.subjects, locations: bible.locations, wardrobe: bible.wardrobe, props: bible.props, palette: bible.palette, lighting: bible.lighting, camera: bible.camera, style: bible.style, prohibitions: bible.prohibitions };
+}
+
 const purposeFor = (index: number, count: number): ProductionScene["narrativePurpose"] =>
   index === 0 ? "opening" : index === count - 1 ? "resolution" : index === Math.max(1, Math.round((count - 1) * .7)) ? "climax" : index === Math.floor((count - 1) / 2) ? "turning-point" : "development";
 
@@ -242,19 +356,43 @@ const sceneDuration = (text: string, preferredSeconds?: number): VideoDurationSe
   return Math.max(4, Math.min(15, Math.max(6, Math.round(requested)))) as VideoDurationSeconds;
 };
 
-function storyboardFacts(snapshot: Record<string, unknown>) {
-  return (Array.isArray(snapshot.facts) ? snapshot.facts : []).filter(promptFactIsActive).map(asRecord).flatMap((fact) => {
-    const properties = asRecord(fact.properties);
-    const sequence = Number(properties.storyboard_frame_index ?? properties.storyboard_sequence);
-    if (!Number.isSafeInteger(sequence) || sequence < 1) return [];
-    return [{ fact, properties, sequence, groupId: clean(properties.source_artifact_id ?? properties.reference_set_id ?? properties.context_set_id ?? properties.storyboard_title) }];
-  }).sort((left, right) => left.groupId.localeCompare(right.groupId) || left.sequence - right.sequence);
+function storyboardFacts(snapshot: Record<string, unknown>, claims: ProductionClaim[]) {
+  const facts = new Map((Array.isArray(snapshot.facts) ? snapshot.facts : []).filter(promptFactIsActive).map(asRecord).map((fact) => [clean(fact.block_id), fact]));
+  const groupOrder = new Map<string, number>();
+  return claims.flatMap((claim, index) => {
+    if (claim.storyboardSequence === null || claim.negative) return [];
+    const fact = facts.get(claim.blockId);
+    if (!fact) return [];
+    const base = asRecord(fact.properties);
+    const nested = claim.artifactItemId
+      ? (Array.isArray(asRecord(base.artifact_structure).items) ? asRecord(base.artifact_structure).items as unknown[] : [])
+        .map(asRecord).find((item) => clean(item.source_artifact_item_id ?? item.id) === claim.artifactItemId)
+      : undefined;
+    const properties = nested ? {
+      ...base,
+      text: clean(nested.body ?? nested.title),
+      label: clean(nested.title),
+      storyboard_shot_title: clean(nested.title),
+      storyboard_shot_direction: clean(nested.body ?? nested.title),
+      storyboard_camera_direction: clean(nested.notes),
+      storyboard_frame_prompt: clean(nested.image_prompt ?? nested.body),
+      source_artifact_item_id: claim.artifactItemId,
+    } : base;
+    const groupId = clean(claim.artifactId ?? properties.source_artifact_id ?? properties.reference_set_id ?? properties.context_set_id ?? properties.storyboard_title) || `source-${index + 1}`;
+    if (!groupOrder.has(groupId)) groupOrder.set(groupId, groupOrder.size);
+    return [{ fact, properties, sequence: claim.storyboardSequence, groupId, claim, position: index }];
+  }).sort((left, right) => groupOrder.get(left.groupId)! - groupOrder.get(right.groupId)! || left.sequence - right.sequence || left.position - right.position);
 }
 
 function boundReferences(scene: ProductionScene, references: ProductionReference[]) {
   const source = new Set(scene.sourceBlockIds);
   const groups = new Set(scene.contextGroupIds);
   return [...references]
+    .filter((reference) => {
+      if (reference.contextGroupIds.length && groups.size && !reference.contextGroupIds.some((id) => groups.has(id))) return false;
+      if (reference.contextGroupIds.length && !groups.size && !source.has(reference.blockId)) return false;
+      return true;
+    })
     .sort((left, right) => {
       const rank = (value: ProductionReference) =>
         (source.has(value.blockId) ? 100 : 0) +
@@ -277,6 +415,9 @@ function anchorRank(scene: ProductionScene, count: number) {
 }
 
 function buildWaves(scenes: ProductionScene[], anchorId: string, maximumParallelScenes: number) {
+  const parallelLimit = Number.isFinite(maximumParallelScenes)
+    ? Math.min(VIDEO_ADAPTER_CONTRACT.referenceUploadConcurrency, Math.max(1, Math.floor(maximumParallelScenes)))
+    : VIDEO_ADAPTER_CONTRACT.referenceUploadConcurrency;
   const completed = new Set<string>();
   const pending = new Map(scenes.map((scene) => [scene.id, scene]));
   const waves: string[][] = [];
@@ -285,7 +426,7 @@ function buildWaves(scenes: ProductionScene[], anchorId: string, maximumParallel
     if (!waves.length) ready = ready.filter((scene) => scene.id === anchorId);
     if (!ready.length) throw new Error("production_scene_dependency_cycle");
     ready.sort((left, right) => right.anchorScore - left.anchorScore || left.narrativeOrder - right.narrativeOrder);
-    const wave = ready.slice(0, Math.max(1, maximumParallelScenes)).map((scene) => scene.id);
+    const wave = ready.slice(0, parallelLimit).map((scene) => scene.id);
     waves.push(wave);
     for (const sceneId of wave) { completed.add(sceneId); pending.delete(sceneId); }
   }
@@ -297,20 +438,18 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
   const claims = productionClaims(snapshot);
   const references = options.references ?? [];
   const groups = combinedContextGroups(snapshot);
-  const beats = storyboardFacts(snapshot);
+  const beats = storyboardFacts(snapshot, claims);
   const plotClaims = claims.filter((claim) => !claim.continuity && !claim.negative && claim.storyboardSequence === null);
-  const groupedClaims = new Map(claims.map((claim) => [claim.blockId, claim]));
   const baselineCount = beats.length || Math.max(1, Math.ceil(plotClaims.length / 2), groups.filter((group) => group.role === "sequence" || group.role === "scene" || group.role === "message").length);
   const count = format === "image" ? 1 : Math.max(baselineCount, Math.max(0, Math.floor(Number(options.requestedItemCount) || 0)));
   const buckets: ProductionClaim[][] = Array.from({ length: count }, () => []);
 
   for (let index = 0; index < beats.length; index += 1) {
     const beat = beats[index]!;
-    const claim = groupedClaims.get(clean(beat.fact.block_id));
+    const claim = beat.claim;
     if (claim) buckets[index % count]!.push(claim);
   }
   plotClaims.forEach((claim, index) => buckets[index % count]!.push(claim));
-  const groupedBlockIds = new Set(groups.flatMap((group) => group.members.map((member) => member.blockId)));
   for (const group of groups) {
     const assigned = buckets.findIndex((bucket) => bucket.some((claim) => claim.contextGroupIds.includes(group.id)));
     if (assigned >= 0) continue;
@@ -325,20 +464,21 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
     const beat = beats[index];
     const facts = unique(buckets[index]!.map((claim) => claim.id)).map((claimId) => claims.find((claim) => claim.id === claimId)!).filter(Boolean);
     const properties = beat?.properties ?? {};
-    const action = clean(properties.storyboard_shot_direction ?? properties.text ?? facts.map((claim) => claim.text).join("; ")) || `Advance ${purposeFor(index, count)} without repeating another scene.`;
-    const title = clean(properties.storyboard_shot_title ?? properties.label) || `${purposeFor(index, count).replaceAll("-", " ")} · ${index + 1}`;
+    const action = clean(properties.storyboard_shot_direction ?? properties.video_scene_direction ?? properties.text ?? facts.map((claim) => claim.text).join("; ")) || `Advance ${purposeFor(index, count)} without repeating another scene.`;
+    const title = clean(properties.storyboard_shot_title ?? properties.video_scene_title ?? properties.label) || `${purposeFor(index, count).replaceAll("-", " ")} · ${index + 1}`;
     const contextGroupIds = unique(facts.flatMap((claim) => claim.contextGroupIds));
     const scene: ProductionScene = {
       id,
       narrativeOrder: index + 1,
       title,
       action,
-      cameraDirection: clean(properties.storyboard_camera_direction) || continuityBible(claims).camera[0] || "Motivated camera movement; preserve established screen direction.",
-      imagePrompt: clean(properties.storyboard_frame_prompt) || action,
+      cameraDirection: clean(properties.storyboard_camera_direction ?? properties.video_scene_camera_direction) || continuityBible(claims).camera[0] || "Motivated camera movement; preserve established screen direction.",
+      imagePrompt: clean(properties.storyboard_frame_prompt ?? properties.video_scene_frame_prompt) || action,
       narrativePurpose: purposeFor(index, count),
       durationSeconds: sceneDuration(action, options.preferredSceneSeconds),
       sourceClaimIds: facts.map((claim) => claim.id),
       sourceBlockIds: unique(facts.map((claim) => claim.blockId)),
+      ...(facts.some((claim) => claim.artifactItemId) ? { sourceArtifactItemIds: unique(facts.flatMap((claim) => claim.artifactItemId ? [claim.artifactItemId] : [])) } : {}),
       contextGroupIds,
       referenceIds: [],
       dependsOn: [],
@@ -355,15 +495,6 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
     return scene;
   });
 
-  // Groups define scoped authorial units; never promote their decisions to a global rule.
-  for (const scene of scenes) {
-    for (const blockId of scene.sourceBlockIds) {
-      if (!groupedBlockIds.has(blockId)) continue;
-      const claim = groupedClaims.get(blockId);
-      if (claim) scene.contextGroupIds = unique([...scene.contextGroupIds, ...claim.contextGroupIds]);
-    }
-  }
-
   const anchor = [...scenes].sort((left, right) => right.anchorScore - left.anchorScore || left.narrativeOrder - right.narrativeOrder)[0]!;
   for (const scene of scenes) {
     if (scene.id === anchor.id || scene.referenceIds.length) continue;
@@ -377,7 +508,7 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
   const totalDurationSeconds = scenes.reduce((sum, scene) => sum + scene.durationSeconds, 0);
   const videoRate = VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[options.resolution ?? VIDEO_ADAPTER_CONTRACT.defaultResolution];
   const estimatedVideoCostMicrousd = format === "video" ? totalDurationSeconds * videoRate : 0;
-  const estimatedReferenceCostMicrousd = (format === "video" || format === "storyboard") && scenes.some((scene) => !scene.referenceIds.length) ? 500_000 : 0;
+  const estimatedReferenceCostMicrousd = format === "video" && scenes.some((scene) => !scene.referenceIds.length) ? 500_000 : 0;
   const estimatedPlanningCostMicrousd = Math.ceil(count / 8) * 1_000_000;
   return {
     schemaVersion: 1,
@@ -385,6 +516,7 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
     format,
     team: productionTeamFor(format),
     claims,
+    contextGroups: groups,
     continuityBible: continuityBible(claims),
     scenes,
     narrativeOrder: scenes.map((scene) => scene.id),
@@ -410,12 +542,23 @@ export function productionSceneSnapshot(snapshot: Record<string, unknown>, scene
     const properties = asRecord(fact.properties);
     const blockId = clean(fact.block_id);
     const memberships = combinedContextMemberships(properties);
+    const structuredItems = Array.isArray(asRecord(properties.artifact_structure).items) ? asRecord(properties.artifact_structure).items as unknown[] : [];
+    if (structuredItems.length && scene.sourceArtifactItemIds?.length && !structuredItems.some((item) => scene.sourceArtifactItemIds!.includes(clean(asRecord(item).source_artifact_item_id ?? asRecord(item).id)))) return false;
     if (memberships.length && !memberships.some((membership) => groups.has(membership.contextSetId))) return false;
     if (ids.has(blockId) || requiredIds.has(blockId)) return true;
     if (Number(properties.storyboard_frame_index ?? properties.storyboard_sequence ?? 0) > 0) return false;
     const type = clean(fact.type || fact.role);
-    const negative = negativeIntents.has(clean(fact.intent || properties.intent).toLowerCase()) || clean(fact.effect).toLowerCase() === "exclude";
+    const negative = isNegativeProductionFact(fact);
     return negative || continuityTypes.has(type) || type === "direction" || type === "accessibility";
+  }).map((fact) => {
+    const properties = asRecord(fact.properties);
+    const structure = asRecord(properties.artifact_structure);
+    if (!scene.sourceArtifactItemIds?.length || !Array.isArray(structure.items)) return fact;
+    const allowed = new Set(scene.sourceArtifactItemIds);
+    const items = structure.items.map(asRecord).filter((item) => allowed.has(clean(item.source_artifact_item_id ?? item.id)));
+    if (!items.length) return fact;
+    const scopedText = items.map((item) => unique([item.title, item.body, item.notes, item.image_prompt].map(clean)).join(" · ")).join("\n");
+    return { ...fact, properties: { ...properties, text: scopedText, artifact_markdown: scopedText, artifact_structure: { ...structure, items } } };
   });
   const retainedIds = new Set(facts.map((fact) => clean(fact.block_id)));
   const relationships = (Array.isArray(snapshot.relationships) ? snapshot.relationships : []).map(asRecord).filter((relation) => retainedIds.has(clean(relation.from_block_id)) && retainedIds.has(clean(relation.to_block_id)));
@@ -511,9 +654,17 @@ export function scoreManualVideoBaseline(plan: ManagedProductionPlan, seconds: V
 export const productionDefectReduction = (baseline: ProductionQualityScore, managed: ProductionQualityScore) =>
   baseline.weightedDefect / Math.max(.000_001, managed.weightedDefect);
 
-export function productionTeamInstructions(plan: Pick<ManagedProductionPlan, "team" | "continuityBible" | "scenes">, scenes = plan.scenes) {
+export function productionTeamInstructions(plan: Pick<ManagedProductionPlan, "team" | "continuityBible" | "scenes"> & Partial<Pick<ManagedProductionPlan, "claims">>, scenes = plan.scenes) {
   const roles = plan.team.specialists.map((member) => `${member.label}: ${member.responsibility} Deliver ${member.deliverable}.`).join(" ");
-  const bible = JSON.stringify(plan.continuityBible);
-  const assignments = scenes.map((scene) => `${scene.narrativeOrder}. ${scene.title}: ${scene.action}. Camera: ${scene.cameraDirection}. Introduce only the assigned new information; ${scene.transitionIn}; ${scene.transitionOut}.`).join(" ");
+  const legacySafeBible = Object.fromEntries(Object.entries(plan.continuityBible).filter(([key]) => key !== "requiredBlockIds"));
+  const sharedClaims = plan.claims?.filter((claim) => !claim.contextGroupIds.length) ?? [];
+  const shared = plan.claims
+    ? providerFacingProductionContinuity({ claims: sharedClaims })
+    : legacySafeBible;
+  const bible = JSON.stringify(scenes.length === 1 && plan.claims ? providerFacingProductionContinuity({ claims: plan.claims }, scenes[0]) : shared);
+  const assignments = scenes.map((scene) => {
+    const scoped = plan.claims ? ` Scoped target continuity: ${JSON.stringify(providerFacingProductionContinuity({ claims: plan.claims }, scene))}.` : "";
+    return `${scene.narrativeOrder}. ${scene.title}: ${scene.action}. Camera: ${scene.cameraDirection}.${scoped} Introduce only the assigned new information; ${scene.transitionIn}; ${scene.transitionOut}.`;
+  }).join(" ");
   return `Act as a coordinated ${plan.team.label}, not as an unaudited set of autonomous agents. ${roles} Preserve this shared production continuity bible: ${bible}. Create distinct source-grounded work units without repeating plot claims: ${assignments}`;
 }

@@ -91,6 +91,33 @@ test("project library export cannot disclose another project's interleaved histo
   assert.doesNotMatch(JSON.stringify(archive),/project-two|document-two|reference-two|second\.png|Private second-project/);
 });
 
+test("project archives retain every owned generated scene and continuity image without foreign media or duplicate manifest entries", () => {
+  const firstClip = "/api/media/owner-1%2Fgenerated%2Fscene-one.mp4";
+  const secondClip = "/api/media/owner-1%2Fgenerated%2Fscene-two.mp4";
+  const frame = "/api/media/owner-1%2Fgenerated%2Fframe-one.jpg";
+  const anchor = "/api/media/owner-1%2Fgenerated%2Fcontinuity-anchor.jpg";
+  const rows = [
+    event(1, "ProjectCreated", { project_id: "project-one", name: "First" }),
+    event(2, "DocumentCreated", { project_id: "project-one", document_id: "document-one", title: "First document" }),
+    event(3, "DocumentRenderCompleted", { project_id: "project-one", document_id: "document-one", artifact_id: "film-one", artifact_kind: "video", media_url: firstClip, media_type: "video/mp4", items: [
+      { id: "clip-two", media_url: secondClip, media_type: "video/mp4", narrative_order: 2, generation_order: 1, duration_seconds: 7 },
+      { id: "clip-one", media_url: firstClip, media_type: "video/mp4", narrative_order: 1, generation_order: 2, duration_seconds: 6 },
+    ], production_assets: [{ role: "production-continuity-anchor", media_url: anchor, media_type: "image/jpeg" }, { role: "forbidden-foreign-anchor", media_url: "/api/media/another-owner%2Fprivate.jpg", media_type: "image/jpeg" }] }),
+    event(4, "DocumentRenderCompleted", { project_id: "project-one", document_id: "document-one", artifact_id: "board-one", artifact_kind: "storyboard", items: [{ id: "frame-one", media_url: frame, media_type: "image/jpeg", narrative_order: 1 }] }),
+    event(5, "ReferenceIngested", { project_id: "project-one", document_id: "document-one", reference_id: "reused-frame", source_ref: frame, rights_class: "account-generated" }),
+    event(6, "ReferenceIngested", { project_id: "project-one", document_id: "document-one", reference_id: "foreign-reference", source_ref: "/api/media/another-owner%2Fprivate.png", rights_class: "owned" }),
+    event(7, "GenerationCompleted", { project_id: "project-one", document_id: "document-one", media_url: "/api/media/owner-1%2Fgenerated%2Ffinal-image.png", media_type: "image/png" }),
+  ];
+  const archive = exportProjectArchive(rows, "project-one");
+  assert.equal(archive.mediaManifest.filter((entry) => entry.sourceRef === frame).length, 1);
+  assert.deepEqual(archive.mediaManifest.find((entry) => entry.sourceRef === frame), { sourceRef: frame, rightsClass: "account-generated", artifactId: "board-one", itemId: "frame-one", role: "storyboard-frame", mediaType: "image/jpeg", narrativeOrder: 1 });
+  const clips = archive.mediaManifest.filter((entry) => entry.role === "video-scene");
+  assert.deepEqual(clips.map((entry) => [entry.itemId, entry.narrativeOrder, entry.generationOrder, entry.durationSeconds]), [["clip-one", 1, 2, 6], ["clip-two", 2, 1, 7]]);
+  assert.ok(archive.mediaManifest.some((entry) => entry.role === "production-continuity-anchor"));
+  assert.ok(archive.mediaManifest.some((entry) => entry.role === "generated-image"));
+  assert.ok(archive.mediaManifest.every((entry) => !entry.sourceRef.includes("another-owner")));
+});
+
 test("inactive decisions and internal identifiers cannot leak into any provider-facing output", () => {
   const snapshot = {
     document: { id: "document-1", title: "Product study" },

@@ -1,4 +1,4 @@
-import type { PromptTechnique } from "../src/model/prompt-structures.ts";
+import { productionBriefForPrompt, type PromptTechnique } from "../src/model/prompt-structures.ts";
 import { compileContextAdaptationSections, partitionContextAdaptationFactScopes, requiredContextAdaptationFacts, type ContextAdaptationPriority } from "../src/model/context-adaptation.ts";
 import { combinedContextGroups, combinedContextMemberships } from "../src/model/combined-context.ts";
 import { promptFactIsActive } from "../src/model/prompt-policy.ts";
@@ -115,7 +115,7 @@ function referenceDirective(reference:ImageReference|undefined){
 }
 
 function boundedPrompt(lines:string[]){
-  const normalized=[...new Set(lines.map((line)=>line.replace(/\s+/g," ").trim()).filter(Boolean))];const priorityFor=(line:string):ContextAdaptationPriority=>/^(?:PRIMARY SUCCESS TEST|MANDATORY (?:PRIMARY SUBJECT|ACTION EVIDENCE|AUTHORED DECISION)|COMBINED CONTEXT —|TARGET-SCOPED EXCLUSION —|FINAL (?:READ|VISUAL CHECK|COMPOSITION CHECK)|REFERENCE —|EXCLUDE:|TEXT(?: — REQUIRED)?:|FRAMING LOCK:|REGION —|DELIVERY(?: QUALITY CONTROL)?:)/.test(line)?"required":/^(?:CREATIVE GOAL|SETTING|COMPOSITION|SHOT GEOMETRY|DIRECTED GEOMETRY|MATERIALS|VISIBLE ACCEPTANCE CHECKLIST)/.test(line)?"important":"optional";
+  const normalized=[...new Set(lines.map((line)=>line.replace(/\s+/g," ").trim()).filter(Boolean))];const priorityFor=(line:string):ContextAdaptationPriority=>/^(?:PRIMARY SUCCESS TEST|MANDATORY (?:PRIMARY SUBJECT|ACTION EVIDENCE|AUTHORED DECISION)|REQUIRED PRODUCTION SOURCE COVERAGE|PRODUCTION (?:TEAM|CONTINUITY)|COMBINED CONTEXT —|TARGET-SCOPED EXCLUSION —|FINAL (?:READ|VISUAL CHECK|COMPOSITION CHECK)|REFERENCE —|EXCLUDE:|TEXT(?: — REQUIRED)?:|FRAMING LOCK:|REGION —|DELIVERY(?: QUALITY CONTROL)?:)/.test(line)?"required":/^(?:CREATIVE GOAL|SETTING|COMPOSITION|SHOT GEOMETRY|DIRECTED GEOMETRY|MATERIALS|VISIBLE ACCEPTANCE CHECKLIST)/.test(line)?"important":"optional";
   const compiled=compileContextAdaptationSections(normalized.map((content,index)=>({id:`image-direction-${index+1}`,content,priority:priorityFor(content)})),IDEOGRAM_PROMPT_MAX_CHARS,"\n");
   return{prompt:compiled.prompt,compacted:compiled.compacted,valid:compiled.valid,issues:compiled.issues.map((issue)=>issue.message)};
 }
@@ -179,6 +179,17 @@ export function buildIdeogramPrompt(
   const focus=classifyIdeogramPromptFocus(scene,Boolean(references[0]),typographyRequired,scoped.length);const directedComposition=director?compositionDirection(composition):"";const priority=director?priorityDirective(focus,primarySubject,setting,composition,material):"";
   const directorFinal=director?`FINAL READ: subject/action = ${primarySubject}; setting = ${setting}; composition = ${composition}. These three facts must be immediately legible together. The primary success test above decides all optional detail.`:"";
   const compositionLine=composition?`COMPOSITION — LITERAL STRUCTURE: ${composition}. Treat every named count, ordering, interruption, and relative placement as a visible requirement.`:"";const frameLine=framingContract(composition);const exclusionLine=exclusions.length?`EXCLUDE: ${exclusions.join("; ").replace(/[.]+$/g,"")}.`:"";
+  const production=productionBriefForPrompt(snapshot);
+  const productionLines=production?[
+    `PRODUCTION TEAM: ${clean(production.team.map((member)=>`${member.role} — ${member.responsibility}`).join("; "),650)}.`,
+    `PRODUCTION CONTINUITY: ${clean(JSON.stringify(production.continuity_bible),650)}.`,
+    ...(production.continuity_bible.prohibitions??[]).map((prohibition)=>`EXCLUDE: ${prohibition}.`),
+    ...production.required_source_coverage.map((claim)=>`REQUIRED PRODUCTION SOURCE COVERAGE: ${claim}.`),
+    ...production.scoped_targets.flatMap((target)=>[
+      ...target.required.map((claim)=>`COMBINED CONTEXT — ${target.role} “${target.target}”: Require ${claim} only on this authored target; do not transfer it to another subject.`),
+      ...target.prohibitions.map((claim)=>`TARGET-SCOPED EXCLUSION — ${target.role} “${target.target}”: Exclude ${claim} only from this target; other targets remain unaffected.`),
+    ]),
+  ]:[];
   const lines=[
     `Create one ${options.quality==="low"?"fast, readable study":"polished editorial image"}${ratio?` composed specifically for a ${ratio} pixel frame`:""}.`,
     priority,
@@ -187,6 +198,7 @@ export function buildIdeogramPrompt(
     compositionFirst?frameLine:"",
     constraintsFirst?exclusionLine:"",
     sentence("CREATIVE GOAL",scene||clean(direction.title,300)||clean(canonicalPrompt,900)),
+    ...productionLines,
     primarySubject?(frameLine?`MANDATORY ACTION EVIDENCE: Depict ${primarySubject} through the exact edge-limited framing below. The active hands or permitted body area must visibly perform the named action; do not substitute unattended objects.`:`MANDATORY PRIMARY SUBJECT AND ACTION: Prominently and unmistakably depict ${primarySubject}. If a person or professional is named, visibly show that person actively performing the named action. Do not substitute an object-only still life, unattended tools, or an environment-only scene.`):"",
     benignStoryContextApplied?`BENIGN STORY CONTEXT: This is fictional editorial artwork about the named professional or creative activity. Depict every person as a safe ${/\badult\b/i.test(primarySubject)&&!/\b(?:child|children|minor|teen|toddler|infant|baby)\b/i.test(primarySubject)?"adult ":""}fictional character while preserving any explicitly authored age. The exact words below are only the artwork's title.`:"",
     sentence("SETTING",setting),
@@ -213,7 +225,7 @@ export function buildIdeogramPrompt(
     !director&&literal&&composition?`FINAL COMPOSITION CHECK: Preserve exactly this authored structure — ${composition}. Do not trade it away for a more conventional crop or arrangement.`:"",
     director?"DELIVERY QUALITY CONTROL: One resolved image only. Use a deliberate square crop with no dead zones. Include only named supporting objects. No contact sheet, split screen, inset, footer, border, annotation, presentation mockup, watermark, artist mark, or signature-like flourish.":"DELIVERY: One complete image only; no contact sheet, split-screen comparison, inset, footer, border, annotation, or presentation mockup.",
   ].filter(Boolean) as string[];
-  const bounded=boundedPrompt(lines);for(const decision of [...mandatoryDecisions,...hardExclusions])if(!decision.direction)bounded.issues.push(`mandatory ${decision.type} decision ${decision.blockId||"without identifier"} has no representable authorial value`);const coveredFacts=facts.filter((fact)=>{const value=factText(fact);const quoted=factType(fact)==="typography"?quoteText(value):"";return Boolean(value&&bounded.prompt.includes(value))||Boolean(quoted&&bounded.prompt.includes(quoted));});return{
+  const bounded=boundedPrompt(lines);for(const decision of [...mandatoryDecisions,...hardExclusions])if(!decision.direction)bounded.issues.push(`mandatory ${decision.type} decision ${decision.blockId||"without identifier"} has no representable authorial value`);for(const claim of production?.required_source_coverage??[])if(!bounded.prompt.includes(claim))bounded.issues.push("a required authored production decision did not survive provider prompt compaction");for(const prohibition of production?.continuity_bible.prohibitions??[])if(!bounded.prompt.includes(prohibition))bounded.issues.push("a forbidden production decision did not survive provider prompt compaction");for(const target of production?.scoped_targets??[])for(const claim of [...target.required,...target.prohibitions])if(!bounded.prompt.includes(claim)||!bounded.prompt.includes(target.target))bounded.issues.push("a target-scoped authored production decision did not survive provider prompt compaction");const coveredFacts=facts.filter((fact)=>{const value=factText(fact);const quoted=factType(fact)==="typography"?quoteText(value):"";return Boolean(value&&bounded.prompt.includes(value))||Boolean(quoted&&bounded.prompt.includes(quoted));});return{
     prompt:bounded.prompt,
     valid:bounded.valid&&bounded.issues.length===0,
     issues:bounded.issues,

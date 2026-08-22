@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { compileContextAdaptationSections, partitionContextAdaptationFactScopes, requiredContextAdaptationFacts } from "../src/model/context-adaptation.ts";
@@ -252,6 +253,27 @@ test("distinct same-title storyboard sets retain independent chronology and refe
   const valid = [reference(1, { sourceArtifactId: "set-a" }), reference(2, { sourceArtifactId: "set-a" }), reference(1, { sourceArtifactId: "set-b", blockId: "b1", referenceId: "b1" }), reference(2, { sourceArtifactId: "set-b", blockId: "b2", referenceId: "b2" })];
   assert.equal(validateCreativeVideoReferences({}, valid), VIDEO_ADAPTER_CONTRACT.model);
   assert.throws(() => validateCreativeVideoReferences({}, [reference(2), reference(1)]), (error) => error.detail.code === "video_reference_order_invalid");
+});
+
+test("managed video preflight preserves ambient audio before continuity references exist", () => {
+  const textToVideoModel = "fal-ai/gemini-video";
+  const env = { FAL_VIDEO_MODEL: textToVideoModel, FAL_REFERENCE_VIDEO_MODEL: VIDEO_ADAPTER_CONTRACT.model };
+
+  assert.throws(
+    () => validateCreativeVideoReferences(env, [], undefined, "original_ambient"),
+    (error) => error.detail.code === "video_audio_provider_unsupported",
+  );
+  assert.equal(
+    validateCreativeVideoReferences(env, [], env.FAL_REFERENCE_VIDEO_MODEL, "original_ambient"),
+    VIDEO_ADAPTER_CONTRACT.model,
+  );
+  assert.equal(validateCreativeVideoReferences(env, [], VIDEO_ADAPTER_CONTRACT.model, "original_ambient"), VIDEO_ADAPTER_CONTRACT.model);
+  assert.equal(validateCreativeVideoReferences(env, [], textToVideoModel, "silent"), textToVideoModel);
+
+  const route = readFileSync(new URL("../worker/events-api.ts", import.meta.url), "utf8");
+  assert.match(route, /const\s+managedProviderModel\s*=\s*body\.providerModel\s*\|\|\s*env\.FAL_REFERENCE_VIDEO_MODEL\s*\|\|\s*VIDEO_ADAPTER_CONTRACT\.model/);
+  assert.match(route, /validateCreativeVideoReferences\(\s*env\s*,\s*references\s*,\s*managedProviderModel\s*,\s*requestedVideoAudioMode\s*\)/);
+  assert.match(route, /validateCreativeVideoReferences\(\s*env\s*,\s*preparedVideoReferences\s*,\s*body\.providerModel\s*\|\|\s*undefined\s*,\s*requestedVideoAudioMode\s*\)/);
 });
 
 test("provider reference validation never permits description-only pixels, invalid order, or missing provenance", () => {

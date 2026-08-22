@@ -68,3 +68,12 @@ export const generationBudgetPreferenceKey = (userId: string, period: string, pr
   `forma:generation-budget:${encodeURIComponent(userId || "anonymous")}:${period || "unknown"}:${preference}`;
 
 export const formatGenerationUsd = (microusd: number) => `$${(Math.max(0, Number(microusd) || 0) / 1_000_000).toFixed(2)}`;
+
+/** Model-aware admission estimates match the actual bounded provider-price receipt. */
+export function estimatePlannerOperationMicrousd(model: string | undefined, operation: "chat" | "structure_adaptive") {
+  const rates = model === "gpt-5.6-terra" ? { input: 2, output: 12 }
+    : model === "gpt-5.6-luna" ? { input: .2, output: 1.2 }
+      : { input: 5, output: 30 };
+  const usage = operation === "chat" ? { input: 10_400, output: 1_600 } : { input: 10_600, output: 1_400 };
+  return Math.ceil(usage.input * rates.input) + Math.ceil(usage.output * rates.output);
+}

@@ -139,6 +139,31 @@ export const costBudgetCounters = sqliteTable(
   (table) => [primaryKey({ columns: [table.scope, table.scopeId, table.period] })],
 );
 
+/** Immutable-month, owner-scoped USD reservation ledger for every paid provider operation. */
+export const costBudgetReservations = sqliteTable(
+  "cost_budget_reservations",
+  {
+    reservationId: text("reservation_id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    workspaceId: text("workspace_id").notNull().default("forma"),
+    streamId: text("stream_id").notNull().default(""),
+    correlationId: text("correlation_id").notNull().default(""),
+    operation: text("operation").notNull(),
+    period: text("period").notNull(),
+    reservedMicrousd: integer("reserved_microusd").notNull(),
+    usedMicrousd: integer("used_microusd").notNull().default(0),
+    status: text("status").notNull(),
+    allowUserOverage: integer("allow_user_overage", { mode: "boolean" }).notNull().default(false),
+    createdAt: text("created_at").notNull(),
+    settledAt: text("settled_at"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_cost_budget_reservations_owner_status_period").on(table.ownerId, table.status, table.period),
+    index("idx_cost_budget_reservations_owner_correlation").on(table.ownerId, table.correlationId),
+  ],
+);
+
 export const shares = sqliteTable(
   "shares",
   {

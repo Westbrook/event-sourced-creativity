@@ -15,7 +15,7 @@ test("fan generation is accepted once and retains explicit failed member states"
   const method=store.slice(store.indexOf("async generatePromptFan"),store.indexOf("async preferPromptTechnique"));
   assert.equal((method.match(/#startDocumentJob\(/g)??[]).length,1);
   assert.match(method,/#startDocumentJob\("prompt_fan"/);
-  assert.match(method,/baseRequestKey/);assert.match(method,/\$\{baseRequestKey\}:managed/);assert.match(method,/productionMode/);assert.match(method,/job\.productionMode\?\?"manual"/);assert.match(method,/generationRiskAcknowledged\(baseRequestKey\)/);
+  assert.match(method,/baseRequestKey/);assert.match(method,/\$\{baseRequestKey\}:managed/);assert.match(method,/productionMode/);assert.match(method,/job\.productionMode\?\?"manual"/);assert.match(method,/generationRiskAcknowledged\(requestKey\)/);
   assert.match(api,/'productionMode',json_extract\(request_json,'\$\.productionMode'\)/);assert.match(api,/const parentRequest = \{ fanKind, promptFanId, documentRevision, sourcePreviewId, productionMode/);assert.match(actions,/generatePromptFan\("preview",\{sourceSurface:this\.source,productionMode:this\.#productionMode\}\)/);assert.match(actions,/Team on/);
   assert.match(api,/childJobIds/);
   assert.match(api,/status === "partial"/);

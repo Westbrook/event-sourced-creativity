@@ -33,6 +33,7 @@ export type GenerationReadiness = {
   documentId: string;
   documentRevision: string;
   kind: GenerationReadinessKind;
+  productionMode?: "manual" | "managed";
   promptTechnique: PromptTechnique;
   status: GenerationReadinessStatus;
   summary: string;

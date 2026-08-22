@@ -1,7 +1,9 @@
 import { combinedContextGroups } from "../src/model/combined-context.ts";
-import type { DocumentArtifactDraft, DocumentArtifactKind } from "../src/model/document-artifacts.ts";
-import { imageFormatForPreset, providerRenderFormat } from "../src/model/image-format.ts";
+import { documentArtifactValidationIssues, normalizeSlideDeckItems, slideCopyIsNearDuplicate, type DocumentArtifactDraft, type DocumentArtifactKind, type DocumentArtifactValidationIssue } from "../src/model/document-artifacts.ts";
+import { documentImageFormat, imageFormatForPreset, providerRenderFormat } from "../src/model/image-format.ts";
 import {
+  providerFacingProductionContinuity,
+  providerFacingProductionTargets,
   productionSceneSnapshot,
   scoreManagedProductionPlan,
   type ManagedProductionPlan,
@@ -18,6 +20,7 @@ import {
   type VideoReference,
 } from "./openai-adapter.ts";
 import type { ProviderCostBreakdown } from "./replay-cost.ts";
+import { ProviderRequestError } from "./provider-errors.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 type ProviderUsage = { inputTokens: number; outputTokens: number; totalTokens: number };
@@ -42,12 +45,32 @@ export type ProductionSceneReceipt = {
   dependsOn: string[];
   startBoundaryGuidanceId: string | null;
   endBoundaryGuidanceId: string | null;
+  startBoundaryMode?: "text-guidance";
+  endBoundaryMode?: "text-guidance";
+};
+
+export type ProductionFrameReceipt = {
+  sceneId: string;
+  narrativeOrder: number;
+  generationOrder: number;
+  status: "completed";
+  provider: string;
+  providerJobId?: string;
+  providerModel: string;
+  mediaUrl: string;
+  mediaType: string;
+  costMicrousd: number;
+  usage: ProviderUsage;
+  referenceInputs: Array<Record<string, unknown>>;
+  authoredReferenceCount: number;
+  inheritedReferenceCount: number;
 };
 
 type ManagedProductionCallbacks = {
   signal?: AbortSignal;
   progress?: (stage: string, message: string, checkpoint?: ProductionCheckpoint) => void | Promise<void>;
   checkpoint?: (state: ProductionCheckpoint) => void;
+  plannerAttempt?: (state: { model: string; responseId: string; responseIds: string[]; usage: ProviderUsage; latencyMs: number }) => void | Promise<void>;
 };
 
 const addUsage = (left: ProviderUsage, right: ProviderUsage): ProviderUsage => ({
@@ -64,7 +87,25 @@ function combinedSceneSnapshot(snapshot: Record<string, unknown>, scenes: Produc
     for (const value of Array.isArray(scoped.facts) ? scoped.facts : []) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const fact = value as Record<string, unknown>;
-      facts.set(String(fact.block_id ?? facts.size), fact);
+      const key = String(fact.block_id ?? facts.size);
+      const previous = facts.get(key);
+      const previousProperties = previous?.properties && typeof previous.properties === "object" ? previous.properties as Record<string, unknown> : null;
+      const currentProperties = fact.properties && typeof fact.properties === "object" ? fact.properties as Record<string, unknown> : null;
+      const previousStructure = previousProperties?.artifact_structure && typeof previousProperties.artifact_structure === "object" ? previousProperties.artifact_structure as Record<string, unknown> : null;
+      const currentStructure = currentProperties?.artifact_structure && typeof currentProperties.artifact_structure === "object" ? currentProperties.artifact_structure as Record<string, unknown> : null;
+      if (previous && previousProperties && currentProperties && Array.isArray(previousStructure?.items) && Array.isArray(currentStructure?.items)) {
+        const items = new Map<string, unknown>();
+        for (const item of [...previousStructure.items, ...currentStructure.items]) {
+          if (!item || typeof item !== "object") continue;
+          const value = item as Record<string, unknown>;
+          items.set(String(value.source_artifact_item_id ?? value.id ?? items.size), value);
+        }
+        const scopedText = [...items.values()].map((item) => {
+          const value = item as Record<string, unknown>;
+          return [value.title, value.body, value.notes].filter(Boolean).join(" · ");
+        }).join("\n");
+        facts.set(key, { ...fact, properties: { ...currentProperties, text: scopedText, artifact_markdown: scopedText, artifact_structure: { ...currentStructure, items: [...items.values()] } } });
+      } else facts.set(key, fact);
     }
     for (const value of Array.isArray(scoped.relationships) ? scoped.relationships : []) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
@@ -92,10 +133,29 @@ export async function generateManagedArtifactDraft(
   } & ManagedProductionCallbacks,
 ) {
   const pages: Array<Awaited<ReturnType<typeof generateDocumentArtifact>>> = [];
+  const attempts: Array<Awaited<ReturnType<typeof generateDocumentArtifact>>> = [];
+  const pageCount = Math.ceil(input.production.scenes.length / 8);
+  const pageOptions = (index: number, repairIssues: string[] = []) => {
+    const previous = pages.slice(0, Math.floor(index / 8));
+    const priorItems = previous.flatMap((page) => page.output.items);
+    const pageIndex = Math.floor(index / 8);
+    return {
+      pageIndex,
+      pageCount,
+      globalStartIndex: index,
+      totalItems: input.production.scenes.length,
+      phase: (pageCount === 1 ? "complete" : pageIndex === 0 ? "opening" : pageIndex === pageCount - 1 ? "final" : "continuation") as "complete" | "opening" | "continuation" | "final",
+      priorSummary: previous.at(-1)?.output.summary ?? "",
+      priorEnding: previous.at(-1)?.output.content_markdown.slice(-700) ?? priorItems.at(-1)?.body.slice(-700) ?? "",
+      priorVisibleCopy: priorItems.flatMap((item) => [item.title, item.body, ...(item.slide?.bullets ?? []), item.slide?.visual.value ?? ""]).filter(Boolean).slice(-48),
+      ...(kind === "slides" && previous[0]?.output.presentation ? { lockedPresentation: previous[0].output.presentation } : {}),
+      ...(repairIssues.length ? { repairIssues } : {}),
+    };
+  };
   for (let index = 0; index < input.production.scenes.length; index += 8) {
     const scenes = input.production.scenes.slice(index, index + 8);
     await input.progress?.("planning", `${input.production.team.label}: planning scenes ${index + 1}–${index + scenes.length} of ${input.production.scenes.length}.`);
-    pages.push(await generateDocumentArtifact(env, ownerId, kind, {
+    const result = await generateDocumentArtifact(env, ownerId, kind, {
       documentTitle: input.documentTitle,
       snapshot: combinedSceneSnapshot(input.snapshot, scenes),
       options: {
@@ -107,45 +167,120 @@ export async function generateManagedArtifactDraft(
         productionMode: "managed",
         productionPlan: input.production,
         productionScenes: scenes,
+        productionPage: pageOptions(index),
         signal: input.signal,
       },
-    }));
+    });
+    pages.push(result);
+    attempts.push(result);
+    await input.plannerAttempt?.({ model: result.model, responseId: attempts[0]!.responseId, responseIds: attempts.map((attempt) => attempt.responseId), usage: attempts.reduce((sum, attempt) => addUsage(sum, attempt.usage), { inputTokens: 0, outputTokens: 0, totalTokens: 0 }), latencyMs: attempts.reduce((sum, attempt) => sum + attempt.latencyMs, 0) });
   }
-  const first = pages[0]!;
-  const output: DocumentArtifactDraft = {
-    title: first.output.title,
-    summary: first.output.summary,
-    presentation: first.output.presentation,
-    content_markdown: pages.map((page) => page.output.content_markdown).join("\n\n"),
-    items: pages.flatMap((page) => page.output.items),
+  const assemble = (normalizeSlides = false): DocumentArtifactDraft => {
+    const first = pages[0]!;
+    let items = pages.flatMap((page) => page.output.items);
+    if (kind === "slides") {
+      // A chapter is represented once; later narrative mentions retain their scoped prose without reopening its chapter.
+      const closed = new Set<string>();
+      let previousGroups = new Set<string>();
+      items = items.map((item) => {
+        const current = new Set(item.context_group_ids ?? []);
+        for (const group of previousGroups) if (!current.has(group)) closed.add(group);
+        const retained = [...current].filter((group) => !closed.has(group));
+        previousGroups = new Set(retained);
+        return { ...item, context_group_ids: retained };
+      });
+      if (normalizeSlides) items = normalizeSlideDeckItems(items);
+    }
+    const content = pages.length === 1 ? first.output.content_markdown
+      : kind === "slides"
+        ? [`# ${first.output.title}`, ...items.map((item, index) => [`## ${index + 1}. ${item.title}`, item.body, ...(item.slide?.bullets ?? []).map((bullet) => `- ${bullet}`)].filter(Boolean).join("\n"))].join("\n\n")
+        : pages.map((page, index) => {
+          const markdown = page.output.content_markdown.trim();
+          if (!index) return markdown;
+          const firstHeading = first.output.content_markdown.trim().split("\n")[0]?.trim();
+          const lines = markdown.split("\n");
+          if (firstHeading && lines[0]?.trim() === firstHeading) lines.shift();
+          return lines.join("\n").trim();
+        }).filter(Boolean).join("\n\n");
+    return { title: first.output.title, summary: first.output.summary, presentation: first.output.presentation, content_markdown: content, items };
   };
+  const wholeWorkIssues = (output: DocumentArtifactDraft): DocumentArtifactValidationIssue[] => {
+    const expectedGroups = combinedContextGroups(input.snapshot).map((group) => group.id);
+    const issues = documentArtifactValidationIssues(kind, output, { itemCount: input.production.scenes.length, contextGroupIds: expectedGroups });
+    if (kind === "slides") {
+      for (const [index, item] of output.items.entries()) if (index > 0 && item.slide?.layout === "cover") issues.push({ code: "duplicate_opening_slide", path: `items.${index}.slide.layout`, message: "Only the global opening slide can use the cover layout." });
+      for (const [index, page] of pages.entries()) if (index > 0 && firstPresentation && JSON.stringify(page.output.presentation) !== JSON.stringify(firstPresentation)) issues.push({ code: "presentation_continuity_drift", path: `items.${index * 8}.presentation`, message: "Every provider page must retain the locked first-page presentation system." });
+    } else if (kind === "short_story" || kind === "scene") {
+      for (const [index, item] of output.items.entries()) {
+        const earlier = output.items.slice(0, index);
+        if (earlier.some((previous) => slideCopyIsNearDuplicate(previous.body, item.body))) issues.push({ code: "duplicate_narrative_movement", path: `items.${index}.body`, message: "This narrative movement repeats an earlier completed movement." });
+      }
+    }
+    return issues;
+  };
+  const firstPresentation = pages[0]?.output.presentation ?? null;
+  let output = assemble();
+  const expectedGroups = combinedContextGroups(input.snapshot).map((group) => group.id);
+  let finalIssues = wholeWorkIssues(output);
+  let repairedPages = 0;
+  if (finalIssues.length && (kind === "slides" || kind === "short_story" || kind === "scene")) {
+    const affected = [...new Set(finalIssues.flatMap((issue) => {
+      const index = /^items\.(\d+)/.exec(issue.path)?.[1];
+      return index === undefined ? [] : [Math.floor(Number(index) / 8)];
+    }))];
+    for (const pageIndex of affected) {
+      const index = pageIndex * 8;
+      const scenes = input.production.scenes.slice(index, index + 8);
+      const issues = finalIssues.filter((issue) => {
+        const position = /^items\.(\d+)/.exec(issue.path)?.[1];
+        return position !== undefined && Math.floor(Number(position) / 8) === pageIndex;
+      }).map((issue) => issue.message.replace(/\b[a-f\d]{8}-[a-f\d-]{27}\b/gi, "its authored target"));
+      const repaired = await generateDocumentArtifact(env, ownerId, kind, {
+        documentTitle: input.documentTitle,
+        snapshot: combinedSceneSnapshot(input.snapshot, scenes),
+        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal },
+      });
+      pages[pageIndex] = repaired;
+      attempts.push(repaired);
+      await input.plannerAttempt?.({ model: repaired.model, responseId: attempts[0]!.responseId, responseIds: attempts.map((attempt) => attempt.responseId), usage: attempts.reduce((sum, attempt) => addUsage(sum, attempt.usage), { inputTokens: 0, outputTokens: 0, totalTokens: 0 }), latencyMs: attempts.reduce((sum, attempt) => sum + attempt.latencyMs, 0) });
+      repairedPages += 1;
+    }
+    output = assemble();
+    finalIssues = wholeWorkIssues(output);
+  }
+  if (finalIssues.length) throw new ProviderRequestError({ code: "provider_returned_incomplete_document_artifact", category: "provider", scope: "request", action: "retry", message: `The managed ${kind.replaceAll("_", " ")} could not be completed after its bounded production review: ${finalIssues.map((issue) => `${issue.code} ${issue.path}`).join(", ")}.`, retryable: true, retryAfterMs: null, requestId: null, httpStatus: 502 });
+  if (kind === "slides") output = assemble(true);
+  finalIssues = documentArtifactValidationIssues(kind, output, { itemCount: input.production.scenes.length, contextGroupIds: expectedGroups });
+  const first = pages[0]!;
   return {
     output,
     model: first.model,
     responseId: first.responseId,
-    responseIds: pages.map((page) => page.responseId),
-    latencyMs: pages.reduce((sum, page) => sum + page.latencyMs, 0),
-    usage: pages.reduce((sum, page) => addUsage(sum, page.usage), { inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
+    responseIds: attempts.map((page) => page.responseId),
+    latencyMs: attempts.reduce((sum, page) => sum + page.latencyMs, 0),
+    usage: attempts.reduce((sum, page) => addUsage(sum, page.usage), { inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
     inputReceipt: {
       production_mode: "managed",
       team: input.production.team,
       page_count: pages.length,
+      whole_work_validation: { issues: finalIssues, repaired_pages: repairedPages },
       pages: pages.map((page, index) => ({ page: index + 1, response_id: page.responseId, item_count: page.output.items.length, ...page.inputReceipt })),
     },
   };
 }
 
-const ownedImageReference = (value: NonNullable<Awaited<ReturnType<typeof readGeneratedImageReference>>>, label: string): ImageReference => ({
+const ownedImageReference = (value: NonNullable<Awaited<ReturnType<typeof readGeneratedImageReference>>>, label: string, mode: ImageReference["mode"] = "preserve_subject"): ImageReference => ({
   ...value,
   label,
   source: "locked-study",
-  mode: "preserve_subject",
+  mode,
 });
 
 function generatedVideoReference(
   value: NonNullable<Awaited<ReturnType<typeof readGeneratedImageReference>>>,
   artifactId: string,
   scene: ProductionScene,
+  groups: NonNullable<VideoReference["contextGroups"]>,
 ): VideoReference {
   return {
     ...value,
@@ -161,7 +296,7 @@ function generatedVideoReference(
     sourceArtifactItemId: null,
     sourceArtifactKind: "production-anchor",
     storyboardTitle: "Shared production continuity",
-    contextGroups: [],
+    contextGroups: groups,
   };
 }
 
@@ -219,14 +354,17 @@ export async function renderManagedVideoProduction(
   if (production.scenes.some((scene) => !scene.referenceIds.length) && !anchor) {
     const anchorScene = production.scenes.find((scene) => scene.id === production.anchorSceneId)!;
     await input.progress?.("anchor-generation", `Creating the shared visual anchor from scene ${anchorScene.narrativeOrder}: ${anchorScene.title}.`);
-    const prior = input.references[0];
-    const reference = prior ? [{ ...prior, source: "locked-study" as const }] satisfies ImageReference[] : [];
+    const anchorGroups = new Set(anchorScene.contextGroupIds);
+    const prior = input.references.find((reference) => anchorScene.referenceIds.includes(reference.referenceId))
+      ?? input.references.find((reference) => (reference.contextGroups ?? []).some((group) => anchorGroups.has(group.id)));
+    const reference = prior ? [{ ...prior, source: "locked-study" as const, mode: prior.mode }] satisfies ImageReference[] : [];
+    const continuity = providerFacingProductionContinuity(production, anchorScene);
     const format = providerRenderFormat(imageFormatForPreset(input.videoSize === "720x1280" ? "9:16" : "16:9"), "preview");
     const image = await generateCreativeImage(env, ownerId, productionSceneSnapshot(input.snapshot, anchorScene), {
       title: anchorScene.title,
       rationale: production.anchorRationale,
-      scene: `${anchorScene.imagePrompt}. Preserve this recurring production identity, wardrobe, location, palette, lighting, and lens: ${JSON.stringify(production.continuityBible)}.`,
-      palette: production.continuityBible.palette,
+      scene: `${anchorScene.imagePrompt}. Preserve this target-scoped production identity, wardrobe, location, palette, lighting, and lens: ${JSON.stringify(continuity)}.`,
+      palette: continuity.palette,
       next_moves: ["Preserve subject identity", "Carry visual continuity across every scene"],
     }, { quality: "low", size: format.size, outputFormat: "jpeg", outputCompression: 82, references: reference, signal: input.signal });
     const stored = await storeGeneratedImage(env, ownerId, `${artifactId}-continuity-anchor`, image.bytes, image.model, image.mimeType, {
@@ -238,7 +376,7 @@ export async function renderManagedVideoProduction(
       providerMediaUrl: image.providerMediaUrl ?? "",
       rights: "account-generated",
     });
-    anchor = { mediaUrl: stored.url, mediaType: stored.mimeType, sceneId: anchorScene.id, source: "account-generated", rights: "account-generated", frameGuidance: "prompt-guided-reference-not-native-frame-lock" };
+    anchor = { mediaUrl: stored.url, mediaType: stored.mimeType, sceneId: anchorScene.id, contextGroupIds: anchorScene.contextGroupIds, source: "account-generated", rights: "account-generated", frameGuidance: "reference-image-not-native-frame-lock" };
     imageUsage = addUsage(imageUsage, image.usage);
     costs.push(image.costBreakdown);
     await persist("The reusable production anchor is safely stored with account-generated provenance.");
@@ -248,7 +386,15 @@ export async function renderManagedVideoProduction(
   if (anchor?.mediaUrl) {
     const image = await readGeneratedImageReference(env, ownerId, anchor.mediaUrl);
     if (!image) throw new Error("production_anchor_reference_unavailable");
-    anchorReference = generatedVideoReference(image, artifactId, production.scenes.find((scene) => scene.id === production.anchorSceneId)!);
+    const anchorScene = production.scenes.find((scene) => scene.id === production.anchorSceneId)!;
+    const knownGroups = new Map(input.references.flatMap((reference) => reference.contextGroups ?? []).map((group) => [group.id, group]));
+    const contextGroups = anchorScene.contextGroupIds.flatMap((id) => {
+      const detailed = knownGroups.get(id);
+      if (detailed) return [detailed];
+      const group = combinedContextGroups(input.snapshot).find((item) => item.id === id);
+      return group ? [{ id: group.id, name: group.name, target: group.target, role: group.role, application: group.application, relativity: group.relativity }] : [];
+    });
+    anchorReference = generatedVideoReference(image, artifactId, anchorScene, contextGroups);
   }
 
   const sceneById = new Map(production.scenes.map((scene) => [scene.id, scene]));
@@ -260,7 +406,18 @@ export async function renderManagedVideoProduction(
       const item = draft.items[scene.narrativeOrder - 1]!;
       const existing = receipts[scene.id];
       const approved = input.references.filter((reference) => scene.referenceIds.includes(reference.referenceId));
-      const references = [...approved, ...(anchorReference && !approved.some((reference) => reference.referenceId === anchorReference?.referenceId) ? [anchorReference] : [])].slice(0, VIDEO_ADAPTER_CONTRACT.maxReferenceImages);
+      const anchorGroups = anchorReference?.contextGroups ?? [];
+      const matchingTarget = Boolean(anchorReference && ((!anchorGroups.length && !scene.contextGroupIds.length) || anchorGroups.length > 0 && anchorGroups.every((group) => scene.contextGroupIds.includes(group.id))));
+      const scopedAnchor = anchorReference ? matchingTarget ? anchorReference : {
+        ...anchorReference,
+        label: "Account-generated shared palette and lighting study",
+        mode: "preserve_style" as const,
+        shotDirection: "Carry only visual style, palette, and lighting.",
+        cameraDirection: "Preserve only the established visual treatment and camera language.",
+        framePrompt: "Shared visual treatment without subject identity.",
+        contextGroups: [],
+      } : null;
+      const references = [...approved, ...(scopedAnchor && !approved.some((reference) => reference.referenceId === scopedAnchor.referenceId) ? [scopedAnchor] : [])].slice(0, VIDEO_ADAPTER_CONTRACT.maxReferenceImages);
       const checkpoint: ProductionSceneReceipt = existing ?? {
         sceneId: scene.id,
         narrativeOrder: scene.narrativeOrder,
@@ -271,11 +428,16 @@ export async function renderManagedVideoProduction(
         dependsOn: scene.dependsOn,
         startBoundaryGuidanceId: scene.startBoundaryId,
         endBoundaryGuidanceId: scene.endBoundaryId,
+        startBoundaryMode: "text-guidance",
+        endBoundaryMode: "text-guidance",
       };
       receipts[scene.id] = checkpoint;
       await persist(`Rendering scene ${scene.narrativeOrder} of ${production.scenes.length}: ${scene.title}.`);
       const sceneSnapshot = productionSceneSnapshot(input.snapshot, scene);
-      const sceneDraft = { title: draft.title, summary: `${draft.summary} Visual continuity: ${JSON.stringify(production.continuityBible)}.`, items: [{ ...item, notes: `${item.notes} ${scene.transitionIn}; ${scene.transitionOut}.` }] };
+      const sceneContinuity = providerFacingProductionContinuity(production, scene);
+      const sceneGroups = (production.contextGroups ?? combinedContextGroups(input.snapshot)).filter((group) => scene.contextGroupIds.includes(group.id));
+      const scopedTargets = providerFacingProductionTargets(production, input.snapshot).filter((target) => sceneGroups.some((group) => group.role === target.role && group.target === target.target));
+      const sceneDraft = { title: draft.title, summary: `${draft.summary} Target-scoped visual continuity: ${JSON.stringify(sceneContinuity)}.`, items: [{ ...item, notes: `${item.notes} ${scene.transitionIn}; ${scene.transitionOut}.` }] };
       const video = await generateCreativeVideo(env, item.image_prompt || item.body || scene.action, {
         seconds: scene.durationSeconds,
         size: input.videoSize,
@@ -283,6 +445,7 @@ export async function renderManagedVideoProduction(
         endUserId: ownerId,
         snapshot: sceneSnapshot,
         plan: sceneDraft,
+        productionContinuity: { prohibitions: providerFacingProductionContinuity({ claims: production.claims.filter((claim) => !claim.contextGroupIds.length) }).prohibitions, scopedTargets },
         references,
         signal: input.signal,
         providerJobId: existing?.providerJobId,
@@ -369,6 +532,7 @@ export async function renderManagedVideoProduction(
       narrative_order: orderedReceipts.map((receipt) => receipt.sceneId),
       generation_order: production.executionOrder,
       native_boundary_frames: false,
+      boundary_mode: "text-guidance" as const,
     },
   };
 }
@@ -380,9 +544,10 @@ export async function renderManagedStoryboardProduction(
   artifactId: string,
   draft: DocumentArtifactDraft,
   production: ManagedProductionPlan,
-  input: { snapshot: Record<string, unknown>; existingItems?: Array<Record<string, unknown>> } & ManagedProductionCallbacks,
+  input: { snapshot: Record<string, unknown>; references?: VideoReference[]; existingItems?: Array<Record<string, unknown>>; existingFrameReceipts?: Record<string, ProductionFrameReceipt> } & ManagedProductionCallbacks,
 ) {
   const rendered = new Map<string, Record<string, unknown>>((input.existingItems ?? []).flatMap((item) => item.scene_id ? [[String(item.scene_id), { ...item }]] : []));
+  const receipts: Record<string, ProductionFrameReceipt> = { ...(input.existingFrameReceipts ?? {}) };
   const usage: ProviderUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   const costs: ProviderCostBreakdown[] = [];
   const sceneById = new Map(production.scenes.map((scene) => [scene.id, scene]));
@@ -391,7 +556,7 @@ export async function renderManagedStoryboardProduction(
   let latestProviderJobId = "";
   let serializedCheckpoint = Promise.resolve();
   const persist = (message: string) => {
-    const checkpoint = { productionPlan: production, renderedItems: [...rendered.values()] };
+    const checkpoint = { productionPlan: production, renderedItems: [...rendered.values()], productionFrameReceipts: structuredClone(receipts) };
     input.checkpoint?.(checkpoint);
     serializedCheckpoint = serializedCheckpoint.then(() => input.progress?.("rendering-frames", message, checkpoint)).then(() => undefined);
     return serializedCheckpoint;
@@ -403,15 +568,21 @@ export async function renderManagedStoryboardProduction(
       const item = draft.items[scene.narrativeOrder - 1]!;
       const parent = scene.dependsOn[0] ? rendered.get(scene.dependsOn[0]) : scene.id !== production.anchorSceneId ? rendered.get(production.anchorSceneId) : undefined;
       const inherited = parent?.media_url ? await readGeneratedImageReference(env, ownerId, parent.media_url) : null;
-      const references = inherited ? [ownedImageReference(inherited, "Account-generated storyboard continuity anchor")] : [];
+      const parentScene = parent?.scene_id ? sceneById.get(String(parent.scene_id)) : undefined;
+      const sameTarget = Boolean(parentScene && ((!parentScene.contextGroupIds.length && !scene.contextGroupIds.length) || parentScene.contextGroupIds.length > 0 && parentScene.contextGroupIds.every((group) => scene.contextGroupIds.includes(group))));
+      const approved: ImageReference[] = (input.references ?? []).filter((reference) => scene.referenceIds.includes(reference.referenceId)).map((reference) => ({ ...reference, source: "uploaded-reference" as const }));
+      const inheritedReference = inherited ? ownedImageReference(inherited, "Account-generated storyboard continuity study", sameTarget ? "preserve_subject" : "preserve_style") : null;
+      const references = [...approved, ...(inheritedReference ? [inheritedReference] : [])].slice(0, VIDEO_ADAPTER_CONTRACT.maxReferenceImages);
+      const continuity = providerFacingProductionContinuity(production, scene);
+      const frameFormat = providerRenderFormat(documentImageFormat(input.snapshot).format, "preview");
       await persist(`Rendering storyboard frame ${scene.narrativeOrder} of ${production.scenes.length}${references.length ? " from the approved production anchor" : ""}.`);
       const image = await generateCreativeImage(env, ownerId, productionSceneSnapshot(input.snapshot, scene), {
         title: item.title,
-        rationale: `${item.notes} Preserve this production continuity: ${JSON.stringify(production.continuityBible)}.`,
+        rationale: `${item.notes} Preserve this target-scoped production continuity: ${JSON.stringify(continuity)}.`,
         scene: item.image_prompt,
-        palette: production.continuityBible.palette,
+        palette: continuity.palette,
         next_moves: [scene.transitionIn, scene.transitionOut],
-      }, { quality: "low", size: "1024x1024", outputFormat: "jpeg", outputCompression: 78, references, signal: input.signal });
+      }, { quality: "low", size: frameFormat.size, outputFormat: "jpeg", outputCompression: 78, references, signal: input.signal });
       const media = await storeGeneratedImage(env, ownerId, `${artifactId}-frame-${scene.narrativeOrder}`, image.bytes, image.model, image.mimeType, {
         artifactRole: "storyboard-frame",
         artifactId,
@@ -422,7 +593,23 @@ export async function renderManagedStoryboardProduction(
         providerMediaUrl: image.providerMediaUrl ?? "",
         rights: "account-generated",
       });
-      rendered.set(scene.id, { id: `${artifactId}-frame-${scene.narrativeOrder}`, scene_id: scene.id, sequence: scene.narrativeOrder, title: item.title, media_url: media.url, media_type: media.mimeType, width: image.width, height: image.height, provider: image.provider, provider_request_id: image.providerRequestId, generation_order: production.executionOrder.indexOf(scene.id) + 1, inherited_reference_count: references.length });
+      rendered.set(scene.id, { id: `${artifactId}-frame-${scene.narrativeOrder}`, scene_id: scene.id, sequence: scene.narrativeOrder, title: item.title, media_url: media.url, media_type: media.mimeType, width: image.width, height: image.height, provider: image.provider, provider_request_id: image.providerRequestId, generation_order: production.executionOrder.indexOf(scene.id) + 1, authored_reference_count: approved.length, inherited_reference_count: inheritedReference ? 1 : 0 });
+      receipts[scene.id] = {
+        sceneId: scene.id,
+        narrativeOrder: scene.narrativeOrder,
+        generationOrder: production.executionOrder.indexOf(scene.id) + 1,
+        status: "completed",
+        provider: image.provider,
+        ...(image.providerRequestId ? { providerJobId: image.providerRequestId } : {}),
+        providerModel: image.model,
+        mediaUrl: media.url,
+        mediaType: media.mimeType,
+        costMicrousd: image.costBreakdown.totalMicrousd,
+        usage: image.usage,
+        referenceInputs: image.referenceInputs.map((reference, index) => ({ ...reference, role: index < approved.length ? "authored-reference" : "inherited-production-continuity" })),
+        authoredReferenceCount: approved.length,
+        inheritedReferenceCount: inheritedReference ? 1 : 0,
+      };
       Object.assign(usage, addUsage(usage, image.usage));
       costs.push(image.costBreakdown);
       latestModel = image.model;
@@ -436,6 +623,7 @@ export async function renderManagedStoryboardProduction(
   await serializedCheckpoint;
   return {
     items: production.scenes.map((scene) => rendered.get(scene.id)!).filter(Boolean),
+    receipts: production.scenes.map((scene) => receipts[scene.id]!).filter(Boolean),
     usage,
     costs,
     model: latestModel,

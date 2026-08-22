@@ -203,13 +203,13 @@ const costBudgetLimits = (env: WorkerEnv) => {
   return { user, workspace: Math.max(user * 10, moneyEnv(env.FORMA_WORKSPACE_COST_LIMIT_USD, 1_000)) };
 };
 
-async function ensureCostBudgetRow(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limitMicrousd: number) {
+async function ensureCostBudgetRow(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limitMicrousd: number, reservationPeriod = period()) {
   const now = new Date().toISOString();
   await env.DB.prepare(`INSERT INTO cost_budget_counters (scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at)
     VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
     SET hard_limit_microusd=excluded.hard_limit_microusd,updated_at=excluded.updated_at
     WHERE cost_budget_counters.hard_limit_microusd IS NOT excluded.hard_limit_microusd`)
-    .bind(scope, scopeId, period(), limitMicrousd, now).run();
+    .bind(scope, scopeId, reservationPeriod, limitMicrousd, now).run();
 }
 
 export async function readCostBudgets(env: WorkerEnv, userId: string) {
@@ -293,35 +293,126 @@ export async function readAccountBudgets(env: WorkerEnv, userId: string) {
   };
 }
 
-export async function reserveCostBudget(env: WorkerEnv, userId: string, requestedMicrousd: number, options: { maximumMicrousd: number; allowUserOverage: boolean }) {
+export type CostBudgetReservationRow = {
+  reservation_id: string;
+  owner_id: string;
+  workspace_id: string;
+  stream_id: string;
+  correlation_id: string;
+  operation: string;
+  period: string;
+  reserved_microusd: number;
+  used_microusd: number;
+  status: string;
+  allow_user_overage: number;
+  created_at: string;
+  settled_at: string | null;
+  updated_at: string;
+};
+
+type CostReservationOptions = {
+  maximumMicrousd: number;
+  allowUserOverage: boolean;
+  reservationId?: string;
+  period?: string;
+  streamId?: string;
+  correlationId?: string;
+  operation?: string;
+};
+
+export async function costBudgetReservation(env: WorkerEnv, userId: string, reservationId: string) {
+  if (!reservationId) return null;
+  return env.DB.prepare("SELECT * FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=?").bind(reservationId, userId).first<CostBudgetReservationRow>();
+}
+
+export async function reserveCostBudget(env: WorkerEnv, userId: string, requestedMicrousd: number, options: CostReservationOptions) {
   const amount = Math.max(0, Math.floor(requestedMicrousd));
   if (!amount || amount > Math.floor(options.maximumMicrousd)) return { ok: false as const, scope: "authorization" as const };
-  const limits = costBudgetLimits(env); const now = new Date().toISOString();
-  await ensureCostBudgetRow(env, "user", userId, limits.user); await ensureCostBudgetRow(env, "workspace", "forma", limits.workspace);
-  const userBefore = await env.DB.prepare("SELECT used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=?").bind(userId, period()).first<Record<string, unknown>>();
-  const projectedUser = Number(userBefore?.used_microusd ?? 0) + Number(userBefore?.reserved_microusd ?? 0) + amount;
-  const userQuery = options.allowUserOverage
-    ? env.DB.prepare("UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=?").bind(amount, now, userId, period())
-    : env.DB.prepare("UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd").bind(amount, now, userId, period(), amount);
-  const userResult = await userQuery.run();
-  if (Number(userResult.meta.changes ?? 0) !== 1) return { ok: false as const, scope: "user" as const };
-  const workspaceResult = await env.DB.prepare("UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd").bind(amount, now, period(), amount).run();
-  if (Number(workspaceResult.meta.changes ?? 0) !== 1) {
-    await env.DB.prepare("UPDATE cost_budget_counters SET reserved_microusd=MAX(0,reserved_microusd-?),updated_at=? WHERE scope='user' AND scope_id=? AND period=?").bind(amount, now, userId, period()).run();
-    return { ok: false as const, scope: "workspace" as const };
-  }
-  return { ok: true as const, reservationId: uuidV7(), reservedMicrousd: amount, userOverageMicrousd: Math.max(0, projectedUser - Number(userBefore?.hard_limit_microusd ?? limits.user)) };
-}
-
-export async function settleCostBudget(env: WorkerEnv, userId: string, reservedMicrousd: number, usedMicrousd: number) {
-  const now = new Date().toISOString(); const reserved = Math.max(0, Math.floor(reservedMicrousd)); const used = Math.max(0, Math.floor(usedMicrousd));
-  await env.DB.batch([
-    env.DB.prepare("UPDATE cost_budget_counters SET reserved_microusd=MAX(0,reserved_microusd-?),used_microusd=used_microusd+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=?").bind(reserved, used, now, userId, period()),
-    env.DB.prepare("UPDATE cost_budget_counters SET reserved_microusd=MAX(0,reserved_microusd-?),used_microusd=used_microusd+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=?").bind(reserved, used, now, period()),
+  const limits = costBudgetLimits(env);
+  const now = new Date().toISOString();
+  const reservationPeriod = options.period ?? period();
+  const reservationId = options.reservationId ?? uuidV7();
+  await ensureCostBudgetRow(env, "user", userId, limits.user, reservationPeriod);
+  await ensureCostBudgetRow(env, "workspace", "forma", limits.workspace, reservationPeriod);
+  const userBefore = await env.DB.prepare("SELECT used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=?").bind(userId, reservationPeriod).first<Record<string, unknown>>();
+  const authorizing = "EXISTS (SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status='authorizing')";
+  const results = await env.DB.batch([
+    env.DB.prepare(`INSERT OR IGNORE INTO cost_budget_reservations (reservation_id,owner_id,workspace_id,stream_id,correlation_id,operation,period,reserved_microusd,used_microusd,status,allow_user_overage,created_at,settled_at,updated_at)
+      SELECT ?,?,'forma',?,?,?,?,?,0,'authorizing',?,?,NULL,?
+      WHERE ?>0
+      AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=? AND (?=1 OR used_microusd+reserved_microusd+?<=hard_limit_microusd))
+      AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)`)
+      .bind(reservationId, userId, options.streamId ?? "", options.correlationId ?? "", options.operation ?? "provider-operation", reservationPeriod, amount, options.allowUserOverage ? 1 : 0, now, now, amount, userId, reservationPeriod, options.allowUserOverage ? 1 : 0, amount, reservationPeriod, amount),
+    env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=? AND ${authorizing}`).bind(amount, now, userId, reservationPeriod, reservationId, userId),
+    env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=? AND ${authorizing}`).bind(amount, now, reservationPeriod, reservationId, userId),
+    env.DB.prepare("UPDATE cost_budget_reservations SET status='active',updated_at=? WHERE reservation_id=? AND owner_id=? AND status='authorizing'").bind(now, reservationId, userId),
   ]);
+  if (Number(results[0]?.meta.changes ?? 0) !== 1) {
+    const existing = options.reservationId ? await costBudgetReservation(env, userId, reservationId) : null;
+    if (existing?.status === "active" && Number(existing.reserved_microusd) === amount && existing.period === reservationPeriod && (!options.correlationId || existing.correlation_id === options.correlationId) && (!options.operation || existing.operation === options.operation)) {
+      return { ok: true as const, reservationId, reservedMicrousd: amount, period: reservationPeriod, userOverageMicrousd: 0, reused: true as const };
+    }
+    const projectedUser = Number(userBefore?.used_microusd ?? 0) + Number(userBefore?.reserved_microusd ?? 0) + amount;
+    return { ok: false as const, scope: !options.allowUserOverage && projectedUser > Number(userBefore?.hard_limit_microusd ?? limits.user) ? "user" as const : "workspace" as const };
+  }
+  const projectedUser = Number(userBefore?.used_microusd ?? 0) + Number(userBefore?.reserved_microusd ?? 0) + amount;
+  return { ok: true as const, reservationId, reservedMicrousd: amount, period: reservationPeriod, userOverageMicrousd: Math.max(0, projectedUser - Number(userBefore?.hard_limit_microusd ?? limits.user)), reused: false as const };
 }
 
-export async function releaseCostBudget(env: WorkerEnv, userId: string, reservedMicrousd: number) { await settleCostBudget(env, userId, reservedMicrousd, 0); }
+async function resolveCostReservation(env: WorkerEnv, userId: string, reservation: string | number) {
+  if (typeof reservation === "string") return costBudgetReservation(env, userId, reservation);
+  const amount = Math.max(0, Math.floor(reservation));
+  if (!amount) return null;
+  const matches = await env.DB.prepare("SELECT * FROM cost_budget_reservations WHERE owner_id=? AND reserved_microusd=? AND status IN ('active','executing') LIMIT 2").bind(userId, amount).all<CostBudgetReservationRow>();
+  return matches.results.length === 1 ? matches.results[0]! : null;
+}
+
+/** Single-consumer provider execution prevents two requests from spending the same active reservation. */
+export async function claimCostBudgetReservation(env: WorkerEnv, userId: string, reservationId: string) {
+  const claimed = await env.DB.prepare("UPDATE cost_budget_reservations SET status='executing',updated_at=? WHERE reservation_id=? AND owner_id=? AND status='active'")
+    .bind(new Date().toISOString(), reservationId, userId).run();
+  return Number(claimed.meta.changes ?? 0) === 1;
+}
+
+export async function settleCostBudget(env: WorkerEnv, userId: string, reservation: string | number, usedMicrousd: number) {
+  const row = await resolveCostReservation(env, userId, reservation);
+  if (!row) return { settled: false as const, reservedMicrousd: 0, usedMicrousd: 0, status: "missing" as const };
+  const now = new Date().toISOString();
+  const used = Math.max(0, Math.floor(usedMicrousd));
+  const status = used > 0 ? "settled" : "released";
+  const active = "EXISTS (SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status IN ('active','executing'))";
+  const results = await env.DB.batch([
+    env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=MAX(0,reserved_microusd-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_microusd=used_microusd+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='user' AND scope_id=? AND period=?`).bind(row.reservation_id, userId, row.reserved_microusd, row.reservation_id, userId, used, now, userId, row.period),
+    env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=MAX(0,reserved_microusd-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_microusd=used_microusd+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='workspace' AND scope_id=? AND period=?`).bind(row.reservation_id, userId, row.reserved_microusd, row.reservation_id, userId, used, now, row.workspace_id, row.period),
+    env.DB.prepare("UPDATE cost_budget_reservations SET used_microusd=?,status=?,settled_at=?,updated_at=? WHERE reservation_id=? AND owner_id=? AND status IN ('active','executing')").bind(used, status, now, now, row.reservation_id, userId),
+  ]);
+  const settled = Number(results[2]?.meta.changes ?? 0) === 1;
+  return { settled, reservationId: row.reservation_id, reservedMicrousd: row.reserved_microusd, usedMicrousd: settled ? used : row.used_microusd, period: row.period, status: settled ? status : row.status };
+}
+
+export async function releaseCostBudget(env: WorkerEnv, userId: string, reservation: string | number) {
+  return settleCostBudget(env, userId, reservation, 0);
+}
+
+/** Adopt a proven pre-ledger reservation without incrementing a counter that already contains it. */
+export async function adoptLegacyCostReservation(env: WorkerEnv, userId: string, input: { reservationId: string; amountMicrousd: number; period: string; streamId: string; correlationId: string; operation: string }) {
+  const amount = Math.max(0, Math.floor(input.amountMicrousd));
+  if (!amount || !input.reservationId || !input.correlationId || !input.period) return false;
+  const now = new Date().toISOString();
+  const result = await env.DB.prepare(`INSERT OR IGNORE INTO cost_budget_reservations (reservation_id,owner_id,workspace_id,stream_id,correlation_id,operation,period,reserved_microusd,used_microusd,status,allow_user_overage,created_at,settled_at,updated_at)
+    SELECT ?,?,'forma',?,?,?,?,?,0,'active',0,?,NULL,?
+    WHERE EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=? AND reserved_microusd>=?)
+    AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND reserved_microusd>=?)
+    AND NOT EXISTS (SELECT 1 FROM cost_budget_reservations WHERE owner_id=? AND correlation_id=? AND status IN ('active','executing'))`)
+    .bind(input.reservationId,userId,input.streamId,input.correlationId,input.operation,input.period,amount,now,now,userId,input.period,amount,input.period,amount,userId,input.correlationId).run();
+  return Number(result.meta.changes ?? 0) === 1;
+}
+
+export async function releaseCostReservationsForCorrelation(env: WorkerEnv, userId: string, correlationId: string) {
+  const active = await env.DB.prepare("SELECT reservation_id FROM cost_budget_reservations WHERE owner_id=? AND correlation_id=? AND status IN ('active','executing')").bind(userId, correlationId).all<{ reservation_id: string }>();
+  for (const row of active.results) await releaseCostBudget(env, userId, row.reservation_id);
+  return active.results.length;
+}
 
 export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: "prompt" | "provider-output" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input", content: string) {
   const contentId = uuidV7(); const createdAt = new Date(); const days = intEnv(env.FORMA_RETENTION_DAYS, 30); const expiresAt = new Date(createdAt.getTime() + days * 86_400_000);

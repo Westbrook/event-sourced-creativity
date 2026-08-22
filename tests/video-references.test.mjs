@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { videoReferencePreflight } from "../src/model/video-references.ts";
+import { adaptVideoPrompt, videoPlannerCreativeContext, videoStoryboardBeats } from "../worker/video-prompt-adapter.ts";
 
 const reference=(id,sequence,mode="context_only",referenceId=`reference-${id}`)=>({
   id,documentId:"document-1",type:"reference",handle:`reference/${id}`,position:`z${sequence}`,removed:false,locked:false,
@@ -59,6 +60,31 @@ test("video reference preflight blocks more pixel references than the adopted pr
   assert.equal(result.pixelCount,10);
   assert.equal(result.providerReferenceLimit,9);
   assert.equal(result.providerLimitExceededCount,1);
+});
+
+test("adopted motion scenes preserve authored chronology, camera lenses, and visual direction without video-pixel references",()=>{
+  const snapshot={facts:[
+    {block_id:"scene-two",type:"motion",properties:{source_artifact_id:"original-reel",source_artifact_kind:"video",video_title:"Midnight observatory",video_scene_index:2,video_scene_count:2,video_scene_title:"Ivo enters",video_scene_direction:"Ivo opens the observatory door.",video_scene_camera_direction:"35mm matched left-facing eyeline",video_scene_frame_prompt:"Ivo beneath cobalt light."}},
+    {block_id:"scene-one",type:"motion",properties:{source_artifact_id:"original-reel",source_artifact_kind:"video",video_title:"Midnight observatory",video_scene_index:1,video_scene_count:2,video_scene_title:"Mara arrives",video_scene_direction:"Mara raises the silver compass.",video_scene_camera_direction:"85mm rightward tracking shot",video_scene_frame_prompt:"Mara beneath crimson moonlight."}},
+  ]};
+  const beats=videoStoryboardBeats(snapshot);
+  assert.deepEqual(beats.map((beat)=>[beat.sequence,beat.title,beat.cameraDirection]),[[1,"Mara arrives","85mm rightward tracking shot"],[2,"Ivo enters","35mm matched left-facing eyeline"]]);
+  const planner=JSON.stringify(videoPlannerCreativeContext(snapshot));
+  assert.match(planner,/video_scene_index|Mara raises the silver compass|85mm rightward tracking shot|35mm matched left-facing eyeline/);
+  const adapted=adaptVideoPrompt("A moonlit observatory sequence.",{snapshot,references:[],seconds:10,size:"1280x720",model:"bytedance/seedance-2.0/reference-to-video",promptProfile:"positive-only"});
+  assert.match(adapted.prompt,/Mara raises the silver compass/);
+  assert.match(adapted.prompt,/Ivo opens the observatory door/);
+  assert.match(adapted.prompt,/85mm rightward tracking shot/);
+  assert.equal(adapted.referenceBindings.length,0);
+});
+
+test("scoped managed-video prohibitions survive first-class provider compilation after long continuity summaries",()=>{
+  const snapshot={facts:[{block_id:"mara",type:"subject",properties:{text:"Mara discovers the silver compass."}}]};
+  const adaptation=adaptVideoPrompt("Mara discovers the silver compass.",{snapshot,plan:{summary:"Ordinary global styling. ".repeat(80)},productionContinuity:{prohibitions:["Never include modern vehicles"],scopedTargets:[{target:"Mara",role:"character",prohibitions:["MARA_ONLY_FORBIDDEN_RED_COAT_8731"]}]},references:[],seconds:6,size:"1280x720",model:"bytedance/seedance-2.0/reference-to-video",promptProfile:"positive-only"});
+  assert.equal(adaptation.compilation.valid,true);
+  assert.match(adaptation.prompt,/MARA_ONLY_FORBIDDEN_RED_COAT_8731/);
+  assert.match(adaptation.prompt,/only from character “Mara”/);
+  assert.match(adaptation.prompt,/Never include modern vehicles/);
 });
 
 test("video creation exposes durable batch and per-frame reference controls",async()=>{

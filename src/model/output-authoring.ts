@@ -113,7 +113,7 @@ export function outputInputEditEvents(root: CreativeBlock, blocks: readonly Crea
   const frames = blocks.filter((block) => !block.removed && block.documentId === root.documentId && block.properties.source_artifact_id === root.properties.source_artifact_id && block.properties.source_artifact_item_id && (!rootSet || string(block.properties.context_set_id) === rootSet || string(block.properties.context_set_root_id) === root.id));
   for (const [index, item] of draft.items.entries()) {
     if (item.source_artifact_item_id !== `${String(root.properties.source_artifact_id ?? root.id)}:${index + 1}`) continue;
-    const frame = frames.find((block) => Number(block.properties.storyboard_frame_index) === index + 1);
+    const frame = frames.find((block) => Number(block.properties.storyboard_frame_index ?? block.properties.video_scene_index ?? block.properties.narrative_order) === index + 1);
     if (frame) item.source_artifact_item_id = string(frame.properties.source_artifact_item_id);
   }
   let structure = { ...copy(originalStructure), presentation: draft.presentation ? copy(draft.presentation) : null, items: copy(draft.items) };
@@ -153,22 +153,29 @@ export function outputInputEditEvents(root: CreativeBlock, blocks: readonly Crea
   if (structureChanged) change(root, "artifact_structure", structure);
   renameMemberships(root);
 
-  if (draft.kind !== "storyboard") return events;
+  if (draft.kind !== "storyboard" && draft.kind !== "video") return events;
 
   for (const [index, item] of draft.items.entries()) {
     const frame = frames.find((block) => String(block.properties.source_artifact_item_id) === item.source_artifact_item_id)
-      ?? frames.find((block) => Number(block.properties.storyboard_frame_index) === index + 1);
+      ?? frames.find((block) => Number(block.properties.storyboard_frame_index ?? block.properties.video_scene_index ?? block.properties.narrative_order) === index + 1);
     if (!frame) continue;
-    const frameNumber = Number(frame.properties.storyboard_frame_index) || index + 1;
+    const isVideo: boolean = draft.kind === "video";
+    const frameNumber = Number(frame.properties.storyboard_frame_index ?? frame.properties.video_scene_index ?? frame.properties.narrative_order) || index + 1;
+    const label = `${draft.title} · ${isVideo ? "Scene" : "Frame"} ${frameNumber}${item.title ? ` · ${item.title}` : ""}`;
+    const titleKey = isVideo ? "video_title" : "storyboard_title";
+    const shotTitleKey = isVideo ? "video_scene_title" : "storyboard_shot_title";
+    const directionKey = isVideo ? "video_scene_direction" : "storyboard_shot_direction";
+    const cameraKey = isVideo ? "video_scene_camera_direction" : "storyboard_camera_direction";
+    const promptKey = isVideo ? "video_scene_frame_prompt" : "storyboard_frame_prompt";
     const authoredText = options.frameTextOverrides?.get(frame.id) ?? [item.body, item.notes].filter(Boolean).join(" ");
-    if (frame.locked && (frame.properties.label !== `${draft.title} · Frame ${frameNumber}${item.title ? ` · ${item.title}` : ""}` || frame.properties.text !== authoredText || frame.properties.storyboard_title !== draft.title || frame.properties.storyboard_shot_title !== item.title || frame.properties.storyboard_shot_direction !== item.body || frame.properties.storyboard_camera_direction !== item.notes || frame.properties.storyboard_frame_prompt !== item.image_prompt)) return [];
-    change(frame, "label", `${draft.title} · Frame ${frameNumber}${item.title ? ` · ${item.title}` : ""}`);
+    if (frame.locked && (frame.properties.label !== label || frame.properties.text !== authoredText || frame.properties[titleKey] !== draft.title || frame.properties[shotTitleKey] !== item.title || frame.properties[directionKey] !== item.body || frame.properties[cameraKey] !== item.notes || frame.properties[promptKey] !== item.image_prompt)) return [];
+    change(frame, "label", label);
     change(frame, "text", authoredText);
-    change(frame, "storyboard_title", draft.title);
-    change(frame, "storyboard_shot_title", item.title);
-    change(frame, "storyboard_shot_direction", item.body);
-    change(frame, "storyboard_camera_direction", item.notes);
-    change(frame, "storyboard_frame_prompt", item.image_prompt);
+    change(frame, titleKey, draft.title);
+    change(frame, shotTitleKey, item.title);
+    change(frame, directionKey, item.body);
+    change(frame, cameraKey, item.notes);
+    change(frame, promptKey, item.image_prompt);
     renameMemberships(frame);
   }
   return events;
@@ -181,14 +188,14 @@ export function outputFrameEditEvents(frame: CreativeBlock, blocks: readonly Cre
   const draft = root ? outputInputDraft(root) : null;
   if (!root || !draft) {
     const events: EventInput[] = [];
-    for (const path of ["text", "storyboard_shot_direction"]) {
+    for (const path of ["text", frame.properties.source_artifact_kind === "video" ? "video_scene_direction" : "storyboard_shot_direction"]) {
       const oldValue = frame.properties[path];
       if (oldValue !== value) events.push({ type: "BlockPropertyEdited", payload: { block_id: frame.id, property_path: path, old_value: oldValue ?? null, new_value: value, source_surface: sourceSurface } });
     }
     return events;
   }
   let index = draft.items.findIndex((item) => item.source_artifact_item_id === frame.properties.source_artifact_item_id);
-  if (index < 0) index = draft.items.findIndex((_, position) => Number(frame.properties.storyboard_frame_index) === position + 1);
+  if (index < 0) index = draft.items.findIndex((_, position) => Number(frame.properties.storyboard_frame_index ?? frame.properties.video_scene_index ?? frame.properties.narrative_order) === position + 1);
   if (index < 0) return [];
   draft.items[index] = { ...draft.items[index]!, body: value };
   return outputInputEditEvents(root, blocks, draft, { sourceSurface, frameTextOverrides: new Map([[frame.id, value]]) });
@@ -196,7 +203,7 @@ export function outputFrameEditEvents(frame: CreativeBlock, blocks: readonly Cre
 
 /** Route every existing plain-text editor through the same derived-output boundary. */
 export function outputBlockTextEditEvents(block: CreativeBlock, blocks: readonly CreativeBlock[], value: string, sourceSurface = "output-context-editor"): EventInput[] {
-  if (block.properties.source_artifact_kind === "storyboard" && block.properties.source_artifact_item_id) return outputFrameEditEvents(block, blocks, value, sourceSurface);
+  if ((block.properties.source_artifact_kind === "storyboard" || block.properties.source_artifact_kind === "video") && block.properties.source_artifact_item_id) return outputFrameEditEvents(block, blocks, value, sourceSurface);
   const draft = outputInputDraft(block);
   if (draft) return outputInputEditEvents(block, blocks, { ...draft, markdown: value }, { sourceSurface });
   const path = block.properties.text !== undefined ? "text" : "label";

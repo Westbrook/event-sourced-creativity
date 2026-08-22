@@ -51,6 +51,7 @@ type VideoPromptOptions = {
   promptProfile: "standard" | "positive-only";
   audioMode?: VideoAudioMode;
   generateAudio?: boolean;
+  productionContinuity?: { prohibitions: string[]; scopedTargets: Array<{ target: string; role: string; prohibitions: string[] }> };
 };
 
 const record = (value: unknown): CreativeRecord => value && typeof value === "object" && !Array.isArray(value) ? value as CreativeRecord : {};
@@ -246,16 +247,16 @@ function removeAudioDirections(value: string) {
 export function videoStoryboardBeats(snapshot: CreativeRecord = {}, references: VideoReference[] = []): VideoStoryboardBeat[] {
   const beats = activeFacts(snapshot).flatMap((fact) => {
     const properties = record(fact.properties);
-    const sequence = Number(properties.storyboard_frame_index ?? properties.storyboard_sequence ?? 0);
+    const sequence = Number(properties.storyboard_frame_index ?? properties.storyboard_sequence ?? properties.video_scene_index ?? properties.narrative_order ?? 0);
     if (!Number.isSafeInteger(sequence) || sequence < 1) return [];
     return [{
       sequence,
-      storyboardTitle: text(properties.storyboard_title ?? properties.reference_set_id ?? properties.context_set_root_id, 180),
-      storyboardGroupId: text(properties.source_artifact_id ?? properties.reference_set_id ?? properties.context_set_id ?? properties.context_set_root_id ?? properties.storyboard_title, 180),
-      title: text(properties.storyboard_shot_title ?? properties.label ?? `Shot ${sequence}`, 140),
-      direction: text(properties.storyboard_shot_direction ?? properties.text ?? "", 750),
-      cameraDirection: text(properties.storyboard_camera_direction, 240),
-      framePrompt: text(properties.storyboard_frame_prompt, 1_200),
+      storyboardTitle: text(properties.storyboard_title ?? properties.video_title ?? properties.reference_set_id ?? properties.context_set_root_id, 180),
+      storyboardGroupId: text(properties.source_artifact_id ?? properties.reference_set_id ?? properties.context_set_id ?? properties.context_set_root_id ?? properties.storyboard_title ?? properties.video_title, 180),
+      title: text(properties.storyboard_shot_title ?? properties.video_scene_title ?? properties.label ?? `Shot ${sequence}`, 140),
+      direction: text(properties.storyboard_shot_direction ?? properties.video_scene_direction ?? properties.text ?? "", 750),
+      cameraDirection: text(properties.storyboard_camera_direction ?? properties.video_scene_camera_direction, 240),
+      framePrompt: text(properties.storyboard_frame_prompt ?? properties.video_scene_frame_prompt, 1_200),
       blockId: text(fact.block_id, 120) || null,
     }];
   });
@@ -381,18 +382,18 @@ function compactMotionThesis(prompt: string, snapshot: CreativeRecord = {}) {
 export function videoPlannerCreativeContext(snapshot: CreativeRecord) {
   const normalized = record(providerFacingRenderingContext(snapshot));
   const facts = Array.isArray(normalized.facts) ? normalized.facts.map(record) : [];
-  const storyboardCount = facts.filter((fact) => Number(record(fact.properties).storyboard_frame_index ?? 0) > 0).length;
+  const storyboardCount = facts.filter((fact) => Number(record(fact.properties).storyboard_frame_index ?? record(fact.properties).video_scene_index ?? 0) > 0).length;
   const safeProperties = (fact: CreativeRecord) => {
     const properties = record(fact.properties);
-    const storyboardFrame = Number(properties.storyboard_frame_index ?? 0) > 0;
+    const storyboardFrame = Number(properties.storyboard_frame_index ?? properties.video_scene_index ?? properties.narrative_order ?? 0) > 0;
     const values: CreativeRecord = {};
     const common = ["label", "subtype", "intent", "weight", "authority", "spatial_scope", "pixel_reference_mode", "source_artifact_kind", "exact_text", "colors", "palette", "image_format", "format", "aspect_ratio", "resolution", "safe_area", "accessibility", "contrast", "minimum_contrast", "font_family", "font_weight", "brand_name", "required", "motion", "camera", "camera_direction", "lens", "lighting", "materials"];
     for (const key of common) if (properties[key] !== undefined && properties[key] !== null && properties[key] !== "") values[key] = properties[key];
     if (storyboardFrame) {
-      for (const key of ["storyboard_frame_index", "storyboard_frame_count", "storyboard_title", "storyboard_shot_title", "storyboard_shot_direction", "storyboard_camera_direction", "storyboard_frame_prompt"] as const) {
+      for (const key of ["storyboard_frame_index", "storyboard_frame_count", "storyboard_title", "storyboard_shot_title", "storyboard_shot_direction", "storyboard_camera_direction", "storyboard_frame_prompt", "video_scene_index", "video_scene_count", "video_title", "video_scene_title", "video_scene_direction", "video_scene_camera_direction", "video_scene_frame_prompt", "narrative_order"] as const) {
         const value = properties[key];
         if (value === undefined || value === null || value === "") continue;
-        values[key] = typeof value === "string" ? text(value, key === "storyboard_frame_prompt" ? 1_200 : key === "storyboard_shot_direction" ? 900 : 240) : value;
+        values[key] = typeof value === "string" ? text(value, key === "storyboard_frame_prompt" || key === "video_scene_frame_prompt" ? 1_200 : key === "storyboard_shot_direction" || key === "video_scene_direction" ? 900 : 240) : value;
       }
     } else {
       for (const key of ["text", "instruction", "description", "value"] as const) {
@@ -463,7 +464,10 @@ export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): V
     startsAtSeconds: authoredTiming?.[index]?.startsAtSeconds ?? Math.round(index * options.seconds / beats.length * 100) / 100,
     endsAtSeconds: authoredTiming?.[index]?.endsAtSeconds ?? (index === beats.length - 1 ? options.seconds : Math.round((index + 1) * options.seconds / beats.length * 100) / 100),
   }));
-  const { excluded, scopedExcluded, emphasis, affirmed } = sourceFactDirective(snapshot);
+  const sourceDecisions = sourceFactDirective(snapshot);
+  const excluded = [...new Set([...sourceDecisions.excluded, ...(options.productionContinuity?.prohibitions ?? [])])];
+  const scopedExcluded = [...sourceDecisions.scopedExcluded, ...(options.productionContinuity?.scopedTargets ?? []).flatMap((target) => target.prohibitions.map((direction) => ({ direction, role: target.role, target: target.target })))];
+  const { emphasis, affirmed } = sourceDecisions;
   const interpretedHardDecisions = requiredContextAdaptationFacts(snapshot)
     .filter((decision) => !factIsNegative(decision.fact) && !(decision.type === "reference" && Number(decision.properties.storyboard_frame_index ?? 0) > 0))
     .map((decision) => {

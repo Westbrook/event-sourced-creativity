@@ -71,6 +71,10 @@ const RENDERING_IDENTIFIER_KEYS = new Set([
   "generation_id", "generationId", "artifact_id", "artifactId", "canvas_id", "canvasId",
   "session_id", "sessionId", "request_id", "requestId", "owner_id", "ownerId",
   "user_id", "userId", "stream_id", "streamId", "position", "source_surface", "sourceSurface",
+  "requiredBlockIds", "required_block_ids", "sourceBlockIds", "source_block_ids",
+  "sourceClaimIds", "source_claim_ids", "referenceIds", "reference_ids",
+  "contextGroupIds", "context_group_ids", "sourceArtifactItemIds", "source_artifact_item_ids",
+  "sourceEventRefs", "source_event_refs", "evidenceRefs", "evidence_refs",
 ]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

@@ -81,8 +81,8 @@ const artifactText = (artifact: DocumentArtifact, content?: DocumentArtifactDraf
 /**
  * Turn a durable non-image output into authored document input without
  * flattening away its order, presentation data, media, or provenance.
- * Storyboards additionally materialize every finished frame as an ordinary
- * Reference block in the same ordered Combined Context.
+ * Storyboards materialize finished frames as Reference inputs; managed-video
+ * clips materialize ordered motion children without ever becoming image pixels.
  */
 export function artifactContextEvents(artifact: DocumentArtifact, options: ArtifactContextOptions): OutputContextResult {
   const idFactory=options.idFactory??(()=>crypto.randomUUID());const semantics=artifactSemantics(artifact);const contextSetId=options.contextSetId??idFactory();const rootBlockId=options.existingRootBlockId??idFactory();const items=draftItems(artifact,options.content);const events:EventInput[]=[];const blockIds:string[]=[];const shared={...sharedPayload(options),source_artifact_id:artifact.id,source_artifact_kind:artifact.kind,source_document_id:artifact.documentId};
@@ -103,7 +103,30 @@ export function artifactContextEvents(artifact: DocumentArtifact, options: Artif
     const frames=storyboardFrameContextEvents(artifact,{...options,contextSetId,contextRootBlockId:rootBlockId,memberOrderOffset:1,positionStart:(options.positionStart??0)+(options.existingRootBlockId?0:1)});events.push(...frames.events);blockIds.push(...frames.blockIds);sourceItemIds=frames.sourceItemIds;
     for(const frameBlockId of frames.blockIds)events.push({type:"BlockRelationAdded",payload:{...shared,relation_id:idFactory(),from_block_id:rootBlockId,to_block_id:frameBlockId,kind:"artifact_contains",properties:{context_set_id:contextSetId,source_artifact_id:artifact.id,ordered:true,created_from:options.sourceSurface}}});
   }
-  return{events,blockIds,sourceItemIds,availableMemberCount:1+(artifact.kind==="storyboard"?artifact.items.filter((item)=>Boolean(item.mediaUrl)).length:0)};
+  if(artifact.kind==="video"){
+    const existing=new Set(options.existingSourceItemIds??[]);
+    const available=artifact.items.map((item,index)=>({item,index})).filter(({item})=>Boolean(item.mediaUrl)&&String(item.mediaType??"").startsWith("video/"));
+    for(const [ordinal,{item,index}] of available.filter(({item})=>!existing.has(item.id)).entries()){
+      const authored=items[index]!;const sceneBlockId=idFactory();const sceneNumber=Number(item.narrativeOrder??index+1);const sceneTitle=authored.title||`Scene ${sceneNumber}`;
+      const sceneShared={...shared,source_artifact_item_id:item.id};
+      events.push({type:"BlockCreated",payload:{...sceneShared,block_id:sceneBlockId,type:"motion",handle:`motion/${slug(artifact.title)}-scene-${String(sceneNumber).padStart(2,"0")}`,position:`${options.positionPrefix??"z"}${String((options.positionStart??0)+(options.existingRootBlockId?0:1)+ordinal).padStart(8,"0")}`,properties:{
+        label:`${artifact.title} · Scene ${sceneNumber} · ${sceneTitle}`,
+        text:[authored.body,authored.notes].filter(Boolean).join(" "),
+        subtype:"Rendered scene",intent:"include",authority:"authored",weight:.8,
+        source_artifact_id:artifact.id,source_artifact_item_id:item.id,source_artifact_kind:"video",source_document_id:artifact.documentId,
+        media_url:item.mediaUrl,media_type:item.mediaType,
+        scene_id:item.sceneId??null,narrative_order:sceneNumber,generation_order:item.generationOrder??null,duration_seconds:item.durationSeconds??null,
+        context_group_ids:[...new Set([...(item.contextGroupIds??[]),...(authored.context_group_ids??[])])],
+        video_scene_index:sceneNumber,video_scene_count:available.length,video_title:artifact.title,video_scene_title:sceneTitle,video_scene_direction:authored.body,video_scene_camera_direction:authored.notes,video_scene_frame_prompt:authored.image_prompt,
+        context_set_id:contextSetId,context_set_root_id:rootBlockId,copied_as_context_set:true,semantic_isolation:true,
+        combined_context_memberships:[{contextSetId,name:artifact.title,role:"sequence",target:`${artifact.title} motion continuity`,application:"ordered",relativity:1,memberOrder:index+1,sourceCanvasId:options.sourceCanvasId??""}],
+        created_from:options.sourceSurface,...(options.sourceCanvasItemIds?.length?{source_canvas_item_ids:options.sourceCanvasItemIds}:{}),
+      }}});
+      events.push({type:"BlockRelationAdded",payload:{...sceneShared,relation_id:idFactory(),from_block_id:rootBlockId,to_block_id:sceneBlockId,kind:"artifact_contains",properties:{context_set_id:contextSetId,source_artifact_id:artifact.id,ordered:true,created_from:options.sourceSurface}}});
+      blockIds.push(sceneBlockId);sourceItemIds.push(item.id);
+    }
+  }
+  return{events,blockIds,sourceItemIds,availableMemberCount:1+(artifact.kind==="storyboard"?artifact.items.filter((item)=>Boolean(item.mediaUrl)).length:artifact.kind==="video"?artifact.items.filter((item)=>Boolean(item.mediaUrl)&&String(item.mediaType??"").startsWith("video/")).length:0)};
 }
 
 /** Materialize a generated still as a rights-backed Reference input. */

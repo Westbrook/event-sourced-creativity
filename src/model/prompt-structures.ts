@@ -1,7 +1,8 @@
 import { normalizeSpatialScope } from "./spatial-scope.ts";
 import { documentImageFormat, imageAspectRatioLabel, imageOrientationLabel } from "./image-format.ts";
 import { combinedContextGroups, combinedContextMemberships, combinedContextPromptDirectives, type CombinedContextGroup } from "./combined-context.ts";
-import { promptFactIsActive, providerFacingCreativeContext, providerFacingRenderingContext } from "./prompt-policy.ts";
+import { requiredContextAdaptationFacts } from "./context-adaptation.ts";
+import { promptFactIsActive, providerFacingRenderingContext } from "./prompt-policy.ts";
 
 export const PROMPT_TECHNIQUES = ["prose", "bullets", "json", "xml"] as const;
 export type PromptTechnique = typeof PROMPT_TECHNIQUES[number];
@@ -82,6 +83,14 @@ export type StructuredImagePrompt = {
   use_reference_images?: number;
   user_edited_layout?: PromptLayout;
   context_groups?: PromptContextGroup[];
+  production_brief?: ProductionPromptBrief;
+};
+
+export type ProductionPromptBrief = {
+  team: Array<{ role: string; responsibility: string }>;
+  continuity_bible: Record<string, string[]>;
+  required_source_coverage: string[];
+  scoped_targets: Array<{ target: string; role: string; required: string[]; prohibitions: string[] }>;
 };
 
 const record = (value: unknown) => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -123,16 +132,46 @@ export function buildSpatialPromptDirectives(snapshot: Record<string, unknown>) 
 export function buildReferencePromptDirectives(references: PromptReferenceDescriptor[]) {
   if (!references.length) return "No source-image pixels are attached. Use only the compiled text context.";
   return references.map((reference, index) => {
-    if (reference.source === "ideation-preview") return `- Image ${index + 1} is the selected working draft. Refine it into the requested result while preserving the creative progress it represents.`;
-    if (reference.source === "locked-study") return `- Image ${index + 1} is an accepted ${reference.label || "creative study"}. Preserve its established identity and defining decisions while composing the larger image.`;
     const policies: Record<string, string> = {
       preserve_composition: "Preserve the reference image's composition, framing, balance, and spatial organization only as a layout guide. Replace its subjects, identities, setting, objects, text, and story with the document's authored content unless another decision explicitly preserves them.",
       preserve_subject: "Preserve the identity and recognizable features of its subject while applying the document's other decisions.",
       preserve_style: "Use its visual style and material language without copying unrelated content.",
       inspiration: "Use it as visual inspiration while allowing the document to determine the result.",
     };
+    if (reference.source === "ideation-preview") return `- Image ${index + 1} is the selected working draft. Refine it into the requested result while preserving the creative progress it represents.`;
+    if (reference.source === "locked-study") {
+      const mode = String(reference.mode ?? "preserve_subject");
+      return mode === "preserve_subject"
+        ? `- Image ${index + 1} is an accepted ${reference.label || "creative study"}. Preserve its established identity and defining decisions while composing the larger image.`
+        : `- Image ${index + 1} is an accepted ${reference.label || "creative study"}. ${policies[mode] ?? policies.inspiration}`;
+    }
     return `- Image ${index + 1}, “${reference.label || `uploaded reference ${index + 1}`}”, is an opted-in uploaded reference. ${policies[String(reference.mode ?? "inspiration")] ?? policies.inspiration}`;
   }).join("\n");
+}
+
+/** Explicit allowlist: managed image direction is semantic creative copy, never a durable provenance envelope. */
+export function productionBriefForPrompt(snapshot: Record<string, unknown>): ProductionPromptBrief | null {
+  const source = record(snapshot.production_brief);
+  if (!Object.keys(source).length) return null;
+  const continuity = record(source.continuity_bible);
+  const allowed = ["subjects", "locations", "wardrobe", "props", "palette", "lighting", "camera", "style", "prohibitions"];
+  return {
+    team: list(source.team).map(record).map((member) => ({
+      role: String(member.role ?? "").trim(),
+      responsibility: String(member.responsibility ?? "").trim(),
+    })).filter((member) => member.role),
+    continuity_bible: Object.fromEntries(allowed.flatMap((key) => {
+      const values = list(continuity[key]).map((value) => String(value).trim()).filter(Boolean);
+      return values.length ? [[key, [...new Set(values)]]] : [];
+    })),
+    required_source_coverage: [...new Set(list(source.required_source_coverage).map((value) => String(value).trim()).filter(Boolean))],
+    scoped_targets: list(source.scoped_targets).map(record).map((target) => ({
+      target: String(target.target ?? "").trim(),
+      role: String(target.role ?? "subject").trim(),
+      required: [...new Set(list(target.required).map((value) => String(value).trim()).filter(Boolean))],
+      prohibitions: [...new Set(list(target.prohibitions).map((value) => String(value).trim()).filter(Boolean))],
+    })).filter((target) => target.target),
+  };
 }
 
 function activeCreativeContext(snapshot: Record<string, unknown>) {
@@ -144,11 +183,13 @@ function activeCreativeContext(snapshot: Record<string, unknown>) {
   const relationships = list(snapshot.relationships).map(record).filter((relation) => activeIds.has(String(relation.from_block_id ?? "")) && activeIds.has(String(relation.to_block_id ?? ""))).map((relation) => ({
     relation_id: relation.relation_id, from_block_id: relation.from_block_id, to_block_id: relation.to_block_id, kind: relation.kind, properties: relation.properties,
   }));
-  return { facts: activeFacts, relationships, context_groups: combinedContextGroups({...snapshot,facts:activeFacts}), pins: list(snapshot.pins), standing_constraints: list(snapshot.standing_constraints), document: snapshot.document };
+  const production = productionBriefForPrompt(snapshot);
+  return { facts: activeFacts, relationships, context_groups: combinedContextGroups({...snapshot,facts:activeFacts}), pins: list(snapshot.pins), standing_constraints: list(snapshot.standing_constraints), document: snapshot.document, ...(production ? { production_brief: production } : {}) };
 }
 
 export function buildProsePrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = []) {
   const spatialDirectives = buildSpatialPromptDirectives(snapshot); const groupedDirectives=combinedContextPromptDirectives({...snapshot,facts:list(snapshot.facts).filter(promptFactIsActive)},"image"); const imageFormat = documentImageFormat(snapshot).format;
+  const production = productionBriefForPrompt(snapshot);
   return [
     `Create one polished ${imageOrientationLabel(imageFormat)} image that realizes the supplied creative direction.`,
     `Output frame: ${imageFormat.dimensions.width} × ${imageFormat.dimensions.height} pixels at ${imageAspectRatioLabel(imageFormat)}. Treat the ratio and intended production dimensions as binding document constraints.`,
@@ -159,17 +200,19 @@ export function buildProsePrompt(snapshot: Record<string, unknown>, direction: R
     `Attached source-image policy:\n${buildReferencePromptDirectives(references)}`,
     `Spatial application map:\n${spatialDirectives.length ? spatialDirectives.join("\n") : "- No active block decisions were supplied."}`,
     `Combined-context isolation map:\n${groupedDirectives.length ? groupedDirectives.join("\n") : "No combined contexts were supplied."}`,
+    ...(production ? [`Coordinated production art-direction contract:\n${JSON.stringify(production)}`] : []),
     `Creative direction:\n${JSON.stringify(direction)}`,
     `Active creative context:\n${JSON.stringify(providerFacingRenderingContext(activeCreativeContext(snapshot)))}`,
   ].join("\n\n");
 }
 
 export function buildBulletPrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = []) {
-  const context = activeCreativeContext(snapshot); const facts = context.facts.map(record); const relationships = context.relationships.map(record); const groupedDirectives=combinedContextPromptDirectives({...snapshot,facts:context.facts},"image"); const imageFormat = documentImageFormat(snapshot).format;
+  const context = activeCreativeContext(snapshot); const facts = context.facts.map(record); const relationships = context.relationships.map(record); const groupedDirectives=combinedContextPromptDirectives({...snapshot,facts:context.facts},"image");const spatialDirectives=buildSpatialPromptDirectives({...snapshot,facts:context.facts}); const imageFormat = documentImageFormat(snapshot).format;
+  const production = productionBriefForPrompt(snapshot);
   const factLines = facts.map((fact, index) => {
-    const rawProperties=record(fact.properties);const properties=record(providerFacingCreativeContext(rawProperties));const scope=normalizeSpatialScope(rawProperties.spatial_scope);
+    const rawProperties=record(fact.properties);const properties=record(providerFacingRenderingContext(rawProperties));const scope=normalizeSpatialScope(rawProperties.spatial_scope);
     const propertyLines=Object.entries(properties).filter(([key])=>key!=="spatial_scope"&&key!=="weight").map(([key,value])=>`  - ${key.replaceAll("_"," ")}: ${typeof value==="string"?value:JSON.stringify(value)}`);
-    return [`- Decision ${index + 1} — ${String(fact.role ?? fact.type ?? "decision")}: ${factLabel(fact)}. Intent: ${String(fact.intent ?? "include")}. Effect: ${String(fact.effect ?? "include")}. Influence: ${percent(Number(properties.weight ?? .5))}. Authority: ${String(fact.authority ?? "authored")}. Applies to: ${scope.kind === "document" ? "the whole image" : buildSpatialPromptDirectives({ facts: [fact] })[0].replace(/^- Apply .*? (across|inside|in|everywhere|around|behind|in front of)/, "$1")}`,...propertyLines].join("\n");
+    return [`- Decision ${index + 1} — ${String(fact.role ?? fact.type ?? "decision")}: ${factLabel(fact)}. Intent: ${String(fact.intent ?? "include")}. Effect: ${String(fact.effect ?? "include")}. Influence: ${percent(Number(properties.weight ?? .5))}. Authority: ${String(fact.authority ?? "authored")}. Applies to: ${scope.kind === "document" ? "the whole image" : spatialDirectives[index]!.replace(/^- Apply .*? (across|inside|in|everywhere|around|behind|in front of)/, "$1")}`,...propertyLines].join("\n");
   });
   const factLabels=new Map(facts.map((fact)=>[String(fact.block_id??""),factLabel(fact)]));
   const relationshipLines = relationships.map((relation, index) => `- Relationship ${index + 1}: “${factLabels.get(String(relation.from_block_id))??"the primary creative decision"}” is connected to “${factLabels.get(String(relation.to_block_id))??"its supporting visual evidence"}” as ${String(relation.kind ?? "visual evidence")}. Treat the target as support for the source, not as a competing subject.`);
@@ -181,6 +224,16 @@ export function buildBulletPrompt(snapshot: Record<string, unknown>, direction: 
     "- Honor every active instruction, its role, intent, influence, relationships, and local application area.",
     "- Treat avoid, prohibit, must_not_include, and exclusion instructions only as negative constraints.",
     "- Do not add typography, logos, watermarks, UI, borders, contact sheets, captions, or annotations unless explicitly requested.",
+    ...(production ? [
+      "Coordinated production art direction:",
+      ...production.team.map((member) => `- ${member.role}: ${member.responsibility}`),
+      `- Shared visual continuity: ${JSON.stringify(production.continuity_bible)}`,
+      ...production.required_source_coverage.map((claim) => `- Required authored source coverage: ${claim}`),
+      ...production.scoped_targets.flatMap((target) => [
+        ...target.required.map((claim) => `- Required only for ${target.role} “${target.target}”: ${claim}`),
+        ...target.prohibitions.map((claim) => `- Forbidden only for ${target.role} “${target.target}”: ${claim}`),
+      ]),
+    ] : []),
     "Creative direction:",
     ...Object.entries(direction).map(([key, value]) => `- ${key.replaceAll("_", " ")}: ${Array.isArray(value) ? value.join("; ") : String(value)}`),
     "Document decisions:", ...(factLines.length ? factLines : ["- No active document decisions were supplied."]),
@@ -210,6 +263,7 @@ function attachedBlob(reference: PromptReferenceDescriptor, index: number): Prom
 
 export function buildStructuredPrompt(snapshot: Record<string, unknown>, direction: Record<string, unknown>, references: PromptReferenceDescriptor[] = [], options: { size?: string; quality?: string; partialImages?: number } = {}): StructuredImagePrompt {
   const targetFormat = documentImageFormat(snapshot).format; const width = targetFormat.dimensions.width; const height = targetFormat.dimensions.height; const facts = list(snapshot.facts).map(record).filter(promptFactIsActive); const blobs = references.map(attachedBlob);
+  const production = productionBriefForPrompt(snapshot);
   const blockAliases=new Map(facts.map((fact,index)=>[String(fact.block_id??""),`decision_${index+1}`]));
   const groups=combinedContextGroups({...snapshot,facts});const groupAliases=new Map(groups.map((group,index)=>[group.id,`context_group_${index+1}`]));
   const regions = facts.map((fact, index): PromptRegion => {
@@ -227,13 +281,14 @@ export function buildStructuredPrompt(snapshot: Record<string, unknown>, directi
     };
   });
   const context=record(providerFacingRenderingContext(activeCreativeContext(snapshot)));const relationships=list(context.relationships).map(record).map((relation)=>`${String(relation.from_label??"the primary decision")} ${String(relation.kind??"relates to")} ${String(relation.to_label??"its supporting decision")}${Object.keys(record(relation.properties)).length?` with ${JSON.stringify(relation.properties)}`:""}`).join("; ");const constraints=list(context.standing_constraints).map(record).map((constraint)=>`${String(constraint.axis??"preference")} ${String(constraint.polarity??"")} ${String(constraint.value??"")}`).join("; ");const pins=list(context.pins).map(String).join(", ");
-  const groupedDirectives=combinedContextPromptDirectives({...snapshot,facts},"image");const prompt = `Create one polished image. ${Object.entries(direction).map(([key, value]) => `${key.replaceAll("_", " ")}: ${Array.isArray(value) ? value.join(", ") : String(value)}`).join(". ")}. Typed relationships: ${relationships||"none"}. Combined-context isolation: ${groupedDirectives.join(" ")||"none"}. Standing constraints: ${constraints||"none"}. Pinned evidence: ${pins||"none"}. Honor negative intent, typed relationships, local regions, grouped isolation, and reference-image policy.`;
+  const groupedDirectives=combinedContextPromptDirectives({...snapshot,facts},"image");const productionClause=production?` Coordinated production art direction: ${JSON.stringify(production)}.`:"";const prompt = `Create one polished image. ${Object.entries(direction).map(([key, value]) => `${key.replaceAll("_", " ")}: ${Array.isArray(value) ? value.join(", ") : String(value)}`).join(". ")}. Typed relationships: ${relationships||"none"}. Combined-context isolation: ${groupedDirectives.join(" ")||"none"}. Standing constraints: ${constraints||"none"}. Pinned evidence: ${pins||"none"}.${productionClause} Honor negative intent, typed relationships, local regions, grouped isolation, and reference-image policy.`;
   const layout: PromptLayout = { width: Number.isFinite(width) ? width : undefined, height: Number.isFinite(height) ? height : undefined, overall_prompt: `${prompt} Coordinates are document-normalized from 0 to 1.`, regions };
   return {
     operation: "generate_image", prompt, aspect_ratio: imageAspectRatioLabel(targetFormat),
     disable_search: 1, ...(options.partialImages ? { intermediate_image_steps: Array.from({ length: options.partialImages }, (_, index) => index + 1), preview_interval_seconds: 2 } : {}),
     reference_images: references.map((reference, index) => ({ image: blobs[index], prompt: buildReferencePromptDirectives([reference]).replace(/^- /, "") })), resolution: `${width}x${height}`,
     streaming: options.partialImages ? 1 : 0, use_reference_images: references.length ? 1 : 0, user_edited_layout: layout, context_groups:groups.map((group,index)=>({context_key:`context_group_${index+1}`,name:group.name,role:group.role,target:group.target,application:group.application,relativity:group.relativity,members:group.members.map((member)=>({decision_key:blockAliases.get(member.blockId)??"",label:member.label,role:member.role,relativity:member.relativity,order:member.order}))})),
+    ...(production ? { production_brief: production } : {}),
   };
 }
 
@@ -269,11 +324,21 @@ export function buildPromptRepresentation(technique: PromptTechnique, snapshot: 
 
 const compactPromptWhitespace=(technique:PromptTechnique,prompt:string)=>technique==="json"?JSON.stringify(JSON.parse(prompt)):technique==="xml"?prompt.replace(/>\s+</g,"><"):prompt;
 const fitString=(value:string,limit:number)=>value.length<=limit?value:`${value.slice(0,Math.max(0,limit-38))}…[${value.length-limit} characters compacted]`;
-const fitPromptValue=(value:unknown,stringLimit:number):unknown=>{
-  if(typeof value==="string")return fitString(value,stringLimit);
-  if(Array.isArray(value))return value.map((item)=>fitPromptValue(item,stringLimit));
-  if(value&&typeof value==="object")return Object.fromEntries(Object.entries(value as Record<string,unknown>).map(([key,item])=>[key,fitPromptValue(item,stringLimit)]));
+const fitPromptValue=(value:unknown,stringLimit:number,preserved:Set<string>):unknown=>{
+  if(typeof value==="string")return preserved.has(value)?value:fitString(value,stringLimit);
+  if(Array.isArray(value))return value.map((item)=>fitPromptValue(item,stringLimit,preserved));
+  if(value&&typeof value==="object")return Object.fromEntries(Object.entries(value as Record<string,unknown>).map(([key,item])=>[key,fitPromptValue(item,stringLimit,preserved)]));
   return value;
+};
+
+const mandatoryPromptStrings=(snapshot:Record<string,unknown>)=>{
+  const retained=new Set<string>();
+  const keep=(value:unknown)=>{if(typeof value==="string"&&value.trim())retained.add(value);};
+  for(const decision of requiredContextAdaptationFacts(snapshot))for(const value of Object.values(decision.properties))if(typeof value==="string")keep(value);
+  for(const value of list(snapshot.facts).map(record)){const properties=record(value.properties);if([value.intent,value.effect,value.type,value.role,properties.intent,properties.effect,properties.polarity].some((item)=>["avoid","prohibit","forbid","exclude","exclusion","must_not_include"].includes(String(item??"").toLowerCase())))for(const property of [properties.text,properties.instruction,properties.description,properties.exact_text,properties.value,properties.label])keep(property);}
+  for(const constraint of list(snapshot.standing_constraints).map(record))if(["avoid","prohibit","forbid","affirm","include","required"].includes(String(constraint.polarity??"").toLowerCase()))keep(constraint.value);
+  const production=productionBriefForPrompt(snapshot);for(const value of [...(production?.required_source_coverage??[]),...(production?.continuity_bible.prohibitions??[]),...(production?.scoped_targets??[]).flatMap((target)=>[...target.required,...target.prohibitions])])keep(value);
+  return retained;
 };
 
 /**
@@ -287,10 +352,10 @@ export function buildBoundedPromptRepresentation(technique:PromptTechnique,snaps
   if(originalLength<=limit)return{prompt:original,originalLength,finalLength:originalLength,compacted:false,fits:true,limit};
   const whitespaceCompacted=compactPromptWhitespace(technique,original);
   if(whitespaceCompacted.length<=limit)return{prompt:whitespaceCompacted,originalLength,finalLength:whitespaceCompacted.length,compacted:true,fits:true,limit};
-  let candidate=whitespaceCompacted;
+  const mandatory=mandatoryPromptStrings(snapshot);let candidate=whitespaceCompacted;
   for(const stringLimit of [2048,1024,512,256,128,64]){
-    candidate=compactPromptWhitespace(technique,buildPromptRepresentation(technique,fitPromptValue(snapshot,stringLimit) as Record<string,unknown>,fitPromptValue(direction,stringLimit) as Record<string,unknown>,fitPromptValue(references,stringLimit) as PromptReferenceDescriptor[],options));
-    if(candidate.length<=limit)return{prompt:candidate,originalLength,finalLength:candidate.length,compacted:true,fits:true,limit};
+    candidate=compactPromptWhitespace(technique,buildPromptRepresentation(technique,fitPromptValue(snapshot,stringLimit,mandatory) as Record<string,unknown>,fitPromptValue(direction,stringLimit,mandatory) as Record<string,unknown>,fitPromptValue(references,stringLimit,mandatory) as PromptReferenceDescriptor[],options));
+    if(candidate.length<=limit&&[...mandatory].every((value)=>!original.includes(value)||candidate.includes(value)))return{prompt:candidate,originalLength,finalLength:candidate.length,compacted:true,fits:true,limit};
   }
   return{prompt:candidate,originalLength,finalLength:candidate.length,compacted:true,fits:false,limit};
 }
