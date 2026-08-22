@@ -191,6 +191,22 @@ export async function readCorrelatedEvents(env:WorkerEnv,streamId:string,correla
 
 export const EVENT_PAGE_SIZE = 5000;
 
+/** Exact, NULL-safe equivalent of isPhantomAttentionEpisode; raw audit reads never use it. */
+export const PHANTOM_ATTENTION_EVENT_SQL = `
+  type='AttentionEpisodeObserved'
+  AND COALESCE(json_extract(payload,'$.capture_version'),'') IN ('attention-v1','attention-v2')
+  AND COALESCE(json_extract(payload,'$.terminal_type'),'')='idle_timeout'
+  AND COALESCE(json_extract(payload,'$.terminal_ref'),'')=''
+  AND COALESCE(CAST(json_extract(payload,'$.active_ms') AS REAL),-1)=30000
+  AND COALESCE(CAST(json_extract(payload,'$.idle_ms') AS REAL),-1)>=30000
+  AND COALESCE(json_extract(payload,'$.surface'),'')<>''
+  AND COALESCE(json_extract(payload,'$.context'),'')=COALESCE(json_extract(payload,'$.surface'),'')||'-overview'
+  AND COALESCE(json_type(payload,'$.visible_refs'),'')='array'
+  AND json_array_length(payload,'$.visible_refs')=0
+  AND COALESCE(CAST(json_extract(payload,'$.friction_score') AS REAL),0)<.45
+  AND COALESCE(CAST(json_extract(payload,'$.outcome_weight') AS REAL),0)<.18
+`;
+
 export type EventReadProfile = import("../src/model/event-profiles").ScopedEventProfile;
 export { PROJECT_BOOTSTRAP_EVENT_TYPES } from "../src/model/event-profiles";
 export const PROJECTION_IGNORED_EVENT_TYPES = PROFILE_EXCLUDED_EVENT_TYPES.workspace;
@@ -230,8 +246,9 @@ export async function readProfileEventPage(
   const placeholders = eventTypes.map(() => "?").join(",");
   const operator = profile === "projects" ? "IN" : "NOT IN";
   const index = profile === "projects" ? " INDEXED BY idx_events_stream_type" : "";
+  const attentionFilter = ["memory", "scout", "sessions"].includes(profile) ? ` AND NOT (${PHANTOM_ATTENTION_EVENT_SQL})` : "";
   const [page, current] = await env.DB.batch<Record<string, unknown>>([
-    env.DB.prepare(`SELECT * FROM events${index} WHERE stream_id=? AND sequence>? AND type ${operator} (${placeholders}) ORDER BY sequence ASC LIMIT ?`)
+    env.DB.prepare(`SELECT * FROM events${index} WHERE stream_id=? AND sequence>? AND type ${operator} (${placeholders})${attentionFilter} ORDER BY sequence ASC LIMIT ?`)
       .bind(streamId, Math.max(0, Math.floor(afterSequence)), ...eventTypes, pageSize),
     env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(streamId),
   ]);
@@ -246,6 +263,17 @@ export async function readProfileEventPage(
 export async function readWorkspaceEvents(env:WorkerEnv,streamId:string){
   const events:EventRow[]=[];let after=0;
   while(true){const page=await readProfileEventPage(env,streamId,"workspace",after,5000);events.push(...page.events);if(!page.hasMore)return events;after=page.nextAfter;}
+}
+
+/** Intelligence interactions need genuine attention evidence, not timer artifacts or raw admin telemetry. */
+export async function readIntelligenceEvents(env: WorkerEnv, streamId: string) {
+  const events: EventRow[] = []; let after = 0;
+  while (true) {
+    const page = await readProfileEventPage(env, streamId, "sessions", after, 5000);
+    events.push(...page.events);
+    if (!page.hasMore) return events;
+    after = page.nextAfter;
+  }
 }
 
 /** Read a complete stream in bounded D1 pages. Callers that only need transport pages should use readEventPage. */

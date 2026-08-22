@@ -3,6 +3,14 @@ import type { CreativeEvent } from "./events";
 export const ATTENTION_RETENTION_DAYS = 14;
 export const ATTENTION_STORAGE_KEY = "forma:attention-episodes:v1";
 export const ATTENTION_PREFERENCE_KEY = "forma:attention-enabled:v1";
+export const ATTENTION_IDLE_GRACE_MS = 30_000;
+export const ATTENTION_IDLE_TERMINAL_MS = 60_000;
+export const ATTENTION_ACTION_TERMINALS = [
+  "ObjectSaved", "ObjectPinned", "AddedToLibrary", "BriefItemAccepted",
+  "PreferenceAuthored", "ObjectCritiqued", "DocumentCreated", "EmptyCanvasChosen",
+  "BlockCreated", "BlockPropertyEdited", "ObjectViewed", "ComparisonOpened",
+  "GenerationRequested", "IdeationPromoted", "PromptFanOutputPromoted",
+] as const;
 const scopedKey=(key:string,scope:string)=>`${key}:${encodeURIComponent(scope||"anonymous")}`;
 
 export type AttentionEpisode = {
@@ -27,6 +35,28 @@ export type AttentionEpisode = {
 
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value));
 const round = (value: number, precision = 3) => Number(value.toFixed(precision));
+
+export function isAttentionActionTerminal(type: string) {
+  return (ATTENTION_ACTION_TERMINALS as readonly string[]).includes(type);
+}
+
+/** Ignore the exact historical artifact produced by restarting an idle timer without user activity. */
+export function isPhantomAttentionEpisode(payload: Record<string, unknown> | null | undefined) {
+  if (!payload || (payload.capture_version !== "attention-v1" && payload.capture_version !== "attention-v2")) return false;
+  const surface = String(payload.surface ?? "");
+  return payload.terminal_type === "idle_timeout" &&
+    (payload.terminal_ref == null || payload.terminal_ref === "") &&
+    Number(payload.active_ms) === ATTENTION_IDLE_GRACE_MS &&
+    Number(payload.idle_ms) >= ATTENTION_IDLE_GRACE_MS &&
+    surface.length > 0 && String(payload.context ?? "") === `${surface}-overview` &&
+    Array.isArray(payload.visible_refs) && payload.visible_refs.length === 0 &&
+    Number(payload.friction_score ?? 0) < .45 && Number(payload.outcome_weight ?? 0) < .18;
+}
+
+export function attentionTickTransition(lastActivityAt: number | null, now: number): "dormant" | "tracking" | "idle-timeout" {
+  if (lastActivityAt === null) return "dormant";
+  return now - lastActivityAt >= ATTENTION_IDLE_TERMINAL_MS ? "idle-timeout" : "tracking";
+}
 
 const TERMINAL_VALUE: Record<string, number> = {
   ObjectSaved: 1,
@@ -65,7 +95,8 @@ export function buildAttentionEpisode(input: Omit<AttentionEpisode,"outcome_weig
 
 export function attentionEvents(events: CreativeEvent[], now = Date.now()) {
   const forgottenAt = events.filter((event) => event.type === "AttentionSignalsForgotten").at(-1)?.sequence ?? 0;
-  return events.filter((event) => event.type === "AttentionEpisodeObserved" && event.sequence > forgottenAt && Date.parse(String(event.payload.expires_at ?? "")) > now);
+  return events.filter((event) => event.type === "AttentionEpisodeObserved" && event.sequence > forgottenAt &&
+    Date.parse(String(event.payload.expires_at ?? "")) > now && !isPhantomAttentionEpisode(event.payload));
 }
 
 export function attentionMetrics(events: CreativeEvent[], now = Date.now()) {

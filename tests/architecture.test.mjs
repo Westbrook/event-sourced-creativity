@@ -663,6 +663,8 @@ test("keeps opt-in attention capture visible-only, coarse, bounded, and forgetta
     readFile(new URL("../docs/event-classification.csv",import.meta.url),"utf8"),
   ]);
   assert.match(observer,/document\.visibilityState==="visible"/);assert.match(observer,/IntersectionObserver/);assert.match(observer,/idle_timeout/);assert.match(observer,/terminal_type/);
+  assert.match(observer,/attentionTickTransition\(this\.#episode\?\.lastActivityAt\?\?null,now\)/);assert.match(observer,/if\(transition==="dormant"\)return/);assert.match(observer,/pointerdown/);assert.match(observer,/isAttentionActionTerminal/);
+  assert.doesNotMatch(observer,/#tick\(\)\{if\(!this\.#episode\)\{this\.#start\(\)/);
   assert.doesNotMatch(observer,/clientX|clientY|screenX|screenY|event\.key|\.value/);
   assert.match(attention,/ATTENTION_RETENTION_DAYS = 14/);assert.match(attention,/\.25/);assert.match(attention,/AttentionSignalsForgotten/);
   assert.match(store,/setAttentionCapture/);assert.match(store,/forgetAttentionSignals/);assert.match(shell,/off until you enable them separately/);assert.match(system,/off by default/);

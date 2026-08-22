@@ -222,7 +222,7 @@ test("six nested route profiles retain every surface's actual evidence", () => {
 test("nested snapshots downscope without crossing account, consent, policy, or impersonation", () => {
   const identity = { userId: "owner-a", policyVersion: "policy-2", accepted: true, impersonating: false };
   const types = ["ProjectCreated", "DocumentViewVisited", "AttentionEpisodeObserved", "AttentionSignalsForgotten", "CanvasInteractionRecorded", "ObjectViewed", "ComparisonOpened", "GenerationPreflightCompleted", "ValidationFailed", "ApplicationViewVisited", "GenerationPreflightRequested"];
-  const snapshot = { key: "owner-a:policy-2:v1", userId: "owner-a", policyVersion: "policy-2", profile: "full", head: types.length, events: types.map((type, index) => ({ type, sequence: index + 1 })), savedAt: Date.now(), schemaVersion: 1 };
+  const snapshot = { key: "owner-a:policy-2:v2", userId: "owner-a", policyVersion: "policy-2", profile: "full", head: types.length, events: types.map((type, index) => ({ type, sequence: index + 1 })), savedAt: Date.now(), schemaVersion: 2 };
   for (const requested of EVENT_PROFILE_ORDER) {
     const found = matchingAccountSnapshot([snapshot], identity, requested);
     assert.equal(found?.profile, requested);
@@ -235,6 +235,21 @@ test("nested snapshots downscope without crossing account, consent, policy, or i
   assert.equal(matchingAccountSnapshot([{ ...snapshot, userId: "owner-b" }], identity, "projects"), null);
   assert.equal(matchingAccountSnapshot([snapshot], { ...identity, accepted: false }, "projects"), null);
   assert.equal(matchingAccountSnapshot([snapshot], { ...identity, impersonating: true }, "projects"), null);
+  assert.equal(matchingAccountSnapshot([{ ...snapshot, key: "owner-a:policy-2:v1", schemaVersion: 1 }], identity, "projects"), null);
+});
+
+test("same-profile and downscoped snapshots remove timer artifacts without changing raw audit history or stream head",()=>{
+  const identity={userId:"owner-a",policyVersion:"policy-2",accepted:true,impersonating:false};
+  const phantom={surface:"studio",context:"studio-overview",terminal_type:"idle_timeout",terminal_ref:null,active_ms:30_000,idle_ms:30_000,visible_refs:[],outcome_weight:.013,friction_score:0,capture_version:"attention-v2"};
+  const events=[{type:"ProjectCreated",sequence:1,payload:{}},{type:"AttentionEpisodeObserved",sequence:2,payload:phantom},{type:"AttentionEpisodeObserved",sequence:3,payload:{...phantom,visible_refs:["block:real"]}},{type:"AttentionSignalsForgotten",sequence:4,payload:{}}];
+  const snapshot={key:"owner-a:policy-2:v2",userId:"owner-a",policyVersion:"policy-2",profile:"full",head:40,events,savedAt:Date.now(),schemaVersion:2};
+  for(const profile of ["memory","scout","sessions"]){
+    const downscoped=matchingAccountSnapshot([snapshot],identity,profile);
+    assert.equal(downscoped?.head,40);assert.deepEqual(downscoped?.events.map((item)=>item.sequence),[1,3,4]);
+    const exact=matchingAccountSnapshot([{...snapshot,profile}],identity,profile);
+    assert.equal(exact?.head,40);assert.deepEqual(exact?.events.map((item)=>item.sequence),[1,3,4]);
+  }
+  assert.deepEqual(matchingAccountSnapshot([snapshot],identity,"full")?.events.map((item)=>item.sequence),[1,2,3,4]);
 });
 
 test("each route requests only its own evidence, private content, and historical jobs", () => {
@@ -381,7 +396,7 @@ test("streamed impersonation preserves fictional identity, actor billing, and ca
 
   const { matchingAccountSnapshot } = await import("../src/state/account-cache.ts");
   const identity = { userId: "fictional-user", policyVersion: embedded.session.policy.version, accepted: true, impersonating: true };
-  const snapshot = { key: `fictional-user:${identity.policyVersion}:v1`, userId: identity.userId, policyVersion: identity.policyVersion, profile: "workspace", head: 1, events: [{}], savedAt: Date.now(), schemaVersion: 1 };
+  const snapshot = { key: `fictional-user:${identity.policyVersion}:v2`, userId: identity.userId, policyVersion: identity.policyVersion, profile: "workspace", head: 1, events: [{}], savedAt: Date.now(), schemaVersion: 2 };
   assert.equal(matchingAccountSnapshot([snapshot], identity, "workspace"), null);
 });
 
@@ -632,6 +647,27 @@ test("analytics excludes fictional streams in SQL and batches all dashboard read
   assert.equal((await request("/api/analytics?days=all")).status, 403);
   assert.equal(database.calls.some((call) => call.kind === "batch"), false);
   assert.equal(database.writeCount(), 0);
+});
+
+test("production-shaped idle histories collapse to one scoped page while raw audit and genuine attention stay intact",async()=>{
+  const {database,request}=await productionWorker();const stream="creative:dev-local-creative";const now=new Date().toISOString();
+  const future=new Date(Date.now()+86_400_000).toISOString();
+  let sequence=Number(database.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head);
+  const insert=database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  const phantom={surface:"studio",context:"studio-overview",terminal_type:"idle_timeout",terminal_ref:null,active_ms:30_000,idle_ms:30_000,visible_refs:[],outcome_weight:.013,friction_score:0,capture_version:"attention-v2",expires_at:future};
+  const append=(type,payload,owner=stream)=>insert.run(crypto.randomUUID(),owner,owner===stream?++sequence:1,now,now,"user","attention-performance",crypto.randomUUID(),null,null,1,type,JSON.stringify(payload));
+  database.sqlite.exec("BEGIN");for(let index=0;index<5_001;index+=1)append("AttentionEpisodeObserved",{...phantom,capture_version:index%2?"attention-v1":"attention-v2"});
+  const genuine=[{...phantom,active_ms:30_001},{...phantom,visible_refs:["block:authored"]},{...phantom,context:"writing-direction"},{...phantom,friction_score:.45},{...phantom,outcome_weight:.18},{}];
+  for(const payload of genuine)append("AttentionEpisodeObserved",payload);append("AttentionSignalsForgotten",{before_sequence:0});append("ProjectCreated",{project_id:"fast-project",name:"Fast"});append("AttentionEpisodeObserved",phantom,"creative:other-owner");database.sqlite.exec("COMMIT");
+  const full=await(await request("/api/events?after=0&limit=5000&content=0")).json();assert.equal(full.events.length,5_000);assert.equal(full.hasMore,true);assert.ok(full.events.some((item)=>item.type==="AttentionEpisodeObserved"&&item.payload.active_ms===30_000));
+  for(const profile of ["memory","scout","sessions"]){database.reset();const response=await request(`/api/events?after=0&limit=5000&profile=${profile}&content=0`);const body=await response.json();
+    assert.equal(response.status,200,profile);assert.equal(body.head,sequence,profile);assert.equal(body.nextAfter,sequence,profile);assert.equal(body.hasMore,false,profile);assert.ok(body.events.length<5_000,profile);
+    assert.equal(body.events.filter((item)=>item.clientId==="attention-performance"&&item.type==="AttentionEpisodeObserved").length,genuine.length,profile);
+    assert.ok(body.events.some((item)=>item.type==="AttentionSignalsForgotten"),profile);assert.ok(body.events.some((item)=>item.payload.project_id==="fast-project"),profile);
+    assert.ok(body.events.every((item)=>item.streamId===stream),profile);assert.ok(database.calls.length<=2,profile);assert.equal(database.writeCount(),0,profile);
+  }
+  database.reset();const analytics=await(await request("/api/analytics?days=all")).json();
+  assert.ok(analytics.report.source.eventCount<5_000);assert.match(database.calls.find((call)=>call.kind==="batch")?.statements[2].sql??"",/capture_version/);assert.ok(database.calls.length<=2);assert.equal(database.writeCount(),0);
 });
 
 test("saved replay listings reconcile and load their own data in bounded database batches", async () => {

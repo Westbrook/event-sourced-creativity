@@ -1,3 +1,5 @@
+import { isPhantomAttentionEpisode } from "./attention.ts";
+
 export const EVENT_PROFILE_ORDER = ["projects", "workspace", "memory", "scout", "sessions", "full"] as const;
 
 export type EventProfile = typeof EVENT_PROFILE_ORDER[number];
@@ -43,8 +45,9 @@ export function eventProfileRank(profile: EventProfile) {
   return EVENT_PROFILE_ORDER.indexOf(profile);
 }
 
-export function eventMatchesProfile(profile: EventProfile, eventType: string) {
+export function eventMatchesProfile(profile: EventProfile, eventType: string, payload?: Record<string, unknown>) {
   if (profile === "full") return true;
   if (profile === "projects") return (PROJECT_BOOTSTRAP_EVENT_TYPES as readonly string[]).includes(eventType);
+  if (eventType === "AttentionEpisodeObserved" && isPhantomAttentionEpisode(payload)) return false;
   return !PROFILE_EXCLUDED_EVENT_TYPES[profile].includes(eventType);
 }

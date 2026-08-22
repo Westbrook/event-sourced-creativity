@@ -4,6 +4,7 @@ import { normalizePromptTechnique, type PromptTechnique } from "./prompt-structu
 import { documentSlug } from "./routes.ts";
 import { canvasInteractionAnalytics, canvasInteractionIdsForEvent, type CanvasInteractionCategory, type CanvasInteractionId } from "./canvas-interactions.ts";
 import { DOCUMENT_ARTIFACT_KINDS, documentArtifactDefinition, isDocumentArtifactKind, type DocumentArtifactKind } from "./document-artifacts.ts";
+import { attentionEvents } from "./attention.ts";
 
 export type AnalyticsStream = {
   streamId:string;
@@ -121,7 +122,11 @@ export function buildAnalyticsReport(streams:AnalyticsStream[],options:{rangeDay
   let totalEvents=0,uploads=0,retainedOutcomes=0,failures=0,activeMs=0,idleMs=0,totalCost=0,exactCostReceipts=0,estimatedCostReceipts=0,promotions=0,draftPromotions=0,referencePixelUses=0,studyLocks=0,studyCompositions=0,relations=0,artifactsCompleted=0,artifactsViewed=0,artifactsExported=0,artifactsFailed=0;
   let readinessRequested=0,readinessReady=0,readinessReview=0,readinessBlocked=0,readinessAcknowledged=0,readinessPreventedCost=0,readinessProviderBlocks=0,readinessSafetyWarnings=0,preflightedRequests=0,unpreflightedRequests=0;
 
-  const selectedStreams=streams.filter((stream)=>includeSynthetic||!stream.fictional);
+  const selectedStreams=streams.filter((stream)=>includeSynthetic||!stream.fictional).map((stream)=>{
+    const visibleEvents=includeSynthetic?stream.events:stream.events.filter((event)=>!syntheticEvent(event));
+    const retainedAttention=new Set(attentionEvents(visibleEvents,now).map((event)=>event.eventId));
+    return {...stream,events:stream.events.filter((event)=>event.type!=="AttentionEpisodeObserved"||retainedAttention.has(event.eventId))};
+  });
   for(const stream of selectedStreams){
     let currentProject="",currentDocument="";const ordered=[...stream.events].sort((a,b)=>a.sequence-b.sequence);
     for(const event of ordered){if(!includeSynthetic&&syntheticEvent(event))continue;const p=event.payload;if(event.type==="ProjectCreated"){currentProject=text(p.project_id);if(currentProject)projectMeta.set(qualified(stream.streamId,currentProject),{id:currentProject,name:text(p.name)||"Untitled project",userId:stream.userId,organizationId:stream.organizationId,fictional:stream.fictional});}if(event.type==="ProjectOpened")currentProject=text(p.project_id)||currentProject;if(event.type==="ProjectRenamed"){const key=qualified(stream.streamId,text(p.project_id)||currentProject);const project=projectMeta.get(key);if(project)project.name=text(p.new_name)||project.name;}if(event.type==="DocumentCreated"||event.type==="DocumentForked"){currentDocument=text(p.document_id);const projectId=text(p.project_id)||currentProject;documentMeta.set(qualified(stream.streamId,currentDocument),{id:currentDocument,title:text(p.title)||"Untitled document",projectId,userId:stream.userId,organizationId:stream.organizationId,fictional:stream.fictional,createdAt:event.occurredAt,removed:false});}if(event.type==="DocumentOpened")currentDocument=text(p.document_id)||currentDocument;if(event.type==="DocumentRenamed"){const document=documentMeta.get(qualified(stream.streamId,text(p.document_id)||currentDocument));if(document)document.title=text(p.new_title)||document.title;}if(event.type==="DocumentRemoved"||event.type==="DocumentRestored"){const document=documentMeta.get(qualified(stream.streamId,text(p.document_id)||currentDocument));if(document)document.removed=event.type==="DocumentRemoved";}
