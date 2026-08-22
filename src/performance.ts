@@ -208,6 +208,9 @@ export function beginRoutePopulation(path: string) {
   delete root().formaHistoryProfile;
   delete root().formaPrivateContentState;
   delete root().formaPrivateContentReadyMs;
+  delete root().formaAuditEventCount;
+  delete root().formaAuditTotal;
+  delete root().formaAuditMatched;
   delete root().formaPopulatedMs;
   delete root().formaRouteLatencyMs;
   delete root().formaSessionSource;
@@ -274,7 +277,7 @@ export function completeRoutePopulation(path: string, retry = 0) {
     else if (surface === "operations-canvas-governance") meaningful = Boolean(main?.querySelector("forma-canvas-governance .canvas-governance-grid,forma-canvas-governance .canvas-governance-error[role=alert]"));
     else if (surface === "operations-canvas-sync") meaningful = Boolean(main?.querySelector('forma-canvas-sync-inspector[data-forma-surface-ready="true"] .system-metrics'));
     else if (surface === "operations-permissions") meaningful = Boolean(main?.querySelector("forma-admin-events .permission-table,forma-admin-events > .admin-page > .replay-empty"));
-    else if (surface === "operations-event-stream") meaningful = Boolean(main?.querySelector("forma-admin-events .event-table tbody,forma-admin-events > .admin-page > .replay-empty"));
+    else if (surface === "operations-event-stream") meaningful = Boolean(main?.querySelector('forma-admin-events [data-forma-surface-ready="true"] .event-table tbody,forma-admin-events [data-forma-surface-ready="true"] [role="alert"],forma-admin-events > .admin-page > .replay-empty'));
     else if (surface === "laboratory-replay") meaningful = Boolean(main?.querySelector('forma-admin-events .saved-replays[data-forma-surface-ready="true"],forma-admin-events > .admin-page > .replay-empty'));
     else if (surface === "laboratory-image-adapters") meaningful = Boolean(main?.querySelector("forma-image-adapter-lab .adapter-lab-status,forma-image-adapter-lab .adapter-lab-warning[role=alert]"));
     else if (surface === "laboratory-focal-points") meaningful = Boolean(main?.querySelector("forma-focal-point-lab .focal-lab-controls") && main.querySelector("forma-focal-point-lab .focal-lab-assets,forma-focal-point-lab .focal-lab-empty"));

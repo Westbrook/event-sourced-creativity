@@ -182,11 +182,12 @@ export class FormaStore {
   async stopDocumentJob(jobId:string,force=false){try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/${force?"force-fail":"cancel"}`,{method:"POST"},force?"force-fail this document operation":"stop this document operation");const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok||!body.job){const messages:Record<string,string>={job_finalizing:"This operation is already finalizing and can no longer be stopped.",admin_required:"Only an administrator can force-fail an operation."};throw new Error(messages[body.error??""]??body.error??"The operation could not be stopped");}this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast(force?"Operation force-failed. Its audit receipt and released budget remain available.":"Operation stopped. Any reserved application budget was released.");await Promise.all([this.syncDocumentJobs(),this.refreshSession()]);return true;}catch(error){this.toast(error instanceof Error?error.message:"The operation could not be stopped");return false;}}
   #flushPendingJobNotices(){if(document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;const jobs=this.#pendingJobNotices.splice(0);this.toast(jobs.length===1?this.#jobNotice(jobs[0]):`${jobs.length} background document operations finished.`);for(const job of jobs)void this.#ackJob(job.jobId);}
   async #readEventPages(after=0){return this.#readEventStream(after,"full",after===0);}
+  async replayAuthoritativeHistory(sequence:number){const complete=await this.#readEventStream(0,"full",false);this.replayEvents.set(complete.events);this.setReplayAsOf(sequence);}
   async #readEventStream(after:number,profile:AccountSnapshotProfile,includeContent=false){
     let cursor=Math.max(0,after),head=cursor,first=true,initialHead=Number.POSITIVE_INFINITY;
     const events:CreativeEvent[]=[];let content:Record<string,string>={};
     for(let page=0;page<500;page+=1){
-      const limit=5000;
+      const limit=profile==="full"?5000:6500;
       const selection=profile==="full"?"":`&profile=${profile}`;
       const response=await fetch(`/api/events?after=${cursor}&limit=${limit}&content=${first&&includeContent?1:0}${selection}`);
       if(!response.ok)throw new Error(`Event stream returned ${response.status}`);

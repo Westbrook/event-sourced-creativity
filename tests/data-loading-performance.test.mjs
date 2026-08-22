@@ -255,8 +255,8 @@ test("same-profile and downscoped snapshots remove timer artifacts without chang
 test("each route requests only its own evidence, private content, and historical jobs", () => {
   const expected = {
     "/projects": ["projects", false, false], "/memory": ["memory", true, false], "/scout": ["scout", false, false],
-    "/sessions": ["sessions", false, false], "/operations/events": ["full", false, false],
-    "/operations/events/stream": ["full", false, false], "/operations": ["sessions", false, false],
+    "/sessions": ["sessions", false, false], "/operations/events": ["projects", false, false],
+    "/operations/events/stream": ["projects", false, false], "/operations": ["sessions", false, false],
     "/operations/events/sync": ["sessions", false, false], "/operations/analytics": ["projects", false, false],
     "/operations/canvas": ["projects", false, false], "/operations/events/permissions": ["projects", false, false],
     "/laboratory/replay": ["projects", false, false], "/laboratory/image-adapters": ["projects", false, false],
@@ -665,9 +665,41 @@ test("production-shaped idle histories collapse to one scoped page while raw aud
     assert.equal(body.events.filter((item)=>item.clientId==="attention-performance"&&item.type==="AttentionEpisodeObserved").length,genuine.length,profile);
     assert.ok(body.events.some((item)=>item.type==="AttentionSignalsForgotten"),profile);assert.ok(body.events.some((item)=>item.payload.project_id==="fast-project"),profile);
     assert.ok(body.events.every((item)=>item.streamId===stream),profile);assert.ok(database.calls.length<=2,profile);assert.equal(database.writeCount(),0,profile);
+    const statement=database.calls.find((call)=>call.kind==="batch")?.statements[0];const plan=database.sqlite.prepare(`EXPLAIN QUERY PLAN ${statement.sql}`).all(...statement.values);
+    assert.match(plan.map((step)=>step.detail).join(" "),/idx_events_nonphantom_stream_sequence/,profile);
   }
   database.reset();const analytics=await(await request("/api/analytics?days=all")).json();
   assert.ok(analytics.report.source.eventCount<5_000);assert.match(database.calls.find((call)=>call.kind==="batch")?.statements[2].sql??"",/capture_version/);assert.ok(database.calls.length<=2);assert.equal(database.writeCount(),0);
+  const analyticsStatement=database.calls.find((call)=>call.kind==="batch")?.statements[2];const analyticsPlan=database.sqlite.prepare(`EXPLAIN QUERY PLAN ${analyticsStatement.sql}`).all(...analyticsStatement.values);
+  assert.match(analyticsPlan.map((step)=>step.detail).join(" "),/idx_events_nonphantom_stream_sequence/);
+
+  database.reset();const auditResponse=await request("/api/events?audit=1&limit=150&content=1");const audit=await auditResponse.json();
+  assert.equal(auditResponse.status,200);assert.equal(audit.events.length,150);assert.equal(audit.head,sequence);assert.equal(audit.total,sequence);assert.equal(audit.matched,sequence);assert.equal(audit.hasOlder,true);assert.equal("content" in audit,false);
+  assert.ok(audit.events.some((item)=>item.type==="AttentionEpisodeObserved"&&item.payload.active_ms===30_000));assert.ok(audit.events.every((item)=>item.streamId===stream));
+  assert.deepEqual(audit.events.map((item)=>item.sequence),[...audit.events].sort((left,right)=>left.sequence-right.sequence).map((item)=>item.sequence));assert.ok(audit.actors.includes("user"));
+  const auditBatch=database.calls.find((call)=>call.kind==="batch");assert.match(auditBatch?.statements[0].sql??"",/ORDER BY sequence DESC LIMIT/);assert.ok(database.calls.length<=2);assert.equal(database.writeCount(),0);
+
+  append("ApplicationViewVisited",{application:"operations",surface:"operations-events",route_family:"operations-events"});
+  database.reset();const older=await(await request(`/api/events?audit=1&limit=150&before=${audit.nextBefore}&asOf=${audit.head}`)).json();
+  assert.equal(older.events.length,150);assert.ok(older.events.at(-1).sequence<audit.events[0].sequence);assert.equal(older.head,audit.head);assert.equal(older.total,audit.total);assert.ok(database.calls.length<=2);assert.equal(database.writeCount(),0);
+
+  const oldest=database.sqlite.prepare("SELECT event_id,correlation_id FROM events WHERE stream_id=? AND client_id=? AND type=? ORDER BY sequence LIMIT 1").get(stream,"attention-performance","AttentionEpisodeObserved");
+  database.reset();const filtered=await(await request(`/api/events?audit=1&type=attentionepisode&correlation=${encodeURIComponent(oldest.correlation_id.slice(0,12))}`)).json();
+  assert.equal(filtered.matched,1);assert.equal(filtered.events[0].eventId,oldest.event_id);assert.equal(filtered.total,sequence);assert.ok(database.calls.length<=2);assert.equal(database.writeCount(),0);
+
+  assert.equal((await request("/api/events?audit=1&limit=not-a-number&before=Infinity")).status,200);
+  database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("dev-local-creative");database.reset();
+  assert.equal((await request("/api/events?audit=1")).status,403);assert.equal(database.calls.some((call)=>call.kind==="batch"),false);assert.equal(database.writeCount(),0);
+});
+
+test("scoped sessions remain a single page above 5,000 genuine receipts without widening full audit pages",async()=>{
+  const {database,request}=await productionWorker();const stream="creative:dev-local-creative";const now=new Date().toISOString();
+  let sequence=Number(database.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head);
+  const insert=database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  database.sqlite.exec("BEGIN");for(let index=0;index<5_175;index+=1)insert.run(crypto.randomUUID(),stream,++sequence,now,now,"user","session-pagination",crypto.randomUUID(),null,null,1,"CanvasInteractionRecorded",JSON.stringify({interaction_id:"item_selected",document_id:"doc-atmosphere"}));database.sqlite.exec("COMMIT");
+  database.reset();const response=await request("/api/events?profile=sessions&after=0&limit=6500&content=0");const scoped=await response.json();
+  assert.equal(response.status,200);assert.ok(scoped.events.length>5_000);assert.ok(scoped.events.length<=6_500);assert.equal(scoped.head,sequence);assert.equal(scoped.nextAfter,sequence);assert.equal(scoped.hasMore,false);assert.ok(database.calls.length<=2);assert.equal(database.writeCount(),0);
+  const raw=await(await request("/api/events?after=0&limit=6500&content=0")).json();assert.equal(raw.events.length,5_000);assert.equal(raw.hasMore,true);
 });
 
 test("saved replay listings reconcile and load their own data in bounded database batches", async () => {

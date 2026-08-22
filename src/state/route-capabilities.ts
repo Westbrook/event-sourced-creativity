@@ -23,7 +23,7 @@ export function routeCapabilities(path: string): RouteCapabilities {
     return { profile: "sessions", privateContent: false, jobHistory: false };
   }
   if (["/operations/events", "/operations/events/stream", "/admin/events", "/admin/events/stream"].includes(pathname)) {
-    return { profile: "full", privateContent: false, jobHistory: false };
+    return { profile: "projects", privateContent: false, jobHistory: false };
   }
   if (["/operations", "/system", "/operations/events/sync", "/admin/events/sync"].includes(pathname)) {
     return { profile: "sessions", privateContent: false, jobHistory: false };

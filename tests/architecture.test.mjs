@@ -249,7 +249,10 @@ test("event administration bounds its visible stream and initializes replay only
   assert.match(source, /#eventLimit\s*=\s*150/);
   assert.match(source, /events\.slice\(-this\.#eventLimit\)\.reverse\(\)/);
   assert.match(source, /this\.#eventLimit\+=150/);
-  assert.match(source, /firstUpdated\(\)\{if\(this\.#tab==="replay"&&this\.store\.session\.get\(\)\?\.user\.role==="admin"\)void this\.#loadSaved\(\);\}/);
+  assert.match(source, /firstUpdated\(\)\{if\(this\.store\.session\.get\(\)\?\.user\.role!=="admin"\)return;if\(this\.#tab==="replay"\)void this\.#loadSaved\(\);else if\(this\.#tab==="stream"\)void this\.#loadAudit\(\);\}/);
+  assert.match(source,/new URLSearchParams\(\{audit:"1",limit:"150"\}\)/);
+  assert.match(source,/this\.store\.replayAuthoritativeHistory\(sequence\)/);
+  assert.match(source,/data-forma-surface-ready=\$\{String\(this\.#auditResolved&&!this\.#auditLoading\)\}/);
   assert.match(source, /data-forma-surface-ready=\$\{String\(this\.#savedResolved\)\}/);
 });
 

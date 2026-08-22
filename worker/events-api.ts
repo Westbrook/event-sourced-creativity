@@ -2,7 +2,7 @@ import { generateCreativeDirection, generateCreativeVideo, generateDocumentArtif
 import { generateCreativeImage, selectImageAdapter } from "./image-adapter";
 import { readGeneratedImageReference, storeGeneratedImage, storeGeneratedMedia } from "./media-api";
 import { loadPrivateContent, readBudgets, releaseBudget, releaseCostBudget, requireConsent, requireUser, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, storePrivateContent, type PilotUser } from "./pilot-policy";
-import { appendEvents, appendEventsWithClientReceipts, ensureSchema, insertEvent, makeEvent, readEventPageWithHead, readEventsByClientEventIds, readIntelligenceEvents, readProfileEventPage, readWorkspaceEvents, StaleSequenceError, streamHead, uuidV7, type EventRow, type WorkerEnv } from "./runtime";
+import { appendEvents, appendEventsWithClientReceipts, ensureSchema, insertEvent, makeEvent, readAuditEventPage, readEventPageWithHead, readEventsByClientEventIds, readIntelligenceEvents, readProfileEventPage, readWorkspaceEvents, SCOPED_EVENT_PAGE_SIZE, StaleSequenceError, streamHead, uuidV7, type EventRow, type WorkerEnv } from "./runtime";
 import { analyzeImageSample, runExtractorEvaluation, type ImageSample, type ReferenceFindingKind } from "../src/model/extractors";
 import { briefEligibility, composeReentryBrief } from "../src/model/brief";
 import { foldEvents, type CreativeProjection } from "../src/model/events";
@@ -175,12 +175,13 @@ export type EventExecutionControl = { signal: AbortSignal; beginCommit: () => Pr
 
 export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userOverride?:PilotUser,execution?:EventExecutionControl):Promise<Response>{
   try{
-    await ensureSchema(env);const auth=userOverride?{response:null,user:userOverride}:await requireUser(request,env,request.method==="GET"?"viewer":"creator");if(auth.response||!auth.user)return auth.response!;const {userId:ownerId,streamId}=auth.user;const billingOwnerId=auth.user.billingUserId??ownerId;await seedIfEmpty(env,streamId);
+    await ensureSchema(env);const inspection=request.method==="GET"&&new URL(request.url).searchParams.get("audit")==="1";const auth=userOverride?{response:null,user:userOverride}:await requireUser(request,env,inspection?"admin":request.method==="GET"?"viewer":"creator");if(auth.response||!auth.user)return auth.response!;const {userId:ownerId,streamId}=auth.user;const billingOwnerId=auth.user.billingUserId??ownerId;await seedIfEmpty(env,streamId);
     if(request.method==="GET"){
       const url=new URL(request.url);const after=Math.max(0,Math.floor(Number(url.searchParams.get("after")??0))||0);
+      if(inspection){const page=await readAuditEventPage(env,streamId,{before:Number(url.searchParams.get("before")??0),asOf:Number(url.searchParams.get("asOf")??0),limit:Number(url.searchParams.get("limit")??150),actor:url.searchParams.get("actor")??"",type:url.searchParams.get("type")??"",correlation:url.searchParams.get("correlation")??""});return Response.json({...page,permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});}
       const profile=url.searchParams.get("profile");
       if(isScopedEventProfile(profile)){
-        const limit=Math.max(1,Math.min(5000,Math.floor(Number(url.searchParams.get("limit")??5000))||5000));
+        const limit=Math.max(1,Math.min(SCOPED_EVENT_PAGE_SIZE,Math.floor(Number(url.searchParams.get("limit")??SCOPED_EVENT_PAGE_SIZE))||SCOPED_EVENT_PAGE_SIZE));
         const page=await readProfileEventPage(env,streamId,profile,after,limit);
         return Response.json({...page,permissionSchemaVersion:PERMISSION_SCHEMA_VERSION});
       }
