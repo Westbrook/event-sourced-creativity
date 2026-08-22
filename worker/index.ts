@@ -52,6 +52,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
         const encoding=(asset.headers.get("content-encoding")??"identity").trim().toLowerCase();
         const response=personalize&&asset.ok&&asset.body&&/text\/html/i.test(asset.headers.get("content-type")??"")&&encoding==="identity"?streamNavigationSession(asset,authenticated!,authenticatedStarted):asset;
         const headers=new Headers(response.headers);
+        if(applicationDefinition(route.application).administratorOnly){headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");}
         headers.set("x-forma-route-family",route.canonicalFamily);
         headers.set("x-forma-application",route.application);
         return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
@@ -69,9 +70,24 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
       return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
     }
+    const directHtmlPath=/\.html?$/i.test(url.pathname)?url.pathname.replace(/(?:\/index)?\.html?$/i,"")||"/":"";
+    const directHtmlRoute=directHtmlPath?resolveServerRoute(directHtmlPath):null;
+    if(directHtmlRoute&&applicationDefinition(directHtmlRoute.application).administratorOnly){
+      const authorization=await requireUser(request,env,"admin",{account:"principal"});
+      if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
+    }
     const developmentAssetRequest=/^\/(?:@vite\/|@id\/|@fs\/|__vite_ping$|__open-in-editor)/.test(url.pathname);
     const assetRequest=developmentAssetRequest||/^\/(?:assets\/|og\.png$|favicon\.|robots\.txt$)|\.[a-z0-9]{2,8}$/i.test(url.pathname);
-    if(assetRequest)return env.ASSETS.fetch(request);
+    if(assetRequest){
+      const asset=await env.ASSETS.fetch(request);
+      if(directHtmlRoute&&applicationDefinition(directHtmlRoute.application).administratorOnly){
+        const headers=new Headers(asset.headers);
+        headers.set("cache-control","private, no-store");
+        headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
+        return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
+      }
+      return asset;
+    }
     if(request.method!=="GET"&&request.method!=="HEAD")return new Response("Method not allowed",{status:405});
     return new Response("Page not found",{status:404,headers:{"content-type":"text/plain; charset=utf-8"}});
 }

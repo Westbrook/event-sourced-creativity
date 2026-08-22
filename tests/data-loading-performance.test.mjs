@@ -527,7 +527,7 @@ test("internal application HTML, compatibility routes, and protected bundles rej
   const assets = htmlAssets(environment);
   database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("dev-local-creative");
 
-  for (const path of ["/operations", "/operations/analytics", "/system", "/admin/events", "/laboratory/replay", "/admin/events/replay", "/protected-assets/internal-test.js"]) {
+  for (const path of ["/operations", "/operations/analytics", "/operations.html", "/operations/index.html", "/operations/analytics.html", "/system", "/system.html", "/admin/events", "/admin/events.html", "/laboratory/replay", "/laboratory/replay.html", "/admin/events/replay", "/admin/events/replay.html", "/protected-assets/internal-test.js"]) {
     const before = assets.requests.length;
     const response = await request(path);
     assert.equal(response.status, 403, path);
@@ -539,6 +539,9 @@ test("internal application HTML, compatibility routes, and protected bundles rej
 
   database.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id=?").run("dev-local-creative");
   assert.equal((await request("/operations")).status, 200);
+  const internalAlias=await request("/operations.html");
+  assert.equal(internalAlias.status,200);
+  assert.equal(internalAlias.headers.get("cache-control"),"private, no-store");
   const protectedAsset = await request("/protected-assets/internal-test.js");
   assert.equal(protectedAsset.status, 200);
   assert.equal(protectedAsset.headers.get("cache-control"), "private, no-store");

@@ -176,6 +176,7 @@ test("creator privacy, managed evidence, and Canvas reading order remain outside
   assert.doesNotMatch(canvas, /enoughToOrganize\?html`<button[^`]*>Reading order/);
   assert.doesNotMatch(canvas, /enoughToOrganize\?html`<button[^`]*>Accessible reading order/);
   assert.match(worker, /administratorOnly\)\{[\s\S]*?requireUser\(request,env,"admin"/);
+  assert.match(worker, /directHtmlRoute&&applicationDefinition\(directHtmlRoute\.application\)\.administratorOnly/);
   assert.match(worker, /\/protected-assets\//);
   assert.match(config, /protected-assets/);
 });
