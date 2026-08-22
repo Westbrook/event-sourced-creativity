@@ -12,7 +12,10 @@ function measuredDatabase() {
 
   class PreparedStatement {
     constructor(sql, values = []) { this.sql = sql; this.values = values; }
-    bind(...values) { return new PreparedStatement(this.sql, values); }
+    bind(...values) {
+      assert.ok(values.length <= 100, `Cloudflare D1 permits at most 100 bound parameters; received ${values.length}`);
+      return new PreparedStatement(this.sql, values);
+    }
     execute(kind) {
       const statement = sqlite.prepare(this.sql);
       if (kind === "first") return statement.get(...this.values) ?? null;
@@ -85,6 +88,46 @@ function addTerminalPromptFans(sqlite, count = 2) {
     const result = { stage: "failed", members, completedCount: 0, failedCount: 4, canceledCount: 0, totalCount: 4 };
     insert.run(parent, owner, stream, "doc-atmosphere", "prompt_fan", "failed", "studio", parent, 1, JSON.stringify({ childJobIds: childIds }), JSON.stringify(result), "prompt_fan_failed", now, now, now, expires, now);
   }
+}
+
+function addActivePromptFan(sqlite) {
+  const owner = "dev-local-creative";
+  const stream = `creative:${owner}`;
+  const now = new Date().toISOString();
+  const expires = new Date(Date.now() + 86_400_000).toISOString();
+  const parent = "active-fan";
+  const childIds = Array.from({ length: 4 }, (_, index) => `${parent}-${index}`);
+  const insert = sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,requested_at,completed_at,notified_at,expires_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  for (const [index, child] of childIds.entries()) {
+    insert.run(child, owner, stream, "doc-atmosphere", "generate", index ? "queued" : "running", "studio", child, 1,
+      JSON.stringify({ documentRevision: "revision-one", promptTechnique: "prose", parentJobId: parent }), null, null, now, null, null, expires, now);
+  }
+  const members = childIds.map((jobId, index) => ({
+    jobId, promptTechnique: "prose", status: index ? "queued" : "running", error: null, moderationPromptRef: null, attemptCount: 0, updatedAt: now,
+  }));
+  const result = { stage: "running", progressMessage: "0 of 4 prompt approaches finished.", members, completedCount: 0, failedCount: 0, canceledCount: 0, totalCount: 4 };
+  insert.run(parent, owner, stream, "doc-atmosphere", "prompt_fan", "running", "studio", parent, 1,
+    JSON.stringify({ documentRevision: "revision-one", fanKind: "generate", childJobIds: childIds }), JSON.stringify(result), null, now, null, null, expires, now);
+  return { parent, childIds };
+}
+
+function addBindingFailureJob(sqlite, { jobId = "binding-failure", correlationId = jobId } = {}) {
+  const owner = "dev-local-creative";
+  const now = new Date().toISOString();
+  const expires = new Date(Date.now() + 86_400_000).toISOString();
+  sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,requested_at,completed_at,notified_at,expires_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(jobId, owner, `creative:${owner}`, "doc-atmosphere", "render_document", "failed", "studio", correlationId, 1,
+      JSON.stringify({ documentRevision: "revision-one", artifactKind: "slides", snapshot: { retained: "private recovery input" } }),
+      JSON.stringify({ artifactKind: "slides", plannerInput: { retained: "private planner checkpoint" } }),
+      "Wrong number of parameter bindings", now, now, now, expires, now);
+  return { owner, stream: `creative:${owner}`, jobId, correlationId, now };
+}
+
+function addCorrelatedTerminal(sqlite, stream, correlationId, now = new Date().toISOString()) {
+  const head = Number(sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head);
+  sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), stream, head + 1, now, now, "worker:document", "performance-test", correlationId, null, null, 1,
+      "DocumentRenderCompleted", JSON.stringify({ document_id: "doc-atmosphere", artifact_id: "artifact-1" }));
 }
 
 test("route timing correctly classifies Canvas proposals and Laboratory aliases", () => {
@@ -168,6 +211,60 @@ test("projects ignore acknowledged failures while preserving active and unnotifi
   const pending = await (await request("/api/document-jobs?scope=active")).json();
   assert.deepEqual(pending.jobs.map((job) => job.jobId), ["fan-0"]);
   assert.equal(database.writeCount(), 0);
+});
+
+test("active prompt fans reconcile ordered children without N+1 reads or redundant list queries", async () => {
+  const { database, request } = await productionWorker();
+  const { parent, childIds } = addActivePromptFan(database.sqlite);
+  database.reset();
+
+  const response = await request("/api/document-jobs?scope=active");
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.deepEqual(body.jobs.find((job) => job.jobId === parent).members.map((member) => member.jobId), childIds);
+  assert.ok(database.calls.length <= 4, `expected auth, list, parent, and one child query; received ${database.calls.length}`);
+  assert.equal(database.calls.filter((call) => /SELECT \* FROM document_jobs WHERE owner_id=\? AND job_id IN/i.test(call.sql)).length, 1);
+  assert.equal(database.writeCount(), 0);
+});
+
+test("legacy failed-job repair reads only indexed, owner-scoped correlation receipts", async () => {
+  const { database, request } = await productionWorker();
+  const failure = addBindingFailureJob(database.sqlite);
+  addCorrelatedTerminal(database.sqlite, failure.stream, failure.correlationId, failure.now);
+  database.reset();
+
+  const response = await request("/api/document-jobs");
+  assert.equal(response.status, 200);
+  const stored = database.sqlite.prepare("SELECT status,request_json,result_json FROM document_jobs WHERE job_id=?").get(failure.jobId);
+  assert.equal(stored.status, "completed");
+  assert.equal(JSON.parse(stored.request_json).snapshot.retained, "private recovery input");
+  assert.equal(JSON.parse(stored.result_json).plannerInput.retained, "private planner checkpoint");
+  assert.ok(database.calls.some((call) => /INDEXED BY idx_events_correlation/i.test(call.sql)));
+  assert.equal(database.calls.filter((call) => /SELECT \* FROM events WHERE stream_id=\? AND sequence>\?/i.test(call.sql)).length, 0);
+});
+
+test("failed-job recovery never trusts another account's matching correlation", async () => {
+  const { database, request } = await productionWorker();
+  const failure = addBindingFailureJob(database.sqlite, { correlationId: "cross-account-correlation" });
+  addCorrelatedTerminal(database.sqlite, "creative:another-account", failure.correlationId, failure.now);
+  database.reset();
+
+  const response = await request("/api/document-jobs");
+  assert.equal(response.status, 200);
+  assert.equal(database.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(failure.jobId).status, "failed");
+  assert.ok(database.calls.length <= 3, `expected auth, visible jobs, and indexed receipts only; received ${database.calls.length}`);
+  assert.equal(database.writeCount(), 0);
+});
+
+test("job acknowledgments skip unrelated global budget and retention maintenance", async () => {
+  const { database, request } = await productionWorker();
+  addTerminalPromptFans(database.sqlite, 1);
+  database.reset();
+
+  const response = await request("/api/document-jobs/fan-0/ack", { method: "POST" });
+  assert.equal(response.status, 200);
+  assert.equal(database.calls.some((call) => /FROM events reserved/i.test(call.sql)), false);
+  assert.equal(database.calls.some((call) => /UPDATE document_jobs SET request_json='\{\}'/i.test(call.sql)), false);
 });
 
 test("idle polling summarizes large recovery checkpoints while explicit inspection preserves them", async () => {
@@ -268,6 +365,35 @@ test("fast interaction receipts never replay the complete account history", asyn
   assert.equal(response.status, 200);
   assert.equal(database.calls.filter((call) => /SELECT \* FROM events WHERE stream_id=\? AND sequence>\?/i.test(call.sql)).length, 0);
   assert.ok(database.calls.length <= 4, `expected ≤4 hot-path D1 round trips, received ${database.calls.length}`);
+});
+
+test("large Canvas offline batches respect D1's 100-parameter limit and remain idempotent", async () => {
+  const { database, request } = await productionWorker();
+  for (const size of [99, 100, 120]) {
+    const events = Array.from({ length: size }, (_, index) => ({
+      type: "CanvasRegisterSet",
+      payload: {
+        canvas_id: "canvas-1", item_id: "item-1", client_event_id: `canvas-${size}-${index}`,
+        operation: { object: { item_id: "item-1" }, prop: "x", value: index, hlc: { pt: index + 1, c: 0, site: "web:test" } },
+      },
+    }));
+    const body = JSON.stringify({ action: "canvas_sync", events, clientId: "performance-test" });
+    database.reset();
+
+    const response = await request("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body });
+    const first = await response.json();
+    assert.equal(response.status, 200, `${size} Canvas changes failed: ${JSON.stringify(first)}`);
+    assert.equal(first.appended.length, size);
+    if (size > 99) {
+      assert.ok(database.calls.some((call) => call.kind === "batch" && call.statements.length === 2 &&
+        call.statements.every((statement) => /FROM event_client_receipts/i.test(statement.sql))));
+    }
+
+    const retry = await request("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body });
+    const second = await retry.json();
+    assert.equal(retry.status, 200);
+    assert.deepEqual(second.appended.map((event) => event.eventId), first.appended.map((event) => event.eventId));
+  }
 });
 
 test("budget limit changes preserve previously recorded spending", async () => {

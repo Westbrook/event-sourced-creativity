@@ -1,7 +1,6 @@
 import { Signal } from "signal-polyfill";
 import { SignalObject } from "signal-utils/object";
 import { foldEvents, type CreativeEvent, type CreativeProjection, type EventInput } from "../model/events";
-import { buildReplayScenario, type ReplayScenarioKey } from "../model/scenarios";
 import type { ImageSample, ReferenceFindingKind } from "../model/extractors";
 import { readAttentionPreference, writeAttentionPreference } from "../model/attention";
 import { blockEffectFor, blockIntentFor, type AdaptiveStructure, type AdaptiveSuggestionSet } from "../model/block-types";
@@ -394,7 +393,6 @@ export class FormaStore {
         void this.syncDocumentFromRoute(this.route.get());
         void this.syncDocumentJobs();
         if(profile!=="projects")void this.#hydrateVisiblePrivateContent().catch(()=>undefined);
-        if(profile==="projects")window.setTimeout(()=>void this.#upgradeHistory("workspace").catch(()=>undefined),1_500);
       });
     } catch (error) { this.error.set(error instanceof Error ? error.message : "Unable to load event stream"); }
     finally { this.loading.set(false); this.notify(); }
@@ -751,7 +749,7 @@ export class FormaStore {
     const redone=appended.filter((event)=>event.actor==="user"&&Boolean(inverseEvent(event)));if(redone.length)this.#undo.push(redone);
   }
 
-  buildReplay(key: ReplayScenarioKey, count: number) { const events = buildReplayScenario(key, count); this.replayEvents.set(events); this.replayAsOf.set(0); this.notify(); }
+  buildReplay(events: CreativeEvent[]) { this.replayEvents.set(events); this.replayAsOf.set(0); this.notify(); }
   setReplayAsOf(value: number) { this.replayAsOf.set(value); this.notify(); }
 }
 

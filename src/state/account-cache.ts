@@ -88,7 +88,7 @@ export async function writeAccountSnapshot(
       existing.onsuccess = () => {
         const previous = existing.result as AccountSnapshot | undefined;
         const rank = (value: AccountSnapshotProfile) => value === "full" ? 2 : value === "workspace" ? 1 : 0;
-        if (!previous || rank(profile) >= rank(previous.profile)) store.put(snapshot);
+        if (!previous || previous.schemaVersion !== 1 || Date.now() - previous.savedAt > MAX_AGE_MS || rank(profile) >= rank(previous.profile)) store.put(snapshot);
         const records = store.getAll();
         records.onsuccess = () => {
           const stale = (records.result as AccountSnapshot[]).sort((left, right) => right.savedAt - left.savedAt).slice(MAX_RECORDS);

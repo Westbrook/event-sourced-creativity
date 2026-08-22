@@ -1,6 +1,6 @@
 import { handleEvents } from "./events-api";
 import { loadPrivateContent, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, requireConsent, requireUser, storePrivateContent, type PilotUser } from "./pilot-policy";
-import { appendAuditEvent, ensureSchema, readEvents, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
+import { appendAuditEvent, ensureSchema, readCorrelatedEvents, readEvents, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { foldEvents } from "../src/model/events";
 import {
   DOCUMENT_JOB_HEARTBEAT_MS,
@@ -132,7 +132,9 @@ async function reconcilePromptFanParent(env: WorkerEnv, ownerId: string, parentI
   const parent = await readJob(env, ownerId, parentId); if (!parent || parent.kind !== "prompt_fan") return parent;
   if (parent.status === "canceled" || errorDetailFromResult(parseResult(parent))?.code === "force_failed_by_admin") return parent;
   const request = parseRequest(parent); const childIds = Array.isArray(request.childJobIds) ? request.childJobIds.map(String).filter(Boolean).slice(0, 4) : [];
-  const children = (await Promise.all(childIds.map((jobId) => readJob(env, ownerId, jobId)))).filter((row): row is DocumentJobRow => Boolean(row));
+  const childRows=childIds.length?(await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND job_id IN (${childIds.map(()=>"?").join(",")})`).bind(ownerId,...childIds).all<DocumentJobRow>()).results:[];
+  const childrenById=new Map(childRows.map((row)=>[row.job_id,row]));
+  const children=childIds.map((jobId)=>childrenById.get(jobId)).filter((row):row is DocumentJobRow=>Boolean(row));
   const members = children.map((child) => {
     const childRequest = parseRequest(child); const childResult = parseResult(child);
     return { jobId: child.job_id, promptTechnique: normalizePromptTechnique(childRequest.promptTechnique), status: child.status, error: errorDetailFromResult(childResult), moderationPromptRef: childResult.moderationPromptRef ? String(childResult.moderationPromptRef) : null, attemptCount: Number(child.attempt_count), updatedAt: child.updated_at };
@@ -283,13 +285,13 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   if (row.kind === "prompt_fan") return reconcilePromptFanParent(env, user.userId, row.job_id);
   if (documentJobTerminal({ status: row.status })) return row;
 
-  const existingEvents = await readEvents(env, user.streamId);
+  const existingEvents = await readCorrelatedEvents(env, user.streamId, [row.correlation_id]);
   const finished = operationFinished(existingEvents, row);
   if (finished) {
     const now = new Date().toISOString(); const status: DocumentJobStatus = finished.failed ? "failed" : "completed";let followup:DocumentJobRow|null=null;
     if(!finished.failed&&row.kind==="chat"){const reasoned=finished.correlated.find((event)=>event.type==="AssistantReasoned"&&event.payload.preview_queued&&event.payload.preview_direction_ref);if(reasoned)followup=await queueFollowupPreview(env,user,row,{kind:"preview",documentId:row.document_id,sourceSurface:"chat",payload:{directionRef:reasoned.payload.preview_direction_ref,directionModel:reasoned.payload.model_id,sourceChatTurnId:reasoned.payload.turn_id}});}
     const failureDetail = finished.failed ? correlatedFailureDetail(finished.correlated) : null;const moderationPromptRef=finished.failed?correlatedModerationPromptRef(finished.correlated):null;
-    const result = { ...safeResult({ head: existingEvents.at(-1)?.sequence ?? 0,previewQueued:Boolean(followup),followupJobId:followup?.job_id,moderationPromptRef }, finished.correlated.map((event) => event.eventId)), ...(failureDetail ? { errorDetail: failureDetail } : {}), stage: status, progressMessage: finished.failed ? failureProgressMessage(failureDetail) : "The operation finished." };
+    const result = { ...safeResult({ head: await streamHead(env,user.streamId),previewQueued:Boolean(followup),followupJobId:followup?.job_id,moderationPromptRef }, finished.correlated.map((event) => event.eventId)), ...(failureDetail ? { errorDetail: failureDetail } : {}), stage: status, progressMessage: finished.failed ? failureProgressMessage(failureDetail) : "The operation finished." };
     await finishDocumentJob(env, row, status, result, failureDetail?.message ?? (finished.failed ? "operation_failed" : null), now, false);
     await reconcileParentForChild(env, row);
     return readJob(env, user.userId, jobId);
@@ -388,7 +390,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const now = new Date().toISOString();
   // Polling is an observation. Do not force the D1 primary to reconcile and
   // rewrite historical jobs every time an idle browser checks its status.
-  if(request.method!=="GET"){
+  if(request.method!=="GET"&&(!path||path.endsWith("/retry"))){
     await reconcileFailedBudgetReservations(env,user);
     await env.DB.prepare("UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)").bind(now, user.userId, now).run();
   }
@@ -429,7 +431,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   if (path.endsWith("/retry") && request.method === "POST") {
     const jobId = decodeURIComponent(path.slice(0, -6).replace(/\/$/, "")); const target = await readJob(env, user.userId, jobId);
     if (!target) return Response.json({ error: "job_not_found" }, { status: 404 });
-    const previous = parseResult(target); const correlated = (await readEvents(env, user.streamId)).filter((event) => event.correlationId === target.correlation_id);
+    const previous = parseResult(target); const correlated = (await readCorrelatedEvents(env,user.streamId,[target.correlation_id])).filter((event) => event.correlationId === target.correlation_id);
     const failure=errorDetailFromResult(previous)??correlatedFailureDetail(correlated);
     const failedEvent = [...correlated].reverse().find((event) => event.type === "DocumentRenderFailed" && event.payload.provider_job_id);
     const requestedEvent = correlated.find((event) => event.type === "DocumentRenderRequested");
@@ -487,15 +489,15 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     let reconciled = false;
     const repairCandidates = rows.filter((row) => row.status === "failed" && /Wrong number of parameter bindings/i.test(row.error_message ?? ""));
     if (repairCandidates.length) {
-      const events = await readEvents(env, user.streamId);
+      const events = await readCorrelatedEvents(env,user.streamId,repairCandidates.map((row)=>row.correlation_id));
       for (const row of repairCandidates) {
+        if(!operationFinished(events,row))continue;
         const retained = path ? row : await readJob(env, user.userId, row.job_id);
         if (retained && await repairMisreportedTerminalJob(env, retained, events)) reconciled = true;
       }
     }
     const parents = rows.filter((row) => row.kind === "prompt_fan" && ["queued","running","committing"].includes(row.status));
-    for (const parent of parents) await reconcilePromptFanParent(env, user.userId, parent.job_id);
-    reconciled = reconciled || parents.length > 0;
+    for(const parent of parents){const updated=await reconcilePromptFanParent(env,user.userId,parent.job_id);if(!updated||updated.status!==parent.status||updated.result_json!==parent.result_json||updated.error_message!==parent.error_message||updated.completed_at!==parent.completed_at)reconciled=true;}
     for (const row of rows) if (rowIsStale(row) && row.attempt_count >= documentJobMaxAttempts(row.kind)) {
       // A compact list row must never replace the retained recovery checkpoint.
       const retained = path ? row : await readJob(env, user.userId, row.job_id);

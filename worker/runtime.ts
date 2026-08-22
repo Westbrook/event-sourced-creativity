@@ -144,7 +144,12 @@ export async function appendEvents(env: WorkerEnv, events: EventRow[], options: 
 
 export async function readEventsByClientEventIds(env:WorkerEnv,streamId:string,clientEventIds:string[]){
   const ids=[...new Set(clientEventIds.filter(Boolean))];const events=new Map<string,EventRow>();
-  for(let offset=0;offset<ids.length;offset+=200){const page=ids.slice(offset,offset+200),placeholders=page.map(()=>"?").join(",");const result=await env.DB.prepare(`SELECT r.client_event_id,e.* FROM event_client_receipts r JOIN events e ON e.event_id=r.event_id WHERE r.stream_id=? AND r.client_event_id IN (${placeholders})`).bind(streamId,...page).all<Record<string,unknown>>();for(const row of result.results)events.set(String(row.client_event_id),serializeEvent(row));}
+  if(!ids.length)return events;
+  // D1 permits 100 bound values per statement; reserve one for the stream.
+  const statements=[];
+  for(let offset=0;offset<ids.length;offset+=99){const page=ids.slice(offset,offset+99),placeholders=page.map(()=>"?").join(",");statements.push(env.DB.prepare(`SELECT r.client_event_id,e.* FROM event_client_receipts r JOIN events e ON e.event_id=r.event_id WHERE r.stream_id=? AND r.client_event_id IN (${placeholders})`).bind(streamId,...page));}
+  const results=statements.length===1?[await statements[0].all<Record<string,unknown>>()]:await env.DB.batch<Record<string,unknown>>(statements);
+  for(const result of results)for(const row of result.results)events.set(String(row.client_event_id),serializeEvent(row));
   return events;
 }
 
@@ -171,6 +176,15 @@ export async function streamHead(env: WorkerEnv, streamId: string) {
 
 export function serializeEvent(row: Record<string, unknown>): EventRow {
   return { eventId: String(row.event_id), streamId: String(row.stream_id), sequence: Number(row.sequence), occurredAt: String(row.occurred_at), recordedAt: String(row.recorded_at), actor: String(row.actor), clientId: String(row.client_id), correlationId: String(row.correlation_id), causationId: row.causation_id ? String(row.causation_id) : null, compensatesEventId: row.compensates_event_id ? String(row.compensates_event_id) : null, schemaVersion: Number(row.schema_version), type: String(row.type), payload: JSON.parse(String(row.payload)) as Record<string, unknown> };
+}
+
+/** Recover job receipts without replaying an account's entire event ledger. */
+export async function readCorrelatedEvents(env:WorkerEnv,streamId:string,correlationIds:string[]){
+  const ids=[...new Set(correlationIds.filter(Boolean))];if(!ids.length)return[] as EventRow[];
+  const statements=[];
+  for(let offset=0;offset<ids.length;offset+=99){const page=ids.slice(offset,offset+99);statements.push(env.DB.prepare(`SELECT * FROM events INDEXED BY idx_events_correlation WHERE stream_id=? AND correlation_id IN (${page.map(()=>"?").join(",")}) ORDER BY sequence ASC`).bind(streamId,...page));}
+  const pages=statements.length===1?[await statements[0].all<Record<string,unknown>>()]:await env.DB.batch<Record<string,unknown>>(statements);
+  return pages.flatMap((page)=>page.results.map(serializeEvent)).sort((left,right)=>left.sequence-right.sequence);
 }
 
 export const EVENT_PAGE_SIZE = 2000;

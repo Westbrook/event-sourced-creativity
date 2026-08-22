@@ -1,4 +1,3 @@
-import * as Y from "yjs";
 import type { CreativeEvent } from "../model/events";
 
 export type CanvasHlc = { pt: number; c: number; site: string };
@@ -240,8 +239,7 @@ export function foldCanvasText(events: CreativeEvent[], objectId: string, field 
   for(const values of children.values())values.sort((a,b)=>opKey(a.id).localeCompare(opKey(b.id)));
   const ordered:TextInsert[]=[];const visit=(parent:string)=>{for(const child of children.get(parent)??[]){ordered.push(child);visit(opKey(child.id));}};visit("root");
   const deleted=new Map<string,number>();for(const removal of deletes)deleted.set(opKey(removal.target),Math.max(deleted.get(opKey(removal.target))??0,removal.len));
-  const doc=new Y.Doc();const text=doc.getText(field);for(const insert of ordered){const count=deleted.get(opKey(insert.id))??0;text.insert(text.length,insert.chars.slice(Math.min(count,insert.chars.length)));}
-  return text.toString();
+  return ordered.map((insert)=>{const count=deleted.get(opKey(insert.id))??0;return insert.chars.slice(Math.min(count,insert.chars.length));}).join("");
 }
 
 export function canvasTextReplacementOperations(events: CreativeEvent[], objectId: string, nextValue: string, site: string, counter = Date.now()) {

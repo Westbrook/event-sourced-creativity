@@ -3,7 +3,7 @@ import { FormaElement, icon, downloadJson } from "./forma-element";
 import { ensureModalDialog } from "./modal-dialog";
 import { eventCategory, outputQualityLabel, shortEventType } from "../model/events";
 import type { CreativeEvent, CreativeOutput } from "../model/events";
-import { buildComprehensiveScenario, formatReplayDuration, explainReplayEvent, REPLAY_SCENARIOS, SCENARIOS, SCENARIO_EVENT_TYPES, type ReplayScenarioKey } from "../model/scenarios";
+import { buildComprehensiveScenario, buildReplayScenario, formatReplayDuration, explainReplayEvent, REPLAY_SCENARIOS, SCENARIOS, SCENARIO_EVENT_TYPES, type ReplayScenarioKey } from "../model/scenarios";
 import { BLOCK_TYPES } from "../model/block-types";
 import { promptTechniqueDefinition } from "../model/prompt-structures";
 import { evaluateReplayCoverage } from "../model/replay-coverage";
@@ -62,7 +62,7 @@ export class FormaAdminEvents extends FormaElement {
     return this.store.events.get().filter((e) => (this.#actor === "all" || e.actor === this.#actor) && (!this.#type || e.type.toLowerCase().includes(this.#type.toLowerCase())) && (!this.#correlation || e.correlationId.toLowerCase().includes(this.#correlation.toLowerCase())));
   }
   #build() {
-    const start = performance.now(); this.store.buildReplay(this.#scenario, this.#count); this.#buildMs = performance.now() - start; this.#playing = false; this.#replaySelected = "";this.#runnerPinnedEvent="";this.#runnerFollow=true;this.#replayOutputLimit=12;this.#replayKind="theoretical";this.#activeReplayTitle=""; if (this.#timer) window.clearInterval(this.#timer); this.requestUpdate();
+    const start = performance.now(); this.store.buildReplay(buildReplayScenario(this.#scenario,this.#count)); this.#buildMs = performance.now() - start; this.#playing = false; this.#replaySelected = "";this.#runnerPinnedEvent="";this.#runnerFollow=true;this.#replayOutputLimit=12;this.#replayKind="theoretical";this.#activeReplayTitle=""; if (this.#timer) window.clearInterval(this.#timer); this.requestUpdate();
   }
   #updateReverse(field:keyof FinishedWorkProduct,value:string|boolean){
     if(field==="reference"){
