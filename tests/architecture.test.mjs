@@ -223,7 +223,7 @@ test("packages first-class HTML entry points for every named application route",
 test("named HTML preloads only its active route component and never starts a public-share session", async () => {
   const manifest = JSON.parse(await readFile(new URL("../dist/client/.vite/manifest.json", import.meta.url), "utf8"));
   const pages = {
-    "/projects": "src/components/forma-projects.ts", "/memory": "src/components/forma-memory.ts",
+    "/document": "src/components/forma-workspace.ts", "/projects": "src/components/forma-projects.ts", "/memory": "src/components/forma-memory.ts",
     "/scout": "src/components/forma-scout.ts", "/sessions": "src/components/forma-sessions.ts",
     "/operations/analytics": "src/components/forma-analytics.ts", "/operations/canvas": "src/apps/operations/canvas-governance.ts",
     "/operations/events": "src/components/forma-admin-events.ts", "/laboratory/replay": "src/components/forma-admin-events.ts",
@@ -241,7 +241,12 @@ test("named HTML preloads only its active route component and never starts a pub
     if (path === "/share") assert.doesNotMatch(html, /forma-static-session-prefetch|fetch\("\/api\/session"\)/);
   }
   const root = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
-  assert.doesNotMatch(root, /data-forma-route-leaf/);
+  const workspace = manifest["src/components/forma-workspace.ts"] ?? Object.values(manifest).find((entry) => entry.src === "src/components/forma-workspace.ts");
+  const leaves = [...root.matchAll(/<link\b(?=[^>]*\brel="modulepreload")(?=[^>]*\bdata-forma-route-leaf\b)[^>]*>/g)].map((match) => match[0]);
+  assert.equal(leaves.length, 1);
+  assert.ok(leaves[0].includes(`href="/${workspace.file}"`));
+  assert.match(leaves[0], /data-forma-route-leaf="\/"/);
+  assert.ok(root.indexOf(leaves[0]) < root.indexOf("data-forma-route-module"));
 });
 
 test("event administration bounds its visible stream and initializes replay only for authorized replay routes", async () => {

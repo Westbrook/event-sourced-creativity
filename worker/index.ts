@@ -17,7 +17,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/session")return handleSession(request,env,context);
     if(url.pathname==="/api/impersonation")return handleImpersonation(request,env);
     if(url.pathname==="/api/admin/users")return handleAdminUsers(request,env);
-    if(url.pathname==="/api/analytics")return handleAnalytics(request,env);
+    if(url.pathname==="/api/analytics")return handleAnalytics(request,env,context);
     if(url.pathname==="/api/generation-readiness")return handleGenerationReadiness(request,env);
     if(url.pathname==="/api/canvas-governance")return handleCanvasGovernance(request,env);
     if(url.pathname==="/api/image-adapters")return handleImageAdapters(request,env);

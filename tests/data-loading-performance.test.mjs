@@ -74,7 +74,9 @@ async function productionWorker() {
     ASSETS: { fetch: async () => new Response(null, { status: 404 }) },
     MEDIA: {},
   };
-  const context = { waitUntil() {} };
+  const background = [];
+  const context = { waitUntil(promise) { background.push(promise); } };
+  const drainBackground = async () => { while (background.length) await Promise.all(background.splice(0)); };
   const request = (path, init) => worker.fetch(new Request(`http://localhost${path}`, init), environment, context);
 
   // Warm the isolate schema, authenticated account, budget rows, and seed.
@@ -82,7 +84,7 @@ async function productionWorker() {
   database.sqlite.prepare("UPDATE users SET consent_version=?").run("pilot-2026-08-10");
   assert.equal((await request("/api/events?after=0&limit=2000&content=0")).status, 200);
   database.reset();
-  return { database, environment, request };
+  return { database, environment, request, context, drainBackground };
 }
 
 function htmlAssets(environment) {
@@ -775,7 +777,7 @@ test("analytics excludes fictional streams in SQL and batches all dashboard read
   const body = await response.json();
   assert.ok(body.report.source.eventCount > 0);
   const batch = database.calls.find((call) => call.kind === "batch");
-  assert.equal(batch?.statements.length, 3);
+  assert.equal(batch?.statements.length, 4);
   assert.match(batch.statements[2].sql, /stream_id NOT IN \(SELECT fictional_stream_id/);
   assert.match(batch.statements[2].sql, /SELECT event_id e,stream_id s,sequence q,occurred_at o,actor a,type t,CASE/);
   assert.match(batch.statements[2].sql, /json_remove\(payload,'\$\.compiled_snapshot'\)/);
@@ -787,7 +789,7 @@ test("analytics excludes fictional streams in SQL and batches all dashboard read
   const synthetic = await request("/api/analytics?days=all&includeSynthetic=true");
   assert.equal(synthetic.status, 200);
   const included = database.calls.find((call) => call.kind === "batch");
-  assert.equal(included?.statements.length, 3);
+  assert.equal(included?.statements.length, 4);
   assert.doesNotMatch(included.statements[2].sql, /NOT IN/);
   database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("dev-local-creative");
   database.reset();
@@ -841,6 +843,136 @@ test("analytics reuses immutable account evidence while every fresh report inclu
   database.reset();
   assert.equal((await request("/api/analytics?days=all")).status, 403);
   assert.equal(database.calls.some((call) => call.kind === "batch"), false);
+});
+
+test("analytics restores exact owner-bound evidence across cold worker instances and folds fresh changes", async () => {
+  const { database, environment, request, context, drainBackground } = await productionWorker();
+  const first = await request("/api/analytics?days=all");
+  const baseline = (await first.json()).report;
+  assert.equal(first.headers.get("x-forma-analytics-cache"), "miss");
+  assert.equal(database.writeCount(), 0, "checkpoint creation must remain outside the response-critical path");
+  await drainBackground();
+
+  const stored = database.sqlite.prepare("SELECT content_id,owner_id,content FROM external_content WHERE content_id LIKE 'analytics-source:v1:%'").all();
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].owner_id, "dev-local-creative");
+  const checkpoint = JSON.parse(stored[0].content);
+  assert.equal(checkpoint.owner, stored[0].owner_id);
+  assert.equal(checkpoint.synthetic, false);
+  assert.equal(checkpoint.count, Number(first.headers.get("x-forma-analytics-source-rows")));
+  assert.ok(checkpoint.count >= baseline.source.eventCount);
+  assert.ok(checkpoint.payload.length < 1_500_000);
+
+  addCorrelatedTerminal(database.sqlite, "creative:dev-local-creative", "analytics-durable-new-event");
+  const binding = { prepare: (sql) => database.DB.prepare(sql), batch: (statements) => database.DB.batch(statements) };
+  const coldEnvironment = { ...environment, DB: binding };
+  const coldRequest = (path) => worker.fetch(new Request(`http://localhost${path}`), coldEnvironment, context);
+  assert.equal((await coldRequest("/api/session")).status, 200);
+  database.reset();
+  const cold = await coldRequest("/api/analytics?days=all");
+  const current = (await cold.json()).report;
+  assert.equal(cold.headers.get("x-forma-analytics-cache"), "durable");
+  assert.equal(cold.headers.get("x-forma-analytics-source-rows"), "1");
+  assert.equal(cold.headers.get("cache-control"), "private, no-store");
+  assert.equal(current.source.eventCount, baseline.source.eventCount + 1);
+  const batch = database.calls.find((call) => call.kind === "batch");
+  assert.equal(batch?.statements.length, 4);
+  assert.match(batch.statements[2].sql, /WITH snapshot\(head\) AS MATERIALIZED/);
+  const plan = database.sqlite.prepare(`EXPLAIN QUERY PLAN ${batch.statements[2].sql}`).all(...batch.statements[2].values);
+  assert.match(plan.map((step) => step.detail).join(" "), /INTEGER PRIMARY KEY \(rowid>\?\)/);
+  assert.match(plan.map((step) => step.detail).join(" "), /idx_events_nonphantom_stream_sequence/);
+  assert.ok(database.calls.length <= 2);
+  assert.equal(database.writeCount(), 0);
+
+  database.reset();
+  const warm = await coldRequest("/api/analytics?days=all");
+  assert.equal(warm.headers.get("x-forma-analytics-cache"), "delta");
+  assert.equal(warm.headers.get("x-forma-analytics-source-rows"), "0");
+  assert.deepEqual((await warm.json()).report.totals, current.totals);
+
+  database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("dev-local-creative");
+  database.reset();
+  assert.equal((await coldRequest("/api/analytics?days=all")).status, 403);
+  assert.equal(database.calls.some((call) => call.kind === "batch"), false);
+});
+
+test("analytics safely rebuilds corrupt durable evidence without exposing another account's checkpoint", async () => {
+  const { database, environment, request, context, drainBackground } = await productionWorker();
+  const initial = await request("/api/analytics?days=all");
+  const expected = (await initial.json()).report;
+  await drainBackground();
+  const checkpoint = database.sqlite.prepare("SELECT content_id,content FROM external_content").get();
+  const corrupt = { ...JSON.parse(checkpoint.content), payload: "not-valid-gzip" };
+  database.sqlite.prepare("UPDATE external_content SET content=? WHERE content_id=?").run(JSON.stringify(corrupt), checkpoint.content_id);
+
+  const binding = { prepare: (sql) => database.DB.prepare(sql), batch: (statements) => database.DB.batch(statements) };
+  const coldEnvironment = { ...environment, DB: binding };
+  const coldRequest = (path) => worker.fetch(new Request(`http://localhost${path}`), coldEnvironment, context);
+  await coldRequest("/api/session");
+  database.reset();
+  const recovered = await coldRequest("/api/analytics?days=all");
+  assert.equal(recovered.headers.get("x-forma-analytics-cache"), "miss");
+  assert.deepEqual((await recovered.json()).report.totals, expected.totals);
+  assert.equal(database.calls.filter((call) => call.kind === "batch").length, 2);
+  assert.equal(database.writeCount(), 0);
+  await drainBackground();
+  assert.notEqual(JSON.parse(database.sqlite.prepare("SELECT content FROM external_content WHERE content_id=?").get(checkpoint.content_id).content).payload, corrupt.payload);
+
+  database.sqlite.prepare("UPDATE external_content SET owner_id=? WHERE content_id=?").run("another-account", checkpoint.content_id);
+  const isolatedBinding = { prepare: (sql) => database.DB.prepare(sql), batch: (statements) => database.DB.batch(statements) };
+  const isolatedEnvironment = { ...environment, DB: isolatedBinding };
+  const isolatedRequest = (path) => worker.fetch(new Request(`http://localhost${path}`), isolatedEnvironment, context);
+  await isolatedRequest("/api/session");
+  database.reset();
+  const isolated = await isolatedRequest("/api/analytics?days=all");
+  assert.equal(isolated.headers.get("x-forma-analytics-cache"), "miss");
+  assert.deepEqual((await isolated.json()).report.totals, expected.totals);
+  await drainBackground();
+  assert.equal(database.sqlite.prepare("SELECT owner_id FROM external_content WHERE content_id=?").get(checkpoint.content_id).owner_id, "another-account");
+});
+
+test("durable analytics evidence is rebuilt when a fictional stream changes visibility without new events", async () => {
+  const { database, environment, request, context, drainBackground } = await productionWorker();
+  const now = new Date().toISOString(), fictional = "durable-fictional";
+  database.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,created_at,updated_at) VALUES (?,?,?,?,?,?)").run(fictional, "durable@example.test", "Durable persona", "creator", now, now);
+  addCorrelatedTerminal(database.sqlite, `creative:${fictional}`, "durable-fictional-evidence", now);
+  const initial = await request("/api/analytics?days=all");
+  assert.ok((await initial.json()).report.dimensions.user.some((item) => item.id === fictional));
+  await drainBackground();
+  database.sqlite.prepare("INSERT INTO replay_personas(persona_id,session_id,owner_id,fictional_user_id,fictional_stream_id,display_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run("durable-persona", "durable-replay", "dev-local-creative", fictional, `creative:${fictional}`, "Durable persona", "ready", now, now);
+
+  const binding = { prepare: (sql) => database.DB.prepare(sql), batch: (statements) => database.DB.batch(statements) };
+  const coldEnvironment = { ...environment, DB: binding };
+  const coldRequest = (path) => worker.fetch(new Request(`http://localhost${path}`), coldEnvironment, context);
+  await coldRequest("/api/session");
+  database.reset();
+  const hidden = await coldRequest("/api/analytics?days=all");
+  assert.equal(hidden.headers.get("x-forma-analytics-cache"), "miss");
+  assert.ok(!(await hidden.json()).report.dimensions.user.some((item) => item.id === fictional));
+  assert.equal(database.writeCount(), 0);
+  await drainBackground();
+
+  const nextBinding = { prepare: (sql) => database.DB.prepare(sql), batch: (statements) => database.DB.batch(statements) };
+  const nextEnvironment = { ...environment, DB: nextBinding };
+  await worker.fetch(new Request("http://localhost/api/session"), nextEnvironment, context);
+  database.reset();
+  const restored = await worker.fetch(new Request("http://localhost/api/analytics?days=all"), nextEnvironment, context);
+  assert.equal(restored.headers.get("x-forma-analytics-cache"), "durable");
+  assert.ok(!(await restored.json()).report.dimensions.user.some((item) => item.id === fictional));
+
+  const synthetic = await worker.fetch(new Request("http://localhost/api/analytics?days=all&includeSynthetic=true"), nextEnvironment, context);
+  assert.equal(synthetic.headers.get("x-forma-analytics-cache"), "miss");
+  assert.ok((await synthetic.json()).report.dimensions.user.some((item) => item.id === fictional));
+  await drainBackground();
+  const checkpoints = database.sqlite.prepare("SELECT content FROM external_content WHERE owner_id=?").all("dev-local-creative").map((row) => JSON.parse(row.content));
+  assert.deepEqual(checkpoints.map((row) => row.synthetic).sort(), [false, true]);
+
+  const syntheticBinding = { prepare: (sql) => database.DB.prepare(sql), batch: (statements) => database.DB.batch(statements) };
+  const syntheticEnvironment = { ...environment, DB: syntheticBinding };
+  await worker.fetch(new Request("http://localhost/api/session"), syntheticEnvironment, context);
+  const syntheticRestored = await worker.fetch(new Request("http://localhost/api/analytics?days=all&includeSynthetic=true"), syntheticEnvironment, context);
+  assert.equal(syntheticRestored.headers.get("x-forma-analytics-cache"), "durable");
+  assert.ok((await syntheticRestored.json()).report.dimensions.user.some((item) => item.id === fictional));
 });
 
 test("analytics invalidates cached source when a fictional account becomes hidden or visible", async () => {

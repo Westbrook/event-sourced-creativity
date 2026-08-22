@@ -16,9 +16,8 @@ function routeDataPrefetch(path: string): string | null {
 }
 
 function routeSurfaceModule(path: string): string | null {
-  if (path === "/") return null;
   if (["/creative", "/projects"].includes(path)) return "src/components/forma-projects.ts";
-  if (["/creative/create", "/document"].includes(path)) return "src/components/forma-workspace.ts";
+  if (["/", "/creative/create", "/document"].includes(path)) return "src/components/forma-workspace.ts";
   if (path === "/studio/project") return "src/components/forma-project-contents.ts";
   if (["/studio/board", "/studio/guided"].includes(path)) return "src/components/forma-studio-alternatives.ts";
   if (["/studio/layers", "/studio/adaptive"].includes(path)) return "src/components/forma-studio-editor-alternatives.ts";
