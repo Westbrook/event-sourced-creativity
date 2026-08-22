@@ -1,5 +1,13 @@
 import type { PilotSession } from "./store";
 
+/** Adopt exactly the authenticated request that started while this HTML head was parsed. */
+export function consumeSessionPrefetch(): Promise<Response> | null {
+  const target = globalThis as typeof globalThis & { __formaInitialSession?: Promise<Response> };
+  const pending = target.__formaInitialSession;
+  delete target.__formaInitialSession;
+  return pending && typeof pending.then === "function" ? pending : null;
+}
+
 /** Consume the session verified for this exact private HTML response, never a previous visit. */
 export function consumeSessionBootstrap(): PilotSession | null {
   const node = document.querySelector<HTMLScriptElement>('script#forma-session-bootstrap[type="application/json"]');

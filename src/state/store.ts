@@ -19,7 +19,7 @@ import { combinedContextGroups, combinedContextRoleForBlockType } from "../model
 import type { VideoAudioMode, VideoDurationSeconds } from "../model/video-adapter";
 import { beginRoutePopulation, completeBackgroundHydration, performanceRouteFamily, recordEventPage, recordPopulationSource, recordSessionReady } from "../performance";
 import { matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
-import { consumeSessionBootstrap } from "./session-bootstrap";
+import { consumeSessionBootstrap, consumeSessionPrefetch } from "./session-bootstrap";
 
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
@@ -365,7 +365,8 @@ export class FormaStore {
       // account data remains invisible until that authoritative identity is known.
       const snapshotsPromise=readAccountSnapshots();
       const bootstrap=consumeSessionBootstrap();
-      const sessionPromise=bootstrap?Promise.resolve(this.#applySession(bootstrap)):this.refreshSession();
+      const prefetched=consumeSessionPrefetch();
+      const sessionPromise=bootstrap?Promise.resolve(this.#applySession(bootstrap)):this.refreshSession(prefetched);
       const live=snapshotsPromise.then(async(snapshots)=>{
         if(snapshots.length){
           const verified=await sessionPromise;
@@ -375,7 +376,7 @@ export class FormaStore {
         return this.#readEventStream(0,profile,profile==="full");
       });
       const [session,snapshots]=await Promise.all([sessionPromise,snapshotsPromise]);
-      recordSessionReady(started,bootstrap?"document":"request");
+      recordSessionReady(started,bootstrap?"document":prefetched?"prefetch":"request");
       const identity=this.#snapshotIdentity(session);
       const cached=matchingAccountSnapshot(snapshots,identity,profile);
       if(cached){
@@ -403,8 +404,8 @@ export class FormaStore {
 
   #applySession(body:PilotSession){const previousUserId=this.session.get()?.user.userId;this.session.set(body);if(body.impersonation){this.ui.attentionCapture=false;this.ui.attentionPaused=true;}else if(previousUserId!==body.user.userId){this.ui.attentionCapture=readAttentionPreference(body.user.userId);this.ui.attentionPaused=false;}this.notify();return body;}
 
-  async refreshSession() {
-    const response = await fetch("/api/session"); const body = await response.json() as PilotSession & { error?: string };
+  async refreshSession(prefetched:Promise<Response>|null=null) {
+    const response = await (prefetched?prefetched.catch(()=>fetch("/api/session")):fetch("/api/session")); const body = await response.json() as PilotSession & { error?: string };
     if (!response.ok) throw new Error(body.error ?? "Authentication required");return this.#applySession(body);
   }
 

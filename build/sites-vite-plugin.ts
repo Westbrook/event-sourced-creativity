@@ -31,8 +31,11 @@ async function writeRouteEntries(root: string) {
     const routeModule = manifest[entry.module] ?? Object.values(manifest).find((candidate) => candidate.src === entry.module);
     if (!routeModule) throw new Error(`No production chunk was generated for ${entry.path} (${entry.module}).`);
     const relativePath = entry.path.slice(1);
+    const sessionPrefetchTag = entry.path === "/share" ? ""
+      : '<script id="forma-static-session-prefetch">if(!/^\\/share(?:\\/|$)/.test(location.pathname)){const started=performance.now(),pending=fetch("/api/session");pending.catch(()=>{});window.__formaInitialSession=pending;document.documentElement.dataset.formaSessionPrefetchStartedMs=String(Math.round(started*10)/10)}</script>';
     const routeModuleTag = `<script type="module" crossorigin src="/${escapeAttribute(routeModule.file)}" data-forma-route-module="${escapeAttribute(entry.path)}" data-forma-application="${entry.application}"></script>`;
     const entryHtml = source
+      .replace(/(<meta charset="[^"]+"\s*\/?>)/i, `$1${sessionPrefetchTag ? `\n    ${sessionPrefetchTag}` : ""}`)
       .replace(/<title>[\s\S]*?<\/title>/, `<title>${escapeAttribute(entry.title)}</title>`)
       .replace(/<meta name="description" content="[^"]*"\s*\/>/, `<meta name="description" content="${escapeAttribute(entry.description)}" />`)
       .replace("</head>", `    <meta name="forma-entry" content="${escapeAttribute(entry.path)}" />\n    ${routeModuleTag}\n  </head>`);

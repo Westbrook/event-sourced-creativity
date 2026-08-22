@@ -18,6 +18,9 @@ export function streamNavigationSession(asset: Response, session: Promise<Respon
   headers.delete("last-modified");
   headers.delete("content-md5");
   headers.delete("content-digest");
+  // A Worker-personalized response already embeds its session; static-header
+  // preload is needed only when the production router bypasses this Worker.
+  headers.delete("link");
 
   const vary = new Set((headers.get("vary") ?? "").split(",").map((value) => value.trim()).filter(Boolean));
   for (const name of ["Cookie", "Authorization", "oai-authenticated-user-id", "cf-access-authenticated-user-email"]) vary.add(name);
@@ -43,7 +46,8 @@ export function streamNavigationSession(asset: Response, session: Promise<Respon
             const marker = /<body\b[^>]*>/i.exec(buffered);
             if (marker) {
               const boundary = marker.index + marker[0].length;
-              controller.enqueue(encoder.encode(buffered.slice(0, boundary)));
+              const prefix = buffered.slice(0, boundary).replace(/<script\s+id="forma-static-session-prefetch">[\s\S]*?<\/script>\s*/i, "");
+              controller.enqueue(encoder.encode(prefix));
 
               let bootstrap = "";
               try {

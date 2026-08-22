@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
+import { runInNewContext } from "node:vm";
 import worker from "../dist/server/index.js";
 import { foldEvents } from "../src/model/events.ts";
 import { performanceRouteFamily } from "../src/performance.ts";
-import { consumeSessionBootstrap } from "../src/state/session-bootstrap.ts";
+import { consumeSessionBootstrap, consumeSessionPrefetch } from "../src/state/session-bootstrap.ts";
 
 function measuredDatabase() {
   const sqlite = new DatabaseSync(":memory:");
@@ -163,6 +165,53 @@ test("route timing correctly classifies Canvas proposals and Laboratory aliases"
   assert.equal(performanceRouteFamily("/admin/events/permissions"), "operations");
 });
 
+test("static HTML starts one authenticated session immediately without touching public shares", async () => {
+  const html = await readFile(new URL("../dist/client/projects/index.html", import.meta.url), "utf8");
+  const match = /<script id="forma-static-session-prefetch">([\s\S]*?)<\/script>/.exec(html);
+  assert.ok(match);
+  assert.ok(match.index < html.indexOf('<script type="module"'));
+
+  for (const [pathname, expected] of [["/projects", 1], ["/document/private-document", 1], ["/share", 0], ["/share/public-token", 0]]) {
+    const calls = [];
+    const pending = Promise.resolve(new Response("{}"));
+    const context = {
+      location: { pathname },
+      document: { documentElement: { dataset: {} } },
+      performance: { now: () => 18.46 },
+      window: {},
+      fetch(path) { calls.push(path); return pending; },
+    };
+    runInNewContext(match[1], context);
+    assert.equal(calls.length, expected);
+    if (expected) {
+      assert.equal(calls[0], "/api/session");
+      assert.equal(context.window.__formaInitialSession, pending);
+      assert.equal(context.document.documentElement.dataset.formaSessionPrefetchStartedMs, "18.5");
+    } else {
+      assert.equal(context.window.__formaInitialSession, undefined);
+    }
+  }
+
+  const share = await readFile(new URL("../dist/client/share/index.html", import.meta.url), "utf8");
+  assert.doesNotMatch(share, /forma-static-session-prefetch/);
+});
+
+test("the early authenticated session request can only be adopted once", () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "__formaInitialSession");
+  try {
+    const pending = Promise.resolve(new Response("{}"));
+    Object.defineProperty(globalThis, "__formaInitialSession", { configurable: true, writable: true, value: pending });
+    assert.equal(consumeSessionPrefetch(), pending);
+    assert.equal(consumeSessionPrefetch(), null);
+
+    Object.defineProperty(globalThis, "__formaInitialSession", { configurable: true, writable: true, value: {} });
+    assert.equal(consumeSessionPrefetch(), null);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "__formaInitialSession", previous);
+    else delete globalThis.__formaInitialSession;
+  }
+});
+
 test("steady-state account sessions use three read-only D1 calls", async () => {
   const { database, request } = await productionWorker();
   const response = await request("/api/session");
@@ -187,6 +236,7 @@ test("private app HTML streams a fresh authenticated session before the applicat
   assert.equal(response.headers.has("last-modified"), false);
   assert.equal(response.headers.get("x-forma-route-family"), "/projects");
   assert.equal(assets.requests[0].headers.has("if-none-match"), false);
+  assert.equal(assets.requests[0].headers.get("accept-encoding"), "identity");
 
   const reader = response.body.getReader();
   const prefix = new TextDecoder().decode((await reader.read()).value);
@@ -279,6 +329,47 @@ test("HTML resource discovery starts while server authentication is still pendin
   }
   assert.ok(embeddedSession(remaining));
   assert.match(remaining, /<forma-shell>/);
+});
+
+test("personalized navigation requests uncompressed assets and removes redundant static preloads", async () => {
+  const { environment, request } = await productionWorker();
+  const assets = htmlAssets(environment);
+  const original = environment.ASSETS.fetch;
+  environment.ASSETS.fetch = async (assetRequest) => {
+    if (assetRequest.headers.get("accept-encoding") !== "identity") {
+      return new Response("compressed asset", { headers: { "content-type": "text/html", "content-encoding": "gzip" } });
+    }
+    const asset = await original(assetRequest);
+    const headers = new Headers(asset.headers);
+    headers.set("link", "</api/session>; rel=preload; as=fetch; crossorigin");
+    return new Response(asset.body, { status: asset.status, headers });
+  };
+
+  const response = await request("/projects");
+  assert.equal(assets.requests[0].headers.get("accept-encoding"), "identity");
+  assert.equal(response.headers.has("link"), false);
+  assert.ok(embeddedSession(await response.text()));
+});
+
+test("personalized streamed HTML removes early static authentication before the head is sent", async () => {
+  const { environment, request } = await productionWorker();
+  const script='<script id="forma-static-session-prefetch">fetch("/api/session")</script>';
+  environment.ASSETS.fetch = async () => new Response(`<!doctype html><html><head>${script}<script type="module" src="/assets/main.js"></script></head><body><forma-shell></forma-shell></body></html>`, {
+    headers: { "content-type": "text/html" },
+  });
+
+  const response = await request("/projects");
+  const reader = response.body.getReader();
+  const prefix = new TextDecoder().decode((await reader.read()).value);
+  assert.match(prefix, /\/assets\/main\.js/);
+  assert.doesNotMatch(prefix, /forma-static-session-prefetch|fetch\("\/api\/session"\)/);
+  let remainder = "";
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    remainder += new TextDecoder().decode(chunk.value);
+  }
+  assert.ok(embeddedSession(remainder));
 });
 
 test("public sharing, HEAD requests, and unauthenticated HTML never contain another user's session", async () => {

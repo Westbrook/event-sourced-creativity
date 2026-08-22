@@ -8,8 +8,10 @@ type RoutePopulation = {
   populatedMs: number;
   routeLatencyMs: number;
   sessionMs: number;
-  sessionSource: "document" | "request" | null;
+  sessionSource: "document" | "prefetch" | "preload" | "request" | null;
   sessionServerMs: number | null;
+  sessionHeadStartMs: number | null;
+  navigationSource: "worker" | "static" | null;
   apiRequests: number;
   apiTransferBytes: number;
   apiServerMs: number;
@@ -33,6 +35,7 @@ const metrics = {
   events: 0,
   sessionMs: 0,
   populationStartedAt: 0,
+  navigationSource: null as "worker" | "static" | null,
   ttfbMs: null as number | null,
   responseEndMs: null as number | null,
   firstAssetMs: null as number | null,
@@ -82,6 +85,7 @@ function observe(type: string, callback: (entry: PerformanceEntry) => void, opti
 
 function installFieldMetrics() {
   const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+  if(navigation){metrics.navigationSource=navigation.serverTiming?.some((entry)=>entry.name==="app")?"worker":"static";root().formaNavigationSource=metrics.navigationSource;}
   if (navigation?.responseStart) {
     metrics.ttfbMs = rounded(navigation.responseStart);
     root().formaTtfbMs = String(metrics.ttfbMs);
@@ -170,14 +174,24 @@ export function beginRoutePopulation(path: string) {
   delete root().formaRouteLatencyMs;
   delete root().formaSessionSource;
   delete root().formaSessionServerMs;
+  delete root().formaSessionHeadStartMs;
+  delete root().formaSessionRequestStartMs;
+  delete root().formaSessionRequestCount;
+  delete root().formaSessionInitiator;
   metrics.completed.clear();
   performance.mark("forma:population-start");
 }
 
-export function recordSessionReady(startedAt: number, source: "document" | "request" = "request") {
+export function recordSessionReady(startedAt: number, source: "document" | "prefetch" | "request" = "request") {
+  const sessionResources=source!=="document"?performance.getEntriesByName(new URL("/api/session",location.href).href,"resource") as PerformanceResourceTiming[]:[];
+  const sessionResource=sessionResources.at(-1);
+  const preloaded=source==="request"&&Boolean(sessionResource&&sessionResource.startTime<startedAt&&["link","early-hint"].includes(sessionResource.initiatorType));
   metrics.sessionMs = rounded(performance.now() - startedAt);
   root().formaSessionMs = String(metrics.sessionMs);
-  root().formaSessionSource = source;
+  root().formaSessionSource = preloaded?"preload":source;
+  if(sessionResource){root().formaSessionRequestCount=String(sessionResources.length);root().formaSessionRequestStartMs=String(rounded(sessionResource.startTime));root().formaSessionInitiator=sessionResource.initiatorType;}
+  const prefetchedAt=source==="prefetch"?Number(root().formaSessionPrefetchStartedMs):preloaded?sessionResource?.startTime:undefined;
+  if(prefetchedAt!==undefined&&Number.isFinite(prefetchedAt)&&prefetchedAt<=startedAt)root().formaSessionHeadStartMs=String(rounded(startedAt-prefetchedAt));
   root().formaPhase = "events";
   performance.mark("forma:session-ready");
 }
@@ -243,8 +257,10 @@ export function completeRoutePopulation(path: string, retry = 0) {
       populatedMs,
       routeLatencyMs:rounded(populatedMs-metrics.populationStartedAt),
       sessionMs:metrics.sessionMs,
-      sessionSource:root().formaSessionSource==="document"?"document":root().formaSessionSource==="request"?"request":null,
+      sessionSource:root().formaSessionSource==="document"?"document":root().formaSessionSource==="prefetch"?"prefetch":root().formaSessionSource==="preload"?"preload":root().formaSessionSource==="request"?"request":null,
       sessionServerMs:root().formaSessionServerMs===undefined?null:Number(root().formaSessionServerMs),
+      sessionHeadStartMs:root().formaSessionHeadStartMs===undefined?null:Number(root().formaSessionHeadStartMs),
+      navigationSource:metrics.navigationSource,
       apiRequests:metrics.resources.length,
       apiTransferBytes:metrics.resources.reduce((total,resource)=>total+resource.transferBytes,0),
       apiServerMs:rounded(metrics.resources.reduce((total,resource)=>total+resource.serverMs,0)),

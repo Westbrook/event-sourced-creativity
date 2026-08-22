@@ -44,7 +44,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
         const personalize=request.method==="GET"&&!url.pathname.startsWith("/share")&&trustedIdentity;
         const authenticatedStarted=performance.now();
         const authenticated=personalize?handleSession(request,env,context).catch(()=>null):null;
-        const asset=await env.ASSETS.fetch(personalize?new Request(entryUrl):new Request(entryUrl,request));
+        const asset=await env.ASSETS.fetch(personalize?new Request(entryUrl,{headers:{"accept-encoding":"identity"}}):new Request(entryUrl,request));
         const encoding=(asset.headers.get("content-encoding")??"identity").trim().toLowerCase();
         const response=personalize&&asset.ok&&asset.body&&/text\/html/i.test(asset.headers.get("content-type")??"")&&encoding==="identity"?streamNavigationSession(asset,authenticated!,authenticatedStarted):asset;
         const headers=new Headers(response.headers);
