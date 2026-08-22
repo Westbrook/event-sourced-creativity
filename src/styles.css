@@ -392,6 +392,7 @@ forma-project-rail { display: block; min-width: 0; background: #ecece5; border-i
 .art-thumb::before { position: absolute; top: 0; right: 9%; width: 31%; height: 82%; content: ""; background: linear-gradient(90deg,rgba(255,255,255,.04),rgba(255,216,171,.72)); filter: blur(2px); clip-path: polygon(22% 0,100% 0,73% 100%,0 100%); }
 .block-meta { display: grid; min-width: 0; grid-template-columns: minmax(118px,1fr) repeat(4,max-content); align-items: center; gap: 8px; padding-top: 9px; overflow: hidden; border-top: 1px solid var(--line); }
 .block-meta label { display: flex; min-width: 0; align-items: center; gap: 6px; color: var(--muted); font-size: var(--type-micro); text-transform: uppercase; }
+.block-influence-form { min-width: 0; }
 .block-meta input[type=range] { width: 100%; min-width: 40px; flex: 1; accent-color: var(--forest-2); }
 .block-meta output { width: 30px; flex: 0 0 auto; font: var(--type-micro) var(--mono); }
 .block-meta > * { min-width: 0; }.meta-short { display: none; }
@@ -416,6 +417,7 @@ forma-project-rail { display: block; min-width: 0; background: #ecece5; border-i
   .block-heading { align-items: stretch; flex-direction: column; }
   .block-heading-state { align-items: center; justify-content: space-between; flex-direction: row; }
   .block-meta { grid-template-columns: minmax(0,1fr) repeat(3,max-content); gap: 7px 5px; }
+  .block-influence-form { grid-column: 1 / -1; width: 100%; }
   .block-meta label { grid-column: 1 / -1; width: 100%; }
   .block-combined-context-controls { grid-template-columns: minmax(0,1fr); }
   .block-relativity { grid-template-columns: minmax(0,1fr) 2.5rem; }

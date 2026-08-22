@@ -3797,7 +3797,8 @@ dialog.command-dialog .command-results {
 .canvas-governance-card header p { margin: .35rem 0 0; color: var(--muted); }
 .canvas-governance-card header > b { color: var(--muted); font-size: var(--type-caption); }
 .canvas-governance-card.approved header > b { color: var(--forest-2); }
-.canvas-governance-card > label:not(.approval-check),.canvas-adapter-form label { display: grid; gap: .4rem; color: var(--muted); font-size: var(--type-caption); }
+.canvas-governance-approval,.canvas-adapter-approval { display: grid; align-content: start; gap: 1.25rem; }
+.canvas-governance-card > label:not(.approval-check),.canvas-governance-approval > label,.canvas-adapter-form label { display: grid; gap: .4rem; color: var(--muted); font-size: var(--type-caption); }
 .canvas-governance-card dl { display: grid; gap: .5rem; margin: 0; }
 .canvas-governance-card dl > div { display: grid; grid-template-columns: minmax(7rem,.35fr) minmax(0,1fr); gap: 1rem; padding-block: .5rem; border-bottom: 1px solid var(--line); }
 .canvas-governance-card dt { color: var(--muted); }

@@ -279,6 +279,7 @@ export class FormaGuidedBrief extends AlternativeStudio {
     this.#seed();
     const projection = this.store.projection.get();
     const section = BRIEF_SECTIONS[this.#step];
+    const guidedFormId = `guided-brief-${projection.documentId}`;
     const answered = ALL_BRIEF_FIELDS.filter((field) => (this.#drafts[field.type] ?? "").trim()).length;
     const activeAnswered = section.fields.filter((field) => (this.#drafts[field.type] ?? "").trim()).length;
     const body = html`
@@ -312,7 +313,8 @@ export class FormaGuidedBrief extends AlternativeStudio {
         })}
       </nav>
 
-      <form class="guided-brief guided-brief--focused" @submit=${this.#saveSection}>
+      <form id=${guidedFormId} @submit=${this.#saveSection}></form>
+      <section class="guided-brief guided-brief--focused">
         <header class="guided-section-header">
           <span class="eyebrow">Step ${this.#step + 1} of ${BRIEF_SECTIONS.length}</span>
           <h2>${section.title}</h2>
@@ -330,12 +332,12 @@ export class FormaGuidedBrief extends AlternativeStudio {
               </header>
               <p>${field.help}</p>
               <label class="guided-subtype">Use this answer as
-                <select .value=${this.#subtypes[field.type]} @change=${(event: Event) => { this.#subtypes[field.type] = (event.target as HTMLSelectElement).value; this.requestUpdate(); }}>
+                <select form=${guidedFormId} .value=${this.#subtypes[field.type]} @change=${(event: Event) => { this.#subtypes[field.type] = (event.target as HTMLSelectElement).value; this.requestUpdate(); }}>
                   ${definition.subtypes.map((subtype) => html`<option value=${subtype}>${subtype}</option>`)}
                 </select>
               </label>
               <label class="sr-only" for=${`brief-${field.type}`}>${field.question}</label>
-              <textarea id=${`brief-${field.type}`} rows="4" placeholder=${definition.prompt} .value=${this.#drafts[field.type] ?? ""} @input=${(event: InputEvent) => { this.#drafts[field.type] = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea>
+              <textarea id=${`brief-${field.type}`} form=${guidedFormId} rows="4" placeholder=${definition.prompt} .value=${this.#drafts[field.type] ?? ""} @input=${(event: InputEvent) => { this.#drafts[field.type] = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea>
               <small class="guided-source">${existing ? "Saving will update this answer everywhere it appears." : "Saving will add this decision to the document."}</small>
               ${existing ? html`<forma-spatial-scope-editor .block=${existing} surface="guided"></forma-spatial-scope-editor>` : html`<small class="guided-scope-pending">Save this answer, then choose whether it affects everything or one area.</small>`}
             </section>`;
@@ -346,10 +348,10 @@ export class FormaGuidedBrief extends AlternativeStudio {
           <span class="guided-action-buttons">
             ${this.#step > 0 ? html`<button type="button" class="button ghost" @click=${() => this.#goToStep(this.#step - 1)}>Back</button>` : nothing}
             ${this.#step < BRIEF_SECTIONS.length - 1 && activeAnswered < section.fields.length ? html`<button type="button" class="button ghost" @click=${() => this.#goToStep(this.#step + 1)}>Skip for now</button>` : nothing}
-            <button class="button primary">${this.#step < BRIEF_SECTIONS.length - 1 ? `Save & continue` : `Save brief`} ${icon("arrow")}</button>
+            <button type="submit" form=${guidedFormId} class="button primary">${this.#step < BRIEF_SECTIONS.length - 1 ? `Save & continue` : `Save brief`} ${icon("arrow")}</button>
           </span>
         </footer>
-      </form>
+      </section>
 
       <section class="whole-document-map" aria-labelledby="guided-whole-document-title">
         <header>

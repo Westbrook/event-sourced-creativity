@@ -79,21 +79,23 @@ export class ReferenceFindings extends FormaElement {
     if (!this.block) return nothing;
     const findings = this.#findings();const jobActive=this.store.documentJobActive("extract_reference");
     const preferences = new Set(this.#preferences());
+    const analysisFormId = `reference-analysis-${this.block.id}`;
     const projection = this.store.projection.get();
     const adoptedKinds = new Set(projection.blocks.filter((block) => block.properties.source_reference_block_id === this.block.id).map((block) => String(block.properties.source_finding_kind)));
     return html`<section class="reference-findings" aria-labelledby=${`reference-findings-${this.block.id}`}>
+      <form id=${analysisFormId} @submit=${(event:SubmitEvent)=>{event.preventDefault();if(!this.#analyzing&&!jobActive)void this.#analyze();}}></form>
       <header>
         <div><span class="eyebrow">Image findings · optional</span><h3 id=${`reference-findings-${this.block.id}`}>Use what this image teaches</h3><p>Choose what to prepare, then add only the findings that should guide this document.</p></div>
-        <button class="button secondary compact" ?disabled=${this.#analyzing||jobActive} @click=${this.#analyze}>${icon("spark")} ${this.#analyzing||jobActive ? "Analyzing safely…" : findings.length ? "Analyze again" : "Analyze image"}</button>
+        <button type="submit" form=${analysisFormId} class="button secondary compact" ?disabled=${this.#analyzing||jobActive}>${icon("spark")} ${this.#analyzing||jobActive ? "Analyzing safely…" : findings.length ? "Analyze again" : "Analyze image"}</button>
       </header>
-      <fieldset class="reference-finding-preferences"><legend>Prepare from this reference</legend>${REFERENCE_FINDING_OPTIONS.map((option) => html`<label><input type="checkbox" .checked=${preferences.has(option.kind)} @change=${(event: Event) => void this.#setPreference(option.kind, (event.target as HTMLInputElement).checked)}><span><b>${option.label}</b><small>${option.description}</small></span></label>`)}</fieldset>
+      <fieldset class="reference-finding-preferences"><legend>Prepare from this reference</legend>${REFERENCE_FINDING_OPTIONS.map((option) => html`<label><input form=${analysisFormId} type="checkbox" .checked=${preferences.has(option.kind)} @change=${(event: Event) => void this.#setPreference(option.kind, (event.target as HTMLInputElement).checked)}><span><b>${option.label}</b><small>${option.description}</small></span></label>`)}</fieldset>
       ${findings.length ? html`<div class="reference-finding-grid">${findings.filter((finding) => preferences.has(finding.kind)).map((finding) => {
         const adopted = finding.kind !== "palette" && adoptedKinds.has(finding.kind);
         return html`<article>
           <header><span>${REFERENCE_FINDING_OPTIONS.find((option) => option.kind === finding.kind)?.label ?? finding.kind}</span><b>${Math.round(finding.confidence * 100)}% suggestion</b></header>
           <h4>${finding.label}</h4><p>${finding.value}</p><small>${finding.basis}</small>
           ${finding.kind === "palette" && finding.colors?.length ? html`<div class="palette-strip" aria-label="Extracted palette">${finding.colors.map((color) => html`<i style=${`--swatch:${color}`}></i>`)}</div>` : nothing}
-          <button class="button ${adopted ? "ghost" : "secondary"} compact" ?disabled=${adopted} @click=${() => this.#adopt(finding)}>${adopted ? `${icon("check")} Added to document` : finding.kind === "palette" ? `Choose a palette ${icon("arrow")}` : `Add as decision ${icon("arrow")}`}</button>
+          <button type="button" class="button ${adopted ? "ghost" : "secondary"} compact" ?disabled=${adopted} @click=${() => this.#adopt(finding)}>${adopted ? `${icon("check")} Added to document` : finding.kind === "palette" ? `Choose a palette ${icon("arrow")}` : `Add as decision ${icon("arrow")}`}</button>
         </article>`;
       })}</div>` : html`<div class="reference-findings-empty"><b>No expanded findings yet</b><p>Analyze the image to prepare mood, composition, material, lighting, palette, and spatial suggestions.</p></div>`}
     </section>`;

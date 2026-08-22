@@ -28,7 +28,7 @@ export class FormaChatStudio extends FormaElement {
 
   async #send(event:SubmitEvent){event.preventDefault();const message=this.#draft.trim();if(!message||this.store.busy.get()||this.store.documentJobActive("chat"))return;this.#draft="";this.requestUpdate();await this.store.chat(message,this.#livePreview);await this.updateComplete;this.querySelector(".chat-thread-end")?.scrollIntoView({behavior:"smooth",block:"end"});}
 
-  #keydown(event:KeyboardEvent){if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();this.querySelector<HTMLFormElement>(".chat-composer")?.requestSubmit();}}
+  #keydown(event:KeyboardEvent){if(event.key==="Enter"&&!event.shiftKey&&!event.isComposing){event.preventDefault();const submitter=this.querySelector<HTMLButtonElement>('.chat-composer button[type="submit"]');if(submitter&&!submitter.disabled)submitter.form?.requestSubmit(submitter);}}
 
   override render(){
     const projection=this.store.projection.get();const lines=this.#lines(projection.documentId);const history=generationHistoryItems(projection.outputs);const currentItem=history.find((item)=>(item.kind==="fan"?`fan:${item.id}`:item.id)===this.store.ui.selectedOutputId)??history[0]??null;const current=currentItem?.kind==="output"?currentItem.output:null;const previewProgress=this.store.documentPreviewProgress(projection.documentId);const previewActive=this.store.documentJobActive("preview",projection.documentId);const working=Boolean(previewProgress)||generationHistoryItemIsDraft(currentItem);const busy=this.store.busy.get();const chatActive=this.store.documentJobActive("chat");
@@ -69,7 +69,7 @@ export class FormaChatStudio extends FormaElement {
               <label for="creative-chat-message" class="sr-only">Message Forma</label>
               <textarea id="creative-chat-message" rows="3" maxlength="4000" placeholder="Describe what to create or change…" .value=${this.#draft} @input=${(event:InputEvent)=>{this.#draft=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}} @keydown=${this.#keydown}></textarea>
               <p class="chat-composer-help">Shift + Enter adds a line. Your message still updates the creative plan when previewing is paused.</p>
-              <div><label class="chat-live-preview"><input type="checkbox" .checked=${this.#livePreview} @change=${(event:Event)=>{this.#livePreview=(event.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>Live preview</b><small>${this.#livePreview?"Make a fast image after useful visual changes.":"Keep chatting without generating an image."}</small></span></label><button class="button primary" ?disabled=${!this.#draft.trim()||Boolean(busy)||chatActive}>${chatActive?"Forma is thinking safely…":html`Send ${icon("arrow")}`}</button></div>
+              <div><label class="chat-live-preview"><input type="checkbox" .checked=${this.#livePreview} @change=${(event:Event)=>{this.#livePreview=(event.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>Live preview</b><small>${this.#livePreview?"Make a fast image after useful visual changes.":"Keep chatting without generating an image."}</small></span></label><button type="submit" class="button primary" ?disabled=${!this.#draft.trim()||Boolean(busy)||chatActive}>${chatActive?"Forma is thinking safely…":html`Send ${icon("arrow")}`}</button></div>
             </form>
           </section>
         </main></div>

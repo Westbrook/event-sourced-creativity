@@ -70,6 +70,38 @@ focal-point comparison, and the living design system are separate laboratories.
 
 These rules are enforced by the application-boundary tests and the production manifest.
 
+## Native form ownership and submission
+
+Every editable control belongs to the native `<form>` for the user action it
+serves. Forms are scoped to one intention: searching existing work must not
+create new work, changing a local decision must not submit its containing
+document, and cancellation or destructive actions must never become implicit
+submitters. Immediately applied preferences still receive a harmless,
+independently scoped owner; read-only receipts and generated sharing links are
+display surfaces rather than submission inputs.
+
+- Application and presentational form controls render in light DOM, so their
+  native inputs already participate in an ancestor form. Do not wrap reusable
+  control primitives in their own forms.
+- Native forms never nest, including across light-DOM custom elements or dialogs
+  shown in the top layer. When local and global actions share a visual layout,
+  use sibling forms with stable IDs and explicitly associate each native
+  control and submit button through its `form` attribute.
+- Put the business action in a `submit` listener and synchronously call
+  `preventDefault()`. Mark primary buttons `type="submit"`; mark close,
+  cancel, navigation, clear, destructive, and other secondary controls
+  `type="button"`. The `forma-ui-button` primitive defaults to `button`, so
+  custom-element submitters must opt in explicitly.
+- Keep ordinary multiline editing native. Established Enter-to-send and
+  Command/Control-Enter shortcuts must preserve composition and modifier
+  behavior, respect disabled submitters, and enter the same validated submit
+  path through `requestSubmit()`.
+- Paid or privileged submissions additionally require the existing consent,
+  budget, one-use server authorization, trusted direct submit-button activation,
+  and available browser user activation. Configuration fields are associated
+  with a separate nonauthorizing form; synthetic submission cannot bypass the
+  direct-user boundary.
+
 ## Durable authoring and projection ownership
 
 Projects define the creative boundary. Documents are scoped editable intentions;

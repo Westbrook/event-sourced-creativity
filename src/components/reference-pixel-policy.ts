@@ -31,14 +31,16 @@ export class ReferencePixelPolicy extends FormaElement {
     const storyboardFrame = String(block.properties.reference_set_kind ?? block.properties.source_artifact_kind) === "storyboard";
     const storyboardIndex = Number(block.properties.storyboard_frame_index);
     const storyboardCount = Number(block.properties.storyboard_frame_count);
-    return html`<section class=${`reference-pixel-policy ${this.compact ? "compact" : ""}`} aria-label="Generation reference policy">
+    const inheritedForm = this.closest("form");
+    const policyFormId = `reference-pixel-policy-${block.id}`;
+    return html`${inheritedForm ? nothing : html`<form id=${policyFormId} hidden @submit=${(event:SubmitEvent)=>event.preventDefault()}></form>`}<section class=${`reference-pixel-policy ${this.compact ? "compact" : ""}`} aria-label="Generation reference policy">
       <div class="reference-pixel-policy-heading">
         <span>${icon("image")}</span>
         <div><b>Use in generation</b><small>${selected === "context_only" ? "Original pixels stay private from image and video models" : "Original pixels can be attached to compatible image and video generations"}</small>${storyboardFrame ? html`<small>Storyboard shot ${Number.isFinite(storyboardIndex) ? storyboardIndex : "—"}${Number.isFinite(storyboardCount) ? ` of ${storyboardCount}` : ""} · retained in source order</small>` : nothing}</div>
       </div>
       <label>
         <span class="sr-only">How should generation models use this reference?</span>
-        <select .value=${selected} ?disabled=${block.locked} @change=${(event:Event)=>this.#change((event.target as HTMLSelectElement).value as ReferencePixelMode)}>
+        <select form=${inheritedForm ? nothing : policyFormId} .value=${selected} ?disabled=${block.locked} @change=${(event:Event)=>this.#change((event.target as HTMLSelectElement).value as ReferencePixelMode)}>
           ${REFERENCE_PIXEL_MODES.map((option)=>html`<option value=${option.id} ?selected=${option.id===selected}>${option.label}</option>`)}
         </select>
       </label>

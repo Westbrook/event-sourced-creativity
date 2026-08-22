@@ -352,7 +352,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
               ${QUICK_TOOLS.map((tool) => html`<button @click=${() => this.#openCreate(tool.type, tool.intent)}><span>${(tool.label ?? FRIENDLY_LABELS[tool.type]).slice(0, 2)}</span><b>${tool.label ?? FRIENDLY_LABELS[tool.type]}</b><small>${tool.description ?? blockTypeDefinition(tool.type)?.description}</small></button>`)}
             </div>
             <button class="creative-tool-more" @click=${() => this.#openCreate()}>${icon("plus")} More ways to shape the work</button>
-            <label class="creative-reference-tool">${icon("image")}<span><b>Add an image</b><small>Use a visual reference</small></span><input type="file" accept="image/*" @change=${this.#queueReference}></label>
+            <form @submit=${(event:SubmitEvent)=>{event.preventDefault();}}><label class="creative-reference-tool">${icon("image")}<span><b>Add an image</b><small>Use a visual reference</small></span><input type="file" accept="image/*" @change=${this.#queueReference}></label></form>
             <footer><b>Not sure where to start?</b><p>Set the goal first. A clear goal makes every later choice easier to judge.</p><button @click=${() => this.#openCreate("direction")}>Set the goal ${icon("arrow")}</button></footer>
           </aside>
 
@@ -428,14 +428,14 @@ export class FormaCreativeEditor extends AlternativeStudio {
       </dialog>` : nothing}
 
       ${this.#pendingReference ? html`<dialog class="modal creative-reference-dialog" closedby="any" aria-labelledby="creative-reference-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget && !this.#uploading) this.#cancelReference(); }} @cancel=${(event: Event) => { event.preventDefault(); if (!this.#uploading) this.#cancelReference(); }}>
-        <div class="modal-card creative-reference-card">
-          <button class="icon-button modal-close" aria-label="Close" ?disabled=${this.#uploading} @click=${this.#cancelReference}>${icon("close")}</button>
+        <form class="modal-card creative-reference-card" @submit=${(event:SubmitEvent)=>{event.preventDefault();if(this.#rightsConfirmed&&!this.#uploading)void this.#confirmReference();}}>
+          <button type="button" class="icon-button modal-close" aria-label="Close" ?disabled=${this.#uploading} @click=${this.#cancelReference}>${icon("close")}</button>
           <span class="eyebrow">Add a visual reference</span><h2 id="creative-reference-title">Use this image in the plan?</h2>
           <div class="creative-reference-receipt"><span>${icon("image")}</span><div><b>${this.#pendingReference.name}</b><small>${(this.#pendingReference.size / 1_048_576).toFixed(1)} MB</small></div></div>
           <p>The editor will prepare color, mood, layout, material, lighting, and spatial cues. You choose which ones become part of the plan.</p>
           <label class="rights-check"><input type="checkbox" .checked=${this.#rightsConfirmed} @change=${(event: Event) => { this.#rightsConfirmed = (event.target as HTMLInputElement).checked; this.requestUpdate(); }}><span><b>I own this image or have permission to use it.</b><small>This confirmation stays with the image wherever it is reused.</small></span></label>
-          <footer><button class="button ghost" ?disabled=${this.#uploading} @click=${this.#cancelReference}>Cancel</button><button class="button primary" ?disabled=${!this.#rightsConfirmed || this.#uploading} @click=${this.#confirmReference}>${this.#uploading ? "Adding image…" : "Add image"}</button></footer>
-        </div>
+          <footer><button type="button" class="button ghost" ?disabled=${this.#uploading} @click=${this.#cancelReference}>Cancel</button><button type="submit" class="button primary" ?disabled=${!this.#rightsConfirmed || this.#uploading}>${this.#uploading ? "Adding image…" : "Add image"}</button></footer>
+        </form>
       </dialog>` : nothing}
     `;
     return this.shell("editor", "Creative editor", "Shape the brief, scene, look, and guardrails in one familiar workspace. The system keeps the underlying history organized for you.", body, { continuity: false, inspector: false, quietRail: true });
