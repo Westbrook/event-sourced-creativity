@@ -92,3 +92,13 @@ export function generationReadinessLabel(value: GenerationReadiness | null | und
 export function generationReadinessBlocks(value: GenerationReadiness | null | undefined) {
   return value?.status === "blocked" || value?.status === "checking" || value?.status === "unknown";
 }
+
+/** Advisory checks may be deferred only when the paid request still enforces its exact server preflight. */
+export function generationReadinessBlocksAction(
+  value: GenerationReadiness | null | undefined,
+  options: { optimistic?: boolean; acknowledged?: boolean } = {},
+) {
+  if (!value) return !options.optimistic;
+  if (value.status === "checking" || value.status === "blocked" || value.status === "unknown") return true;
+  return value.status === "review" && !options.acknowledged;
+}

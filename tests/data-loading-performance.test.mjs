@@ -467,10 +467,55 @@ test("blocked document generation reuses one workspace projection for its forced
   assert.equal(body.error, "generation_preflight_blocked");
   assert.equal(body.readiness.status, "blocked");
   assert.equal(body.readiness.probes.find((probe) => probe.id === "provider-health")?.status, "fail");
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count, 0);
+  assert.deepEqual(database.sqlite.prepare("SELECT type FROM events WHERE json_extract(payload,'$.preflight_id')=? ORDER BY sequence")
+    .all(body.readiness.preflightId).map((event) => event.type), [
+      "GenerationPreflightRequested", "GenerationPreflightCompleted", "GenerationBlockedBeforeProvider",
+    ]);
 
   const statements = database.calls.flatMap((call) => call.kind === "batch" ? call.statements.map((statement) => statement.sql) : [call.sql]);
   assert.equal(statements.filter((sql) => /FROM events[\s\S]*type\s+NOT\s+IN/i.test(sql)).length, 1);
   assert.equal(statements.some((sql) => /SELECT \* FROM events WHERE stream_id=\? AND sequence>\? ORDER BY sequence ASC LIMIT \?/i.test(sql)), false);
+});
+
+test("an unchecked paid request still requires an exact acknowledged safety review", async () => {
+  const { database, environment, request } = await productionWorker();
+  environment.OPENAI_API_KEY = "test-only";
+  const previousFetch = globalThis.fetch;
+  let moderationCalls = 0;
+  globalThis.fetch = async (input) => {
+    assert.equal(String(input), "https://api.openai.com/v1/moderations");
+    moderationCalls += 1;
+    return Response.json({ model: "omni-moderation-latest", results: [{ flagged: true, categories: { violence: true } }] });
+  };
+
+  try {
+    const start = async (acknowledged) => request("/api/document-jobs", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "preview", documentId: "doc-atmosphere", sourceSurface: "performance-test",
+        payload: {
+          documentRevision: "review-revision", requestKey: "preview:review-revision", promptTechnique: "prose",
+          snapshot: { facts: [], relationships: [], pins: [], tail: [] }, preflightAcknowledged: acknowledged,
+        },
+      }),
+    });
+
+    const blocked = await start(false);
+    const review = await blocked.json();
+    assert.equal(blocked.status, 428);
+    assert.equal(review.error, "generation_preflight_review_required");
+    assert.equal(review.readiness.status, "review");
+    assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count, 0);
+
+    const approved = await start(true);
+    assert.equal(approved.status, 202);
+    assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count, 1);
+    assert.equal(moderationCalls, 1, "the unchanged document must reuse its advisory moderation result");
+    assert.ok(database.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='GenerationRiskAcknowledged'").get().count);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });
 
 test("cached generation readiness avoids replaying the entire creative stream", async () => {

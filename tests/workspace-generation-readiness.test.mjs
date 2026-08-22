@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { runReadyImageGeneration } from "../src/model/generation-intent.ts";
+import { generationReadinessBlocksAction } from "../src/model/generation-readiness.ts";
 
 const harness = (status, { acknowledged = false, summary, reject } = {}) => {
   const calls = [];
@@ -129,9 +130,40 @@ test("every paid next-step recommendation uses the shared readiness dispatcher",
 test("compact document controls defer hidden fan checks without skipping their safety gates", async () => {
   const controls = await readFile(new URL("../src/components/generation-actions.ts", import.meta.url), "utf8");
   assert.match(controls, /kind\.includes\("fan"\)&&this\.compact&&!this\.#detailsOpen/);
-  assert.match(controls, /this\.#detailsOpen=true;this\.requestUpdate\(\);void this\.#warmReadiness/);
+  assert.match(controls, /@toggle=\$\{warmOnOpen\}/);
+  assert.match(controls, /this\.#detailsOpen=true;this\.requestUpdate\(\);\}/);
   assert.match(controls, /requiredReadinessRows=this\.compact&&!this\.#detailsOpen\?readinessRows\.slice\(0,2\):readinessRows/);
   assert.match(controls, /ensureGenerationReadiness\(row\.kind/);
   assert.match(controls, /formaGenerationFirstResolvedMs/);
   assert.match(controls, /formaGenerationResolvedMs/);
+});
+
+test("optimistic primary actions remain available without hiding known provider or safety failures", () => {
+  const status = (value) => value === null ? null : { status: value, requestKey: "exact-request" };
+
+  assert.equal(generationReadinessBlocksAction(status(null), { optimistic: true }), false);
+  assert.equal(generationReadinessBlocksAction(status("checking"), { optimistic: true }), true);
+  assert.equal(generationReadinessBlocksAction(status("ready"), { optimistic: true }), false);
+  assert.equal(generationReadinessBlocksAction(status("blocked"), { optimistic: true }), true);
+  assert.equal(generationReadinessBlocksAction(status("unknown"), { optimistic: true }), true);
+  assert.equal(generationReadinessBlocksAction(status("review"), { optimistic: true }), true);
+  assert.equal(generationReadinessBlocksAction(status("review"), { optimistic: true, acknowledged: true }), false);
+  assert.equal(generationReadinessBlocksAction(status(null)), true);
+  assert.equal(generationReadinessBlocksAction(status("checking")), true);
+});
+
+test("compact primary controls skip passive checks while paid and fan safety remain mandatory", async () => {
+  const controls = await readFile(new URL("../src/components/generation-actions.ts", import.meta.url), "utf8");
+  const jobs = await readFile(new URL("../worker/document-jobs-api.ts", import.meta.url), "utf8");
+
+  assert.doesNotMatch(controls, /this\.#readinessTimer\s*=\s*window\.setTimeout/);
+  assert.match(controls, /generationReadinessBlocksAction\(value,\{optimistic:true/);
+  assert.match(controls, /previewBudgetBlocked\|\|readinessDisabled\(previewReadiness\)/);
+  assert.match(controls, /fullBudgetBlocked\|\|readinessDisabled\(generateReadiness\)/);
+  assert.match(controls, /previewFanBudgetBlocked\|\|readinessDisabled\(previewFanReadiness\)/);
+  assert.match(controls, /fullFanBudgetBlocked\|\|readinessDisabled\(generateFanReadiness\)/);
+  assert.match(controls, /formaGenerationActionableMs/);
+  assert.match(controls, /provider\.provider==="fal"\)\?\.configured/);
+  assert.match(controls, /Date\.parse\(value\.expiresAt\)>Date\.now\(\)/);
+  assert.match(jobs, /force:true[^\n]*allowCache:false/);
 });
