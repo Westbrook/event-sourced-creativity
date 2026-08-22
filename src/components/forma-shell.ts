@@ -5,7 +5,7 @@ import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isD
 import { APPLICATIONS, applicationDefinition, applicationIdFromRoute, creativeCreationHref, navigationItemActive } from "../platform/applications";
 import { canvasFocusFromRoute } from "../canvas/routes";
 import { ensureModalDialog } from "./modal-dialog";
-import { completeRoutePopulation } from "../performance";
+import { beginRoutePopulation, completeRoutePopulation, recordPopulationSource } from "../performance";
 import { FORMA_SUPPORTED_LOCALES, formaLocaleFamily, setFormaLocale } from "./design-system/localization";
 import "./forma-attention-observer";
 
@@ -66,7 +66,9 @@ export class FormaShell extends FormaElement {
     });
     this.#dialogObserver.observe(this, { subtree: true, childList: true, attributes: true, attributeFilter: ["open"] });
     void loadRouteComponent(location.pathname);
-    if (!location.pathname.startsWith("/share/")&&!this.store.events.get().length) void this.store.load();
+    const shared=location.pathname==="/share"||location.pathname.startsWith("/share/");
+    if(shared){beginRoutePopulation(location.pathname);recordPopulationSource("miss",0);}
+    else if(!this.store.events.get().length)void this.store.load();
   }
   override disconnectedCallback() { this.#dialogObserver?.disconnect(); window.removeEventListener("keydown", this.#keydown); window.removeEventListener("popstate", this.#pop); window.removeEventListener("forma-route-changed", this.#routeChanged); super.disconnectedCallback(); }
 
@@ -212,7 +214,8 @@ export class FormaShell extends FormaElement {
 
   override render() {
     const path = this.store.route.get();const applicationId=applicationIdFromRoute(path);const application=applicationDefinition(applicationId);const isCreative=applicationId==="creative";const isCanvas=applicationId==="canvas";const isMaking=isCreative||isCanvas;
-    if(path.startsWith("/share/"))return html`<div class="shared-locale-switcher">${this.#localePicker()}</div><forma-shared-view .token=${decodeURIComponent(path.slice("/share/".length))}></forma-shared-view><span class="sr-only" role="status" aria-live="polite">${this.#localeAnnouncement}</span>`;
+    const pathname=path.split(/[?#]/)[0]||"/";
+    if(pathname==="/share"||pathname.startsWith("/share/"))return html`<div class="shared-locale-switcher">${this.#localePicker()}</div><forma-shared-view .token=${decodeURIComponent(pathname.slice("/share/".length))}></forma-shared-view><span class="sr-only" role="status" aria-live="polite">${this.#localeAnnouncement}</span>`;
     const session=this.store.session.get();const impersonation=session?.impersonation;
     const simplifiedEditor = documentViewFromRoute(path) === "editor";
     const projection=this.store.projection.get();

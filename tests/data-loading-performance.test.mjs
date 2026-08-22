@@ -5,7 +5,18 @@ import { DatabaseSync } from "node:sqlite";
 import { runInNewContext } from "node:vm";
 import worker from "../dist/server/index.js";
 import { foldEvents } from "../src/model/events.ts";
-import { performanceRouteFamily } from "../src/performance.ts";
+import { routePathname } from "../src/model/routes.ts";
+import { EVENT_PROFILE_ORDER, SCOPED_EVENT_PROFILES, eventMatchesProfile, eventProfileRank } from "../src/model/event-profiles.ts";
+import { buildComprehensiveScenario, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
+import { tasteMetrics } from "../src/model/taste.ts";
+import { attentionMetrics } from "../src/model/attention.ts";
+import { documentViewWorkflow } from "../src/model/document-view-signals.ts";
+import { buildScoutEnvelope, buildScoutTrajectory, scoutPrecisionLedger } from "../src/model/scout.ts";
+import { briefEligibility, phase6GateMetrics, sessionContinuityDelta } from "../src/model/brief.ts";
+import { unfinishedIntentTrajectories } from "../src/model/intent-trajectories.ts";
+import { performanceRouteFamily, performanceRouteSurface } from "../src/performance.ts";
+import { matchingAccountSnapshot } from "../src/state/account-cache.ts";
+import { routeCapabilities } from "../src/state/route-capabilities.ts";
 import { consumeSessionBootstrap, consumeSessionPrefetch } from "../src/state/session-bootstrap.ts";
 
 function measuredDatabase() {
@@ -163,6 +174,84 @@ test("route timing correctly classifies Canvas proposals and Laboratory aliases"
   assert.equal(performanceRouteFamily("/system/focal-points"), "laboratory");
   assert.equal(performanceRouteFamily("/admin/events/replay"), "laboratory");
   assert.equal(performanceRouteFamily("/admin/events/permissions"), "operations");
+});
+
+test("performance isolates operational, laboratory, document, and public entry points", () => {
+  const cases = {
+    "/operations": "operations-system", "/system": "operations-system", "/operations/analytics": "operations-analytics",
+    "/operations/canvas": "operations-canvas-governance", "/operations/events": "operations-event-stream",
+    "/operations/events/stream": "operations-event-stream", "/admin/events": "operations-event-stream",
+    "/operations/events/permissions": "operations-permissions", "/admin/events/permissions": "operations-permissions",
+    "/operations/events/sync": "operations-canvas-sync", "/admin/events/sync": "operations-canvas-sync",
+    "/laboratory": "laboratory-replay", "/laboratory/replay": "laboratory-replay", "/admin/events/replay": "laboratory-replay",
+    "/laboratory/image-adapters": "laboratory-image-adapters", "/laboratory/focal-points": "laboratory-focal-points",
+    "/system/focal-points": "laboratory-focal-points", "/laboratory/design-system": "laboratory-design-system",
+    "/document/document-1/title/view/chat": "document-chat", "/document/document-1/title": "document-workspace",
+    "/share": "shared-document", "/share/secret-token": "shared-document",
+  };
+  for (const [path, surface] of Object.entries(cases)) assert.equal(performanceRouteSurface(`${path}?safe=1#view`), surface, path);
+  for (const view of ["board", "guided", "layers", "adaptive", "editor", "chat"]) assert.equal(performanceRouteSurface(`/studio/${view}`), `studio-${view}`);
+  for (const path of ["/creative", "/operations/analytics", "/operations/canvas", "/operations/events/sync", "/laboratory", "/laboratory/image-adapters", "/laboratory/focal-points", "/laboratory/design-system"]) {
+    assert.equal(routePathname(`${path}/?safe=1`), path);
+    assert.equal(performanceRouteFamily(`${path}/`), performanceRouteFamily(path));
+    assert.equal(performanceRouteSurface(`${path}/`), performanceRouteSurface(path));
+    assert.deepEqual(routeCapabilities(`${path}/`), routeCapabilities(path));
+  }
+});
+
+test("six nested route profiles retain every surface's actual evidence", () => {
+  assert.deepEqual(EVENT_PROFILE_ORDER, ["projects", "workspace", "memory", "scout", "sessions", "full"]);
+  assert.deepEqual(SCOPED_EVENT_PROFILES, ["projects", "workspace", "memory", "scout", "sessions"]);
+  for (const [rank, profile] of EVENT_PROFILE_ORDER.entries()) assert.equal(eventProfileRank(profile), rank);
+  for (const type of SCENARIO_EVENT_TYPES) for (let index = 1; index < EVENT_PROFILE_ORDER.length; index += 1) {
+    assert.ok(!eventMatchesProfile(EVENT_PROFILE_ORDER[index - 1], type) || eventMatchesProfile(EVENT_PROFILE_ORDER[index], type), `${type} ceases to be nested at ${EVENT_PROFILE_ORDER[index]}`);
+  }
+  const full = buildComprehensiveScenario();
+  const select = (profile) => full.filter((event) => eventMatchesProfile(profile, event.type));
+  assert.deepEqual(foldEvents(select("workspace")), foldEvents(full));
+  for (const model of [tasteMetrics, attentionMetrics, documentViewWorkflow]) assert.deepEqual(model(select("memory")), model(full), `memory ${model.name}`);
+  for (const model of [buildScoutTrajectory, scoutPrecisionLedger, documentViewWorkflow]) assert.deepEqual(model(select("scout")), model(full), `scout ${model.name}`);
+  assert.deepEqual(buildScoutEnvelope(select("scout"), 500_000, 3), buildScoutEnvelope(full, 500_000, 3));
+  for (const model of [briefEligibility, phase6GateMetrics, sessionContinuityDelta, unfinishedIntentTrajectories]) assert.deepEqual(model(select("sessions")), model(full), `sessions ${model.name}`);
+  assert.ok(eventMatchesProfile("sessions", "ValidationFailed"));
+  assert.ok(eventMatchesProfile("sessions", "GenerationPreflightCompleted"));
+  assert.ok(eventMatchesProfile("scout", "CanvasInteractionRecorded"));
+  for (const profile of ["memory", "scout", "sessions"]) assert.ok(eventMatchesProfile(profile, "AttentionSignalsForgotten"));
+});
+
+test("nested snapshots downscope without crossing account, consent, policy, or impersonation", () => {
+  const identity = { userId: "owner-a", policyVersion: "policy-2", accepted: true, impersonating: false };
+  const types = ["ProjectCreated", "DocumentViewVisited", "AttentionEpisodeObserved", "AttentionSignalsForgotten", "CanvasInteractionRecorded", "ObjectViewed", "ComparisonOpened", "GenerationPreflightCompleted", "ValidationFailed", "ApplicationViewVisited", "GenerationPreflightRequested"];
+  const snapshot = { key: "owner-a:policy-2:v1", userId: "owner-a", policyVersion: "policy-2", profile: "full", head: types.length, events: types.map((type, index) => ({ type, sequence: index + 1 })), savedAt: Date.now(), schemaVersion: 1 };
+  for (const requested of EVENT_PROFILE_ORDER) {
+    const found = matchingAccountSnapshot([snapshot], identity, requested);
+    assert.equal(found?.profile, requested);
+    assert.equal(found?.head, snapshot.head);
+    assert.deepEqual(found?.events.map((event) => event.type), types.filter((type) => eventMatchesProfile(requested, type)));
+  }
+  assert.equal(matchingAccountSnapshot([{ ...snapshot, profile: "workspace" }], identity, "memory"), null);
+  assert.equal(matchingAccountSnapshot([snapshot], { ...identity, userId: "owner-b" }, "projects"), null);
+  assert.equal(matchingAccountSnapshot([snapshot], { ...identity, policyVersion: "policy-3" }, "projects"), null);
+  assert.equal(matchingAccountSnapshot([{ ...snapshot, userId: "owner-b" }], identity, "projects"), null);
+  assert.equal(matchingAccountSnapshot([snapshot], { ...identity, accepted: false }, "projects"), null);
+  assert.equal(matchingAccountSnapshot([snapshot], { ...identity, impersonating: true }, "projects"), null);
+});
+
+test("each route requests only its own evidence, private content, and historical jobs", () => {
+  const expected = {
+    "/projects": ["projects", false, false], "/memory": ["memory", true, false], "/scout": ["scout", false, false],
+    "/sessions": ["sessions", false, false], "/operations/events": ["full", false, false],
+    "/operations/events/stream": ["full", false, false], "/operations": ["sessions", false, false],
+    "/operations/events/sync": ["sessions", false, false], "/operations/analytics": ["projects", false, false],
+    "/operations/canvas": ["projects", false, false], "/operations/events/permissions": ["projects", false, false],
+    "/laboratory/replay": ["projects", false, false], "/laboratory/image-adapters": ["projects", false, false],
+    "/laboratory/focal-points": ["workspace", false, false], "/laboratory/design-system": ["workspace", false, false],
+    "/studio/project": ["workspace", false, false], "/document/document-1": ["workspace", true, true],
+    "/canvas/canvas-1": ["workspace", true, true], "/library": ["workspace", true, true], "/share/token": ["projects", false, false],
+  };
+  for (const [path, [profile, privateContent, jobHistory]] of Object.entries(expected)) assert.deepEqual(routeCapabilities(`${path}?safe=1#section`), { profile, privateContent, jobHistory }, path);
+  assert.deepEqual(routeCapabilities("/admin/events/replay"), routeCapabilities("/laboratory/replay"));
+  assert.deepEqual(routeCapabilities("/admin/events/permissions"), routeCapabilities("/operations/events/permissions"));
 });
 
 test("static HTML starts one authenticated session immediately without touching public shares", async () => {
@@ -484,6 +573,136 @@ test("route-specific projects are complete, private, and fetched in one D1 batch
   assert.ok(database.calls.length <= 2, `expected auth + one D1 batch, received ${database.calls.length}`);
   assert.equal(database.writeCount(), 0);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
+});
+
+test("every scoped event profile is nested, owner-scoped, paginated, and content-free", async () => {
+  const { database, request } = await productionWorker();
+  const stream = "creative:dev-local-creative";
+  const now = new Date().toISOString();
+  let sequence = Number(database.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head);
+  const insert = database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  for (const type of ["DocumentViewVisited", "AttentionEpisodeObserved", "AttentionSignalsForgotten", "CanvasInteractionRecorded", "ObjectViewed", "ComparisonOpened", "GenerationPreflightCompleted", "ValidationFailed", "GenerationPreflightRequested", "ApplicationViewVisited"]) {
+    insert.run(crypto.randomUUID(), stream, ++sequence, now, now, "user", "profile-test", crypto.randomUUID(), null, null, 1, type, "{}");
+  }
+  insert.run(crypto.randomUUID(), "creative:other-owner", 1, now, now, "user", "profile-test", crypto.randomUUID(), null, null, 1, "ProjectCreated", "{}");
+  const full = await (await request("/api/events?after=0&limit=5000&content=0")).json();
+  for (const profile of SCOPED_EVENT_PROFILES) {
+    let after = 0;
+    const actual = [];
+    for (let page = 0; page < 200; page += 1) {
+      database.reset();
+      const response = await request(`/api/events?after=${after}&limit=7&profile=${profile}&content=1`);
+      const body = await response.json();
+      assert.equal(response.status, 200, profile);
+      assert.equal(body.profile, profile);
+      assert.equal("content" in body, false, profile);
+      assert.equal(body.head, sequence, profile);
+      assert.ok(body.events.every((event) => event.streamId === stream && eventMatchesProfile(profile, event.type)), profile);
+      assert.ok(database.calls.length <= 2, `${profile}: ${database.calls.length} D1 round trips`);
+      assert.equal(database.writeCount(), 0);
+      actual.push(...body.events);
+      if (!body.hasMore) { assert.equal(body.nextAfter, sequence, profile); break; }
+      assert.ok(body.nextAfter > after, profile);
+      after = body.nextAfter;
+    }
+    assert.deepEqual(actual.map((event) => event.eventId), full.events.filter((event) => eventMatchesProfile(profile, event.type)).map((event) => event.eventId), profile);
+  }
+});
+
+test("analytics excludes fictional streams in SQL and batches all dashboard reads", async () => {
+  const { database, request } = await productionWorker();
+  const response = await request("/api/analytics?days=all");
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.ok(body.report.source.eventCount > 0);
+  const batch = database.calls.find((call) => call.kind === "batch");
+  assert.equal(batch?.statements.length, 3);
+  assert.match(batch.statements[2].sql, /stream_id NOT IN \(SELECT fictional_stream_id/);
+  assert.ok(database.calls.length <= 2, `expected admin authentication plus one dashboard batch, received ${database.calls.length}`);
+  assert.equal(database.writeCount(), 0);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  database.reset();
+  const synthetic = await request("/api/analytics?days=all&includeSynthetic=true");
+  assert.equal(synthetic.status, 200);
+  const included = database.calls.find((call) => call.kind === "batch");
+  assert.equal(included?.statements.length, 3);
+  assert.doesNotMatch(included.statements[2].sql, /NOT IN/);
+  database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("dev-local-creative");
+  database.reset();
+  assert.equal((await request("/api/analytics?days=all")).status, 403);
+  assert.equal(database.calls.some((call) => call.kind === "batch"), false);
+  assert.equal(database.writeCount(), 0);
+});
+
+test("saved replay listings reconcile and load their own data in bounded database batches", async () => {
+  const { database, request } = await productionWorker();
+  const response = await request("/api/replay-sessions");
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.ok(Array.isArray(body.sessions));
+  assert.ok(body.liveGeneration);
+  assert.ok(database.calls.length <= 4, `expected authentication, reconciliation, listing, and budget; received ${database.calls.length}`);
+  const batches = database.calls.filter((call) => call.kind === "batch");
+  assert.equal(batches.length, 2);
+  assert.equal(batches[0].statements.length, 2);
+  assert.equal(batches[1].statements.length, 3);
+  assert.match(batches[1].statements[0].sql, /CASE WHEN json_valid\(usage_json\)/);
+  assert.doesNotMatch(batches[1].statements[0].sql, /SELECT \* FROM replay_sessions/);
+  assert.equal(database.writeCount(), 0);
+});
+
+test("full inspection uses 5,000-event pages while editing reads only workspace evidence", async () => {
+  const { database, request } = await productionWorker();
+  const stream = "creative:dev-local-creative";
+  const now = new Date().toISOString();
+  let sequence = Number(database.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head);
+  const insert = database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  database.sqlite.exec("BEGIN");
+  for (let index = 0; index < 5_001; index += 1) insert.run(crypto.randomUUID(), stream, ++sequence, now, now, "user", "performance-test", crypto.randomUUID(), null, null, 1, "ApplicationViewVisited", "{}");
+  database.sqlite.exec("COMMIT");
+  const full = await request("/api/events?after=0&limit=5000&content=0");
+  assert.equal(full.status, 200);
+  const page = await full.json();
+  assert.equal(page.events.length, 5_000);
+  assert.equal(page.hasMore, true);
+  database.reset();
+  const edited = await request("/api/events", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "append", event: { type: "CollectionCreated", payload: { collection_id: "collection-fast", handle: "performance-fast", parent_collection_id: null } } }),
+  });
+  assert.equal(edited.status, 200);
+  const body = await edited.json();
+  assert.ok(body.appended.some((event) => event.type === "CollectionCreated"));
+  const eventReads = database.calls.filter((call) => call.kind === "batch" && call.statements.some((statement) => /FROM events.*type NOT IN/i.test(statement.sql)));
+  assert.equal(eventReads.length, 1);
+  assert.equal(database.calls.some((call) => call.kind === "batch" && call.statements.some((statement) => /FROM events WHERE stream_id=\? AND sequence>\? ORDER BY/i.test(statement.sql))), false);
+});
+
+test("public shares load only their scoped workspace projection without recipient account access", async () => {
+  const { database, request } = await productionWorker();
+  const creation = await request("/api/shares", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ resourceKind: "document", documentId: "doc-atmosphere", projectId: "project-atmosphere", expiresHours: 1 }),
+  });
+  assert.equal(creation.status, 200);
+  const { share } = await creation.json();
+  assert.ok(share.token);
+  database.reset();
+  const response = await request(`/api/shared/${encodeURIComponent(share.token)}`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.ok(body.projection.documentTitle);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.ok(database.calls.length <= 2, `expected token scope plus one workspace batch, received ${database.calls.length}`);
+  const batch = database.calls.find((call) => call.kind === "batch");
+  assert.match(batch?.statements[0].sql ?? "", /type NOT IN/);
+  assert.equal(database.calls.some((call) => /SELECT \* FROM users WHERE user_id/i.test(call.sql)), false);
+  assert.doesNotMatch(JSON.stringify(body.projection), /"(?:content_ref|contentRef|prompt_ref|promptRef|input_ref|inputRef)"/);
+  assert.equal(database.writeCount(), 0);
+  assert.equal((await request(`/api/shares/${share.shareId}`, { method: "DELETE" })).status, 200);
+  assert.equal((await request(`/api/shared/${encodeURIComponent(share.token)}`)).status, 404);
 });
 
 test("full event pages and their heads share one consistent D1 round trip", async () => {

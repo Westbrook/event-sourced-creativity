@@ -1,6 +1,7 @@
 import type { CreativeEvent } from "../model/events";
+import { eventMatchesProfile, eventProfileRank, type EventProfile } from "../model/event-profiles.ts";
 
-export type AccountSnapshotProfile = "full" | "projects" | "workspace";
+export type AccountSnapshotProfile = EventProfile;
 
 export type AccountSnapshotIdentity = {
   userId: string;
@@ -62,13 +63,16 @@ export function matchingAccountSnapshot(
   requestedProfile: AccountSnapshotProfile,
 ) {
   if (identity.impersonating || !identity.accepted) return null;
-  return snapshots.find((snapshot) =>
-    snapshot.key === snapshotKey(identity) &&
-    snapshot.userId === identity.userId &&
-    snapshot.policyVersion === identity.policyVersion &&
-    (snapshot.profile === "full" || snapshot.profile === requestedProfile || snapshot.profile === "workspace" && requestedProfile === "projects") &&
-    snapshot.events.length > 0,
-  ) ?? null;
+  const snapshot = snapshots.find((candidate) =>
+    candidate.key === snapshotKey(identity) &&
+    candidate.userId === identity.userId &&
+    candidate.policyVersion === identity.policyVersion &&
+    eventProfileRank(candidate.profile) >= eventProfileRank(requestedProfile) &&
+    candidate.events.length > 0,
+  );
+  if (!snapshot) return null;
+  if (snapshot.profile === requestedProfile) return snapshot;
+  return { ...snapshot, profile: requestedProfile, events: snapshot.events.filter((event) => eventMatchesProfile(requestedProfile, event.type)) };
 }
 
 export async function writeAccountSnapshot(
@@ -87,8 +91,7 @@ export async function writeAccountSnapshot(
       const existing = store.get(snapshot.key);
       existing.onsuccess = () => {
         const previous = existing.result as AccountSnapshot | undefined;
-        const rank = (value: AccountSnapshotProfile) => value === "full" ? 2 : value === "workspace" ? 1 : 0;
-        if (!previous || previous.schemaVersion !== 1 || Date.now() - previous.savedAt > MAX_AGE_MS || rank(profile) >= rank(previous.profile)) store.put(snapshot);
+        if (!previous || previous.schemaVersion !== 1 || Date.now() - previous.savedAt > MAX_AGE_MS || eventProfileRank(profile) >= eventProfileRank(previous.profile)) store.put(snapshot);
         const records = store.getAll();
         records.onsuccess = () => {
           const stale = (records.result as AccountSnapshot[]).sort((left, right) => right.savedAt - left.savedAt).slice(MAX_RECORDS);

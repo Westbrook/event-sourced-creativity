@@ -5,7 +5,7 @@ import { documentViewFromRoute, routePathname } from "../../model/routes";
 export function loadCreativeRoute(path: string): Promise<unknown> {
   const pathname=routePathname(path);
   const documentView = documentViewFromRoute(path);
-  if (pathname.startsWith("/share/")) return import("../../components/forma-shared-view");
+  if (pathname === "/share" || pathname.startsWith("/share/")) return import("../../components/forma-shared-view");
   if (pathname.startsWith("/projects") || pathname === "/creative") return import("../../components/forma-projects");
   if (pathname.startsWith("/studio/project")) return import("../../components/forma-project-contents");
   if (documentView === "board" || documentView === "guided") return import("../../components/forma-studio-alternatives");

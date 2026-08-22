@@ -17,10 +17,12 @@ import { parseDocumentArtifactContent, type DocumentArtifactKind, type SlidePres
 import { artifactContextEvents, imageOutputContextEvents } from "../model/output-context";
 import { outputBlockRemovalEvents as ownedOutputBlockRemovalEvents, outputBlockTextEditEvents, outputInputDraft, outputInputEditEvents, type OutputInputDraft } from "../model/output-authoring";
 import { combinedContextGroups, combinedContextMemberships, combinedContextRoleForBlockType } from "../model/combined-context";
+import { eventProfileRank } from "../model/event-profiles";
 import type { VideoAudioMode, VideoDurationSeconds } from "../model/video-adapter";
-import { beginRoutePopulation, completeBackgroundHydration, performanceRouteFamily, recordEventPage, recordPopulationSource, recordSessionReady } from "../performance";
+import { beginRoutePopulation, completeBackgroundHydration, recordEventPage, recordPopulationSource, recordPrivateContentState, recordRouteHistoryProfile, recordSessionReady } from "../performance";
 import { matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
 import { consumeSessionBootstrap, consumeSessionPrefetch } from "./session-bootstrap";
+import { routeCapabilities } from "./route-capabilities";
 
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
@@ -92,7 +94,7 @@ export class FormaStore {
   #contentHydration?: Promise<void>;
   #focalBackfillTimer = 0;
 
-  constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){this.#flushPendingJobNotices();void this.syncDocumentJobs();}});}
+  constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&this.session.get()&&this.events.get().length){this.#flushPendingJobNotices();void this.syncDocumentJobs();}});}
 
   subscribe(listener: Listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   notify() { this.#listeners.forEach((listener) => listener()); }
@@ -184,7 +186,7 @@ export class FormaStore {
     let cursor=Math.max(0,after),head=cursor,first=true,initialHead=Number.POSITIVE_INFINITY;
     const events:CreativeEvent[]=[];let content:Record<string,string>={};
     for(let page=0;page<500;page+=1){
-      const limit=profile==="full"?2000:5000;
+      const limit=5000;
       const selection=profile==="full"?"":`&profile=${profile}`;
       const response=await fetch(`/api/events?after=${cursor}&limit=${limit}&content=${first&&includeContent?1:0}${selection}`);
       if(!response.ok)throw new Error(`Event stream returned ${response.status}`);
@@ -210,15 +212,11 @@ export class FormaStore {
   }
 
   #profileForRoute(path:string):AccountSnapshotProfile{
-    const family=performanceRouteFamily(path);
-    if(family==="projects")return"projects";
-    if(["operations","laboratory","sessions","scout","memory"].includes(family))return"full";
-    return"workspace";
+    return routeCapabilities(path).profile;
   }
 
   routeDataReady(path=this.route.get()){
-    const rank=(value:AccountSnapshotProfile)=>value==="full"?2:value==="workspace"?1:0;
-    return rank(this.#historyProfile)>=rank(this.#profileForRoute(path));
+    return eventProfileRank(this.#historyProfile)>=eventProfileRank(this.#profileForRoute(path));
   }
 
   #snapshotIdentity(session:PilotSession):AccountSnapshotIdentity{
@@ -226,17 +224,17 @@ export class FormaStore {
   }
 
   async #upgradeHistory(profile:AccountSnapshotProfile){
-    const rank=(value:AccountSnapshotProfile)=>value==="full"?2:value==="workspace"?1:0;
-    if(rank(this.#historyProfile)>=rank(profile))return;
-    if(this.#historyUpgrade){await this.#historyUpgrade;if(rank(this.#historyProfile)>=rank(profile))return;}
+    if(eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;
+    if(this.#historyUpgrade){await this.#historyUpgrade;if(eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;}
     const upgrade=(async()=>{
-      const incoming=profile==="full"?await this.#readEventPages(0):await this.#readEventStream(0,profile,false);
+      const incoming=await this.#readEventStream(0,profile,profile==="full"&&routeCapabilities(this.route.get()).privateContent);
       const merged=new Map(incoming.events.map((event)=>[event.eventId,event]));
       for(const event of this.events.get())merged.set(event.eventId,event);
       this.events.set([...merged.values()].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));
       if(Object.keys(incoming.content).length)this.content.set({...this.content.get(),...incoming.content});
       this.head.set(Math.max(this.head.get(),incoming.head));
       this.#historyProfile=profile;
+      recordRouteHistoryProfile(profile);
       if(profile!=="projects")completeBackgroundHydration(this.events.get().length,profile);
       this.notify();
       const session=this.session.get();if(session)void writeAccountSnapshot(this.#snapshotIdentity(session),this.events.get(),this.head.get(),profile);
@@ -246,7 +244,10 @@ export class FormaStore {
   }
 
   async #hydrateVisiblePrivateContent(){
-    if(Object.keys(this.content.get()).length||this.#contentHydration)return this.#contentHydration;
+    if(Object.keys(this.content.get()).length){recordPrivateContentState("ready");return;}
+    const hydrationPath=this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/";
+    if(this.#contentHydration){try{await this.#contentHydration;if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("ready");}catch(error){if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("unavailable");throw error;}return;}
+    recordPrivateContentState("pending");
     const hydration=(async()=>{
       const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1`);
       if(!response.ok)throw new Error(`Private content returned ${response.status}`);
@@ -254,7 +255,8 @@ export class FormaStore {
       if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}
     })();
     this.#contentHydration=hydration;
-    try{await hydration;}finally{if(this.#contentHydration===hydration)this.#contentHydration=undefined;}
+    let state:"ready"|"unavailable"="unavailable";
+    try{await hydration;state="ready";}finally{if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState(state);if(this.#contentHydration===hydration)this.#contentHydration=undefined;}
   }
 
   async ensurePrivateContent(reference:string){
@@ -291,7 +293,7 @@ export class FormaStore {
   async #refreshEvents(){const previous=this.events.get();const known=new Set(previous.map((event)=>event.eventId));const after=this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();let replace=after===0;let body=await this.#readEventPages(after);if(body.head<after){body=await this.#readEventPages(0);replace=true;this.#historyProfile="full";}if(!replace&&!body.events.length&&body.head===after&&!Object.keys(body.content).length)return false;const complete=replace?body.events:[...previous,...body.events.filter((event)=>!known.has(event.eventId))];this.events.set(complete);const confirmedClientIds=this.#clientEventIds(complete);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));if(Object.keys(body.content).length)this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#publishAppended(complete.filter((event)=>!known.has(event.eventId)));return true;}
   async refreshEvents(){if(await this.#refreshEvents())this.notify();}
   #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
-  #jobScope(path=this.route.get()){const documentId=documentIdFromRoute(path);return performanceRouteFamily(path)==="projects"?"?scope=active":documentId?`?document=${encodeURIComponent(documentId)}`:"";}
+  #jobScope(path=this.route.get()){const documentId=documentIdFromRoute(path);return documentId?`?document=${encodeURIComponent(documentId)}`:routeCapabilities(path).jobHistory?"":"?scope=active";}
   #driveDocumentJobs(jobs:DocumentJob[]){const next=[...jobs].filter((job)=>job.kind!=="prompt_fan"&&(job.status==="queued"||job.status==="running"||job.status==="committing")).sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId))[0];if(next&&(next.status==="queued"||documentJobIsStale(next))&&!this.#jobsDriving.has(next.jobId))void this.#driveDocumentJob(next);}
   async #driveDocumentJob(job:DocumentJob){this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}
   async syncDocumentJobs(){const scope=this.#jobScope();if(this.#jobsSyncing){if(scope!==this.#jobSyncScope)this.#jobResyncRequested=true;return;}this.#jobsSyncing=true;this.#jobSyncScope=scope;try{const response=await fetch(`/api/document-jobs${scope}`);if(!response.ok)throw new Error(`Job status returned ${response.status}`);const body=await response.json() as {jobs?:DocumentJob[]};if(this.#jobScope()!==scope){this.#jobResyncRequested=true;return;}const previous=new Map(this.documentJobs.get().map((job)=>[job.jobId,job]));const jobs=(body.jobs??[]).map((job)=>{const detail=this.#jobDetails.get(job.jobId);if(detail&&detail.updatedAt===job.updatedAt)return{...job,result:detail.result};if(detail)this.#jobDetails.delete(job.jobId);return job;});this.documentJobs.set(jobs);this.#jobPollFailures=0;this.#jobPollIssueNotified=false;
@@ -327,13 +329,15 @@ export class FormaStore {
       else history.pushState({}, "", routedPath);
       if(!this.loading.get()){
         beginRoutePopulation(routedPath);
+        recordRouteHistoryProfile(this.#historyProfile);
+        recordPrivateContentState(routeCapabilities(routedPath).privateContent?(Object.keys(this.content.get()).length?"ready":"pending"):"not-required");
         recordPopulationSource("memory",this.events.get().length);
       }
     }
     this.route.set(routedPath); this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath } }));
     const required=this.#profileForRoute(routedPath);
-    if(required!==this.#historyProfile&&this.#historyProfile!=="full")void this.#upgradeHistory(required).catch((error)=>{console.warn("[forma-performance]",JSON.stringify({phase:"history-upgrade",message:error instanceof Error?error.message:"history_upgrade_failed"}));});
-    if(required!=="projects"&&!this.loading.get())requestAnimationFrame(()=>void this.#hydrateVisiblePrivateContent().catch(()=>undefined));
+    if(eventProfileRank(this.#historyProfile)<eventProfileRank(required))void this.#upgradeHistory(required).catch((error)=>{console.warn("[forma-performance]",JSON.stringify({phase:"history-upgrade",message:error instanceof Error?error.message:"history_upgrade_failed"}));});
+    if(routeCapabilities(routedPath).privateContent&&!this.loading.get())requestAnimationFrame(()=>void this.#hydrateVisiblePrivateContent().catch(()=>undefined));
     if(!this.loading.get()&&this.#jobScope(current)!==this.#jobScope(routedPath))requestAnimationFrame(()=>void this.syncDocumentJobs());
   }
 
@@ -367,6 +371,8 @@ export class FormaStore {
   async load() {
     const path=this.route.get();const profile=this.#profileForRoute(path);const started=performance.now();
     beginRoutePopulation(path);
+    recordRouteHistoryProfile(profile);
+    recordPrivateContentState(routeCapabilities(path).privateContent?"pending":"not-required");
     this.loading.set(true); this.notify();
     try {
       // The document's streamed session is verified on this exact request. Cached
@@ -381,7 +387,7 @@ export class FormaStore {
           const snapshot=matchingAccountSnapshot(snapshots,this.#snapshotIdentity(verified),profile);
           if(snapshot)return this.#readEventStream(snapshot.head,snapshot.profile,false);
         }
-        return this.#readEventStream(0,profile,profile==="full");
+        return this.#readEventStream(0,profile,false);
       });
       const [session,snapshots]=await Promise.all([sessionPromise,snapshotsPromise]);
       recordSessionReady(started,bootstrap?"document":prefetched?"prefetch":"request");
@@ -391,7 +397,7 @@ export class FormaStore {
         this.events.set(cached.events);this.head.set(cached.head);this.#historyProfile=cached.profile;
         recordPopulationSource("indexeddb",cached.events.length);
         void live.then(async(current)=>{
-          if(current.head<cached.head){const restored=await this.#readEventStream(0,profile,profile==="full");this.events.set(restored.events);this.content.set(restored.content);this.head.set(restored.head);this.#historyProfile=profile;this.notify();}
+          if(current.head<cached.head){const restored=await this.#readEventStream(0,profile,false);this.events.set(restored.events);this.content.set(restored.content);this.head.set(restored.head);this.#historyProfile=profile;this.notify();}
           else if(current.head>cached.head){const merged=new Map([...this.events.get(),...current.events].map((event)=>[event.eventId,event]));this.events.set([...merged.values()].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));if(Object.keys(current.content).length)this.content.set({...this.content.get(),...current.content});this.head.set(current.head);this.#publishAppended(current.events);this.notify();void writeAccountSnapshot(identity,this.events.get(),this.head.get(),this.#historyProfile);}
         }).catch((error)=>console.warn("[forma-performance]",JSON.stringify({phase:"cache-revalidation",message:error instanceof Error?error.message:"cache_revalidation_failed"})));
       }else{
@@ -404,7 +410,7 @@ export class FormaStore {
       requestAnimationFrame(()=>{
         void this.syncDocumentFromRoute(this.route.get());
         void this.syncDocumentJobs();
-        if(profile!=="projects")void this.#hydrateVisiblePrivateContent().catch(()=>undefined);
+        if(routeCapabilities(this.route.get()).privateContent)void this.#hydrateVisiblePrivateContent().catch(()=>undefined);
       });
     } catch (error) { this.error.set(error instanceof Error ? error.message : "Unable to load event stream"); }
     finally { this.loading.set(false); this.notify(); }

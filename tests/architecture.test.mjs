@@ -220,6 +220,39 @@ test("packages first-class HTML entry points for every named application route",
   assert.doesNotMatch(shell, /<forma-library|<forma-admin-events|<forma-system|<forma-focal-point-lab/);
 });
 
+test("named HTML preloads only its active route component and never starts a public-share session", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../dist/client/.vite/manifest.json", import.meta.url), "utf8"));
+  const pages = {
+    "/projects": "src/components/forma-projects.ts", "/memory": "src/components/forma-memory.ts",
+    "/scout": "src/components/forma-scout.ts", "/sessions": "src/components/forma-sessions.ts",
+    "/operations/analytics": "src/components/forma-analytics.ts", "/operations/canvas": "src/apps/operations/canvas-governance.ts",
+    "/operations/events": "src/components/forma-admin-events.ts", "/laboratory/replay": "src/components/forma-admin-events.ts",
+    "/laboratory/image-adapters": "src/components/forma-image-adapter-lab.ts", "/canvas": "src/canvas/canvas-application.ts",
+    "/share": "src/components/forma-shared-view.ts",
+  };
+  for (const [path, source] of Object.entries(pages)) {
+    const html = await readFile(new URL(`../dist/client${path}/index.html`, import.meta.url), "utf8");
+    const leaf = manifest[source] ?? Object.values(manifest).find((entry) => entry.src === source);
+    assert.ok(leaf?.file, source);
+    const tags = [...html.matchAll(/<link\b(?=[^>]*\brel="modulepreload")(?=[^>]*\bdata-forma-route-leaf\b)[^>]*>/g)].map((match) => match[0]);
+    assert.equal(tags.length, 1, path);
+    assert.ok(tags[0].includes(`href="/${leaf.file}"`), path);
+    assert.ok(html.indexOf(tags[0]) < html.indexOf("data-forma-route-module"), path);
+    if (path === "/share") assert.doesNotMatch(html, /forma-static-session-prefetch|fetch\("\/api\/session"\)/);
+  }
+  const root = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
+  assert.doesNotMatch(root, /data-forma-route-leaf/);
+});
+
+test("event administration bounds its visible stream and initializes replay only for authorized replay routes", async () => {
+  const source = await readFile(new URL("../src/components/forma-admin-events.ts", import.meta.url), "utf8");
+  assert.match(source, /#eventLimit\s*=\s*150/);
+  assert.match(source, /events\.slice\(-this\.#eventLimit\)\.reverse\(\)/);
+  assert.match(source, /this\.#eventLimit\+=150/);
+  assert.match(source, /firstUpdated\(\)\{if\(this\.#tab==="replay"&&this\.store\.session\.get\(\)\?\.user\.role==="admin"\)void this\.#loadSaved\(\);\}/);
+  assert.match(source, /data-forma-surface-ready=\$\{String\(this\.#savedResolved\)\}/);
+});
+
 test("restores Event operations tabs and Studio documents from URL state", async () => {
   const [admin, store, shell, routes, navigation, rail] = await Promise.all([
     readFile(new URL("../src/components/forma-admin-events.ts", import.meta.url), "utf8"),

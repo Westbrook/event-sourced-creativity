@@ -2,6 +2,7 @@ import { html, LitElement, nothing } from "lit";
 import { documentArtifactDefinition, type DocumentArtifact } from "../model/document-artifacts";
 import type { CreativeOutput } from "../model/events";
 import { FormaLocaleController } from "./design-system/localization";
+import { completeRoutePopulation } from "../performance";
 import "./artifact-summary";
 import "./output-visual";
 
@@ -15,9 +16,9 @@ export class FormaSharedView extends LitElement {
   protected override createRenderRoot() { return this; }
   override connectedCallback() { super.connectedCallback(); void this.#load(); }
   async #load() {
-    try { const response = await fetch(`/api/shared/${encodeURIComponent(this.token)}`); const body = await response.json() as { projection?: SharedProjection; share?: { expiresAt: string }; error?: string }; if (!response.ok || !body.projection) throw new Error(body.error ?? "Shared view unavailable"); this.#projection = body.projection; this.#expiresAt = body.share?.expiresAt ?? ""; }
+    try {if(!this.token.trim())throw new Error("Shared view unavailable");const response = await fetch(`/api/shared/${encodeURIComponent(this.token)}`); const body = await response.json() as { projection?: SharedProjection; share?: { expiresAt: string }; error?: string }; if (!response.ok || !body.projection) throw new Error(body.error ?? "Shared view unavailable"); this.#projection = body.projection; this.#expiresAt = body.share?.expiresAt ?? ""; }
     catch (error) { this.#error = error instanceof Error ? error.message : "Shared view unavailable"; }
-    finally { this.#loading = false; this.requestUpdate(); }
+    finally { this.#loading = false;this.requestUpdate();void this.updateComplete.then(()=>completeRoutePopulation(location.pathname)); }
   }
 
   #results(projection: SharedProjection): SharedResult[] {

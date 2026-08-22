@@ -9,10 +9,13 @@ const allowedRanges=new Set([7,30,90,365]);
 export async function handleAnalytics(request:Request,env:WorkerEnv){
   await ensureSchema(env);const auth=await requireUser(request,env,"admin",{account:"principal"});if(auth.response||!auth.user)return auth.response!;if(request.method!=="GET")return new Response("Method not allowed",{status:405});
   const url=new URL(request.url);const requestedDays=Number(url.searchParams.get("days")??30);const rangeDays=url.searchParams.get("days")==="all"?null:allowedRanges.has(requestedDays)?requestedDays:30;const includeSynthetic=url.searchParams.get("includeSynthetic")==="true";
-  const [userRows,personaRows,eventRows]=await Promise.all([
-    env.DB.prepare("SELECT user_id,email,display_name FROM users ORDER BY created_at").all<Record<string,unknown>>(),
-    env.DB.prepare("SELECT fictional_user_id,fictional_stream_id,display_name FROM replay_personas WHERE status='ready' ORDER BY created_at").all<Record<string,unknown>>(),
-    env.DB.prepare("SELECT * FROM events ORDER BY stream_id,sequence LIMIT ?").bind(MAX_ANALYTICS_EVENTS+1).all<Record<string,unknown>>(),
+  const eventQuery=includeSynthetic
+    ? "SELECT * FROM events ORDER BY stream_id,sequence LIMIT ?"
+    : "SELECT * FROM events WHERE stream_id NOT IN (SELECT fictional_stream_id FROM replay_personas WHERE status='ready') ORDER BY stream_id,sequence LIMIT ?";
+  const [userRows,personaRows,eventRows]=await env.DB.batch<Record<string,unknown>>([
+    env.DB.prepare("SELECT user_id,email,display_name FROM users ORDER BY created_at"),
+    env.DB.prepare("SELECT fictional_user_id,fictional_stream_id,display_name FROM replay_personas WHERE status='ready' ORDER BY created_at"),
+    env.DB.prepare(eventQuery).bind(MAX_ANALYTICS_EVENTS+1),
   ]);
   const users=new Map(userRows.results.map((row)=>[String(row.user_id),{name:String(row.display_name),email:String(row.email)}]));const personas=new Map(personaRows.results.map((row)=>[String(row.fictional_stream_id),{id:String(row.fictional_user_id),name:String(row.display_name)}]));const grouped=new Map<string,ReturnType<typeof serializeEvent>[]>();
   for(const row of eventRows.results.slice(0,MAX_ANALYTICS_EVENTS)){const event=serializeEvent(row);const bucket=grouped.get(event.streamId);if(bucket)bucket.push(event);else grouped.set(event.streamId,[event]);}

@@ -2,6 +2,8 @@ type PopulationCache = "miss" | "indexeddb" | "memory";
 
 type RoutePopulation = {
   routeFamily: string;
+  routeSurface: string;
+  historyProfile: string | null;
   cache: PopulationCache;
   events: number;
   pages: number;
@@ -11,6 +13,8 @@ type RoutePopulation = {
   sessionSource: "document" | "prefetch" | "preload" | "request" | null;
   sessionServerMs: number | null;
   sessionHeadStartMs: number | null;
+  privateContentState: string | null;
+  privateContentReadyMs: number | null;
   navigationSource: "worker" | "static" | null;
   apiRequests: number;
   apiTransferBytes: number;
@@ -30,6 +34,8 @@ type RecordedResource = { path: string; durationMs: number; serverMs: number; tr
 
 const metrics = {
   routeFamily: "unknown",
+  routeSurface: "unknown",
+  routePath: "",
   cache: "miss" as PopulationCache,
   pages: 0,
   events: 0,
@@ -55,7 +61,7 @@ const root = () => document.documentElement.dataset;
 const rounded = (value: number) => Math.round(value * 10) / 10;
 
 export function performanceRouteFamily(path: string) {
-  const pathname = path.split(/[?#]/)[0] || "/";
+  const pathname = path.split(/[?#]/)[0]?.replace(/\/+$/, "") || "/";
   if (pathname.startsWith("/projects") || pathname === "/creative") return "projects";
   if (pathname === "/canvas/proposals" || pathname.startsWith("/canvas/proposals/")) return "canvas-proposals";
   if (pathname.startsWith("/canvas/")) return "canvas-workspace";
@@ -65,12 +71,33 @@ export function performanceRouteFamily(path: string) {
   if (pathname.startsWith("/studio/")) return "studio";
   if (pathname.startsWith("/laboratory") || pathname.startsWith("/admin/events/replay") || pathname.startsWith("/system/focal-points")) return "laboratory";
   if (pathname.startsWith("/operations") || pathname.startsWith("/admin/events") || pathname.startsWith("/system")) return "operations";
-  if (pathname.startsWith("/share/")) return "share";
+  if (pathname === "/share" || pathname.startsWith("/share/")) return "share";
   if (pathname.startsWith("/library")) return "library";
   if (pathname.startsWith("/sessions")) return "sessions";
   if (pathname.startsWith("/scout")) return "scout";
   if (pathname.startsWith("/memory")) return "memory";
   return "creative-workspace";
+}
+
+export function performanceRouteSurface(path: string) {
+  const pathname = path.split(/[?#]/)[0]?.replace(/\/+$/, "") || "/";
+  if (pathname === "/share" || pathname.startsWith("/share/")) return "shared-document";
+  if (pathname === "/operations/analytics") return "operations-analytics";
+  if (pathname === "/operations/canvas") return "operations-canvas-governance";
+  if (["/operations/events/sync", "/admin/events/sync"].includes(pathname)) return "operations-canvas-sync";
+  if (["/operations/events/permissions", "/admin/events/permissions"].includes(pathname)) return "operations-permissions";
+  if (["/operations/events", "/operations/events/stream", "/admin/events", "/admin/events/stream"].includes(pathname)) return "operations-event-stream";
+  if (pathname === "/operations" || pathname === "/system") return "operations-system";
+  if (["/laboratory", "/laboratory/replay", "/admin/events/replay"].includes(pathname)) return "laboratory-replay";
+  if (pathname === "/laboratory/image-adapters") return "laboratory-image-adapters";
+  if (["/laboratory/focal-points", "/system/focal-points"].includes(pathname)) return "laboratory-focal-points";
+  if (pathname === "/laboratory/design-system") return "laboratory-design-system";
+  if (pathname.startsWith("/studio/")) return `studio-${pathname.split("/")[2]}`;
+  if (pathname.startsWith("/document/")) {
+    const view = pathname.match(/\/view\/([^/]+)/)?.[1];
+    return view ? `document-${view}` : "document-workspace";
+  }
+  return performanceRouteFamily(path);
 }
 
 function observe(type: string, callback: (entry: PerformanceEntry) => void, options: Record<string, unknown> = {}) {
@@ -155,12 +182,17 @@ function installFieldMetrics() {
     const serverMs = rounded(Number(resource.serverTiming?.find((timing) => timing.name === "app")?.duration ?? 0));
     metrics.resources.push({ path, durationMs: rounded(resource.duration), serverMs, transferBytes: resource.transferSize, decodedBytes: resource.decodedBodySize });
     if (metrics.resources.length > 80) metrics.resources.shift();
+    root().formaApiRequests = String(metrics.resources.length);
+    root().formaApiPaths = [...new Set(metrics.resources.map((item) => item.path))].join(",");
   });
 }
 
 export function beginRoutePopulation(path: string) {
   const family = performanceRouteFamily(path);
+  const surface = performanceRouteSurface(path);
   metrics.routeFamily = family;
+  metrics.routeSurface = surface;
+  metrics.routePath = path.split(/[?#]/)[0]?.replace(/\/+$/, "") || "/";
   metrics.populationStartedAt = performance.now();
   metrics.pages = 0;
   metrics.events = 0;
@@ -169,7 +201,13 @@ export function beginRoutePopulation(path: string) {
   metrics.cache = "miss";
   root().formaPhase = "session";
   root().formaRouteFamily = family;
+  root().formaRouteSurface = surface;
   root().formaCache = "miss";
+  root().formaApiRequests = "0";
+  delete root().formaApiPaths;
+  delete root().formaHistoryProfile;
+  delete root().formaPrivateContentState;
+  delete root().formaPrivateContentReadyMs;
   delete root().formaPopulatedMs;
   delete root().formaRouteLatencyMs;
   delete root().formaSessionSource;
@@ -180,6 +218,15 @@ export function beginRoutePopulation(path: string) {
   delete root().formaSessionInitiator;
   metrics.completed.clear();
   performance.mark("forma:population-start");
+}
+
+export function recordRouteHistoryProfile(profile: string) {
+  root().formaHistoryProfile = profile;
+}
+
+export function recordPrivateContentState(state: "pending" | "ready" | "unavailable" | "not-required") {
+  root().formaPrivateContentState = state;
+  if (state === "ready") root().formaPrivateContentReadyMs = String(rounded(performance.now()));
 }
 
 export function recordSessionReady(startedAt: number, source: "document" | "prefetch" | "request" = "request") {
@@ -213,13 +260,28 @@ export function recordPopulationSource(cache: PopulationCache, events: number) {
 
 export function completeRoutePopulation(path: string, retry = 0) {
   const family = performanceRouteFamily(path);
-  if (family !== metrics.routeFamily || metrics.completed.has(family)) return;
+  const surface = performanceRouteSurface(path);
+  const pathname = path.split(/[?#]/)[0]?.replace(/\/+$/, "") || "/";
+  const currentPathname = location.pathname.replace(/\/+$/, "") || "/";
+  if (family !== metrics.routeFamily || surface !== metrics.routeSurface || pathname !== metrics.routePath || pathname !== currentPathname || metrics.completed.has(surface)) return;
   requestAnimationFrame(() => {
     const main = document.querySelector("#main-content");
     let meaningful = family === "projects"
       ? Boolean(main?.querySelector(".project-card,forma-ui-empty-state"))
       : Boolean(main && main.querySelectorAll("*").length > 2 && !main.querySelector(".application-loading"));
-    const shell=document.querySelector("forma-shell") as (HTMLElement & {store?:{projection?:{get:()=>{documentId?:string}};canvasProjection?:{get:()=>{selectedCanvasId?:string}}}})|null;
+    if (surface === "shared-document") meaningful = Boolean(document.querySelector(".shared-view .shared-hero,.shared-view .shared-status h1"));
+    else if (surface === "operations-analytics") meaningful = Boolean(main?.querySelector("forma-analytics .analytics-overview,forma-analytics .analytics-error[role=alert]"));
+    else if (surface === "operations-canvas-governance") meaningful = Boolean(main?.querySelector("forma-canvas-governance .canvas-governance-grid,forma-canvas-governance .canvas-governance-error[role=alert]"));
+    else if (surface === "operations-canvas-sync") meaningful = Boolean(main?.querySelector('forma-canvas-sync-inspector[data-forma-surface-ready="true"] .system-metrics'));
+    else if (surface === "operations-permissions") meaningful = Boolean(main?.querySelector("forma-admin-events .permission-table,forma-admin-events > .admin-page > .replay-empty"));
+    else if (surface === "operations-event-stream") meaningful = Boolean(main?.querySelector("forma-admin-events .event-table tbody,forma-admin-events > .admin-page > .replay-empty"));
+    else if (surface === "laboratory-replay") meaningful = Boolean(main?.querySelector('forma-admin-events .saved-replays[data-forma-surface-ready="true"],forma-admin-events > .admin-page > .replay-empty'));
+    else if (surface === "laboratory-image-adapters") meaningful = Boolean(main?.querySelector("forma-image-adapter-lab .adapter-lab-status,forma-image-adapter-lab .adapter-lab-warning[role=alert]"));
+    else if (surface === "laboratory-focal-points") meaningful = Boolean(main?.querySelector("forma-focal-point-lab .focal-lab-controls") && main.querySelector("forma-focal-point-lab .focal-lab-assets,forma-focal-point-lab .focal-lab-empty"));
+    else if (surface === "laboratory-design-system") meaningful = Boolean(main?.querySelector("forma-design-system-lab .design-lab-content forma-component-catalog") && main.querySelector("forma-design-system-lab .design-lab-section"));
+    const shell=document.querySelector("forma-shell") as (HTMLElement & {store?:{projection?:{get:()=>{documentId?:string;conditions?:unknown[]}};canvasProjection?:{get:()=>{selectedCanvasId?:string}}}})|null;
+    if (family === "memory" && (shell?.store?.projection?.get().conditions?.length ?? 0) > 0 && root().formaPrivateContentState === "pending") meaningful = false;
+    if ((surface === "document-chat" || surface === "studio-chat") && root().formaPrivateContentState === "pending") meaningful = false;
     if(family==="document"){
       const requested=decodeURIComponent((path.split(/[?#]/)[0].split("/")[2]??""));
       if(requested&&shell?.store?.projection?.get().documentId!==requested)meaningful=false;
@@ -228,15 +290,17 @@ export function completeRoutePopulation(path: string, retry = 0) {
       const requested=decodeURIComponent((path.split(/[?#]/)[0].split("/")[2]??""));
       if(requested&&shell?.store?.canvasProjection?.get().selectedCanvasId!==requested)meaningful=false;
     }
-    if (!meaningful && retry < 120) {
+    if (!meaningful && retry < 480) {
       window.setTimeout(() => completeRoutePopulation(path, retry + 1), 25);
       return;
     }
-    if (!meaningful || metrics.completed.has(family)) return;
-    metrics.completed.add(family);
+    if (!meaningful || metrics.completed.has(surface) || metrics.routeSurface !== surface || metrics.routePath !== pathname || (location.pathname.replace(/\/+$/, "") || "/") !== pathname) return;
+    metrics.completed.add(surface);
     const populatedMs = rounded(performance.now());
     root().formaPopulatedMs = String(populatedMs);
     root().formaRouteLatencyMs = String(rounded(populatedMs-metrics.populationStartedAt));
+    root().formaApiRequests = String(metrics.resources.length);
+    root().formaApiPaths = [...new Set(metrics.resources.map((resource) => resource.path))].join(",");
     root().formaPhase = "populated";
     performance.mark("forma:route-populated");
     const apiBreakdown = [...metrics.resources.reduce((groups, resource) => {
@@ -251,6 +315,8 @@ export function completeRoutePopulation(path: string, retry = 0) {
       .map((group) => ({ ...group, durationMs: rounded(group.durationMs), serverMs: rounded(group.serverMs) }));
     const detail: RoutePopulation = {
       routeFamily: family,
+      routeSurface: surface,
+      historyProfile: root().formaHistoryProfile ?? null,
       cache: metrics.cache,
       events: metrics.events,
       pages: metrics.pages,
@@ -260,6 +326,8 @@ export function completeRoutePopulation(path: string, retry = 0) {
       sessionSource:root().formaSessionSource==="document"?"document":root().formaSessionSource==="prefetch"?"prefetch":root().formaSessionSource==="preload"?"preload":root().formaSessionSource==="request"?"request":null,
       sessionServerMs:root().formaSessionServerMs===undefined?null:Number(root().formaSessionServerMs),
       sessionHeadStartMs:root().formaSessionHeadStartMs===undefined?null:Number(root().formaSessionHeadStartMs),
+      privateContentState:root().formaPrivateContentState ?? null,
+      privateContentReadyMs:root().formaPrivateContentReadyMs===undefined?null:Number(root().formaPrivateContentReadyMs),
       navigationSource:metrics.navigationSource,
       apiRequests:metrics.resources.length,
       apiTransferBytes:metrics.resources.reduce((total,resource)=>total+resource.transferBytes,0),
@@ -279,11 +347,11 @@ export function completeRoutePopulation(path: string, retry = 0) {
   });
 }
 
-export function completeBackgroundHydration(events: number, profile: "workspace" | "full") {
+export function completeBackgroundHydration(events: number, profile: "workspace" | "memory" | "scout" | "sessions" | "full") {
   root().formaHistoryEvents = String(events);
   root().formaHistoryProfile = profile;
   root().formaHistoryReadyMs = String(rounded(performance.now()));
-  performance.mark(profile === "full" ? "forma:history-ready" : "forma:workspace-ready");
+  performance.mark(profile === "full" ? "forma:history-ready" : `forma:${profile}-ready`);
 }
 
 if (typeof window !== "undefined") installFieldMetrics();

@@ -20,7 +20,8 @@ const libraryFocusKinds = new Set<LibraryFocusKind>(["block", "output", "artifac
 const safeDecode = (value: string) => { try { return decodeURIComponent(value); } catch { return value; } };
 
 export function routePathname(route: string) {
-  return routeUrl(route).pathname;
+  const pathname = routeUrl(route).pathname;
+  return pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
 }
 
 function documentRouteParts(route: string) {

@@ -1,3 +1,5 @@
+import { PROFILE_EXCLUDED_EVENT_TYPES, PROJECT_BOOTSTRAP_EVENT_TYPES } from "../src/model/event-profiles";
+
 export interface WorkerEnv {
   ASSETS: Fetcher;
   DB: D1Database;
@@ -187,28 +189,11 @@ export async function readCorrelatedEvents(env:WorkerEnv,streamId:string,correla
   return pages.flatMap((page)=>page.results.map(serializeEvent)).sort((left,right)=>left.sequence-right.sequence);
 }
 
-export const EVENT_PAGE_SIZE = 2000;
+export const EVENT_PAGE_SIZE = 5000;
 
-export type EventReadProfile = "projects" | "workspace";
-
-/** Project cards do not need the account's engagement, audit, or canvas history. */
-export const PROJECT_BOOTSTRAP_EVENT_TYPES = [
-  "ProjectCreated", "ProjectOpened", "ProjectRenamed", "ProjectStateChanged",
-  "DocumentCreated", "DocumentForked", "DocumentOpened", "DocumentRenamed",
-  "DocumentRemoved", "DocumentRestored", "BlockCreated", "BlockRemoved",
-  "BlockRestored", "BlockRehomed", "CollectionCreated", "CollectionRemoved",
-  "CollectionRestored", "IdeationPreviewCompleted", "GenerationCompleted",
-  "DocumentRenderCompleted", "ObjectDiscarded", "ObjectPinned", "ObjectUnpinned",
-  "ObjectSaved", "AddedToLibrary", "RemovedFromLibrary", "PromptFanOutputPromoted",
-  "ImageFocalPointCalculated",
-] as const;
-
-/** These receipts do not participate in either the creative or Canvas projections. */
-export const PROJECTION_IGNORED_EVENT_TYPES = [
-  "AttentionEpisodeObserved", "ApplicationViewVisited", "CanvasInteractionRecorded",
-  "DocumentViewVisited", "ObjectViewed", "ComparisonOpened",
-  "GenerationPreflightRequested", "GenerationPreflightCompleted", "ValidationFailed",
-] as const;
+export type EventReadProfile = import("../src/model/event-profiles").ScopedEventProfile;
+export { PROJECT_BOOTSTRAP_EVENT_TYPES } from "../src/model/event-profiles";
+export const PROJECTION_IGNORED_EVENT_TYPES = PROFILE_EXCLUDED_EVENT_TYPES.workspace;
 
 export async function readEventPage(env: WorkerEnv, streamId: string, afterSequence = 0, limit = EVENT_PAGE_SIZE) {
   const pageSize=Math.max(1,Math.min(EVENT_PAGE_SIZE,Math.floor(limit)));
@@ -241,7 +226,7 @@ export async function readProfileEventPage(
   limit = 5000,
 ) {
   const pageSize = Math.max(1, Math.min(5000, Math.floor(limit)));
-  const eventTypes = profile === "projects" ? PROJECT_BOOTSTRAP_EVENT_TYPES : PROJECTION_IGNORED_EVENT_TYPES;
+  const eventTypes = profile === "projects" ? PROJECT_BOOTSTRAP_EVENT_TYPES : PROFILE_EXCLUDED_EVENT_TYPES[profile];
   const placeholders = eventTypes.map(() => "?").join(",");
   const operator = profile === "projects" ? "IN" : "NOT IN";
   const index = profile === "projects" ? " INDEXED BY idx_events_stream_type" : "";
