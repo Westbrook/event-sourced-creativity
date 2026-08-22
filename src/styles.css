@@ -1788,11 +1788,12 @@ forma-document-artifacts { display: block; min-width: 0; }
 .document-artifact-reader-actions { display: flex; flex: none; align-items: center; gap: 1rem; }
 .artifact-slide-footer-toggle { display: inline-flex; align-items: center; gap: .55rem; color: var(--muted); font-size: var(--type-caption); font-weight: 600; cursor: pointer; }
 .artifact-slide-footer-toggle input { margin: 0; accent-color: var(--accent); }
-.artifact-kind-picker { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 1px; overflow: auto; background: var(--line); }
-.artifact-kind-picker button { display: grid; align-content: start; gap: .45rem; min-width: 9rem; min-height: 10rem; padding: 1.2rem; text-align: start; color: inherit; border: 0; background: var(--panel); cursor: pointer; }
-.artifact-kind-picker button.selected { background: light-dark(#fff8ef,#29231d); }
-.artifact-kind-picker button > span { width: 1.5rem; color: var(--accent); }
-.artifact-kind-picker button small { color: var(--muted); line-height: 1.35; }
+.artifact-kind-picker { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 1px; overflow: auto; margin: 0; padding: 0; border: 0; background: var(--line); }
+.artifact-kind-picker :is(button,label) { display: grid; align-content: start; gap: .45rem; min-width: 9rem; min-height: 10rem; padding: 1.2rem; text-align: start; color: inherit; border: 0; background: var(--panel); cursor: pointer; }
+.artifact-kind-picker :is(button,label).selected { background: light-dark(#fff8ef,#29231d); }
+.artifact-kind-picker :is(button,label) > span { width: 1.5rem; color: var(--accent); }
+.artifact-kind-picker :is(button,label) small { color: var(--muted); line-height: 1.35; }
+.artifact-kind-picker input[type="radio"] { inline-size: 1.125rem; block-size: 1.125rem; accent-color: var(--accent); }
 .document-artifact-dialog { overflow: auto; }
 .artifact-options { display: grid; grid-template-columns: minmax(12rem,1.4fr) repeat(2,minmax(10rem,1fr)); gap: 1.25rem 2rem; padding: 1.75rem var(--page-gutter); }
 .artifact-option-intro h3 { margin: 0 0 .35rem; font: 600 1.2rem var(--sans); }

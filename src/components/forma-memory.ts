@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import { beliefHistory, CREATOR_AXES, preferenceCapsule, standingConstraints, tasteMetrics, type CreatorAxis, type TasteBelief } from "../model/taste";
 import { attentionMetrics } from "../model/attention";
 import { FormaElement, icon } from "./forma-element";
+import "./icons-history";
 import "./area-navigation";
 
 const record=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};

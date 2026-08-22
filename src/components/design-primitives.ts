@@ -1,5 +1,5 @@
 import { html, noChange, nothing } from "lit";
-import { icon } from "./icons";
+import { icon, type FormaIconName } from "./icons";
 import { FormaPresentationalElement } from "./presentational-element";
 
 export type InterfaceTone = "neutral" | "accent" | "positive" | "warning" | "danger";
@@ -16,7 +16,7 @@ export type InterfaceButtonVariant = "primary" | "secondary" | "ghost" | "danger
  */
 export class FormaUiButton extends FormaPresentationalElement {
   static properties = { label: { type: String }, variant: { type: String }, disabled: { type: Boolean }, busy: { type: Boolean }, compact: { type: Boolean }, iconName: { type: String, attribute: "icon-name" }, type: { type: String }, name: { type: String }, value: { type: String }, form: { type: String }, busyLabel: { type: String, attribute: "busy-label" }, expanded: { type: Boolean }, pressed: { type: Boolean }, controls: { type: String } };
-  label = ""; variant: InterfaceButtonVariant = "secondary"; disabled = false; busy = false; compact = false; iconName = ""; type: "button" | "submit" | "reset" = "button"; name = ""; value = ""; form = ""; busyLabel = ""; expanded?: boolean; pressed?: boolean; controls = "";
+  label = ""; variant: InterfaceButtonVariant = "secondary"; disabled = false; busy = false; compact = false; iconName: FormaIconName | "" = ""; type: "button" | "submit" | "reset" = "button"; name = ""; value = ""; form = ""; busyLabel = ""; expanded?: boolean; pressed?: boolean; controls = "";
   #press(event: MouseEvent) {
     if (this.disabled || this.busy) { event.preventDefault(); event.stopImmediatePropagation(); return; }
     if (!this.dispatchEvent(new CustomEvent("forma-press", { detail: { value: this.value }, bubbles: true, composed: true, cancelable: true }))) event.preventDefault();
@@ -24,7 +24,7 @@ export class FormaUiButton extends FormaPresentationalElement {
   override render() {
     const label = this.label || this.i18n.t("action.default");
     const busy = this.busy ? this.busyLabel || this.i18n.t("action.working") : "";
-    return html`<button type=${this.type} class=${`button ${this.variant}${this.compact ? " compact" : ""}`} ?disabled=${this.disabled} aria-disabled=${this.busy ? "true" : nothing} aria-busy=${this.busy ? "true" : "false"} aria-expanded=${typeof this.expanded === "boolean" ? String(this.expanded) : nothing} aria-pressed=${typeof this.pressed === "boolean" ? String(this.pressed) : nothing} aria-controls=${this.controls || nothing} name=${this.name || nothing} value=${this.value || nothing} form=${this.form || nothing} @click=${this.#press}>${this.iconName ? html`<span class=${this.iconName === "arrow" ? "ui-directional-icon" : nothing} aria-hidden="true">${icon(this.iconName)}</span>` : nothing}<span>${label}</span>${this.busy ? html`<span class="ui-button-busy" aria-hidden="true">…</span>` : nothing}</button><span class="sr-only" role="status" aria-live="polite" aria-atomic="true">${this.busy ? this.i18n.t("action.busy", "", { label, status: busy }) : ""}</span>`;
+    return html`<button type=${this.type} class=${`button ${this.variant}${this.compact ? " compact" : ""}`} ?disabled=${this.disabled} aria-disabled=${this.busy ? "true" : nothing} aria-busy=${this.busy ? "true" : "false"} aria-expanded=${typeof this.expanded === "boolean" ? String(this.expanded) : nothing} aria-pressed=${typeof this.pressed === "boolean" ? String(this.pressed) : nothing} aria-controls=${this.controls || nothing} name=${this.name || nothing} value=${this.value || nothing} form=${this.form || nothing} @click=${this.#press}>${this.iconName ? html`<span class=${this.iconName === "arrow" ? "ui-directional-icon" : nothing} aria-hidden="true">${icon(this.iconName)}</span>` : nothing}<span>${label}</span>${this.busy ? html`<span class="ui-spinner-mark ui-button-busy" aria-hidden="true"></span>` : nothing}</button><span class="sr-only" role="status" aria-live="polite" aria-atomic="true">${this.busy ? this.i18n.t("action.busy", "", { label, status: busy }) : ""}</span>`;
   }
 }
 
@@ -91,7 +91,7 @@ export class FormaUiMetric extends FormaPresentationalElement {
  */
 export class FormaUiEmptyState extends FormaPresentationalElement {
   static properties = { heading: { type: String }, detail: { type: String }, action: { type: String }, iconName: { type: String, attribute: "icon-name" }, level: { type: Number } };
-  heading = ""; detail = ""; action = ""; iconName = "spark"; level = 3;
+  heading = ""; detail = ""; action = ""; iconName: FormaIconName = "spark"; level = 3;
   #heading() { switch (Math.max(1, Math.min(6, Math.trunc(this.level)))) { case 1: return html`<h1>${this.heading}</h1>`; case 2: return html`<h2>${this.heading}</h2>`; case 4: return html`<h4>${this.heading}</h4>`; case 5: return html`<h5>${this.heading}</h5>`; case 6: return html`<h6>${this.heading}</h6>`; default: return html`<h3>${this.heading}</h3>`; } }
   override render() {
     return html`<section class="ui-empty-state"><span aria-hidden="true">${icon(this.iconName)}</span>${this.#heading()}<p>${this.detail}</p>${this.action ? html`<forma-ui-button variant="secondary" .label=${this.action} @forma-press=${() => this.dispatchEvent(new CustomEvent("forma-action", { bubbles: true, composed: true }))}></forma-ui-button>` : nothing}</section>`;

@@ -83,6 +83,7 @@ export type DocumentArtifact = {
   modelId: string;
   latency: number;
   sequence: number;
+  library: boolean;
   sourceEventId: string;
   sourceSurface: string | null;
   settings: Record<string, unknown>;

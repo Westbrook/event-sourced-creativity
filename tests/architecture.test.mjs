@@ -395,11 +395,11 @@ test("enforces the adopted production-pilot boundaries", async () => {
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
   ]);
   assert.match(policy, /oai-authenticated-user-id/); assert.match(policy, /cf-access-authenticated-user-email/);
-  assert.match(policy, /pilot_terms_required/); assert.match(policy, /reserved_tokens/); assert.match(policy, /500_000/); assert.match(policy, /5_000_000/);
+  assert.match(policy, /pilot_terms_required/); assert.match(policy, /reserved_tokens/); assert.match(policy, /10_000_000/); assert.match(policy, /100_000_000/);
   assert.match(adapter, /api\.openai\.com\/v1\/responses/); assert.match(adapter, /store: false/); assert.match(adapter, /safety_identifier/);
   assert.match(shares, /expiresHours/); assert.match(shares, /ShareLinkRevoked/); assert.match(shares, /token_hash/);
   assert.match(media, /rightsConfirmed/); assert.match(shell, /acceptTerms/); assert.match(shell, /forma-shared-view/);
-  assert.match(schema, /private_content/); assert.match(schema, /budget_counters/); assert.match(schema, /budget_reservations/); assert.match(envExample, /OPENAI_API_KEY=/); assert.match(envExample, /FORMA_USER_TOKEN_LIMIT=500000/); assert.match(envExample, /FORMA_WORKSPACE_TOKEN_LIMIT=5000000/);
+  assert.match(schema, /private_content/); assert.match(schema, /budget_counters/); assert.match(schema, /budget_reservations/); assert.match(envExample, /OPENAI_API_KEY=/); assert.match(envExample, /FORMA_USER_TOKEN_LIMIT=10000000/); assert.match(envExample, /FORMA_WORKSPACE_TOKEN_LIMIT=100000000/);
 });
 
 test("records the accepted provider debt and makes the extractor gate operational", async () => {

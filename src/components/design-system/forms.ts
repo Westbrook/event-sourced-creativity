@@ -1,7 +1,9 @@
 import { html, noChange, nothing } from "lit";
-import { icon } from "../icons";
+import { icon, type FormaIconName } from "../icons";
 import { FormaPresentationalElement } from "../presentational-element";
 import { defineFormaElements, emitFormaEvent, nextFormaId, type FormaOption } from "./contracts";
+import { applyRichTextFormat, RICH_TEXT_FORMATS, type RichTextFormat } from "../../model/rich-text";
+import "../icons-formatting";
 
 /**
  * @tag forma-ui-search
@@ -39,6 +41,70 @@ export class FormaUiTextarea extends FormaPresentationalElement {
   #compositionEnd(event: CompositionEvent) { this.#composing = false; this.#input(event); }
   #change(event: Event) { this.value = (event.target as HTMLTextAreaElement).value; emitFormaEvent(this, "forma-change", { value: this.value }); }
   override render() { const descriptions = [this.help && `${this.#id}-help`, this.error && `${this.#id}-error`].filter(Boolean).join(" "); return html`<label class=${`ui-field ui-textarea${this.error ? " ui-field--invalid" : ""}`} for=${this.#id}><span>${this.label || this.i18n.t("field.text")}${this.required ? html` <span aria-hidden="true">*</span>` : nothing}</span><textarea id=${this.#id} .value=${this.#composing ? noChange : this.value} rows=${Math.max(2, this.rows)} name=${this.name || nothing} form=${this.form || nothing} placeholder=${this.placeholder || nothing} maxlength=${this.maxLength > 0 ? this.maxLength : nothing} autocomplete=${this.autocomplete || nothing} ?required=${this.required} ?disabled=${this.disabled} ?readonly=${this.readOnly} aria-invalid=${this.error ? "true" : "false"} aria-describedby=${descriptions || nothing} aria-errormessage=${this.error ? `${this.#id}-error` : nothing} @input=${this.#input} @change=${this.#change} @compositionstart=${this.#compositionStart} @compositionend=${this.#compositionEnd}></textarea>${this.help ? html`<small id=${`${this.#id}-help`}>${this.help}</small>` : nothing}${this.error ? html`<small id=${`${this.#id}-error`} class="ui-field-error">${this.error}</small>` : nothing}</label>`; }
+}
+
+/**
+ * @tag forma-ui-rich-text
+ * @summary Accessible Markdown authoring with a native multiline field and selection-safe formatting.
+ * @fires {CustomEvent<{ value: string }>} forma-input - Authored Markdown changed.
+ * @fires {CustomEvent<{ value: string }>} forma-change - Authored Markdown was committed.
+ * @cssprop {<color>} --forma-color-border-strong - Accessible field and formatting-action boundary.
+ * @cssprop {<length>} --forma-control-min-size - Formatting button target size.
+ */
+export class FormaUiRichText extends FormaPresentationalElement {
+  static properties = { label: { type: String }, value: { type: String }, name: { type: String }, form: { type: String }, placeholder: { type: String }, help: { type: String }, error: { type: String }, required: { type: Boolean }, disabled: { type: Boolean }, readOnly: { type: Boolean, attribute: "readonly" }, rows: { type: Number } };
+  label = ""; value = ""; name = ""; form = ""; placeholder = ""; help = ""; error = ""; required = false; disabled = false; readOnly = false; rows = 8;
+  #id = nextFormaId("rich-text"); #composing = false; #status = "";
+
+  #input(event: Event) {
+    if (this.#composing || (event instanceof InputEvent && event.isComposing)) return;
+    const value = (event.target as HTMLTextAreaElement).value;
+    if (value === this.value) return;
+    this.value = value;
+    emitFormaEvent(this, "forma-input", { value });
+  }
+
+  #compositionStart() { this.#composing = true; }
+  #compositionEnd(event: CompositionEvent) { this.#composing = false; this.#input(event); }
+  #change(event: Event) { this.value = (event.target as HTMLTextAreaElement).value; emitFormaEvent(this, "forma-change", { value: this.value }); }
+
+  #format(format: RichTextFormat) {
+    const textarea = this.querySelector<HTMLTextAreaElement>("textarea");
+    if (!textarea || this.disabled || this.readOnly || this.#composing) return;
+    const next = applyRichTextFormat(textarea.value, textarea.selectionStart, textarea.selectionEnd, format);
+    textarea.setRangeText(next.value, 0, textarea.value.length, "preserve");
+    textarea.setSelectionRange(next.selectionStart, next.selectionEnd);
+    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText" }));
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(next.selectionStart, next.selectionEnd);
+    this.#status = this.i18n.t("editor.applied", "{format} formatting applied.", { format: this.i18n.t(`editor.${format}`) });
+    this.requestUpdate();
+  }
+
+  #keydown(event: KeyboardEvent) {
+    if (this.#composing || event.isComposing || event.altKey || !(event.metaKey || event.ctrlKey)) return;
+    const format = event.key.toLowerCase() === "b" ? "bold" : event.key.toLowerCase() === "i" ? "italic" : "";
+    if (!format) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.#format(format);
+  }
+
+  override render() {
+    const instructions = [this.help, this.i18n.t("editor.help")].filter(Boolean).join(" ");
+    const descriptions = [`${this.#id}-help`, this.error && `${this.#id}-error`].filter(Boolean).join(" ");
+    const marks: Record<RichTextFormat, FormaIconName> = { bold: "bold", italic: "italic", heading: "heading", bullets: "bullets", numbered: "numbered", quote: "quote", link: "link" };
+    return html`<div class=${`ui-rich-text${this.error ? " ui-field--invalid" : ""}`}>
+      <label class="ui-rich-text-label" for=${this.#id}>${this.label || this.i18n.t("field.text")}${this.required ? html` <span aria-hidden="true">*</span>` : nothing}</label>
+      <textarea id=${this.#id} class="ui-rich-text-input" .value=${this.#composing ? noChange : this.value} rows=${Math.max(3, this.rows)} name=${this.name || nothing} form=${this.form || nothing} placeholder=${this.placeholder || nothing} ?required=${this.required} ?disabled=${this.disabled} ?readonly=${this.readOnly} aria-invalid=${this.error ? "true" : "false"} aria-describedby=${descriptions} aria-errormessage=${this.error ? `${this.#id}-error` : nothing} @input=${this.#input} @change=${this.#change} @compositionstart=${this.#compositionStart} @compositionend=${this.#compositionEnd} @keydown=${this.#keydown}></textarea>
+      <div class="ui-rich-text-actions ui-toolbar" role="group" aria-label=${this.i18n.t("editor.formatting")}>
+        ${RICH_TEXT_FORMATS.map((format) => html`<button type="button" title=${this.i18n.t(`editor.${format}`)} aria-label=${this.i18n.t(`editor.${format}`)} aria-keyshortcuts=${format === "bold" ? "Control+B Meta+B" : format === "italic" ? "Control+I Meta+I" : nothing} ?disabled=${this.disabled || this.readOnly} @click=${() => this.#format(format)}>${icon(marks[format])}</button>`)}
+      </div>
+      <small id=${`${this.#id}-help`}>${instructions}</small>
+      ${this.error ? html`<small id=${`${this.#id}-error`} class="ui-field-error">${this.error}</small>` : nothing}
+      <span class="ui-rich-text-status" role="status" aria-live="polite" aria-atomic="true">${this.#status}</span>
+    </div>`;
+  }
 }
 
 /**
@@ -114,7 +180,7 @@ export class FormaUiNumberField extends FormaPresentationalElement {
 }
 
 const definitions = [
-  ["forma-ui-search", FormaUiSearch], ["forma-ui-textarea", FormaUiTextarea], ["forma-ui-select", FormaUiSelect],
+  ["forma-ui-search", FormaUiSearch], ["forma-ui-textarea", FormaUiTextarea], ["forma-ui-rich-text", FormaUiRichText], ["forma-ui-select", FormaUiSelect],
   ["forma-ui-checkbox", FormaUiCheckbox], ["forma-ui-switch", FormaUiSwitch], ["forma-ui-radio-group", FormaUiRadioGroup],
   ["forma-ui-number-field", FormaUiNumberField],
 ] as const;
@@ -122,7 +188,7 @@ defineFormaElements(definitions);
 
 declare global {
   interface HTMLElementTagNameMap {
-    "forma-ui-search": FormaUiSearch; "forma-ui-textarea": FormaUiTextarea; "forma-ui-select": FormaUiSelect;
+    "forma-ui-search": FormaUiSearch; "forma-ui-textarea": FormaUiTextarea; "forma-ui-rich-text": FormaUiRichText; "forma-ui-select": FormaUiSelect;
     "forma-ui-checkbox": FormaUiCheckbox; "forma-ui-switch": FormaUiSwitch; "forma-ui-radio-group": FormaUiRadioGroup;
     "forma-ui-number-field": FormaUiNumberField;
   }

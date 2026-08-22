@@ -95,7 +95,7 @@ export class ReferenceFindings extends FormaElement {
           <header><span>${REFERENCE_FINDING_OPTIONS.find((option) => option.kind === finding.kind)?.label ?? finding.kind}</span><b>${Math.round(finding.confidence * 100)}% suggestion</b></header>
           <h4>${finding.label}</h4><p>${finding.value}</p><small>${finding.basis}</small>
           ${finding.kind === "palette" && finding.colors?.length ? html`<div class="palette-strip" aria-label="Extracted palette">${finding.colors.map((color) => html`<i style=${`--swatch:${color}`}></i>`)}</div>` : nothing}
-          <button type="button" class="button ${adopted ? "ghost" : "secondary"} compact" ?disabled=${adopted} @click=${() => this.#adopt(finding)}>${adopted ? `${icon("check")} Added to document` : finding.kind === "palette" ? `Choose a palette ${icon("arrow")}` : `Add as decision ${icon("arrow")}`}</button>
+          <button type="button" class="button ${adopted ? "ghost" : "secondary"} compact" ?disabled=${adopted} @click=${() => this.#adopt(finding)}>${adopted ? html`${icon("check")} Added to document` : finding.kind === "palette" ? html`Choose a palette ${icon("arrow")}` : html`Add as decision ${icon("arrow")}`}</button>
         </article>`;
       })}</div>` : html`<div class="reference-findings-empty"><b>No expanded findings yet</b><p>Analyze the image to prepare mood, composition, material, lighting, palette, and spatial suggestions.</p></div>`}
     </section>`;

@@ -13,9 +13,10 @@ import { effectivePromptPreference, normalizePromptTechnique, type PromptPrefere
 import { canvasIdFromRoute } from "../canvas/routes";
 import { canvasProjectId, foldCanvasEvents, type CanvasContextSet, type CanvasProjection } from "../canvas/model";
 import type { GenerationReadiness, GenerationReadinessKind, PromptTechniqueSafetyComparison } from "../model/generation-readiness";
-import { parseDocumentArtifactContent, type DocumentArtifactKind } from "../model/document-artifacts";
+import { parseDocumentArtifactContent, type DocumentArtifactKind, type SlidePresentation } from "../model/document-artifacts";
 import { artifactContextEvents, imageOutputContextEvents } from "../model/output-context";
-import { combinedContextGroups, combinedContextRoleForBlockType } from "../model/combined-context";
+import { outputBlockRemovalEvents as ownedOutputBlockRemovalEvents, outputBlockTextEditEvents, outputInputDraft, outputInputEditEvents, type OutputInputDraft } from "../model/output-authoring";
+import { combinedContextGroups, combinedContextMemberships, combinedContextRoleForBlockType } from "../model/combined-context";
 import type { VideoAudioMode, VideoDurationSeconds } from "../model/video-adapter";
 import { beginRoutePopulation, completeBackgroundHydration, performanceRouteFamily, recordEventPage, recordPopulationSource, recordSessionReady } from "../performance";
 import { matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
@@ -255,6 +256,13 @@ export class FormaStore {
     this.#contentHydration=hydration;
     try{await hydration;}finally{if(this.#contentHydration===hydration)this.#contentHydration=undefined;}
   }
+
+  async ensurePrivateContent(reference:string){
+    if(!reference)return null;
+    const existing=this.content.get()[reference];if(typeof existing==="string")return existing;
+    if(this.#contentHydration){try{await this.#contentHydration;}catch{/* A targeted retry below preserves the exact missing-reference contract. */}const hydrated=this.content.get()[reference];if(typeof hydrated==="string")return hydrated;}
+    try{const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1`);if(!response.ok)return null;const body=await response.json() as {content?:Record<string,string>};if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}return this.content.get()[reference]??null;}catch{return null;}
+  }
   #clientEventIds(events:CreativeEvent[]){return new Set(events.map((event)=>String(event.payload.client_event_id??"")).filter(Boolean));}
   #mergeConfirmed(appended:CreativeEvent[],head=this.head.get(),remember=false){
     const known=new Set(this.events.get().map((event)=>event.eventId));const fresh=appended.filter((event)=>!known.has(event.eventId));
@@ -448,30 +456,89 @@ export class FormaStore {
     if(!root){this.toast("That reusable context is no longer available.");return null;}
     const connected=new Set([root.id]);let changed=true;while(changed&&connected.size<24){changed=false;for(const relation of projection.libraryBlockRelations){if(connected.has(relation.fromBlockId)&&available.has(relation.toBlockId)&&!connected.has(relation.toBlockId)){connected.add(relation.toBlockId);changed=true;}if(connected.size>=24)break;}}
     const blocks=[...connected].map((id)=>available.get(id)!).sort((left,right)=>left.id===root.id?-1:right.id===root.id?1:left.position.localeCompare(right.position));const ids=new Map(blocks.map((block)=>[block.id,crypto.randomUUID()]));const contextSetId=crypto.randomUUID();const base=this.head.get()+1;
-    const groupRole=combinedContextRoleForBlockType(root.type),groupName=String(root.properties.label??root.properties.text??root.handle),groupRelativity=Math.max(.5,Math.min(1,Number(root.properties.weight??.8)));const events:EventInput[]=blocks.map((block,index)=>({type:"BlockCreated",payload:{block_id:ids.get(block.id),document_id:destinationDocumentId,type:block.type,handle:`${block.handle}-copy-${String(base+index).padStart(3,"0")}`,position:`z${String(base+index).padStart(6,"0")}`,properties:{...block.properties,authority:"authored",copied_from_block_id:block.id,copied_as_context_set:blocks.length>1,context_set_id:contextSetId,context_set_root_id:ids.get(root.id),combined_context_memberships:blocks.length>1?[{contextSetId,name:groupName,role:groupRole,target:groupName,application:"isolate",relativity:groupRelativity,memberOrder:index,sourceCanvasId:""}]:[],semantic_isolation:blocks.length>1,created_from:sourceSurface}}}));
+    const groupRole=combinedContextRoleForBlockType(root.type),groupName=String(root.properties.label??root.properties.text??root.handle),groupRelativity=Math.max(.5,Math.min(1,Number(root.properties.weight??.8)));const events:EventInput[]=blocks.map((block,index)=>{const authoredMemberships=combinedContextMemberships(block.properties);return{type:"BlockCreated",payload:{block_id:ids.get(block.id),document_id:destinationDocumentId,type:block.type,handle:`${block.handle}-copy-${String(base+index).padStart(3,"0")}`,position:`z${String(base+index).padStart(6,"0")}`,properties:{...block.properties,authority:"authored",copied_from_block_id:block.id,copied_as_context_set:blocks.length>1,context_set_id:contextSetId,context_set_root_id:ids.get(root.id),combined_context_memberships:authoredMemberships.length?authoredMemberships.map((membership)=>({...membership,contextSetId,memberOrder:index,sourceCanvasId:""})):blocks.length>1?[{contextSetId,name:groupName,role:groupRole,target:groupName,application:"isolate",relativity:groupRelativity,memberOrder:index,sourceCanvasId:""}]:[],semantic_isolation:blocks.length>1,created_from:sourceSurface}}};});
     for(const relation of projection.libraryBlockRelations){const from=ids.get(relation.fromBlockId);const to=ids.get(relation.toBlockId);if(!from||!to)continue;events.push({type:"BlockRelationAdded",payload:{relation_id:crypto.randomUUID(),project_id:projection.projectId,document_id:destinationDocumentId,from_block_id:from,to_block_id:to,kind:relation.kind,properties:{...relation.properties,copied_from_relation_id:relation.id,context_set_id:contextSetId},source_surface:sourceSurface}});}
     const appended=await this.appendBatch(events);if(!appended.length)return null;const copiedRootId=ids.get(root.id)!;this.patchUi({focusBlockId:copiedRootId});this.toast(blocks.length===1?"Reusable block added to the open document.":`${blocks.length} connected blocks added as one context set.`);return{rootBlockId:copiedRootId,blockCount:blocks.length,relationCount:events.length-blocks.length};
   }
 
-  async addArtifactAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer"){
+  #relatedOutputBlocks(blockId:string){
+    const projection=this.projection.get(),target=projection.libraryBlocks.find((block)=>block.id===blockId);if(!target)return[];
+    const rootId=target.properties.source_artifact_item_id?projection.libraryBlockRelations.find((relation)=>relation.kind==="artifact_contains"&&relation.toBlockId===target.id)?.fromBlockId??String(target.properties.context_set_root_id??""):target.id;
+    const relationIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===rootId).map((relation)=>relation.toBlockId));
+    if(relationIds.size)return projection.libraryBlocks.filter((block)=>block.id===rootId||relationIds.has(block.id));
+    return projection.libraryBlocks.filter((block)=>block.id===rootId||block.id===target.id||block.properties.context_set_root_id===rootId);
+  }
+
+  outputOwnedBlockCount(blockId:string){return this.projection.get().libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===blockId).length;}
+
+  outputBlockRemovalEvents(input:EventInput){
+    const projection=this.projection.get(),target=projection.libraryBlocks.find((block)=>block.id===String(input.payload.block_id??""));
+    if(!target)return[];
+    if(target.locked){this.toast("Unlock this input before removing it.");return[];}
+    const owner=projection.libraryBlockRelations.find((relation)=>relation.kind==="artifact_contains"&&relation.toBlockId===target.id);
+    if(owner){this.toast("This frame belongs to a storyboard. Remove the complete storyboard to keep every future generation in sync.");return[];}
+    const ownedIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===target.id).map((relation)=>relation.toBlockId));
+    const owned=projection.libraryBlocks.filter((block)=>ownedIds.has(block.id));
+    if(owned.some((block)=>block.locked)){this.toast("Unlock every linked storyboard frame before removing this input.");return[];}
+    return ownedOutputBlockRemovalEvents(target,projection.libraryBlocks,projection.libraryBlockRelations,input);
+  }
+
+  async removeOutputBlock(input:EventInput){const events=this.outputBlockRemovalEvents(input);if(!events.length)return[];return this.appendBatch(events,{rebaseAttempts:6});}
+
+  outputBlockTextEvents(blockId:string,value:string,sourceSurface="output-context-editor"){
+    const block=this.projection.get().libraryBlocks.find((candidate)=>candidate.id===blockId);if(!block)return[];
+    return outputBlockTextEditEvents(block,this.#relatedOutputBlocks(blockId),value,sourceSurface);
+  }
+
+  async saveBlockText(blockId:string,value:string,sourceSurface="output-context-editor"){
+    const events=this.outputBlockTextEvents(blockId,value,sourceSurface);if(!events.length)return[];return this.appendBatch(events,{rebaseAttempts:6});
+  }
+
+  async saveOutputInput(blockId:string,draft:OutputInputDraft,sourceSurface="output-input-editor"){
+    const root=this.projection.get().libraryBlocks.find((block)=>block.id===blockId);if(!root)return false;
+    const events=this.outputInputEvents(blockId,draft,sourceSurface);
+    if(!events.length){if(JSON.stringify(outputInputDraft(root))===JSON.stringify(draft)){this.toast("Your input is already up to date.");return true;}this.toast(root.locked?"Unlock this input before editing it.":"Unlock the related storyboard frame before saving these changes.");return false;}
+    const appended=await this.appendBatch(events,{rebaseAttempts:6});if(appended.length)this.toast("Your customized input is saved. The original output remains unchanged.");return Boolean(appended.length);
+  }
+
+  outputInputEvents(blockId:string,draft:OutputInputDraft,sourceSurface="output-input-editor"){
+    const root=this.projection.get().libraryBlocks.find((block)=>block.id===blockId);if(!root)return[];return outputInputEditEvents(root,this.#relatedOutputBlocks(blockId),draft,{sourceSurface});
+  }
+
+  async revealOutputInput(blockId:string,destinationDocumentId=this.projection.get().documentId){
+    if(!blockId)return false;
+    const projection=this.projection.get(),targetDocument=projection.documents.find((item)=>item.id===destinationDocumentId);if(!targetDocument)return false;
+    if(!isDocumentViewRoute(this.route.get())||projection.documentId!==destinationDocumentId||documentViewFromRoute(this.route.get())!=="document"){
+      const opened=await this.openDocument(destinationDocumentId,withDocumentInRoute("/",destinationDocumentId,targetDocument.title),"output-input");if(!opened)return false;
+    }
+    this.patchUi({focusBlockId:blockId,editingBlockId:blockId});
+    let attempts=0;const focus=()=>{const block=document.querySelector<HTMLElement>(`[data-block-id="${CSS.escape(blockId)}"]`),field=block?.querySelector<HTMLTextAreaElement>("forma-ui-rich-text textarea")??block?.querySelector<HTMLTextAreaElement>("textarea");if(field&&!document.querySelector("dialog[open]")){const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;block?.scrollIntoView({block:"center",behavior:reduced?"instant":"smooth"});field.focus({preventScroll:true});return;}if(attempts++<24)window.requestAnimationFrame(focus);};window.requestAnimationFrame(focus);return true;
+  }
+
+  async addArtifactAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer",options:{reveal?:boolean;presentation?:SlidePresentation|null}={}){
     const projection=this.projection.get();const artifact=projection.libraryArtifacts.find((candidate)=>candidate.id===artifactId);
     if(!artifact){this.toast("That output is no longer available.");return null;}
     const document=projection.documents.find((candidate)=>candidate.id===destinationDocumentId);if(!document){this.toast("Choose an available document before adding output context.");return null;}
     const existingBlocks=projection.libraryBlocks.filter((block)=>block.documentId===destinationDocumentId&&block.properties.source_artifact_id===artifact.id);const existingRoot=existingBlocks.find((block)=>!block.properties.source_artifact_item_id);const existingSourceItemIds=existingBlocks.map((block)=>String(block.properties.source_artifact_item_id??"")).filter(Boolean);const contextSetId=String(existingRoot?.properties.context_set_id??"")||undefined;
-    const content=parseDocumentArtifactContent(this.content.get()[artifact.contentRef??""]);const result=artifactContextEvents(artifact,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content,existingRootBlockId:existingRoot?.id,existingSourceItemIds,contextSetId,positionStart:this.head.get()+1});
-    if(!result.blockIds.length){this.toast("This complete output is already available as document input.");return{blockCount:0,availableMemberCount:result.availableMemberCount};}
+    const availableFrames=artifact.kind==="storyboard"?artifact.items.filter((item)=>Boolean(item.mediaUrl)).length:0;
+    if(existingRoot&&existingSourceItemIds.length>=availableFrames){if(options.reveal!==false)await this.revealOutputInput(existingRoot.id,destinationDocumentId);return{rootBlockId:existingRoot.id,created:false,blockCount:0,availableMemberCount:1+availableFrames};}
+    const retained=artifact.contentRef?await this.ensurePrivateContent(artifact.contentRef):null;let content=parseDocumentArtifactContent(retained??undefined);if(content&&artifact.kind==="slides"&&options.presentation)content={...content,presentation:structuredClone(options.presentation)};
+    if(artifact.contentRef&&!content){this.toast("The complete original output is unavailable, so an incomplete copy was not created.");return null;}
+    const result=artifactContextEvents(artifact,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content,existingRootBlockId:existingRoot?.id,existingSourceItemIds,contextSetId,positionStart:this.head.get()+1});
+    if(!result.blockIds.length){if(existingRoot&&options.reveal!==false)await this.revealOutputInput(existingRoot.id,destinationDocumentId);return{rootBlockId:existingRoot?.id??"",created:false,blockCount:0,availableMemberCount:result.availableMemberCount};}
     const appended=await this.appendBatch(result.events,{rebaseAttempts:6});const created=appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;
-    this.patchUi({focusBlockId:result.blockIds[0]??existingRoot?.id??""});this.toast(`${artifact.title} is now reusable document input${artifact.kind==="storyboard"?" with its finished frames kept in order":""}.`);return{blockCount:created,availableMemberCount:result.availableMemberCount};
+    const rootBlockId=existingRoot?.id??result.blockIds[0]??"";if(options.reveal!==false)await this.revealOutputInput(rootBlockId,destinationDocumentId);else this.patchUi({focusBlockId:rootBlockId});this.toast(`${artifact.title} is ready to customize${artifact.kind==="storyboard"?", with its finished frames kept in order":""}.`);return{rootBlockId,created:true,blockCount:created,availableMemberCount:result.availableMemberCount};
   }
 
   async addStoryboardFramesAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer"){return this.addArtifactAsContext(artifactId,destinationDocumentId,sourceSurface);}
 
-  async addImageOutputAsContext(outputId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="output-card"){
+  async addImageOutputAsContext(outputId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="output-card",options:{reveal?:boolean}={}){
     const projection=this.projection.get();const output=projection.libraryOutputs.find((candidate)=>candidate.id===outputId);if(!output){this.toast("That generated image is no longer available.");return null;}
     const document=projection.documents.find((candidate)=>candidate.id===destinationDocumentId);if(!document){this.toast("Choose an available document before using this image as input.");return null;}
-    if(projection.libraryBlocks.some((block)=>block.documentId===destinationDocumentId&&block.properties.source_output_id===output.id)){this.toast("This image is already available as document input.");return{blockCount:0};}
-    const result=imageOutputContextEvents(output,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,positionStart:this.head.get()+1});if(!result.events.length){this.toast("The generated image has no durable media to use as input.");return null;}
-    const appended=await this.appendBatch(result.events,{rebaseAttempts:6});const created=appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;this.patchUi({focusBlockId:result.blockIds[0]??""});this.toast("The generated image is now a pixel-capable Reference input.");return{blockCount:created};
+    const existing=projection.libraryBlocks.find((block)=>block.documentId===destinationDocumentId&&block.properties.source_output_id===output.id);if(existing){if(options.reveal!==false)await this.revealOutputInput(existing.id,destinationDocumentId);return{rootBlockId:existing.id,created:false,blockCount:0};}
+    const retained=output.contentRef?await this.ensurePrivateContent(output.contentRef):null;let direction:Record<string,unknown>|null=null;if(retained)try{const parsed=JSON.parse(retained) as unknown;if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed))direction=parsed as Record<string,unknown>;}catch{/* Existing image rights and pixels remain usable when optional direction is absent. */}
+    const result=imageOutputContextEvents(output,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content:direction,positionStart:this.head.get()+1});if(!result.events.length){this.toast("The generated image has no durable media to use as input.");return null;}
+    const appended=await this.appendBatch(result.events,{rebaseAttempts:6});const created=appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;const rootBlockId=result.blockIds[0]??"";if(options.reveal!==false)await this.revealOutputInput(rootBlockId,destinationDocumentId);else this.patchUi({focusBlockId:rootBlockId});this.toast("The generated image and its editable direction are ready to reuse.");return{rootBlockId,created:true,blockCount:created};
   }
 
   async hot(event: EventInput, options: { keepalive?: boolean } = {}) {
@@ -530,12 +597,28 @@ export class FormaStore {
     if(appended.length)this.toast(`${normalizePromptTechnique(technique)} prompts preferred for this ${scope==="collection"?"folder":scope}.`);return Boolean(appended.length);
   }
 
+  async adoptCanvasOutputItems(items:readonly{sourceKind:string;sourceId:string}[],documentId:string,sourceSurface="canvas-generation"){
+    const projection=this.projection.get();if(!projection.documents.some((document)=>document.id===documentId)){this.toast("Choose an available document before reusing the selected outputs.");return null;}
+    const unique=new Map<string,{sourceKind:string;sourceId:string}>();for(const item of items)if(item.sourceKind==="output"||item.sourceKind==="artifact")unique.set(`${item.sourceKind}:${item.sourceId}`,item);
+    for(const item of unique.values()){
+      if(item.sourceKind==="output"){const output=projection.libraryOutputs.find((candidate)=>candidate.id===item.sourceId),existing=projection.libraryBlocks.find((block)=>block.documentId===documentId&&block.properties.source_output_id===item.sourceId);if(!output||!existing?.properties.media_url&&!output.mediaUrl){this.toast("A selected generated image is unavailable, so your document was left unchanged.");return null;}continue;}
+      const artifact=projection.libraryArtifacts.find((candidate)=>candidate.id===item.sourceId);if(!artifact){this.toast("A selected output is unavailable, so your document was left unchanged.");return null;}
+      const existingRoot=projection.libraryBlocks.find((block)=>block.documentId===documentId&&block.properties.source_artifact_id===artifact.id&&!block.properties.source_artifact_item_id);const ownedIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===existingRoot?.id).map((relation)=>relation.toBlockId));const finished=new Set(artifact.items.filter((entry)=>Boolean(entry.mediaUrl)).map((entry)=>entry.id));const available=new Set(projection.libraryBlocks.filter((block)=>ownedIds.has(block.id)&&finished.has(String(block.properties.source_artifact_item_id??""))).map((block)=>String(block.properties.source_artifact_item_id)));if(existingRoot&&(artifact.kind!=="storyboard"||available.size===finished.size))continue;
+      if(artifact.contentRef&&!parseDocumentArtifactContent(await this.ensurePrivateContent(artifact.contentRef)??undefined)){this.toast(`${artifact.title} is unavailable, so your document was left unchanged.`);return null;}
+    }
+    const rootIds:string[]=[];for(const item of unique.values()){const result=item.sourceKind==="output"?await this.addImageOutputAsContext(item.sourceId,documentId,`${sourceSurface}-output`,{reveal:false}):await this.addArtifactAsContext(item.sourceId,documentId,`${sourceSurface}-artifact`,{reveal:false});if(!result?.rootBlockId)return null;rootIds.push(result.rootBlockId);}
+    return rootIds;
+  }
+
   async generateCanvasContext(kind:"preview"|"generate"|"preview_fan"|"generate_fan",contextSet:CanvasContextSet,sourcePreviewId?:string){
-    const projection=this.projection.get();const canvas=this.canvasProjection.get();const itemIds=new Set(contextSet.itemIds);const visitedSets=new Set<string>();const expandSet=(setId:string)=>{if(visitedSets.has(setId))return;visitedSets.add(setId);const nested=canvas.contextSets.find((candidate)=>candidate.id===setId);if(!nested)return;for(const itemId of nested.itemIds){itemIds.add(itemId);const item=canvas.items.find((candidate)=>candidate.id===itemId);if(item?.sourceKind==="context")expandSet(item.sourceId);}};for(const itemId of [...itemIds]){const item=canvas.items.find((candidate)=>candidate.id===itemId);if(item?.sourceKind==="context")expandSet(item.sourceId);}const selectedItems=canvas.items.filter((item)=>itemIds.has(item.id)&&item.sourceKind!=="context");
-    const blockIds=new Set(contextSet.blockIds);for(const nestedId of visitedSets){const nested=canvas.contextSets.find((candidate)=>candidate.id===nestedId);for(const blockId of nested?.blockIds??[])blockIds.add(blockId);}for(const documentId of [...contextSet.documentIds,...selectedItems.filter((item)=>item.sourceKind==="document").map((item)=>item.sourceId)])for(const block of projection.libraryBlocks)if(block.documentId===documentId)blockIds.add(block.id);
+    let projection=this.projection.get();const canvas=this.canvasProjection.get();const itemIds=new Set(contextSet.itemIds);const visitedSets=new Set<string>();const expandSet=(setId:string)=>{if(visitedSets.has(setId))return;visitedSets.add(setId);const nested=canvas.contextSets.find((candidate)=>candidate.id===setId);if(!nested)return;for(const itemId of nested.itemIds){itemIds.add(itemId);const item=canvas.items.find((candidate)=>candidate.id===itemId);if(item?.sourceKind==="context")expandSet(item.sourceId);}};for(const itemId of [...itemIds]){const item=canvas.items.find((candidate)=>candidate.id===itemId);if(item?.sourceKind==="context")expandSet(item.sourceId);}const selectedItems=canvas.items.filter((item)=>itemIds.has(item.id)&&item.sourceKind!=="context");
+    const selectedDocumentIds=selectedItems.filter((item)=>item.sourceKind==="document").map((item)=>item.sourceId);const anchorDocumentId=[...contextSet.documentIds,...selectedDocumentIds].find((id)=>projection.documents.some((document)=>document.id===id))??projection.documents[0]?.id??projection.documentId;if(!anchorDocumentId){this.toast("Create a project document before starting a Canvas generation.");return false;}
+    const blockIds=new Set(contextSet.blockIds);for(const nestedId of visitedSets){const nested=canvas.contextSets.find((candidate)=>candidate.id===nestedId);for(const blockId of nested?.blockIds??[])blockIds.add(blockId);}
+    const roots=await this.adoptCanvasOutputItems(selectedItems,anchorDocumentId);if(!roots)return false;projection=this.projection.get();for(const rootId of roots)blockIds.add(rootId);
+    for(const documentId of [...contextSet.documentIds,...selectedDocumentIds])for(const block of projection.libraryBlocks)if(block.documentId===documentId)blockIds.add(block.id);
+    for(const relation of projection.libraryBlockRelations)if(relation.kind==="artifact_contains"&&blockIds.has(relation.fromBlockId))blockIds.add(relation.toBlockId);
     const blocks=projection.libraryBlocks.filter((block)=>blockIds.has(block.id));const selectedBySource=new Map(selectedItems.map((item)=>[item.sourceId,item]));
-    const facts=blocks.map((block)=>{const item=selectedBySource.get(block.id);return{block_id:block.id,canvas_id:contextSet.canvasId,context_set_id:contextSet.id,type:block.type,role:block.type,intent:blockIntentFor(block.type,block.properties),handle:block.handle,active:Number(block.properties.weight??.5)>0,effect:blockEffectFor(block.type,block.properties),properties:{...block.properties,spatial_scope:normalizeSpatialScope(block.properties.spatial_scope)},authority:block.properties.authority??"authored",source_event_refs:[...block.sourceEvents,...(item?.sourceEvents??[])]};});const snapshot={facts,relationships:projection.libraryBlockRelations.filter((relation)=>blockIds.has(relation.fromBlockId)&&blockIds.has(relation.toBlockId)).map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties,source_event_refs:relation.sourceEvents})),context_groups:combinedContextGroups({facts}),pins:[...new Set([...contextSet.outputIds,...projection.libraryOutputs.filter((output)=>output.canvasId===contextSet.canvasId&&output.pinned).map((output)=>output.id)])],canvas:{canvas_id:contextSet.canvasId,context_set_id:contextSet.id,item_ids:contextSet.itemIds,formalized_as_of_sequence:contextSet.asOfSequence,spatial_arrangement_is_semantic:false,arrangement_is_context:false,provenance_frames:selectedItems.map((item)=>({item_id:item.id,source_kind:item.sourceKind,source_id:item.sourceId,frame:{x:item.x,y:item.y,w:item.w,h:item.h,rotation:item.rot,z:item.z}}))},tail:[]};
-    const anchorDocumentId=contextSet.documentIds.find((id)=>projection.documents.some((document)=>document.id===id))??projection.documents[0]?.id??projection.documentId;if(!anchorDocumentId){this.toast("Create a project document before starting a Canvas generation.");return false;}
+    const facts=blocks.map((block)=>{const item=selectedBySource.get(block.id)??selectedBySource.get(String(block.properties.source_output_id??block.properties.source_artifact_id??""));return{block_id:block.id,canvas_id:contextSet.canvasId,context_set_id:contextSet.id,type:block.type,role:block.type,intent:blockIntentFor(block.type,block.properties),handle:block.handle,active:Number(block.properties.weight??.5)>0,effect:blockEffectFor(block.type,block.properties),properties:{...block.properties,spatial_scope:normalizeSpatialScope(block.properties.spatial_scope)},authority:block.properties.authority??"authored",source_event_refs:[...block.sourceEvents,...(item?.sourceEvents??[])]};});const snapshot={facts,relationships:projection.libraryBlockRelations.filter((relation)=>blockIds.has(relation.fromBlockId)&&blockIds.has(relation.toBlockId)).map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties,source_event_refs:relation.sourceEvents})),context_groups:combinedContextGroups({facts}),pins:[...new Set([...contextSet.outputIds,...selectedItems.filter((item)=>item.sourceKind==="output").map((item)=>item.sourceId),...projection.libraryOutputs.filter((output)=>output.canvasId===contextSet.canvasId&&output.pinned).map((output)=>output.id)])],canvas:{canvas_id:contextSet.canvasId,context_set_id:contextSet.id,item_ids:contextSet.itemIds,formalized_as_of_sequence:contextSet.asOfSequence,spatial_arrangement_is_semantic:false,arrangement_is_context:false,provenance_frames:selectedItems.map((item)=>({item_id:item.id,source_kind:item.sourceKind,source_id:item.sourceId,frame:{x:item.x,y:item.y,w:item.w,h:item.h,rotation:item.rot,z:item.z}}))},tail:[]};
     const context={snapshot,sourceBlockVersions:blocks.map((block)=>({block_id:block.id,version:block.sourceEvents.length})),documentId:anchorDocumentId,canvasId:contextSet.canvasId,contextSetId:contextSet.id};const documentRevision=generationRevisionFor(context);const filed=projection.membership[anchorDocumentId];const technique=effectivePromptPreference(projection.preferences,{documentId:anchorDocumentId,collectionIds:filed?[filed.collectionId]:[],projectId:projection.projectId,accountId:this.session.get()?.user.userId}).technique;const fan=kind.endsWith("_fan");const fanKind=kind.startsWith("preview")?"preview":"generate";const jobKind:"preview"|"generate"|"prompt_fan"=fan?"prompt_fan":fanKind;const promptFanId=fan?crypto.randomUUID():undefined;const requestKey=fan?`canvas:prompt-fan:${fanKind}:${contextSet.id}:${documentRevision}:${sourcePreviewId??"context"}`:`canvas:${kind}:${contextSet.id}:${documentRevision}:${sourcePreviewId??"context"}`;
     try{const {reused}=await this.#startDocumentJob(jobKind,{...context,documentRevision,requestKey,promptTechnique:technique,sourcePreviewId,...(fan?{fanKind,promptFanId}:{})},"canvas",anchorDocumentId);const quality=fanKind==="preview"?"Draft":"Full-quality";this.toast(reused?"This exact Canvas generation is already queued.":fan?`${quality} fan queued as one four-image comparison for ${contextSet.name}.`:`${quality} Canvas generation queued from ${contextSet.name}.`);return true;}catch(error){this.toast(error instanceof Error?error.message:"Canvas generation could not be started.");return false;}
   }

@@ -720,12 +720,12 @@ test("budget limit changes preserve previously recorded spending", async () => {
   const { database, environment, request } = await productionWorker();
   const owner = "dev-local-creative";
   database.sqlite.prepare("UPDATE budget_counters SET used_tokens=?,reserved_tokens=? WHERE scope='user' AND scope_id=?").run(117, 42, owner);
-  environment.FORMA_USER_TOKEN_LIMIT = "750000";
+  environment.FORMA_USER_TOKEN_LIMIT = "12000000";
   database.reset();
 
   const response = await request("/api/session");
   const session = await response.json();
-  assert.equal(session.budgets.user.limit, 750000);
+  assert.equal(session.budgets.user.limit, 12000000);
   assert.equal(session.budgets.user.used, 117);
   assert.equal(session.budgets.user.reserved, 42);
   assert.ok(database.calls.some((call) => call.kind === "batch"));

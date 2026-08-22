@@ -20,6 +20,10 @@ export type ArtifactContextOptions = OutputContextOptions & {
   contextSetId?: string;
 };
 
+export type ImageOutputContextOptions = OutputContextOptions & {
+  content?: Record<string, unknown> | null;
+};
+
 export type OutputContextResult = {
   events: EventInput[];
   blockIds: string[];
@@ -44,20 +48,23 @@ const artifactSemantics = (artifact: DocumentArtifact) => ({
   video: { type:"motion", subtype:"Rendered motion", role:"sequence", application:"ordered", target:`${artifact.title} motion continuity` },
 }[artifact.kind]);
 
-const draftItems = (artifact: DocumentArtifact, content?: DocumentArtifactDraft | null): DocumentArtifactDraftItem[] => artifact.items.map((item,index)=>{
+type AuthoredArtifactItem = DocumentArtifactDraftItem & { source_artifact_item_id: string };
+
+const draftItems = (artifact: DocumentArtifact, content?: DocumentArtifactDraft | null): AuthoredArtifactItem[] => artifact.items.map((item,index)=>{
   const authored=content?.items[index];
   return {
-    title:authored?.title?.trim()||item.title,
-    body:authored?.body?.trim()||item.body,
-    notes:authored?.notes?.trim()||item.notes,
-    image_prompt:authored?.image_prompt?.trim()||item.imagePrompt,
+    source_artifact_item_id:item.id,
+    title:typeof authored?.title==="string"?authored.title:item.title,
+    body:typeof authored?.body==="string"?authored.body:item.body,
+    notes:typeof authored?.notes==="string"?authored.notes:item.notes,
+    image_prompt:typeof authored?.image_prompt==="string"?authored.image_prompt:item.imagePrompt,
     context_group_ids:authored?.context_group_ids??item.contextGroupIds??[],
     slide:authored?.slide??item.slide,
   };
 });
 
 const artifactText = (artifact: DocumentArtifact, content?: DocumentArtifactDraft | null) => {
-  const retained=content?.content_markdown?.trim();if(retained)return retained;
+  if(typeof content?.content_markdown==="string")return content.content_markdown;
   const parts=draftItems(artifact,content).flatMap((item,index)=>[
     `${index+1}. ${item.title}`,
     item.body,
@@ -77,7 +84,7 @@ export function artifactContextEvents(artifact: DocumentArtifact, options: Artif
   if(!options.existingRootBlockId){
     blockIds.push(rootBlockId);
     events.push({type:"BlockCreated",payload:{...shared,block_id:rootBlockId,type:semantics.type,handle:`${semantics.type}/${slug(artifact.title)}-${artifact.id.slice(-8)}`,position:`${options.positionPrefix??"z"}${String(options.positionStart??0).padStart(8,"0")}`,properties:{
-      label:artifact.title,text:artifactText(artifact,options.content),subtype:semantics.subtype,intent:"include",authority:"authored",weight:.9,
+      label:artifact.title,text:artifactText(artifact,options.content),artifact_markdown:artifactText(artifact,options.content),subtype:semantics.subtype,intent:"include",authority:"authored",weight:.9,
       source_artifact_id:artifact.id,source_artifact_kind:artifact.kind,source_document_id:artifact.documentId,source_artifact_content_ref:artifact.contentRef,source_artifact_input_ref:artifact.inputRef??null,
       artifact_summary:artifact.summary,artifact_item_count:artifact.itemCount,artifact_structure:{presentation:options.content?.presentation??artifact.presentation,items},
       media_url:artifact.mediaUrl,media_type:artifact.mediaType,provider:artifact.provider,model_id:artifact.modelId,input_mode:"full_output",
@@ -95,11 +102,12 @@ export function artifactContextEvents(artifact: DocumentArtifact, options: Artif
 }
 
 /** Materialize a generated still as a rights-backed Reference input. */
-export function imageOutputContextEvents(output: CreativeOutput, options: OutputContextOptions): OutputContextResult {
+export function imageOutputContextEvents(output: CreativeOutput, options: ImageOutputContextOptions): OutputContextResult {
   if(!output.mediaUrl)return{events:[],blockIds:[],sourceItemIds:[],availableMemberCount:0};
   const idFactory=options.idFactory??(()=>crypto.randomUUID());const blockId=idFactory(),referenceId=idFactory();const shared={...sharedPayload(options),source_output_id:output.id,source_generation_id:output.generationId,source_document_id:output.documentId};
+  const direction=options.content??{};const title=typeof direction.title==="string"&&direction.title?direction.title:`${output.quality==="low"?"Draft":"Full-quality"} image input`;const guidance=[direction.rationale,direction.scene].filter((value):value is string=>typeof value==="string"&&Boolean(value));const palette=Array.isArray(direction.palette)?direction.palette.filter((value):value is string=>typeof value==="string"):[];
   return{events:[
     {type:"ReferenceIngested",payload:{...shared,reference_id:referenceId,source_type:"generated-output",source_ref:output.mediaUrl,media_url:output.mediaUrl,media_type:output.mediaType,rights_class:"account-generated",provider:output.provider,model_id:output.modelId}},
-    {type:"BlockCreated",payload:{...shared,block_id:blockId,type:"reference",handle:`reference/generated-${output.id.slice(-8)}`,position:`${options.positionPrefix??"z"}${String(options.positionStart??0).padStart(8,"0")}`,properties:{reference_id:referenceId,label:`${output.quality==="low"?"Draft":"Full-quality"} image input`,text:"Use this selected generation as visual inspiration for the next output.",media_url:output.mediaUrl,media_type:output.mediaType,width:output.width,height:output.height,focal_point:output.focalPoint,source_output_id:output.id,source_generation_id:output.generationId,source_document_id:output.documentId,prompt_technique:output.promptTechnique,prompt_fan_id:output.promptFanId,pixel_reference_mode:"inspiration",intent:"include",authority:"authored",weight:.8,input_mode:"full_output",created_from:options.sourceSurface,...(options.sourceCanvasItemIds?.length?{source_canvas_item_ids:options.sourceCanvasItemIds}:{})}}},
+    {type:"BlockCreated",payload:{...shared,block_id:blockId,type:"reference",handle:`reference/generated-${output.id.slice(-8)}`,position:`${options.positionPrefix??"z"}${String(options.positionStart??0).padStart(8,"0")}`,properties:{reference_id:referenceId,label:title,text:guidance.length?[...new Set(guidance)].join("\n\n"):"Use this selected generation as visual inspiration for the next output.",output_palette:palette,palette,image_caption:title,media_url:output.mediaUrl,media_type:output.mediaType,width:output.width,height:output.height,focal_point:output.focalPoint,source_output_id:output.id,source_generation_id:output.generationId,source_output_content_ref:output.contentRef,source_output_prompt_ref:output.promptRef,source_document_id:output.documentId,prompt_technique:output.promptTechnique,prompt_fan_id:output.promptFanId,pixel_reference_mode:"inspiration",intent:"include",authority:"authored",weight:.8,input_mode:"full_output",created_from:options.sourceSurface,...(options.sourceCanvasItemIds?.length?{source_canvas_item_ids:options.sourceCanvasItemIds}:{})}}},
   ],blockIds:[blockId],sourceItemIds:[output.id],availableMemberCount:1};
 }

@@ -6,9 +6,12 @@ import { sampleImageFile } from "../model/image-sample";
 import { focalPointCss } from "../model/focal-point";
 import { positionImageAtFocalPoint } from "../model/image-focus";
 import { icon } from "./forma-element";
+import { blockIconName } from "./icon-semantics";
 import { ensureModalDialog } from "./modal-dialog";
 import { AlternativeStudio } from "./forma-studio-alternatives";
 import { spatialScopeLabel } from "../model/spatial-scope";
+import { outputInputDraft } from "../model/output-authoring";
+import "./icons-authoring";
 import "./spatial-scope-editor";
 import "./output-visual";
 import "./reference-image";
@@ -17,6 +20,7 @@ import "./generation-actions";
 import "./document-artifacts";
 import "./prompt-fan-visual";
 import "./prompt-fan-review";
+import "./output-input-editor";
 
 type EditorSection = {
   id: "brief" | "picture" | "look" | "delivery" | "references";
@@ -65,7 +69,7 @@ const QUICK_TOOLS: readonly { type: BlockKind; intent: BlockIntent; label?: stri
   { type:"lighting", intent:"include" },
   { type:"subject", intent:"avoid", label:"Avoid", description:"Keep an unwanted subject, mood, color, material, or other reality out." },
 ];
-const textFor = (item: CreativeBlock) => String(item.properties.text ?? item.properties.label ?? "Untitled");
+const textFor = (item: CreativeBlock) => String(item.properties.artifact_markdown ?? item.properties.text ?? item.properties.label ?? "Untitled");
 const slug = (value: string, id = "") => value.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 42) || (id ? `decision-${id.slice(0, 8)}` : "item");
 const strengthFor = (weight: number) => weight >= .82 ? "lead" : weight >= .5 ? "balanced" : "supporting";
 const weightFor = (strength: string) => strength === "lead" ? .94 : strength === "supporting" ? .34 : .65;
@@ -192,9 +196,12 @@ export class FormaCreativeEditor extends AlternativeStudio {
     event.preventDefault();
     if (item.locked) return;
     const data = new FormData(event.currentTarget as HTMLFormElement);
-    const text = String(data.get("copy") ?? "").trim();
+    const currentDraft = outputInputDraft(item);
+    const workbench = currentDraft ? (event.currentTarget as HTMLFormElement).querySelector("forma-output-input-editor") : null;
+    const rawText = workbench?.draft?.markdown ?? String(data.get("copy") ?? "");
+    const text = item.properties.source_artifact_id || item.properties.source_output_id ? rawText : rawText.trim();
     const strength = String(data.get("strength") ?? strengthFor(Number(item.properties.weight ?? .65)));
-    const currentText = textFor(item);
+    const currentText = outputInputDraft(item)?.markdown ?? textFor(item);
     const nextType = String(data.get("item-type") ?? item.type);
     const currentIntent = blockIntentFor(item.type, item.properties);
     const nextIntent = String(data.get("item-intent") ?? currentIntent);
@@ -204,7 +211,11 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const changes: EventInput[] = [];
     if (isBlockKind(nextType) && nextType !== item.type) changes.push({ type: "BlockPropertyEdited", payload: { block_id: item.id, property_path: "type", old_value: item.type, new_value: nextType, source_surface: "creative-editor-role" } });
     if (isBlockIntent(nextIntent) && (nextIntent !== currentIntent || (nextType !== item.type && !isBlockIntent(storedIntent)))) changes.push({ type: "BlockPropertyEdited", payload: { block_id: item.id, property_path: "intent", old_value: currentIntent, new_value: nextIntent, source_surface: "creative-editor-intent" } });
-    if (text && text !== currentText) changes.push({ type: "BlockPropertyEdited", payload: { block_id: item.id, property_path: item.properties.text === undefined ? "label" : "text", old_value: currentText, new_value: text, source_surface: "creative-editor" } });
+    if (currentDraft && workbench?.draft) {
+      const authoredChanges = this.store.outputInputEvents(item.id, workbench.draft, "creative-editor");
+      if (JSON.stringify(currentDraft) !== JSON.stringify(workbench.draft) && !authoredChanges.length) { this.store.toast("Unlock every related storyboard frame before saving these changes."); return; }
+      changes.push(...authoredChanges);
+    } else if ((text || item.properties.source_artifact_id || item.properties.source_output_id) && text !== currentText) changes.push(...this.store.outputBlockTextEvents(item.id, text, "creative-editor"));
     if (nextWeight !== currentWeight) changes.push({ type: "BlockWeightSet", payload: { block_id: item.id, weight: nextWeight, previous_weight: currentWeight, source_surface: "creative-editor" } });
     if (!changes.length) {
       this.store.toast("Everything already matches.");
@@ -224,6 +235,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
 
   async #duplicate(item: CreativeBlock) {
     const projection = this.store.projection.get();
+    if(item.properties.source_artifact_id){if(item.properties.source_artifact_item_id){this.store.toast("Copy the complete storyboard to keep every frame connected.");return;}const copied=await this.store.copyLibraryBlockSet(item.id,projection.documentId,"creative-editor");if(copied){this.#selectedId=copied.rootBlockId;this.requestUpdate();}return;}
     const id = crypto.randomUUID();
     const appended = await this.store.append({
       type: "BlockCreated",
@@ -244,7 +256,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
       this.store.toast("Allow changes before removing this item.");
       return;
     }
-    const appended = await this.store.append({ type: "BlockRemoved", payload: { block_id: item.id, source_surface: "creative-editor" } });
+    const appended = await this.store.removeOutputBlock({ type: "BlockRemoved", payload: { block_id: item.id, source_surface: "creative-editor" } });
     if (appended.length && this.#selectedId === item.id) this.#selectedId = "";
   }
 
@@ -313,7 +325,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
       @dragover=${(event: DragEvent) => event.preventDefault()}
       @drop=${(event: DragEvent) => this.#drop(event, item.id)}>
       <button class="creative-editor-item-main" aria-pressed=${selected} @click=${() => { this.#selectedId = item.id; this.requestUpdate(); }}>
-        ${image ? html`<img src=${image} alt=${textFor(item)} loading="lazy" style=${focalPointCss(item.properties.focal_point)} @load=${(event:Event)=>positionImageAtFocalPoint(event.currentTarget as HTMLImageElement,item.properties.focal_point)}>` : html`<span class=${`editor-item-glyph editor-item-glyph--${this.#sectionFor(item).id}`}>${FRIENDLY_LABELS[kind].slice(0, 2)}</span>`}
+        ${image ? html`<img src=${image} alt=${textFor(item)} loading="lazy" style=${focalPointCss(item.properties.focal_point)} @load=${(event:Event)=>positionImageAtFocalPoint(event.currentTarget as HTMLImageElement,item.properties.focal_point)}>` : html`<span class=${`editor-item-glyph editor-item-glyph--${this.#sectionFor(item).id}`}>${icon(blockIconName(kind))}</span>`}
         <span><b>${intent === "include" ? FRIENDLY_LABELS[kind] : `${intentCopy(intent)} ${FRIENDLY_LABELS[kind].toLowerCase()}`}</b><small>${negativeConstraint ? `Must not include: ${textFor(item)}` : textFor(item)}</small><small class="creative-editor-item-scope">${spatialScopeLabel(item.properties.spatial_scope)}</small></span>
         ${item.locked ? html`<em>Protected</em>` : intent !== "include" ? html`<em>${intentCopy(intent)}</em>` : nothing}
       </button>
@@ -349,7 +361,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
           <aside class="creative-editor-tools" aria-label="Add creative material">
             <header><span>Tools</span><h2>Add to the plan</h2><p>Choose what you want to shape. The editor will put it in the right place.</p></header>
             <div class="creative-quick-tools">
-              ${QUICK_TOOLS.map((tool) => html`<button @click=${() => this.#openCreate(tool.type, tool.intent)}><span>${(tool.label ?? FRIENDLY_LABELS[tool.type]).slice(0, 2)}</span><b>${tool.label ?? FRIENDLY_LABELS[tool.type]}</b><small>${tool.description ?? blockTypeDefinition(tool.type)?.description}</small></button>`)}
+              ${QUICK_TOOLS.map((tool) => html`<button @click=${() => this.#openCreate(tool.type, tool.intent)}><span>${icon(blockIconName(tool.type))}</span><b>${tool.label ?? FRIENDLY_LABELS[tool.type]}</b><small>${tool.description ?? blockTypeDefinition(tool.type)?.description}</small></button>`)}
             </div>
             <button class="creative-tool-more" @click=${() => this.#openCreate()}>${icon("plus")} More ways to shape the work</button>
             <form @submit=${(event:SubmitEvent)=>{event.preventDefault();}}><label class="creative-reference-tool">${icon("image")}<span><b>Add an image</b><small>Use a visual reference</small></span><input type="file" accept="image/*" @change=${this.#queueReference}></label></form>
@@ -391,26 +403,26 @@ export class FormaCreativeEditor extends AlternativeStudio {
           </main>
 
           <aside class=${`creative-editor-inspector ${selectedIsExclusion ? "negative-constraint" : ""}`} aria-label="Selected item settings">
-            ${selected ? html`<form @submit=${(event: SubmitEvent) => this.#save(event, selected)}>
+            ${selected ? html`<form @submit=${(event: SubmitEvent) => this.#save(event, selected)} @keydown=${(event:KeyboardEvent)=>{if(event.isComposing)return;if(event.key==="Enter"&&(event.metaKey||event.ctrlKey)){event.preventDefault();event.stopPropagation();(event.currentTarget as HTMLFormElement).requestSubmit();}else if(event.key==="Escape"){event.preventDefault();event.stopPropagation();const form=event.currentTarget as HTMLFormElement;form.querySelector("forma-output-input-editor")?.reset();const rich=form.querySelector<HTMLElementTagNameMap["forma-ui-rich-text"]>('forma-ui-rich-text[name="copy"]');if(rich){rich.value=textFor(selected);const textarea=rich.querySelector("textarea");if(textarea)textarea.value=textFor(selected);rich.requestUpdate();}const textarea=form.querySelector<HTMLTextAreaElement>('textarea[name="copy"]');if(textarea)textarea.value=textFor(selected);const type=form.querySelector<HTMLSelectElement>('select[name="item-type"]'),intent=form.querySelector<HTMLSelectElement>('select[name="item-intent"]');if(type)type.value=selected.type;if(intent)intent.value=blockIntentFor(selected.type,selected.properties);for(const radio of form.querySelectorAll<HTMLInputElement>('input[name="strength"]'))radio.checked=radio.value===strengthFor(Number(selected.properties.weight??.65));this.#selectedId=selected.id;this.store.patchUi({focusBlockId:selected.id,editingBlockId:""});this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLButtonElement>(".creative-editor-item.selected .creative-editor-item-main")?.focus({preventScroll:true}));}}}>
               <header><span>${selectedIsExclusion ? "Guardrail selected" : "Selected"}</span><h2>${selectedIntent === "include" ? FRIENDLY_LABELS[selected.type as BlockKind] : `${intentCopy(selectedIntent)} ${FRIENDLY_LABELS[selected.type as BlockKind].toLowerCase()}`}</h2><p>${selectedIsExclusion ? `This is a negative ${FRIENDLY_LABELS[selected.type as BlockKind].toLowerCase()} constraint. It tells the preview what must not appear; it never becomes a positive focus.` : "Change the role, intent, wording, and influence of this decision."}</p></header>
               ${selected.type === "reference" && selected.properties.media_url ? html`<forma-reference-image class="creative-inspector-image" .src=${String(selected.properties.media_url)} .alt=${textFor(selected)} .targetId=${selected.id} .referenceId=${String(selected.properties.reference_id??"")} .focalPoint=${selected.properties.focal_point}></forma-reference-image>` : nothing}
               ${selected.type === "reference" ? html`<forma-reference-pixel-policy .block=${selected} surface="editor" compact></forma-reference-pixel-policy>` : nothing}
               <label><span>Role in the plan</span><select name="item-type" ?disabled=${selected.locked}>${BLOCK_TYPES.map((item) => html`<option value=${item.type} ?selected=${item.type === selected.type}>${FRIENDLY_LABELS[item.type]}</option>`)}</select></label>
               <label><span>Intent</span><select name="item-intent" ?disabled=${selected.locked}>${BLOCK_INTENTS.map((intent) => html`<option value=${intent.id} ?selected=${intent.id === selectedIntent}>${intent.label} · ${intent.description}</option>`)}</select></label>
               <div class="creative-role-intent-summary"><b>${intentCopy(selectedIntent)} · ${FRIENDLY_LABELS[selected.type as BlockKind]}</b><small>${spatialScopeLabel(selected.properties.spatial_scope)}</small></div>
-              <label><span>${selectedIsExclusion ? "What must the work avoid?" : "What should it say?"}</span><textarea name="copy" rows="6" .value=${textFor(selected)} ?disabled=${selected.locked}></textarea></label>
+              ${outputInputDraft(selected)?html`<forma-output-input-editor .block=${selected} source="creative-editor"></forma-output-input-editor>`:selected.properties.source_artifact_item_id||selected.properties.source_output_id?html`<forma-ui-rich-text name="copy" .label=${selected.properties.source_artifact_item_id?"Storyboard shot direction":"Image direction"} .value=${textFor(selected)} .rows=${7} ?disabled=${selected.locked}></forma-ui-rich-text>`:html`<label><span>${selectedIsExclusion ? "What must the work avoid?" : "What should it say?"}</span><textarea name="copy" rows="6" .value=${textFor(selected)} ?disabled=${selected.locked}></textarea></label>`}
               <fieldset ?disabled=${selected.locked}>
                 <legend>${selectedIsExclusion ? "How strictly should it be excluded?" : "How much should it lead?"}</legend>
                 ${(selectedIsExclusion ? [["supporting", "Gentle"], ["balanced", "Standard"], ["lead", "Strict"]] : [["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]]).map(([value, label]) => html`<label><input type="radio" name="strength" value=${value} .checked=${strengthFor(Number(selected.properties.weight ?? .65)) === value}><span>${label}</span></label>`)}
               </fieldset>
               <button class="button primary" ?disabled=${selected.locked}>${selectedIsExclusion ? "Save guardrail" : "Save changes"}</button>
-              <div class="creative-inspector-order"><button type="button" @click=${() => this.#move(selected, -1)}>↑ Earlier</button><button type="button" @click=${() => this.#move(selected, 1)}>↓ Later</button></div>
+              <div class="creative-inspector-order"><button type="button" @click=${() => this.#move(selected, -1)}>${icon("up")} Earlier</button><button type="button" @click=${() => this.#move(selected, 1)}>${icon("down")} Later</button></div>
               <div class="creative-inspector-actions">
                 <button type="button" @click=${() => this.#protect(selected)}>${selected.locked ? "Allow changes" : "Protect from changes"}</button>
                 <button type="button" @click=${() => this.#duplicate(selected)}>Make a copy</button>
                 <button type="button" class="danger" @click=${() => this.#remove(selected)}>Remove</button>
               </div>
-            </form><forma-spatial-scope-editor .block=${selected} surface="editor"></forma-spatial-scope-editor>` : html`<div class="creative-inspector-empty"><span>✦</span><h2>Start anywhere</h2><p>Add a goal, subject, look, or reference. Select it on the page whenever you want to refine it.</p><button class="button primary" @click=${() => this.#openCreate()}>Add something</button></div>`}
+            </form><forma-spatial-scope-editor .block=${selected} surface="editor"></forma-spatial-scope-editor>` : html`<div class="creative-inspector-empty"><span>${icon("spark")}</span><h2>Start anywhere</h2><p>Add a goal, subject, look, or reference. Select it on the page whenever you want to refine it.</p><button class="button primary" @click=${() => this.#openCreate()}>Add something</button></div>`}
           </aside>
         </div>
       </section>

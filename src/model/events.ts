@@ -352,7 +352,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
           itemCount: Number(p.item_count ?? rawItems.length),
           items: rawItems.map((value, index) => { const item=asRecord(value); return { id:String(item.id??`${id}-${index+1}`),title:String(item.title??`Part ${index+1}`),body:String(item.body??""),notes:String(item.notes??""),imagePrompt:String(item.image_prompt??""),contextGroupIds:Array.isArray(item.context_group_ids)?item.context_group_ids.map(String).filter(Boolean):[],mediaUrl:item.media_url?String(item.media_url):null,mediaType:item.media_type?String(item.media_type):null,width:item.width?Number(item.width):null,height:item.height?Number(item.height):null,focalPoint:normalizeImageFocalPoint(item.focal_point),slide:item.slide?normalizeSlideVisual(item.slide,item,index):null }; }),
           mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null,
-          provider: String(p.provider ?? "openai"), modelId: String(p.model_id ?? "adapter-neutral"), latency: Number(p.latency_ms ?? 0), sequence: event.sequence,
+          provider: String(p.provider ?? "openai"), modelId: String(p.model_id ?? "adapter-neutral"), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, library: false,
           sourceEventId: event.eventId, sourceSurface: p.source_surface ? String(p.source_surface) : null, settings: asRecord(p.settings), presentation:normalizeSlidePresentation(p.presentation),
         });
         break;
@@ -368,7 +368,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "ObjectSaved": { const o = outputs.get(String(p.object_id)); if (o) o.saved = true; break; }
       case "PromptFanOutputPromoted": { const o = outputs.get(String(p.object_id)); if (o && o.promptFanId === String(p.prompt_fan_id ?? o.promptFanId)) { o.standalone = true; o.standaloneSequence = event.sequence; } break; }
       case "ObjectDiscarded": { const o = outputs.get(String(p.object_id)); if (o) o.discarded = true; break; }
-      case "AddedToLibrary": case "RemovedFromLibrary": { const o = outputs.get(String(p.object_id ?? p.item_id)); if (o) o.library = event.type === "AddedToLibrary"; break; }
+      case "AddedToLibrary": case "RemovedFromLibrary": { const id=String(p.object_id??p.item_id),kept=event.type==="AddedToLibrary",output=outputs.get(id),artifact=artifacts.get(id);if(output)output.library=kept;if(artifact)artifact.library=kept;break; }
       case "BriefComposed": state.brief = p; state.presentedBriefItems.clear(); break;
       case "BriefItemPresented": state.presentedBriefItems.add(String(p.item_id)); break;
       case "BriefItemIgnored": if (state.brief && String(state.brief.brief_id) === String(p.brief_id) && Array.isArray(state.brief.items)) state.brief = { ...state.brief, items: state.brief.items.filter((value) => String(asRecord(value).item_id) !== String(p.item_id)) }; break;

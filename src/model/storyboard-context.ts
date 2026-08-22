@@ -44,10 +44,10 @@ export function storyboardFrameContextEvents(artifact: DocumentArtifact, options
   const events: EventInput[] = [];
   for (const [ordinal, record] of records.entries()) {
     const authored = options.content?.items[record.index];
-    const title = authored?.title?.trim() || record.item.title.trim() || `Frame ${record.index + 1}`;
-    const body = authored?.body?.trim() || record.item.body.trim();
-    const notes = authored?.notes?.trim() || record.item.notes.trim();
-    const instruction = [body, notes].filter(Boolean).join(" ") || `Use frame ${record.index + 1} from ${artifact.title} as visual context.`;
+    const title = typeof authored?.title === "string" ? authored.title : record.item.title || `Frame ${record.index + 1}`;
+    const body = typeof authored?.body === "string" ? authored.body : record.item.body;
+    const notes = typeof authored?.notes === "string" ? authored.notes : record.item.notes;
+    const instruction = authored ? [body, notes].filter(Boolean).join(" ") : [body, notes].filter(Boolean).join(" ") || `Use frame ${record.index + 1} from ${artifact.title} as visual context.`;
     const shared = {
       project_id: options.projectId,
       document_id: options.documentId,
@@ -106,7 +106,7 @@ export function storyboardFrameContextEvents(artifact: DocumentArtifact, options
           storyboard_shot_title: title,
           storyboard_shot_direction: body,
           storyboard_camera_direction: notes,
-          storyboard_frame_prompt: authored?.image_prompt?.trim() || "",
+          storyboard_frame_prompt: typeof authored?.image_prompt === "string" ? authored.image_prompt : record.item.imagePrompt,
           reference_set_id: contextSetId,
           reference_set_kind: "storyboard",
           reference_set_role: "ordered-video-sequence",

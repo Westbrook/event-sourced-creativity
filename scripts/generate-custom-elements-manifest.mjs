@@ -423,6 +423,7 @@ const internalMessagesByTag = {
   "forma-ui-field": ["field.text"],
   "forma-ui-search": ["field.search", "field.clearSearch"],
   "forma-ui-textarea": ["field.text"],
+  "forma-ui-rich-text": ["field.text", "editor.formatting", "editor.bold", "editor.italic", "editor.heading", "editor.bullets", "editor.numbered", "editor.quote", "editor.link", "editor.help", "editor.applied"],
   "forma-ui-select": ["field.choose"],
   "forma-ui-checkbox": ["field.option"],
   "forma-ui-switch": ["field.setting"],

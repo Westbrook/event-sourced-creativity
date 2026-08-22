@@ -15,6 +15,15 @@ const compositionStyles = css`
   }
 
   *, *::before, *::after { box-sizing: border-box; }
+  .forma-icon {
+    display: inline-grid;
+    inline-size: var(--forma-icon-size, 1.25rem);
+    block-size: var(--forma-icon-size, 1.25rem);
+    flex: none;
+    place-items: center;
+    vertical-align: middle;
+  }
+  .forma-icon > svg { display: block; inline-size: 100%; block-size: 100%; }
   slot { display: contents; }
   ::slotted(*) { min-inline-size: 0; max-inline-size: 100%; }
   ::slotted([hidden]) { display: none !important; }

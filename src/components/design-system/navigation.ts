@@ -42,7 +42,7 @@ export class FormaUiBreadcrumbs extends FormaPresentationalElement {
   static properties = { label: { type: String }, items: { attribute: false } };
   label = ""; items: FormaOption[] = [];
   #navigate(event: MouseEvent, value: string) { if (!emitFormaEvent(this, "forma-navigate", { value }, { cancelable: true })) event.preventDefault(); }
-  override render() { return html`<nav class="ui-breadcrumbs" aria-label=${this.label || this.i18n.t("navigation.breadcrumbs")}><ol>${this.items.map((item, index) => html`<li>${index === this.items.length - 1 ? html`<span aria-current="page">${item.label}</span>` : html`<a href=${item.value} @click=${(event: MouseEvent) => this.#navigate(event, item.value)}>${item.label}</a><span aria-hidden="true">/</span>`}</li>`)}</ol></nav>`; }
+  override render() { return html`<nav class="ui-breadcrumbs" aria-label=${this.label || this.i18n.t("navigation.breadcrumbs")}><ol>${this.items.map((item, index) => html`<li>${index === this.items.length - 1 ? html`<span aria-current="page">${item.label}</span>` : html`<a href=${item.value} @click=${(event: MouseEvent) => this.#navigate(event, item.value)}>${item.label}</a><span class="ui-directional-icon" aria-hidden="true">${icon("next")}</span>`}</li>`)}</ol></nav>`; }
 }
 
 /**
@@ -55,7 +55,7 @@ export class FormaUiPagination extends FormaPresentationalElement {
   static properties = { label: { type: String }, page: { type: Number }, total: { type: Number } };
   label = ""; page = 1; total = 1;
   #change(page: number) { const total = Math.max(1, Math.trunc(this.total)); const next = Math.max(1, Math.min(total, page)); if (next === this.page) return; this.page = next; emitFormaEvent(this, "forma-change", { value: next }); }
-  override render() { const total = Math.max(1, Math.trunc(this.total)); const page = Math.max(1, Math.min(total, Math.trunc(this.page))); const rightToLeft = this.matches(":dir(rtl)"); return html`<nav class="ui-pagination" aria-label=${this.label || this.i18n.t("navigation.pagination")}><button type="button" ?disabled=${page <= 1} aria-label=${this.i18n.t("navigation.previous")} @click=${() => this.#change(page - 1)}>${rightToLeft ? "→" : "←"}</button><span aria-current="page">${this.i18n.t("navigation.page", "", { page: this.i18n.number(page), total: this.i18n.number(total) })}</span><button type="button" ?disabled=${page >= total} aria-label=${this.i18n.t("navigation.next")} @click=${() => this.#change(page + 1)}>${rightToLeft ? "←" : "→"}</button></nav>`; }
+  override render() { const total = Math.max(1, Math.trunc(this.total)); const page = Math.max(1, Math.min(total, Math.trunc(this.page))); const rightToLeft = this.matches(":dir(rtl)"); return html`<nav class="ui-pagination" aria-label=${this.label || this.i18n.t("navigation.pagination")}><button type="button" ?disabled=${page <= 1} aria-label=${this.i18n.t("navigation.previous")} @click=${() => this.#change(page - 1)}>${icon(rightToLeft ? "next" : "previous")}</button><span aria-current="page">${this.i18n.t("navigation.page", "", { page: this.i18n.number(page), total: this.i18n.number(total) })}</span><button type="button" ?disabled=${page >= total} aria-label=${this.i18n.t("navigation.next")} @click=${() => this.#change(page + 1)}>${icon(rightToLeft ? "previous" : "next")}</button></nav>`; }
 }
 
 /**

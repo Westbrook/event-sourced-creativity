@@ -1,19 +1,19 @@
 import { html, nothing } from "lit";
-import { icon } from "../icons";
+import { icon, type FormaIconName } from "../icons";
 import { FormaPresentationalElement } from "../presentational-element";
 import { defineFormaElements, emitFormaEvent, type FormaButtonVariant, type FormaSize, type FormaTone } from "./contracts";
 
-const iconActionMessageKeys: Record<string, string> = { dots: "action.more", close: "action.close", search: "field.search", save: "action.save", open: "action.open" };
+const iconActionMessageKeys: Partial<Record<FormaIconName, string>> = { dots: "action.more", close: "action.close", search: "field.search", save: "action.save", open: "action.open" };
 
 /**
  * @tag forma-ui-icon
- * @summary Render the shared visual vocabulary, decorative by default.
+ * @summary Render one synchronized Phosphor Regular SVG, decorative by default.
  * @cssprop {<color>} --forma-color-text - Icon foreground.
  * @cssprop {<length>} --forma-icon-size - Icon dimensions.
  */
 export class FormaUiIcon extends FormaPresentationalElement {
   static properties = { name: { type: String }, label: { type: String }, size: { type: String } };
-  name = "spark"; label = ""; size: FormaSize = "medium";
+  name: FormaIconName = "spark"; label = ""; size: FormaSize = "medium";
   override render() { return html`<span class=${`ui-icon ui-icon--${this.size}`} role=${this.label ? "img" : nothing} aria-label=${this.label || nothing} aria-hidden=${this.label ? nothing : "true"}>${icon(this.name)}</span>`; }
 }
 
@@ -26,9 +26,9 @@ export class FormaUiIcon extends FormaPresentationalElement {
  */
 export class FormaUiIconButton extends FormaPresentationalElement {
   static properties = { label: { type: String }, iconName: { type: String, attribute: "icon-name" }, variant: { type: String }, disabled: { type: Boolean }, pressed: { type: Boolean }, expanded: { type: Boolean }, controls: { type: String }, value: { type: String } };
-  label = ""; iconName = "dots"; variant: FormaButtonVariant = "ghost"; disabled = false; pressed?: boolean; expanded?: boolean; controls = ""; value = "";
+  label = ""; iconName: FormaIconName = "dots"; variant: FormaButtonVariant = "ghost"; disabled = false; pressed?: boolean; expanded?: boolean; controls = ""; value = "";
   #press() { if (!this.disabled) emitFormaEvent(this, "forma-press", { value: this.value }); }
-  override render() { const name = this.label || (iconActionMessageKeys[this.iconName] ? this.i18n.t(iconActionMessageKeys[this.iconName]) : this.iconName.replace(/[-_]+/g, " ").replace(/^./, (letter) => letter.toLocaleUpperCase(this.i18n.locale)) || this.i18n.t("action.default")); return html`<button type="button" class=${`icon-button ui-icon-button ui-icon-button--${this.variant}`} aria-label=${name} aria-pressed=${typeof this.pressed === "boolean" ? String(this.pressed) : nothing} aria-expanded=${typeof this.expanded === "boolean" ? String(this.expanded) : nothing} aria-controls=${this.controls || nothing} ?disabled=${this.disabled} @click=${this.#press}><span aria-hidden="true">${icon(this.iconName)}</span></button>`; }
+  override render() { const messageKey = iconActionMessageKeys[this.iconName]; const name = this.label || (messageKey ? this.i18n.t(messageKey) : this.iconName.replace(/[-_]+/g, " ").replace(/^./, (letter) => letter.toLocaleUpperCase(this.i18n.locale)) || this.i18n.t("action.default")); return html`<button type="button" class=${`icon-button ui-icon-button ui-icon-button--${this.variant}`} aria-label=${name} aria-pressed=${typeof this.pressed === "boolean" ? String(this.pressed) : nothing} aria-expanded=${typeof this.expanded === "boolean" ? String(this.expanded) : nothing} aria-controls=${this.controls || nothing} ?disabled=${this.disabled} @click=${this.#press}><span aria-hidden="true">${icon(this.iconName)}</span></button>`; }
 }
 
 /**
@@ -40,7 +40,7 @@ export class FormaUiIconButton extends FormaPresentationalElement {
 export class FormaUiAvatar extends FormaPresentationalElement {
   static properties = { name: { type: String }, initials: { type: String }, src: { type: String }, size: { type: String } };
   name = ""; initials = ""; src = ""; size: FormaSize = "medium";
-  override render() { const letters = this.src ? "" : this.initials || this.name.normalize("NFC").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => this.i18n.firstGrapheme(part)).join("").toLocaleUpperCase(this.i18n.locale); return html`<span class=${`ui-avatar ui-avatar--${this.size}`} role=${this.src ? nothing : "img"} aria-label=${this.src ? nothing : this.name || this.i18n.t("avatar.unnamed")}>${this.src ? html`<img src=${this.src} alt=${this.name || this.i18n.t("avatar.person")} loading="lazy" decoding="async">` : letters || "?"}</span>`; }
+  override render() { const letters = this.src ? "" : this.initials || this.name.normalize("NFC").split(/\s+/).filter(Boolean).slice(0, 2).map((part) => this.i18n.firstGrapheme(part)).join("").toLocaleUpperCase(this.i18n.locale); return html`<span class=${`ui-avatar ui-avatar--${this.size}`} role=${this.src ? nothing : "img"} aria-label=${this.src ? nothing : this.name || this.i18n.t("avatar.unnamed")}>${this.src ? html`<img src=${this.src} alt=${this.name || this.i18n.t("avatar.person")} loading="lazy" decoding="async">` : letters || icon("user")}</span>`; }
 }
 
 /**
@@ -67,7 +67,7 @@ export class FormaUiChip extends FormaPresentationalElement {
  */
 export class FormaUiStatus extends FormaPresentationalElement {
   static properties = { label: { type: String }, tone: { type: String }, iconName: { type: String, attribute: "icon-name" }, live: { type: Boolean } };
-  label = ""; tone: FormaTone = "neutral"; iconName = ""; live = false;
+  label = ""; tone: FormaTone = "neutral"; iconName: FormaIconName | "" = ""; live = false;
   override render() { return html`<span class=${`ui-status ui-status--${this.tone}`} role=${this.live ? "status" : nothing} aria-live=${this.live ? "polite" : nothing}><span aria-hidden="true">${icon(this.iconName || (this.tone === "positive" ? "check" : this.tone === "warning" || this.tone === "danger" ? "warning" : "info"))}</span>${this.label}</span>`; }
 }
 

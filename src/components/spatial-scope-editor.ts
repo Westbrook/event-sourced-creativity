@@ -2,9 +2,13 @@ import { html, nothing } from "lit";
 import type { CreativeBlock } from "../model/events";
 import { WHOLE_DOCUMENT_SCOPE, formatSpatialPath, normalizeSpatialScope, parseSpatialPath, spatialScopeLabel, type SpatialScope, type SpatialScopeKind } from "../model/spatial-scope";
 import { FormaElement, icon } from "./forma-element";
+import { registerIcons } from "./icons";
+import scopeIcon from "@phosphor-icons/core/regular/bounding-box.svg?raw";
 import { ensureModalDialog } from "./modal-dialog";
 import { focalPointCss } from "../model/focal-point";
 import { positionImageAtFocalPoint } from "../model/image-focus";
+
+registerIcons({ scope: scopeIcon });
 
 const kinds: Array<{ id: SpatialScopeKind; label: string; help: string }> = [
   { id: "document", label: "Everything", help: "Apply across the complete document." },
@@ -273,7 +277,7 @@ export class SpatialScopeEditor extends FormaElement {
     const previewHeight=Number(dimensions?.height??latest?.height??3);
     const previewFocal=blockPreview?this.block.properties.focal_point:latest?.focalPoint;
     return html`<div class=${`spatial-scope-control spatial-scope-control--${this.getAttribute("surface") || "default"}`}>
-      <button type="button" class="spatial-scope-trigger" ?disabled=${this.block.locked} aria-label=${`Change affected area, currently ${label}`} @click=${this.#openEditor}><span aria-hidden="true">⌗</span><span><small>Affects</small><b>${label}</b></span>${icon("edit")}</button>
+      <button type="button" class="spatial-scope-trigger" ?disabled=${this.block.locked} aria-label=${`Change affected area, currently ${label}`} @click=${this.#openEditor}><span aria-hidden="true">${icon("scope")}</span><span><small>Affects</small><b>${label}</b></span>${icon("edit")}</button>
       ${this.#open ? html`<dialog class="modal spatial-scope-dialog" closedby="any" aria-labelledby=${`spatial-scope-title-${this.block.id}`} @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) this.#close(); }} @cancel=${(event: Event) => { event.preventDefault(); this.#close(); }}>
         <form class="modal-card spatial-scope-card" @submit=${(event: SubmitEvent) => { event.preventDefault(); if (targetValid) void this.#save(); }}>
           <button type="button" class="icon-button modal-close" aria-label="Close affected area editor" @click=${this.#close}>${icon("close")}</button>

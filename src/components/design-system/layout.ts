@@ -1,5 +1,5 @@
 import { html, nothing } from "lit";
-import { icon } from "../icons";
+import { icon, type FormaIconName } from "../icons";
 import { FormaPresentationalElement } from "../presentational-element";
 import { defineFormaElements, emitFormaEvent, type FormaTone } from "./contracts";
 import { FormaSlottedElement } from "./slotted-element";
@@ -80,7 +80,7 @@ export class FormaUiCard extends FormaSlottedElement {
  */
 export class FormaUiListItem extends FormaSlottedElement {
   static properties = { label: { type: String }, detail: { type: String }, action: { type: String }, value: { type: String }, iconName: { type: String, attribute: "icon-name" } };
-  label = ""; detail = ""; action = ""; value = ""; iconName = "";
+  label = ""; detail = ""; action = ""; value = ""; iconName: FormaIconName | "" = "";
   override render() {
     return html`<div class="ui-list-item">
       <slot name="leading">${this.iconName ? html`<span aria-hidden="true">${icon(this.iconName)}</span>` : nothing}</slot>

@@ -2,6 +2,7 @@ import { html } from "lit";
 import type { CreativeOutput } from "../model/events";
 import { PROMPT_TECHNIQUE_DEFINITIONS } from "../model/prompt-structures";
 import { FormaElement, icon } from "./forma-element";
+import "./icons-history";
 import "./output-visual";
 
 export class PromptFanVisual extends FormaElement {
