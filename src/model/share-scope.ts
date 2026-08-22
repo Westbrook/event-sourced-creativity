@@ -28,6 +28,12 @@ export function documentShareScope(projection: CreativeProjection, ownerId: stri
 
   const candidates = [
     ...projection.blocks.map((block) => block.properties.media_url),
+    ...projection.blocks.flatMap((block) => {
+      const structure = block.properties.artifact_structure;
+      if (!structure || typeof structure !== "object" || Array.isArray(structure)) return [];
+      const items = (structure as Record<string, unknown>).items;
+      return Array.isArray(items) ? items.map((item) => item && typeof item === "object" ? (item as Record<string, unknown>).media_url : null) : [];
+    }),
     ...projection.outputs.map((output) => output.mediaUrl),
     ...projection.artifacts.flatMap((artifact) => [artifact.mediaUrl, ...artifact.items.map((item) => item.mediaUrl)]),
   ];

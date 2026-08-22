@@ -44,12 +44,12 @@ test("document sharing freezes one authorized document and its exact owner-scope
     documentId: "doc-1",
     projectId: "project-1",
     documents: [{ id: "doc-1", projectId: "project-1" }],
-    blocks: [{ properties: { media_url: "/api/media/owner-1%2Freferences%2Freference.png" } }],
+    blocks: [{ properties: { media_url: "/api/media/owner-1%2Freferences%2Freference.png",artifact_structure:{items:[{media_url:"/api/media/owner-1%2Fgenerated%2Fscene-2.mp4"},{media_url:"/api/media/other-user%2Fgenerated%2Fprivate.mp4"}]} } }],
     outputs: [{ mediaUrl: "/api/media/owner-1%2Fgenerated%2Fimage.png" }],
     artifacts: [{ mediaUrl: null, items: [{ mediaUrl: "/api/media/owner-1%2Fgenerated%2Fframe.png" }] }],
   };
   const scope = documentShareScope(projection, "owner-1", "doc-1", "project-1");
-  assert.deepEqual(scope.mediaKeys, ["owner-1/generated/frame.png", "owner-1/generated/image.png", "owner-1/references/reference.png"]);
+  assert.deepEqual(scope.mediaKeys, ["owner-1/generated/frame.png", "owner-1/generated/image.png", "owner-1/generated/scene-2.mp4", "owner-1/references/reference.png"]);
   assert.equal(documentShareScope(projection, "owner-1", "doc-2", "project-1"), null);
   assert.equal(ownedMediaKey("/api/media/other-user%2Fgenerated%2Fprivate.png", "owner-1"), null);
   assert.equal(shareAllowsMedia(scope, "owner-1/generated/not-shared.png"), false);
@@ -60,14 +60,15 @@ test("document sharing freezes one authorized document and its exact owner-scope
     content_ref: "private-snake",
     contentRef: "private-camel",
     promptRef: "private-prompt",
-    nested: { input_ref: "private-input" },
+    nested: { input_ref: "private-input",media_url:"/api/media/owner-1%2Fgenerated%2Fscene-2.mp4",foreign_media:"/api/media/other-user%2Fgenerated%2Fprivate.mp4" },
   }, scope, "share-token");
   assert.equal(sanitized.mediaUrl, "/api/shared/share-token/media/owner-1%2Fgenerated%2Fimage.png");
   assert.equal(sanitized.privateMedia, null);
+  assert.equal(sanitized.nested.media_url,"/api/shared/share-token/media/owner-1%2Fgenerated%2Fscene-2.mp4");assert.equal(sanitized.nested.foreign_media,null);
   assert.equal("content_ref" in sanitized, false);
   assert.equal("contentRef" in sanitized, false);
   assert.equal("promptRef" in sanitized, false);
-  assert.deepEqual(sanitized.nested, {});
+  assert.equal("input_ref" in sanitized.nested,false);
 });
 
 test("project library export cannot disclose another project's interleaved history or reference media",()=>{

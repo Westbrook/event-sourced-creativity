@@ -1,6 +1,7 @@
 import { html, nothing } from "lit";
 import { briefEligibility, phase6GateMetrics, sessionContinuityDelta, type BriefDestination, type BriefItem } from "../model/brief";
 import { FormaElement, icon } from "./forma-element";
+import "./icons-history";
 import { DOCUMENT_VIEW_LABELS } from "../model/document-view-signals";
 import "./area-navigation";
 

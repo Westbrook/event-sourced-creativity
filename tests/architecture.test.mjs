@@ -203,16 +203,62 @@ test("packages first-class HTML entry points for every named application route",
     assert.match(entry, /<forma-shell><\/forma-shell>/); assert.match(entry, new RegExp(`content="/${route.replaceAll("/", "\\/")}"`));
     assert.match(entry, new RegExp(`data-forma-route-module="/${route.replaceAll("/", "\\/")}"`));
     assert.match(entry,new RegExp(`data-forma-application="${applicationIdFromRoute(`/${route}`)}"`));
+    assert.match(entry,/id="forma-static-session-prefetch"/);
+    assert.ok(entry.indexOf('id="forma-static-session-prefetch"')<entry.indexOf('<script type="module"'));
     assert.match(direct, /\/assets\/entry-[^"/]+\.js/);
   }
   const rootEntry = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
   const shareEntry = await readFile(new URL("../dist/client/share/index.html", import.meta.url), "utf8");
   assert.match(rootEntry, /data-forma-route-module="\/"/); assert.match(shareEntry, /data-forma-application="creative"/);
+  assert.match(rootEntry,/id="forma-static-session-prefetch"/);
+  assert.match(rootEntry,/\/share\(\?:\\\/\|\$\)/);
+  assert.doesNotMatch(shareEntry,/forma-static-session-prefetch|fetch\("\/api\/session"\)/);
   assert.match(config, /manifest: true/); assert.match(config, /run_worker_first: \["\/\*", "!\/assets\/\*"\]/); assert.match(worker, /resolveServerRoute\(url\.pathname\)/); assert.match(worker, /x-forma-route-family/); assert.doesNotMatch(worker, /entryPath=.*index\.html/); assert.match(applications,/resolveServerRoute/);assert.match(applications,/\/document\\\/\[\^\/\]\+/);assert.match(applications,/\/library\\\//);
   assert.match(plugin,/SITE_ROUTE_ENTRIES/);assert.match(routeLoader,/\.\/apps\/creative\/entry/);assert.match(routeLoader,/\.\/apps\/operations\/entry/);assert.match(routeLoader,/\.\/apps\/laboratory\/entry/);
   assert.match(shell, /addEventListener\("forma-route-changed", this\.#routeChanged\)/); assert.match(shell, /loadRouteComponent\(path\)/);
   assert.match(shell,/forma-creative-application/);assert.match(shell,/forma-operations-application/);assert.match(shell,/forma-laboratory-application/);
   assert.doesNotMatch(shell, /<forma-library|<forma-admin-events|<forma-system|<forma-focal-point-lab/);
+});
+
+test("named HTML preloads only its active route component and never starts a public-share session", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../dist/client/.vite/manifest.json", import.meta.url), "utf8"));
+  const pages = {
+    "/document": "src/components/forma-workspace.ts", "/projects": "src/components/forma-projects.ts", "/memory": "src/components/forma-memory.ts",
+    "/scout": "src/components/forma-scout.ts", "/sessions": "src/components/forma-sessions.ts",
+    "/operations/analytics": "src/components/forma-analytics.ts", "/operations/canvas": "src/apps/operations/canvas-governance.ts",
+    "/operations/events": "src/components/forma-admin-events.ts", "/laboratory/replay": "src/components/forma-admin-events.ts",
+    "/laboratory/image-adapters": "src/components/forma-image-adapter-lab.ts", "/canvas": "src/canvas/canvas-application.ts",
+    "/share": "src/components/forma-shared-view.ts",
+  };
+  for (const [path, source] of Object.entries(pages)) {
+    const html = await readFile(new URL(`../dist/client${path}/index.html`, import.meta.url), "utf8");
+    const leaf = manifest[source] ?? Object.values(manifest).find((entry) => entry.src === source);
+    assert.ok(leaf?.file, source);
+    const tags = [...html.matchAll(/<link\b(?=[^>]*\brel="modulepreload")(?=[^>]*\bdata-forma-route-leaf\b)[^>]*>/g)].map((match) => match[0]);
+    assert.equal(tags.length, 1, path);
+    assert.ok(tags[0].includes(`href="/${leaf.file}"`), path);
+    assert.ok(html.indexOf(tags[0]) < html.indexOf("data-forma-route-module"), path);
+    if (path === "/share") assert.doesNotMatch(html, /forma-static-session-prefetch|fetch\("\/api\/session"\)/);
+  }
+  const root = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
+  const workspace = manifest["src/components/forma-workspace.ts"] ?? Object.values(manifest).find((entry) => entry.src === "src/components/forma-workspace.ts");
+  const leaves = [...root.matchAll(/<link\b(?=[^>]*\brel="modulepreload")(?=[^>]*\bdata-forma-route-leaf\b)[^>]*>/g)].map((match) => match[0]);
+  assert.equal(leaves.length, 1);
+  assert.ok(leaves[0].includes(`href="/${workspace.file}"`));
+  assert.match(leaves[0], /data-forma-route-leaf="\/"/);
+  assert.ok(root.indexOf(leaves[0]) < root.indexOf("data-forma-route-module"));
+});
+
+test("event administration bounds its visible stream and initializes replay only for authorized replay routes", async () => {
+  const source = await readFile(new URL("../src/components/forma-admin-events.ts", import.meta.url), "utf8");
+  assert.match(source, /#eventLimit\s*=\s*150/);
+  assert.match(source, /events\.slice\(-this\.#eventLimit\)\.reverse\(\)/);
+  assert.match(source, /this\.#eventLimit\+=150/);
+  assert.match(source, /firstUpdated\(\)\{if\(this\.store\.session\.get\(\)\?\.user\.role!=="admin"\)return;if\(this\.#tab==="replay"\)void this\.#loadSaved\(\);else if\(this\.#tab==="stream"\)void this\.#loadAudit\(\);\}/);
+  assert.match(source,/new URLSearchParams\(\{audit:"1",limit:"150"\}\)/);
+  assert.match(source,/this\.store\.replayAuthoritativeHistory\(sequence\)/);
+  assert.match(source,/data-forma-surface-ready=\$\{String\(this\.#auditResolved&&!this\.#auditLoading\)\}/);
+  assert.match(source, /data-forma-surface-ready=\$\{String\(this\.#savedResolved\)\}/);
 });
 
 test("restores Event operations tabs and Studio documents from URL state", async () => {
@@ -390,11 +436,11 @@ test("enforces the adopted production-pilot boundaries", async () => {
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
   ]);
   assert.match(policy, /oai-authenticated-user-id/); assert.match(policy, /cf-access-authenticated-user-email/);
-  assert.match(policy, /pilot_terms_required/); assert.match(policy, /reserved_tokens/); assert.match(policy, /500_000/); assert.match(policy, /5_000_000/);
+  assert.match(policy, /pilot_terms_required/); assert.match(policy, /reserved_tokens/); assert.match(policy, /10_000_000/); assert.match(policy, /100_000_000/);
   assert.match(adapter, /api\.openai\.com\/v1\/responses/); assert.match(adapter, /store: false/); assert.match(adapter, /safety_identifier/);
   assert.match(shares, /expiresHours/); assert.match(shares, /ShareLinkRevoked/); assert.match(shares, /token_hash/);
   assert.match(media, /rightsConfirmed/); assert.match(shell, /acceptTerms/); assert.match(shell, /forma-shared-view/);
-  assert.match(schema, /private_content/); assert.match(schema, /budget_counters/); assert.match(schema, /budget_reservations/); assert.match(envExample, /OPENAI_API_KEY=/); assert.match(envExample, /FORMA_USER_TOKEN_LIMIT=500000/); assert.match(envExample, /FORMA_WORKSPACE_TOKEN_LIMIT=5000000/);
+  assert.match(schema, /private_content/); assert.match(schema, /budget_counters/); assert.match(schema, /budget_reservations/); assert.match(envExample, /OPENAI_API_KEY=/); assert.match(envExample, /FORMA_USER_TOKEN_LIMIT=10000000/); assert.match(envExample, /FORMA_WORKSPACE_TOKEN_LIMIT=100000000/);
 });
 
 test("records the accepted provider debt and makes the extractor gate operational", async () => {
@@ -625,6 +671,8 @@ test("keeps opt-in attention capture visible-only, coarse, bounded, and forgetta
     readFile(new URL("../docs/event-classification.csv",import.meta.url),"utf8"),
   ]);
   assert.match(observer,/document\.visibilityState==="visible"/);assert.match(observer,/IntersectionObserver/);assert.match(observer,/idle_timeout/);assert.match(observer,/terminal_type/);
+  assert.match(observer,/attentionTickTransition\(this\.#episode\?\.lastActivityAt\?\?null,now\)/);assert.match(observer,/if\(transition==="dormant"\)return/);assert.match(observer,/pointerdown/);assert.match(observer,/isAttentionActionTerminal/);
+  assert.doesNotMatch(observer,/#tick\(\)\{if\(!this\.#episode\)\{this\.#start\(\)/);
   assert.doesNotMatch(observer,/clientX|clientY|screenX|screenY|event\.key|\.value/);
   assert.match(attention,/ATTENTION_RETENTION_DAYS = 14/);assert.match(attention,/\.25/);assert.match(attention,/AttentionSignalsForgotten/);
   assert.match(store,/setAttentionCapture/);assert.match(store,/forgetAttentionSignals/);assert.match(shell,/off until you enable them separately/);assert.match(system,/off by default/);

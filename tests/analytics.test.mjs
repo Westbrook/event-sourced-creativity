@@ -78,7 +78,7 @@ test("keeps attention, slow-generation inputs and outputs, unresolved work, and 
     at(5,"ContextCompiled",{generation_id:"slow-1",document_id:"document-1",source_block_versions:[{block_id:"subject-1"}],reference_input_count:1,quality:"high",prompt_technique:"bullets",source_surface:"guided"},"worker:compiler"),
     at(6,"GenerationCompleted",{generation_id:"slow-1",document_id:"document-1",object_ids:["slow-object"],media_url:"/api/media/slow-object.png",quality:"high",prompt_technique:"bullets",latency_ms:65_000,source_surface:"guided"},"worker:generator"),
     at(7,"GenerationUsageRecorded",{generation_id:"slow-1",document_id:"document-1",quality:"high",cost_microusd:250_000,cost_breakdown_microusd:{text_input_microusd:15_000,text_output_microusd:20_000,image_text_input_microusd:25_000,image_input_microusd:40_000,image_output_microusd:150_000}},"worker:policy"),
-    at(8,"AttentionEpisodeObserved",{episode_id:"episode-1",document_id:"document-1",context:"writing-a-direction",active_ms:48_000,idle_ms:12_000,visible_refs:["subject-1","slow-object"],terminal_type:"generation_requested",terminal_ref:"slow-1",outcome_weight:.35,friction_score:.72,source_surface:"guided"}),
+    at(8,"AttentionEpisodeObserved",{episode_id:"episode-1",document_id:"document-1",context:"writing-a-direction",active_ms:48_000,idle_ms:12_000,visible_refs:["subject-1","slow-object"],terminal_type:"generation_requested",terminal_ref:"slow-1",outcome_weight:.35,friction_score:.72,source_surface:"guided",expires_at:"2026-08-25T12:00:00.000Z"}),
   ];
   const report=buildAnalyticsReport([{streamId:"creative:user-1",userId:"user-1",userName:"Ari",organizationId:"forma",organizationName:"Forma workspace",fictional:false,events}],{rangeDays:30,now:Date.parse("2026-08-18T12:00:00.000Z")});
   const attention=report.improvement.find((item)=>item.key==="view-friction")?.evidence?.[0];const latency=report.improvement.find((item)=>item.key==="tail-latency")?.evidence?.[0];const decision=report.improvement.find((item)=>item.key==="unretained-output")?.evidence?.[0];const cost=report.improvement.find((item)=>item.key==="cost-per-outcome")?.evidence?.[0];
@@ -129,6 +129,30 @@ test("keeps fictional actual-data mock accounts out of product analytics unless 
   const base={streamId:"creative:user-1",userId:"user-1",userName:"Ari",organizationId:"forma",organizationName:"Forma workspace",fictional:false,events:observed};
   const observedOnly=buildAnalyticsReport([base,fictional],{rangeDays:30,now:Date.parse("2026-08-18T12:00:00.000Z")});const withMocks=buildAnalyticsReport([base,fictional],{rangeDays:30,includeSynthetic:true,now:Date.parse("2026-08-18T12:00:00.000Z")});
   assert.equal(observedOnly.totals.events,19);assert.equal(observedOnly.totals.users,1);assert.equal(withMocks.totals.events,38);assert.equal(withMocks.totals.users,2);assert.ok(withMocks.dimensions.user.some((row)=>row.fictional));
+});
+
+test("analytics excludes forgotten, expired, and fabricated attention separately for every account",()=>{
+  const now=Date.parse("2026-08-18T12:00:00.000Z");
+  const genuine={surface:"studio",context:"writing-direction",terminal_type:"ObjectSaved",terminal_ref:"object:real",active_ms:180_000,idle_ms:5_000,visible_refs:["object:real"],outcome_weight:.2,friction_score:.7,capture_version:"attention-v2",expires_at:"2026-08-25T12:00:00.000Z"};
+  const phantom={surface:"studio",context:"studio-overview",terminal_type:"idle_timeout",terminal_ref:null,active_ms:30_000,idle_ms:30_000,visible_refs:[],outcome_weight:.013,friction_score:0,capture_version:"attention-v2",expires_at:"2026-08-25T12:00:00.000Z"};
+  const first={streamId:"creative:user-1",userId:"user-1",userName:"Ari",organizationId:"forma",organizationName:"Forma workspace",fictional:false,events:[
+    at(1,"ProjectCreated",{project_id:"project-a",name:"Account A"}),
+    at(2,"AttentionEpisodeObserved",{...genuine,episode_id:"forgotten-evidence"}),
+    at(3,"AttentionSignalsForgotten",{before_sequence:2}),
+    at(4,"AttentionEpisodeObserved",{...genuine,episode_id:"expired-evidence",expires_at:"2026-08-17T12:00:00.000Z"}),
+    at(5,"AttentionEpisodeObserved",{...genuine,episode_id:"retained-a"}),
+    at(6,"AttentionEpisodeObserved",{...phantom,episode_id:"fabricated-evidence"}),
+  ]};
+  const second={...first,streamId:"creative:user-2",userId:"user-2",userName:"Dee",events:[
+    {...at(1,"ProjectCreated",{project_id:"project-b",name:"Account B"}),eventId:"b-1",streamId:"creative:user-2"},
+    {...at(2,"AttentionEpisodeObserved",{...genuine,episode_id:"retained-b",active_ms:240_000}),eventId:"b-2",streamId:"creative:user-2"},
+  ]};
+  const report=buildAnalyticsReport([first,second],{rangeDays:30,now});
+  assert.equal(report.totals.events,5);assert.equal(report.totals.activeMinutes,7);
+  assert.equal(report.views.reduce((total,view)=>total+view.frictionEpisodes,0),2);
+  const evidence=report.improvement.find((item)=>item.key==="view-friction")?.evidence??[];
+  assert.deepEqual(evidence.map((item)=>item.id).sort(),["attention:creative:user-1:retained-a","attention:creative:user-2:retained-b"]);
+  for(const leaked of ["forgotten-evidence","expired-evidence","fabricated-evidence"])assert.doesNotMatch(JSON.stringify(report),new RegExp(leaked));
 });
 
 test("ships analytics as an admin-only, server-first Operations surface",async()=>{

@@ -1,5 +1,5 @@
 import { handleEvents } from "./events-api";
-import { loadPrivateContent, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, requireConsent, requireUser, storePrivateContent, type PilotUser } from "./pilot-policy";
+import { loadPrivateContent, readCostBudgets, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, releaseCostBudget, requireConsent, requireUser, storePrivateContent, type PilotUser } from "./pilot-policy";
 import { appendAuditEvent, ensureSchema, readCorrelatedEvents, readWorkspaceEvents, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { foldEvents } from "../src/model/events";
 import {
@@ -20,7 +20,9 @@ import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } fro
 import { applicationFailureDetail, classifyProviderFailure, publicFailureDetail, type ProviderFailureDetail } from "./provider-errors";
 import { documentJobCompletionBindings } from "./document-job-sql";
 import { preflightGeneration } from "./generation-readiness";
-import { DEFAULT_REFERENCE_VIDEO_MODEL } from "../src/model/video-adapter";
+import { DEFAULT_REFERENCE_VIDEO_MODEL, normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter";
+import { generationBudgetGate } from "../src/model/generation-budget";
+import { buildManagedProductionPlan } from "../src/model/managed-production";
 
 type DocumentJobRow = {
   job_id: string; owner_id: string; stream_id: string; document_id: string; kind: DocumentJobKind; status: DocumentJobStatus;
@@ -120,7 +122,7 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
     : Object.fromEntries(Object.entries(visibleResult).filter(([key]) => !["plannerInput", "videoInputReceipt", "artifactPlan"].includes(key)));
   return {
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
-    requestedSequence: Number(row.requested_sequence), documentRevision: identity.documentRevision, requestKey: identity.requestKey, sourcePreviewId: identity.sourcePreviewId, promptTechnique: identity.promptTechnique, promptFanId: identity.promptFanId,
+    requestedSequence: Number(row.requested_sequence), documentRevision: identity.documentRevision, requestKey: identity.requestKey, sourcePreviewId: identity.sourcePreviewId, productionMode:request.productionMode==="managed"?"managed" as const:"manual" as const, promptTechnique: identity.promptTechnique, promptFanId: identity.promptFanId,
     parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result: summarizedResult, error: row.error_message, errorDetail: errorDetailFromResult(parsed), moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
     requestedAt: row.requested_at, startedAt: row.started_at, completedAt: row.completed_at, notifiedAt: row.notified_at,
     leaseExpiresAt: row.lease_expires_at, updatedAt: row.updated_at,
@@ -197,6 +199,7 @@ async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow, operatio
 
 async function releaseInterruptedAttempt(env: WorkerEnv, user: PilotUser, row: DocumentJobRow, reason: string) {
   const released=await releaseBudgetReservationsForCorrelation(env,user,row.correlation_id,reason);
+  const checkpoint=parseResult(row);const activeSceneReceipts=Object.values(checkpoint.productionSceneReceipts&&typeof checkpoint.productionSceneReceipts==="object"?checkpoint.productionSceneReceipts as Record<string,Record<string,unknown>>:{});const hasPaidProvider=Boolean(checkpoint.providerJobId)||activeSceneReceipts.some((receipt)=>receipt.status==="submitted"||receipt.status==="completed");if(!hasPaidProvider){const events=await readCorrelatedEvents(env,user.streamId,[row.correlation_id]);const settled=events.some((event)=>event.type==="GenerationUsageRecorded");if(!settled){const reservedMicrousd=events.filter((event)=>event.type==="BudgetReserved").reduce((sum,event)=>sum+Math.max(0,Number(event.payload.reserved_microusd??0)),0);if(reservedMicrousd>0)await releaseCostBudget(env,user.billingUserId??user.userId,reservedMicrousd);}}
   try {
     await appendAuditEvent(env, user.streamId, "worker:scheduler", "JobAttemptInterrupted", { job_id: row.job_id, document_id: row.document_id, kind: row.kind, attempt: row.attempt_count, reason, released_reservation_count: released.length }, row.correlation_id);
     for (const reservation of released) await appendAuditEvent(env, user.streamId, "worker:policy", "BudgetReleased", { reservation_id: reservation.id, reserved_tokens: reservation.tokens, reason, operation: reservation.operation, job_id: row.job_id, attempt: row.attempt_count }, row.correlation_id);
@@ -291,7 +294,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const now = new Date().toISOString(); const status: DocumentJobStatus = finished.failed ? "failed" : "completed";let followup:DocumentJobRow|null=null;
     if(!finished.failed&&row.kind==="chat"){const reasoned=finished.correlated.find((event)=>event.type==="AssistantReasoned"&&event.payload.preview_queued&&event.payload.preview_direction_ref);if(reasoned)followup=await queueFollowupPreview(env,user,row,{kind:"preview",documentId:row.document_id,sourceSurface:"chat",payload:{directionRef:reasoned.payload.preview_direction_ref,directionModel:reasoned.payload.model_id,sourceChatTurnId:reasoned.payload.turn_id}});}
     const failureDetail = finished.failed ? correlatedFailureDetail(finished.correlated) : null;const moderationPromptRef=finished.failed?correlatedModerationPromptRef(finished.correlated):null;
-    const result = { ...safeResult({ head: await streamHead(env,user.streamId),previewQueued:Boolean(followup),followupJobId:followup?.job_id,moderationPromptRef }, finished.correlated.map((event) => event.eventId)), ...(failureDetail ? { errorDetail: failureDetail } : {}), stage: status, progressMessage: finished.failed ? failureProgressMessage(failureDetail) : "The operation finished." };
+    const result = { ...(finished.failed ? parseResult(row) : {}), ...safeResult({ head: await streamHead(env,user.streamId),previewQueued:Boolean(followup),followupJobId:followup?.job_id,moderationPromptRef }, finished.correlated.map((event) => event.eventId)), ...(failureDetail ? { errorDetail: failureDetail } : {}), stage: status, progressMessage: finished.failed ? failureProgressMessage(failureDetail) : "The operation finished." };
     await finishDocumentJob(env, row, status, result, failureDetail?.message ?? (finished.failed ? "operation_failed" : null), now, false);
     await reconcileParentForChild(env, row);
     return readJob(env, user.userId, jobId);
@@ -307,21 +310,21 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   const attemptCorrelationId = `${jobId}:attempt:${attempt}`; const initialResult = { ...parseResult(row), stage: "preparing", progressMessage: attempt > 1 ? "Recovering the interrupted operation." : "Preparing the document context." };
   const claimed = await env.DB.prepare("UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=COALESCE(started_at,?),lease_expires_at=?,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND (status='queued' OR (status='running' AND (lease_expires_at<? OR updated_at<?)))").bind(attemptCorrelationId, nowIso, leaseExpiresAt, JSON.stringify(initialResult), nowIso, jobId, user.userId, nowIso, staleBefore).run();
   if (Number(claimed.meta.changes ?? 0) !== 1) return readJob(env, user.userId, jobId);
-  if (previousAttempt > 0 && !(row.kind === "render_document" && parseResult(previousRow).providerJobId)) await releaseInterruptedAttempt(env, user, previousRow, "execution_interrupted_retrying");
+  if (previousAttempt > 0 && !(row.kind === "render_document" && (parseResult(previousRow).providerJobId||parseResult(previousRow).productionSceneReceipts))) await releaseInterruptedAttempt(env, user, previousRow, "execution_interrupted_retrying");
   row = await readJob(env, user.userId, jobId); if (!row) return null;
 
   try {
     const payload = JSON.parse(row.request_json) as Record<string, unknown>;
     const inputRef = String(payload.jobInputRef ?? "");
     if (inputRef) {
-      const privateContent = await loadPrivateContent(env, user.userId); const input = privateContent[inputRef];
+      const privateContent = await loadPrivateContent(env, user.userId, row.kind === "chat" ? "chat" : "all"); const input = privateContent[inputRef];
       if (typeof input !== "string") throw new Error("job_input_expired");
       if (row.kind === "chat") payload.message = input;
       if (row.kind === "structure_adaptive") payload.prompt = input;
     }
     delete payload.expectedSequence; delete payload.jobInputRef;
     if(row.kind==="render_document"){
-      const checkpoint=parseResult(row);for(const key of ["artifactId","providerJobId","providerModel","providerStatusUrl","providerResponseUrl","providerCancelUrl","artifactPlan","plannerModel","plannerResponseId","plannerLatencyMs","plannerUsage","plannerInput","renderedItems","videoInputReceipt"] as const)if(checkpoint[key]!==undefined)payload[key]=checkpoint[key];if(checkpoint.providerJobId&&checkpoint.reservationId)payload.reservationId=checkpoint.reservationId;
+      const checkpoint=parseResult(row);for(const key of ["artifactId","providerJobId","providerModel","providerStatusUrl","providerResponseUrl","providerCancelUrl","artifactPlan","plannerModel","plannerResponseId","plannerLatencyMs","plannerUsage","plannerInput","renderedItems","videoInputReceipt","productionPlan","productionSceneReceipts","productionPrepaidSceneIds","productionAnchor","costReservationMicrousd"] as const)if(checkpoint[key]!==undefined)payload[key]=checkpoint[key];if((checkpoint.providerJobId||checkpoint.productionSceneReceipts)&&checkpoint.reservationId)payload.reservationId=checkpoint.reservationId;
     }
     payload.action = row.kind; payload.documentId = row.document_id; payload.sourceSurface = row.source_surface;
     payload.correlationId = row.correlation_id; payload.clientId = `server:document-job:${row.kind}`;
@@ -331,11 +334,14 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const detail = !response.ok
       ? body.errorDetail && typeof body.errorDetail === "object" ? body.errorDetail as ProviderFailureDetail : applicationFailureDetail(String(body.error ?? "document_job_failed"), body.scope, response.status)
       : null;
-    const terminalResult = { ...(response.ok?{}:parseResult(row)), ...safeResult({...body,followupJobId:followup?.job_id}), ...(detail ? { errorDetail: publicFailureDetail(detail) } : {}), stage: response.ok ? "completed" : "failed", progressMessage: response.ok ? "The operation finished." : failureProgressMessage(detail) };
+    const durableCheckpoint = response.ok?{}:parseResult(row);
+    if (!response.ok) Object.assign(durableCheckpoint, parseResult(await readJob(env, user.userId, row.job_id) ?? row));
+    const terminalResult = { ...durableCheckpoint, ...safeResult({...body,followupJobId:followup?.job_id}), ...(detail ? { errorDetail: publicFailureDetail(detail) } : {}), stage: response.ok ? "completed" : "failed", progressMessage: response.ok ? "The operation finished." : failureProgressMessage(detail) };
     await finishDocumentJob(env, row, response.ok ? "completed" : "failed", terminalResult, response.ok ? null : detail?.message ?? String(body.error ?? "document_job_failed"), completedAt);
   } catch (error) {
     const completedAt = new Date().toISOString(); const detail = classifyProviderFailure(error);
-    await finishDocumentJob(env, row, "failed", { ...parseResult(row), errorDetail: publicFailureDetail(detail), stage: "failed", progressMessage: failureProgressMessage(detail) }, detail.message, completedAt);
+    const durableCheckpoint = parseResult(await readJob(env, user.userId, row.job_id) ?? row);
+    await finishDocumentJob(env, row, "failed", { ...durableCheckpoint, errorDetail: publicFailureDetail(detail), stage: "failed", progressMessage: failureProgressMessage(detail) }, detail.message, completedAt);
   }
   const finishedRow = await readJob(env, user.userId, jobId); if (finishedRow) await reconcileParentForChild(env, finishedRow); return finishedRow;
 }
@@ -376,6 +382,7 @@ async function stopGenerationJob(env: WorkerEnv, user: PilotUser, target: Docume
     if (Number(updated.meta.changes ?? 0) !== 1) continue;
     stopped.push(row);
     const released = await releaseBudgetReservationsForCorrelation(env, user, row.correlation_id, force ? "generation_force_failed" : "generation_canceled");
+    const checkpoint=parseResult(row);const sceneReceipts=Object.values(checkpoint.productionSceneReceipts&&typeof checkpoint.productionSceneReceipts==="object"?checkpoint.productionSceneReceipts as Record<string,Record<string,unknown>>:{});if(!checkpoint.providerJobId&&!sceneReceipts.some((receipt)=>receipt.status==="submitted"||receipt.status==="completed")){const correlated=await readCorrelatedEvents(env,user.streamId,[row.correlation_id]);if(!correlated.some((event)=>event.type==="GenerationUsageRecorded")){const reservedMicrousd=correlated.filter((event)=>event.type==="BudgetReserved").reduce((sum,event)=>sum+Math.max(0,Number(event.payload.reserved_microusd??0)),0);if(reservedMicrousd>0)await releaseCostBudget(env,user.billingUserId??user.userId,reservedMicrousd);}}
     const auditType = force ? "JobForceFailed" : "JobCanceled";
     try {
       await appendAuditEvent(env, user.streamId, "worker:scheduler", auditType, { job_id: row.job_id, document_id: row.document_id, kind: row.kind, previous_status: row.status, requested_by: user.userId, requested_by_role: user.role, released_reservation_count: released.length }, row.correlation_id);
@@ -387,9 +394,12 @@ async function stopGenerationJob(env: WorkerEnv, user: PilotUser, target: Docume
 
 export async function handleDocumentJobs(request: Request, env: WorkerEnv, path = "", context?: WorkerExecutionContext) {
   await ensureSchema(env); const auth = await requireUser(request, env, request.method === "GET" ? "viewer" : "creator"); if (auth.response || !auth.user) return auth.response!; const user = auth.user;
+  type DocumentJobAdmission={kind?:string;documentId?:string;sourceSurface?:string;payload?:Record<string,unknown>};let submittedInput:DocumentJobAdmission|null=null;
+  if(request.method==="POST"&&!path){const consent=requireConsent(user);if(consent)return consent;submittedInput=await request.json() as DocumentJobAdmission;const payload=submittedInput.payload;if(submittedInput.kind==="render_document"&&(payload?.artifactKind==="storyboard"||payload?.artifactKind==="video")&&payload.paidMediaConfirmed!==true)return Response.json({error:"paid_media_confirmation_required",message:"Confirm paid media generation before starting this render."},{status:428});}
+  if(request.method==="POST"&&path.endsWith("/retry")){const target=await readJob(env,user.userId,decodeURIComponent(path.slice(0,-6).replace(/\/$/,"")));if(target?.kind==="render_document"){const payload=parseRequest(target);if((payload.artifactKind==="storyboard"||payload.artifactKind==="video")&&payload.paidMediaConfirmed!==true)return Response.json({error:"paid_media_confirmation_required",message:"Confirm paid media generation before recovering this render."},{status:428});}}
   const now = new Date().toISOString();
-  // Polling is an observation. Do not force the D1 primary to reconcile and
-  // rewrite historical jobs every time an idle browser checks its status.
+  // Neither passive polling nor an unauthorized paid request may reconcile or
+  // rewrite account history. Maintenance starts only after financial admission.
   if(request.method!=="GET"&&(!path||path.endsWith("/retry"))){
     await reconcileFailedBudgetReservations(env,user);
     await env.DB.prepare("UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)").bind(now, user.userId, now).run();
@@ -438,10 +448,14 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const providerJobId = String(previous.providerJobId ?? failedEvent?.payload.provider_job_id ?? "");
     const artifactId = String(previous.artifactId ?? failedEvent?.payload.artifact_id ?? requestedEvent?.payload.artifact_id ?? "");
     const requestPayload = parseRequest(target); const artifactKind = String(requestPayload.artifactKind ?? failedEvent?.payload.artifact_kind ?? "");
-    if(!documentJobCanRecoverProviderRender({...serializeJob(target),result:{...previous,providerJobId,artifactKind},errorDetail:failure}))return Response.json({error:"provider_job_not_retryable",message:"This provider request reached a terminal failure and cannot be resumed. Review the saved inputs and start a changed render.",...(failure?{errorDetail:publicFailureDetail({...failure,probe:failure.probe??undefined})}:{})},{status:409});
-    if (target.kind !== "render_document" || target.status !== "failed" || !providerJobId || !artifactId) return Response.json({ error: "resumable_provider_job_required" }, { status: 409 });
+    if((artifactKind==="storyboard"||artifactKind==="video")&&requestPayload.paidMediaConfirmed!==true)return Response.json({error:"paid_media_confirmation_required",message:"Confirm paid media generation before recovering this render."},{status:428});
+    const sceneReceipts=previous.productionSceneReceipts&&typeof previous.productionSceneReceipts==="object"?Object.values(previous.productionSceneReceipts as Record<string,Record<string,unknown>>):[];
+    const prepaidSceneIds=sceneReceipts.filter((scene)=>Boolean(scene.providerJobId)&&(scene.status==="submitted"||scene.status==="completed")).map((scene)=>String(scene.sceneId)).filter(Boolean);
+    const managedRecovery=prepaidSceneIds.length>0;
+    if(!documentJobCanRecoverProviderRender({...serializeJob(target),result:{...previous,providerJobId,artifactKind,recoverableProductionProviderRequest:managedRecovery},errorDetail:failure}))return Response.json({error:"provider_job_not_retryable",message:"This provider request reached a terminal failure and cannot be resumed. Review the saved inputs and start a changed render.",...(failure?{errorDetail:publicFailureDetail({...failure,probe:failure.probe??undefined})}:{})},{status:409});
+    if (target.kind !== "render_document" || target.status !== "failed" || (!providerJobId&&!managedRecovery) || !artifactId) return Response.json({ error: "resumable_provider_job_required" }, { status: 409 });
     const providerModel = String(previous.providerModel ?? (artifactKind === "video" ? env.FAL_REFERENCE_VIDEO_MODEL ?? DEFAULT_REFERENCE_VIDEO_MODEL : ""));
-    const result:Record<string,unknown> = { ...previous, artifactId, providerJobId, providerModel, stage: "queued", progressMessage: "Recovering the saved Fal render without submitting a second paid video." };delete result.errorDetail;delete result.dismissedAt;delete result.reservationId;
+    const result:Record<string,unknown> = { ...previous, artifactId, ...(managedRecovery?{productionPrepaidSceneIds:[...new Set([...(Array.isArray(previous.productionPrepaidSceneIds)?previous.productionPrepaidSceneIds.map(String):[]),...prepaidSceneIds])],recoverableProductionProviderRequest:true}:{providerJobId,providerModel}), stage: "queued", progressMessage: managedRecovery?"Recovering saved production scenes without submitting already-paid Fal requests again.":"Recovering the saved Fal render without submitting a second paid video." };delete result.errorDetail;delete result.dismissedAt;delete result.reservationId;delete result.costReservationMicrousd;
     const updated = await env.DB.prepare("UPDATE document_jobs SET status='queued',correlation_id=?,result_json=?,error_message=NULL,completed_at=NULL,lease_expires_at=NULL,notified_at=NULL,updated_at=? WHERE job_id=? AND owner_id=? AND status='failed'").bind(jobId, JSON.stringify(result), now, jobId, user.userId).run();
     if (Number(updated.meta.changes ?? 0) !== 1) return Response.json({ error: "job_retry_conflict" }, { status: 409 });
     const queued=await readJob(env,user.userId,jobId);context?.waitUntil(driveDocumentQueue(env,user));return Response.json({job:serializeJob(queued!),reusedProviderRequest:true},{status:202});
@@ -477,9 +491,9 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         'documentRevision',json_extract(request_json,'$.documentRevision'),'requestKey',json_extract(request_json,'$.requestKey'),
         'sourcePreviewId',json_extract(request_json,'$.sourcePreviewId'),'promptTechnique',json_extract(request_json,'$.promptTechnique'),
         'promptFanId',json_extract(request_json,'$.promptFanId'),'parentJobId',json_extract(request_json,'$.parentJobId'),
-        'fanKind',json_extract(request_json,'$.fanKind'),'artifactKind',json_extract(request_json,'$.artifactKind')
+        'fanKind',json_extract(request_json,'$.fanKind'),'artifactKind',json_extract(request_json,'$.artifactKind'),'productionMode',json_extract(request_json,'$.productionMode')
       ) END AS request_json,
-      json_remove(result_json,'$.plannerInput','$.videoInputReceipt','$.artifactPlan') AS result_json,
+      json_remove(result_json,'$.plannerInput','$.videoInputReceipt','$.artifactPlan','$.productionPlan','$.productionSceneReceipts','$.productionAnchor') AS result_json,
       error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at
       FROM document_jobs WHERE owner_id=? AND (status IN ('queued','running','committing') OR (notified_at IS NULL AND expires_at>?) OR (kind IN ('preview','generate','prompt_fan','render_document') AND status IN ('failed','partial') AND expires_at>?))
       AND (?=0 OR status IN ('queued','running','committing') OR notified_at IS NULL)
@@ -522,11 +536,19 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
 
   if (path || request.method !== "POST") return new Response("Method not allowed", { status: 405 });
   const consent = requireConsent(user); if (consent) return consent;
-  const input = await request.json() as { kind?: string; documentId?: string; sourceSurface?: string; payload?: Record<string, unknown> };
+  const input = submittedInput??await request.json() as DocumentJobAdmission;
   if (!KINDS.has(input.kind as DocumentJobKind)) return Response.json({ error: "unsupported_document_job" }, { status: 400 });
   const kind = input.kind as DocumentJobKind; const payload = input.payload && typeof input.payload === "object" ? { ...input.payload } : {};
+  if(kind==="render_document"&&(payload.artifactKind==="storyboard"||payload.artifactKind==="video")&&payload.paidMediaConfirmed!==true)return Response.json({error:"paid_media_confirmation_required",message:"Confirm paid media generation before starting this render."},{status:428});
   if (kind !== "extract_reference" && !env.OPENAI_API_KEY) return Response.json({ error: "provider_not_configured" }, { status: 503 });
   if (JSON.stringify(payload).length > MAX_PAYLOAD_BYTES) return Response.json({ error: "document_job_payload_too_large" }, { status: 413 });
+  if(kind==="preview"||kind==="generate"||kind==="prompt_fan"||kind==="render_document"){
+    const artifactKind=String(payload.artifactKind??"");const production=kind==="render_document"&&payload.productionMode==="managed"&&["short_story","scene","slides","storyboard","video"].includes(artifactKind)?buildManagedProductionPlan(artifactKind as "short_story"|"scene"|"slides"|"storyboard"|"video",payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{},artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??0)}):null;
+    const estimatedCostMicrousd=production?production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:0):kind==="prompt_fan"?4_000_000:kind==="render_document"&&artifactKind==="video"?normalizeVideoDurationSeconds(payload.videoSeconds)*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:kind==="render_document"&&artifactKind==="storyboard"?Math.max(1,Math.floor(Number(payload.itemCount??6)))*1_000_000+1_000_000:1_000_000;
+    const gate=generationBudgetGate(await readCostBudgets(env,user.billingUserId??user.userId),{projectedMicrousd:estimatedCostMicrousd,suppressedUntilCritical:payload.budgetWarningSuppressed===true,noticeAcknowledged:payload.budgetAcknowledged===true});
+    if(gate.level==="blocked")return Response.json({error:"budget_hard_cap_reached",message:`This generation exceeds the remaining ${gate.scope==="workspace"?"organization":"personal"} monthly budget.`,scope:gate.scope,gate},{status:429});
+    if(gate.requiresAcknowledgement&&payload.budgetAcknowledged!==true)return Response.json({error:"generation_budget_acknowledgement_required",message:`Review your ${Math.round(gate.projectedUtilization*100)}% monthly budget usage before starting this generation.`,gate},{status:428});
+  }
   const events = await readWorkspaceEvents(env, user.streamId); const projection = foldEvents(events, Number.POSITIVE_INFINITY, input.documentId);
   const documentId = String(input.documentId ?? projection.documentId); const documentRecord = projection.documents.find((document) => document.id === documentId);
   if (!documentRecord) return Response.json({ error: "document_not_found" }, { status: 404 });
@@ -549,8 +571,9 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     if (duplicate) return Response.json({ job: serializeJob(await reconcilePromptFanParent(env, user.userId, duplicate.job_id) ?? duplicate), reused: true }, { status: 202 });
     const requestedAt = new Date(); const requestedAtIso = requestedAt.toISOString(); const configuredRetention = Number(env.FORMA_RETENTION_DAYS ?? 30); const retentionDays = Number.isFinite(configuredRetention) && configuredRetention > 0 ? configuredRetention : 30; const expiresAt = new Date(requestedAt.getTime() + retentionDays * 86_400_000).toISOString();
     const sourceSurface = String(input.sourceSurface ?? payload.sourceSurface ?? "studio").slice(0, 80) || "studio"; const requestedSequence = await streamHead(env, user.streamId); const parentId = uuidV7(); const childIds = PROMPT_TECHNIQUES.map(() => uuidV7());
-    const shared = { ...payload, fanKind: undefined, requestKey: undefined, promptTechnique: undefined, promptFanId, documentRevision, sourcePreviewId };
-    const parentRequest = { fanKind, promptFanId, documentRevision, sourcePreviewId, requestKey: parentRequestKey, childJobIds: childIds };
+    const productionMode=payload.productionMode==="managed"?"managed":"manual";
+    const shared = { ...payload, productionMode, fanKind: undefined, requestKey: undefined, promptTechnique: undefined, promptFanId, documentRevision, sourcePreviewId };
+    const parentRequest = { fanKind, promptFanId, documentRevision, sourcePreviewId, productionMode, requestKey: parentRequestKey, childJobIds: childIds };
     const insert = (jobId: string, jobKind: DocumentJobKind, requestJson: Record<string, unknown>, resultJson: Record<string, unknown> | null = null) => env.DB.prepare("INSERT INTO document_jobs (job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at) VALUES (?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?)").bind(jobId, user.userId, user.streamId, documentId, jobKind, sourceSurface, jobId, requestedSequence, JSON.stringify(requestJson), resultJson ? JSON.stringify(resultJson) : null, requestedAtIso, expiresAt, requestedAtIso);
     const members = PROMPT_TECHNIQUES.map((technique, index) => ({ jobId: childIds[index], promptTechnique: technique, status: "queued", error: null, attemptCount: 0, updatedAt: requestedAtIso }));
     const statements = [insert(parentId, "prompt_fan", parentRequest, { stage: "queued", progressMessage: "Four prompt approaches are queued as one generation.", members, completedCount: 0, failedCount: 0, totalCount: 4 }), ...PROMPT_TECHNIQUES.map((technique: PromptTechnique, index: number) => insert(childIds[index], fanKind, { ...shared, parentJobId: parentId, promptTechnique: technique, requestKey: documentGenerationRequestKey(fanKind, documentRevision, sourcePreviewId, technique, promptFanId) }))];

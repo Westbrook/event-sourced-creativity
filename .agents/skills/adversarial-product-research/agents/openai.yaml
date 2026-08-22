@@ -1,0 +1,4 @@
+interface:
+  display_name: "Adversarial Product Research"
+  short_description: "Score products through four adversarial perspectives"
+  default_prompt: "Use $adversarial-product-research to assess this application with four adversarial specialists, synthesize a scored roadmap, and perform an in-app reporter exercise when authorized."

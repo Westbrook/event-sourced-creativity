@@ -1,4 +1,6 @@
 import { integer, sqliteTable, text, uniqueIndex, index, primaryKey } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { PHANTOM_ATTENTION_EVENT_SQL } from "./event-predicates.ts";
 
 /**
  * Truth lives here. Product state is always rebuilt by folding these rows.
@@ -26,6 +28,7 @@ export const events = sqliteTable(
     index("idx_events_stream_type").on(table.streamId, table.type),
     index("idx_events_correlation").on(table.correlationId),
     index("idx_events_stream_actor").on(table.streamId, table.actor),
+    index("idx_events_nonphantom_stream_sequence").on(table.streamId, table.sequence).where(sql.raw(`NOT (${PHANTOM_ATTENTION_EVENT_SQL})`)),
   ],
 );
 

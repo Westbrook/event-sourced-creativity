@@ -1,7 +1,8 @@
 import { foldEvents } from "../src/model/events";
+import { parseDocumentArtifactContent } from "../src/model/document-artifacts";
 import { documentShareScope, sanitizeSharedValue, shareAllowsMedia, type DocumentShareScope } from "../src/model/share-scope";
 import { requireConsent, requireUser } from "./pilot-policy";
-import { appendAuditEvent, ensureSchema, readEvents, uuidV7, type WorkerEnv } from "./runtime";
+import { appendAuditEvent, ensureSchema, readWorkspaceEvents, uuidV7, type WorkerEnv } from "./runtime";
 
 const token = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(24));
@@ -21,7 +22,7 @@ export async function handleShares(request: Request, env: WorkerEnv, shareId = "
   if (request.method === "POST") {
     const body = await request.json() as { expiresHours?: number; resourceKind?: string; documentId?: string; projectId?: string }; const expiresHours = Math.max(1, Math.min(168, Math.floor(Number(body.expiresHours ?? 24))));
     if(body.resourceKind!=="document"||!body.documentId?.trim()||!body.projectId?.trim())return Response.json({error:"share_resource_scope_required"},{status:400});
-    const projection=foldEvents(await readEvents(env,user.streamId),Number.POSITIVE_INFINITY,body.documentId,body.projectId);const scope=documentShareScope(projection,user.userId,body.documentId,body.projectId);if(!scope)return Response.json({error:"share_document_not_found"},{status:404});
+    const projection=foldEvents(await readWorkspaceEvents(env,user.streamId),Number.POSITIVE_INFINITY,body.documentId,body.projectId);const scope=documentShareScope(projection,user.userId,body.documentId,body.projectId);if(!scope)return Response.json({error:"share_document_not_found"},{status:404});
     const shareToken = token(); const id = uuidV7(); const createdAt = new Date(); const expiresAt = new Date(createdAt.getTime() + expiresHours * 3_600_000);
     await env.DB.batch([env.DB.prepare("INSERT INTO shares (share_id,token_hash,owner_id,stream_id,expires_at,revoked_at,created_at) VALUES (?,?,?,?,?,NULL,?)").bind(id, await hashToken(shareToken), user.userId, user.streamId, expiresAt.toISOString(), createdAt.toISOString()),env.DB.prepare("INSERT INTO share_scopes (share_id,owner_id,resource_kind,resource_id,project_id,media_keys_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(id,user.userId,scope.resourceKind,scope.resourceId,scope.projectId,JSON.stringify(scope.mediaKeys),createdAt.toISOString())]);
     await appendAuditEvent(env, user.streamId, "user", "ShareLinkCreated", { share_id: id, resource_kind: scope.resourceKind, document_id: scope.resourceId, project_id: scope.projectId, media_count: scope.mediaKeys.length, expires_at: expiresAt.toISOString(), access: "read-only" });
@@ -40,10 +41,11 @@ export async function handleSharedView(request: Request, env: WorkerEnv, rawToke
   const row = await activeShare(env,rawToken);
   if (!row) return Response.json({ error: "share_expired_or_revoked" }, { status: 404 });
   const scope=rowScope(row);if(!scope)return Response.json({error:"share_expired_or_revoked"},{status:404});
-  const events = await readEvents(env, String(row.stream_id)); const projection = foldEvents(events,Number.POSITIVE_INFINITY,scope.resourceId,scope.projectId);if(!documentShareScope(projection,scope.ownerId,scope.resourceId,scope.projectId))return Response.json({error:"shared_document_unavailable"},{status:404});
+  const events = await readWorkspaceEvents(env, String(row.stream_id)); const projection = foldEvents(events,Number.POSITIVE_INFINITY,scope.resourceId,scope.projectId);if(!documentShareScope(projection,scope.ownerId,scope.resourceId,scope.projectId))return Response.json({error:"shared_document_unavailable"},{status:404});
+  const contentIds=[...new Set(projection.artifacts.map((artifact)=>artifact.contentRef).filter((value):value is string=>Boolean(value)))];const contentStatements=[];const now=new Date().toISOString();for(let index=0;index<contentIds.length;index+=98){const ids=contentIds.slice(index,index+98);contentStatements.push(env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND kind='document-artifact' AND redacted_at IS NULL AND expires_at>? AND content_id IN (${ids.map(()=>"?").join(",")})`).bind(scope.ownerId,now,...ids));}const retainedContent=new Map(contentStatements.length?(await env.DB.batch<{content_id:string;content:string}>(contentStatements)).flatMap((result)=>result.results).map((result)=>[result.content_id,parseDocumentArtifactContent(result.content)]):[]);
   const blocks=projection.blocks.map(({id,type,handle,properties})=>({id,type,handle,properties:sanitizeSharedValue(properties,scope,rawToken)}));
   const outputs=projection.outputs.map(({ id, documentId, modelId, provider, variant, sequence, mediaUrl, mediaType, width, height, focalPoint, latency, purpose, promptFanId, promptTechnique })=>({id,documentId,modelId,provider,variant,sequence,mediaUrl:sanitizeSharedValue(mediaUrl,scope,rawToken),mediaType,width,height,focalPoint,latency,purpose,promptFanId,promptTechnique}));
-  const artifacts=projection.artifacts.map(({id,documentId,kind,title,summary,itemCount,items,mediaUrl,mediaType,provider,modelId,sequence,presentation})=>({id,documentId,kind,title,summary,itemCount,items:sanitizeSharedValue(items,scope,rawToken),mediaUrl:sanitizeSharedValue(mediaUrl,scope,rawToken),mediaType,provider,modelId,sequence,presentation}));
+  const artifacts=projection.artifacts.map(({id,documentId,kind,title,summary,itemCount,items,mediaUrl,mediaType,provider,modelId,sequence,presentation,contentRef})=>{const content=contentRef?retainedContent.get(contentRef):null;const authored=items.map((item,index)=>{const draft=content?.items[index];return draft?{...item,title:draft.title,body:draft.body,notes:draft.notes,imagePrompt:draft.image_prompt,contextGroupIds:draft.context_group_ids??item.contextGroupIds,slide:draft.slide??item.slide}:item;});return{id,documentId,kind,title,summary,itemCount,items:sanitizeSharedValue(authored,scope,rawToken),mediaUrl:sanitizeSharedValue(mediaUrl,scope,rawToken),mediaType,provider,modelId,sequence,presentation:content?.presentation??presentation,contentMarkdown:content?.content_markdown??null,contentAvailable:Boolean(content)};});
   return Response.json({ share: serializeShare(row), projection: { projectName: projection.projectName, documentTitle: projection.documentTitle, blocks, outputs, artifacts } },{headers:{"cache-control":"private, no-store"}});
 }
 

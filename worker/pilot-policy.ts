@@ -1,7 +1,7 @@
-import { appendAuditEvent, ensureSchema, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
-import { MICRO_USD_PER_USD } from "./replay-cost";
-import { readCanvasGovernance } from "./canvas-governance-policy";
-import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter";
+import { appendAuditEvent, ensureSchema, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
+import { MICRO_USD_PER_USD } from "./replay-cost.ts";
+import { readCanvasGovernance } from "./canvas-governance-policy.ts";
+import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
 
 export const POLICY_VERSION = "pilot-2026-08-10";
 export type PilotRole = "admin" | "creator" | "agent" | "viewer";
@@ -70,7 +70,10 @@ export function requireConsent(user: PilotUser) {
 }
 
 const period = () => new Date().toISOString().slice(0, 7);
-const budgetLimits = (env: WorkerEnv) => ({ user: intEnv(env.FORMA_USER_TOKEN_LIMIT, 500_000), workspace: intEnv(env.FORMA_WORKSPACE_TOKEN_LIMIT, 5_000_000) });
+const budgetLimits = (env: WorkerEnv) => {
+  const user = Math.max(10_000_000, intEnv(env.FORMA_USER_TOKEN_LIMIT, 10_000_000));
+  return { user, workspace: Math.max(user * 10, intEnv(env.FORMA_WORKSPACE_TOKEN_LIMIT, 100_000_000)) };
+};
 const BUDGET_RECONCILIATION_AGE_MS = 5 * 60_000;
 type BudgetReservationRow = { reservation_id: string; owner_id: string; stream_id: string; correlation_id: string; operation: string; period: string; reserved_tokens: number; used_tokens: number; status: string; settlement_reason: string | null; created_at: string; settled_at: string | null; updated_at: string };
 type BudgetReservationContext = { streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string };
@@ -195,7 +198,10 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
 }
 
 export type CostBudgetSnapshot = { usedMicrousd: number; reservedMicrousd: number; limitMicrousd: number; remainingMicrousd: number };
-const costBudgetLimits = (env: WorkerEnv) => ({ user: moneyEnv(env.FORMA_USER_COST_LIMIT_USD, 10), workspace: moneyEnv(env.FORMA_WORKSPACE_COST_LIMIT_USD, 100) });
+const costBudgetLimits = (env: WorkerEnv) => {
+  const user = Math.max(100 * MICRO_USD_PER_USD, moneyEnv(env.FORMA_USER_COST_LIMIT_USD, 100));
+  return { user, workspace: Math.max(user * 10, moneyEnv(env.FORMA_WORKSPACE_COST_LIMIT_USD, 1_000)) };
+};
 
 async function ensureCostBudgetRow(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limitMicrousd: number) {
   const now = new Date().toISOString();
@@ -227,6 +233,64 @@ export async function readCostBudgets(env: WorkerEnv, userId: string) {
   }));
   const empty = (limitMicrousd: number): CostBudgetSnapshot => ({ usedMicrousd: 0, reservedMicrousd: 0, limitMicrousd, remainingMicrousd: limitMicrousd });
   return { period: currentPeriod, currency: "USD" as const, user: map.user ?? empty(limits.user), workspace: map.workspace ?? empty(limits.workspace) };
+}
+
+/** Keep authenticated session bootstrap on one steady-state D1 budget read. */
+export async function readAccountBudgets(env: WorkerEnv, userId: string) {
+  const tokens = budgetLimits(env);
+  const costs = costBudgetLimits(env);
+  const currentPeriod = period();
+  const query = () => env.DB.prepare(`
+    SELECT 'tokens' AS currency,scope,used_tokens AS used,reserved_tokens AS reserved,hard_limit_tokens AS hard_limit
+    FROM budget_counters
+    WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma'))
+    UNION ALL
+    SELECT 'USD' AS currency,scope,used_microusd AS used,reserved_microusd AS reserved,hard_limit_microusd AS hard_limit
+    FROM cost_budget_counters
+    WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma'))
+  `).bind(currentPeriod, userId, currentPeriod, userId);
+  let rows = (await query().all<Record<string, unknown>>()).results;
+  const expected = new Map([
+    ["tokens:user", tokens.user], ["tokens:workspace", tokens.workspace],
+    ["USD:user", costs.user], ["USD:workspace", costs.workspace],
+  ]);
+  if (rows.length !== 4 || rows.some((row) => Number(row.hard_limit) !== expected.get(`${String(row.currency)}:${String(row.scope)}`))) {
+    const now = new Date().toISOString();
+    const tokenUpsert = (scope: "user" | "workspace", scopeId: string, limit: number) => env.DB.prepare(`
+      INSERT INTO budget_counters (scope,scope_id,period,used_tokens,reserved_tokens,hard_limit_tokens,updated_at)
+      VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
+      SET hard_limit_tokens=excluded.hard_limit_tokens,updated_at=excluded.updated_at
+      WHERE budget_counters.hard_limit_tokens IS NOT excluded.hard_limit_tokens
+    `).bind(scope, scopeId, currentPeriod, limit, now);
+    const costUpsert = (scope: "user" | "workspace", scopeId: string, limit: number) => env.DB.prepare(`
+      INSERT INTO cost_budget_counters (scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at)
+      VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
+      SET hard_limit_microusd=excluded.hard_limit_microusd,updated_at=excluded.updated_at
+      WHERE cost_budget_counters.hard_limit_microusd IS NOT excluded.hard_limit_microusd
+    `).bind(scope, scopeId, currentPeriod, limit, now);
+    const results = await env.DB.batch<Record<string, unknown>>([
+      tokenUpsert("user", userId, tokens.user), tokenUpsert("workspace", "forma", tokens.workspace),
+      costUpsert("user", userId, costs.user), costUpsert("workspace", "forma", costs.workspace),
+      query(),
+    ]);
+    rows = results.at(-1)?.results ?? [];
+  }
+  const entry = (currency: "tokens" | "USD", scope: "user" | "workspace") => rows.find((row) => row.currency === currency && row.scope === scope);
+  const tokenScope = (scope: "user" | "workspace") => {
+    const row = entry("tokens", scope);
+    return { used: Number(row?.used ?? 0), reserved: Number(row?.reserved ?? 0), limit: Number(row?.hard_limit ?? tokens[scope]) };
+  };
+  const costScope = (scope: "user" | "workspace"): CostBudgetSnapshot => {
+    const row = entry("USD", scope);
+    const usedMicrousd = Number(row?.used ?? 0);
+    const reservedMicrousd = Number(row?.reserved ?? 0);
+    const limitMicrousd = Number(row?.hard_limit ?? costs[scope]);
+    return { usedMicrousd, reservedMicrousd, limitMicrousd, remainingMicrousd: Math.max(0, limitMicrousd - usedMicrousd - reservedMicrousd) };
+  };
+  return {
+    budgets: { period: currentPeriod, user: tokenScope("user"), workspace: tokenScope("workspace") },
+    costBudgets: { period: currentPeriod, currency: "USD" as const, user: costScope("user"), workspace: costScope("workspace") },
+  };
 }
 
 export async function reserveCostBudget(env: WorkerEnv, userId: string, requestedMicrousd: number, options: { maximumMicrousd: number; allowUserOverage: boolean }) {
@@ -269,9 +333,10 @@ export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind:
   return { contentId, expiresAt: expiresAt.toISOString() };
 }
 
-export async function loadPrivateContent(env: WorkerEnv, ownerId: string) {
+export async function loadPrivateContent(env: WorkerEnv, ownerId: string, scope: "all" | "chat" | "memory" = "all") {
   const now = new Date().toISOString();
-  const rows = await env.DB.prepare("SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>?").bind(ownerId, now).all<{ content_id: string; content: string }>();
+  const restricted = scope === "chat" ? " AND kind IN ('chat-user','chat-assistant')" : scope === "memory" ? " AND kind='condition'" : "";
+  const rows = await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>?${restricted}`).bind(ownerId, now).all<{ content_id: string; content: string }>();
   return Object.fromEntries(rows.results.map((row) => [row.content_id, row.content]));
 }
 
@@ -287,8 +352,8 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
   } else if (request.method !== "GET") return new Response("Method not allowed", { status: 405 });
   const budgetUser=auth.principal??user;
   if(request.method==="POST")await reconcileFailedBudgetReservations(env,budgetUser);
-  const [canvas,budgets]=await Promise.all([readCanvasGovernance(env,user.role),readBudgets(env,budgetUser.userId)]);
-  return Response.json({ user, impersonation:auth.impersonation?{active:true,impersonationId:auth.impersonation.impersonationId,personaId:auth.impersonation.personaId,replaySessionId:auth.impersonation.replaySessionId,actor:auth.impersonation.actor,fictionalUser:auth.impersonation.fictionalUser,startedAt:auth.impersonation.startedAt,expiresAt:auth.impersonation.expiresAt}:null, policy: { version: POLICY_VERSION, accepted: user.consentVersion === POLICY_VERSION, passiveCapture: false, attentionCapture: { available: true, defaultOn: false, retentionDays: 14, rawInputCapture: false }, externalAssetsRequireAssertion: true, retentionDays: intEnv(env.FORMA_RETENTION_DAYS, 30), sharing: "private-expiring-revocable" }, canvas, provider: { name: "OpenAI Responses · OpenAI + Fal image adapters · Fal video", model: env.OPENAI_IMAGE_MODEL ?? "gpt-image-2", plannerModel: env.OPENAI_MODEL ?? "gpt-5.6-terra", configured: Boolean(env.OPENAI_API_KEY), imageProvider:env.FORMA_IMAGE_PROVIDER??"openai", imageProviders:[{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",configured:Boolean(env.OPENAI_API_KEY)},{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4",previewModel:env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast",editModel:env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image",configured:Boolean(env.FAL_KEY)}], videoProvider: env.FORMA_VIDEO_PROVIDER??"fal", videoModel:env.FAL_VIDEO_MODEL??DEFAULT_VIDEO_MODEL, videoReferenceModel:env.FAL_REFERENCE_VIDEO_MODEL??DEFAULT_REFERENCE_VIDEO_MODEL, videoAdapterVersion:VIDEO_ADAPTER_CONTRACT.adapterVersion, videoConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY), videoApiSunset:null }, budgets });
+  const [canvas,accountBudgets]=await Promise.all([readCanvasGovernance(env,user.role),readAccountBudgets(env,budgetUser.userId)]);
+  return Response.json({ user, impersonation:auth.impersonation?{active:true,impersonationId:auth.impersonation.impersonationId,personaId:auth.impersonation.personaId,replaySessionId:auth.impersonation.replaySessionId,actor:auth.impersonation.actor,fictionalUser:auth.impersonation.fictionalUser,startedAt:auth.impersonation.startedAt,expiresAt:auth.impersonation.expiresAt}:null, policy: { version: POLICY_VERSION, accepted: user.consentVersion === POLICY_VERSION, passiveCapture: false, attentionCapture: { available: true, defaultOn: false, retentionDays: 14, rawInputCapture: false }, externalAssetsRequireAssertion: true, retentionDays: intEnv(env.FORMA_RETENTION_DAYS, 30), sharing: "private-expiring-revocable" }, canvas, provider: { name: "OpenAI Responses · OpenAI + Fal image adapters · Fal video", model: env.OPENAI_IMAGE_MODEL ?? "gpt-image-2", plannerModel: env.OPENAI_MODEL ?? "gpt-5.6-terra", configured: Boolean(env.OPENAI_API_KEY), imageProvider:env.FORMA_IMAGE_PROVIDER??"openai", imageProviders:[{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",configured:Boolean(env.OPENAI_API_KEY)},{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4",previewModel:env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast",editModel:env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image",configured:Boolean(env.FAL_KEY)}], videoProvider: env.FORMA_VIDEO_PROVIDER??"fal", videoModel:env.FAL_VIDEO_MODEL??DEFAULT_VIDEO_MODEL, videoReferenceModel:env.FAL_REFERENCE_VIDEO_MODEL??DEFAULT_REFERENCE_VIDEO_MODEL, videoAdapterVersion:VIDEO_ADAPTER_CONTRACT.adapterVersion, videoConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY), videoApiSunset:null }, ...accountBudgets });
 }
 
 export async function handleImpersonation(request:Request,env:WorkerEnv){

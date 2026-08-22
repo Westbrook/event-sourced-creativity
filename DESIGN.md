@@ -188,6 +188,31 @@ Administrative tools may expose more detail and denser tables, but should still 
 - Minimum interactive target size is 44px by 44px; icon-only controls meet the same target and always have an accessible name.
 - Button labels use sentence case.
 
+### Iconography
+
+Phosphor Regular is the only interface icon family. Its considered, softly
+geometric silhouettes suit the editorial gallery language while clearly
+distinguishing navigation, authored changes, spatial tools, media formats,
+feedback, and operational controls.
+
+- Render trusted, individually imported SVGs synchronously; never use a native
+  text glyph, emoji, icon font, remote sprite, asynchronous icon request, or
+  package-wide icon barrel.
+- Choose semantic Forma icon names through the shared `icon(name)` helper or
+  `<forma-ui-icon>` component. The same action has the same symbol everywhere.
+- Keep the shared shell vocabulary small. Register authoring, navigation,
+  history, formatting, media, and Canvas icons from their existing route chunks.
+- Use 16px, 20px, and 24px tokenized icons; meaningful empty-state artwork may
+  reach 32px. Reserve each icon's square before first paint in both light and
+  shadow DOM, preserve `currentColor`, and never shift neighboring content.
+- Decorative icons are hidden from assistive technology. Meaningful icons and
+  icon-only controls retain explicit accessible names and 44px minimum targets.
+- Preserve right-to-left navigation direction and reduced-motion preferences.
+- Actual keyboard symbols, initials, dimensions, signed quantities, and
+  mathematical multipliers are semantic text, not interface icon substitutes.
+- The living vocabulary is documented at `/laboratory/design-system`; its
+  complete usage inventory and delivery contract are in `docs/icon-system.md`.
+
 ### Forms
 
 All forms share the same structure:

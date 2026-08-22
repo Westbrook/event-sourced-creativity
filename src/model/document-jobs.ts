@@ -25,6 +25,7 @@ export type DocumentJob = {
   documentRevision: string;
   requestKey: string;
   sourcePreviewId: string | null;
+  productionMode: ProductionMode;
   promptTechnique: "prose" | "bullets" | "json" | "xml";
   promptFanId: string | null;
   parentJobId: string | null;
@@ -86,15 +87,15 @@ const TEXT_ARTIFACT_PROGRESS: ProgressPhase[] = [
 const STORYBOARD_PROGRESS: ProgressPhase[] = [
   { id: "queue", label: "Queue", stages: ["queued", "queue-recovery", "recovering", "preparing"] },
   { id: "structure", label: "Structure", stages: ["planning"] },
-  { id: "render", label: "Render frames", stages: ["rendering-frames", "safety-review", "provider-wait", "rendering"] },
+  { id: "render", label: "Render frames", stages: ["anchor-generation", "rendering-frames", "rendering-scenes", "safety-review", "provider-wait", "rendering"] },
   { id: "save", label: "Save", stages: ["saving", "committing"] },
 ];
 
 const VIDEO_PROGRESS: ProgressPhase[] = [
   { id: "queue", label: "Queue", stages: ["queued", "queue-recovery", "recovering", "preparing"] },
-  { id: "structure", label: "Structure", stages: ["planning", "preparing-video"] },
+  { id: "structure", label: "Structure", stages: ["planning", "preparing-video", "anchor-generation"] },
   { id: "submit", label: "Submit", stages: ["uploading-references", "submitting"] },
-  { id: "render", label: "Render", stages: ["rendering"] },
+  { id: "render", label: "Render", stages: ["rendering", "rendering-scenes"] },
   { id: "save", label: "Save", stages: ["finalizing", "downloading", "saving", "committing"] },
 ];
 
@@ -132,7 +133,7 @@ export function documentJobProgress(job: DocumentJob): DocumentJobProgress {
     const complete = Math.max(0, Number(unitProgress[1]));
     const total = Math.max(1, Number(unitProgress[2]));
     phaseFraction = Math.min(1, complete / total);
-    detail = `${Math.min(complete, total)} of ${total} frames stored`;
+    detail = `${Math.min(complete, total)} of ${total} ${artifactKind === "video" ? "scenes" : "frames"} stored`;
   } else if (job.kind === "prompt_fan" && fanCompleted > 0) {
     phaseFraction = Math.min(1, fanCompleted / 4);
     detail = `${Math.min(fanCompleted, 4)} of 4 prompt approaches finished`;
@@ -210,7 +211,13 @@ export function documentJobFailure(job: DocumentJob) {
 
 /** A saved provider request can only be resumed after a genuinely recoverable transport/result failure. */
 export function documentJobCanRecoverProviderRender(job: DocumentJob) {
-  if (job.kind !== "render_document" || job.status !== "failed" || job.result?.artifactKind !== "video" || !job.result?.providerJobId) return false;
+  if (job.kind !== "render_document" || job.status !== "failed" || job.result?.artifactKind !== "video") return false;
+  const sceneReceipts = job.result.productionSceneReceipts && typeof job.result.productionSceneReceipts === "object"
+    ? Object.values(job.result.productionSceneReceipts as Record<string, Record<string, unknown>>)
+    : [];
+  const recoverableScene = job.result.recoverableProductionProviderRequest === true
+    || sceneReceipts.some((scene) => Boolean(scene.providerJobId) && (scene.status === "submitted" || scene.status === "completed"));
+  if (!job.result.providerJobId && !recoverableScene) return false;
   const failure = documentJobFailure(job);
   return Boolean(failure?.retryable && failure.category !== "safety" && failure.httpStatus !== 400 && failure.httpStatus !== 422);
 }
@@ -262,3 +269,4 @@ export function documentJobActionLabel(job: DocumentJob | undefined, kind: "prev
   if (kind === "preview") return job.stage === "rendering" ? "Draft rendering…" : "Draft preparing…";
   return job.stage === "rendering" ? "Rendering full image…" : "Preparing full image…";
 }
+import type { ProductionMode } from "./managed-production.ts";

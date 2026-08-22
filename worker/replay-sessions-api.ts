@@ -76,7 +76,10 @@ async function checkpointReplayOperation(env:WorkerEnv,sessionId:string,stage:st
 }
 
 async function reconcileReplaySessions(env:WorkerEnv,user:PilotUser){
-  const rows=await env.DB.prepare("SELECT * FROM replay_sessions WHERE owner_id=? AND status='running'").bind(user.userId).all<SessionRow>();const cutoff=Date.now()-REPLAY_HEARTBEAT_TIMEOUT_MS;
+  const [rows,unsettled]=await env.DB.batch<Record<string,unknown>>([
+    env.DB.prepare("SELECT * FROM replay_sessions WHERE owner_id=? AND status='running'").bind(user.userId),
+    env.DB.prepare("SELECT o.* FROM replay_session_operations o JOIN replay_sessions s ON s.session_id=o.session_id WHERE s.owner_id=? AND s.status IN ('failed','archived') AND o.settled_at IS NULL").bind(user.userId),
+  ]);const cutoff=Date.now()-REPLAY_HEARTBEAT_TIMEOUT_MS;
   for(const row of rows.results){const operation=await ensureLegacyReplayOperation(env,row);const heartbeat=Date.parse(String(operation?.heartbeat_at??row.created_at));if(Number.isFinite(heartbeat)&&heartbeat>cutoff)continue;
     const stage=String(operation?.stage??"unknown");const completedOperations=Number(operation?.completed_operations??0);const totalOperations=Number(operation?.total_operations??0);const error=`This run stopped reporting progress for more than ${REPLAY_HEARTBEAT_TIMEOUT_MS/60_000} minutes. Last recorded step: ${stage}; ${completedOperations} of ${totalOperations||"unknown"} provider calls completed. The request or worker ended without a terminal provider receipt, so no active generation can be verified.`;const stoppedAt=new Date().toISOString();
     const usage={...parseJson<Record<string,unknown>>(row.usage_json,{}),reservedCostMicrousd:Number(operation?.reserved_microusd??0),actualCostMicrousd:Number(operation?.actual_microusd??0),authorizedProviderOperations:totalOperations,actualProviderOperations:completedOperations,operations:completedOperations,partial:true,terminalReason:"heartbeat_timeout",lastRecordedStage:stage,lastHeartbeatAt:operation?.heartbeat_at??row.created_at};
@@ -84,15 +87,17 @@ async function reconcileReplaySessions(env:WorkerEnv,user:PilotUser){
     if(operation){await env.DB.prepare("UPDATE replay_session_operations SET stage='failed',progress_message=?,heartbeat_at=? WHERE session_id=?").bind("Stopped after the progress heartbeat expired.",stoppedAt,String(row.session_id)).run();await settleTrackedReplayOperation(env,operation,Number(operation.reserved_microusd),Number(operation.actual_microusd));}
     await appendAuditEvent(env,user.streamId,"worker:replay","LiveReplaySessionStalled",{replay_session_id:String(row.session_id),last_recorded_stage:stage,last_heartbeat_at:operation?.heartbeat_at??row.created_at,completed_provider_operations:completedOperations,authorized_provider_operations:totalOperations,reserved_cost_microusd:Number(operation?.reserved_microusd??0),actual_cost_microusd:Number(operation?.actual_microusd??0),heartbeat_timeout_minutes:REPLAY_HEARTBEAT_TIMEOUT_MS/60_000},operation?.approval_id?String(operation.approval_id):undefined);
   }
-  const unsettled=await env.DB.prepare("SELECT o.* FROM replay_session_operations o JOIN replay_sessions s ON s.session_id=o.session_id WHERE s.owner_id=? AND s.status IN ('failed','archived') AND o.settled_at IS NULL").bind(user.userId).all<OperationRow>();for(const operation of unsettled.results)await settleTrackedReplayOperation(env,operation,Number(operation.reserved_microusd),Number(operation.actual_microusd));
+  for(const operation of unsettled.results)await settleTrackedReplayOperation(env,operation,Number(operation.reserved_microusd),Number(operation.actual_microusd));
 }
 
 async function listSessions(request:Request,env:WorkerEnv){
   const auth=await requireUser(request,env,"admin",{account:"principal"});if(auth.response||!auth.user)return auth.response!;
   await reconcileReplaySessions(env,auth.user);
-  const result=await env.DB.prepare("SELECT * FROM replay_sessions WHERE owner_id=? AND status<>'archived' ORDER BY created_at DESC LIMIT 50").bind(auth.user.userId).all<SessionRow>();
-  const personas=await env.DB.prepare("SELECT * FROM replay_personas WHERE owner_id=? ORDER BY updated_at DESC").bind(auth.user.userId).all<PersonaRow>();const bySession=new Map(personas.results.map((row)=>[String(row.session_id),row]));
-  const operations=await env.DB.prepare("SELECT o.*,p.event_count AS requested_event_count,p.provider_coverage AS requested_provider_coverage,d.study_types_json AS requested_study_types_json,x.experience_profile AS requested_experience_profile FROM replay_session_operations o LEFT JOIN replay_approval_profiles p ON p.approval_id=o.approval_id LEFT JOIN replay_development_profiles d ON d.approval_id=o.approval_id LEFT JOIN replay_experience_profiles x ON x.approval_id=o.approval_id WHERE o.owner_id=?").bind(auth.user.userId).all<OperationRow>();const operationBySession=new Map(operations.results.map((row)=>[String(row.session_id),row]));
+  const [result,personas,operations]=await env.DB.batch<Record<string,unknown>>([
+    env.DB.prepare("SELECT session_id,status,title,summary,seed,event_count,image_count,preview_media_url,final_media_url,planner_model,image_model,usage_json,error_message,created_at,completed_at,CASE WHEN json_valid(usage_json) AND CAST(COALESCE(json_extract(usage_json,'$.coverageTotal'),0) AS INTEGER)>0 THEN NULL ELSE events_json END AS events_json FROM replay_sessions WHERE owner_id=? AND status<>'archived' ORDER BY created_at DESC LIMIT 50").bind(auth.user.userId),
+    env.DB.prepare("SELECT * FROM replay_personas WHERE owner_id=? ORDER BY updated_at DESC").bind(auth.user.userId),
+    env.DB.prepare("SELECT o.*,p.event_count AS requested_event_count,p.provider_coverage AS requested_provider_coverage,d.study_types_json AS requested_study_types_json,x.experience_profile AS requested_experience_profile FROM replay_session_operations o LEFT JOIN replay_approval_profiles p ON p.approval_id=o.approval_id LEFT JOIN replay_development_profiles d ON d.approval_id=o.approval_id LEFT JOIN replay_experience_profiles x ON x.approval_id=o.approval_id WHERE o.owner_id=?").bind(auth.user.userId),
+  ]);const bySession=new Map(personas.results.map((row)=>[String(row.session_id),row]));const operationBySession=new Map(operations.results.map((row)=>[String(row.session_id),row]));
   return Response.json({sessions:result.results.map((row)=>summary(row,bySession.get(String(row.session_id)),operationBySession.get(String(row.session_id)))),liveGeneration:await liveConfiguration(env,auth.user.userId)});
 }
 

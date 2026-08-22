@@ -1,5 +1,5 @@
-import { requireConsent, requireUser } from "./pilot-policy";
-import type { WorkerEnv } from "./runtime";
+import { requireConsent, requireUser } from "./pilot-policy.ts";
+import type { WorkerEnv } from "./runtime.ts";
 
 const ownerPrefix = (ownerId:string) => ownerId.replace(/[^a-zA-Z0-9._-]/g,"-");
 

@@ -61,6 +61,10 @@ export type DocumentArtifactItem = {
   contextGroupIds?: string[];
   mediaUrl: string | null;
   mediaType: string | null;
+  sceneId?: string | null;
+  narrativeOrder?: number | null;
+  generationOrder?: number | null;
+  durationSeconds?: number | null;
   width: number | null;
   height: number | null;
   focalPoint: ImageFocalPoint | null;
@@ -83,6 +87,7 @@ export type DocumentArtifact = {
   modelId: string;
   latency: number;
   sequence: number;
+  library: boolean;
   sourceEventId: string;
   sourceSurface: string | null;
   settings: Record<string, unknown>;

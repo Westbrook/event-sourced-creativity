@@ -5,7 +5,7 @@ import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isD
 import { APPLICATIONS, applicationDefinition, applicationIdFromRoute, creativeCreationHref, navigationItemActive } from "../platform/applications";
 import { canvasFocusFromRoute } from "../canvas/routes";
 import { ensureModalDialog } from "./modal-dialog";
-import { completeRoutePopulation } from "../performance";
+import { beginRoutePopulation, completeRoutePopulation, recordPopulationSource } from "../performance";
 import { FORMA_SUPPORTED_LOCALES, formaLocaleFamily, setFormaLocale } from "./design-system/localization";
 import "./forma-attention-observer";
 
@@ -34,7 +34,14 @@ export class FormaShell extends FormaElement {
     const path = (event as CustomEvent<{ path?: string }>).detail?.path ?? `${location.pathname}${location.search}${location.hash}`;
     void loadRouteComponent(path);
     if (!this.store.loading.get()) void this.store.syncDocumentFromRoute(path);
-    this.#observeApplicationView(path);this.#observeDocumentView(path);
+  };
+  #populated = () => {
+    const path = this.store.route.get();
+    window.setTimeout(() => {
+      if (!this.isConnected || this.store.route.get() !== path || document.documentElement.dataset.formaPhase !== "populated") return;
+      this.#observeApplicationView(path);
+      this.#observeDocumentView(path);
+    }, 0);
   };
   #pop = () => { this.store.setRoute(`${location.pathname}${location.search}${location.hash}`); };
   #changeLocale = async (event: Event) => {
@@ -59,16 +66,18 @@ export class FormaShell extends FormaElement {
   }
 
   override connectedCallback() {
-    super.connectedCallback(); window.addEventListener("keydown", this.#keydown); window.addEventListener("popstate", this.#pop); window.addEventListener("forma-route-changed", this.#routeChanged);
+    super.connectedCallback(); window.addEventListener("keydown", this.#keydown); window.addEventListener("popstate", this.#pop); window.addEventListener("forma-route-changed", this.#routeChanged); window.addEventListener("forma-performance", this.#populated);
     this.#dialogObserver = new MutationObserver((records) => {
       const dialogChanged = records.some((record) => record.type === "attributes" || [...record.addedNodes].some((node) => node instanceof Element && (node.matches("dialog") || node.querySelector("dialog"))));
       if (dialogChanged) queueMicrotask(() => this.#raiseToast());
     });
     this.#dialogObserver.observe(this, { subtree: true, childList: true, attributes: true, attributeFilter: ["open"] });
     void loadRouteComponent(location.pathname);
-    if (!location.pathname.startsWith("/share/")&&!this.store.events.get().length) void this.store.load();
+    const shared=location.pathname==="/share"||location.pathname.startsWith("/share/");
+    if(shared){beginRoutePopulation(location.pathname);recordPopulationSource("miss",0);}
+    else if(!this.store.events.get().length)void this.store.load();
   }
-  override disconnectedCallback() { this.#dialogObserver?.disconnect(); window.removeEventListener("keydown", this.#keydown); window.removeEventListener("popstate", this.#pop); window.removeEventListener("forma-route-changed", this.#routeChanged); super.disconnectedCallback(); }
+  override disconnectedCallback() { this.#dialogObserver?.disconnect(); window.removeEventListener("keydown", this.#keydown); window.removeEventListener("popstate", this.#pop); window.removeEventListener("forma-route-changed", this.#routeChanged); window.removeEventListener("forma-performance", this.#populated); super.disconnectedCallback(); }
 
   #raiseToast() {
     const toast = this.querySelector<HTMLElement>(".toast[popover]");
@@ -79,7 +88,7 @@ export class FormaShell extends FormaElement {
     } catch { /* The toast remains a fixed fallback when popovers are unavailable. */ }
   }
 
-  protected override updated() { for(const dialog of this.querySelectorAll<HTMLDialogElement>(".command-dialog,.consent-modal,.impersonation-confirm-dialog,dialog[data-shell-modal]"))ensureModalDialog(dialog);this.#raiseToast();if(!this.store.loading.get()&&this.store.events.get().length&&this.store.routeDataReady())completeRoutePopulation(this.store.route.get());this.#observeApplicationView(this.store.route.get());this.#observeDocumentView(this.store.route.get());this.#revealApplication(); }
+  protected override updated() { for(const dialog of this.querySelectorAll<HTMLDialogElement>(".command-dialog,.consent-modal,.impersonation-confirm-dialog,dialog[data-shell-modal]"))ensureModalDialog(dialog);this.#raiseToast();if(!this.store.loading.get()&&this.store.events.get().length&&this.store.routeDataReady())completeRoutePopulation(this.store.route.get());this.#revealApplication(); }
 
   #revealApplication() {
     const application = `${applicationIdFromRoute(this.store.route.get())}:${this.i18n.locale}:${this.matches(":dir(rtl)")}`;
@@ -95,7 +104,7 @@ export class FormaShell extends FormaElement {
   }
 
   #observeApplicationView(path:string){
-    if(this.store.loading.get()||!this.store.events.get().length)return;
+    if(document.documentElement.dataset.formaPhase!=="populated"||this.store.loading.get()||!this.store.events.get().length)return;
     const pathname=path.split(/[?#]/)[0]||"/";const application=applicationIdFromRoute(pathname);const projection=this.store.projection.get();const documentId=documentIdFromRoute(pathname)??"";
     const routeFamily=documentId?"document":pathname.startsWith("/operations/events")?"operations-events":pathname.startsWith("/operations/analytics")?"operations-analytics":pathname.startsWith("/operations")?"operations-system":pathname.startsWith("/laboratory/replay")?"laboratory-replay":pathname.startsWith("/laboratory")?"laboratory-home":pathname.startsWith("/canvas/")?"canvas-workspace":pathname==="/canvas"?"canvas-home":pathname.startsWith("/library")?"library":pathname.startsWith("/sessions")?"sessions":pathname.startsWith("/scout")?"scout":pathname.startsWith("/memory")?"memory":pathname.startsWith("/projects")?"projects":"creative-workspace";
     const focused=documentId?documentFocusFromRoute(pathname):application==="canvas"?canvasFocusFromRoute(pathname):undefined;const visitKey=`${routeFamily}:${documentId}:${documentViewFromRoute(pathname)??""}:${focused===true?"focus":"standard"}`;if(visitKey===this.#lastObservedApplicationView)return;this.#lastObservedApplicationView=visitKey;
@@ -105,7 +114,7 @@ export class FormaShell extends FormaElement {
   #observeDocumentView(path: string) {
     const view = documentViewFromRoute(path);
     if (!view) { this.#lastObservedDocumentView = ""; return; }
-    if (this.store.loading.get() || !this.store.events.get().length) return;
+    if (document.documentElement.dataset.formaPhase !== "populated" || this.store.loading.get() || !this.store.events.get().length) return;
     const projection = this.store.projection.get();
     const documentId = documentIdFromRoute(path) ?? projection.documentId;
     if (!documentId) return;
@@ -212,7 +221,8 @@ export class FormaShell extends FormaElement {
 
   override render() {
     const path = this.store.route.get();const applicationId=applicationIdFromRoute(path);const application=applicationDefinition(applicationId);const isCreative=applicationId==="creative";const isCanvas=applicationId==="canvas";const isMaking=isCreative||isCanvas;
-    if(path.startsWith("/share/"))return html`<div class="shared-locale-switcher">${this.#localePicker()}</div><forma-shared-view .token=${decodeURIComponent(path.slice("/share/".length))}></forma-shared-view><span class="sr-only" role="status" aria-live="polite">${this.#localeAnnouncement}</span>`;
+    const pathname=path.split(/[?#]/)[0]||"/";
+    if(pathname==="/share"||pathname.startsWith("/share/"))return html`<div class="shared-locale-switcher">${this.#localePicker()}</div><forma-shared-view .token=${decodeURIComponent(pathname.slice("/share/".length))}></forma-shared-view><span class="sr-only" role="status" aria-live="polite">${this.#localeAnnouncement}</span>`;
     const session=this.store.session.get();const impersonation=session?.impersonation;
     const simplifiedEditor = documentViewFromRoute(path) === "editor";
     const projection=this.store.projection.get();
@@ -231,7 +241,7 @@ export class FormaShell extends FormaElement {
           ${this.#localePicker()}
           <button class="command-trigger" aria-label=${this.i18n.t("shell.command")} aria-keyshortcuts="Meta+K Control+K" @click=${() => this.store.patchUi({ commandOpen: true })}><span aria-hidden="true">${icon("search")}</span><span class="command-label">${this.i18n.t("shell.command")}</span><kbd>⌘ K</kbd></button>
           ${isCreative&&isDocumentViewRoute(path)&&projection.documentId ? html`<button class="button secondary compact" @click=${() => {void this.store.loadShares();this.store.patchUi({ shareOpen: true });}}>${icon("share")} ${this.i18n.t("shell.share", "Share")}</button>` : nothing}
-          <button class=${`avatar ${impersonation?"impersonating":""}`} aria-label=${impersonation?this.i18n.t("shell.impersonationAccount","Open fictional account controls for {name}",{name:impersonation.fictionalUser.displayName}):this.i18n.t("shell.account")} aria-expanded=${this.store.ui.accountOpen} @click=${() => this.store.patchUi({ accountOpen: !this.store.ui.accountOpen })}>${session?.user.displayName?this.i18n.firstGrapheme(session.user.displayName).toLocaleUpperCase(this.i18n.locale):"·"}</button>
+          <button class=${`avatar ${impersonation?"impersonating":""}`} aria-label=${impersonation?this.i18n.t("shell.impersonationAccount","Open fictional account controls for {name}",{name:impersonation.fictionalUser.displayName}):this.i18n.t("shell.account")} aria-expanded=${this.store.ui.accountOpen} @click=${() => this.store.patchUi({ accountOpen: !this.store.ui.accountOpen })}>${session?.user.displayName?this.i18n.firstGrapheme(session.user.displayName).toLocaleUpperCase(this.i18n.locale):icon("user")}</button>
         </div>
         ${this.store.ui.accountOpen ? html`<div class="account-popover">
           ${impersonation ? html`<span class="eyebrow">${this.i18n.t("account.fictional", "Fictional account · impersonating")}</span><b dir="auto">${impersonation.fictionalUser.displayName}</b><p><bdi dir="ltr">${impersonation.fictionalUser.email}</bdi> · ${this.i18n.plural("account.mockEvents", this.store.head.get(), "{count} mock event", "{count} mock events")}</p><div class="account-impersonation-note"><b>${this.i18n.t("account.signedInAs", "Signed in as {name}", { name: "\u2068" + impersonation.actor.displayName + "\u2069" })}</b><p>${this.i18n.t("account.isolation", "Every change requires confirmation and remains isolated in this saved mock.")}</p></div><button class="button primary" @click=${()=>this.store.stopImpersonating()}>${this.i18n.t("account.return", "Return to my account")}</button>` : html`<span class="eyebrow">${this.i18n.t("account.role." + (session?.user.role || "authenticated"), session?.user.role || this.i18n.t("account.role.authenticated", "authenticated"))}</span><b dir="auto">${session?.user.displayName || this.i18n.t("account.signedIn", "Signed-in creative")}</b><p><bdi dir="ltr">${session?.user.email || this.i18n.t("account.identityLoading", "Identity loading")}</bdi>${simplifiedEditor ? nothing : html` · ${this.i18n.plural("account.events", this.store.head.get(), "{count} event", "{count} events")}`}</p>`}

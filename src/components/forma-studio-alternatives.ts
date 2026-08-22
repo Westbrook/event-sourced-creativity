@@ -226,7 +226,7 @@ export class FormaGuidedBrief extends AlternativeStudio {
     this.#subtypes = {};
     for (const field of ALL_BRIEF_FIELDS) {
       const block = projection.blocks.find((item) => item.type === field.type);
-      this.#drafts[field.type] = block ? String(block.properties.text ?? block.properties.label ?? "") : "";
+      this.#drafts[field.type] = block ? String(block.properties.artifact_markdown ?? block.properties.text ?? block.properties.label ?? "") : "";
       this.#subtypes[field.type] = String(block?.properties.subtype ?? suggestedSubtype(field.type));
     }
     this.#step = 0;
@@ -237,13 +237,14 @@ export class FormaGuidedBrief extends AlternativeStudio {
     const projection = this.store.projection.get();
     const events: EventInput[] = [];
     for (const field of fields) {
-      const value = (this.#drafts[field.type] ?? "").trim();
-      if (!value) continue;
-      const subtype = this.#subtypes[field.type] ?? suggestedSubtype(field.type);
       const current = projection.blocks.find((block) => block.type === field.type);
+      const adopted = Boolean(current?.properties.source_artifact_id || current?.properties.source_output_id);
+      const value = adopted ? this.#drafts[field.type] ?? "" : (this.#drafts[field.type] ?? "").trim();
+      if (!value && !adopted) continue;
+      const subtype = this.#subtypes[field.type] ?? suggestedSubtype(field.type);
       if (current) {
-        const oldValue = String(current.properties.text ?? current.properties.label ?? "");
-        if (oldValue !== value) events.push({ type: "BlockPropertyEdited", payload: { block_id: current.id, property_path: current.properties.text !== undefined ? "text" : "label", old_value: oldValue, new_value: value, source_surface: "guided-brief" } });
+        const oldValue = String(current.properties.artifact_markdown ?? current.properties.text ?? current.properties.label ?? "");
+        if (oldValue !== value) events.push(...this.store.outputBlockTextEvents(current.id, value, "guided-brief"));
         const oldSubtype = String(current.properties.subtype ?? suggestedSubtype(field.type));
         if (oldSubtype !== subtype) events.push({ type: "BlockPropertyEdited", payload: { block_id: current.id, property_path: "subtype", old_value: oldSubtype, new_value: subtype, source_surface: "guided-brief" } });
       } else {
@@ -368,7 +369,7 @@ export class FormaGuidedBrief extends AlternativeStudio {
                 return html`<li>
                   <button @click=${() => fieldSection >= 0 ? this.#goToStep(fieldSection) : this.store.setRoute("/")}>
                     <span><b>${blockTypeDefinition(block.type)?.label ?? block.type}</b><small>${String(block.properties.subtype ?? block.handle)}</small></span>
-                    <em>${String(block.properties.text ?? block.properties.label ?? block.handle)}</em>
+                    <em>${String(block.properties.artifact_markdown ?? block.properties.text ?? block.properties.label ?? block.handle)}</em>
                     <i>${fieldSection >= 0 ? "Review answer" : "Open baseline"} ${icon("arrow")}</i>
                   </button>
                 </li>`;

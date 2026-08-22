@@ -1,5 +1,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { FormaElement, icon } from "./forma-element";
+import "./icons-authoring";
+import "./icons-navigation";
 import { ensureModalDialog } from "./modal-dialog";
 
 type CollectionDialog = { mode: "create" | "rename"; parentId: string | null; collectionId: string | null; current: string };
@@ -65,7 +67,7 @@ export class CollectionTree extends FormaElement {
   override render() {
     const p=this.store.projection.get();const roots=p.collections.filter((collection)=>!collection.parentId);const children=(id:string)=>p.collections.filter((collection)=>collection.parentId===id);const activeCollection=p.collections.find((collection)=>collection.id===this.store.ui.focusCollectionId);const subjectId=this.itemKind==="block"?this.itemId:p.documentId;const currentMembership=subjectId?p.membership[subjectId]:undefined;const subjectName=this.itemKind==="block"?(this.itemLabel||"this block"):"the open document";const fileLabel=this.itemKind==="block"?"File this block":"File open document";
     const node=(collection:typeof p.collections[number]):TemplateResult=>html`<li class=${this.store.ui.focusCollectionId===collection.id?"brief-focus":""} data-collection-id=${collection.id}>
-      <div class="tree-row"><span aria-hidden="true">${icon("folder")}</span><button type="button" class="tree-name" title=${`Filter project contents to ${collection.handle}`} aria-current=${this.store.ui.focusCollectionId===collection.id?"true":nothing} @click=${()=>this.#openCollection(collection.id)}>${collection.handle}</button><span class="tree-count">${Object.values(p.membership).filter((membership)=>membership.collectionId===collection.id).length}</span><button type="button" class="tree-more" aria-label=${`Open actions for ${collection.handle}`} title="Collection actions" aria-controls=${this.#menuId(collection.id)} aria-expanded=${this.#openMenuId===collection.id} @click=${(event:MouseEvent)=>this.#toggleMenu(event,collection.id)}>•••</button></div>
+      <div class="tree-row"><span aria-hidden="true">${icon("folder")}</span><button type="button" class="tree-name" title=${`Filter project contents to ${collection.handle}`} aria-current=${this.store.ui.focusCollectionId===collection.id?"true":nothing} @click=${()=>this.#openCollection(collection.id)}>${collection.handle}</button><span class="tree-count">${Object.values(p.membership).filter((membership)=>membership.collectionId===collection.id).length}</span><button type="button" class="tree-more" aria-label=${`Open actions for ${collection.handle}`} title="Collection actions" aria-controls=${this.#menuId(collection.id)} aria-expanded=${this.#openMenuId===collection.id} @click=${(event:MouseEvent)=>this.#toggleMenu(event,collection.id)}>${icon("dots")}</button></div>
       <div id=${this.#menuId(collection.id)} class="tree-menu" popover="auto" role="group" aria-label=${`${collection.handle} actions`} @toggle=${(event:Event)=>this.#menuToggle(event,collection.id)}>
         <button type="button" @click=${()=>this.#fromMenu(collection.id,()=>this.#openRename(collection.id,collection.handle))}>${icon("edit")} Rename</button>
         <button type="button" @click=${()=>this.#fromMenu(collection.id,()=>this.#openCreate(collection.id))}>${icon("plus")} New nested collection</button>

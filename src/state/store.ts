@@ -13,12 +13,19 @@ import { effectivePromptPreference, normalizePromptTechnique, type PromptPrefere
 import { canvasIdFromRoute } from "../canvas/routes";
 import { canvasProjectId, foldCanvasEvents, type CanvasContextSet, type CanvasProjection } from "../canvas/model";
 import type { GenerationReadiness, GenerationReadinessKind, PromptTechniqueSafetyComparison } from "../model/generation-readiness";
-import { parseDocumentArtifactContent, type DocumentArtifactKind } from "../model/document-artifacts";
+import { parseDocumentArtifactContent, type DocumentArtifactKind, type SlidePresentation } from "../model/document-artifacts";
 import { artifactContextEvents, imageOutputContextEvents } from "../model/output-context";
-import { combinedContextGroups, combinedContextRoleForBlockType } from "../model/combined-context";
+import { outputBlockRemovalEvents as ownedOutputBlockRemovalEvents, outputBlockTextEditEvents, outputInputDraft, outputInputEditEvents, type OutputInputDraft } from "../model/output-authoring";
+import { combinedContextGroups, combinedContextMemberships, combinedContextRoleForBlockType } from "../model/combined-context";
+import { eventProfileRank } from "../model/event-profiles";
 import type { VideoAudioMode, VideoDurationSeconds } from "../model/video-adapter";
-import { beginRoutePopulation, completeBackgroundHydration, performanceRouteFamily, recordEventPage, recordPopulationSource, recordSessionReady } from "../performance";
-import { matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
+import { normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../model/video-adapter";
+import { formatGenerationUsd, generationBudgetGate, generationBudgetPreferenceKey, type GenerationCostBudgets } from "../model/generation-budget";
+import { buildManagedProductionPlan, type ProductionMode } from "../model/managed-production";
+import { beginRoutePopulation, completeBackgroundHydration, recordEventPage, recordPopulationSource, recordPrivateContentState, recordRouteHistoryProfile, recordSessionReady } from "../performance";
+import { clearAnalyticsSnapshots, matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
+import { consumeSessionBootstrap, consumeSessionPrefetch } from "./session-bootstrap";
+import { routeCapabilities } from "./route-capabilities";
 
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
@@ -30,6 +37,7 @@ export type PilotSession = {
   canvas: { version:string; mode:"internal"|"pilot"; pilotAvailable:boolean; access:boolean; accessReason:"administrator-internal-review"|"pilot-approved"|"pilot-gate-incomplete"|"role-not-eligible"; blockedBy:Array<"trust_safety"|"counsel"|"second_image_adapter">; requirements:Array<{id:"trust_safety"|"counsel"|"second_image_adapter";label:string;summary:string;approved:boolean;approvedBy:string|null;approvedByUserId:string|null;approvedAt:string|null;evidenceRef:string|null;details:Record<string,unknown>}> };
   provider: { name: string; model: string; plannerModel?: string; configured: boolean; imageProvider?:string; imageProviders?:Array<{provider:string;model:string;previewModel?:string;editModel?:string;configured:boolean}>; videoProvider?:string; videoModel?:string; videoReferenceModel?:string; videoAdapterVersion?:string; videoConfigured?:boolean; videoApiSunset?:string|null };
   budgets: { period: string; user: { used: number; reserved: number; limit: number }; workspace: { used: number; reserved: number; limit: number } };
+  costBudgets: GenerationCostBudgets;
 };
 export type ShareRecord = { shareId: string; token?: string; resourceKind?: string; resourceId?: string; projectId?: string; expiresAt: string; revokedAt?: string | null; createdAt?: string; active: boolean };
 
@@ -88,14 +96,17 @@ export class FormaStore {
   #historyProfile: AccountSnapshotProfile = "full";
   #historyUpgrade?: Promise<void>;
   #contentHydration?: Promise<void>;
+  #privateContentScope:"none"|"chat"|"memory"|"all"="none";
+  #pendingPassiveJobPath="";
   #focalBackfillTimer = 0;
 
-  constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){this.#flushPendingJobNotices();void this.syncDocumentJobs();}});}
+  constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&this.session.get()&&this.events.get().length){this.#flushPendingJobNotices();this.#syncVisibleJobs();}});window.addEventListener("forma-performance",()=>{if(!this.#pendingPassiveJobPath||this.route.get()!==this.#pendingPassiveJobPath||document.documentElement.dataset.formaPhase!=="populated")return;this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);});}
 
   subscribe(listener: Listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   notify() { this.#listeners.forEach((listener) => listener()); }
   #publishAppended(events:CreativeEvent[]){
     if(!events.length)return;
+    const session=this.session.get();if(session&&events.some((event)=>event.type==="AttentionSignalsForgotten"))void clearAnalyticsSnapshots(this.#snapshotIdentity(session),true);
     window.dispatchEvent(new CustomEvent("forma-events-appended",{detail:{events}}));
     const needsImageMaintenance=events.some((event)=>["GenerationCompleted","IdeationPreviewCompleted","DocumentRenderCompleted","ReferenceIngested","BlockCreated"].includes(event.type));
     if(needsImageMaintenance&&!this.session.get()?.impersonation){
@@ -178,11 +189,12 @@ export class FormaStore {
   async stopDocumentJob(jobId:string,force=false){try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/${force?"force-fail":"cancel"}`,{method:"POST"},force?"force-fail this document operation":"stop this document operation");const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok||!body.job){const messages:Record<string,string>={job_finalizing:"This operation is already finalizing and can no longer be stopped.",admin_required:"Only an administrator can force-fail an operation."};throw new Error(messages[body.error??""]??body.error??"The operation could not be stopped");}this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast(force?"Operation force-failed. Its audit receipt and released budget remain available.":"Operation stopped. Any reserved application budget was released.");await Promise.all([this.syncDocumentJobs(),this.refreshSession()]);return true;}catch(error){this.toast(error instanceof Error?error.message:"The operation could not be stopped");return false;}}
   #flushPendingJobNotices(){if(document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;const jobs=this.#pendingJobNotices.splice(0);this.toast(jobs.length===1?this.#jobNotice(jobs[0]):`${jobs.length} background document operations finished.`);for(const job of jobs)void this.#ackJob(job.jobId);}
   async #readEventPages(after=0){return this.#readEventStream(after,"full",after===0);}
+  async replayAuthoritativeHistory(sequence:number){const complete=await this.#readEventStream(0,"full",false);this.replayEvents.set(complete.events);this.setReplayAsOf(sequence);}
   async #readEventStream(after:number,profile:AccountSnapshotProfile,includeContent=false){
     let cursor=Math.max(0,after),head=cursor,first=true,initialHead=Number.POSITIVE_INFINITY;
     const events:CreativeEvent[]=[];let content:Record<string,string>={};
     for(let page=0;page<500;page+=1){
-      const limit=profile==="full"?2000:5000;
+      const limit=profile==="full"?5000:6500;
       const selection=profile==="full"?"":`&profile=${profile}`;
       const response=await fetch(`/api/events?after=${cursor}&limit=${limit}&content=${first&&includeContent?1:0}${selection}`);
       if(!response.ok)throw new Error(`Event stream returned ${response.status}`);
@@ -208,15 +220,11 @@ export class FormaStore {
   }
 
   #profileForRoute(path:string):AccountSnapshotProfile{
-    const family=performanceRouteFamily(path);
-    if(family==="projects")return"projects";
-    if(["operations","laboratory","sessions","scout","memory"].includes(family))return"full";
-    return"workspace";
+    return routeCapabilities(path).profile;
   }
 
   routeDataReady(path=this.route.get()){
-    const rank=(value:AccountSnapshotProfile)=>value==="full"?2:value==="workspace"?1:0;
-    return rank(this.#historyProfile)>=rank(this.#profileForRoute(path));
+    return eventProfileRank(this.#historyProfile)>=eventProfileRank(this.#profileForRoute(path));
   }
 
   #snapshotIdentity(session:PilotSession):AccountSnapshotIdentity{
@@ -224,17 +232,17 @@ export class FormaStore {
   }
 
   async #upgradeHistory(profile:AccountSnapshotProfile){
-    const rank=(value:AccountSnapshotProfile)=>value==="full"?2:value==="workspace"?1:0;
-    if(rank(this.#historyProfile)>=rank(profile))return;
-    if(this.#historyUpgrade){await this.#historyUpgrade;if(rank(this.#historyProfile)>=rank(profile))return;}
+    if(eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;
+    if(this.#historyUpgrade){await this.#historyUpgrade;if(eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;}
     const upgrade=(async()=>{
-      const incoming=profile==="full"?await this.#readEventPages(0):await this.#readEventStream(0,profile,false);
+      const incoming=await this.#readEventStream(0,profile,profile==="full"&&routeCapabilities(this.route.get()).privateContent);
       const merged=new Map(incoming.events.map((event)=>[event.eventId,event]));
       for(const event of this.events.get())merged.set(event.eventId,event);
       this.events.set([...merged.values()].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));
       if(Object.keys(incoming.content).length)this.content.set({...this.content.get(),...incoming.content});
       this.head.set(Math.max(this.head.get(),incoming.head));
       this.#historyProfile=profile;
+      recordRouteHistoryProfile(profile);
       if(profile!=="projects")completeBackgroundHydration(this.events.get().length,profile);
       this.notify();
       const session=this.session.get();if(session)void writeAccountSnapshot(this.#snapshotIdentity(session),this.events.get(),this.head.get(),profile);
@@ -243,16 +251,32 @@ export class FormaStore {
     try{await upgrade;}finally{if(this.#historyUpgrade===upgrade)this.#historyUpgrade=undefined;}
   }
 
-  async #hydrateVisiblePrivateContent(){
-    if(Object.keys(this.content.get()).length||this.#contentHydration)return this.#contentHydration;
+  async #hydrateVisiblePrivateContent():Promise<void>{
+    const required: "chat"|"memory"|"all"=routeCapabilities(this.route.get()).profile==="memory"?"memory":documentViewFromRoute(this.route.get())==="chat"?"chat":"all";
+    if(this.#privateContentScope==="all"||this.#privateContentScope===required){recordPrivateContentState("ready",required);return;}
+    const hydrationPath=this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/";
+    const owner=this.session.get()?.user.userId;
+    if(this.#contentHydration){try{await this.#contentHydration;if(String(this.#privateContentScope)!=="all"&&String(this.#privateContentScope)!==required)return this.#hydrateVisiblePrivateContent();if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("ready",required);}catch(error){if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("unavailable",required);throw error;}return;}
+    recordPrivateContentState("pending",required);
     const hydration=(async()=>{
-      const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1`);
+      const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1${required!=="all"?`&contentScope=${required}`:""}`);
       if(!response.ok)throw new Error(`Private content returned ${response.status}`);
       const body=await response.json() as {content?:Record<string,string>};
+      if(!owner||this.session.get()?.user.userId!==owner)throw new Error("Private content no longer belongs to the active account");
+      this.#privateContentScope=required;
       if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}
     })();
     this.#contentHydration=hydration;
-    try{await hydration;}finally{if(this.#contentHydration===hydration)this.#contentHydration=undefined;}
+    let state:"ready"|"unavailable"="unavailable";
+    try{await hydration;state="ready";}finally{if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState(state,required);if(this.#contentHydration===hydration)this.#contentHydration=undefined;}
+  }
+
+  async ensurePrivateContent(reference:string){
+    if(!reference)return null;
+    const owner=this.session.get()?.user.userId;if(!owner)return null;
+    const existing=this.content.get()[reference];if(typeof existing==="string")return existing;
+    if(this.#contentHydration){try{await this.#contentHydration;}catch{/* A targeted retry below preserves the exact missing-reference contract. */}const hydrated=this.content.get()[reference];if(typeof hydrated==="string")return hydrated;}
+    try{const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1`);if(!response.ok)return null;const body=await response.json() as {content?:Record<string,string>};if(this.session.get()?.user.userId!==owner)return null;this.#privateContentScope="all";if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}return this.content.get()[reference]??null;}catch{return null;}
   }
   #clientEventIds(events:CreativeEvent[]){return new Set(events.map((event)=>String(event.payload.client_event_id??"")).filter(Boolean));}
   #mergeConfirmed(appended:CreativeEvent[],head=this.head.get(),remember=false){
@@ -282,7 +306,8 @@ export class FormaStore {
   async #refreshEvents(){const previous=this.events.get();const known=new Set(previous.map((event)=>event.eventId));const after=this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();let replace=after===0;let body=await this.#readEventPages(after);if(body.head<after){body=await this.#readEventPages(0);replace=true;this.#historyProfile="full";}if(!replace&&!body.events.length&&body.head===after&&!Object.keys(body.content).length)return false;const complete=replace?body.events:[...previous,...body.events.filter((event)=>!known.has(event.eventId))];this.events.set(complete);const confirmedClientIds=this.#clientEventIds(complete);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));if(Object.keys(body.content).length)this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#publishAppended(complete.filter((event)=>!known.has(event.eventId)));return true;}
   async refreshEvents(){if(await this.#refreshEvents())this.notify();}
   #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
-  #jobScope(path=this.route.get()){const documentId=documentIdFromRoute(path);return performanceRouteFamily(path)==="projects"?"?scope=active":documentId?`?document=${encodeURIComponent(documentId)}`:"";}
+  #syncVisibleJobs(path=this.route.get()){if(path!==this.route.get())return;if(routeCapabilities(path).jobHistory||this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){this.#pendingPassiveJobPath="";void this.syncDocumentJobs();return;}window.clearTimeout(this.#jobPollTimer);if(document.documentElement.dataset.formaPhase==="populated"){this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);}else this.#pendingPassiveJobPath=path;}
+  #jobScope(path=this.route.get()){const documentId=documentIdFromRoute(path);return documentId?`?document=${encodeURIComponent(documentId)}`:routeCapabilities(path).jobHistory?"":"?scope=active";}
   #driveDocumentJobs(jobs:DocumentJob[]){const next=[...jobs].filter((job)=>job.kind!=="prompt_fan"&&(job.status==="queued"||job.status==="running"||job.status==="committing")).sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId))[0];if(next&&(next.status==="queued"||documentJobIsStale(next))&&!this.#jobsDriving.has(next.jobId))void this.#driveDocumentJob(next);}
   async #driveDocumentJob(job:DocumentJob){this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}
   async syncDocumentJobs(){const scope=this.#jobScope();if(this.#jobsSyncing){if(scope!==this.#jobSyncScope)this.#jobResyncRequested=true;return;}this.#jobsSyncing=true;this.#jobSyncScope=scope;try{const response=await fetch(`/api/document-jobs${scope}`);if(!response.ok)throw new Error(`Job status returned ${response.status}`);const body=await response.json() as {jobs?:DocumentJob[]};if(this.#jobScope()!==scope){this.#jobResyncRequested=true;return;}const previous=new Map(this.documentJobs.get().map((job)=>[job.jobId,job]));const jobs=(body.jobs??[]).map((job)=>{const detail=this.#jobDetails.get(job.jobId);if(detail&&detail.updatedAt===job.updatedAt)return{...job,result:detail.result};if(detail)this.#jobDetails.delete(job.jobId);return job;});this.documentJobs.set(jobs);this.#jobPollFailures=0;this.#jobPollIssueNotified=false;
@@ -290,7 +315,39 @@ export class FormaStore {
       for(const job of completed){if(job.kind==="structure_adaptive"&&job.status==="completed"&&job.result?.structure)this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId);continue;}if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);}
       this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(jobs.some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")?1_500:60_000);
     }catch{this.#jobPollFailures+=1;if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}this.#scheduleJobPoll(5_000);}finally{this.#jobsSyncing=false;if(this.#jobResyncRequested||this.#jobScope()!==scope){this.#jobResyncRequested=false;queueMicrotask(()=>void this.syncDocumentJobs());}}}
-  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string){const documentId=documentIdOverride??this.projection.get().documentId;const requestKey=String(payload.requestKey??"");if(requestKey&&this.#jobStarts.has(requestKey))throw new Error("This exact image request is already being queued.");if(requestKey){this.#jobStarts.add(requestKey);this.notify();}try{const navigation=this.#navigationCommit;await this.#appendPipeline;if(navigation&&!await navigation)throw new Error("The selected project could not be opened safely.");const action=kind==="preview"?"start a draft image":kind==="generate"?"start a full-quality image":kind==="prompt_fan"?"start a four-image prompt fan":`start ${kind.replaceAll("_"," ")}`;const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action);const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness};if(body.readiness&&requestKey)this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});if(!response.ok||!body.job)throw new Error(body.message??body.error??"Document operation could not be started");const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);if(requestKey)this.#readinessAcknowledgements.delete(requestKey);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);return{job:body.job,reused:Boolean(body.reused)};}finally{if(requestKey){this.#jobStarts.delete(requestKey);this.notify();}}}
+  #budgetPreference(key:string){try{return localStorage.getItem(key)==="true";}catch{return false;}}
+  #setBudgetPreference(key:string){try{localStorage.setItem(key,"true");}catch{/* A blocked browser storage policy only affects reminder persistence. */}}
+  #generationEstimate(kind:DocumentJobKind,payload:Record<string,unknown>){
+    if(kind==="prompt_fan")return 4_000_000;
+    if(kind!=="render_document")return 1_000_000;
+    const artifactKind=String(payload.artifactKind??"");
+    if(payload.productionMode==="managed"&&["short_story","scene","slides","storyboard","video"].includes(artifactKind)){const production=buildManagedProductionPlan(artifactKind as DocumentArtifactKind,payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{},artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??0)});return production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:0);}
+    return artifactKind==="video"?normalizeVideoDurationSeconds(payload.videoSeconds)*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:artifactKind==="storyboard"?Math.max(1,Math.floor(Number(payload.itemCount??6)))*1_000_000+1_000_000:1_000_000;
+  }
+  async #authorizeGenerationBudget(kind:DocumentJobKind,payload:Record<string,unknown>){
+    if(!["preview","generate","prompt_fan","render_document"].includes(kind))return;
+    const session=this.session.get();if(!session?.costBudgets)return;
+    const billingUserId=session.impersonation?.actor.userId??session.user.userId;
+    const noticeKey=generationBudgetPreferenceKey(billingUserId,session.costBudgets.period,"notice");
+    const suppressionKey=generationBudgetPreferenceKey(billingUserId,session.costBudgets.period,"suppressed");
+    const suppressed=this.#budgetPreference(suppressionKey);
+    const acknowledged=this.#budgetPreference(noticeKey);
+    const gate=generationBudgetGate(session.costBudgets,{projectedMicrousd:this.#generationEstimate(kind,payload),suppressedUntilCritical:suppressed,noticeAcknowledged:acknowledged});
+    if(gate.level==="blocked")throw new Error(`This generation exceeds the remaining ${gate.scope==="workspace"?"organization":"personal"} monthly budget.`);
+    if(!gate.requiresAcknowledgement){payload.budgetAcknowledged=acknowledged;payload.budgetWarningSuppressed=suppressed&&gate.level!=="critical";return;}
+    const dialog=document.createElement("dialog");dialog.className="modal generation-budget-approval";const dialogId=crypto.randomUUID();dialog.setAttribute("aria-labelledby",`generation-budget-title-${dialogId}`);dialog.setAttribute("aria-describedby",`generation-budget-description-${dialogId}`);
+    const card=document.createElement("section");card.className="modal-card";
+    const heading=document.createElement("h2");heading.id=`generation-budget-title-${dialogId}`;heading.textContent=gate.level==="critical"?"Your monthly generation budget is almost exhausted":"Review your monthly generation budget";
+    const message=document.createElement("p");message.id=`generation-budget-description-${dialogId}`;message.textContent=`This ${gate.scope==="workspace"?"organization":"personal"} budget will be ${Math.round(gate.projectedUtilization*100)}% used. The generation reserves up to ${formatGenerationUsd(gate.projectedMicrousd)}; ${formatGenerationUsd(gate.remainingMicrousd)} remains before it starts.`;
+    card.append(heading,message);
+    let suppression:HTMLInputElement|null=null;
+    if(gate.dismissible){const label=document.createElement("label");suppression=document.createElement("input");suppression.type="checkbox";label.append(suppression,document.createTextNode(" I no longer want to see this until 95% of the monthly budget is used."));card.append(label);}
+    const footer=document.createElement("footer"),cancel=document.createElement("button"),continueButton=document.createElement("button");cancel.type="button";cancel.className="button ghost";cancel.textContent="Cancel";continueButton.type="button";continueButton.className="button primary";continueButton.textContent="I understand, continue";footer.append(cancel,continueButton);card.append(footer);dialog.append(card);document.body.append(dialog);
+    const accepted=await new Promise<boolean>((resolve)=>{let settled=false;const finish=(value:boolean)=>{if(settled)return;settled=true;if(value&&suppression?.checked)this.#setBudgetPreference(suppressionKey);if(value&&gate.level==="notice")this.#setBudgetPreference(noticeKey);dialog.close();dialog.remove();resolve(value);};cancel.addEventListener("click",()=>finish(false));continueButton.addEventListener("click",()=>finish(true));dialog.addEventListener("cancel",(event)=>{event.preventDefault();finish(false);});dialog.showModal();});
+    if(!accepted)throw new Error("Generation canceled before any provider work was started.");
+    payload.budgetAcknowledged=true;payload.budgetWarningSuppressed=this.#budgetPreference(suppressionKey)&&gate.level!=="critical";
+  }
+  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string){const documentId=documentIdOverride??this.projection.get().documentId;const requestKey=String(payload.requestKey??"");if(requestKey&&this.#jobStarts.has(requestKey))throw new Error("This exact image request is already being queued.");if(requestKey){this.#jobStarts.add(requestKey);this.notify();}try{const navigation=this.#navigationCommit;await this.#appendPipeline;if(navigation&&!await navigation)throw new Error("The selected project could not be opened safely.");await this.#authorizeGenerationBudget(kind,payload);const action=kind==="preview"?"start a draft image":kind==="generate"?"start a full-quality image":kind==="prompt_fan"?"start a four-image prompt fan":`start ${kind.replaceAll("_"," ")}`;const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action);const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness};if(body.readiness&&requestKey)this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});if(!response.ok||!body.job)throw new Error(body.message??body.error??"Document operation could not be started");const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);if(requestKey)this.#readinessAcknowledgements.delete(requestKey);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);return{job:body.job,reused:Boolean(body.reused)};}finally{if(requestKey){this.#jobStarts.delete(requestKey);this.notify();}}}
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   toast(message: string) { this.ui.toast = message; this.notify(); window.setTimeout(() => { if (this.ui.toast === message) { this.ui.toast = ""; this.notify(); } }, 2800); }
   async confirmImpersonatedInteraction(action="change this fictional account"){
@@ -318,14 +375,16 @@ export class FormaStore {
       else history.pushState({}, "", routedPath);
       if(!this.loading.get()){
         beginRoutePopulation(routedPath);
+        recordRouteHistoryProfile(this.#historyProfile);
+        const contentScope=routeCapabilities(routedPath).profile==="memory"?"memory":documentViewFromRoute(routedPath)==="chat"?"chat":"all";recordPrivateContentState(routeCapabilities(routedPath).privateContent?(this.#privateContentScope==="all"||this.#privateContentScope===contentScope?"ready":"pending"):"not-required",routeCapabilities(routedPath).privateContent?contentScope:undefined);
         recordPopulationSource("memory",this.events.get().length);
       }
     }
-    this.route.set(routedPath); this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath } }));
+    this.route.set(routedPath);if(!this.loading.get()&&!routeCapabilities(routedPath).jobHistory&&!this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath=routedPath;}this.notify(); window.dispatchEvent(new CustomEvent("forma-route-changed", { detail: { path: routedPath } }));
     const required=this.#profileForRoute(routedPath);
-    if(required!==this.#historyProfile&&this.#historyProfile!=="full")void this.#upgradeHistory(required).catch((error)=>{console.warn("[forma-performance]",JSON.stringify({phase:"history-upgrade",message:error instanceof Error?error.message:"history_upgrade_failed"}));});
-    if(required!=="projects"&&!this.loading.get())requestAnimationFrame(()=>void this.#hydrateVisiblePrivateContent().catch(()=>undefined));
-    if(!this.loading.get()&&this.#jobScope(current)!==this.#jobScope(routedPath))requestAnimationFrame(()=>void this.syncDocumentJobs());
+    if(eventProfileRank(this.#historyProfile)<eventProfileRank(required))void this.#upgradeHistory(required).catch((error)=>{console.warn("[forma-performance]",JSON.stringify({phase:"history-upgrade",message:error instanceof Error?error.message:"history_upgrade_failed"}));});
+    if(routeCapabilities(routedPath).privateContent&&!this.loading.get())requestAnimationFrame(()=>void this.#hydrateVisiblePrivateContent().catch(()=>undefined));
+    if(!this.loading.get()&&(this.#jobScope(current)!==this.#jobScope(routedPath)||!routeCapabilities(routedPath).jobHistory))requestAnimationFrame(()=>this.#syncVisibleJobs(routedPath));
   }
 
   async syncDocumentFromRoute(path = this.route.get()) {
@@ -353,55 +412,62 @@ export class FormaStore {
   }
   setAttentionCapture(enabled:boolean){if(this.session.get()?.impersonation){this.patchUi({attentionCapture:false,attentionPaused:true});this.toast("Attention capture stays off while you experience a fictional account.");return;}writeAttentionPreference(enabled,this.session.get()?.user.userId??"anonymous");this.patchUi({attentionCapture:enabled,attentionPaused:false});this.toast(enabled?"Attention signals enabled for this account on this device.":"Attention signals disabled; the current episode was closed.");}
   setAttentionPaused(paused:boolean){this.patchUi({attentionPaused:paused});this.toast(paused?"Attention capture paused on this device.":"Attention capture resumed.");}
-  async forgetAttentionSignals(){window.dispatchEvent(new Event("forma-attention-forget"));const appended=await this.append({type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:this.head.get(),reason:"user-requested",device_ledger_cleared:true}});if(appended.length)this.toast("Attention episodes were forgotten and excluded from Scout and Memory.");return appended;}
+  async forgetAttentionSignals(){window.dispatchEvent(new Event("forma-attention-forget"));const appended=await this.append({type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:this.head.get(),reason:"user-requested",device_ledger_cleared:true}});if(appended.length){const session=this.session.get();if(session)await clearAnalyticsSnapshots(this.#snapshotIdentity(session),true);this.toast("Attention episodes were forgotten and excluded from Scout and Memory.");}return appended;}
 
   async load() {
     const path=this.route.get();const profile=this.#profileForRoute(path);const started=performance.now();
     beginRoutePopulation(path);
+    recordRouteHistoryProfile(profile);
+    recordPrivateContentState(routeCapabilities(path).privateContent?"pending":"not-required");
     this.loading.set(true); this.notify();
     try {
-      // Both authenticated requests can travel to the edge concurrently. Cached
-      // account data remains invisible until the fresh server session verifies it.
+      // The document's streamed session is verified on this exact request. Cached
+      // account data remains invisible until that authoritative identity is known.
       const snapshotsPromise=readAccountSnapshots();
-      const sessionPromise=this.refreshSession();
+      const bootstrap=consumeSessionBootstrap();
+      const prefetched=consumeSessionPrefetch();
+      const sessionPromise=bootstrap?Promise.resolve(this.#applySession(bootstrap)):this.refreshSession(prefetched);
+      if(documentViewFromRoute(path)==="chat")void sessionPromise.then((verified)=>{if(this.session.get()?.user.userId!==verified.user.userId||this.route.get()!==path)return;return this.#hydrateVisiblePrivateContent();}).catch(()=>undefined);
       const live=snapshotsPromise.then(async(snapshots)=>{
         if(snapshots.length){
           const verified=await sessionPromise;
           const snapshot=matchingAccountSnapshot(snapshots,this.#snapshotIdentity(verified),profile);
           if(snapshot)return this.#readEventStream(snapshot.head,snapshot.profile,false);
         }
-        return this.#readEventStream(0,profile,profile==="full");
+        return this.#readEventStream(0,profile,false);
       });
       const [session,snapshots]=await Promise.all([sessionPromise,snapshotsPromise]);
-      recordSessionReady(started);
+      recordSessionReady(started,bootstrap?"document":prefetched?"prefetch":"request");
       const identity=this.#snapshotIdentity(session);
       const cached=matchingAccountSnapshot(snapshots,identity,profile);
       if(cached){
         this.events.set(cached.events);this.head.set(cached.head);this.#historyProfile=cached.profile;
         recordPopulationSource("indexeddb",cached.events.length);
         void live.then(async(current)=>{
-          if(current.head<cached.head){const restored=await this.#readEventStream(0,profile,profile==="full");this.events.set(restored.events);this.content.set(restored.content);this.head.set(restored.head);this.#historyProfile=profile;this.notify();}
+          if(current.head<cached.head){const restored=await this.#readEventStream(0,profile,false);this.events.set(restored.events);this.content.set({...this.content.get(),...restored.content});this.head.set(restored.head);this.#historyProfile=profile;this.notify();}
           else if(current.head>cached.head){const merged=new Map([...this.events.get(),...current.events].map((event)=>[event.eventId,event]));this.events.set([...merged.values()].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));if(Object.keys(current.content).length)this.content.set({...this.content.get(),...current.content});this.head.set(current.head);this.#publishAppended(current.events);this.notify();void writeAccountSnapshot(identity,this.events.get(),this.head.get(),this.#historyProfile);}
         }).catch((error)=>console.warn("[forma-performance]",JSON.stringify({phase:"cache-revalidation",message:error instanceof Error?error.message:"cache_revalidation_failed"})));
       }else{
         const body=await live;
-        this.events.set(body.events);this.content.set(body.content);this.head.set(body.head);this.#historyProfile=profile;
+        this.events.set(body.events);this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#historyProfile=profile;
         recordPopulationSource("miss",body.events.length);
         void writeAccountSnapshot(identity,body.events,body.head,profile);
       }
       this.error.set("");this.loading.set(false);this.notify();
       requestAnimationFrame(()=>{
         void this.syncDocumentFromRoute(this.route.get());
-        void this.syncDocumentJobs();
-        if(profile!=="projects")void this.#hydrateVisiblePrivateContent().catch(()=>undefined);
+        this.#syncVisibleJobs(this.route.get());
+        if(routeCapabilities(this.route.get()).privateContent)void this.#hydrateVisiblePrivateContent().catch(()=>undefined);
       });
     } catch (error) { this.error.set(error instanceof Error ? error.message : "Unable to load event stream"); }
     finally { this.loading.set(false); this.notify(); }
   }
 
-  async refreshSession() {
-    const response = await fetch("/api/session"); const body = await response.json() as PilotSession & { error?: string };
-    if (!response.ok) throw new Error(body.error ?? "Authentication required");const previousUserId=this.session.get()?.user.userId;this.session.set(body);if(body.impersonation){this.ui.attentionCapture=false;this.ui.attentionPaused=true;}else if(previousUserId!==body.user.userId){this.ui.attentionCapture=readAttentionPreference(body.user.userId);this.ui.attentionPaused=false;} this.notify(); return body;
+  #applySession(body:PilotSession){const previousUserId=this.session.get()?.user.userId;if(previousUserId&&previousUserId!==body.user.userId){this.content.set({});this.#privateContentScope="none";}this.session.set(body);if(body.impersonation){this.ui.attentionCapture=false;this.ui.attentionPaused=true;}else if(previousUserId!==body.user.userId){this.ui.attentionCapture=readAttentionPreference(body.user.userId);this.ui.attentionPaused=false;}this.notify();return body;}
+
+  async refreshSession(prefetched:Promise<Response>|null=null) {
+    const response = await (prefetched?prefetched.catch(()=>fetch("/api/session")):fetch("/api/session")); const body = await response.json() as PilotSession & { error?: string };
+    if (!response.ok) throw new Error(body.error ?? "Authentication required");return this.#applySession(body);
   }
 
   async acceptTerms() {
@@ -443,30 +509,89 @@ export class FormaStore {
     if(!root){this.toast("That reusable context is no longer available.");return null;}
     const connected=new Set([root.id]);let changed=true;while(changed&&connected.size<24){changed=false;for(const relation of projection.libraryBlockRelations){if(connected.has(relation.fromBlockId)&&available.has(relation.toBlockId)&&!connected.has(relation.toBlockId)){connected.add(relation.toBlockId);changed=true;}if(connected.size>=24)break;}}
     const blocks=[...connected].map((id)=>available.get(id)!).sort((left,right)=>left.id===root.id?-1:right.id===root.id?1:left.position.localeCompare(right.position));const ids=new Map(blocks.map((block)=>[block.id,crypto.randomUUID()]));const contextSetId=crypto.randomUUID();const base=this.head.get()+1;
-    const groupRole=combinedContextRoleForBlockType(root.type),groupName=String(root.properties.label??root.properties.text??root.handle),groupRelativity=Math.max(.5,Math.min(1,Number(root.properties.weight??.8)));const events:EventInput[]=blocks.map((block,index)=>({type:"BlockCreated",payload:{block_id:ids.get(block.id),document_id:destinationDocumentId,type:block.type,handle:`${block.handle}-copy-${String(base+index).padStart(3,"0")}`,position:`z${String(base+index).padStart(6,"0")}`,properties:{...block.properties,authority:"authored",copied_from_block_id:block.id,copied_as_context_set:blocks.length>1,context_set_id:contextSetId,context_set_root_id:ids.get(root.id),combined_context_memberships:blocks.length>1?[{contextSetId,name:groupName,role:groupRole,target:groupName,application:"isolate",relativity:groupRelativity,memberOrder:index,sourceCanvasId:""}]:[],semantic_isolation:blocks.length>1,created_from:sourceSurface}}}));
+    const groupRole=combinedContextRoleForBlockType(root.type),groupName=String(root.properties.label??root.properties.text??root.handle),groupRelativity=Math.max(.5,Math.min(1,Number(root.properties.weight??.8)));const events:EventInput[]=blocks.map((block,index)=>{const authoredMemberships=combinedContextMemberships(block.properties);return{type:"BlockCreated",payload:{block_id:ids.get(block.id),document_id:destinationDocumentId,type:block.type,handle:`${block.handle}-copy-${String(base+index).padStart(3,"0")}`,position:`z${String(base+index).padStart(6,"0")}`,properties:{...block.properties,authority:"authored",copied_from_block_id:block.id,copied_as_context_set:blocks.length>1,context_set_id:contextSetId,context_set_root_id:ids.get(root.id),combined_context_memberships:authoredMemberships.length?authoredMemberships.map((membership)=>({...membership,contextSetId,memberOrder:index,sourceCanvasId:""})):blocks.length>1?[{contextSetId,name:groupName,role:groupRole,target:groupName,application:"isolate",relativity:groupRelativity,memberOrder:index,sourceCanvasId:""}]:[],semantic_isolation:blocks.length>1,created_from:sourceSurface}}};});
     for(const relation of projection.libraryBlockRelations){const from=ids.get(relation.fromBlockId);const to=ids.get(relation.toBlockId);if(!from||!to)continue;events.push({type:"BlockRelationAdded",payload:{relation_id:crypto.randomUUID(),project_id:projection.projectId,document_id:destinationDocumentId,from_block_id:from,to_block_id:to,kind:relation.kind,properties:{...relation.properties,copied_from_relation_id:relation.id,context_set_id:contextSetId},source_surface:sourceSurface}});}
     const appended=await this.appendBatch(events);if(!appended.length)return null;const copiedRootId=ids.get(root.id)!;this.patchUi({focusBlockId:copiedRootId});this.toast(blocks.length===1?"Reusable block added to the open document.":`${blocks.length} connected blocks added as one context set.`);return{rootBlockId:copiedRootId,blockCount:blocks.length,relationCount:events.length-blocks.length};
   }
 
-  async addArtifactAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer"){
+  #relatedOutputBlocks(blockId:string){
+    const projection=this.projection.get(),target=projection.libraryBlocks.find((block)=>block.id===blockId);if(!target)return[];
+    const rootId=target.properties.source_artifact_item_id?projection.libraryBlockRelations.find((relation)=>relation.kind==="artifact_contains"&&relation.toBlockId===target.id)?.fromBlockId??String(target.properties.context_set_root_id??""):target.id;
+    const relationIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===rootId).map((relation)=>relation.toBlockId));
+    if(relationIds.size)return projection.libraryBlocks.filter((block)=>block.id===rootId||relationIds.has(block.id));
+    return projection.libraryBlocks.filter((block)=>block.id===rootId||block.id===target.id||block.properties.context_set_root_id===rootId);
+  }
+
+  outputOwnedBlockCount(blockId:string){return this.projection.get().libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===blockId).length;}
+
+  outputBlockRemovalEvents(input:EventInput){
+    const projection=this.projection.get(),target=projection.libraryBlocks.find((block)=>block.id===String(input.payload.block_id??""));
+    if(!target)return[];
+    if(target.locked){this.toast("Unlock this input before removing it.");return[];}
+    const owner=projection.libraryBlockRelations.find((relation)=>relation.kind==="artifact_contains"&&relation.toBlockId===target.id);
+    if(owner){this.toast("This frame belongs to a storyboard. Remove the complete storyboard to keep every future generation in sync.");return[];}
+    const ownedIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===target.id).map((relation)=>relation.toBlockId));
+    const owned=projection.libraryBlocks.filter((block)=>ownedIds.has(block.id));
+    if(owned.some((block)=>block.locked)){this.toast("Unlock every linked storyboard frame before removing this input.");return[];}
+    return ownedOutputBlockRemovalEvents(target,projection.libraryBlocks,projection.libraryBlockRelations,input);
+  }
+
+  async removeOutputBlock(input:EventInput){const events=this.outputBlockRemovalEvents(input);if(!events.length)return[];return this.appendBatch(events,{rebaseAttempts:6});}
+
+  outputBlockTextEvents(blockId:string,value:string,sourceSurface="output-context-editor"){
+    const block=this.projection.get().libraryBlocks.find((candidate)=>candidate.id===blockId);if(!block)return[];
+    return outputBlockTextEditEvents(block,this.#relatedOutputBlocks(blockId),value,sourceSurface);
+  }
+
+  async saveBlockText(blockId:string,value:string,sourceSurface="output-context-editor"){
+    const events=this.outputBlockTextEvents(blockId,value,sourceSurface);if(!events.length)return[];return this.appendBatch(events,{rebaseAttempts:6});
+  }
+
+  async saveOutputInput(blockId:string,draft:OutputInputDraft,sourceSurface="output-input-editor"){
+    const root=this.projection.get().libraryBlocks.find((block)=>block.id===blockId);if(!root)return false;
+    const events=this.outputInputEvents(blockId,draft,sourceSurface);
+    if(!events.length){if(JSON.stringify(outputInputDraft(root))===JSON.stringify(draft)){this.toast("Your input is already up to date.");return true;}this.toast(root.locked?"Unlock this input before editing it.":"Unlock the related storyboard frame before saving these changes.");return false;}
+    const appended=await this.appendBatch(events,{rebaseAttempts:6});if(appended.length)this.toast("Your customized input is saved. The original output remains unchanged.");return Boolean(appended.length);
+  }
+
+  outputInputEvents(blockId:string,draft:OutputInputDraft,sourceSurface="output-input-editor"){
+    const root=this.projection.get().libraryBlocks.find((block)=>block.id===blockId);if(!root)return[];return outputInputEditEvents(root,this.#relatedOutputBlocks(blockId),draft,{sourceSurface});
+  }
+
+  async revealOutputInput(blockId:string,destinationDocumentId=this.projection.get().documentId){
+    if(!blockId)return false;
+    const projection=this.projection.get(),targetDocument=projection.documents.find((item)=>item.id===destinationDocumentId);if(!targetDocument)return false;
+    if(!isDocumentViewRoute(this.route.get())||projection.documentId!==destinationDocumentId||documentViewFromRoute(this.route.get())!=="document"){
+      const opened=await this.openDocument(destinationDocumentId,withDocumentInRoute("/",destinationDocumentId,targetDocument.title),"output-input");if(!opened)return false;
+    }
+    this.patchUi({focusBlockId:blockId,editingBlockId:blockId});
+    let attempts=0;const focus=()=>{const block=document.querySelector<HTMLElement>(`[data-block-id="${CSS.escape(blockId)}"]`),field=block?.querySelector<HTMLTextAreaElement>("forma-ui-rich-text textarea")??block?.querySelector<HTMLTextAreaElement>("textarea");if(field&&!document.querySelector("dialog[open]")){const reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;block?.scrollIntoView({block:"center",behavior:reduced?"instant":"smooth"});field.focus({preventScroll:true});return;}if(attempts++<24)window.requestAnimationFrame(focus);};window.requestAnimationFrame(focus);return true;
+  }
+
+  async addArtifactAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer",options:{reveal?:boolean;presentation?:SlidePresentation|null}={}){
     const projection=this.projection.get();const artifact=projection.libraryArtifacts.find((candidate)=>candidate.id===artifactId);
     if(!artifact){this.toast("That output is no longer available.");return null;}
     const document=projection.documents.find((candidate)=>candidate.id===destinationDocumentId);if(!document){this.toast("Choose an available document before adding output context.");return null;}
     const existingBlocks=projection.libraryBlocks.filter((block)=>block.documentId===destinationDocumentId&&block.properties.source_artifact_id===artifact.id);const existingRoot=existingBlocks.find((block)=>!block.properties.source_artifact_item_id);const existingSourceItemIds=existingBlocks.map((block)=>String(block.properties.source_artifact_item_id??"")).filter(Boolean);const contextSetId=String(existingRoot?.properties.context_set_id??"")||undefined;
-    const content=parseDocumentArtifactContent(this.content.get()[artifact.contentRef??""]);const result=artifactContextEvents(artifact,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content,existingRootBlockId:existingRoot?.id,existingSourceItemIds,contextSetId,positionStart:this.head.get()+1});
-    if(!result.blockIds.length){this.toast("This complete output is already available as document input.");return{blockCount:0,availableMemberCount:result.availableMemberCount};}
+    const availableFrames=artifact.kind==="storyboard"?artifact.items.filter((item)=>Boolean(item.mediaUrl)).length:0;
+    if(existingRoot&&existingSourceItemIds.length>=availableFrames){if(options.reveal!==false)await this.revealOutputInput(existingRoot.id,destinationDocumentId);return{rootBlockId:existingRoot.id,created:false,blockCount:0,availableMemberCount:1+availableFrames};}
+    const retained=artifact.contentRef?await this.ensurePrivateContent(artifact.contentRef):null;let content=parseDocumentArtifactContent(retained??undefined);if(content&&artifact.kind==="slides"&&options.presentation)content={...content,presentation:structuredClone(options.presentation)};
+    if(artifact.contentRef&&!content){this.toast("The complete original output is unavailable, so an incomplete copy was not created.");return null;}
+    const result=artifactContextEvents(artifact,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content,existingRootBlockId:existingRoot?.id,existingSourceItemIds,contextSetId,positionStart:this.head.get()+1});
+    if(!result.blockIds.length){if(existingRoot&&options.reveal!==false)await this.revealOutputInput(existingRoot.id,destinationDocumentId);return{rootBlockId:existingRoot?.id??"",created:false,blockCount:0,availableMemberCount:result.availableMemberCount};}
     const appended=await this.appendBatch(result.events,{rebaseAttempts:6});const created=appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;
-    this.patchUi({focusBlockId:result.blockIds[0]??existingRoot?.id??""});this.toast(`${artifact.title} is now reusable document input${artifact.kind==="storyboard"?" with its finished frames kept in order":""}.`);return{blockCount:created,availableMemberCount:result.availableMemberCount};
+    const rootBlockId=existingRoot?.id??result.blockIds[0]??"";if(options.reveal!==false)await this.revealOutputInput(rootBlockId,destinationDocumentId);else this.patchUi({focusBlockId:rootBlockId});this.toast(`${artifact.title} is ready to customize${artifact.kind==="storyboard"?", with its finished frames kept in order":""}.`);return{rootBlockId,created:true,blockCount:created,availableMemberCount:result.availableMemberCount};
   }
 
   async addStoryboardFramesAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer"){return this.addArtifactAsContext(artifactId,destinationDocumentId,sourceSurface);}
 
-  async addImageOutputAsContext(outputId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="output-card"){
+  async addImageOutputAsContext(outputId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="output-card",options:{reveal?:boolean}={}){
     const projection=this.projection.get();const output=projection.libraryOutputs.find((candidate)=>candidate.id===outputId);if(!output){this.toast("That generated image is no longer available.");return null;}
     const document=projection.documents.find((candidate)=>candidate.id===destinationDocumentId);if(!document){this.toast("Choose an available document before using this image as input.");return null;}
-    if(projection.libraryBlocks.some((block)=>block.documentId===destinationDocumentId&&block.properties.source_output_id===output.id)){this.toast("This image is already available as document input.");return{blockCount:0};}
-    const result=imageOutputContextEvents(output,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,positionStart:this.head.get()+1});if(!result.events.length){this.toast("The generated image has no durable media to use as input.");return null;}
-    const appended=await this.appendBatch(result.events,{rebaseAttempts:6});const created=appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;this.patchUi({focusBlockId:result.blockIds[0]??""});this.toast("The generated image is now a pixel-capable Reference input.");return{blockCount:created};
+    const existing=projection.libraryBlocks.find((block)=>block.documentId===destinationDocumentId&&block.properties.source_output_id===output.id);if(existing){if(options.reveal!==false)await this.revealOutputInput(existing.id,destinationDocumentId);return{rootBlockId:existing.id,created:false,blockCount:0};}
+    const retained=output.contentRef?await this.ensurePrivateContent(output.contentRef):null;let direction:Record<string,unknown>|null=null;if(retained)try{const parsed=JSON.parse(retained) as unknown;if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed))direction=parsed as Record<string,unknown>;}catch{/* Existing image rights and pixels remain usable when optional direction is absent. */}
+    const result=imageOutputContextEvents(output,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content:direction,positionStart:this.head.get()+1});if(!result.events.length){this.toast("The generated image has no durable media to use as input.");return null;}
+    const appended=await this.appendBatch(result.events,{rebaseAttempts:6});const created=appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;const rootBlockId=result.blockIds[0]??"";if(options.reveal!==false)await this.revealOutputInput(rootBlockId,destinationDocumentId);else this.patchUi({focusBlockId:rootBlockId});this.toast("The generated image and its editable direction are ready to reuse.");return{rootBlockId,created:true,blockCount:created};
   }
 
   async hot(event: EventInput, options: { keepalive?: boolean } = {}) {
@@ -491,31 +616,31 @@ export class FormaStore {
     } finally { this.busy.set(""); this.notify(); }
   }
 
-  async preview(sourceSurface?: string,promptTechnique?:PromptTechnique) {
+  async preview(sourceSurface?: string,promptTechnique?:PromptTechnique,productionMode:ProductionMode="manual") {
     const technique=normalizePromptTechnique(promptTechnique??this.promptTechniquePreference().technique);
-    try{const context=this.#generationContext();const requestKey=generationRequestKeyFor("preview",context.documentRevision,null,technique);const {reused}=await this.#startDocumentJob("preview",{...context,requestKey,promptTechnique:technique,preflightAcknowledged:this.generationRiskAcknowledged(requestKey)},sourceSurface??"studio");this.toast(reused?"This exact draft is already in the queue.":`${technique==="prose"?"Draft":`${technique} draft`} queued. You can keep editing and queue the updated document too.`);}catch(error){this.toast(error instanceof Error?error.message:"Draft generation failed");}
+    try{const context=this.#generationContext();const baseRequestKey=generationRequestKeyFor("preview",context.documentRevision,null,technique);const requestKey=productionMode==="managed"?`${baseRequestKey}:managed`:baseRequestKey;const {reused}=await this.#startDocumentJob("preview",{...context,requestKey,promptTechnique:technique,productionMode,preflightAcknowledged:this.generationRiskAcknowledged(baseRequestKey)},sourceSurface??"studio");this.toast(reused?"This exact draft is already in the queue.":productionMode==="managed"?"Your image art-direction team is preparing a source-grounded draft.":`${technique==="prose"?"Draft":`${technique} draft`} queued. You can keep editing and queue the updated document too.`);}catch(error){this.toast(error instanceof Error?error.message:"Draft generation failed");}
   }
 
-  async generate(options?: string | { sourceSurface?: string; sourcePreviewId?: string; promptTechnique?: PromptTechnique }) {
+  async generate(options?: string | { sourceSurface?: string; sourcePreviewId?: string; promptTechnique?: PromptTechnique; productionMode?:ProductionMode }) {
     const sourceSurface=typeof options==="string"?options:options?.sourceSurface;const sourcePreviewId=typeof options==="string"?undefined:options?.sourcePreviewId;const technique=normalizePromptTechnique(typeof options==="string"?this.promptTechniquePreference().technique:options?.promptTechnique??this.promptTechniquePreference().technique);
     try {
-      const context=this.#generationContext();const requestKey=generationRequestKeyFor("generate",context.documentRevision,sourcePreviewId,technique);const {reused}=await this.#startDocumentJob("generate",{sourcePreviewId,...context,requestKey,promptTechnique:technique,preflightAcknowledged:this.generationRiskAcknowledged(requestKey)},sourceSurface??"studio");this.toast(reused?"This exact full-quality image is already in the queue.":`${technique==="prose"?"Full-quality generation":`${technique} full-quality generation`} queued. You can keep editing and queue the updated document too.`);
+      const productionMode=typeof options==="string"?"manual":options?.productionMode??"manual";const context=this.#generationContext();const baseRequestKey=generationRequestKeyFor("generate",context.documentRevision,sourcePreviewId,technique);const requestKey=productionMode==="managed"?`${baseRequestKey}:managed`:baseRequestKey;const {reused}=await this.#startDocumentJob("generate",{sourcePreviewId,...context,requestKey,promptTechnique:technique,productionMode,preflightAcknowledged:this.generationRiskAcknowledged(baseRequestKey)},sourceSurface??"studio");this.toast(reused?"This exact full-quality image is already in the queue.":productionMode==="managed"?"Your image art-direction team is preparing the finished image.":`${technique==="prose"?"Full-quality generation":`${technique} full-quality generation`} queued. You can keep editing and queue the updated document too.`);
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
   }
 
-  async generatePromptFan(kind:"preview"|"generate",options:{sourceSurface?:string;sourcePreviewId?:string}={}){
-    const context=this.#generationContext();const promptFanId=crypto.randomUUID();const requestKey=`prompt-fan:${kind}:${context.documentRevision}:${options.sourcePreviewId||"document"}`;
-    try{const {reused}=await this.#startDocumentJob("prompt_fan",{...context,fanKind:kind,sourcePreviewId:options.sourcePreviewId,requestKey,promptFanId,preflightAcknowledged:this.generationRiskAcknowledged(requestKey)},options.sourceSurface??"studio");this.toast(reused?"This exact fan is already in the queue.":`${kind==="preview"?"Draft":"Full-quality"} fan accepted as one generation · four prompt processes.`);}catch(error){this.toast(error instanceof Error?error.message:"The fan generation could not be started.");}
+  async generatePromptFan(kind:"preview"|"generate",options:{sourceSurface?:string;sourcePreviewId?:string;productionMode?:ProductionMode}={}){
+    const context=this.#generationContext();const promptFanId=crypto.randomUUID();const productionMode=options.productionMode??"manual";const baseRequestKey=`prompt-fan:${kind}:${context.documentRevision}:${options.sourcePreviewId||"document"}`;const requestKey=productionMode==="managed"?`${baseRequestKey}:managed`:baseRequestKey;
+    try{const {reused}=await this.#startDocumentJob("prompt_fan",{...context,fanKind:kind,sourcePreviewId:options.sourcePreviewId,requestKey,promptFanId,productionMode,preflightAcknowledged:this.generationRiskAcknowledged(baseRequestKey)},options.sourceSurface??"studio");this.toast(reused?"This exact fan is already in the queue.":productionMode==="managed"?`Your image art-direction team is preparing four ${kind==="preview"?"draft":"full-quality"} approaches.`:`${kind==="preview"?"Draft":"Full-quality"} fan accepted as one generation · four prompt processes.`);}catch(error){this.toast(error instanceof Error?error.message:"The fan generation could not be started.");}
     return promptFanId;
   }
 
   async retryDocumentGeneration(job:DocumentJob,promptTechnique?:PromptTechnique){
-    const technique=normalizePromptTechnique(promptTechnique??job.promptTechnique);
+    const technique=normalizePromptTechnique(promptTechnique??job.promptTechnique);const productionMode=job.productionMode??"manual";
     if(promptTechnique){const kind=job.kind==="prompt_fan"?job.fanKind??"generate":job.kind==="preview"?"preview":"generate";this.#readinessAcknowledgements.add(this.generationReadinessRequestKey(kind,job.sourcePreviewId,technique));}
-    if(job.kind==="preview")return this.preview(job.sourceSurface,technique);
-    if(job.kind==="generate")return this.generate({sourceSurface:job.sourceSurface,sourcePreviewId:job.sourcePreviewId??undefined,promptTechnique:technique});
-    if(job.kind==="prompt_fan"&&job.fanKind&&promptTechnique)return job.fanKind==="preview"?this.preview(job.sourceSurface,technique):this.generate({sourceSurface:job.sourceSurface,sourcePreviewId:job.sourcePreviewId??undefined,promptTechnique:technique});
-    if(job.kind==="prompt_fan"&&job.fanKind)return this.generatePromptFan(job.fanKind,{sourceSurface:job.sourceSurface,sourcePreviewId:job.sourcePreviewId??undefined});
+    if(job.kind==="preview")return this.preview(job.sourceSurface,technique,productionMode);
+    if(job.kind==="generate")return this.generate({sourceSurface:job.sourceSurface,sourcePreviewId:job.sourcePreviewId??undefined,promptTechnique:technique,productionMode});
+    if(job.kind==="prompt_fan"&&job.fanKind&&promptTechnique)return job.fanKind==="preview"?this.preview(job.sourceSurface,technique,productionMode):this.generate({sourceSurface:job.sourceSurface,sourcePreviewId:job.sourcePreviewId??undefined,promptTechnique:technique,productionMode});
+    if(job.kind==="prompt_fan"&&job.fanKind)return this.generatePromptFan(job.fanKind,{sourceSurface:job.sourceSurface,sourcePreviewId:job.sourcePreviewId??undefined,productionMode});
   }
 
   async preferPromptTechnique(technique:PromptTechnique,scope:PromptPreferenceScope,source:{fanId?:string|null;outputId?:string|null}={}){
@@ -525,12 +650,28 @@ export class FormaStore {
     if(appended.length)this.toast(`${normalizePromptTechnique(technique)} prompts preferred for this ${scope==="collection"?"folder":scope}.`);return Boolean(appended.length);
   }
 
+  async adoptCanvasOutputItems(items:readonly{sourceKind:string;sourceId:string}[],documentId:string,sourceSurface="canvas-generation"){
+    const projection=this.projection.get();if(!projection.documents.some((document)=>document.id===documentId)){this.toast("Choose an available document before reusing the selected outputs.");return null;}
+    const unique=new Map<string,{sourceKind:string;sourceId:string}>();for(const item of items)if(item.sourceKind==="output"||item.sourceKind==="artifact")unique.set(`${item.sourceKind}:${item.sourceId}`,item);
+    for(const item of unique.values()){
+      if(item.sourceKind==="output"){const output=projection.libraryOutputs.find((candidate)=>candidate.id===item.sourceId),existing=projection.libraryBlocks.find((block)=>block.documentId===documentId&&block.properties.source_output_id===item.sourceId);if(!output||!existing?.properties.media_url&&!output.mediaUrl){this.toast("A selected generated image is unavailable, so your document was left unchanged.");return null;}continue;}
+      const artifact=projection.libraryArtifacts.find((candidate)=>candidate.id===item.sourceId);if(!artifact){this.toast("A selected output is unavailable, so your document was left unchanged.");return null;}
+      const existingRoot=projection.libraryBlocks.find((block)=>block.documentId===documentId&&block.properties.source_artifact_id===artifact.id&&!block.properties.source_artifact_item_id);const ownedIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===existingRoot?.id).map((relation)=>relation.toBlockId));const finished=new Set(artifact.items.filter((entry)=>Boolean(entry.mediaUrl)).map((entry)=>entry.id));const available=new Set(projection.libraryBlocks.filter((block)=>ownedIds.has(block.id)&&finished.has(String(block.properties.source_artifact_item_id??""))).map((block)=>String(block.properties.source_artifact_item_id)));if(existingRoot&&(artifact.kind!=="storyboard"||available.size===finished.size))continue;
+      if(artifact.contentRef&&!parseDocumentArtifactContent(await this.ensurePrivateContent(artifact.contentRef)??undefined)){this.toast(`${artifact.title} is unavailable, so your document was left unchanged.`);return null;}
+    }
+    const rootIds:string[]=[];for(const item of unique.values()){const result=item.sourceKind==="output"?await this.addImageOutputAsContext(item.sourceId,documentId,`${sourceSurface}-output`,{reveal:false}):await this.addArtifactAsContext(item.sourceId,documentId,`${sourceSurface}-artifact`,{reveal:false});if(!result?.rootBlockId)return null;rootIds.push(result.rootBlockId);}
+    return rootIds;
+  }
+
   async generateCanvasContext(kind:"preview"|"generate"|"preview_fan"|"generate_fan",contextSet:CanvasContextSet,sourcePreviewId?:string){
-    const projection=this.projection.get();const canvas=this.canvasProjection.get();const itemIds=new Set(contextSet.itemIds);const visitedSets=new Set<string>();const expandSet=(setId:string)=>{if(visitedSets.has(setId))return;visitedSets.add(setId);const nested=canvas.contextSets.find((candidate)=>candidate.id===setId);if(!nested)return;for(const itemId of nested.itemIds){itemIds.add(itemId);const item=canvas.items.find((candidate)=>candidate.id===itemId);if(item?.sourceKind==="context")expandSet(item.sourceId);}};for(const itemId of [...itemIds]){const item=canvas.items.find((candidate)=>candidate.id===itemId);if(item?.sourceKind==="context")expandSet(item.sourceId);}const selectedItems=canvas.items.filter((item)=>itemIds.has(item.id)&&item.sourceKind!=="context");
-    const blockIds=new Set(contextSet.blockIds);for(const nestedId of visitedSets){const nested=canvas.contextSets.find((candidate)=>candidate.id===nestedId);for(const blockId of nested?.blockIds??[])blockIds.add(blockId);}for(const documentId of [...contextSet.documentIds,...selectedItems.filter((item)=>item.sourceKind==="document").map((item)=>item.sourceId)])for(const block of projection.libraryBlocks)if(block.documentId===documentId)blockIds.add(block.id);
+    let projection=this.projection.get();const canvas=this.canvasProjection.get();const itemIds=new Set(contextSet.itemIds);const visitedSets=new Set<string>();const expandSet=(setId:string)=>{if(visitedSets.has(setId))return;visitedSets.add(setId);const nested=canvas.contextSets.find((candidate)=>candidate.id===setId);if(!nested)return;for(const itemId of nested.itemIds){itemIds.add(itemId);const item=canvas.items.find((candidate)=>candidate.id===itemId);if(item?.sourceKind==="context")expandSet(item.sourceId);}};for(const itemId of [...itemIds]){const item=canvas.items.find((candidate)=>candidate.id===itemId);if(item?.sourceKind==="context")expandSet(item.sourceId);}const selectedItems=canvas.items.filter((item)=>itemIds.has(item.id)&&item.sourceKind!=="context");
+    const selectedDocumentIds=selectedItems.filter((item)=>item.sourceKind==="document").map((item)=>item.sourceId);const anchorDocumentId=[...contextSet.documentIds,...selectedDocumentIds].find((id)=>projection.documents.some((document)=>document.id===id))??projection.documents[0]?.id??projection.documentId;if(!anchorDocumentId){this.toast("Create a project document before starting a Canvas generation.");return false;}
+    const blockIds=new Set(contextSet.blockIds);for(const nestedId of visitedSets){const nested=canvas.contextSets.find((candidate)=>candidate.id===nestedId);for(const blockId of nested?.blockIds??[])blockIds.add(blockId);}
+    const roots=await this.adoptCanvasOutputItems(selectedItems,anchorDocumentId);if(!roots)return false;projection=this.projection.get();for(const rootId of roots)blockIds.add(rootId);
+    for(const documentId of [...contextSet.documentIds,...selectedDocumentIds])for(const block of projection.libraryBlocks)if(block.documentId===documentId)blockIds.add(block.id);
+    for(const relation of projection.libraryBlockRelations)if(relation.kind==="artifact_contains"&&blockIds.has(relation.fromBlockId))blockIds.add(relation.toBlockId);
     const blocks=projection.libraryBlocks.filter((block)=>blockIds.has(block.id));const selectedBySource=new Map(selectedItems.map((item)=>[item.sourceId,item]));
-    const facts=blocks.map((block)=>{const item=selectedBySource.get(block.id);return{block_id:block.id,canvas_id:contextSet.canvasId,context_set_id:contextSet.id,type:block.type,role:block.type,intent:blockIntentFor(block.type,block.properties),handle:block.handle,active:Number(block.properties.weight??.5)>0,effect:blockEffectFor(block.type,block.properties),properties:{...block.properties,spatial_scope:normalizeSpatialScope(block.properties.spatial_scope)},authority:block.properties.authority??"authored",source_event_refs:[...block.sourceEvents,...(item?.sourceEvents??[])]};});const snapshot={facts,relationships:projection.libraryBlockRelations.filter((relation)=>blockIds.has(relation.fromBlockId)&&blockIds.has(relation.toBlockId)).map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties,source_event_refs:relation.sourceEvents})),context_groups:combinedContextGroups({facts}),pins:[...new Set([...contextSet.outputIds,...projection.libraryOutputs.filter((output)=>output.canvasId===contextSet.canvasId&&output.pinned).map((output)=>output.id)])],canvas:{canvas_id:contextSet.canvasId,context_set_id:contextSet.id,item_ids:contextSet.itemIds,formalized_as_of_sequence:contextSet.asOfSequence,spatial_arrangement_is_semantic:false,arrangement_is_context:false,provenance_frames:selectedItems.map((item)=>({item_id:item.id,source_kind:item.sourceKind,source_id:item.sourceId,frame:{x:item.x,y:item.y,w:item.w,h:item.h,rotation:item.rot,z:item.z}}))},tail:[]};
-    const anchorDocumentId=contextSet.documentIds.find((id)=>projection.documents.some((document)=>document.id===id))??projection.documents[0]?.id??projection.documentId;if(!anchorDocumentId){this.toast("Create a project document before starting a Canvas generation.");return false;}
+    const facts=blocks.map((block)=>{const item=selectedBySource.get(block.id)??selectedBySource.get(String(block.properties.source_output_id??block.properties.source_artifact_id??""));return{block_id:block.id,canvas_id:contextSet.canvasId,context_set_id:contextSet.id,type:block.type,role:block.type,intent:blockIntentFor(block.type,block.properties),handle:block.handle,active:Number(block.properties.weight??.5)>0,effect:blockEffectFor(block.type,block.properties),properties:{...block.properties,spatial_scope:normalizeSpatialScope(block.properties.spatial_scope)},authority:block.properties.authority??"authored",source_event_refs:[...block.sourceEvents,...(item?.sourceEvents??[])]};});const snapshot={facts,relationships:projection.libraryBlockRelations.filter((relation)=>blockIds.has(relation.fromBlockId)&&blockIds.has(relation.toBlockId)).map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties,source_event_refs:relation.sourceEvents})),context_groups:combinedContextGroups({facts}),pins:[...new Set([...contextSet.outputIds,...selectedItems.filter((item)=>item.sourceKind==="output").map((item)=>item.sourceId),...projection.libraryOutputs.filter((output)=>output.canvasId===contextSet.canvasId&&output.pinned).map((output)=>output.id)])],canvas:{canvas_id:contextSet.canvasId,context_set_id:contextSet.id,item_ids:contextSet.itemIds,formalized_as_of_sequence:contextSet.asOfSequence,spatial_arrangement_is_semantic:false,arrangement_is_context:false,provenance_frames:selectedItems.map((item)=>({item_id:item.id,source_kind:item.sourceKind,source_id:item.sourceId,frame:{x:item.x,y:item.y,w:item.w,h:item.h,rotation:item.rot,z:item.z}}))},tail:[]};
     const context={snapshot,sourceBlockVersions:blocks.map((block)=>({block_id:block.id,version:block.sourceEvents.length})),documentId:anchorDocumentId,canvasId:contextSet.canvasId,contextSetId:contextSet.id};const documentRevision=generationRevisionFor(context);const filed=projection.membership[anchorDocumentId];const technique=effectivePromptPreference(projection.preferences,{documentId:anchorDocumentId,collectionIds:filed?[filed.collectionId]:[],projectId:projection.projectId,accountId:this.session.get()?.user.userId}).technique;const fan=kind.endsWith("_fan");const fanKind=kind.startsWith("preview")?"preview":"generate";const jobKind:"preview"|"generate"|"prompt_fan"=fan?"prompt_fan":fanKind;const promptFanId=fan?crypto.randomUUID():undefined;const requestKey=fan?`canvas:prompt-fan:${fanKind}:${contextSet.id}:${documentRevision}:${sourcePreviewId??"context"}`:`canvas:${kind}:${contextSet.id}:${documentRevision}:${sourcePreviewId??"context"}`;
     try{const {reused}=await this.#startDocumentJob(jobKind,{...context,documentRevision,requestKey,promptTechnique:technique,sourcePreviewId,...(fan?{fanKind,promptFanId}:{})},"canvas",anchorDocumentId);const quality=fanKind==="preview"?"Draft":"Full-quality";this.toast(reused?"This exact Canvas generation is already queued.":fan?`${quality} fan queued as one four-image comparison for ${contextSet.name}.`:`${quality} Canvas generation queued from ${contextSet.name}.`);return true;}catch(error){this.toast(error instanceof Error?error.message:"Canvas generation could not be started.");return false;}
   }
@@ -553,9 +694,9 @@ export class FormaStore {
     try{if(sourceSurface!=="canvas")this.dismissAdaptiveStructure(documentId);const {job}=await this.#startDocumentJob("structure_adaptive",{prompt,documentId,projectScope:options.projectScope===true},sourceSurface,documentId);this.#pendingAdaptiveIntents.set(job.jobId,prompt);this.toast(sourceSurface==="canvas"?"Forma is shaping a few useful next moves from the whole project.":"Adaptive planning started. You can continue working while it runs.");return true;}catch(error){this.toast(error instanceof Error?error.message:"Forma could not structure that intent");return false;}
   }
 
-  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{documentId?:string;itemCount?:number;audience?:string;tone?:string;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;paidMediaConfirmed?:boolean;sourceSurface?:string}={}){
-    const documentId=options.documentId??this.projection.get().documentId;const context=this.#generationContext(documentId);const audience=options.audience?.trim()||undefined,tone=options.tone?.trim()||undefined;const requestKey=`render:${kind}:${context.documentRevision}:${options.itemCount??"default"}:${options.videoSeconds??"none"}:${options.videoSize??"none"}:${options.videoAudioMode??"silent"}:${encodeURIComponent(audience?.toLowerCase()??"general")}:${encodeURIComponent(tone?.toLowerCase()??"document-derived")}`;
-    try{const {reused}=await this.#startDocumentJob("render_document",{...context,requestKey,artifactKind:kind,itemCount:options.itemCount,audience,tone,videoSeconds:options.videoSeconds,videoSize:options.videoSize,videoAudioMode:options.videoAudioMode,paidMediaConfirmed:options.paidMediaConfirmed===true},options.sourceSurface??"document",documentId);this.toast(reused?`This exact ${kind.replaceAll("_"," ")} is already in progress.`:`${kind.replaceAll("_"," ")} queued. You can keep working while it is prepared.`);return true;}catch(error){this.toast(error instanceof Error?error.message:`The ${kind.replaceAll("_"," ")} could not be started.`);return false;}
+  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{documentId?:string;itemCount?:number;audience?:string;tone?:string;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string}={}){
+    const documentId=options.documentId??this.projection.get().documentId;const context=this.#generationContext(documentId);const audience=options.audience?.trim()||undefined,tone=options.tone?.trim()||undefined;const productionMode=options.productionMode??"manual";const requestKey=`render:${kind}:${productionMode}:${context.documentRevision}:${options.itemCount??"default"}:${options.videoSeconds??"none"}:${options.videoSize??"none"}:${options.videoAudioMode??"silent"}:${encodeURIComponent(audience?.toLowerCase()??"general")}:${encodeURIComponent(tone?.toLowerCase()??"document-derived")}`;
+    try{const {reused}=await this.#startDocumentJob("render_document",{...context,requestKey,artifactKind:kind,itemCount:options.itemCount,audience,tone,videoSeconds:options.videoSeconds,videoSize:options.videoSize,videoAudioMode:options.videoAudioMode,productionMode,paidMediaConfirmed:options.paidMediaConfirmed===true},options.sourceSurface??"document",documentId);this.toast(reused?`This exact ${kind.replaceAll("_"," ")} is already in progress.`:productionMode==="managed"?`Your ${kind==="video"?"film production":kind==="slides"?"presentation editorial":kind==="storyboard"?"previsualization":"writing"} team is working on the complete document.`:`${kind.replaceAll("_"," ")} queued. You can keep working while it is prepared.`);return true;}catch(error){this.toast(error instanceof Error?error.message:`The ${kind.replaceAll("_"," ")} could not be started.`);return false;}
   }
 
   async openProject(projectId:string,destination="/") {

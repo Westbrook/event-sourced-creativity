@@ -672,7 +672,7 @@
               "kind": "field",
               "name": "tone",
               "type": {
-                "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
+                "text": "\"warning\" | \"neutral\" | \"accent\" | \"positive\" | \"danger\""
               },
               "default": "\"neutral\"",
               "attribute": "tone",
@@ -693,7 +693,7 @@
               "name": "tone",
               "fieldName": "tone",
               "type": {
-                "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
+                "text": "\"warning\" | \"neutral\" | \"accent\" | \"positive\" | \"danger\""
               },
               "default": "\"neutral\"",
               "description": "Stable semantic visual-tone identifier."
@@ -824,7 +824,7 @@
               "kind": "field",
               "name": "iconName",
               "type": {
-                "text": "string"
+                "text": "\"\" | FormaIconName"
               },
               "default": "\"\"",
               "attribute": "icon-name",
@@ -957,7 +957,7 @@
               "name": "icon-name",
               "fieldName": "iconName",
               "type": {
-                "text": "string"
+                "text": "\"\" | FormaIconName"
               },
               "default": "\"\"",
               "description": "Stable, locale-invariant icon identifier."
@@ -1115,7 +1115,7 @@
               "kind": "field",
               "name": "iconName",
               "type": {
-                "text": "string"
+                "text": "\"layers\" | \"document\" | \"palette\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"spark\"",
               "attribute": "icon-name",
@@ -1163,7 +1163,7 @@
               "name": "icon-name",
               "fieldName": "iconName",
               "type": {
-                "text": "string"
+                "text": "\"layers\" | \"document\" | \"palette\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"spark\"",
               "description": "Stable, locale-invariant icon identifier."
@@ -2014,7 +2014,7 @@
               "kind": "field",
               "name": "tone",
               "type": {
-                "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
+                "text": "\"warning\" | \"neutral\" | \"accent\" | \"positive\" | \"danger\""
               },
               "default": "\"neutral\"",
               "attribute": "tone",
@@ -2071,7 +2071,7 @@
               "name": "tone",
               "fieldName": "tone",
               "type": {
-                "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
+                "text": "\"warning\" | \"neutral\" | \"accent\" | \"positive\" | \"danger\""
               },
               "default": "\"neutral\"",
               "description": "Stable semantic visual-tone identifier."
@@ -2220,8 +2220,8 @@
           "name": "FormaUiIcon",
           "tagName": "forma-ui-icon",
           "customElement": true,
-          "summary": "Render the shared visual vocabulary, decorative by default.",
-          "description": "Render the shared visual vocabulary, decorative by default.",
+          "summary": "Render one synchronized Phosphor Regular SVG, decorative by default.",
+          "description": "Render one synchronized Phosphor Regular SVG, decorative by default.",
           "superclass": {
             "name": "FormaPresentationalElement",
             "module": "src/components/presentational-element.ts"
@@ -2241,7 +2241,7 @@
               "kind": "field",
               "name": "name",
               "type": {
-                "text": "string"
+                "text": "\"layers\" | \"document\" | \"palette\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"spark\"",
               "attribute": "name",
@@ -2271,7 +2271,7 @@
               "name": "name",
               "fieldName": "name",
               "type": {
-                "text": "string"
+                "text": "\"layers\" | \"document\" | \"palette\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"spark\"",
               "description": "Stable native form field or technical identifier; never translate machine identifiers."
@@ -2360,7 +2360,7 @@
               "kind": "field",
               "name": "iconName",
               "type": {
-                "text": "string"
+                "text": "\"layers\" | \"document\" | \"palette\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"dots\"",
               "attribute": "icon-name",
@@ -2437,7 +2437,7 @@
               "name": "icon-name",
               "fieldName": "iconName",
               "type": {
-                "text": "string"
+                "text": "\"layers\" | \"document\" | \"palette\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"dots\"",
               "description": "Stable, locale-invariant icon identifier."
@@ -2920,7 +2920,7 @@
               "kind": "field",
               "name": "iconName",
               "type": {
-                "text": "string"
+                "text": "\"\" | FormaIconName"
               },
               "default": "\"\"",
               "attribute": "icon-name",
@@ -2949,7 +2949,7 @@
               "kind": "field",
               "name": "tone",
               "type": {
-                "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
+                "text": "\"warning\" | \"neutral\" | \"accent\" | \"positive\" | \"danger\""
               },
               "default": "\"neutral\"",
               "attribute": "tone",
@@ -2961,7 +2961,7 @@
               "name": "icon-name",
               "fieldName": "iconName",
               "type": {
-                "text": "string"
+                "text": "\"\" | FormaIconName"
               },
               "default": "\"\"",
               "description": "Stable, locale-invariant icon identifier."
@@ -2987,7 +2987,7 @@
               "name": "tone",
               "fieldName": "tone",
               "type": {
-                "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
+                "text": "\"warning\" | \"neutral\" | \"accent\" | \"positive\" | \"danger\""
               },
               "default": "\"neutral\"",
               "description": "Stable semantic visual-tone identifier."
@@ -4016,7 +4016,7 @@
               "kind": "field",
               "name": "tone",
               "type": {
-                "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
+                "text": "\"warning\" | \"neutral\" | \"accent\" | \"positive\" | \"danger\""
               },
               "default": "\"neutral\"",
               "attribute": "tone",
@@ -4072,7 +4072,7 @@
               "name": "tone",
               "fieldName": "tone",
               "type": {
-                "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
+                "text": "\"warning\" | \"neutral\" | \"accent\" | \"positive\" | \"danger\""
               },
               "default": "\"neutral\"",
               "description": "Stable semantic visual-tone identifier."
@@ -5055,6 +5055,292 @@
               ],
               "internalMessages": [
                 "field.choose"
+              ]
+            }
+          }
+        },
+        {
+          "kind": "class",
+          "name": "FormaUiRichText",
+          "tagName": "forma-ui-rich-text",
+          "customElement": true,
+          "summary": "Accessible Markdown authoring with a native multiline field and selection-safe formatting.",
+          "description": "Accessible Markdown authoring with a native multiline field and selection-safe formatting.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "error",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "error",
+              "description": "Author-supplied, localized validation or error message."
+            },
+            {
+              "kind": "field",
+              "name": "form",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "form",
+              "description": "ID of the associated native HTML form."
+            },
+            {
+              "kind": "field",
+              "name": "help",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "help",
+              "description": "Author-supplied, localized supporting instructions."
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "label",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "kind": "field",
+              "name": "name",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "name",
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
+            },
+            {
+              "kind": "field",
+              "name": "placeholder",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "placeholder",
+              "description": "Author-supplied, localized input hint."
+            },
+            {
+              "kind": "field",
+              "name": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "readonly",
+              "description": "Whether the native control can be read but not edited."
+            },
+            {
+              "kind": "field",
+              "name": "required",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "required",
+              "description": "Whether a native form value is required."
+            },
+            {
+              "kind": "field",
+              "name": "rows",
+              "type": {
+                "text": "number"
+              },
+              "default": "8",
+              "attribute": "rows",
+              "description": "Number of visible native textarea rows."
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
+            }
+          ],
+          "attributes": [
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "name": "error",
+              "fieldName": "error",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized validation or error message."
+            },
+            {
+              "name": "form",
+              "fieldName": "form",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "ID of the associated native HTML form."
+            },
+            {
+              "name": "help",
+              "fieldName": "help",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting instructions."
+            },
+            {
+              "name": "label",
+              "fieldName": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "name": "name",
+              "fieldName": "name",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Stable native form field or technical identifier; never translate machine identifiers."
+            },
+            {
+              "name": "placeholder",
+              "fieldName": "placeholder",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized input hint."
+            },
+            {
+              "name": "readonly",
+              "fieldName": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether the native control can be read but not edited."
+            },
+            {
+              "name": "required",
+              "fieldName": "required",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether a native form value is required."
+            },
+            {
+              "name": "rows",
+              "fieldName": "rows",
+              "type": {
+                "text": "number"
+              },
+              "default": "8",
+              "description": "Number of visible native textarea rows."
+            },
+            {
+              "name": "value",
+              "fieldName": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
+            }
+          ],
+          "events": [
+            {
+              "name": "forma-change",
+              "type": {
+                "text": "CustomEvent<{ value: string }>"
+              },
+              "description": "Authored Markdown was committed. Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-input",
+              "type": {
+                "text": "CustomEvent<{ value: string }>"
+              },
+              "description": "Authored Markdown changed. Bubbles and crosses component boundaries."
+            }
+          ],
+          "cssProperties": [
+            {
+              "name": "--forma-color-border-strong",
+              "syntax": "<color>",
+              "description": "Accessible field and formatting-action boundary."
+            },
+            {
+              "name": "--forma-control-min-size",
+              "syntax": "<length>",
+              "description": "Formatting button target size."
+            }
+          ],
+          "demos": [
+            {
+              "url": "/laboratory/design-system#forma-ui-rich-text"
+            }
+          ],
+          "x-forma": {
+            "category": "molecule",
+            "renderRoot": "light",
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-rich-text",
+              "authorTextAttributes": [
+                "error",
+                "help",
+                "label",
+                "placeholder"
+              ],
+              "authorOwnedSlots": [],
+              "internalMessages": [
+                "field.text",
+                "editor.formatting",
+                "editor.bold",
+                "editor.italic",
+                "editor.heading",
+                "editor.bullets",
+                "editor.numbered",
+                "editor.quote",
+                "editor.link",
+                "editor.help",
+                "editor.applied"
               ]
             }
           }
@@ -6050,6 +6336,14 @@
         },
         {
           "kind": "custom-element-definition",
+          "name": "forma-ui-rich-text",
+          "declaration": {
+            "name": "FormaUiRichText",
+            "module": "src/components/design-system/forms.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
           "name": "forma-ui-search",
           "declaration": {
             "name": "FormaUiSearch",
@@ -6101,6 +6395,14 @@
           "name": "FormaUiRadioGroup",
           "declaration": {
             "name": "FormaUiRadioGroup",
+            "module": "src/components/design-system/forms.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaUiRichText",
+          "declaration": {
+            "name": "FormaUiRichText",
             "module": "src/components/design-system/forms.ts"
           }
         },
@@ -6457,7 +6759,7 @@
               "kind": "field",
               "name": "iconName",
               "type": {
-                "text": "string"
+                "text": "\"\" | FormaIconName"
               },
               "default": "\"\"",
               "attribute": "icon-name",
@@ -6507,7 +6809,7 @@
               "name": "icon-name",
               "fieldName": "iconName",
               "type": {
-                "text": "string"
+                "text": "\"\" | FormaIconName"
               },
               "default": "\"\"",
               "description": "Stable, locale-invariant icon identifier."
@@ -6903,7 +7205,7 @@
               "kind": "field",
               "name": "tone",
               "type": {
-                "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
+                "text": "\"warning\" | \"neutral\" | \"accent\" | \"positive\" | \"danger\""
               },
               "default": "\"neutral\"",
               "attribute": "tone",
@@ -6932,7 +7234,7 @@
               "name": "tone",
               "fieldName": "tone",
               "type": {
-                "text": "\"neutral\" | \"accent\" | \"positive\" | \"warning\" | \"danger\""
+                "text": "\"warning\" | \"neutral\" | \"accent\" | \"positive\" | \"danger\""
               },
               "default": "\"neutral\"",
               "description": "Stable semantic visual-tone identifier."
@@ -8030,7 +8332,7 @@
                 {
                   "name": "kind",
                   "type": {
-                    "text": "\"scene\" | \"short_story\" | \"slides\" | \"storyboard\" | \"video\" | undefined"
+                    "text": "\"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\" | undefined"
                   }
                 },
                 {
@@ -8108,7 +8410,7 @@
             {
               "name": "document-artifact-queued",
               "type": {
-                "text": "CustomEvent<{ documentId: string; kind: \"scene\" | \"short_story\" | \"slides\" | \"storyboard\" | \"video\"; }>"
+                "text": "CustomEvent<{ documentId: string; kind: \"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\"; }>"
               },
               "description": "Bubbles and crosses component boundaries."
             }
@@ -8326,6 +8628,15 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "events": [
+            {
+              "name": "forma-analytics-fresh",
+              "type": {
+                "text": "CustomEvent<{ readyMs: number; initialSource: string; cache: string; sourceRows: number; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -9708,6 +10019,131 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/output-input-editor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "OutputInputEditor",
+          "tagName": "forma-output-input-editor",
+          "customElement": true,
+          "summary": "Output input editor application interface.",
+          "description": "A single format-aware workbench for every adopted document work product.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "block",
+              "type": {
+                "text": "CreativeBlock"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "draft",
+              "type": {
+                "text": "OutputInputDraft | null"
+              }
+            },
+            {
+              "kind": "method",
+              "name": "reset",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "source",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"output-input-editor\"",
+              "attribute": "source"
+            },
+            {
+              "kind": "field",
+              "name": "standalone",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "standalone"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "source",
+              "fieldName": "source",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"output-input-editor\""
+            },
+            {
+              "name": "standalone",
+              "fieldName": "standalone",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false"
+            }
+          ],
+          "events": [
+            {
+              "name": "output-input-cancel",
+              "type": {
+                "text": "CustomEvent<null>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "output-input-change",
+              "type": {
+                "text": "CustomEvent<{ blockId: string; draft: OutputInputDraft; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "output-input-saved",
+              "type": {
+                "text": "CustomEvent<{ blockId: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-output-input-editor",
+          "declaration": {
+            "name": "OutputInputEditor",
+            "module": "src/components/output-input-editor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "OutputInputEditor",
+          "declaration": {
+            "name": "OutputInputEditor",
+            "module": "src/components/output-input-editor.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/output-visual.ts",
       "declarations": [
         {
@@ -9857,6 +10293,13 @@
             "module": "src/components/forma-element.ts"
           },
           "members": [
+            {
+              "kind": "field",
+              "name": "activePresentation",
+              "type": {
+                "text": "SlidePresentation"
+              }
+            },
             {
               "kind": "field",
               "name": "deckTitle",

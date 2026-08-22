@@ -1,3 +1,8 @@
+import { PROFILE_EXCLUDED_EVENT_TYPES, PROJECT_BOOTSTRAP_EVENT_TYPES } from "../src/model/event-profiles.ts";
+import { PHANTOM_ATTENTION_EVENT_SQL } from "../db/event-predicates.ts";
+
+export { PHANTOM_ATTENTION_EVENT_SQL } from "../db/event-predicates.ts";
+
 export interface WorkerEnv {
   ASSETS: Fetcher;
   DB: D1Database;
@@ -56,6 +61,7 @@ export function ensureSchema(env: WorkerEnv): Promise<void> {
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_events_stream_type ON events(stream_id, type)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_events_correlation ON events(correlation_id)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_events_stream_actor ON events(stream_id, actor)"),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_events_nonphantom_stream_sequence ON events(stream_id,sequence) WHERE NOT (${PHANTOM_ATTENTION_EVENT_SQL})`),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS event_client_receipts (stream_id TEXT NOT NULL, client_event_id TEXT NOT NULL, event_id TEXT NOT NULL, sequence INTEGER NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(stream_id,client_event_id))"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_event_client_receipts_event ON event_client_receipts(event_id)"),
     env.DB.prepare("CREATE TRIGGER IF NOT EXISTS events_block_update BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END"),
@@ -123,7 +129,9 @@ const insertEventAtHead = (env: WorkerEnv, event: EventRow, expectedHead: number
   WHERE (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?`).bind(event.eventId, event.streamId, event.sequence, event.occurredAt, event.recordedAt, event.actor, event.clientId, event.correlationId, event.causationId, event.compensatesEventId, event.schemaVersion, event.type, JSON.stringify(event.payload), event.streamId, expectedHead);
 
 export class StaleSequenceError extends Error {
-  constructor(readonly expected: number, readonly head: number) { super("stale_sequence"); this.name = "StaleSequenceError"; }
+  readonly expected: number;
+  readonly head: number;
+  constructor(expected: number, head: number) { super("stale_sequence"); this.expected=expected;this.head=head;this.name = "StaleSequenceError"; }
 }
 
 /** Reserve and append one contiguous event range in a single D1 batch. */
@@ -187,28 +195,12 @@ export async function readCorrelatedEvents(env:WorkerEnv,streamId:string,correla
   return pages.flatMap((page)=>page.results.map(serializeEvent)).sort((left,right)=>left.sequence-right.sequence);
 }
 
-export const EVENT_PAGE_SIZE = 2000;
+export const EVENT_PAGE_SIZE = 5000;
+export const SCOPED_EVENT_PAGE_SIZE = 6500;
 
-export type EventReadProfile = "projects" | "workspace";
-
-/** Project cards do not need the account's engagement, audit, or canvas history. */
-export const PROJECT_BOOTSTRAP_EVENT_TYPES = [
-  "ProjectCreated", "ProjectOpened", "ProjectRenamed", "ProjectStateChanged",
-  "DocumentCreated", "DocumentForked", "DocumentOpened", "DocumentRenamed",
-  "DocumentRemoved", "DocumentRestored", "BlockCreated", "BlockRemoved",
-  "BlockRestored", "BlockRehomed", "CollectionCreated", "CollectionRemoved",
-  "CollectionRestored", "IdeationPreviewCompleted", "GenerationCompleted",
-  "DocumentRenderCompleted", "ObjectDiscarded", "ObjectPinned", "ObjectUnpinned",
-  "ObjectSaved", "AddedToLibrary", "RemovedFromLibrary", "PromptFanOutputPromoted",
-  "ImageFocalPointCalculated",
-] as const;
-
-/** These receipts do not participate in either the creative or Canvas projections. */
-export const PROJECTION_IGNORED_EVENT_TYPES = [
-  "AttentionEpisodeObserved", "ApplicationViewVisited", "CanvasInteractionRecorded",
-  "DocumentViewVisited", "ObjectViewed", "ComparisonOpened",
-  "GenerationPreflightRequested", "GenerationPreflightCompleted", "ValidationFailed",
-] as const;
+export type EventReadProfile = import("../src/model/event-profiles.ts").ScopedEventProfile;
+export { PROJECT_BOOTSTRAP_EVENT_TYPES } from "../src/model/event-profiles.ts";
+export const PROJECTION_IGNORED_EVENT_TYPES = PROFILE_EXCLUDED_EVENT_TYPES.workspace;
 
 export async function readEventPage(env: WorkerEnv, streamId: string, afterSequence = 0, limit = EVENT_PAGE_SIZE) {
   const pageSize=Math.max(1,Math.min(EVENT_PAGE_SIZE,Math.floor(limit)));
@@ -238,15 +230,16 @@ export async function readProfileEventPage(
   streamId: string,
   profile: EventReadProfile,
   afterSequence = 0,
-  limit = 5000,
+  limit = SCOPED_EVENT_PAGE_SIZE,
 ) {
-  const pageSize = Math.max(1, Math.min(5000, Math.floor(limit)));
-  const eventTypes = profile === "projects" ? PROJECT_BOOTSTRAP_EVENT_TYPES : PROJECTION_IGNORED_EVENT_TYPES;
+  const pageSize = Math.max(1, Math.min(SCOPED_EVENT_PAGE_SIZE, Math.floor(limit)));
+  const eventTypes = profile === "projects" ? PROJECT_BOOTSTRAP_EVENT_TYPES : PROFILE_EXCLUDED_EVENT_TYPES[profile];
   const placeholders = eventTypes.map(() => "?").join(",");
   const operator = profile === "projects" ? "IN" : "NOT IN";
   const index = profile === "projects" ? " INDEXED BY idx_events_stream_type" : "";
+  const attentionFilter = profile !== "projects" ? ` AND NOT (${PHANTOM_ATTENTION_EVENT_SQL})` : "";
   const [page, current] = await env.DB.batch<Record<string, unknown>>([
-    env.DB.prepare(`SELECT * FROM events${index} WHERE stream_id=? AND sequence>? AND type ${operator} (${placeholders}) ORDER BY sequence ASC LIMIT ?`)
+    env.DB.prepare(`SELECT * FROM events${index} WHERE stream_id=? AND sequence>? AND type ${operator} (${placeholders})${attentionFilter} ORDER BY sequence ASC LIMIT ?`)
       .bind(streamId, Math.max(0, Math.floor(afterSequence)), ...eventTypes, pageSize),
     env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(streamId),
   ]);
@@ -260,7 +253,69 @@ export async function readProfileEventPage(
 /** Load every projection-relevant account event without replaying telemetry. */
 export async function readWorkspaceEvents(env:WorkerEnv,streamId:string){
   const events:EventRow[]=[];let after=0;
-  while(true){const page=await readProfileEventPage(env,streamId,"workspace",after,5000);events.push(...page.events);if(!page.hasMore)return events;after=page.nextAfter;}
+  while(true){const page=await readProfileEventPage(env,streamId,"workspace",after,SCOPED_EVENT_PAGE_SIZE);events.push(...page.events);if(!page.hasMore)return events;after=page.nextAfter;}
+}
+
+/** Intelligence interactions need genuine attention evidence, not timer artifacts or raw admin telemetry. */
+export async function readIntelligenceEvents(env: WorkerEnv, streamId: string) {
+  const events: EventRow[] = []; let after = 0;
+  while (true) {
+    const page = await readProfileEventPage(env, streamId, "sessions", after, SCOPED_EVENT_PAGE_SIZE);
+    events.push(...page.events);
+    if (!page.hasMore) return events;
+    after = page.nextAfter;
+  }
+}
+
+/** Read immutable inspection rows newest-first without replaying or filtering the account ledger. */
+export async function readAuditEventPage(env: WorkerEnv, streamId: string, options: {
+  before?: number;
+  asOf?: number;
+  limit?: number;
+  actor?: string;
+  type?: string;
+  correlation?: string;
+} = {}) {
+  const requestedLimit = Number(options.limit ?? 150);
+  const limit = Math.max(1, Math.min(500, Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 150));
+  const requestedAnchor = Number(options.asOf ?? 0);
+  const asOf = Number.isSafeInteger(requestedAnchor) && requestedAnchor > 0 ? requestedAnchor : 0;
+  const scopeConditions = asOf ? ["stream_id=?", "sequence<=?"] : ["stream_id=?"];
+  const scopeValues: Array<string | number> = asOf ? [streamId, asOf] : [streamId];
+  const conditions = [...scopeConditions];
+  const values = [...scopeValues];
+  const actor = String(options.actor ?? "").trim().slice(0, 120);
+  const type = String(options.type ?? "").trim().slice(0, 160);
+  const correlation = String(options.correlation ?? "").trim().slice(0, 160);
+  if (actor && actor !== "all") { conditions.push("actor=?"); values.push(actor); }
+  if (type) { conditions.push("instr(lower(type),lower(?))>0"); values.push(type); }
+  if (correlation) { conditions.push("instr(lower(correlation_id),lower(?))>0"); values.push(correlation); }
+  const filteredWhere = conditions.join(" AND ");
+  const requestedBefore = Number(options.before ?? 0);
+  const before = Number.isSafeInteger(requestedBefore) && requestedBefore > 0 ? requestedBefore : 0;
+  const pageWhere = before > 0 ? `${filteredWhere} AND sequence<?` : filteredWhere;
+  const pageValues = before > 0 ? [...values, Math.floor(before)] : values;
+  const statements = [
+    env.DB.prepare(`SELECT * FROM events WHERE ${pageWhere} ORDER BY sequence DESC LIMIT ?`).bind(...pageValues, limit + 1),
+    env.DB.prepare(`SELECT COUNT(*) AS total,COALESCE(MAX(sequence),0) AS head FROM events WHERE ${scopeConditions.join(" AND ")}`).bind(...scopeValues),
+    env.DB.prepare(`SELECT DISTINCT actor FROM events WHERE ${scopeConditions.join(" AND ")} ORDER BY actor`).bind(...scopeValues),
+  ];
+  const filtered = conditions.length > scopeConditions.length;
+  if (filtered) statements.push(env.DB.prepare(`SELECT COUNT(*) AS matched FROM events WHERE ${filteredWhere}`).bind(...values));
+  const [page, totals, actors, matches] = await env.DB.batch<Record<string, unknown>>(statements);
+  const rows = page?.results ?? [];
+  const hasOlder = rows.length > limit;
+  const events = rows.slice(0, limit).map(serializeEvent).reverse();
+  const total = Number(totals?.results[0]?.total ?? 0);
+  return {
+    events,
+    head: Number(totals?.results[0]?.head ?? 0),
+    total,
+    matched: filtered ? Number(matches?.results[0]?.matched ?? 0) : total,
+    actors: (actors?.results ?? []).map((row) => String(row.actor)),
+    nextBefore: hasOlder ? Number(events[0]?.sequence ?? 0) : null,
+    hasOlder,
+  };
 }
 
 /** Read a complete stream in bounded D1 pages. Callers that only need transport pages should use readEventPage. */
