@@ -20,6 +20,11 @@ type RoutePopulation = {
   routePrefetchHeadStartMs: number | null;
   analyticsCache: string | null;
   analyticsSourceRows: number | null;
+  analyticsViewSource: string | null;
+  analyticsInitialSource: string | null;
+  analyticsFreshState: string | null;
+  analyticsSnapshotAgeMs: number | null;
+  analyticsFreshReadyMs: number | null;
   privateContentState: string | null;
   privateContentScope: string | null;
   privateContentReadyMs: number | null;
@@ -230,6 +235,11 @@ export function beginRoutePopulation(path: string) {
   delete root().formaAuditMatched;
   delete root().formaAnalyticsCache;
   delete root().formaAnalyticsSourceRows;
+  delete root().formaAnalyticsViewSource;
+  delete root().formaAnalyticsInitialSource;
+  delete root().formaAnalyticsFreshState;
+  delete root().formaAnalyticsSnapshotAgeMs;
+  delete root().formaAnalyticsFreshReadyMs;
   delete root().formaPopulatedMs;
   delete root().formaRouteLatencyMs;
   delete root().formaSessionSource;
@@ -358,6 +368,11 @@ export function completeRoutePopulation(path: string, retry = 0) {
       routePrefetchHeadStartMs:root().formaRoutePrefetchHeadStartMs===undefined?null:Number(root().formaRoutePrefetchHeadStartMs),
       analyticsCache:root().formaAnalyticsCache??null,
       analyticsSourceRows:root().formaAnalyticsSourceRows===undefined?null:Number(root().formaAnalyticsSourceRows),
+      analyticsViewSource:root().formaAnalyticsViewSource??null,
+      analyticsInitialSource:root().formaAnalyticsInitialSource??null,
+      analyticsFreshState:root().formaAnalyticsFreshState??null,
+      analyticsSnapshotAgeMs:root().formaAnalyticsSnapshotAgeMs===undefined?null:Number(root().formaAnalyticsSnapshotAgeMs),
+      analyticsFreshReadyMs:root().formaAnalyticsFreshReadyMs===undefined?null:Number(root().formaAnalyticsFreshReadyMs),
       privateContentState:root().formaPrivateContentState ?? null,
       privateContentScope:root().formaPrivateContentScope ?? null,
       privateContentReadyMs:root().formaPrivateContentReadyMs===undefined?null:Number(root().formaPrivateContentReadyMs),

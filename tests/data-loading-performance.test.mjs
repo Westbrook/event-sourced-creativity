@@ -15,7 +15,7 @@ import { buildScoutEnvelope, buildScoutTrajectory, scoutPrecisionLedger } from "
 import { briefEligibility, phase6GateMetrics, sessionContinuityDelta } from "../src/model/brief.ts";
 import { unfinishedIntentTrajectories } from "../src/model/intent-trajectories.ts";
 import { performanceRouteFamily, performanceRouteSurface } from "../src/performance.ts";
-import { matchingAccountSnapshot } from "../src/state/account-cache.ts";
+import { matchingAccountSnapshot, matchingAnalyticsSnapshot } from "../src/state/account-cache.ts";
 import { routeCapabilities } from "../src/state/route-capabilities.ts";
 import { consumeRoutePrefetch, consumeSessionBootstrap, consumeSessionPrefetch } from "../src/state/session-bootstrap.ts";
 
@@ -269,6 +269,29 @@ test("each route requests only its own evidence, private content, and historical
   assert.deepEqual(routeCapabilities("/admin/events/permissions"), routeCapabilities("/operations/events/permissions"));
 });
 
+test("cached Analytics is short-lived, account-exact, and never bypasses current administrator consent", () => {
+  const now = Date.now();
+  const url = "/api/analytics?days=30&includeSynthetic=false";
+  const identity = { userId: "owner-a", policyVersion: "policy-2", accepted: true, impersonating: false, role: "admin" };
+  const report = { generatedAt: new Date(now - 500).toISOString(), source: { eventCount: 9 }, totals: { events: 9 } };
+  const snapshot = { key: `owner-a:policy-2:analytics:${encodeURIComponent(url)}:v1`, userId: "owner-a", policyVersion: "policy-2", role: "admin", url, report, savedAt: now - 1_000, schemaVersion: 1 };
+  assert.equal(matchingAnalyticsSnapshot(snapshot, identity, url, now), snapshot);
+  for (const invalid of [
+    [{ ...identity, userId: "owner-b" }, url, snapshot],
+    [{ ...identity, policyVersion: "policy-3" }, url, snapshot],
+    [{ ...identity, role: "creator" }, url, snapshot],
+    [{ ...identity, accepted: false }, url, snapshot],
+    [{ ...identity, impersonating: true }, url, snapshot],
+    [identity, "/api/analytics?days=7&includeSynthetic=false", snapshot],
+    [identity, "/api/analytics?days=30&includeSynthetic=true", snapshot],
+    [identity, url, { ...snapshot, savedAt: now - 60_001 }],
+    [identity, url, { ...snapshot, savedAt: now + 1 }],
+    [identity, url, { ...snapshot, role: "creator" }],
+    [identity, url, { ...snapshot, report: { ...report, generatedAt: "invalid" } }],
+    [identity, url, { ...snapshot, schemaVersion: 2 }],
+  ]) assert.equal(matchingAnalyticsSnapshot(invalid[2], invalid[0], invalid[1], now), null);
+});
+
 test("static HTML starts one authenticated session immediately without touching public shares", async () => {
   const html = await readFile(new URL("../dist/client/projects/index.html", import.meta.url), "utf8");
   const match = /<script id="forma-static-session-prefetch">([\s\S]*?)<\/script>/.exec(html);
@@ -414,6 +437,11 @@ test("background visits and unrelated job polling begin after meaningful route p
   assert.match(analytics, /data-evidence-key=\$\{item\.key\}/);
   assert.match(analytics, /\?open=\$\{expanded\} @toggle=\$\{this\.#toggleEvidence\}/);
   assert.match(analytics, /expanded\?html`<div class="analytics-evidence-list"/);
+  assert.match(analytics, /readAnalyticsSnapshot\(identity,url\)/);
+  assert.match(analytics, /writeAnalyticsSnapshot\(identity,url,body\.report\)/);
+  assert.match(analytics, /Refreshing live data/);
+  assert.match(analytics, /\[401,403,428\]\.includes\(response\.status\)/);
+  assert.match(store, /await clearAnalyticsSnapshots\(this\.#snapshotIdentity\(session\),true\)/);
 });
 
 test("the early authenticated session request can only be adopted once", () => {
@@ -749,6 +777,9 @@ test("analytics excludes fictional streams in SQL and batches all dashboard read
   const batch = database.calls.find((call) => call.kind === "batch");
   assert.equal(batch?.statements.length, 3);
   assert.match(batch.statements[2].sql, /stream_id NOT IN \(SELECT fictional_stream_id/);
+  assert.match(batch.statements[2].sql, /SELECT event_id e,stream_id s,sequence q,occurred_at o,actor a,type t,CASE/);
+  assert.match(batch.statements[2].sql, /json_remove\(payload,'\$\.compiled_snapshot'\)/);
+  assert.doesNotMatch(batch.statements[2].sql, /SELECT \* FROM events/);
   assert.ok(database.calls.length <= 2, `expected admin authentication plus one dashboard batch, received ${database.calls.length}`);
   assert.equal(database.writeCount(), 0);
   assert.equal(response.headers.get("cache-control"), "private, no-store");

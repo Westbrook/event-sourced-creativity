@@ -20,7 +20,7 @@ import { combinedContextGroups, combinedContextMemberships, combinedContextRoleF
 import { eventProfileRank } from "../model/event-profiles";
 import type { VideoAudioMode, VideoDurationSeconds } from "../model/video-adapter";
 import { beginRoutePopulation, completeBackgroundHydration, recordEventPage, recordPopulationSource, recordPrivateContentState, recordRouteHistoryProfile, recordSessionReady } from "../performance";
-import { matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
+import { clearAnalyticsSnapshots, matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
 import { consumeSessionBootstrap, consumeSessionPrefetch } from "./session-bootstrap";
 import { routeCapabilities } from "./route-capabilities";
 
@@ -102,6 +102,7 @@ export class FormaStore {
   notify() { this.#listeners.forEach((listener) => listener()); }
   #publishAppended(events:CreativeEvent[]){
     if(!events.length)return;
+    const session=this.session.get();if(session&&events.some((event)=>event.type==="AttentionSignalsForgotten"))void clearAnalyticsSnapshots(this.#snapshotIdentity(session),true);
     window.dispatchEvent(new CustomEvent("forma-events-appended",{detail:{events}}));
     const needsImageMaintenance=events.some((event)=>["GenerationCompleted","IdeationPreviewCompleted","DocumentRenderCompleted","ReferenceIngested","BlockCreated"].includes(event.type));
     if(needsImageMaintenance&&!this.session.get()?.impersonation){
@@ -375,7 +376,7 @@ export class FormaStore {
   }
   setAttentionCapture(enabled:boolean){if(this.session.get()?.impersonation){this.patchUi({attentionCapture:false,attentionPaused:true});this.toast("Attention capture stays off while you experience a fictional account.");return;}writeAttentionPreference(enabled,this.session.get()?.user.userId??"anonymous");this.patchUi({attentionCapture:enabled,attentionPaused:false});this.toast(enabled?"Attention signals enabled for this account on this device.":"Attention signals disabled; the current episode was closed.");}
   setAttentionPaused(paused:boolean){this.patchUi({attentionPaused:paused});this.toast(paused?"Attention capture paused on this device.":"Attention capture resumed.");}
-  async forgetAttentionSignals(){window.dispatchEvent(new Event("forma-attention-forget"));const appended=await this.append({type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:this.head.get(),reason:"user-requested",device_ledger_cleared:true}});if(appended.length)this.toast("Attention episodes were forgotten and excluded from Scout and Memory.");return appended;}
+  async forgetAttentionSignals(){window.dispatchEvent(new Event("forma-attention-forget"));const appended=await this.append({type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:this.head.get(),reason:"user-requested",device_ledger_cleared:true}});if(appended.length){const session=this.session.get();if(session)await clearAnalyticsSnapshots(this.#snapshotIdentity(session),true);this.toast("Attention episodes were forgotten and excluded from Scout and Memory.");}return appended;}
 
   async load() {
     const path=this.route.get();const profile=this.#profileForRoute(path);const started=performance.now();

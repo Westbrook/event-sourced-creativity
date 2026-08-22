@@ -8628,6 +8628,15 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "events": [
+            {
+              "name": "forma-analytics-fresh",
+              "type": {
+                "text": "CustomEvent<{ readyMs: number; initialSource: string; cache: string; sourceRows: number; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
