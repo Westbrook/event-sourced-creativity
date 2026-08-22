@@ -10,6 +10,23 @@ const { d1, r2 } = hostingConfig;
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
+const protectedSurfaceModules = new Set([
+  "/src/components/forma-system.ts",
+  "/src/components/forma-analytics.ts",
+  "/src/components/forma-admin-events.ts",
+  "/src/components/forma-image-adapter-lab.ts",
+  "/src/components/forma-focal-point-lab.ts",
+  "/src/components/forma-design-system-lab.ts",
+  "/src/components/design-system/component-catalog.ts",
+]);
+
+function applicationChunkName(chunk: { facadeModuleId?: string | null }) {
+  const path = chunk.facadeModuleId?.replaceAll("\\", "/") ?? "";
+  if (path.includes("virtual:cloudflare/worker-entry")) return "index.js";
+  const protectedSurface = path.includes("/src/apps/operations/") || path.includes("/src/apps/laboratory/") || [...protectedSurfaceModules].some((module) => path.endsWith(module));
+  return `${protectedSurface ? "protected-assets" : "assets"}/[name]-[hash].js`;
+}
+
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_date: "2026-05-22",
@@ -54,7 +71,7 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
-    build: { manifest: true },
+    build: { manifest: true, rollupOptions: { output: { entryFileNames: applicationChunkName, chunkFileNames: applicationChunkName } } },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,

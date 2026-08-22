@@ -1,4 +1,6 @@
 export type ApplicationId = "creative" | "canvas" | "operations" | "laboratory";
+export type ApplicationAudience = "creator" | "platform-operator" | "product-quality" | "design-knowledge" | "engineering-diagnostics";
+export type ApplicationRole = "admin" | "creator" | "agent" | "viewer";
 
 export type ApplicationNavigationItem = {
   id: string;
@@ -11,6 +13,8 @@ export type ApplicationDefinition = {
   id: ApplicationId;
   label: string;
   description: string;
+  audiences: readonly ApplicationAudience[];
+  administratorOnly: boolean;
   home: string;
   entry: string;
   navigation: readonly ApplicationNavigationItem[];
@@ -36,6 +40,8 @@ export const APPLICATIONS: readonly ApplicationDefinition[] = [
     id: "creative",
     label: "Creative",
     description: "Projects, creation, context, re-entry, and creative intelligence",
+    audiences: ["creator"],
+    administratorOnly: false,
     home: "/projects",
     entry: "src/apps/creative/entry.ts",
     navigation: [
@@ -45,12 +51,15 @@ export const APPLICATIONS: readonly ApplicationDefinition[] = [
       { id: "sessions", href: "/sessions", label: "Re-entry", description: "Resume witnessed work" },
       { id: "scout", href: "/scout", label: "Scout", description: "Investigate creative trajectories" },
       { id: "memory", href: "/memory", label: "Taste & time", description: "Manage preferences and resurfacing" },
+      { id: "settings", href: "/settings", label: "Settings", description: "Manage your privacy, sharing, and personal production spending" },
     ],
   },
   {
     id: "canvas",
     label: "Canvas",
     description: "A spatial project workspace for documents, decisions, references, and every creative result",
+    audiences: ["creator"],
+    administratorOnly: false,
     home: "/canvas",
     entry: "src/apps/canvas/entry.ts",
     navigation: [
@@ -64,6 +73,8 @@ export const APPLICATIONS: readonly ApplicationDefinition[] = [
     id: "operations",
     label: "Operations",
     description: "Governance, health, permissions, and durable stream inspection",
+    audiences: ["platform-operator", "engineering-diagnostics"],
+    administratorOnly: true,
     home: "/operations",
     entry: "src/apps/operations/entry.ts",
     navigation: [
@@ -79,6 +90,8 @@ export const APPLICATIONS: readonly ApplicationDefinition[] = [
     id: "laboratory",
     label: "Laboratory",
     description: "Controlled experiments over the same durable creative data",
+    audiences: ["product-quality", "design-knowledge"],
+    administratorOnly: true,
     home: "/laboratory/replay",
     entry: "src/apps/laboratory/entry.ts",
     navigation: [
@@ -91,6 +104,21 @@ export const APPLICATIONS: readonly ApplicationDefinition[] = [
 ] as const;
 
 export const applicationDefinition = (id: ApplicationId) => APPLICATIONS.find((application) => application.id === id)!;
+
+export type ApplicationAccess = {
+  role: ApplicationRole | null | undefined;
+  principalRole?: ApplicationRole | null;
+  canvasAccess?: boolean;
+};
+
+/** Shared visibility contract; the Worker independently enforces privileged delivery. */
+export function applicationAccessible(id: ApplicationId, access: ApplicationAccess) {
+  if (!access.role) return false;
+  const definition = applicationDefinition(id);
+  if (definition.administratorOnly) return (access.principalRole ?? access.role) === "admin";
+  if (id === "canvas") return access.canvasAccess === true;
+  return true;
+}
 
 export function creativeCreationHref(
   context: CreativeCreationContext,
@@ -175,6 +203,7 @@ export const SITE_ROUTE_ENTRIES: readonly SiteRouteEntry[] = [
   route("/sessions", "creative", "Re-entry — Forma", "Resume witnessed work through event-derived re-entry briefs."),
   route("/scout", "creative", "Scout — Forma", "Run bounded creative research and inspect its evidence."),
   route("/memory", "creative", "Taste & time — Forma", "Review reversible preferences, taste evidence, and time-based memory."),
+  route("/settings", "creative", "Personal settings — Forma", "Manage your own privacy, sharing, consent, and creative production spending."),
   route("/share", "creative", "Shared creative context — Forma", "Open an expiring, read-only creative context handoff."),
   route("/canvas", "canvas", "Canvas", "Arrange project context and creative results on a replayable infinite canvas."),
   route("/canvas/proposals", "canvas", "Canvas report space", "Review agent proposals without mixing them into authored work."),

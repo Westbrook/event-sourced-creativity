@@ -28,6 +28,7 @@ test("the server resolves every shareable deep-link family before SPA hydration"
   const cases=[
     ["/projects","/projects/","creative"],
     ["/projects/project-42","/projects/","creative"],
+    ["/settings","/settings/","creative"],
     ["/document/doc-42/study","/","creative"],
     ["/document/doc-42/study/focus","/","creative"],
     ["/document/doc-42/study/view/chat/focus","/studio/chat/","creative"],

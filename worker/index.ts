@@ -1,8 +1,8 @@
 import { handleEvents, type WorkerEnv } from "./events-api";
 import { getMedia, uploadMedia } from "./media-api";
-import { handleAdminUsers, handleImpersonation, handleSession } from "./pilot-policy";
+import { handleAdminUsers, handleImpersonation, handleSession, requireUser } from "./pilot-policy";
 import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
-import { resolveServerRoute } from "../src/platform/applications";
+import { applicationDefinition, resolveServerRoute } from "../src/platform/applications";
 import { handleReplayApproval, handleReplayEstimate, handleReplaySessions } from "./replay-sessions-api";
 import { handleDocumentJobs } from "./document-jobs-api";
 import type { WorkerExecutionContext } from "./runtime";
@@ -39,6 +39,10 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(request.method==="GET"||request.method==="HEAD"){
       const route=resolveServerRoute(url.pathname);
       if(route){
+        if(applicationDefinition(route.application).administratorOnly){
+          const authorization=await requireUser(request,env,"admin",{account:"principal"});
+          if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
+        }
         const entryUrl=new URL(route.entryPath,url);
         const trustedIdentity=Boolean(request.headers.get("oai-authenticated-user-id")&&request.headers.get("oai-authenticated-user-email")||request.headers.get("cf-access-authenticated-user-email")||url.hostname==="localhost"||url.hostname==="127.0.0.1");
         const personalize=request.method==="GET"&&!url.pathname.startsWith("/share")&&trustedIdentity;
@@ -56,6 +60,15 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     // Vite's development runtime has extensionless module endpoints. They are
     // assets, not navigations, and must reach the asset binding or the HTML
     // shell will never hydrate after a deep-link refresh.
+    if(url.pathname.startsWith("/protected-assets/")){
+      const authorization=await requireUser(request,env,"admin",{account:"principal"});
+      if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
+      const asset=await env.ASSETS.fetch(request);
+      const headers=new Headers(asset.headers);
+      headers.set("cache-control","private, no-store");
+      headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
+      return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
+    }
     const developmentAssetRequest=/^\/(?:@vite\/|@id\/|@fs\/|__vite_ping$|__open-in-editor)/.test(url.pathname);
     const assetRequest=developmentAssetRequest||/^\/(?:assets\/|og\.png$|favicon\.|robots\.txt$)|\.[a-z0-9]{2,8}$/i.test(url.pathname);
     if(assetRequest)return env.ASSETS.fetch(request);

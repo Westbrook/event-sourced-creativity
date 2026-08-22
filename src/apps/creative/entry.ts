@@ -16,6 +16,7 @@ export function loadCreativeRoute(path: string): Promise<unknown> {
   if (pathname.startsWith("/sessions")) return import("../../components/forma-sessions");
   if (pathname.startsWith("/scout")) return import("../../components/forma-scout");
   if (pathname.startsWith("/memory")) return import("../../components/forma-memory");
+  if (pathname === "/settings") return import("../../components/forma-account-settings");
   return import("../../components/forma-workspace");
 }
 
@@ -34,6 +35,7 @@ export class FormaCreativeApplication extends FormaElement {
     if(pathname.startsWith("/sessions"))return html`<forma-sessions></forma-sessions>`;
     if(pathname.startsWith("/scout"))return html`<forma-scout></forma-scout>`;
     if(pathname.startsWith("/memory"))return html`<forma-memory></forma-memory>`;
+    if(pathname==="/settings")return html`<forma-account-settings></forma-account-settings>`;
     return html`<forma-workspace></forma-workspace>`;
   }
 }

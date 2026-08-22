@@ -22,6 +22,9 @@ export function routeCapabilities(path: string): RouteCapabilities {
   if (pathname === "/sessions" || pathname.startsWith("/sessions/")) {
     return { profile: "sessions", privateContent: false, jobHistory: false };
   }
+  if (pathname === "/settings") {
+    return { profile: "sessions", privateContent: false, jobHistory: false };
+  }
   if (["/operations/events", "/operations/events/stream", "/admin/events", "/admin/events/stream"].includes(pathname)) {
     return { profile: "projects", privateContent: false, jobHistory: false };
   }

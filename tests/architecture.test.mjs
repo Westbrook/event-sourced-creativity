@@ -205,7 +205,8 @@ test("packages first-class HTML entry points for every named application route",
     assert.match(entry,new RegExp(`data-forma-application="${applicationIdFromRoute(`/${route}`)}"`));
     assert.match(entry,/id="forma-static-session-prefetch"/);
     assert.ok(entry.indexOf('id="forma-static-session-prefetch"')<entry.indexOf('<script type="module"'));
-    assert.match(direct, /\/assets\/entry-[^"/]+\.js/);
+    const restricted=["operations","laboratory"].includes(applicationIdFromRoute(`/${route}`));
+    assert.match(direct,restricted?/\/protected-assets\/entry-[^"/]+\.js/:/\/assets\/entry-[^"/]+\.js/);
   }
   const rootEntry = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
   const shareEntry = await readFile(new URL("../dist/client/share/index.html", import.meta.url), "utf8");
@@ -224,7 +225,7 @@ test("named HTML preloads only its active route component and never starts a pub
   const manifest = JSON.parse(await readFile(new URL("../dist/client/.vite/manifest.json", import.meta.url), "utf8"));
   const pages = {
     "/document": "src/components/forma-workspace.ts", "/projects": "src/components/forma-projects.ts", "/memory": "src/components/forma-memory.ts",
-    "/scout": "src/components/forma-scout.ts", "/sessions": "src/components/forma-sessions.ts",
+    "/scout": "src/components/forma-scout.ts", "/sessions": "src/components/forma-sessions.ts", "/settings": "src/components/forma-account-settings.ts",
     "/operations/analytics": "src/components/forma-analytics.ts", "/operations/canvas": "src/apps/operations/canvas-governance.ts",
     "/operations/events": "src/components/forma-admin-events.ts", "/laboratory/replay": "src/components/forma-admin-events.ts",
     "/laboratory/image-adapters": "src/components/forma-image-adapter-lab.ts", "/canvas": "src/canvas/canvas-application.ts",
@@ -605,7 +606,7 @@ test("connects the final Library and Studio affordances to explicit destinations
   assert.doesNotMatch(`${workspace}${library}${styles}`,/studio-sidebar|library-tree/);assert.match(styles,/\.project-rail/);
   assert.match(workspace,/\?disabled=\$\{!canCompare\}/);assert.match(store,/canUndo/);assert.match(store,/canRedo/);assert.match(styles,/\.document-bar \{ position: sticky/);
   assert.match(outputCard,/Taste evidence/);assert.match(outputCard,/taste-axis-grid/);assert.match(outputCard,/Record taste evidence/);
-  assert.match(shell,/operations#governance/);assert.match(shell,/Use attention signals to improve Forma/);assert.match(system,/id="governance"/);assert.match(system,/Forget attention data/);
+  assert.match(shell,/this\.#route\("\/settings"\)/);assert.doesNotMatch(shell,/operations#governance/);assert.match(shell,/Use attention signals to improve Forma/);assert.match(system,/id="governance"/);assert.match(system,/Forget attention data/);
 });
 
 test("keeps account, project, document, intelligence, operations, and laboratory scopes distinct",async()=>{

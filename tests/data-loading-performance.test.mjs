@@ -267,7 +267,7 @@ test("same-profile and downscoped snapshots remove timer artifacts without chang
 test("each route requests only its own evidence, private content, and historical jobs", () => {
   const expected = {
     "/projects": ["projects", false, false], "/memory": ["memory", true, false], "/scout": ["scout", false, false],
-    "/sessions": ["sessions", false, false], "/operations/events": ["projects", false, false],
+    "/sessions": ["sessions", false, false], "/settings": ["sessions", false, false], "/operations/events": ["projects", false, false],
     "/operations/events/stream": ["projects", false, false], "/operations": ["sessions", false, false],
     "/operations/events/sync": ["sessions", false, false], "/operations/analytics": ["projects", false, false],
     "/operations/canvas": ["projects", false, false], "/operations/events/permissions": ["projects", false, false],
@@ -520,6 +520,51 @@ test("private app HTML streams a fresh authenticated session before the applicat
   assert.ok(suffix.indexOf("forma-session-bootstrap") < suffix.indexOf("<forma-shell>"));
   assert.equal(database.calls.length, 3, `expected one authenticated navigation with 3 D1 reads; got ${database.calls.length}`);
   assert.equal(database.writeCount(), 0);
+});
+
+test("internal application HTML, compatibility routes, and protected bundles reject creators before asset delivery", async () => {
+  const { database, environment, request } = await productionWorker();
+  const assets = htmlAssets(environment);
+  database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("dev-local-creative");
+
+  for (const path of ["/operations", "/operations/analytics", "/system", "/admin/events", "/laboratory/replay", "/admin/events/replay", "/protected-assets/internal-test.js"]) {
+    const before = assets.requests.length;
+    const response = await request(path);
+    assert.equal(response.status, 403, path);
+    assert.equal(assets.requests.length, before, `${path} must deny before protected HTML or module bytes`);
+    assert.equal(response.headers.has("x-forma-application"), false);
+    const body = await response.text();
+    assert.doesNotMatch(body, /forma-shell|forma-session-bootstrap|provider|costBudgets/);
+  }
+
+  database.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id=?").run("dev-local-creative");
+  assert.equal((await request("/operations")).status, 200);
+  const protectedAsset = await request("/protected-assets/internal-test.js");
+  assert.equal(protectedAsset.status, 200);
+  assert.equal(protectedAsset.headers.get("cache-control"), "private, no-store");
+  assert.match(protectedAsset.headers.get("vary") ?? "", /oai-authenticated-user-id/i);
+});
+
+test("hosted first-user provisioning never overrides an explicit administrator allowlist", async () => {
+  const database = measuredDatabase();
+  const environment = {
+    DB: database.DB,
+    ASSETS: { fetch: async () => new Response(null, { status: 404 }) },
+    MEDIA: {},
+    FORMA_ADMIN_EMAILS: "approved-admin@example.test",
+  };
+  const context = { waitUntil() {} };
+  const request = (id, email) => worker.fetch(new Request("https://forma.example.test/api/session", {
+    headers: { "oai-authenticated-user-id": id, "oai-authenticated-user-email": email },
+  }), environment, context);
+
+  const visitor = await request("first-visitor", "first-visitor@example.test");
+  assert.equal(visitor.status, 200);
+  assert.equal((await visitor.json()).user.role, "creator");
+
+  const administrator = await request("approved-admin", "approved-admin@example.test");
+  assert.equal(administrator.status, 200);
+  assert.equal((await administrator.json()).user.role, "admin");
 });
 
 test("streamed impersonation preserves fictional identity, actor billing, and cache isolation", async () => {
@@ -1397,7 +1442,7 @@ test("large Canvas offline batches respect D1's 100-parameter limit and remain i
     const events = Array.from({ length: size }, (_, index) => ({
       type: "CanvasRegisterSet",
       payload: {
-        canvas_id: "canvas-1", item_id: "item-1", client_event_id: `canvas-${size}-${index}`,
+        canvas_id: "canvas-1", project_id: "project-atmosphere", history_owner_id: "dev-local-creative", item_id: "item-1", client_event_id: `canvas-${size}-${index}`,
         operation: { object: { item_id: "item-1" }, prop: "x", value: index, hlc: { pt: index + 1, c: 0, site: "web:test" } },
       },
     }));
@@ -1418,6 +1463,26 @@ test("large Canvas offline batches respect D1's 100-parameter limit and remain i
     assert.equal(retry.status, 200);
     assert.deepEqual(second.appended.map((event) => event.eventId), first.appended.map((event) => event.eventId));
   }
+});
+
+test("Canvas synchronization refuses a different account's offline events before accepting them", async () => {
+  const { database, request } = await productionWorker();
+  const event = {
+    type: "CanvasRegisterSet",
+    payload: {
+      canvas_id: "canvas-1", project_id: "another-project", history_owner_id: "different-account", client_event_id: "foreign-canvas-change", item_id: "item-1",
+      operation: { object: { item_id: "item-1" }, prop: "x", value: 12, hlc: { pt: 1, c: 0, site: "web:foreign" } },
+    },
+  };
+  const response = await request("/api/events", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "canvas_sync", events: [event], clientId: "ownership-test" }),
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.deepEqual(body.rejected, [{ index: 0, type: "CanvasRegisterSet", reason: "canvas_account_mismatch" }]);
+  assert.ok(body.appended.every((item) => item.type !== "CanvasRegisterSet"));
+  assert.equal(Number(database.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE stream_id=? AND type='CanvasRegisterSet' AND json_extract(payload,'$.client_event_id')=?").get("creative:dev-local-creative", "foreign-canvas-change").count), 0);
 });
 
 test("budget limit changes preserve previously recorded spending", async () => {

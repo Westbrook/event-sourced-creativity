@@ -8574,6 +8574,47 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-account-settings.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaAccountSettings",
+          "tagName": "forma-account-settings",
+          "customElement": true,
+          "summary": "Account settings application interface.",
+          "description": "Creator-owned controls remain available without entering platform administration.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-account-settings",
+          "declaration": {
+            "name": "FormaAccountSettings",
+            "module": "src/components/forma-account-settings.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaAccountSettings",
+          "declaration": {
+            "name": "FormaAccountSettings",
+            "module": "src/components/forma-account-settings.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-admin-events.ts",
       "declarations": [
         {

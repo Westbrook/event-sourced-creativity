@@ -46,6 +46,6 @@ export function renderVideoReel(items: readonly VideoReelItem[], fallbackUrl?: s
     ${scenes.length > 1 ? html`<p class="forma-video-reel-description">${scenes.length} individually playable scenes in narrative order. A combined MP4 is not available.</p>
       <label class="forma-video-reel-picker">Choose a scene<select @change=${(event: Event) => { const picker = event.currentTarget as HTMLSelectElement; const player = picker.closest<HTMLElement>(".forma-video-reel")?.querySelector<HTMLVideoElement>(".forma-video-reel-player"); if (player) selectScene(player, Number(picker.value), !player.paused); }}>
         ${scenes.map((scene, index) => html`<option value=${String(index)}>Scene ${index + 1} · ${scene.title}${scene.duration ? ` · ${scene.duration}s` : ""}</option>`)}
-      </select></label><p class="forma-video-reel-status" role="status" aria-live="polite" aria-atomic="true" data-scene-status>${label(0)}</p>` : nothing}
+      </select></label><p class="forma-video-reel-status" role="status" aria-live="polite" aria-atomic="true" data-scene-status .textContent=${label(0)}></p>` : nothing}
   </section>`;
 }

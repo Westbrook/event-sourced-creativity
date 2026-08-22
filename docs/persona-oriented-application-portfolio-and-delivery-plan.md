@@ -1,8 +1,9 @@
 # Forma persona-oriented application portfolio and delivery plan
 
 Date: 2026-08-22  
-Status: Proposed; adversarial product, design, architecture, performance, and accessibility review incorporated  
-Decision requested: Approve audience-oriented application delivery without fragmenting Forma's shared creative platform.
+Reviewed production baseline: `dc6f88508551e2bfded027c32d2f159e0cac3281` (production version 117)
+Status: Reassessed against current main and production; first creator-trust and production-visibility delivery tranche in implementation
+Decision requested: Deliver audience-oriented applications without fragmenting Forma's shared creative platform or claiming nonexistent tenant administration.
 
 ## Executive recommendation
 
@@ -10,7 +11,7 @@ Forma does not need to be split from one technical monolith into many disconnect
 
 Organize delivery around **who must accomplish which job, which information they are allowed to see, and which decisions they are authorized to make**. Keep one durable platform, one project/document/context model, one design system, and one set of policy-enforced generation services.
 
-The catalog identifies **42 capability families across six audience groups**: 10 end-user capabilities; five currently blocked customer/workspace-administration capabilities; seven platform-administration capabilities; eight product, production, and evaluation capabilities; four design/research capabilities; and eight engineering, reliability, and security capabilities.
+The expanded catalog identifies **50 capability families across six audience groups**: 15 end-user capabilities; five currently blocked customer/workspace-administration capabilities; seven platform-administration capabilities; 10 product, production, and evaluation capabilities; four design/research capabilities; and nine engineering, reliability, and security capabilities. The eight additions account for current format-specific production teams, reusable generated inputs, scoped continuity, honest artifact evidence, creator-owned cost reporting, production orchestration, cross-format evaluation, and reservation/recovery engineering.
 
 The recommended initial portfolio has no more than six authenticated task surfaces:
 
@@ -23,7 +24,44 @@ The recommended initial portfolio has no more than six authenticated task surfac
 
 The existing public **Review & Share** experience remains a separate, minimal, exact-resource, read-only security boundary; it is not another signed-in application launcher destination. **Workspace Administration** is an important customer-administrator candidate but must remain blocked until real organizations, memberships, project authorization, isolated streams/projections, scoped budgets, revocation, and multi-account security tests exist. Launch it first as a scoped workspace-settings area; fund a standalone application only if actual administrator usage justifies another product surface.
 
-The immediate first user benefit is straightforward: give creators complete personal privacy and usage controls in their own experience, then remove Operations, provider internals, implementation roadmaps, evaluation gates, and raw infrastructure concepts from their normal navigation.
+The immediate first user benefit is straightforward: give creators complete personal privacy and usage controls in their own experience, then remove Operations, provider internals, implementation roadmaps, evaluation gates, and raw infrastructure concepts from their normal navigation. Make managed-production outcomes, actual charges, and the limits of available quality evidence understandable beside the work itself.
+
+### Current-main reassessment and adversarial scorecard
+
+Four independent reviewers reassessed the committed main/production baseline as an end user, market researcher, product owner, and procurement officer. Scores describe observed delivery before the implementation tranche below, not aspirations or the quality of this plan.
+
+| Shared product goal | End user | Market | Product owner | Procurement | Mean |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Coherent Creator Workspace and distinct project-scoped Canvas. | 59 | 54 | 46 | 57 | 54.00 |
+| One authoritative context powering editable, managed multimodal outcomes. | 79 | 78 | 80 | 83 | 80.00 |
+| Trustworthy identity, authorization, privacy, spending, and recovery. | 46 | 45 | 34 | 38 | 40.75 |
+| Accessible, localized, reliable, performant audience journeys. | 43 | 62 | 57 | 54 | 54.00 |
+| Credible separation of creators, administration, production, design, and engineering. | 37 | 41 | 39 | 35 | 38.00 |
+
+The arithmetic mean across all 20 role-by-goal scores is **53.35/100**. Procurement's more stringent weighted purchase-readiness score is **44/100**. These averages do not override a hard authorization, account-isolation, identity-bootstrap, or privacy failure. The current hosted Site has a custom allowlist containing four authorized accounts and no external visitors; it is therefore **not owner-only**. Organizational purchase and genuine cross-account project collaboration remain blocked even when this explicitly restricted creator pilot improves.
+
+Intervening production changes materially strengthen the product thesis:
+
+- Six format-specific orchestration contracts cover film, previsualization, presentation, writers'-room, screenwriting, and image-art-direction work. “Production team” means coordinated specialist responsibilities, not separately hired people or proof of six autonomous model calls.
+- Shared authored context now drives production claims, exclusions, target-scoped Combined Contexts, continuity anchors, ordered narrative units, execution dependencies, and recoverable per-scene/frame provider receipts.
+- Completed text and slides can receive actual rendered-copy evidence. Image and video receipts establish delivery and work coverage, but visual adherence, continuity, duplication, and transitions must remain explicitly **not evaluated** until pixels or frames are actually inspected.
+- Managed video with optional original environmental audio is an **ordered, individually playable scene reel**. A combined MP4, validated visual continuity, and a generated soundtrack are not delivered capabilities.
+- Owner-bound USD and token reservations now support exact admission, settlement, failed-operation release, original accounting periods, and recovery without silently resubmitting paid provider work. The “workspace” limit is still one global `forma` scope, not a customer tenant.
+- Eight human-approved outputs now exist across the four Forma-authored review documents; the previous zero-output/no-provider assertions are historically stale. Read-only runtime verification found two outputs per document and **$18.487293** total recorded account-level usage for those document operations.
+
+The first implementation tranche therefore combines: creator-owned privacy/sharing/personal-spend settings; audience-entitled navigation; administrator authorization before internal HTML, bootstrap, or privileged module delivery; explicitly configured hosted administrator bootstrap; account/project-partitioned Canvas offline custody with conservative legacy recovery; a shared multi-scene-video rerender repair; always-available Canvas reading order; and creator-readable production/evidence/cost summaries. Real organizations, delegated billing, project ACLs, assembled video, advanced evaluator roles, and accessible tagged PDF remain future gated work.
+
+### Current market context and product differentiation
+
+Official vendor sources checked on 2026-08-22 show a consistent pattern: integrate related creative workflows while separately controlling audience access, billing, and administration. Published US prices exclude taxes and may vary by contract, region, plan, and billing cadence.
+
+- [Adobe Firefly for Teams](https://www.adobe.com/creativecloud/business/teams/firefly.html) lists $19.99, $49.99, and $199.99 per license per month billed annually, with corresponding credit allotments; [Firefly Boards](https://helpx.adobe.com/firefly/web/create-mood-boards/firefly-boards/about-firefly-boards.html) combines references, generation, and shared composition.
+- [Canva pricing](https://www.canva.com/pricing/) lists Canva Business at $250 per person annually and includes team, brand, and approval capabilities; Enterprise governance is negotiated.
+- [Figma pricing](https://www.figma.com/pricing/) lists Professional/Organization/Enterprise Full seats at $16/$55/$90 monthly, with annual billing for Organization and Enterprise; [Figma AI credit administration](https://help.figma.com/hc/en-us/articles/35865276858647-Manage-AI-credits) documents per-person visibility, pooled controls, and current $0.03 pay-as-you-go credits.
+- [Miro pricing](https://miro.com/pricing/) lists Starter at $8 per member per month billed yearly; Miro's [August 17, 2026 Enterprise announcement](https://miro.com/blog/enterprise-pricing-miro/) describes bundling AI workflows into the existing product rather than creating disconnected add-ons.
+- [Runway workspace roles](https://help.runwayml.com/hc/en-us/articles/43198398846611-Managing-Workspace-Members) distinguish actual Admin, Editor, Billing Admin, and Viewer authority; [Runway Enterprise credits](https://help.runwayml.com/hc/en-us/articles/32117491177619-Enterprise-Credits) explain pooled and individual usage.
+
+Forma's defensible position is **authoritative reusable creative direction → specialist-managed multimodal production → inspectable source evidence, recovery, and actual cost**. It should separate audience authority and decision-oriented reporting without selling a separate application for every document lens, generated format, or production-team label.
 
 ### Requested capability families mapped to delivery
 
@@ -47,7 +85,7 @@ The immediate first user benefit is straightforward: give creators complete pers
 | Operations | Governance, product analytics, release evidence, provider readiness, durable-stream inspection, producer permissions, and synchronization diagnostics. | Creators seeking privacy controls, platform administrators, product owners, trust/safety operators, finance, support, and engineers. |
 | Laboratory | Synthetic/actual-data replay, image-adapter qualification, focal-point comparison, and the living design-system catalog. | Evaluators, platform administrators, production/product teams, designers, accessibility specialists, and engineers. |
 
-The static route catalog currently declares 38 entries, including historical aliases, while the four application navigation definitions contain 20 destinations. The split must extend these existing application boundaries rather than recreate them or discard their proven lazy-loading, route-ownership, and sibling-import constraints.
+The updated static route catalog declares 39 entries, including historical aliases and creator-owned `/settings`, while the four application definitions retain 21 discoverable destinations. The creator's actual primary navigation progressively exposes only five relevant destinations. The split must extend these existing application boundaries rather than recreate them or discard their proven lazy-loading, route-ownership, and sibling-import constraints.
 
 ### Evidence of the current audience mismatch
 
@@ -55,7 +93,7 @@ The static route catalog currently declares 38 entries, including historical ali
 - `src/components/forma-system.ts:10-46`: one Operations page mixes personal attention/privacy settings and budget information with implementation phases, evaluation thresholds, provider topology, role matrices, infrastructure facts, and platform governance.
 - `worker/index.ts:39-53`: recognized application HTML is resolved and served before an application-specific entitlement check, even though selected privileged APIs independently reject nonadministrators.
 - `worker/pilot-policy.ts:6-11`: the existing platform roles are only `viewer`, `agent`, `creator`, and `admin`; there are no tenant-admin, product, evaluator, design, support, or engineer grants.
-- `worker/analytics-api.ts:9-20`: analytics is globally administrator-only, scans all user streams, and reports a hardcoded organization named `forma`; it cannot safely be repackaged as production-team or tenant-admin reporting.
+- `worker/analytics-api.ts`: analytics remains platform-administrator-only and aggregates multiple user streams under a hardcoded organization named `forma`. The latest implementation now excludes synthetic activity by default and uses owner-bound in-memory/durable checkpoints plus event deltas, so it no longer performs an unconditional full-history scan on every request; it still cannot safely be repackaged as tenant-scoped or nonadministrator product reporting.
 - `worker/pilot-policy.ts:87-108`: the current workspace budget likewise uses one hardcoded workspace scope rather than actual tenant ownership.
 - `docs/product-architecture-review.md:88-103`: membership-like project events do not grant real cross-account access; genuine collaboration requires new project ACLs, sequencing, migration, and authorized fan-out.
 - `worker/pilot-policy.ts:310-319`: global account listing and role assignment already exist on the server, but there is no corresponding user-administration application interface.
@@ -81,6 +119,11 @@ These labels describe the capability, not a promise that every feature is genera
 | Document and creative-context authoring | Edit one durable document and independently correct reusable creative decisions. | `/document/*`; `forma-workspace.ts`; `context-block.ts`; `block-types.ts`. | Creator Workspace; never require an application switch to author context. | Existing. |
 | Alternate document lenses | Choose Document, Board, Guided, Layers, Adaptive, Editor, or Chat as interchangeable views over the same work. | `studio-navigation.ts`; `docs/event-sourced-creative-system-project-plan.md:438-460`. | One progressively disclosed mode chooser in Creator Workspace. | Existing; explicitly not separate applications. |
 | Images and multimodal content generation | Produce, inspect, compare, retry, and retain images, stories, scenes, presentations, storyboards, and video. | `document-artifacts.ts`; `document-generations.ts`; `worker/document-jobs-api.ts`. | One document-scoped generation workflow and history. | Existing, subject to provider/consent gates. |
+| Specialist-managed multimodal production | Choose coordinated film, previsualization, presentation, writing, screenplay, or art-direction responsibilities without leaving the source document. | `src/model/managed-production.ts`; `worker/managed-production.ts`. | Creator Workspace's document-native Production Desk; no separate application per team or output. | Existing orchestration; creator-readable reporting is new. |
+| Scoped creative continuity and authorized references | Carry explicit characters, locations, style constraints, exclusions, approved references, and account-owned continuity anchors into only their intended output units. | `src/model/managed-production.ts`; `src/model/combined-context.ts`; `worker/managed-production.ts`. | Document-owned production planning and reference disclosure. | Existing; visual continuity itself remains unverified. |
+| Generated-result adoption and editable reuse | Turn generated stories, scenes, slides, frames, or scenes into editable provenance-preserving creative input. | `src/model/output-authoring.ts`; `src/model/output-context.ts`; `document-artifacts.ts`. | One Creator Workspace context-to-output-to-context loop. | Existing; keep every source and edit attributable. |
+| Truthful production evidence and delivery state | Understand source coverage, completed narrative units, quality-evidence basis, unmeasured visual dimensions, and actual reel-versus-film delivery. | `src/model/production-evidence.ts`; `worker/events-api.ts`; retained artifact receipts. | Creator-readable artifact summaries and progressive receipt disclosure. | Existing evidence foundation; audience-appropriate presentation is new. |
+| Personal generation spend and recoverability | Inspect own estimated/reserved/settled USD and token use, remaining limits, failed work, and safe no-rebill recovery. | `worker/pilot-policy.ts`; `src/model/generation-budget.ts`; `worker/document-jobs-api.ts`. | Creator-owned settings plus document-local production summaries. | Existing ledger/recovery; self-service reporting is extractable. |
 | Project Library and context management | Search, curate, reuse, and export project-scoped decisions, collections, references, and outcomes. | `/library`; `forma-library.ts`; `library-block-editor.ts`. | Creator Workspace module; consider standalone only for a validated curator/librarian cohort. | Existing; module first. |
 | Spatial project composition | Arrange project materials, prepare documents, and formalize Combined Contexts. | `/canvas/*`; `src/canvas/*`; `docs/canvas-implementation.md`. | Existing independently loaded Canvas companion with preserved project handoff. | Existing but release-gated. |
 | Continuity and creative assistance | Resume unfinished work; inspect bounded Scout findings; manage taste and time without implementation jargon. | `/sessions`, `/scout`, `/memory`. | Contextual Creator Workspace assistance, surfaced only when useful. | Existing; simplify rather than extract. |
@@ -123,6 +166,8 @@ Do not describe these capabilities as shipped, demonstrate fake invitation/acces
 | Capability and outcome reporting | Report adoption and benefit without exposing private prompts, raw event payloads, or user identities. | `worker/analytics-api.ts` currently reads global raw streams. | Small scoped Insights dashboards with explicit metric ownership. | New projection and disclosure policy. |
 | Application and experience evaluation | Review deterministic corpora, outcome judgments, accessibility/usability findings, and failure trends. | Extractor gates, replay scenarios, adapter corpora, existing tests. | Product & Quality → Evaluation, with separately entitled safe modules. | Extractable; advanced campaign management is new. |
 | Provider/model qualification | Compare approved frozen corpora, model capabilities, correction rates, cost, and evidence versions. | `/laboratory/image-adapters`; `evals/image-adapters/*`; `docs/evaluations/*`. | Product & Quality → Evaluation evidence/runs; Platform Operations owns production approval. | Existing/extractable; paid execution remains separately authorized. |
+| Cross-format production coordination | Review responsible specialist contracts, work-unit dependencies, execution order, completed checkpoints, and recovery behavior across explicitly authorized production scopes. | `src/model/production-system.ts`; `src/model/managed-production.ts`; `worker/managed-production.ts`. | Product & Quality → Production insights; creators retain their own document-native desk. | Existing owner-scoped execution; cross-creator operations blocked without real grants. |
+| Artifact-level quality and claim coverage | Compare rendered-text/slide evidence, source-claim coverage, unevaluated media dimensions, and attributable human review without presenting proxies as measured quality. | `src/model/production-evidence.ts`; `tests/production-evidence.test.mjs`. | Product & Quality → Evaluation through sanitized, explicitly authorized projections. | Existing measurement primitives; safe aggregate reporting is new. |
 | Documentation and operating knowledge | Locate product behavior, operating procedures, evidence definitions, and decision history. | `README.md`, `ARCHITECTURE.md`, `DESIGN.md`, `docs/*`. | Design & Knowledge for approved published content; Delivery links to current evidence. | Existing repository content; new classified publishing/search experience. |
 
 ### Design and research-team-facing capabilities
@@ -143,6 +188,7 @@ Do not describe these capabilities as shipped, demonstrate fake invitation/acces
 | Synthetic replay and deterministic fixtures | Build reproducible journeys and compare safe projection outcomes. | `/laboratory/replay`; replay models and tests. | Product & Quality → Evaluation owns synthetic scenario evidence; Engineering links to restricted diagnostics. | Existing/extractable; one authoritative owner, no duplicated replay applications. |
 | Actual-data replay and impersonation | Investigate explicitly approved production-shaped behavior with isolated fictional accounts. | `worker/replay-sessions-api.ts`; `worker/pilot-policy.ts`. | Separately entitled restricted Evaluation mode with conspicuous identity, one-use approval, audit, and safe return. | Existing, exceptionally privileged; never available to ordinary production/design roles. |
 | Provider implementation and adapter debugging | Diagnose adapter implementations, normalized errors, preflight, retries, and capability mismatches. | `worker/*adapter*.ts`; `worker/provider-errors.ts`. | Engineering Diagnostics; link qualification evidence from Evaluation. | Existing/extractable; production provider activation remains Operations-owned. |
+| Production settlement and checkpoint integrity | Reconcile owner-bound reservations, accounting periods, per-scene/frame receipts, cancellation, duplicate protection, and safe provider-job recovery. | `worker/pilot-policy.ts`; `worker/managed-production.ts`; `tests/cost-budget-ledger.test.mjs`; `tests/managed-production.test.mjs`. | Engineering Diagnostics with redacted finance/Operations handoff; creators see only their own outcome and charge. | Existing platform capability; role-scoped operational read models are new. |
 | Performance and reliability observability | Compare route bundles, p75/p95 timings, request counts, D1 contention, queue health, and recoverability. | `src/performance.ts`; `tests/data-loading-performance.test.mjs`. | Engineering Diagnostics; role-specific summaries in Operations. | Existing local instrumentation; durable telemetry/alerts are new. |
 | Developer architecture and integration documentation | Understand event contracts, APIs, package boundaries, component manifests, runbooks, and integrations. | `ARCHITECTURE.md`; `custom-elements.json`; `docs/*`. | Approved Design & Knowledge documentation; sensitive runbooks require engineering scope. | Existing documents; curated role-filtered publication is new. |
 | Automated security, accessibility, localization, and quality evidence | Verify route/API isolation, deep links, component contracts, inclusive interactions, performance, and release gates. | Existing Node tests and targeted PDF visual harness. | Product & Quality consumes summarized results; Engineering/Design own remediation. | Existing partial test foundation; broad persona E2E, axe, CI, and release automation are new. |
@@ -272,7 +318,7 @@ Use a small, typed handoff envelope containing only identifiers the destination 
 
 Deliverables:
 
-- Persona/job inventory, current 38-route catalog, task-to-capability matrix, data sensitivity, canonical ownership, and application extraction criteria.
+- Persona/job inventory, current 39-route catalog, task-to-capability matrix, data sensitivity, canonical ownership, and application extraction criteria.
 - Baselines for matched persona/task cohorts: task success, time to first relevant action, time to first retained result, irrelevant destinations, dead ends/denials, support contacts, app switches, performance, accessibility, and provider cost.
 - Existing database/runtime table inventory, stable event schemas, compatibility routes, approval boundaries, and owner-approved effort/benefit estimates.
 - A decision register that distinguishes `planned`, `running`, `failed`, `passed`, `approval_required`, `approved`, `revoked`, and `superseded`.
@@ -287,6 +333,8 @@ Deliverables:
 - Consistent access to those personal controls from every authenticated application.
 - Creator-readable provider/job errors: retry, adjust inputs, check own usage, contact support/administrator; no unactionable API-key, global-billing, organization, raw-event, or Operations instructions.
 - Admin-as-creator behavior matching the clean ordinary creator experience.
+- Document-native managed-production summaries that explain team, output units, known estimate versus actual cost, evidence basis, and unevaluated visual dimensions without requiring raw technical-receipt inspection.
+- Repair shared multi-scene video announcements without corrupting Lit's rendering markers; keep scene-reel delivery and optional ambient audio honest.
 
 Exit only when every creator can complete privacy/consent and delete/revoke tasks in no more than two navigational decisions, without entering Operations or losing any existing controls.
 
@@ -295,8 +343,10 @@ Exit only when every creator can complete privacy/consent and delete/revoke task
 Deliverables:
 
 - Server-owned principal/capability policy and scope evaluation; compatibility mapping from the four existing roles.
+- Hosted administrator bootstrap comes only from an explicitly configured administrator identity; arbitrary first signed-in visitors never acquire platform-wide authority.
 - Application/route registry entries declare required audience, capability, sensitivity, loader, canonical route, and backward-compatible aliases.
 - Worker authorization before HTML/session hydration; equivalent checks for protected entries/chunks, APIs, exports, redirects, and navigation handoffs.
+- Account/project-bound device queue ownership, synchronization locks, and conservative recovery of provably owner-attributed legacy Canvas batches; unidentified records remain quarantined.
 - Persona-specific bootstrap/session projections that omit provider topology, global governance, budgets, event metadata, and unrelated applications when unnecessary.
 - Entitlement-aware task launcher that disappears for users with only one available surface.
 - Remove Operations, Laboratory, internal docs, and engineering/evaluation destinations from unqualified creator navigation only after Stage 1A is complete.
@@ -406,7 +456,7 @@ Create an authoritative schema inventory, ownership map, migration path, and con
 
 ### 5. Build role-safe reporting projections rather than exposing raw analytics
 
-The current administrator analytics endpoint reads global users and streams and cannot be reused for customer or product users. Produce bounded projections keyed by authorized audience/scope, exclude private prompt/attention/memory content, suppress small-cell identity leakage, exclude fictional replay traffic by default, and attach metric definitions, freshness, source, and owner.
+The current administrator analytics endpoint still aggregates global users/streams under one hardcoded organization, although recent code now excludes synthetic streams by default and reuses principal-bound durable/in-memory checkpoints with incremental event deltas. Those performance improvements do not create customer or product authorization scopes. Produce bounded projections keyed by authorized audience/scope, exclude private prompt/attention/memory content, suppress small-cell identity leakage, preserve explicit synthetic-cohort labeling, and attach metric definitions, freshness, source, and owner.
 
 Represent release state explicitly. Existing documentation illustrates why: `docs/evaluations/ideogram-adapter-cycle-5-outcome.md` records a passed 50-case provider evaluation, while other documentation still describes a provider gate as blocked. A passing evaluation is not the same as provider entitlement, legal approval, or release authorization. Canonical evidence must distinguish evaluation outcome from approval state.
 
@@ -553,7 +603,7 @@ Quarantine ambiguous historical ownership as private rather than guessing. Rehea
 - Do not increase creator initial-route JavaScript/CSS transfer, D1 round trips, session bootstrap size, API request count, or account-wide projection hydration.
 - Maintain Canvas p95 visible-frame work below 16 ms where the current product scorecard applies.
 - Prevent creator entries from importing privileged operations, replay, evaluation, corpus, documentation, design-catalog, or engineering chunks.
-- Preserve pending jobs, offline writes, retry/idempotency, budget reservations, consent, account isolation, and direct-link behavior across all entitled application transitions.
+- Preserve pending jobs, account/project-isolated offline writes, retry/idempotency, budget reservations, consent, effective-account isolation, and direct-link behavior across all entitled application transitions; quarantine unattributed legacy device records rather than assigning them to a newly active account.
 
 ### Accessibility, internationalization, and component contracts
 
@@ -564,9 +614,9 @@ Quarantine ambiguous historical ownership as private rather than guessing. Rehea
 - Publish an up-to-date, truthful Custom Elements Manifest; no application-state or fictional-slot leakage into supposedly store-free design documentation.
 - Add automated role/route/browser coverage, accessible component/page assertions, manual assistive-technology checks, and visual/PDF verification to the existing native Node test foundation.
 
-### Existing verification baseline and release blockers
+### Current validated implementation baseline
 
-Read-only checks performed against the existing, already-dirty working tree produced the following results:
+The reassessed creator-trust/production-visibility tranche was verified against the actual current source and deployment build on 2026-08-22:
 
 ```text
 pnpm typecheck
@@ -575,24 +625,16 @@ PASS
 pnpm lint
 PASS
 
-node --experimental-strip-types --test \
-  tests/application-boundaries.test.mjs \
-  tests/analytics.test.mjs \
-  tests/product-foundations.test.mjs \
-  tests/form-semantics.test.mjs \
-  tests/responsive-layout.test.mjs \
-  tests/color-scheme.test.mjs \
-  tests/typography.test.mjs \
-  tests/event-concurrency.test.mjs
-PASS: 69 tests; 0 failures
+pnpm test
+PASS: production server/client build; 548 tests; 0 failures
 
 pnpm cem:check
-FAIL: Stale Custom Elements Manifest: custom-elements.json. Run pnpm cem.
+PASS: Custom Elements Manifest is current (102 elements).
 ```
 
-An additional accessibility-focused source/component check passed 75 tests and failed one existing component-manifest consistency check: `forma-ui-rich-text` is present in the current catalog but missing from the canonical generated manifest. Session-streaming tests against the existing `dist/server/index.js` also fail because that generated server predates uncommitted routing/session changes. These results establish source/generated-artifact drift; they do not, by themselves, prove a source regression.
+The full suite now includes executable checks for hosted first-user administrator allowlisting; denial of unauthorized Operations, Laboratory, historical internal aliases, and privileged production bundles before protected bytes; creator-owned `/settings`; effective-owner/project Canvas device queue filtering, foreign-account deletion refusal, conservative legacy quarantine, and server-side sync rejection; Lit-safe scene selection; truthful creator-visible estimated/reserved/actual production evidence; unrestricted Canvas reading order; and the preserved three-read authenticated creator navigation/session baseline.
 
-The canonical `pnpm test` regenerates the Custom Elements Manifest and cleans/rebuilds `dist/`. It should be run only as a coordinated clean-build/release operation because those generated writes can overwrite existing user-owned working-tree state. Until the manifest and production build are deliberately synchronized, full generated-artifact qualification remains a release blocker.
+The earlier transient lint failure, stale manifest, component-registration mismatch, and generated-server session-streaming failures no longer reproduce. No real provider call was made by this verification; externally generated outputs listed below were previously and separately authorized by the user. Actual cross-tenant authorization, composed MP4 delivery, decoded visual evaluation, and independently validated tagged multilingual PDF remain unsolved future gates rather than inferred from a passing build.
 
 ## Principal risks and mitigations
 
@@ -607,13 +649,16 @@ The canonical `pnpm test` regenerates the Custom Elements Manifest and cleans/re
 | Unsafe design previews | Component demos read live creator data, navigate, generate, or leak documentation receipts. | Approved docs plus interactive synthetic/store-independent fixtures only; test network, navigation, telemetry, and mutation isolation. |
 | Privilege confusion | Evaluators activate providers, product users run paid replay, or engineers receive customer-admin rights. | Explicit capabilities, segregation of duties, one-use approvals, purpose-based audit, and role/scenario testing. |
 | Deep-link and handoff breakage | Existing links, unsaved work, locale, offline operations, jobs, or guest shares fail during extraction. | Authorized compatibility routes, typed scoped handoffs, retry-safe persistence, and browser back/refresh/focus regression coverage. |
+| Arbitrary privileged bootstrap | The first authenticated visitor on a fresh hosted deployment accidentally becomes a global administrator. | Require an explicit hosted administrator allowlist; permit automatic first-user bootstrap only for the local development identity. |
+| Cross-account device custody | A shared browser stages or replays another account's pending Canvas content. | Bind offline batches, reads, removals, summaries, and synchronization locks to effective owner and project; quarantine legacy records lacking provable ownership. |
+| Misleading managed-production evidence | Plan proxies, provider receipts, scene reels, or specialist labels are presented as verified media quality, a composed film, or hired humans. | Label evidence basis and measured coverage; explicitly state unevaluated image/video quality and actual ordered-scene delivery; describe specialist contracts as orchestration. |
 | Documentation drift | A passed evaluation is confused with approved production availability. | Canonical versioned release-evidence projection with distinct passed, approval-required, approved, revoked, and superseded states. |
 | Premature database/service extraction | Schema drift and account-only streams cause migration, reservation, media, or ownership failures. | Reconcile the 26 runtime/15 declared table inventory; extract UI/read facades first; rehearse every later data migration. |
-| Paid-operation assumptions | An automated user creates provider-backed slides or replay without explicit spending authorization. | Deliver authored Forma documents/context without provider execution; create Slides only after a human explicitly authorizes the paid operation. |
+| Paid-operation assumptions | Automation creates provider-backed work or repeats a charged submission without informed human approval. | Require a deliberate final human action beside exact maximum cost, provider/reference/audio disclosure, and server-enforced paid-media confirmation; preserve reservation identity and no-rebill recovery. Do not add a redundant blanket checkbox. |
 
 ## Cross-functional adversarial review outcome
 
-All seven independently assigned reviewers found the proposed audience-focused delivery **higher-value than the existing mixed experience**, provided their stated conditions become non-negotiable release gates. Every approval is conditional; none represents permission to ship the current security, accessibility, or generated-artifact defects.
+All seven independently assigned reviewers found the proposed audience-focused delivery **higher-value than the existing mixed experience**, provided their stated conditions become non-negotiable release gates. Every approval is conditional; none represents permission to ship unresolved security or accessibility defects or unrelated in-progress lint failures.
 
 | Reviewer | Verdict | Principal condition for creating higher value |
 | --- | --- | --- |
@@ -651,11 +696,11 @@ The design-engineering review identified an otherwise easy-to-miss failure: the 
 
 ### Performance engineer: conditional pass, incorporated
 
-The performance reviewer rejected six independently initialized runtimes, account-wide projections on every surface, reuse of privileged cached snapshots, unpartitioned Canvas queues/presence, and product dashboards that scan all global events. The report incorporates one shared shell/runtime, independently lazy application modules, surface-specific projections, cache/queue/presence partitioning, incremental privacy-filtered reporting, D1 query ceilings, quantified route-bundle budgets, shared-CSS reduction, and a prominent warning that existing production bundle/test artifacts are stale.
+The performance reviewer rejected six independently initialized runtimes, account-wide projections on every surface, reuse of privileged cached snapshots, unpartitioned Canvas queues/presence, and product dashboards that scan all global events. The report incorporates one shared shell/runtime, independently lazy application modules, surface-specific projections, cache/queue/presence partitioning, incremental privacy-filtered reporting, D1 query ceilings, quantified route-bundle budgets, shared-CSS reduction, and the requirement to remeasure any historical build baseline against the intended release artifact.
 
 ### Accessibility engineer: conditional pass, incorporated
 
-The accessibility reviewer accepted role-oriented delivery as an accessibility improvement only if the migration also fixes identified user-visible defects: route-specific titles and transition announcements, single main/heading ownership, guest skip links, creator-native privacy, keyboard-complete Canvas list equivalents for zero to three items, nested Canvas controls/application roles, incomplete analytics tabs/tables, and misleading unstructured PDF accessibility claims. The report now requires rendered-browser/assistive-technology verification, locale/RTL/zoom/preference coverage, truthful accessible-HTML review, genuinely tagged multilingual PDFs before any PDF/UA claim, and resolution of the existing generated-manifest failure.
+The accessibility reviewer accepted role-oriented delivery as an accessibility improvement only if the migration also fixes identified user-visible defects: route-specific titles and transition announcements, single main/heading ownership, guest skip links, creator-native privacy, keyboard-complete Canvas list equivalents for zero to three items, nested Canvas controls/application roles, incomplete analytics tabs/tables, and misleading unstructured PDF accessibility claims. The report now requires rendered-browser/assistive-technology verification, locale/RTL/zoom/preference coverage, truthful accessible-HTML review, genuinely tagged multilingual PDFs before any PDF/UA claim, and a continuously synchronized generated manifest; the previously observed manifest mismatch has since been resolved.
 
 ## Forma-authored review materials
 
@@ -665,9 +710,18 @@ Forma does not currently provide a generic generated `report` or `plan` artifact
 2. Durable context blocks describing the existing baseline, personas, capability inventory, proposed portfolio, authorization boundaries, phased execution, technical dependencies, success measures, and reviewer conditions.
 3. Optionally, the supported **Slides** output using the **Field notes** style, which is specifically appropriate for research, evidence, and plans.
 
-Authored projects, documents, and context blocks can be created without provider execution. Slide generation uses a configured external provider and may incur cost; it must remain pending unless a human explicitly authorizes that paid operation. If approved, the existing presentation can be reviewed as semantic HTML and exported as a **visual PDF**; the current PDF is neither a separate native report artifact nor a verified accessible/PDF-UA deliverable.
+Authored projects, documents, and context blocks can be created without provider execution. Subsequent supported outputs use configured external providers and may incur cost; each generation remains a separate human-approved action. Existing presentations can be reviewed as semantic HTML and exported as a **visual PDF**; the current PDF is neither a separate native report artifact nor a verified accessible/PDF-UA deliverable. Managed video is a playable ordered scene reel, not a combined MP4.
 
-**Actual authoring status:** The newly assigned end-user reviewer connected to the running Forma application, opened `/projects`, and reached its real **Name your project** dialog. The next browser inspection was explicitly denied by browser URL-security policy before any project, document, or context block could be saved. The restriction was not bypassed. A complete four-document, 29-block, copy-ready authoring package is provided in `docs/forma-persona-portfolio-review-contexts.md`; it includes a truthful Slides-generation brief without authorizing paid provider execution.
+**Actual authoring status: completed.** Retesting the current application on its advertised `http://localhost:5173` endpoint confirmed that the earlier browser-security limitation no longer prevents ordinary project/document authoring. The **Forma Audience-Focused Application Portfolio — Review Plan** project now exists inside Forma, with four documents and **29 persisted authored context blocks**:
+
+| Forma document | Authored context blocks | Verified completed outputs | Recorded document usage | Canonical document route |
+| --- | ---: | --- | ---: | --- |
+| 01 — Capability Catalog and Audience Portfolio | 7 | Short story; Slides. | $0.064540 | `/document/c9b29f08-5f37-4b2d-a4b8-4be07f320366/01-capability-catalog-and-audience-portfolio` |
+| 02 — Secure Technical Architecture and Accessibility | 7 | Managed Video; managed Slides. | $9.169997 | `/document/6b864592-9704-4a1e-b2e1-14d911066abb/02-secure-technical-architecture-and-accessibility` |
+| 03 — Delivery Roadmap, Scorecard and Review Gates | 8 | Scene; Slides. | $0.063078 | `/document/4a6ed5cf-f96b-4de3-ad3e-45078677454f/03-delivery-roadmap-scorecard-and-review-gates` |
+| 04 — Review-Ready Presentation Brief | 7 | Slides; managed Video. | $9.189678 | `/document/b5038591-d80b-46c9-823c-37aa2536304e/04-review-ready-presentation-brief` |
+
+A read-only current-runtime event projection independently verifies **four documents, 29 authored context blocks, eight completed outputs, three managed artifacts, and $18.487293 of recorded document-operation usage**. The initial project/blocks were entered through ordinary visible controls; the outputs were subsequently created only after the user requested and approved their individual generation operations. Current reassessment did not submit another provider call, mutate an application record, bypass browser security, or invent a generic report artifact. The exact authored context is also preserved in `docs/forma-persona-portfolio-review-contexts.md`.
 
 ## Source and verification index
 

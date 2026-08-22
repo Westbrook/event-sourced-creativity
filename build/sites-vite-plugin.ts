@@ -24,6 +24,7 @@ function routeSurfaceModule(path: string): string | null {
   if (path === "/studio/editor") return "src/components/forma-creative-editor.ts";
   if (path === "/studio/chat") return "src/components/forma-chat-studio.ts";
   if (["/library", "/sessions", "/scout", "/memory"].includes(path)) return `src/components/forma-${path.slice(1)}.ts`;
+  if (path === "/settings") return "src/components/forma-account-settings.ts";
   if (path === "/share") return "src/components/forma-shared-view.ts";
   if (path === "/canvas" || path === "/canvas/proposals") return "src/canvas/canvas-application.ts";
   if (path === "/operations" || path === "/system") return "src/components/forma-system.ts";
