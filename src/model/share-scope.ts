@@ -46,14 +46,22 @@ export function shareAllowsMedia(scope: Pick<DocumentShareScope, "ownerId" | "me
 }
 
 /** Remove private references and rewrite only explicitly authorized object URLs. */
-export function sanitizeSharedValue(value: unknown, scope: Pick<DocumentShareScope, "ownerId" | "mediaKeys">, token: string): unknown {
+export function sanitizeSharedValue(value: unknown, scope: Pick<DocumentShareScope, "ownerId" | "mediaKeys">, token: string, mediaReference = false): unknown {
   if (typeof value === "string" && value.startsWith("/api/media/")) {
     const key = ownedMediaKey(value, scope.ownerId);
     return key && shareAllowsMedia(scope, key) ? `/api/shared/${encodeURIComponent(token)}/media/${encodeURIComponent(key)}` : null;
   }
-  if (Array.isArray(value)) return value.map((item) => sanitizeSharedValue(item, scope, token));
+  if (typeof value === "string" && mediaReference) return null;
+  if (Array.isArray(value)) return value.map((item) => sanitizeSharedValue(item, scope, token, mediaReference));
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).filter(([key]) => !/(?:^|_)(?:content|prompt|intent|input)_?ref$/i.test(key)).map(([key, item]) => [key, sanitizeSharedValue(item, scope, token)]));
+    return Object.fromEntries(Object.entries(value).filter(([key]) => {
+      const normalized=key.replace(/[A-Z]/g,(character)=>`_${character.toLowerCase()}`);
+      return !/(?:^|_)(?:content|prompt|intent|input)_?ref$/i.test(normalized)
+        && !/(?:^|_)prompt(?:_|$)/.test(normalized)
+        && !/(?:^|_)(?:model|adapter)(?:_id|_version)?$/.test(normalized)
+        && !/(?:^|_)provider(?:$|_(?:id|name|model|request|receipt|job|status|response|cancel|url))/.test(normalized)
+        && !/^(?:request_id|client_id|correlation_id|causation_id|scene_id|source_artifact_item_id|context_group_ids)$/.test(normalized);
+    }).map(([key, item]) => [key, sanitizeSharedValue(item, scope, token, /^(?:media|image|thumbnail|preview|poster)_?url$/i.test(key))]));
   }
   return value;
 }

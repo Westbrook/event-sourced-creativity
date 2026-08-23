@@ -305,7 +305,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
 
   #selectOutput(id:string){
     this.store.patchUi({selectedOutputId:id});
-    if(this.store.ui.instrumentation)void this.store.hot({type:"ObjectViewed",payload:{object_id:id,source_surface:"creative-editor-preview"}});
+    if(this.store.ui.instrumentation&&!this.store.session.get()?.projectContext)void this.store.hot({type:"ObjectViewed",payload:{object_id:id,source_surface:"creative-editor-preview"}});
   }
 
   #sectionFor(item: CreativeBlock) {

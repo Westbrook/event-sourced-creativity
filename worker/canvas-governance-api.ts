@@ -1,5 +1,5 @@
 import { appendAuditEvent, ensureSchema, type WorkerEnv } from "./runtime";
-import { requireUser } from "./pilot-policy";
+import { requireCapability } from "./pilot-policy";
 import { CANVAS_GOVERNANCE_VERSION, isCanvasGovernanceRequirement, readCanvasGovernance } from "./canvas-governance-policy";
 import { FAL_IDEOGRAM_ADAPTER_ID, FAL_IDEOGRAM_ADAPTER_VERSION, falIdeogramAdapterReadiness } from "./fal-image-adapter";
 import { IMAGE_ADAPTER_V9_DIAGNOSTIC_EVIDENCE, IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE, IMAGE_ADAPTER_EVALUATION_PLAN, RETAINED_IMAGE_ADAPTER_EVALUATIONS, passingImageAdapterEvaluation } from "./image-adapter-evaluation-evidence";
@@ -8,7 +8,7 @@ const CONFIRMATION = "I understand, record this Canvas approval";
 const clean=(value:unknown,max=500)=>String(value??"").trim().slice(0,max);
 
 export async function handleCanvasGovernance(request:Request,env:WorkerEnv){
-  await ensureSchema(env);const auth=await requireUser(request,env,"admin",{account:"principal"});if(auth.response||!auth.user)return auth.response!;const actor=auth.user;
+  await ensureSchema(env);const auth=await requireCapability(request,env,request.method==="POST"?"platform.release.approve":["platform.release.approve","platform.policy.manage"]);if(auth.response||!auth.user)return auth.response!;const actor=auth.user;
   if(request.method==="GET"){
     const readiness=falIdeogramAdapterReadiness(env);
     const passing=passingImageAdapterEvaluation(FAL_IDEOGRAM_ADAPTER_ID,FAL_IDEOGRAM_ADAPTER_VERSION,IMAGE_ADAPTER_EVALUATION_PLAN.corpusVersion);

@@ -136,7 +136,7 @@ test("production chunks contain only the synchronous SVG artwork needed by each 
   };
 
   check(
-    await closure("index.html", "src/apps/operations/entry.ts", "src/components/forma-analytics.ts"),
+    await closure("index.html", "src/apps/product/entry.ts", "src/apps/product/insights.ts"),
     [], featurePacks,
   );
   check(
@@ -148,7 +148,7 @@ test("production chunks contain only the synchronous SVG artwork needed by each 
     featurePacks, [],
   );
   check(
-    await closure("index.html", "src/apps/laboratory/entry.ts", "src/components/forma-design-system-lab.ts"),
+    await closure("index.html", "src/apps/knowledge/entry.ts", "src/components/forma-design-system-lab.ts"),
     featurePacks, [],
   );
   for (const entry of Object.values(manifest)) {
@@ -241,4 +241,7 @@ test("the complete living icon gallery remains translated, accessible, and RTL-a
   assert.match(viewer, /rtl=this\.matches\(":dir\(rtl\)"\)/);
   assert.match(viewer, /aria-keyshortcuts=\$\{rtl\?"ArrowRight":"ArrowLeft"\}/);
   assert.match(viewer, /icon\(rtl\?"next":"previous"\)/);
+  assert.match(viewer,/aria-label=\$\{this\.i18n\.t\("canvas\.backToProjectBoards","Back to project boards"\)\}><span class="ui-directional-icon">\$\{icon\("back"\)\}<\/span><\/a>/);
+  const canvasStyles=await read("src/canvas/canvas.css");
+  assert.doesNotMatch(canvasStyles,/\.canvas-board-identity>a\s*\{[^}]*transform:\s*rotate\(180deg\)/);
 });

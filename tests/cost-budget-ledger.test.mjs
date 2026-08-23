@@ -123,15 +123,17 @@ test("monthly user and organization hard caps remain independently enforceable",
   assert.deepEqual(await reserveCostBudget(env, "owner", 1_000_000, authorization("over-organization", "over-organization", { allowUserOverage: true })), { ok: false, scope: "workspace" });
 });
 
-test("correlation cancellation releases only the matching account and operation", async () => {
+test("correlation cancellation releases only the matching account, stream, and operation", async () => {
   const { env } = budgetDatabase();
   await reserveCostBudget(env, "owner", 1_000_000, authorization("matching", "cancel-me"));
   await reserveCostBudget(env, "owner", 1_000_000, authorization("remaining", "keep-me"));
+  await reserveCostBudget(env, "owner", 1_000_000, authorization("other-stream", "cancel-me", { streamId: "creative:fictional" }));
   await reserveCostBudget(env, "other-owner", 1_000_000, authorization("other-account", "cancel-me"));
 
-  assert.equal(await releaseCostReservationsForCorrelation(env, "owner", "cancel-me"), 1);
+  assert.equal(await releaseCostReservationsForCorrelation(env, "owner", "cancel-me", "creative:owner"), 1);
   assert.equal((await costBudgetReservation(env, "owner", "matching")).status, "released");
   assert.equal((await costBudgetReservation(env, "owner", "remaining")).status, "active");
+  assert.equal((await costBudgetReservation(env, "owner", "other-stream")).status, "active");
   assert.equal((await costBudgetReservation(env, "other-owner", "other-account")).status, "active");
 });
 
@@ -160,10 +162,25 @@ test("proven pre-migration dollar reservations can be adopted and released witho
   const adopted = await adoptLegacyCostReservation(env, "owner", { reservationId: "legacy-dollar-reservation", amountMicrousd: 750_000, period, streamId: "creative:owner", correlationId: "legacy-correlation", operation: "document-render:video" });
   assert.equal(adopted, true);
   assert.equal((await readCostBudgets(env, "owner")).user.reservedMicrousd, 750_000, "adoption must not increment a preexisting reserved projection");
-  assert.equal(await releaseCostReservationsForCorrelation(env, "owner", "legacy-correlation"), 1);
+  assert.equal(await releaseCostReservationsForCorrelation(env, "owner", "legacy-correlation", "creative:owner"), 1);
   const released = await readCostBudgets(env, "owner");
   assert.equal(released.user.reservedMicrousd, 0);
   assert.equal(released.workspace.reservedMicrousd, 0);
+});
+
+test("legacy reservation adoption stays scoped when a shared billing owner reuses a correlation",async()=>{
+  const {sqlite,env}=budgetDatabase();
+  const principal=await reserveCostBudget(env,"owner",1_000_000,authorization("principal-active","shared-correlation"));
+  assert.equal(principal.ok,true);
+  const period=principal.period;
+  sqlite.prepare("UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+750000 WHERE period=?").run(period);
+  const adopted=await adoptLegacyCostReservation(env,"owner",{reservationId:"fictional-legacy",amountMicrousd:750_000,period,
+    streamId:"creative:fictional",correlationId:"shared-correlation",operation:"document-render:video"});
+  assert.equal(adopted,true);
+  assert.equal(await releaseCostReservationsForCorrelation(env,"owner","shared-correlation","creative:fictional"),1);
+  assert.equal((await costBudgetReservation(env,"owner","fictional-legacy")).status,"released");
+  assert.equal((await costBudgetReservation(env,"owner","principal-active")).status,"active");
+  assert.equal((await readCostBudgets(env,"owner")).user.reservedMicrousd,1_000_000);
 });
 
 test("unproven historical reservations cannot consume an unrelated account or organization reservation", async () => {

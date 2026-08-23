@@ -3,34 +3,38 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { applicationDefinition, navigationItemActive, resolveServerRoute } from "../src/platform/applications.ts";
 
-test("the image-adapter laboratory is a refreshable Laboratory route",()=>{
-  assert.deepEqual(resolveServerRoute("/laboratory/image-adapters"),{application:"laboratory",entryPath:"/laboratory/image-adapters/",canonicalFamily:"/laboratory/image-adapters"});
-  assert.equal(navigationItemActive("laboratory","image-adapters","/laboratory/image-adapters"),true);
-  assert.ok(applicationDefinition("laboratory").navigation.some((item)=>item.id==="image-adapters"));
+test("adapter qualification is a refreshable Product route with preserved legacy aliases",()=>{
+  assert.deepEqual(resolveServerRoute("/laboratory/image-adapters"),{application:"product",entryPath:"/laboratory/image-adapters/",canonicalFamily:"/laboratory/image-adapters"});
+  assert.equal(navigationItemActive("product","evaluation","/laboratory/image-adapters"),true);
+  assert.ok(applicationDefinition("product").navigation.some((item)=>item.id==="evaluation"));
+  assert.ok(applicationDefinition("product").requiredCapabilities.includes("evaluation.qualification.run"));
 });
 
-test("the image-adapter laboratory previews routing without initiating paid generation",async()=>{
-  const [component,api,evidence,governance,entry,index]=await Promise.all([
+test("Product adapter qualification previews routing without paid generation or provider secrets",async()=>{
+  const [component,legacy,api,evidence,governance,entry,index]=await Promise.all([
+    readFile(new URL("../src/apps/product/adapter-preview.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/components/forma-image-adapter-lab.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/image-adapters-api.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/image-adapter-evaluation-evidence.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/apps/operations/canvas-governance.ts",import.meta.url),"utf8"),
-    readFile(new URL("../src/apps/laboratory/entry.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/apps/product/entry.ts",import.meta.url),"utf8"),
     readFile(new URL("../worker/index.ts",import.meta.url),"utf8"),
   ]);
-  assert.match(entry,/forma-image-adapter-lab/);
+  assert.match(entry,/forma-product-adapter-preview/);
+  assert.match(component,/evaluation\.qualification\.run/);
+  assert.match(component,/\/api\/portfolio\/product\/adapter-preview/);
+  assert.match(component,/!body\.dryRun\|\|body\.providerCall\|\|body\.pixelsTransmitted/);
+  assert.match(component,/Routing or fallback reason/);
+  assert.match(component,/no provider request, no image transmission/);
+  assert.match(api,/handleQualificationPreview/);
+  assert.match(api,/providerCall:false,pixelsTransmitted:false/);
+  assert.match(api,/\["evaluation\.qualification\.run","platform\.provider\.configure"\]/);
+  assert.match(api,/requireCapability\(request,env,"platform\.provider\.configure"\)/);
+  assert.doesNotMatch(component,/state\/store|this\.store/);
   assert.match(index,/\/api\/image-adapters/);
-  assert.match(component,/No provider call, image generation, or billable operation occurred/);
-  assert.match(component,/Known capability edges/);
-  assert.match(component,/Review qualification/);
-  assert.match(component,/Retained frozen comparison/);
-  assert.match(component,/Expanded prompt contracts/);
-  assert.match(component,/Medium \/ Large/);
-  assert.match(component,/Provider request IDs/);
-  assert.match(component,/Bounded candidate search/);
-  assert.match(component,/Cycle limit exhausted/);
-  assert.match(component,/Compare retained finalists/);
-  assert.match(component,/Inspect provider safety failures/);
+  assert.match(legacy,/Known capability edges/);
+  assert.match(legacy,/Retained frozen comparison/);
+  assert.match(legacy,/Expanded prompt contracts/);
   assert.match(api,/selectImageAdapter/);
   assert.match(api,/IMAGE_ADAPTER_CYCLE_SEARCH_EVIDENCE/);
   assert.match(api,/IMAGE_ADAPTER_CYCLE_2_SEARCH_EVIDENCE/);
@@ -53,7 +57,7 @@ test("the image-adapter laboratory previews routing without initiating paid gene
   assert.match(governance,/server-retained passing report/);
   assert.match(api,/Multi-reference fallback/);
   assert.match(api,/FAL_IDEOGRAM_ADAPTER_ID/);
-  assert.match(component,/Qualified production adapter/);
+  assert.match(legacy,/Qualified production adapter/);
   assert.match(api,/IMAGE_ADAPTER_EVALUATION_PLAN/);
   assert.match(api,/published output-pixel rates plus the selected provider caption expansion/);
   assert.doesNotMatch(api,/generateCreativeImage\(/);

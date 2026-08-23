@@ -143,6 +143,142 @@ The global header is a quiet utility strip, not a page hero. It should remain vi
 
 The project rail is a navigational tool. Expanded, it provides project, document, collection, and library paths. Collapsed, it becomes a compact dock and returns meaningful width to the workspace.
 
+Account menus and other floating utilities must remain inside the current
+dynamic viewport. Subtract their actual trigger offset and the bottom safe-area
+inset, scroll overflowing content inside the floating surface, contain scroll
+chaining, and preserve space around keyboard-focused controls. Every privacy,
+account, and administrative action must remain reachable at short window
+heights, high zoom levels, and on mobile devices. Account controls and the
+workspace switcher use the same browser-managed auto-popover and invoker
+pattern: outside interaction dismisses them, their triggers accurately expose
+expanded state, and Escape returns focus to the invoking control. Compact
+floating panels should not reserve an empty one-sided scrollbar gutter; use
+`scrollbar-gutter: auto` so their logical padding stays visually balanced.
+
+### Audience-oriented information architecture
+
+Forma is one coherent platform with six independently authorized application
+surfaces. A person sees only the workspace and task destinations their
+server-issued capabilities actually permit.
+
+| Surface | Primary audience | Canonical destination | Primary decisions |
+| --- | --- | --- | --- |
+| Creator Workspace | Creators and personal account owners | `/projects`, `/library` | Projects, Create, Library, Re-entry, Settings |
+| Canvas | Creators with spatial-workspace access | `/canvas`, `/canvas/projects`, `/canvas/library` | Project boards, the same projects, and the same project Library |
+| Platform Operations | Authorized platform operators | `/operations` | Providers, releases, platform access, service policy |
+| Product & Quality | Product owners, delivery leads, authorized evaluators | `/product` | Aggregate insights, delivery evidence, separately granted evaluation |
+| Design & Knowledge | Designers and authorized internal readers | `/knowledge` | Components, audience patterns, accessibility and design guidance |
+| Engineering Diagnostics | Authorized reliability and engineering specialists | `/engineering` | Redacted event, synchronization, and job diagnostics |
+
+- `<forma-ui-workspace-switcher>` receives only explicitly authorized
+  destinations. Hide it for zero or one workspace; show direct links for two;
+  present three or more in a compact current-workspace button and native
+  automatically dismissed popover. The button announces its action and current
+  workspace, keeps `aria-expanded` accurate, initially focuses the current link,
+  honors Escape/outside dismissal, and preserves modifier-click/new-tab behavior.
+  Workspace destinations remain real links, not form options or modal commands.
+  Never advertise missing privileges.
+- `<forma-ui-audience-navigation>` presents no more than five authorized tasks.
+  Use an audience-neutral, preference-reactive task rail containing a named
+  native navigation landmark, a real list of ordinary anchors, and exactly one
+  truthful `aria-current="page"` state; route changes are not tabs. The current
+  workspace name belongs in the global header, never as a repeated heading in
+  the task rail. Start links at the same single logical page gutter as the
+  content, indicate the current task with restrained type and an accent
+  underline rather than a filled administrative pill, and never silently drop
+  the current authorized destination when incoming data exceeds the five-task
+  limit. Preserve 44-by-44-pixel hit areas, unclipped keyboard focus, horizontal
+  local scrolling, right-to-left reading order, and forced-colors contrast.
+  Render nothing when no authorized tasks exist; hide the rail in document and
+  Canvas focus modes.
+- Creator Workspace and Canvas are two views of the same project. Projects and
+  Library are shared capabilities with application-owned routes: `/projects`
+  pairs with `/canvas/projects`, and `/library` (including its previews and
+  block editor) pairs with `/canvas/library`. Reuse identical authoritative
+  records and page components; never copy data or switch applications merely
+  because a person opens Projects, Library, a collection, a preview, or the
+  Forma brand. Document authoring, reusable context, results, and consent stay
+  continuous; Canvas adds spatial placement, not a second project or account.
+  When an action genuinely requires Creator's document editor, its visible
+  label and accessible name explicitly say **Creator Workspace** before the
+  handoff.
+- Cross-audience handoffs refresh receiving server-validated capabilities.
+  Creator-to-Canvas handoffs preserve the same authorized project; guest shares
+  omit account-level navigation.
+- Specialist sessions disclose only their current audience's exact capabilities;
+  separately returned authorized application identifiers and safe landing URLs
+  support workspace switching without revealing unrelated grants, budgets,
+  organization membership, provider topology, or creator work.
+- Platform **Access** reports only currently effective specialist grants.
+  Expired and revoked privileges disappear from both access-management lists
+  and authorized destinations; valid future-expiring and unbounded active grants remain
+  visible until their actual server-enforced expiration or revocation.
+- Product **Evaluation** distinguishes synthetic reading from synthetic
+  execution, retained qualification reading from no-cost qualification
+  simulation, and principal-admin-only paid replay. Each tool appears only for
+  its exact grant; passing historical evidence never implies release approval.
+- Product **Delivery** is a durable decision surface with named ownership,
+  audience, evidence, status, immutable dependencies, conflict-safe edits, and
+  manager-only mutations. Release counts include missing, revoked, and stale
+  approvals rather than quietly displaying zero on a new account.
+- Creator-visible paid-generation recovery retains one provider operation and
+  its paired token/USD reservations. Resume only when owner, creative stream,
+  operation, accounting period, reservation pair, and provider attempt all
+  match; never imply a failed or competing retry silently launched new work.
+  Record real provider charges even when a previously recorded planning pass
+  means the recovered attempt consumed no additional tokens.
+- Design **Patterns** exposes focal-point comparison only to
+  `design.catalog.read`; docs-only readers never see inaccessible destinations.
+  Components, Patterns, and Guidance have distinct titles and task boundaries.
+- Public review is a presentation-only surface: approved images, storyboard
+  frames, and prompt-fan alternatives open in an exact-token native dialog with
+  localized unique labels, RTL-aware keyboard comparison, and focus return.
+  Private generation prompts, provider/model receipts, external trackers, and
+  account controls never reach guest payloads.
+- Creator provenance defaults to readable saved-change history. Raw event
+  payloads, client/correlation identifiers, and the Engineering handoff appear
+  only behind explicit disclosure for `engineering.events.read` specialists.
+- Personal privacy, sharing, and spending remain creator-owned at `/settings`.
+  Authorized customer organization administration lives under
+  `/settings/workspaces`, inside Creator Workspace: invitations, member/project
+  roles, exact shared-project access, budget policy, and tenant-safe activity
+  are filtered by the current organization permission. It is not another app.
+- Shape shared-project navigation around tasks the active project role can
+  actually complete. Personal Sessions, Scout, Taste Memory, and unsupported
+  Canvas proposals never appear as shared tasks or commands. A bookmarked
+  personal-only destination explains the boundary and offers an explicit return
+  to the personal workspace rather than rendering an empty or inaccessible
+  experience. Empty viewer states explain their read-only role without inviting
+  impossible creation or conversation.
+- Shared-project viewers receive a genuinely read-only document experience;
+  owner/editor authoring never exposes private owner prompts or unrelated media.
+  Separately granted Canvas access preserves viewer versus editor behavior;
+  editors can create actor-private outputs and conversations, with clear
+  disclosure of personal and organization spending. Organization spending
+  guidance links qualified organization owners/administrators directly to that
+  organization's Usage settings; contributors without access receive a clear
+  instruction to contact their project administrator instead of a broken link.
+  The same truthful labels, announcements, viewer controls, failure states, and
+  help text are available in English, French, and Arabic.
+- Shared-document review links belong solely to the active exact project owner.
+  Present the same owner-only Review action consistently in the top bar,
+  account popover, and command dialog; never show it to project editors or
+  viewers. Keep newly created raw review URLs transient, clear them when the
+  active identity, organization, project, document, or permission epoch
+  changes, and distinguish immediate revocation from link creation. Guest
+  review remains a separate exact-resource presentation boundary.
+- Every shared-project download—image, generated media, Markdown, structurally
+  tagged multilingual presentation PDF, document JSON, or archive—must first receive an exact
+  actor/project/resource export acknowledgment. A rejected or stale
+  authorization cancels the download before any browser file action. Preserve
+  the existing frictionless personal-project behavior outside shared contexts.
+- Labels, announcements, and focus work in English, French, and Arabic.
+  Preserve RTL layouts, 44px targets, visible focus, skip links, reduced motion,
+  forced colors, and a predictable primary heading.
+- Design-system examples use synthetic data only. They never hydrate a creative
+  store, open real accounts, fetch private media, call providers, or mutate
+  durable records. See `docs/components.md` for integration contracts.
+
 ### Page header
 
 Every page begins with the same hierarchy:
@@ -210,7 +346,7 @@ feedback, and operational controls.
 - Preserve right-to-left navigation direction and reduced-motion preferences.
 - Actual keyboard symbols, initials, dimensions, signed quantities, and
   mathematical multipliers are semantic text, not interface icon substitutes.
-- The living vocabulary is documented at `/laboratory/design-system`; its
+- The living vocabulary is documented at `/knowledge/design-system`; its
   complete usage inventory and delivery contract are in `docs/icon-system.md`.
 
 ### Forms
@@ -270,18 +406,22 @@ Use a card only when the item is independently actionable or movable. Otherwise 
 ## Atomic component architecture
 
 The application demonstrates its real production components at
-`/laboratory/design-system`. The inventory is cumulative:
+`/knowledge/design-system`. Audience patterns and approved interaction rules
+live at `/knowledge/patterns` and `/knowledge/guidance`. The inventory is
+cumulative:
 
 1. **Foundations:** preference-reactive semantic color tokens, the spacing scale,
    browser-respecting typography, balanced shape, focus visibility, and motion policy.
 2. **Atoms:** consistently sized buttons, status badges, icons, labels, and
    explicit loading, disabled, error, and success states.
 3. **Molecules:** accessible fields with labels/help/errors, actionable metrics,
-   output summaries, navigation choices, and progressive disclosures.
+   output summaries, audience-scoped navigation, and progressive disclosures.
 4. **Organisms:** complete output composition, user-authorized reference policy,
-   meaningful empty states, contextual next actions, galleries, and shared dialogs.
-5. **Templates:** Creative, Canvas, Operations, and Laboratory shells that share
-   alignment and primitives while expressing their distinct tasks.
+   meaningful empty states, entitlement-aware workspace switching, contextual
+   next actions, galleries, and shared dialogs.
+5. **Templates:** Creator Workspace, Canvas, Platform Operations, Product &
+   Quality, Design & Knowledge, and Engineering Diagnostics. Their shells share
+   alignment and primitives while expressing distinct audience-owned tasks.
 
 Atoms and molecules are store-independent and emit semantic DOM events. A
 component demonstration must render the same implementation shipped in the
@@ -300,7 +440,7 @@ requests, changing routes, or competing with the current document.
 Composition-heavy cards, page headers, list items, notices, and disclosures
 accept genuine authored default and named slots for semantic headings, media,
 context, actions, and noninteractive disclosure summaries. Attribute shorthand
-remains available, and the Laboratory presents both forms side by side. These
+remains available, and Design & Knowledge presents both forms side by side. These
 five components share one token-driven adopted stylesheet; native form controls,
 transparent layout wrappers, overlays, and production-critical atoms remain in
 light DOM. Authored controls preserve their own native interaction semantics,

@@ -112,6 +112,150 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/apps/engineering/diagnostics.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaEngineeringDiagnostics",
+          "tagName": "forma-engineering-diagnostics",
+          "customElement": true,
+          "summary": "Engineering diagnostics application interface.",
+          "description": "Store-independent engineering diagnostics interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaRoleDashboard",
+            "module": "src/components/forma-role-dashboard.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "view",
+              "type": {
+                "text": "\"health\" | \"events\" | \"sync\" | \"jobs\""
+              },
+              "default": "\"health\"",
+              "attribute": "view"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "view",
+              "fieldName": "view",
+              "type": {
+                "text": "\"health\" | \"events\" | \"sync\" | \"jobs\""
+              },
+              "default": "\"health\""
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-engineering-diagnostics",
+          "declaration": {
+            "name": "FormaEngineeringDiagnostics",
+            "module": "src/apps/engineering/diagnostics.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaEngineeringDiagnostics",
+          "declaration": {
+            "name": "FormaEngineeringDiagnostics",
+            "module": "src/apps/engineering/diagnostics.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/apps/engineering/entry.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaEngineeringApplication",
+          "tagName": "forma-engineering-application",
+          "customElement": true,
+          "summary": "Engineering application application interface.",
+          "description": "Store-independent engineering application interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-engineering-application",
+          "declaration": {
+            "name": "FormaEngineeringApplication",
+            "module": "src/apps/engineering/entry.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaEngineeringApplication",
+          "declaration": {
+            "name": "FormaEngineeringApplication",
+            "module": "src/apps/engineering/entry.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/apps/knowledge/entry.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaKnowledgeApplication",
+          "tagName": "forma-knowledge-application",
+          "customElement": true,
+          "summary": "Knowledge application application interface.",
+          "description": "Store-independent knowledge application interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-knowledge-application",
+          "declaration": {
+            "name": "FormaKnowledgeApplication",
+            "module": "src/apps/knowledge/entry.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaKnowledgeApplication",
+          "declaration": {
+            "name": "FormaKnowledgeApplication",
+            "module": "src/apps/knowledge/entry.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/apps/laboratory/entry.ts",
       "declarations": [
         {
@@ -153,6 +297,47 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/apps/operations/access-management.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaAccessManagement",
+          "tagName": "forma-access-management",
+          "customElement": true,
+          "summary": "Access management application interface.",
+          "description": "Operators grant exact specialist permissions without promoting someone to global administrator.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-access-management",
+          "declaration": {
+            "name": "FormaAccessManagement",
+            "module": "src/apps/operations/access-management.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaAccessManagement",
+          "declaration": {
+            "name": "FormaAccessManagement",
+            "module": "src/apps/operations/access-management.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/apps/operations/canvas-governance.ts",
       "declarations": [
         {
@@ -161,15 +346,15 @@
           "tagName": "forma-canvas-governance",
           "customElement": true,
           "summary": "Canvas governance application interface.",
-          "description": "Application-connected canvas governance interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "description": "Store-independent canvas governance interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
           "superclass": {
-            "name": "FormaElement",
-            "module": "src/components/forma-element.ts"
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
           },
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
-            "stateful": true
+            "stateful": false
           }
         }
       ],
@@ -243,15 +428,15 @@
           "tagName": "forma-operations-application",
           "customElement": true,
           "summary": "Operations application application interface.",
-          "description": "Application-connected operations application interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "description": "Store-independent operations application interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
           "superclass": {
-            "name": "FormaElement",
-            "module": "src/components/forma-element.ts"
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
           },
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
-            "stateful": true
+            "stateful": false
           }
         }
       ],
@@ -270,6 +455,416 @@
           "declaration": {
             "name": "FormaOperationsApplication",
             "module": "src/apps/operations/entry.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/apps/operations/overview.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaOperationsOverview",
+          "tagName": "forma-operations-overview",
+          "customElement": true,
+          "summary": "Operations overview application interface.",
+          "description": "Policy and incident operators see aggregate service health without creator or provider data.",
+          "superclass": {
+            "name": "FormaRoleDashboard",
+            "module": "src/components/forma-role-dashboard.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-operations-overview",
+          "declaration": {
+            "name": "FormaOperationsOverview",
+            "module": "src/apps/operations/overview.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaOperationsOverview",
+          "declaration": {
+            "name": "FormaOperationsOverview",
+            "module": "src/apps/operations/overview.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/apps/operations/providers.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaOperationsProviders",
+          "tagName": "forma-operations-providers",
+          "customElement": true,
+          "summary": "Operations providers application interface.",
+          "description": "Provider operators inspect bounded configuration readiness without budgets, secrets, or creator work.",
+          "superclass": {
+            "name": "FormaRoleDashboard",
+            "module": "src/components/forma-role-dashboard.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-operations-providers",
+          "declaration": {
+            "name": "FormaOperationsProviders",
+            "module": "src/apps/operations/providers.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaOperationsProviders",
+          "declaration": {
+            "name": "FormaOperationsProviders",
+            "module": "src/apps/operations/providers.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/apps/product/actual-replay.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaActualReplay",
+          "tagName": "forma-actual-replay",
+          "customElement": true,
+          "summary": "Actual replay application interface.",
+          "description": "Owner-isolated administrator tooling for previously approved fixtures and explicitly approved paid rehearsals.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-actual-replay",
+          "declaration": {
+            "name": "FormaActualReplay",
+            "module": "src/apps/product/actual-replay.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaActualReplay",
+          "declaration": {
+            "name": "FormaActualReplay",
+            "module": "src/apps/product/actual-replay.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/apps/product/adapter-preview.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaProductAdapterPreview",
+          "tagName": "forma-product-adapter-preview",
+          "customElement": true,
+          "summary": "Product adapter preview application interface.",
+          "description": "Frozen qualification evidence plus explicit no-cost, provider-free adapter routing simulation.",
+          "superclass": {
+            "name": "FormaProductEvaluation",
+            "module": "src/apps/product/evaluation.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-product-adapter-preview",
+          "declaration": {
+            "name": "FormaProductAdapterPreview",
+            "module": "src/apps/product/adapter-preview.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaProductAdapterPreview",
+          "declaration": {
+            "name": "FormaProductAdapterPreview",
+            "module": "src/apps/product/adapter-preview.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/apps/product/delivery.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaProductDelivery",
+          "tagName": "forma-product-delivery",
+          "customElement": true,
+          "summary": "Product delivery application interface.",
+          "description": "Store-independent product delivery interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaRoleDashboard",
+            "module": "src/components/forma-role-dashboard.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-product-delivery",
+          "declaration": {
+            "name": "FormaProductDelivery",
+            "module": "src/apps/product/delivery.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaProductDelivery",
+          "declaration": {
+            "name": "FormaProductDelivery",
+            "module": "src/apps/product/delivery.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/apps/product/entry.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaProductApplication",
+          "tagName": "forma-product-application",
+          "customElement": true,
+          "summary": "Product application application interface.",
+          "description": "Store-independent product application interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-product-application",
+          "declaration": {
+            "name": "FormaProductApplication",
+            "module": "src/apps/product/entry.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaProductApplication",
+          "declaration": {
+            "name": "FormaProductApplication",
+            "module": "src/apps/product/entry.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/apps/product/evaluation.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaProductEvaluation",
+          "tagName": "forma-product-evaluation",
+          "customElement": true,
+          "summary": "Product evaluation application interface.",
+          "description": "Store-independent product evaluation interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaRoleDashboard",
+            "module": "src/components/forma-role-dashboard.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-product-evaluation",
+          "declaration": {
+            "name": "FormaProductEvaluation",
+            "module": "src/apps/product/evaluation.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaProductEvaluation",
+          "declaration": {
+            "name": "FormaProductEvaluation",
+            "module": "src/apps/product/evaluation.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/apps/product/insights.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaProductInsights",
+          "tagName": "forma-product-insights",
+          "customElement": true,
+          "summary": "Product insights application interface.",
+          "description": "Store-independent product insights interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaRoleDashboard",
+            "module": "src/components/forma-role-dashboard.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-product-insights",
+          "declaration": {
+            "name": "FormaProductInsights",
+            "module": "src/apps/product/insights.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaProductInsights",
+          "declaration": {
+            "name": "FormaProductInsights",
+            "module": "src/apps/product/insights.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/apps/product/synthetic-replay.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaSyntheticReplay",
+          "tagName": "forma-synthetic-replay",
+          "customElement": true,
+          "summary": "Synthetic replay application interface.",
+          "description": "Pure in-memory rehearsal: never reads account history, starts a provider, or writes records.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-synthetic-replay",
+          "declaration": {
+            "name": "FormaSyntheticReplay",
+            "module": "src/apps/product/synthetic-replay.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaSyntheticReplay",
+          "declaration": {
+            "name": "FormaSyntheticReplay",
+            "module": "src/apps/product/synthetic-replay.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/apps/public-share/entry.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaPublicShare",
+          "tagName": "forma-public-share",
+          "customElement": true,
+          "summary": "Public share application interface.",
+          "description": "Exact-token guest review never imports account state, authenticated chrome, or attention telemetry.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-public-share",
+          "declaration": {
+            "name": "FormaPublicShare",
+            "module": "src/apps/public-share/entry.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaPublicShare",
+          "declaration": {
+            "name": "FormaPublicShare",
+            "module": "src/apps/public-share/entry.ts"
           }
         }
       ]
@@ -332,7 +927,7 @@
           },
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-area-navigation"
+              "url": "/knowledge/design-system#forma-area-navigation"
             }
           ],
           "x-forma": {
@@ -414,7 +1009,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-artifact-summary"
+              "url": "/knowledge/design-system#forma-artifact-summary"
             }
           ],
           "x-forma": {
@@ -538,7 +1133,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-collection-tree"
+              "url": "/knowledge/design-system#forma-collection-tree"
             }
           ],
           "x-forma": {
@@ -723,7 +1318,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-badge"
+              "url": "/knowledge/design-system#forma-ui-badge"
             }
           ],
           "x-forma": {
@@ -1044,7 +1639,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-button"
+              "url": "/knowledge/design-system#forma-ui-button"
             }
           ],
           "x-forma": {
@@ -1200,7 +1795,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-empty-state"
+              "url": "/knowledge/design-system#forma-ui-empty-state"
             }
           ],
           "x-forma": {
@@ -1627,7 +2222,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-field"
+              "url": "/knowledge/design-system#forma-ui-field"
             }
           ],
           "x-forma": {
@@ -1735,7 +2330,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-metric"
+              "url": "/knowledge/design-system#forma-ui-metric"
             }
           ],
           "x-forma": {
@@ -1939,7 +2534,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-avatar"
+              "url": "/knowledge/design-system#forma-ui-avatar"
             }
           ],
           "x-forma": {
@@ -2116,7 +2711,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-chip"
+              "url": "/knowledge/design-system#forma-ui-chip"
             }
           ],
           "x-forma": {
@@ -2199,7 +2794,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-divider"
+              "url": "/knowledge/design-system#forma-ui-divider"
             }
           ],
           "x-forma": {
@@ -2299,7 +2894,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-icon"
+              "url": "/knowledge/design-system#forma-ui-icon"
             }
           ],
           "x-forma": {
@@ -2501,7 +3096,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-icon-button"
+              "url": "/knowledge/design-system#forma-ui-icon-button"
             }
           ],
           "x-forma": {
@@ -2593,7 +3188,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-kbd"
+              "url": "/knowledge/design-system#forma-ui-kbd"
             }
           ],
           "x-forma": {
@@ -2729,7 +3324,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-progress"
+              "url": "/knowledge/design-system#forma-ui-progress"
             }
           ],
           "x-forma": {
@@ -2811,7 +3406,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-skeleton"
+              "url": "/knowledge/design-system#forma-ui-skeleton"
             }
           ],
           "x-forma": {
@@ -2885,7 +3480,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-spinner"
+              "url": "/knowledge/design-system#forma-ui-spinner"
             }
           ],
           "x-forma": {
@@ -3012,7 +3607,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-status"
+              "url": "/knowledge/design-system#forma-ui-status"
             }
           ],
           "x-forma": {
@@ -3288,7 +3883,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-theme"
+              "url": "/knowledge/design-system#forma-ui-theme"
             }
           ],
           "x-forma": {
@@ -3511,7 +4106,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system"
+              "url": "/knowledge/design-system"
             }
           ],
           "x-forma": {
@@ -3620,7 +4215,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-copy-button"
+              "url": "/knowledge/design-system#forma-ui-copy-button"
             }
           ],
           "x-forma": {
@@ -3797,7 +4392,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-dialog"
+              "url": "/knowledge/design-system#forma-ui-dialog"
             }
           ],
           "x-forma": {
@@ -3939,7 +4534,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-disclosure"
+              "url": "/knowledge/design-system#forma-ui-disclosure"
             }
           ],
           "x-forma": {
@@ -4133,7 +4728,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-notice"
+              "url": "/knowledge/design-system#forma-ui-notice"
             }
           ],
           "x-forma": {
@@ -4272,7 +4867,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-popover"
+              "url": "/knowledge/design-system#forma-ui-popover"
             }
           ],
           "x-forma": {
@@ -4578,7 +5173,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-checkbox"
+              "url": "/knowledge/design-system#forma-ui-checkbox"
             }
           ],
           "x-forma": {
@@ -4831,7 +5426,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-number-field"
+              "url": "/knowledge/design-system#forma-ui-number-field"
             }
           ],
           "x-forma": {
@@ -5031,7 +5626,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-radio-group"
+              "url": "/knowledge/design-system#forma-ui-radio-group"
             }
           ],
           "x-forma": {
@@ -5313,7 +5908,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-rich-text"
+              "url": "/knowledge/design-system#forma-ui-rich-text"
             }
           ],
           "x-forma": {
@@ -5530,7 +6125,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-search"
+              "url": "/knowledge/design-system#forma-ui-search"
             }
           ],
           "x-forma": {
@@ -5770,7 +6365,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-select"
+              "url": "/knowledge/design-system#forma-ui-select"
             }
           ],
           "x-forma": {
@@ -5971,7 +6566,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-switch"
+              "url": "/knowledge/design-system#forma-ui-switch"
             }
           ],
           "x-forma": {
@@ -6286,7 +6881,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-textarea"
+              "url": "/knowledge/design-system#forma-ui-textarea"
             }
           ],
           "x-forma": {
@@ -6621,7 +7216,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-card"
+              "url": "/knowledge/design-system#forma-ui-card"
             }
           ],
           "x-forma": {
@@ -6709,7 +7304,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-cluster"
+              "url": "/knowledge/design-system#forma-ui-cluster"
             }
           ],
           "x-forma": {
@@ -6869,7 +7464,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-list-item"
+              "url": "/knowledge/design-system#forma-ui-list-item"
             }
           ],
           "x-forma": {
@@ -7068,7 +7663,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-page-header"
+              "url": "/knowledge/design-system#forma-ui-page-header"
             }
           ],
           "x-forma": {
@@ -7155,7 +7750,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-stack"
+              "url": "/knowledge/design-system#forma-ui-stack"
             }
           ],
           "x-forma": {
@@ -7259,7 +7854,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-surface"
+              "url": "/knowledge/design-system#forma-ui-surface"
             }
           ],
           "x-forma": {
@@ -7467,7 +8062,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-locale"
+              "url": "/knowledge/design-system#forma-ui-locale"
             }
           ],
           "x-forma": {
@@ -7508,6 +8103,144 @@
       "kind": "javascript-module",
       "path": "src/components/design-system/navigation.ts",
       "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaUiAudienceNavigation",
+          "tagName": "forma-ui-audience-navigation",
+          "customElement": true,
+          "summary": "Audience-neutral task rail containing only explicitly authorized native navigation links.",
+          "description": "Audience-neutral task rail containing only explicitly authorized native navigation links.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "destinations",
+              "type": {
+                "text": "{ label: string; value: string; href: string; disabled?: boolean; description?: string }[]"
+              },
+              "default": "[]",
+              "description": "Property-only, server-authorized navigation destinations with localized labels and descriptions and invariant identifiers and URLs."
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "label",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
+            }
+          ],
+          "attributes": [
+            {
+              "name": "label",
+              "fieldName": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "name": "value",
+              "fieldName": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
+            }
+          ],
+          "events": [
+            {
+              "name": "forma-navigate",
+              "type": {
+                "text": "CustomEvent<{ value: string; href: string }>"
+              },
+              "description": "An authorized task identifier and destination were activated. Bubbles and crosses component boundaries."
+            }
+          ],
+          "cssProperties": [
+            {
+              "name": "--forma-color-accent",
+              "syntax": "<color>",
+              "description": "Current-task underline."
+            },
+            {
+              "name": "--forma-color-accent-text",
+              "syntax": "<color>",
+              "description": "Current-task foreground."
+            },
+            {
+              "name": "--forma-color-border",
+              "syntax": "<color>",
+              "description": "Quiet task-rail boundary."
+            },
+            {
+              "name": "--forma-color-surface",
+              "syntax": "<color>",
+              "description": "Preference-reactive task-rail surface."
+            },
+            {
+              "name": "--forma-color-text",
+              "syntax": "<color>",
+              "description": "Hovered task foreground."
+            },
+            {
+              "name": "--forma-color-text-muted",
+              "syntax": "<color>",
+              "description": "Default task foreground."
+            },
+            {
+              "name": "--forma-control-min-size",
+              "syntax": "<length>",
+              "description": "Minimum audience-navigation hit area."
+            }
+          ],
+          "demos": [
+            {
+              "url": "/knowledge/design-system#forma-ui-audience-navigation"
+            }
+          ],
+          "x-forma": {
+            "category": "molecule",
+            "renderRoot": "light",
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-audience-navigation",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "optionTextPaths": [
+                "destinations[].label",
+                "destinations[].description"
+              ],
+              "invariantValuePaths": [
+                "destinations[].value",
+                "destinations[].href",
+                "value"
+              ],
+              "internalMessages": [
+                "navigation.scopedNavigation"
+              ]
+            }
+          }
+        },
         {
           "kind": "class",
           "name": "FormaUiBreadcrumbs",
@@ -7569,7 +8302,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-breadcrumbs"
+              "url": "/knowledge/design-system#forma-ui-breadcrumbs"
             }
           ],
           "x-forma": {
@@ -7681,7 +8414,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-link"
+              "url": "/knowledge/design-system#forma-ui-link"
             }
           ],
           "x-forma": {
@@ -7787,7 +8520,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-pagination"
+              "url": "/knowledge/design-system#forma-ui-pagination"
             }
           ],
           "x-forma": {
@@ -7913,7 +8646,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-segmented-control"
+              "url": "/knowledge/design-system#forma-ui-segmented-control"
             }
           ],
           "x-forma": {
@@ -8025,7 +8758,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-tabs"
+              "url": "/knowledge/design-system#forma-ui-tabs"
             }
           ],
           "x-forma": {
@@ -8113,7 +8846,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-ui-toolbar"
+              "url": "/knowledge/design-system#forma-ui-toolbar"
             }
           ],
           "x-forma": {
@@ -8138,9 +8871,132 @@
               ]
             }
           }
+        },
+        {
+          "kind": "class",
+          "name": "FormaUiWorkspaceSwitcher",
+          "tagName": "forma-ui-workspace-switcher",
+          "customElement": true,
+          "summary": "Audience-safe workspace picker with native navigation links and an automatically dismissed popover.",
+          "description": "Audience-safe workspace picker with native navigation links and an automatically dismissed popover.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "destinations",
+              "type": {
+                "text": "{ label: string; value: string; href: string; disabled?: boolean; description?: string }[]"
+              },
+              "default": "[]",
+              "description": "Property-only, server-authorized navigation destinations with localized labels and descriptions and invariant identifiers and URLs."
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "label",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
+            }
+          ],
+          "attributes": [
+            {
+              "name": "label",
+              "fieldName": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "name": "value",
+              "fieldName": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
+            }
+          ],
+          "events": [
+            {
+              "name": "forma-navigate",
+              "type": {
+                "text": "CustomEvent<{ value: string; href: string }>"
+              },
+              "description": "An authorized workspace identifier and destination were activated. Bubbles and crosses component boundaries."
+            }
+          ],
+          "cssProperties": [
+            {
+              "name": "--forma-color-accent",
+              "syntax": "<color>",
+              "description": "Active workspace indicator."
+            },
+            {
+              "name": "--forma-control-min-size",
+              "syntax": "<length>",
+              "description": "Minimum workspace-switcher hit area."
+            }
+          ],
+          "demos": [
+            {
+              "url": "/knowledge/design-system#forma-ui-workspace-switcher"
+            }
+          ],
+          "x-forma": {
+            "category": "organism",
+            "renderRoot": "light",
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-workspace-switcher",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "optionTextPaths": [
+                "destinations[].label",
+                "destinations[].description"
+              ],
+              "invariantValuePaths": [
+                "destinations[].value",
+                "destinations[].href",
+                "value"
+              ],
+              "internalMessages": [
+                "navigation.availableWorkspaces",
+                "navigation.switchWorkspace",
+                "navigation.switchWorkspaceCurrent"
+              ]
+            }
+          }
         }
       ],
       "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-ui-audience-navigation",
+          "declaration": {
+            "name": "FormaUiAudienceNavigation",
+            "module": "src/components/design-system/navigation.ts"
+          }
+        },
         {
           "kind": "custom-element-definition",
           "name": "forma-ui-breadcrumbs",
@@ -8190,6 +9046,22 @@
           }
         },
         {
+          "kind": "custom-element-definition",
+          "name": "forma-ui-workspace-switcher",
+          "declaration": {
+            "name": "FormaUiWorkspaceSwitcher",
+            "module": "src/components/design-system/navigation.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaUiAudienceNavigation",
+          "declaration": {
+            "name": "FormaUiAudienceNavigation",
+            "module": "src/components/design-system/navigation.ts"
+          }
+        },
+        {
           "kind": "js",
           "name": "FormaUiBreadcrumbs",
           "declaration": {
@@ -8234,6 +9106,14 @@
           "name": "FormaUiToolbar",
           "declaration": {
             "name": "FormaUiToolbar",
+            "module": "src/components/design-system/navigation.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaUiWorkspaceSwitcher",
+          "declaration": {
+            "name": "FormaUiWorkspaceSwitcher",
             "module": "src/components/design-system/navigation.ts"
           }
         }
@@ -8417,7 +9297,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-document-artifacts"
+              "url": "/knowledge/design-system#forma-document-artifacts"
             }
           ],
           "x-forma": {
@@ -8839,13 +9719,34 @@
           "summary": "Design system lab application interface.",
           "description": "Living, route-addressable component documentation built from production primitives.",
           "superclass": {
-            "name": "FormaElement",
-            "module": "src/components/forma-element.ts"
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
           },
+          "members": [
+            {
+              "kind": "field",
+              "name": "view",
+              "type": {
+                "text": "\"components\" | \"patterns\" | \"guidance\""
+              },
+              "default": "\"components\"",
+              "attribute": "view"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "view",
+              "fieldName": "view",
+              "type": {
+                "text": "\"components\" | \"patterns\" | \"guidance\""
+              },
+              "default": "\"components\""
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
-            "stateful": true
+            "stateful": false
           }
         }
       ],
@@ -8903,15 +9804,15 @@
           "tagName": "forma-focal-point-lab",
           "customElement": true,
           "summary": "Focal point lab application interface.",
-          "description": "Application-connected focal point lab interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "description": "Store-independent focal point lab interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
           "superclass": {
-            "name": "FormaElement",
-            "module": "src/components/forma-element.ts"
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
           },
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
-            "stateful": true
+            "stateful": false
           }
         }
       ],
@@ -9053,6 +9954,58 @@
           "declaration": {
             "name": "FormaMemory",
             "module": "src/components/forma-memory.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/forma-platform-shell.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaPlatformShell",
+          "tagName": "forma-platform-shell",
+          "customElement": true,
+          "summary": "Platform shell application interface.",
+          "description": "Internal task surfaces never import, initialize, observe, or hydrate creator work.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "demos": [
+            {
+              "url": "/knowledge/design-system#forma-platform-shell"
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false,
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-platform-shell",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-platform-shell",
+          "declaration": {
+            "name": "FormaPlatformShell",
+            "module": "src/components/forma-platform-shell.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaPlatformShell",
+          "declaration": {
+            "name": "FormaPlatformShell",
+            "module": "src/components/forma-platform-shell.ts"
           }
         }
       ]
@@ -9628,6 +10581,58 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-workspace-settings.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaWorkspaceSettings",
+          "tagName": "forma-workspace-settings",
+          "customElement": true,
+          "summary": "Workspace settings application interface.",
+          "description": "Scoped customer organization management remains a Creator Settings task, never a seventh application.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "demos": [
+            {
+              "url": "/knowledge/design-system#forma-workspace-settings"
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true,
+            "demonstration": "isolated-composition",
+            "i18n": {
+              "documentationIdPrefix": "component.forma-workspace-settings",
+              "authorTextAttributes": [],
+              "authorOwnedSlots": []
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-workspace-settings",
+          "declaration": {
+            "name": "FormaWorkspaceSettings",
+            "module": "src/components/forma-workspace-settings.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaWorkspaceSettings",
+          "declaration": {
+            "name": "FormaWorkspaceSettings",
+            "module": "src/components/forma-workspace-settings.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-workspace.ts",
       "declarations": [
         {
@@ -9745,7 +10750,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-generation-actions"
+              "url": "/knowledge/design-system#forma-generation-actions"
             }
           ],
           "x-forma": {
@@ -10283,7 +11288,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-output-visual"
+              "url": "/knowledge/design-system#forma-output-visual"
             }
           ],
           "x-forma": {
@@ -10440,7 +11445,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-presentation-deck"
+              "url": "/knowledge/design-system#forma-presentation-deck"
             }
           ],
           "x-forma": {
@@ -10589,7 +11594,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-presentation-slide"
+              "url": "/knowledge/design-system#forma-presentation-slide"
             }
           ],
           "x-forma": {
@@ -10675,7 +11680,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-project-rail"
+              "url": "/knowledge/design-system#forma-project-rail"
             }
           ],
           "x-forma": {
@@ -10748,7 +11753,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-prompt-fan-review"
+              "url": "/knowledge/design-system#forma-prompt-fan-review"
             }
           ],
           "x-forma": {
@@ -10831,7 +11836,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-prompt-fan-visual"
+              "url": "/knowledge/design-system#forma-prompt-fan-visual"
             }
           ],
           "x-forma": {
@@ -11074,7 +12079,7 @@
           ],
           "demos": [
             {
-              "url": "/laboratory/design-system#forma-reference-image"
+              "url": "/knowledge/design-system#forma-reference-image"
             }
           ],
           "x-forma": {

@@ -132,7 +132,7 @@ test("codifies and applies a gallery-first accessible design system", async () =
   assert.doesNotMatch(system, /:hover[^{}]*\{[^}]*transform:\s*(?:translate|scale)/s);
   assert.match(editor, /context-collapsed/);
   assert.match(editor, /filing-collapsed/);
-  assert.match(editor, /aria-label="Collapse project context"/);
+  assert.match(editor, /aria-label=\$\{this\.i18n\.t\("projects\.editorCollapseContext","Collapse project context"\)\}/);
   assert.match(generations, /document-generation-collapse/);
   assert.match(generations, /Collapse images/);
 });
@@ -193,6 +193,7 @@ test("packages first-class HTML entry points for every named application route",
   const applications = await readFile(new URL("../src/platform/applications.ts", import.meta.url), "utf8");
   const routeLoader = await readFile(new URL("../src/route-loader.ts", import.meta.url), "utf8");
   const shell = await readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8");
+  const platformShell = await readFile(new URL("../src/components/forma-platform-shell.ts", import.meta.url), "utf8");
   const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
   const config = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
   const routes = ["creative","creative/create","document","projects","studio/project","studio/board","studio/guided","studio/layers","studio/adaptive","studio/editor","studio/chat","library","sessions","scout","memory","operations","operations/events","operations/events/permissions","laboratory","laboratory/replay","laboratory/image-adapters","laboratory/focal-points","system","system/focal-points","admin/events","admin/events/stream","admin/events/replay","admin/events/permissions"];
@@ -200,24 +201,26 @@ test("packages first-class HTML entry points for every named application route",
     assert.match(applications, new RegExp(`route\\("/${route.replaceAll("/", "\\/")}"`));
     const entry = await readFile(new URL(`../dist/client/${route}/index.html`, import.meta.url), "utf8");
     const direct = await readFile(new URL(`../dist/client/${route}.html`, import.meta.url), "utf8");
-    assert.match(entry, /<forma-shell><\/forma-shell>/); assert.match(entry, new RegExp(`content="/${route.replaceAll("/", "\\/")}"`));
+    const application=applicationIdFromRoute(`/${route}`);
+    const restricted=["operations","product","knowledge","engineering"].includes(application);
+    assert.match(entry,restricted?/<forma-platform-shell><\/forma-platform-shell>/:/<forma-shell><\/forma-shell>/); assert.match(entry, new RegExp(`content="/${route.replaceAll("/", "\\/")}"`));
     assert.match(entry, new RegExp(`data-forma-route-module="/${route.replaceAll("/", "\\/")}"`));
     assert.match(entry,new RegExp(`data-forma-application="${applicationIdFromRoute(`/${route}`)}"`));
     assert.match(entry,/id="forma-static-session-prefetch"/);
     assert.ok(entry.indexOf('id="forma-static-session-prefetch"')<entry.indexOf('<script type="module"'));
-    const restricted=["operations","laboratory"].includes(applicationIdFromRoute(`/${route}`));
-    assert.match(direct,restricted?/\/protected-assets\/entry-[^"/]+\.js/:/\/assets\/entry-[^"/]+\.js/);
+    assert.match(direct,restricted?/\/protected-assets\/(?:operations|product|knowledge|engineering)\/entry-[^"/]+\.js/:/\/assets\/entry-[^"/]+\.js/);
   }
   const rootEntry = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
   const shareEntry = await readFile(new URL("../dist/client/share/index.html", import.meta.url), "utf8");
   assert.match(rootEntry, /data-forma-route-module="\/"/); assert.match(shareEntry, /data-forma-application="creative"/);
+  assert.match(shareEntry,/<forma-public-share><\/forma-public-share>/);
   assert.match(rootEntry,/id="forma-static-session-prefetch"/);
   assert.match(rootEntry,/\/share\(\?:\\\/\|\$\)/);
   assert.doesNotMatch(shareEntry,/forma-static-session-prefetch|fetch\("\/api\/session"\)/);
   assert.match(config, /manifest: true/); assert.match(config, /run_worker_first: \["\/\*", "!\/assets\/\*"\]/); assert.match(worker, /resolveServerRoute\(url\.pathname\)/); assert.match(worker, /x-forma-route-family/); assert.doesNotMatch(worker, /entryPath=.*index\.html/); assert.match(applications,/resolveServerRoute/);assert.match(applications,/\/document\\\/\[\^\/\]\+/);assert.match(applications,/\/library\\\//);
-  assert.match(plugin,/SITE_ROUTE_ENTRIES/);assert.match(routeLoader,/\.\/apps\/creative\/entry/);assert.match(routeLoader,/\.\/apps\/operations\/entry/);assert.match(routeLoader,/\.\/apps\/laboratory\/entry/);
-  assert.match(shell, /addEventListener\("forma-route-changed", this\.#routeChanged\)/); assert.match(shell, /loadRouteComponent\(path\)/);
-  assert.match(shell,/forma-creative-application/);assert.match(shell,/forma-operations-application/);assert.match(shell,/forma-laboratory-application/);
+  assert.match(plugin,/SITE_ROUTE_ENTRIES/);for(const owner of ["creative","operations","product","knowledge","engineering"])assert.match(routeLoader,new RegExp(`\\./apps/${owner}/entry`));
+  assert.match(shell, /addEventListener\("forma-route-changed",\s*this\.#routeChanged\)/); assert.match(shell, /loadRouteComponent\(path\)/);
+  assert.match(shell,/forma-creative-application/);for(const owner of ["operations","product","knowledge","engineering"])assert.match(platformShell,new RegExp(`forma-${owner}-application`));
   assert.doesNotMatch(shell, /<forma-library|<forma-admin-events|<forma-system|<forma-focal-point-lab/);
 });
 
@@ -226,9 +229,9 @@ test("named HTML preloads only its active route component and never starts a pub
   const pages = {
     "/document": "src/components/forma-workspace.ts", "/projects": "src/components/forma-projects.ts", "/memory": "src/components/forma-memory.ts",
     "/scout": "src/components/forma-scout.ts", "/sessions": "src/components/forma-sessions.ts", "/settings": "src/components/forma-account-settings.ts",
-    "/operations/analytics": "src/components/forma-analytics.ts", "/operations/canvas": "src/apps/operations/canvas-governance.ts",
-    "/operations/events": "src/components/forma-admin-events.ts", "/laboratory/replay": "src/components/forma-admin-events.ts",
-    "/laboratory/image-adapters": "src/components/forma-image-adapter-lab.ts", "/canvas": "src/canvas/canvas-application.ts",
+    "/operations/analytics": "src/apps/product/insights.ts", "/operations/canvas": "src/apps/operations/canvas-governance.ts",
+    "/operations/events": "src/apps/engineering/diagnostics.ts", "/laboratory/replay": "src/apps/product/synthetic-replay.ts",
+    "/laboratory/image-adapters": "src/apps/product/adapter-preview.ts", "/canvas": "src/canvas/canvas-application.ts",
     "/share": "src/components/forma-shared-view.ts",
   };
   for (const [path, source] of Object.entries(pages)) {
@@ -286,7 +289,7 @@ test("restores focused Library dialogs from durable URLs", async () => {
     readFile(new URL("../worker/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/platform/applications.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(routes, /LibraryFocusKind/); assert.match(routes, /\/library\/\$\{kind\}\/\$\{encodeURIComponent\(id\)\}/); assert.match(routes, /libraryFocusFromRoute/);
+  assert.match(routes, /LibraryFocusKind/); assert.match(routes, /\$\{libraryBaseRoute\(currentRoute\)\}\/\$\{kind\}\/\$\{encodeURIComponent\(id\)\}/); assert.match(routes, /libraryFocusFromRoute/);
   assert.match(library, /libraryFocusRoute\("block"/); assert.match(library, /libraryFocusRoute\("output"/); assert.match(library, /libraryFocusRoute\("family"/);
   assert.match(library, /libraryRootRoute/); assert.match(library, /replace:true/); assert.doesNotMatch(library, /#focused(?:Block|Output|Family)Id/);
   assert.match(worker, /resolveServerRoute/); assert.match(applications, /route\("\/library"/);assert.match(applications,/canonicalFamily: "\/library\/:focus\/:id"/); assert.doesNotMatch(routes, /documentEntryPath[\s\S]*?index\.html/);
@@ -395,7 +398,7 @@ test("opens otherwise passive generation and reference images in contained dialo
   assert.match(visual,/interactive/);assert.match(visual,/generated-image-viewer/);assert.match(visual,/ensureModalDialog/);assert.match(visual,/closedby="any"/);
   assert.match(reference,/reference-viewer/);assert.match(reference,/closedby="any"/);
   assert.match(creative,/\.interactive=\$\{true\}/);assert.match(creative,/forma-reference-image/);
-  assert.match(projectContents,/\.interactive=\$\{true\}/);assert.match(shared,/\.interactive=\$\{true\}/);
+  assert.match(projectContents,/\.interactive=\$\{true\}/);assert.match(shared,/shared-image-dialog/);assert.match(shared,/ensureModalDialog/);assert.match(shared,/const approvedFan=result\.outputs\.flatMap/);assert.match(shared,/\/api\/shared\/\$\{encodeURIComponent\(this\.token\)\}\/media\//);assert.doesNotMatch(shared,/state\/store|this\.store|output-visual/);
 });
 
 test("keeps toast feedback above open modal dialogs",async()=>{
@@ -609,7 +612,7 @@ test("connects the final Library and Studio affordances to explicit destinations
   assert.match(shell,/this\.#route\("\/settings"\)/);assert.doesNotMatch(shell,/operations#governance/);assert.match(shell,/Use attention signals to improve Forma/);assert.match(system,/id="governance"/);assert.match(system,/Forget attention data/);
 });
 
-test("keeps account, project, document, intelligence, operations, and laboratory scopes distinct",async()=>{
+test("keeps creator, canvas, operations, product, design, and engineering scopes distinct",async()=>{
   const [shell,rail,navigation,areas,contents,library,sessions,scout,memory,system,admin,collections,styles,review,applications]=await Promise.all([
     "forma-shell.ts","project-rail.ts","studio-navigation.ts","area-navigation.ts","forma-project-contents.ts","forma-library.ts","forma-sessions.ts","forma-scout.ts","forma-memory.ts","forma-system.ts","forma-admin-events.ts","collection-tree.ts",
   ].map((file)=>readFile(new URL(`../src/components/${file}`,import.meta.url),"utf8")).concat([
@@ -617,16 +620,16 @@ test("keeps account, project, document, intelligence, operations, and laboratory
     readFile(new URL("../docs/information-architecture-review.md",import.meta.url),"utf8"),
     readFile(new URL("../src/platform/applications.ts",import.meta.url),"utf8"),
   ]));
-  assert.match(applications,/label: "Creative"/);assert.match(applications,/label: "Operations"/);assert.match(applications,/label: "Laboratory"/);assert.match(applications,/label: "Projects"/);assert.match(applications,/label: "Create"/);assert.match(applications,/label: "Re-entry"/);assert.match(applications,/label: "Taste & time"/);
-  assert.match(shell,/class="account-nav"/);assert.match(shell,/application-switcher/);assert.match(shell,/Durable stream/);assert.match(shell,/Laboratory/);
-  assert.match(shell,/class="global-nav area-navigation area-navigation--administrative area-navigation--creative"/);assert.match(shell,/<span>\$\{this\.i18n\.t\("shell\.creative"\)\}<\/span>/);assert.match(shell,/\$\{creativeNavigation\}[\s\S]*\$\{this\.store\.error/);assert.doesNotMatch(shell,/\$\{isCreative\?html`<nav class="global-nav"/);
+  for(const label of ["Creator Workspace","Canvas","Platform Operations","Product & Quality","Design & Knowledge","Engineering Diagnostics","Projects","Create","Re-entry","Taste & time"])assert.match(applications,new RegExp(`label: "${label.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}"`));
+  assert.match(shell,/class="account-nav"/);assert.match(shell,/<forma-ui-workspace-switcher/);assert.match(shell,/Durable stream/);assert.match(shell,/applicationAccessible\(candidate\.id,access\)/);
+  assert.match(shell,/<forma-ui-audience-navigation class=\$\{`application-task-navigation area-navigation--\$\{applicationId\}`\}/);assert.match(shell,/\$\{audienceNavigation\}[\s\S]*\$\{this\.store\.error/);assert.doesNotMatch(shell,/\$\{isCreative\?html`<nav class="global-nav"/);
   assert.match(rail,/rail-project-card/);assert.match(rail,/rail-dock/);assert.match(rail,/aria-controls="project-rail-content"/);assert.match(rail,/Project destinations/);assert.match(rail,/Project library/);assert.match(rail,/Your work is saved/);
   assert.match(navigation,/aria-label="Document views"/);assert.doesNotMatch(navigation,/Project-level|studio-project-overview/);assert.match(navigation,/studio-breadcrumbs/);assert.match(navigation,/Projects/);
-  assert.doesNotMatch(contents,/forma-studio-mode-nav|forma-studio-navigator/);assert.match(library,/Project library/);assert.match(rail,/surface==="library"\?"\/library":"\/studio\/project"/);assert.match(collections,/setRoute\(this\.destination\)/);
+  assert.doesNotMatch(contents,/forma-studio-mode-nav|forma-studio-navigator/);assert.match(library,/Project library/);assert.match(rail,/surface==="library"\?libraryRoute:overviewRoute/);assert.match(rail,/canvasWorkspace\?"\/canvas":"\/studio\/project"/);assert.match(collections,/setRoute\(this\.destination\)/);
   for(const [source,active] of [[sessions,"sessions"],[scout,"scout"],[memory,"memory"]])assert.match(source,new RegExp(`forma-area-navigation area="intelligence" active="${active}"`));
   assert.match(system,/system-page administrative-page/);assert.match(system,/system-page-content page-pad/);assert.match(admin,/admin-page administrative-page/);
-  assert.match(system,/area="operations" active="system"/);assert.match(admin,/laboratory\?"laboratory":"operations"/);assert.match(areas,/Creative intelligence/);assert.match(areas,/this\.i18n\.t\("shell\.operations"\)/);assert.match(areas,/this\.i18n\.t\("shell\.laboratory"\)/);
-  assert.match(areas,/area-navigation--administrative/);
+  assert.match(system,/area="operations" active="system"/);assert.match(admin,/laboratory\?"laboratory":"operations"/);assert.match(areas,/Creative intelligence/);assert.match(areas,/applicationDefinition\("operations"\)/);assert.match(areas,/applicationDefinition\(area\)/);assert.match(areas,/navigationItemAccessible/);
+  assert.match(areas,/<forma-ui-audience-navigation/);
   assert.match(styles,/\.rail-dock/);assert.match(styles,/\.area-navigation/);assert.match(styles,/\.studio-breadcrumbs/);assert.match(styles,/\.block-type-group/);assert.doesNotMatch(styles,/global-nav a:nth-child/);
   assert.match(review,/Deficiencies found and resolved/);assert.match(review,/Primary navigation/);assert.match(review,/Follow-up evaluation/);
 });
@@ -677,7 +680,7 @@ test("keeps opt-in attention capture visible-only, coarse, bounded, and forgetta
   assert.doesNotMatch(observer,/clientX|clientY|screenX|screenY|event\.key|\.value/);
   assert.match(attention,/ATTENTION_RETENTION_DAYS = 14/);assert.match(attention,/\.25/);assert.match(attention,/AttentionSignalsForgotten/);
   assert.match(store,/setAttentionCapture/);assert.match(store,/forgetAttentionSignals/);assert.match(shell,/off until you enable them separately/);assert.match(system,/off by default/);
-  assert.match(scout,/attention_weight_cap:\.25/);assert.match(memory,/cannot create a taste belief/);assert.match(eventsApi,/AttentionEpisodeObserved/);assert.match(eventsApi,/normalizeAttention/);assert.match(policy,/rawInputCapture: false/);
+  assert.match(scout,/attention_weight_cap:\.25/);assert.match(memory,/cannot create a taste belief/);assert.match(eventsApi,/AttentionEpisodeObserved/);assert.match(eventsApi,/normalizeAttention/);assert.match(policy,/rawInputCapture:\s*false/);
   assert.match(decisions,/D-0029.*supersedes":"D-0015"/);assert.match(classification,/AttentionEpisodeObserved,derived_sensitive/);
 });
 

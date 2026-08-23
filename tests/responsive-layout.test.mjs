@@ -33,6 +33,30 @@ test("keeps route shells intrinsically containable without hiding page overflow"
   assert.match(design, /:where\(h1, h2, h3, h4, p, dd, code, pre, small, strong\)\s*\{\s*overflow-wrap:\s*anywhere/);
 });
 
+test("keeps every account control reachable inside the current viewport", async () => {
+  const [styles, design, shell] = await Promise.all([
+    read("../src/styles.css"),
+    read("../src/design-system.css"),
+    read("../src/components/forma-shell.ts"),
+  ]);
+
+  const accountPopover = styles.match(/\.account-popover\s*\{[^}]*\}/)?.[0] ?? "";
+  assert.match(accountPopover, /--account-popover-top:\s*52px/);
+  assert.match(accountPopover, /top:\s*var\(--account-popover-top\)/);
+  assert.match(accountPopover, /max-block-size:\s*calc\(100dvh - var\(--account-popover-top\) - max\(12px,env\(safe-area-inset-bottom,0px\)\)\)/);
+  assert.match(accountPopover, /overflow-y:\s*auto/);
+  assert.match(accountPopover, /overscroll-behavior:\s*contain/);
+  assert.match(accountPopover, /scroll-padding-block:\s*12px/);
+  assert.match(accountPopover, /position:\s*fixed/);
+  assert.match(accountPopover, /inset:\s*auto/);
+  assert.match(accountPopover, /margin:\s*0/);
+  assert.match(accountPopover, /scrollbar-gutter:\s*auto/);
+  assert.match(accountPopover, /scrollbar-width:\s*thin/);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.account-popover\s*\{\s*--account-popover-top:\s*49px;/);
+  assert.match(design, /\.account-popover\s*\{\s*max-width:\s*calc\(100vw - 1rem\)/);
+  assert.match(shell, /class="account-popover" popover="auto"[\s\S]*?account\.privacy/);
+});
+
 test("keeps page-shell content on one responsive inline gutter", async () => {
   const [styles, design] = await Promise.all([
     read("../src/styles.css"),
@@ -43,6 +67,9 @@ test("keeps page-shell content on one responsive inline gutter", async () => {
   assert.match(design, /\.page-pad\s*\{\s*padding:\s*clamp\([^;]+\)\s+var\(--page-gutter\)\s+var\(--page-bottom-space\);\s*\}/);
   assert.match(design, /\.page-header--admin\s*\{[^}]*padding-inline:\s*var\(--page-gutter\);/s);
   assert.match(design, /\.administrative-page\s*>\s*forma-area-navigation\s+\.area-navigation--administrative\s*\{[^}]*padding-inline:\s*var\(--page-gutter\);/s);
+  assert.match(design, /\.app-shell > forma-ui-audience-navigation\s*,\s*\.forma-platform-shell > forma-ui-audience-navigation\s*\{[^}]*padding:\s*0;/s);
+  assert.match(design, /\.ui-audience-navigation-list\s*\{[^}]*padding-inline:\s*var\(--page-gutter,[^;]+\);[^}]*overflow-x:\s*auto;[^}]*scroll-padding-inline:\s*var\(--page-gutter,/s);
+  assert.doesNotMatch(design, /\.app-shell > \.global-nav\s*,\s*\.app-shell > forma-ui-audience-navigation\.global-nav/);
   assert.match(design, /\.tabbar\s*\{[^}]*padding-inline:\s*var\(--page-gutter\);/s);
   assert.match(design, /\.admin-content\s*\{\s*padding:\s*clamp\([^;]+\)\s+var\(--page-gutter\)\s+var\(--page-bottom-space\);\s*\}/);
 });
@@ -157,6 +184,26 @@ test("contains every dialog within the viewport and keeps page scrolling locked"
   assert.match(design, /dialog\.modal\[open\],\s*dialog\.command-dialog\[open\]\s*\{[^}]*display:\s*grid;[^}]*place-items:\s*center/s);
   assert.match(design, /dialog\.modal > :first-child,\s*dialog\.command-dialog > :first-child\s*\{[^}]*max-width:\s*100%;[^}]*max-height:\s*100%;[^}]*margin:\s*0;[^}]*overscroll-behavior:\s*contain/s);
   assert.match(design, /dialog\.command-dialog \.command-results\s*\{[^}]*min-height:\s*0;[^}]*max-height:\s*none;[^}]*overflow:\s*auto/s);
+});
+
+test("keeps the account menu inside the dynamic viewport with accessible internal scrolling and focus return", async () => {
+  const [design,shell]=await Promise.all([read("../src/design-system.css"),read("../src/components/forma-shell.ts")]);
+  assert.match(design,/\.account-popover\s*\{[^}]*box-sizing:\s*border-box;[^}]*inline-size:\s*min\(22rem,[^;]*100dvw[^;]*safe-area-inset-left[^;]*safe-area-inset-right[^;]*\);[^}]*max-block-size:\s*calc\(100dvh\s*-\s*var\(--account-popover-top,\s*52px\)\s*-\s*max\([^;]*safe-area-inset-bottom[^;]*\)\);[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;[^}]*overscroll-behavior:\s*contain;[^}]*scrollbar-gutter:\s*auto;/s);
+  assert.match(design,/\.account-popover bdi\s*\{\s*overflow-wrap:\s*anywhere/);
+  assert.match(shell,/popovertarget="account-popover" aria-controls="account-popover" aria-expanded=\$\{this\.store\.ui\.accountOpen\}/);
+  assert.match(shell,/<div id="account-popover" class="account-popover" popover="auto" @toggle=\$\{this\.#accountToggle\}>/);
+  assert.match(shell,/#accountToggle = \(event: ToggleEvent\) => \{[\s\S]*?event\.newState === "open"[\s\S]*?this\.store\.patchUi\(\{ accountOpen: open \}\)/);
+  assert.match(shell,/if\(!this\.store\.ui\.accountOpen&&accountPopover\?\.matches\(":popover-open"\)\)accountPopover\.hidePopover\(\)/);
+  assert.match(shell,/const returnAccountFocus=this\.store\.ui\.accountOpen[\s\S]*?if\(returnAccountFocus\)queueMicrotask\(\(\)=>this\.querySelector<HTMLButtonElement>\("\.avatar"\)\?\.focus\(\)\)/);
+});
+
+test("keeps document sharing reachable through the auto-dismissing account menu on narrow screens",async()=>{
+  const [shell,design]=await Promise.all([read("../src/components/forma-shell.ts"),read("../src/design-system.css")]);
+  assert.match(shell,/isCreative&&this\.store\.canManageProjectShares\(\)&&isDocumentViewRoute\(path\)&&projection\.documentId\?html`<button type="button" class="button secondary compact account-share-action"/);
+  assert.match(shell,/@click=\$\{\(\)=>this\.#openShare\(true\)\}/);
+  assert.match(shell,/#openShare\(closeAccount=false\)[\s\S]*accountOpen:false[\s\S]*shareOpen:true/);
+  assert.match(design,/@media \(max-width: 480px\)[\s\S]*?\.command-trigger\s*\{\s*display:\s*none/);
+  assert.doesNotMatch(design,/\.account-share-action\s*\{[^}]*display:\s*none/);
 });
 
 test("stacks document headers without seams and reserves composer space inside Studio", async () => {

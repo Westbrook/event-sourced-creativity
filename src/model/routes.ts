@@ -72,31 +72,36 @@ export function documentSlug(value: string) {
   return value.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 64);
 }
 
-export function libraryFocusFromRoute(route: string): LibraryFocus | null {
-  const parts = routePathname(route).split("/").filter(Boolean);
-  if (parts[0] !== "library" || !libraryFocusKinds.has(parts[1] as LibraryFocusKind) || !parts[2]) return null;
-  return { kind: parts[1] as LibraryFocusKind, id: safeDecode(parts[2]) };
+export function libraryBaseRoute(route = "/library") {
+  const path = routePathname(route);
+  return path === "/canvas/library" || path.startsWith("/canvas/library/") ? "/canvas/library" : "/library";
 }
 
-export function libraryFocusRoute(kind: LibraryFocusKind, id: string, label = "") {
+export function libraryFocusFromRoute(route: string): LibraryFocus | null {
+  const parts = routePathname(route).slice(libraryBaseRoute(route).length).split("/").filter(Boolean);
+  if (!libraryFocusKinds.has(parts[0] as LibraryFocusKind) || !parts[1]) return null;
+  return { kind: parts[0] as LibraryFocusKind, id: safeDecode(parts[1]) };
+}
+
+export function libraryFocusRoute(kind: LibraryFocusKind, id: string, label = "", currentRoute = "/library") {
   const slug = documentSlug(label);
-  return `/library/${kind}/${encodeURIComponent(id)}${slug ? `/${slug}` : ""}`;
+  return `${libraryBaseRoute(currentRoute)}/${kind}/${encodeURIComponent(id)}${slug ? `/${slug}` : ""}`;
 }
 
 export function libraryBlockEditorFromRoute(route: string): LibraryBlockEditorTarget | null {
-  const parts = routePathname(route).split("/").filter(Boolean);
-  if (parts[0] !== "library" || parts[1] !== "blocks" || parts[2] !== "editor") return null;
-  const blockId = parts[3] && parts[3] !== "new" ? safeDecode(parts[3]) : null;
+  const parts = routePathname(route).slice(libraryBaseRoute(route).length).split("/").filter(Boolean);
+  if (parts[0] !== "blocks" || parts[1] !== "editor") return null;
+  const blockId = parts[2] && parts[2] !== "new" ? safeDecode(parts[2]) : null;
   return { blockId };
 }
 
-export function libraryBlockEditorRoute(blockId = "") {
-  return `/library/blocks/editor/${blockId ? encodeURIComponent(blockId) : "new"}`;
+export function libraryBlockEditorRoute(blockId = "", currentRoute = "/library") {
+  return `${libraryBaseRoute(currentRoute)}/blocks/editor/${blockId ? encodeURIComponent(blockId) : "new"}`;
 }
 
 export function libraryRootRoute(route: string) {
   const url = routeUrl(route);
-  return `/library${url.search}${url.hash}`;
+  return `${libraryBaseRoute(route)}${url.search}${url.hash}`;
 }
 
 export function withDocumentInRoute(route: string, documentId: string, documentName = "") {

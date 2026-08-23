@@ -1,12 +1,19 @@
 # Application architecture
 
-The product is one event-sourced platform with four independently loaded applications. They share durable data and domain contracts; they do not share route ownership or import each other.
+The product is one event-sourced platform with six independently loaded,
+audience-authorized applications. They share durable domain contracts and
+presentational foundations; they do not share route ownership, sibling imports,
+creative-store hydration, or access to another audience's private data.
 
 ## Application boundaries
 
-### Creative
+### Creator Workspace
 
-Owns projects, Create, documents, the Library, Re-entry, Scout, and Taste & time. It may append user-authorized creative events and consume creative projections.
+Owns the Creator-scoped `/projects` and `/library` routes, Create, documents,
+Re-entry, Scout, and Taste & time. It may append user-authorized creative events
+and consume creative projections. Projects and Library are shared capabilities,
+not Creator-exclusive data domains: Canvas presents the identical records under
+its own routes without duplicating projects, documents, events, or media.
 
 The current Create experience remains the baseline. Future Create approaches belong below `src/apps/creative/create/` and use `/creative/create/...` for their application routes. They must operate on the same document stream and projections rather than creating a parallel data model.
 
@@ -16,26 +23,76 @@ Owns named, project-scoped spatial workspaces and report-space proposals. Canvas
 
 Spatial placement is its own projection: moving or grouping an item never changes its source content and never enters generation context until a person emits `ContextSetFormalized`. URL-only lenses may reorder or filter a view without creating events. Cursor presence is ephemeral and must not enter the durable stream.
 
-Canonical routes begin with `/canvas`. `src/canvas/` owns the spatial projection and UI, while `src/sync/` and `worker/realtime/` own offline operation delivery and admission.
+Canonical routes begin with `/canvas`. `/canvas/projects` and `/canvas/library`
+are Canvas-owned task surfaces for the same authoritative projects and reusable
+resources available at `/projects` and `/library`. Their dynamic Library
+previews, block editor, project selection, collection links, deep links, page
+metadata, performance families, and navigation chrome remain Canvas-owned.
+The Canvas entry lazily imports the same reusable Projects and Library page
+components; it does not import the Creator application entry or hydrate a
+second store. Ordinary same-workspace navigation never silently switches
+applications. Document editing remains a clearly labeled, server-revalidated
+handoff to Creator Workspace. `src/canvas/` owns the spatial projection and UI,
+while `src/sync/` and `worker/realtime/` own personal offline operation
+delivery and admission.
 
-### Operations
+### Platform Operations
 
-Owns governance, health, roles, producer permissions, and inspection of the durable stream. It explains and administers the platform but does not host creative experiments.
+Owns server-authorized platform access, provider policy, governed releases,
+platform health, and accountable operational decisions. Route, asset, and API
+capabilities are evaluated independently.
 
-Canonical routes begin with `/operations`. Historical `/system` and `/admin/events` links remain compatibility aliases.
+Canonical routes begin with `/operations`. Historical `/system` links remain
+compatibility aliases; former event inspection routes resolve to Engineering.
 
-### Laboratory
+### Product & Quality
 
-Owns controlled experiments, comparison tooling, and reusable synthetic fixtures. A laboratory may read production-shaped data and save explicitly approved fixtures, but experimental controls must not silently mutate creative documents.
+Owns separately authorized aggregate product insights, delivery readiness, and
+synthetic evaluation. Reporting suppresses small populations, excludes fictional
+activity, and never returns private projects, documents, prompts, media,
+individual creator histories, or provider credentials. Evaluation requires its
+own capability.
 
-Each actual-data replay owns one fictional creator with a separate event stream, media namespace, and complete project graph. Administrators inspect that graph through a bounded impersonation session rather than copying it into a regular account. The effective fictional identity is always visible; every modifying request requires a fresh explicit confirmation, while cancellation or light-dismiss prevents the request. Personal attention, memory, taste, Scout, and re-entry evidence never cross this boundary, and provider costs remain attributable to the signed-in principal.
+Canonical routes begin with `/product`. Historical `/operations/analytics`,
+`/laboratory`, and replay aliases resolve to their Product & Quality owner and
+still require the receiving module's capability.
 
-Canonical routes begin with `/laboratory`. Replay, image-adapter qualification,
-focal-point comparison, and the living design system are separate laboratories.
+### Design & Knowledge
+
+Owns approved reusable component contracts, synthetic-only audience and
+navigation patterns, and design/accessibility/localization guidance. Its shell
+and routes are store-independent and never hydrate creator history.
+
+Canonical routes begin with `/knowledge`. `/knowledge/design-system`,
+`/knowledge/patterns`, and `/knowledge/guidance` provide distinct Components,
+Patterns, and Guidance views. Historical `/laboratory/design-system` and focal
+point URLs resolve to their appropriate Knowledge destination.
+
+### Engineering Diagnostics
+
+Owns independently granted operational diagnostics, redacted event/sync health,
+and background-job reliability. Projections exclude private creator documents,
+prompts, media, provider secrets, and personal attention signals.
+
+Canonical routes begin with `/engineering`. Historical `/operations/events` and
+`/admin/events` URLs resolve to Engineering and cannot bypass its capability.
+
+### Exact-resource public review
+
+`/share/:token` is a separate unauthenticated delivery boundary, not a seventh
+signed-in application. Its store-independent entry exposes only the exact
+immutable shared resource and approved owner-scoped media; it never hydrates
+account sessions, creative events, application launchers, or internal chunks.
 
 ## Shared platform
 
 - `src/platform/` contains the application catalog, canonical route ownership, and cross-application contracts.
+- `src/platform/capabilities.ts` defines scoped capability names;
+  `worker/access-policy.ts` validates active grants, accepted memberships,
+  organization/project scope, revocation, and permission epochs.
+- `src/platform/session-controller.ts` supplies minimized internal sessions;
+  `<forma-platform-shell>` composes Operations, Product, Knowledge, and Engineering without
+  loading the creator event store.
 - `src/model/` contains pure event, projection, prompt, spatial, and evaluation contracts.
 - `src/model/prompt-policy.ts` owns reusable provider-facing context sanitization,
   inactive-decision filtering, and output-independent creative guardrails.
@@ -64,7 +121,8 @@ focal-point comparison, and the living design system are separate laboratories.
 8. All output entry points reuse the same configuration, consent, readiness,
    reference-policy, durable-job, and inspection contracts.
 9. URL resolution and authorization happen on the server before application
-   hydration; client-side route visibility is never an access-control boundary.
+   HTML, protected JavaScript, API responses, or application hydration;
+   client-side route visibility is never an access-control boundary.
 10. Active, user-authorized creative decisions alone may reach provider-facing
     generation prompts; inactive decisions and internal identifiers are removed.
 
@@ -134,7 +192,23 @@ resource kind, document ID, project ID, and exact authorized object keys.
 - Project Library archives resolve ownership across documents, reusable blocks,
   collections, references, outputs, and boards before selecting events or media;
   interleaved history from another project never enters a project download.
-- Analytics and Laboratory impersonation remain administrator-authorized.
+- Raw cross-account analytics, provider policy, and actual-data impersonation
+  remain platform-authorized. Product readers receive only approved aggregate
+  reporting; synthetic evaluation requires its own grant.
+- Customer Workspace Administration is a scoped Creator Settings child, never a
+  seventh application. Accepted organization membership, exact project grants,
+  opaque project-context sessions, owner-preserving project event sidecars, and
+  per-resource R2/content manifests restrict collaborator reads and edits.
+- Project-scoped reservations enforce the creator, exact organization, and
+  platform token/USD limits together; registered project owners are charged to
+  that organization when they generate from their normal Creator Workspace.
+  Authorized project editors receive actor-owned provider jobs and private
+  conversations against the owner's canonical project history; immutable
+  actor/organization/project receipts, personal-plus-tenant-plus-platform
+  spending limits, fair cross-actor scheduling, and immediate cancellation
+  preserve custody. Canvas requires its own exact project grant and canonical
+  release approval: viewers can inspect a board, while editors can author it.
+  Public review still requires its separately authorized exact-resource share.
 
 ## Synchronization and performance
 
@@ -148,11 +222,14 @@ Existing user identities avoid redundant database writes. Mergeable Canvas text
 is indexed by item before projection so unedited items never allocate a Yjs
 document or repeatedly scan unrelated events.
 
-These measures improve the existing single-account, same-stream model; they do
-not turn browser-local BroadcastChannel presence into real multi-user
-collaboration. Cross-account editing requires project-scoped streams or durable
-project sequencers, project ACLs, authenticated session fan-out, presence
-expiry, conflict policy, and a carefully rehearsed identity-preserving migration.
+These measures support real cross-account project editing and board
+convergence: exact project ACLs, immutable owner-stream/project sequence
+sidecars, actor-bound device receipts, scoped offline queues, and authenticated
+adaptive delta polling synchronize shared board state without changing the
+single canonical owner history. Browser-local BroadcastChannel presence is
+not cross-account cursor presence; a future remote-cursor experience would
+still require separately authenticated ephemeral fan-out, expiry, and conflict
+policies. It is not required for the implemented durable collaboration model.
 
 ## Provider and prompt boundaries
 
@@ -181,16 +258,24 @@ shortcut around a blocked provider, unavailable budget, or unacknowledged risk.
 `src/components/design-primitives.ts` contains store-independent atoms and
 molecules. `artifact-summary.ts`, shared modal behavior, complete output
 composition, and outcome-driven next actions compose those foundations into
-reusable production patterns. `/laboratory/design-system` demonstrates the real
+reusable production patterns. `/knowledge/design-system` demonstrates the real
 implementation across foundations, atoms, molecules, organisms, and templates.
-The same primitives render production project creation, Canvas onboarding,
-creative intelligence, and the Operations capability inventory. Every product
-dialog enters the browser top layer through one accessible, independently
-testable modal contract.
+`/knowledge/patterns` demonstrates audience surfaces, workspace handoffs,
+authorized task navigation, and Creator-versus-Canvas continuity;
+`/knowledge/guidance` publishes approved privacy and interaction rules. The
+same primitives render creator tasks, internal application shells, reporting,
+and operational access management. Every dialog enters the browser top layer
+through one accessible, independently testable modal contract.
 
 `src/components/design-system/` groups independently importable atom, form,
 navigation, feedback, and layout families behind one small shared contract. UI
-elements never import the application store. Native form controls, overlays,
+elements never import the application store. `<forma-ui-workspace-switcher>`
+and `<forma-ui-audience-navigation>` receive property-only, already-authorized
+destinations and emit cancelable intent; they are not authorization boundaries.
+Two available workspaces remain direct native links; larger authorized sets use
+a current-workspace button and a browser-managed, light-dismiss auto popover
+containing ordinary navigation links, never a form-value picker or modal trap.
+Native form controls, overlays,
 transparent layout scopes, production metrics, and application-connected
 interfaces retain light DOM, inherited `--forma-*` theme tokens, and bubbling
 named intent events. Five composition-heavy card, page-header, list-item,
@@ -203,8 +288,8 @@ stay outside live regions, and grouped disclosures coordinate peers within
 their actual host tree. Complex option lists remain JavaScript-only, with their
 complete record shapes documented for automation.
 
-The Laboratory reference and its searchable metadata are route-lazy and
-store-independent. Twelve application-pattern demonstrations safely compose
+The Design & Knowledge reference and its searchable metadata are route-lazy and
+store-independent. Application-pattern demonstrations safely compose
 real presentational primitives around synthetic fixtures without importing or
 mounting the corresponding application elements. They cannot subscribe to the
 workspace, navigate, enqueue provider readiness, fetch media, or mutate user

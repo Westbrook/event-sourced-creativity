@@ -22,12 +22,12 @@ test("the client refreshes and rebases authored appends after stale heads",async
     readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),
   ]);
   assert.match(store,/response\.status===409&&body\.error==="stale_sequence"/);
-  assert.match(store,/await this\.#refreshEvents\(\);continue/);
+  assert.match(store,/await this\.#refreshEvents\(\);this\.#assertAuthorizationScope\(authorization\);continue/);
   assert.match(store,/rebaseAttempts\?\?2/);
   assert.match(store,/action:"canvas_sync"/);
   assert.match(store,/stageOptimisticCanvasEvents/);
   assert.match(store,/#appendPipeline/);
-  assert.match(store,/this\.#appendPipeline\.then\(\(\)=>this\.#appendBatchNow/);
+  assert.match(store,/this\.#appendPipeline\.then\(\(\)=>this\.#scopeStillActive\(authorization\)\?this\.#appendBatchNow\(events,options,authorization\):\[\]\)/);
   assert.match(store,/const persisted=this\.append\(\{type:"DocumentOpened"/);
   assert.match(store,/background:true\}\);const committed=persisted\.then\(\(events\)=>events\.length>0,\(\)=>false\);this\.#navigationCommit=committed;this\.setRoute\(routedDestination\)/);
   assert.match(runtime,/sequence>\? ORDER BY sequence ASC LIMIT \?/);
@@ -44,7 +44,7 @@ test("project navigation remains interactive and commits before competing teleme
 
   assert.match(store,/const persisted=this\.append\(input,\{rebaseAttempts:6,silent:true,background:true\}\);const committed=persisted\.then/);
   assert.match(store,/if\(!options\.background\)this\.busy\.set\(events\[0\]\?\.type/);
-  assert.match(store,/finally \{ if\(!options\.background\)this\.busy\.set\(""\)/);
+  assert.match(store,/finally \{if\(this\.#scopeStillActive\(authorization\)\)\{if\(!options\.background\)this\.busy\.set\(""\)/);
   assert.match(store,/if\(!options\.keepalive\)await this\.#appendPipeline;/);
   assert.match(store,/this\.#jobStarts\.add\(requestKey\);this\.notify\(\);\}try\{const navigation=this\.#navigationCommit;await this\.#appendPipeline;/);
   assert.match(store,/if\(navigation&&!await navigation\)throw new Error/);

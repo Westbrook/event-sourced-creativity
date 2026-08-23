@@ -70,7 +70,7 @@ test("the standard manifest documents every registered UI and application custom
   assert.ok(elements.length >= 99, "include the original application inventory, locale provider, and expanded component library");
   assert.ok(elements.filter((element) => element.tagName.startsWith("forma-ui-")).length >= 41);
   assert.equal(new Set(elements.map((element) => element.tagName)).size, elements.length);
-  for (const tag of ["forma-shell", "forma-library", "forma-projects", "forma-analytics", "forma-design-system-lab", "forma-component-catalog", "forma-ui-theme", "forma-ui-locale", "forma-ui-dialog"]) {
+  for (const tag of ["forma-shell", "forma-platform-shell", "forma-library", "forma-projects", "forma-analytics", "forma-design-system-lab", "forma-component-catalog", "forma-ui-theme", "forma-ui-locale", "forma-ui-dialog", "forma-ui-workspace-switcher", "forma-ui-audience-navigation"]) {
     assert.ok(declarationByTag.has(tag), `${tag} is documented`);
   }
   assert.ok(elements.every((element) => element.summary && element.description), "every element has readable machine-discoverable purpose");
@@ -117,7 +117,7 @@ test("genuine slots preserve authored semantics, shared styles, fallback behavio
   assert.match(feedbackSource, /peer !== this && peer\.group === this\.group[\s\S]*?details\.open = false/);
   assert.match(feedbackSource, /emitFormaEvent\(this, "forma-dismiss", \{ value: this\.value \}\)/);
 
-  for (const tag of ["forma-ui-button", "forma-ui-field", "forma-ui-search", "forma-ui-select", "forma-ui-tabs", "forma-ui-popover", "forma-ui-dialog", "forma-ui-stack", "forma-ui-theme", "forma-ui-locale", "forma-ui-empty-state", "forma-ui-metric"]) {
+  for (const tag of ["forma-ui-button", "forma-ui-field", "forma-ui-search", "forma-ui-select", "forma-ui-tabs", "forma-ui-popover", "forma-ui-dialog", "forma-ui-stack", "forma-ui-theme", "forma-ui-locale", "forma-ui-empty-state", "forma-ui-metric", "forma-ui-workspace-switcher", "forma-ui-audience-navigation"]) {
     assert.equal(declarationByTag.get(tag)["x-forma"].renderRoot, "light", `${tag} preserves its native/light-DOM behavior`);
   }
   assert.match(generatorSource, /documents slots without a shadow root/);
@@ -176,7 +176,7 @@ test("scoped locale contracts separate translated authored content from invarian
     assert.ok(attribute.description);
   }
   assert.ok(locale.members.some((member) => member.name === "messages" && !member.attribute));
-  for (const [tag, collection] of [["forma-ui-select", "options"], ["forma-ui-breadcrumbs", "items"], ["forma-ui-toolbar", "actions"]]) {
+  for (const [tag, collection] of [["forma-ui-select", "options"], ["forma-ui-breadcrumbs", "items"], ["forma-ui-toolbar", "actions"], ["forma-ui-workspace-switcher", "destinations"], ["forma-ui-audience-navigation", "destinations"]]) {
     const metadata = declarationByTag.get(tag)["x-forma"].i18n;
     assert.ok(metadata.optionTextPaths.includes(`${collection}[].label`));
     assert.ok(metadata.invariantValuePaths.includes(`${collection}[].value`));
@@ -230,7 +230,7 @@ test("human reference and manifest describe the same atomic component taxonomy",
 
 test("every application pattern has an isolated, truthful, accessible production-primitive demonstration", () => {
   const applicationPatterns = componentCatalog.filter((entry) => entry.level === "application");
-  assert.equal(applicationPatterns.length, 12);
+  assert.equal(applicationPatterns.length, 14);
   assert.equal(elements.filter((element) => element["x-forma"].demonstration === "isolated-composition").length, applicationPatterns.length);
 
   for (const entry of applicationPatterns) {
@@ -238,7 +238,7 @@ test("every application pattern has an isolated, truthful, accessible production
     assert.equal(entry.preview, false, `${entry.tag} is never mounted as a live application`);
     assert.equal(entry.previewKind, "application-composition");
     assert.equal(declaration["x-forma"].demonstration, "isolated-composition");
-    assert.deepEqual(declaration.demos, [{ url: `/laboratory/design-system#${entry.tag}` }]);
+    assert.deepEqual(declaration.demos, [{ url: `/knowledge/design-system#${entry.tag}` }]);
     assert.match(applicationPreviewSource, new RegExp(`case "${entry.tag}":`));
     assert.doesNotMatch(applicationPreviewSource, new RegExp(`<${entry.tag}(?:\\s|>)`), `${entry.tag} cannot be mounted by its illustrative composition`);
   }
@@ -248,8 +248,15 @@ test("every application pattern has an isolated, truthful, accessible production
   assert.deepEqual(imports, ["lit"], "demonstrations cannot import application modules or the workspace store");
   assert.doesNotMatch(applicationPreviewSource, /this\.store|state\/store|fetch\(|setTimeout\(|localStorage|<img\b|<video\b|<canvas\b/);
   assert.doesNotMatch(applicationPreviewSource, /<h[1-3]\b|role="tree"|role="menu"|role="tablist"|<section\b[^>]*aria-label=/);
-  assert.match(applicationPreviewSource, /role="group" aria-label=\$\{t\("pattern\.navigation", "Example Laboratory navigation"\)\}/);
-  assert.match(applicationPreviewSource, /value="design-system"/);
+  assert.match(applicationPreviewSource, /role="group" aria-label=\$\{t\("pattern\.navigation", "Example audience-specific navigation"\)\}/);
+  assert.match(applicationPreviewSource, /value="components"/);
+  assert.match(applicationPreviewSource, /case "forma-platform-shell"/);
+  assert.match(applicationPreviewSource,/case "forma-workspace-settings"/);
+  assert.match(applicationPreviewSource,/pattern\.workspaceAdministration/);
+  assert.match(applicationPreviewSource,/<forma-ui-switch \.label=\$\{t\("workspace\.admin\.canvasAccessNamed"/);
+  assert.match(applicationPreviewSource,/workspace\.admin\.editorBudgetNotice/);
+  assert.match(applicationPreviewSource, /<forma-ui-workspace-switcher/);
+  assert.match(applicationPreviewSource, /<forma-ui-audience-navigation/);
   assert.match(applicationPreviewSource, /role="list" aria-label=\$\{t\("pattern\.collectionHierarchy", "Sample collection hierarchy"\)\}/);
   assert.match(applicationPreviewSource, /class="sr-only"> \$\{t\("pattern\.libraryItems"/);
   for (const approach of ["Prose", "Bullets", "JSON", "XML"]) assert.match(applicationPreviewSource, new RegExp(`"${approach}"`));
@@ -264,7 +271,7 @@ test("every application pattern has an isolated, truthful, accessible production
 
   assert.equal(componentCatalog.find((entry) => entry.tag === "forma-ui-spinner").preview, false);
   assert.equal(componentCatalog.find((entry) => entry.tag === "forma-ui-spinner").previewKind, "component");
-  for (const tag of ["forma-artifact-summary", "forma-presentation-slide"]) {
+  for (const tag of ["forma-artifact-summary", "forma-presentation-slide", "forma-platform-shell", "forma-ui-workspace-switcher", "forma-ui-audience-navigation"]) {
     assert.equal(declarationByTag.get(tag)["x-forma"].stateful, false, `${tag} truthfully reports its presentational base`);
   }
   for (const tag of ["forma-collection-tree", "forma-generation-actions", "forma-shared-view"]) {
@@ -273,7 +280,7 @@ test("every application pattern has an isolated, truthful, accessible production
 });
 
 test("the reference remains route-lazy, store-independent, searchable, and interactive", async () => {
-  const route = await read("../src/apps/laboratory/entry.ts");
+  const route = await read("../src/apps/knowledge/entry.ts");
   assert.match(route, /import\("\.\.\/\.\.\/components\/forma-design-system-lab"\)/);
   assert.match(baseSource, /createRenderRoot\(\)\s*\{\s*return this/);
   assert.doesNotMatch(catalogSource, /\.\/forma-element|state\/store|this\.store/);
@@ -300,19 +307,179 @@ test("the reference remains route-lazy, store-independent, searchable, and inter
   assert.match(labSource, /<forma-component-catalog>/);
   assert.match(labSource, /administrative-page design-system-lab/);
   assert.match(labSource, /<forma-ui-disclosure class="design-disclosure"><span slot="summary">\$\{this\.i18n\.t\("lab\.disclosure", "Progressive disclosure"\)\}<\/span>/);
-  assert.match(labSource, /@forma-action=\$\{\(\) => this\.store\.setRoute\("\/projects"\)/);
+  assert.match(labSource, /extends FormaPresentationalElement/);
+  assert.match(labSource, /SYNTHETIC_DESIGN_FIXTURES/);
+  assert.match(labSource, /SYNTHETIC_AUDIENCE_TASKS/);
+  assert.match(labSource, /view==="components"/);
+  assert.match(labSource, /#cancelPreview\(event:Event\)/);
+  assert.doesNotMatch(labSource, /this\.store|state\/store|fetch\(/);
   for (const level of ["Foundations", "Atoms", "Molecules", "Organisms", "Templates"]) assert.match(labSource, new RegExp(level));
 });
 
+test("audience information architecture is a documented, localized, production-adopted design-system contract", async()=>{
+  const [navigation,creatorShell,platformShell,design,architecture,readme,reference,knowledgeEntry]=await Promise.all([
+    "../src/components/design-system/navigation.ts","../src/components/forma-shell.ts","../src/components/forma-platform-shell.ts",
+    "../DESIGN.md","../ARCHITECTURE.md","../README.md","../docs/components.md","../src/apps/knowledge/entry.ts",
+  ].map(read));
+  for(const [tag,category] of [["forma-ui-workspace-switcher","organism"],["forma-ui-audience-navigation","molecule"]]){
+    const declaration=declarationByTag.get(tag);
+    assert.ok(componentCatalog.some((entry)=>entry.tag===tag&&entry.level===category));
+    assert.equal(declaration["x-forma"].category,category);
+    assert.equal(declaration["x-forma"].stateful,false);
+    assert.equal(declaration["x-forma"].renderRoot,"light");
+    assert.ok(declaration.members.some((member)=>member.name==="destinations"&&!member.attribute));
+    assert.ok(!declaration.attributes.some((attribute)=>attribute.name==="destinations"));
+    assert.match(declaration.events.find((event)=>event.name==="forma-navigate").type.text,/value:\s*string;\s*href:\s*string/);
+    const i18n=declaration["x-forma"].i18n;
+    assert.deepEqual(i18n.optionTextPaths,["destinations[].label","destinations[].description"]);
+    assert.ok(i18n.invariantValuePaths.includes("destinations[].value"));
+    assert.ok(i18n.invariantValuePaths.includes("destinations[].href"));
+    assert.ok(i18n.invariantValuePaths.includes("value"));
+    assert.deepEqual(declaration.demos,[{url:`/knowledge/design-system#${tag}`}]);
+    assert.ok(frenchMessages[`component.${tag}.title`]);
+    assert.ok(arabicMessages[`component.${tag}.summary`]);
+    assert.match(creatorShell,new RegExp(`<${tag}`));
+    assert.match(platformShell,new RegExp(`<${tag}`));
+    assert.match(reference,new RegExp(tag));
+  }
+  assert.match(navigation,/destinations\.length < 2\) return nothing/);
+  assert.match(navigation,/const authorized = this\.destinations\.filter\(\(destination\) => !destination\.disabled\)/);
+  assert.match(navigation,/const destinations = authorized\.slice\(0, 5\)/);
+  assert.match(navigation,/aria-current=\$\{destination\.value === this\.value \? "page" : nothing\}/);
+  assert.match(navigation,/\{ value: destination\.value, href: destination\.href \}/);
+  assert.match(familyStyles,/\.ui-workspace-switcher/);
+  assert.match(familyStyles,/\.ui-audience-navigation/);
+  assert.match(knowledgeEntry,/\/knowledge\/patterns/);
+  assert.match(knowledgeEntry,/\/knowledge\/guidance/);
+  for(const document of [design,architecture,readme,reference]){
+    for(const surface of ["Creator Workspace","Canvas","Platform Operations","Product & Quality","Design & Knowledge","Engineering Diagnostics"])
+      assert.ok(document.includes(surface),`${surface} is documented`);
+    assert.match(document,/\/knowledge\/design-system/);
+  }
+  assert.doesNotMatch(reference,/\/laboratory\/design-system/);
+});
+
+test("workspace navigation opens an accessible native link popover instead of a disclosure or form control",async()=>{
+  const [navigation,defaultMessages,design,reference]=await Promise.all([
+    "../src/components/design-system/navigation.ts","../src/components/design-system/localization.ts","../DESIGN.md","../docs/components.md",
+  ].map(read));
+  const start=navigation.indexOf("export class FormaUiWorkspaceSwitcher");
+  const end=navigation.indexOf("export class FormaUiAudienceNavigation",start);
+  assert.ok(start>=0&&end>start);
+  const switcher=navigation.slice(start,end);
+
+  assert.match(switcher,/destinations\.length < 2\) return nothing/);
+  assert.match(switcher,/destinations\.length === 2\) return html`<nav/);
+  assert.match(switcher,/destinations\.find\(\(destination\) => destination\.value === this\.value\)/);
+  assert.match(switcher,/nextFormaId\("workspace-switcher"\)/);
+  assert.match(switcher,/<button type="button"[^>]*popovertarget=\$\{this\.#id\}/);
+  assert.match(switcher,/aria-controls=\$\{this\.#id\} aria-expanded=\$\{String\(this\.#open\)\}/);
+  assert.match(switcher,/navigation\.switchWorkspaceCurrent[\s\S]*?workspace: current\.label/);
+  assert.match(switcher,/<nav id=\$\{this\.#id\}[^>]*popover="auto" aria-label=\$\{label\}/);
+  assert.match(switcher,/@toggle=\$\{this\.#toggle\}/);
+  assert.match(switcher,/querySelector<HTMLAnchorElement>\('a\[aria-current="page"\]'\)/);
+  assert.match(switcher,/event\.key === "Escape"[\s\S]*?this\.#returnFocus = true/);
+  assert.match(switcher,/querySelector<HTMLButtonElement>\("\.ui-workspace-switcher-trigger"\)\?\.focus\(\)/);
+  assert.match(switcher,/panel\.hidePopover\(\)/);
+  assert.match(switcher,/event\.button!==0\|\|event\.metaKey\|\|event\.ctrlKey\|\|event\.shiftKey\|\|event\.altKey/);
+  assert.match(switcher,/<a href=\$\{destination\.href\}/);
+  assert.doesNotMatch(switcher,/<details\b|<summary\b|<select\b|<dialog\b|role="(?:menu|menuitem|listbox|combobox)"/);
+
+  assert.match(familyStyles,/\.ui-workspace-switcher-panel\[popover\]:popover-open\s*\{[^}]*display:\s*grid/);
+  assert.match(familyStyles,/forma-ui-popover,forma-ui-workspace-switcher\s*\{\s*anchor-scope:/);
+  assert.doesNotMatch(familyStyles,/\.ui-workspace-switcher\s+summary|\.platform-switcher\s*>\s*nav\s*\{/);
+  assert.match(defaultMessages,/"navigation\.switchWorkspaceCurrent":/);
+  for(const catalog of [frenchMessages,arabicMessages])assert.match(catalog["navigation.switchWorkspaceCurrent"],/\{workspace\}/);
+  assert.ok(declarationByTag.get("forma-ui-workspace-switcher")["x-forma"].i18n.internalMessages.includes("navigation.switchWorkspaceCurrent"));
+  assert.match(catalogSource,/case "forma-ui-workspace-switcher"[^\n]*value:"product"/);
+  assert.match(design,/native\s+automatically dismissed popover/);
+  assert.match(reference,/popover="auto"/);
+});
+
+test("audience task rails are neutral, current-preserving, keyboard-safe, and consistent across shells",async()=>{
+  const [navigation,creatorShell,platformShell,adapter,design,reference,canvasStyles]=await Promise.all([
+    "../src/components/design-system/navigation.ts","../src/components/forma-shell.ts","../src/components/forma-platform-shell.ts",
+    "../src/components/area-navigation.ts","../DESIGN.md","../docs/components.md","../src/canvas/canvas.css",
+  ].map(read));
+  const start=navigation.indexOf("export class FormaUiAudienceNavigation");
+  assert.ok(start>=0);
+  const audience=navigation.slice(start,navigation.indexOf("\nconst definitions =",start));
+
+  assert.match(audience,/if \(!authorized\.length\) return nothing/);
+  assert.match(audience,/const destinations = authorized\.slice\(0, 5\)/);
+  assert.match(audience,/if \(current && !destinations\.includes\(current\)\) destinations\[destinations\.length - 1\] = current/);
+  assert.match(audience,/const currentIndex = destinations\.findIndex\(\(destination\) => destination\.value === this\.value\)/);
+  assert.match(audience,/<nav class="ui-audience-navigation" aria-label=\$\{label\}><ul class="ui-audience-navigation-list">/);
+  assert.match(audience,/<li><a href=\$\{destination\.href\}/);
+  assert.match(audience,/aria-current=\$\{index === currentIndex \? "page" : nothing\}/);
+  assert.match(audience,/querySelector<HTMLElement>\("\.ui-audience-navigation-list"\)/);
+  assert.match(audience,/Number\.parseFloat\(getComputedStyle\(current\)\.outlineWidth\)/);
+  assert.match(audience,/target\.right > viewport\.right - focusClearance[\s\S]*scroller\.scrollLeft \+=/);
+  assert.match(audience,/this\.matches\(":dir\(rtl\)"\)/);
+  assert.match(audience,/event\.button!==0\|\|event\.metaKey\|\|event\.ctrlKey\|\|event\.shiftKey\|\|event\.altKey/);
+  assert.doesNotMatch(audience,/area-navigation--administrative|<span>\$\{label\}<\/span>|role="(?:tablist|tab|menu|menuitem)"|scrollIntoView|scroll-behavior:\s*smooth/);
+  assert.doesNotMatch(adapter,/getBoundingClientRect|\.area-navigation > div/);
+
+  assert.match(familyStyles,/forma-ui-audience-navigation:empty\s*\{\s*display:\s*none/);
+  assert.match(familyStyles,/\.ui-audience-navigation-list\s*\{[^}]*padding-inline:\s*var\(--page-gutter,[^;]+\);[^}]*overflow-x:\s*auto;[^}]*scroll-padding-inline:\s*var\(--page-gutter,/s);
+  assert.doesNotMatch(familyStyles,/\.ui-audience-navigation-list\s*\{[^}]*padding-block:/s);
+  assert.match(familyStyles,/\.ui-audience-navigation a:focus-visible\s*\{\s*outline-offset:\s*calc\(-1 \* var\(--forma-focus-ring-width,/);
+  assert.match(familyStyles,/\.ui-audience-navigation a\s*\{[^}]*min-inline-size:\s*var\(--forma-control-min-size,[^;]+\);[^}]*color:\s*var\(--forma-color-text-muted,[^;]+\);[^}]*border-block-end:\s*2px solid transparent/s);
+  assert.match(familyStyles,/\.ui-audience-navigation a\[aria-current="page"\]\s*\{[^}]*border-block-end-color:\s*var\(--forma-color-accent,/s);
+  assert.match(familyStyles,/@media \(forced-colors: active\)[\s\S]*?\.ui-audience-navigation a\[aria-current="page"\]\s*\{[^}]*color:\s*CanvasText;[^}]*background:\s*Canvas;[^}]*border-block-end-color:\s*Highlight;/s);
+  assert.match(familyStyles,/html\[data-document-focus\] \.app-shell > forma-ui-audience-navigation,\s*html\[data-canvas-focus\] \.app-shell > forma-ui-audience-navigation\s*\{\s*display:\s*none/);
+  assert.match(canvasStyles,/html\[data-canvas-focus\] \.application-canvas>\.topbar,html\[data-canvas-focus\] \.application-canvas>\.area-navigation--canvas\{display:none\}/);
+  assert.match(canvasStyles,/--canvas-chrome-height:calc\(4rem \+ var\(--forma-control-min-size,2\.75rem\) \+ 1px\)/);
+  assert.match(creatorShell,/application-task-navigation area-navigation--\$\{applicationId\}/);
+  assert.match(platformShell,/<forma-ui-audience-navigation class="platform-navigation"/);
+  assert.match(laboratoryStyles,/\.component-library \.ui-audience-navigation-list,[\s\S]*?padding-inline:\s*var\(--forma-space-3/);
+  assert.match(catalogSource,/case "forma-ui-audience-navigation"[^\n]*value="delivery"/);
+  for(const token of ["--forma-color-surface","--forma-color-border","--forma-color-text","--forma-color-text-muted","--forma-color-accent-text","--forma-color-accent"])
+    assert.ok(declarationByTag.get("forma-ui-audience-navigation").cssProperties.some((property)=>property.name===token),`${token} is machine-discoverable`);
+  assert.match(design,/audience-neutral, preference-reactive task rail/);
+  assert.match(reference,/current authorized destination instead of silently hiding it/);
+});
+
 test("the component library is actually adopted by Library and Operations surfaces", () => {
-  assert.match(librarySource, /<forma-ui-search class="searchbox" label="Search project library"/);
-  assert.match(librarySource, /<forma-ui-segmented-control class="segmented" label="Library content"/);
+  assert.match(librarySource, /<forma-ui-search class="searchbox" \.label=\$\{this\.i18n\.t\("projects\.searchLibrary","Search project library"\)/);
+  assert.match(librarySource, /<forma-ui-segmented-control class="segmented" \.label=\$\{this\.i18n\.t\("projects\.libraryContent","Library content"\)/);
   assert.match(librarySource, /@forma-input/);
   assert.match(librarySource, /@forma-change/);
   assert.match(analyticsSource, /<div><forma-ui-metric \.label=\$\{label\}/);
   assert.match(familyStyles, /\.analytics-readiness-outcomes/);
   assert.doesNotMatch(collectionSource, /role="tree"|role="treeitem"|role="menu"|role="menuitem"/);
   assert.match(collectionSource, /role="group" aria-label=\$\{`\$\{collection\.handle\} actions`\}/);
+});
+
+test("the Design System documents workspace-owned shared capabilities and explicit localized Creator handoffs",async()=>{
+  const [design,reference,architecture,rail,editor,output,fan,artifacts]=await Promise.all([
+    "../DESIGN.md","../docs/components.md","../ARCHITECTURE.md","../src/components/project-rail.ts",
+    "../src/components/library-block-editor.ts","../src/components/output-card.ts","../src/components/prompt-fan-review.ts","../src/components/document-artifacts.ts",
+  ].map(read));
+  for(const source of [design,reference,architecture,applicationPreviewSource]){
+    assert.match(source,/\/canvas\/projects/);
+    assert.match(source,/\/canvas\/library/);
+  }
+  assert.match(applicationPreviewSource,/href:\s*"#forma-area-navigation-canvas-projects"/);
+  assert.match(applicationPreviewSource,/href:\s*"#forma-area-navigation-canvas-library"/);
+  for(const catalog of [frenchMessages,arabicMessages]){
+    for(const key of ["pattern.workspaceOwnedResources","pattern.sharedProjectResources","projects.editCreator","projects.useEditCreator","projects.removeKeptNamed","projects.keepReuseNamed"])assert.ok(catalog[key],key);
+    assert.ok(catalog["projects.removeKeptNamed"].startsWith(catalog["projects.removeKept"]));
+    assert.ok(catalog["projects.keepReuseNamed"].startsWith(catalog["projects.keepReuse"]));
+  }
+  assert.match(rail,/event\.button!==0\|\|event\.metaKey\|\|event\.ctrlKey/);
+  assert.match(editor,/<h1 id="library-block-editor-title">/);
+  assert.doesNotMatch(editor,/<main class="library-block-workbench">/);
+  assert.match(librarySource,/\$\{canAuthor&&!context\?html`<button class="button ghost"/);
+  assert.match(librarySource,/for\(const dialog of this\.querySelectorAll<HTMLDialogElement>/);
+  for(const source of [output,fan,artifacts,librarySource]){
+    assert.match(source,/projects\.editCreator/);
+    assert.match(source,/projects\.useEditCreator/);
+  }
+  assert.match(librarySource,/libraryBaseRoute\(this\.store\.route\.get\(\)\)==="\/canvas\/library"/);
+  assert.match(librarySource,/aria-label=\$\{this\.#inputAction\(adopted,artifact\.title\)\}/);
+  assert.match(librarySource,/\$\{this\.#inputLabel\(adopted\)\}/);
+  assert.match(fan,/aria-label=\$\{this\.#inputLabel\(output,definition\.label\)\}/);
 });
 
 test("single-select pickers enhance progressively while preserving native forms and accessibility", async () => {

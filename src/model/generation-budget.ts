@@ -64,8 +64,8 @@ export function generationBudgetGate(
   };
 }
 
-export const generationBudgetPreferenceKey = (userId: string, period: string, preference: "notice" | "suppressed") =>
-  `forma:generation-budget:${encodeURIComponent(userId || "anonymous")}:${period || "unknown"}:${preference}`;
+export const generationBudgetPreferenceKey = (userId: string, period: string, preference: "notice" | "suppressed", organizationId?: string | null) =>
+  `forma:generation-budget:${encodeURIComponent(userId || "anonymous")}:${period || "unknown"}${organizationId?`:organization:${encodeURIComponent(organizationId)}`:""}:${preference}`;
 
 export const formatGenerationUsd = (microusd: number) => `$${(Math.max(0, Number(microusd) || 0) / 1_000_000).toFixed(2)}`;
 

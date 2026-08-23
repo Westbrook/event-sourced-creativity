@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { deflateSync, inflateSync } from "node:zlib";
 import { createPresentationPdf, createPresentationPdfFromRenderedSlides, presentationPdfFilename } from "../src/model/presentation-pdf.ts";
@@ -86,6 +87,55 @@ test("retains Unicode search mappings beyond one 8-bit font and supports emoji",
   assert.match(source,/\/F2 1 Tf/);
 });
 
+test("exports genuine tagged multilingual heading, paragraph, and list structures in reading order",(context)=>{
+  const pixels=deflateSync(Uint8Array.from([18,23,21]));
+  const result=createPresentationPdfFromRenderedSlides([
+    {width:1,height:1,bytes:pixels,text:"مرحبا\nسياق فرنسي Café\nالهدف الأول\nالهدف الثاني",heading:"مرحبا",bullets:["الهدف الأول","الهدف الثاني"],language:"ar",direction:"rtl"},
+    {width:1,height:1,bytes:pixels,text:"Présentation\nRésumé 東京 😀",heading:"Présentation",language:"fr",direction:"ltr"},
+  ],{title:"خطة Forma",language:"ar",direction:"rtl"});
+  const source=Buffer.from(result.bytes).toString("latin1");
+
+  assert.match(source,/\/StructTreeRoot \d+ 0 R/);
+  assert.match(source,/\/MarkInfo << \/Marked true >> \/Lang \(ar\)/);
+  assert.match(source,/\/ViewerPreferences << \/DisplayDocTitle true >>/);
+  assert.match(source,/\/ParentTree \d+ 0 R \/ParentTreeNextKey 2/);
+  assert.match(source,/\/StructParents 0 \/Tabs \/S/);
+  assert.match(source,/\/StructParents 1 \/Tabs \/S/);
+  assert.match(source,/\/S \/Document/);
+  assert.equal((source.match(/\/S \/Sect/g)??[]).length,2);
+  assert.equal((source.match(/\/S \/H1/g)??[]).length,2);
+  assert.equal((source.match(/\/S \/P /g)??[]).length,2);
+  assert.match(source,/\/S \/L /);
+  assert.equal((source.match(/\/S \/LI /g)??[]).length,2);
+  assert.equal((source.match(/\/S \/LBody /g)??[]).length,2);
+  assert.match(source,/\/WritingMode \/RlTb/);
+  assert.match(source,/\/Lang \(fr\)/);
+  assert.equal((source.match(/\/Artifact BMC/g)??[]).length,2);
+  assert.match(source,/\/H1 << \/MCID 0 \/ActualText </);
+  assert.match(source,/\/LBody << \/MCID 2 \/ActualText </);
+
+  const info=spawnSync("pdfinfo",["-"],{input:Buffer.from(result.bytes),encoding:"utf8"});
+  if(info.error?.code==="ENOENT"){context.skip("Poppler pdfinfo is unavailable in this environment.");return;}
+  assert.equal(info.status,0,info.stderr);
+  assert.match(info.stdout,/Tagged:\s+yes/);
+
+  const structure=spawnSync("pdfinfo",["-struct-text","-"],{input:Buffer.from(result.bytes),encoding:"utf8"});
+  assert.equal(structure.status,0,structure.stderr);
+  assert.match(structure.stdout,/Document[\s\S]*Sect[\s\S]*H1[^\n]*\n\s*"مرحبا"[\s\S]*P[^\n]*\n\s*"سياق فرنسي Café"[\s\S]*L[\s\S]*LI[\s\S]*LBody[^\n]*\n\s*"الهدف الأول"[\s\S]*LI[\s\S]*LBody[^\n]*\n\s*"الهدف الثاني"[\s\S]*Sect[\s\S]*H1[^\n]*\n\s*"Présentation"[\s\S]*P[^\n]*\n\s*"Résumé 東京 😀"/);
+});
+
+test("preserves bullet reading order ahead of later chart labels and footer text",(context)=>{
+  const pixels=deflateSync(Uint8Array.from([18,23,21]));
+  const result=createPresentationPdfFromRenderedSlides([{
+    width:1,height:1,bytes:pixels,heading:"Campaign direction",bullets:["First decision","Second decision"],
+    text:"Campaign direction\nContext for the review\nFirst decision\nSecond decision\nCreative confidence\n87%\nReview deck",
+  }]);
+  const structure=spawnSync("pdfinfo",["-struct-text","-"],{input:Buffer.from(result.bytes),encoding:"utf8"});
+  if(structure.error?.code==="ENOENT"){context.skip("Poppler pdfinfo is unavailable in this environment.");return;}
+  assert.equal(structure.status,0,structure.stderr);
+  assert.match(structure.stdout,/"Context for the review"[\s\S]*LBody[^\n]*\n\s*"First decision"[\s\S]*LBody[^\n]*\n\s*"Second decision"[\s\S]*"Creative confidence"[\s\S]*"87%"[\s\S]*"Review deck"/);
+});
+
 test("exports the actual themed slide component instead of reconstructing its layout",async()=>{
   const [exporter,deck]=await Promise.all([
     readFile(new URL("../src/components/presentation-pdf-export.ts",import.meta.url),"utf8"),
@@ -99,9 +149,14 @@ test("exports the actual themed slide component instead of reconstructing its la
   assert.match(exporter,/document\.fonts\.ready/);
   assert.match(exporter,/document\.styleSheets/);
   assert.match(exporter,/foreignObject/);
+  assert.match(exporter,/wrapper\.setAttribute\("lang",document\.documentElement\.lang\|\|"en"\)/);
+  assert.match(exporter,/wrapper\.setAttribute\("dir",inherited\.direction\|\|document\.documentElement\.dir\|\|"ltr"\)/);
+  assert.match(exporter,/heading:host\.querySelector<HTMLElement>/);
+  assert.match(exporter,/bullets:Array\.from\(host\.querySelectorAll<HTMLElement>/);
   assert.match(exporter,/CompressionStream\("deflate"\)/);
   assert.match(exporter,/EXPORT_SCALE=2/);
   assert.match(deck,/renderPresentationPdf\(items,presentation,options\)/);
+  assert.match(deck,/language:this\.i18n\.locale,direction:this\.i18n\.direction/);
   assert.match(deck,/render_mode:"browser-slide-capture"/);
   assert.doesNotMatch(deck,/\bcreatePresentationPdf\s*\(/);
   assert.doesNotMatch(deck,/compatible-vector/);

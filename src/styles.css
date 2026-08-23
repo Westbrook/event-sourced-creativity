@@ -195,7 +195,7 @@ code, pre, kbd { font-family: var(--mono); }
 .icon-button { display: inline-flex; min-width: 31px; min-height: 31px; align-items: center; justify-content: center; gap: 6px; border-radius: 6px; color: var(--muted); }
 .icon-button:hover { color: var(--ink); background: var(--panel-2); }
 .icon-button.labeled { padding: 0 7px; font-size: var(--type-caption); }
-.account-popover { position: absolute; z-index: 55; top: 52px; inset-inline-end: 22px; width: 260px; padding: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+.account-popover { --account-popover-top: 52px; position: fixed; z-index: 55; inset: auto; top: var(--account-popover-top); inset-inline-end: 22px; width: 260px; max-block-size: calc(100dvh - var(--account-popover-top) - max(12px,env(safe-area-inset-bottom,0px))); overflow-y: auto; margin: 0; padding: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); overscroll-behavior: contain; scroll-padding-block: 12px; scrollbar-gutter: auto; scrollbar-width: thin; }
 .account-popover b { display: block; font-family: var(--serif); font-size: var(--type-heading); }
 .account-popover p, .account-popover small { color: var(--muted); font-size: var(--type-caption); }
 .account-popover .button { width: 100%; margin-top: 12px; }
@@ -1152,7 +1152,7 @@ forma-output-visual { position: absolute; inset: 0; display: grid; min-width: 0;
   .top-actions .locale-switcher > span, .focus-locale-switcher .locale-switcher > span { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
   .locale-switcher > select { max-inline-size: 7.25rem; padding-inline: .4rem; }
   .focus-locale-switcher { inset-inline-end: .25rem; }
-  .account-popover { top: 49px; inset-inline-end: 10px; }
+  .account-popover { --account-popover-top: 49px; inset-inline-end: 10px; }
   .creator-settings-grid { grid-template-columns: minmax(0,1fr); }
   .creator-settings-budget { grid-template-columns: minmax(0,1fr); }
   .creator-settings-shares li { align-items: stretch; flex-direction: column; }

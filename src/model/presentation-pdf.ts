@@ -9,9 +9,9 @@ const TEXT_WIDTH=500;
 const VISUAL_LEFT=604;
 const VISUAL_WIDTH=302;
 
-export type PresentationPdfOptions={title?:string;showFooterLabel?:boolean};
+export type PresentationPdfOptions={title?:string;showFooterLabel?:boolean;language?:string;direction?:"ltr"|"rtl"};
 export type PresentationPdfResult={bytes:Uint8Array;filename:string;pageCount:number};
-export type PresentationPdfRenderedPage={width:number;height:number;bytes:Uint8Array;text?:string};
+export type PresentationPdfRenderedPage={width:number;height:number;bytes:Uint8Array;text?:string;heading?:string;bullets?:string[];language?:string;direction?:"ltr"|"rtl"};
 
 const replacements:Record<string,string>={"\u2018":"'","\u2019":"'","\u201a":",","\u201c":"\"","\u201d":"\"","\u2013":"-","\u2014":"-","\u2026":"...","\u2022":"-","\u00b7":"-","\u00a0":" ","\u00ae":"(R)","\u00a9":"(C)","\u2122":"TM"};
 const ascii=(value:unknown)=>String(value??"").normalize("NFKD").replace(/[\u2018\u2019\u201a\u201c\u201d\u2013\u2014\u2026\u2022\u00b7\u00a0\u00ae\u00a9\u2122]/g,(character)=>replacements[character]??"").replace(/[\u0300-\u036f]/g,"").replace(/[^\x20-\x7e\n]/g,"").replace(/[ \t]+/g," ").trim();
@@ -94,12 +94,39 @@ const pdf=(pages:string[],title:string)=>{
   return new TextEncoder().encode(body);
 };
 
-const renderedPdf=(pages:PresentationPdfRenderedPage[],title:string)=>{
+const pdfLanguage=(value:unknown)=>{
+  try{return Intl.getCanonicalLocales(typeof value==="string"?value:"en")[0]??"en";}catch{return"en";}
+};
+
+const renderedPdf=(pages:PresentationPdfRenderedPage[],title:string,options:PresentationPdfOptions)=>{
   const objects:Uint8Array[]=[];
   const add=(value:string|Uint8Array)=>{objects.push(typeof value==="string"?encode(value):value);return objects.length;};
-  const catalog=add("<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> >>");
+  const catalog=add("");
   add("");
-  const lines=pages.map((page)=>(page.text??"").split(/\r?\n/).map((line)=>line.trim()).filter(Boolean));
+  const structureRoot=add("");
+  const documentStructure=add("");
+  const parentTree=add("");
+  const semanticPages=pages.map((page,index)=>{
+    const source=(page.text??"").split(/\r?\n/).map((line)=>line.trim()).filter(Boolean);
+    const heading=String(page.heading??source[0]??`Slide ${index+1}`).trim()||`Slide ${index+1}`;
+    const bullets=(page.bullets??[]).map((bullet)=>String(bullet).trim()).filter(Boolean);
+    const remainingBullets=[...bullets];
+    let removedHeading=false;
+    const entries:Array<{role:"P";line:string}|{role:"L";lines:string[]}>=[];
+    for(const line of source){
+      if(!removedHeading&&line===heading){removedHeading=true;continue;}
+      const bulletIndex=remainingBullets.indexOf(line);
+      if(bulletIndex!==-1){
+        remainingBullets.splice(bulletIndex,1);
+        const list=entries.at(-1);
+        if(list?.role==="L")list.lines.push(line);
+        else entries.push({role:"L",lines:[line]});
+      }else entries.push({role:"P",line});
+    }
+    if(remainingBullets.length)entries.push({role:"L",lines:remainingBullets});
+    return{heading,entries,language:pdfLanguage(page.language??options.language),direction:page.direction??options.direction??"ltr"};
+  });
+  const lines=semanticPages.map((page)=>[page.heading,...page.entries.flatMap((entry)=>entry.role==="P"?[entry.line]:entry.lines)]);
   const characters=[...new Set(lines.flatMap((entries)=>entries.flatMap((entry)=>Array.from(entry))))];
   const groups=Array.from({length:Math.max(1,Math.ceil(characters.length/255))},(_,index)=>characters.slice(index*255,(index+1)*255));
   const glyphs=new Map<string,{font:string;code:string}>();
@@ -117,6 +144,8 @@ const renderedPdf=(pages:PresentationPdfRenderedPage[],title:string)=>{
     return{name,id};
   });
   const pageIds:number[]=[];
+  const sectionIds:number[]=[];
+  const parentEntries:Array<{page:number;leaves:number[]}>=[];
 
   pages.forEach((page,index)=>{
     if(!Number.isSafeInteger(page.width)||page.width<1||!Number.isSafeInteger(page.height)||page.height<1||!page.bytes.byteLength)throw new TypeError("A rendered presentation page must contain compressed RGB pixels and valid dimensions.");
@@ -127,10 +156,42 @@ const renderedPdf=(pages:PresentationPdfRenderedPage[],title:string)=>{
       encode("\nendstream"),
     ]));
 
-    // Lossless pixels preserve appearance; invisible text keeps search and
-    // copy useful. Explicit ToUnicode maps retain accents, CJK, and emoji even
-    // in PDF readers that ignore marked-content ActualText.
-    const semantics=lines[index]!.map((line,lineIndex)=>{
+    const content=add("");
+    const entry=add("");
+    pageIds.push(entry);
+    const semanticPage=semanticPages[index]!;
+    const section=add("");
+    sectionIds.push(section);
+    const leaves:number[]=[];
+    const children:number[]=[];
+    const semanticLines:Array<{line:string;role:"H1"|"P"|"LBody";id:number}>=[];
+    const leaf=(role:"H1"|"P"|"LBody",line:string,parent:number)=>{
+      const id=add(`<< /Type /StructElem /S /${role} /P ${parent} 0 R /Pg ${entry} 0 R /K ${leaves.length} >>`);
+      leaves.push(id);
+      semanticLines.push({line,role,id});
+      return id;
+    };
+    children.push(leaf("H1",semanticPage.heading,section));
+    for(const pageEntry of semanticPage.entries){
+      if(pageEntry.role==="P"){children.push(leaf("P",pageEntry.line,section));continue;}
+      const list=add("");
+      children.push(list);
+      const listItems:number[]=[];
+      for(const bullet of pageEntry.lines){
+        const item=add("");
+        listItems.push(item);
+        const body=leaf("LBody",bullet,item);
+        objects[item-1]=encode(`<< /Type /StructElem /S /LI /P ${list} 0 R /K [${body} 0 R] >>`);
+      }
+      objects[list-1]=encode(`<< /Type /StructElem /S /L /P ${section} 0 R /K [${listItems.map((id)=>`${id} 0 R`).join(" ")}] >>`);
+    }
+    const direction=semanticPage.direction==="rtl"?" /A << /O /Layout /WritingMode /RlTb >>":"";
+    objects[section-1]=encode(`<< /Type /StructElem /S /Sect /P ${documentStructure} 0 R /Lang (${semanticPage.language})${direction} /K [${children.map((id)=>`${id} 0 R`).join(" ")}] >>`);
+    parentEntries.push({page:index,leaves});
+
+    // The screenshot is an artifact; every visible label is represented by a
+    // Unicode leaf in the tagged Document / Sect / H1 / P / L structure.
+    const semantics=semanticLines.map(({line,role},lineIndex)=>{
       const runs:Array<{font:string;codes:string[]}>=[];
       for(const character of line){
         const glyph=glyphs.get(character);
@@ -140,15 +201,18 @@ const renderedPdf=(pages:PresentationPdfRenderedPage[],title:string)=>{
         else runs.push({font:glyph.font,codes:[glyph.code]});
       }
       const content=runs.map((run)=>`/${run.font} 1 Tf\n<${run.codes.join("")}> Tj`).join("\n");
-      return`/Span << /ActualText <${utf16(`${line}\n`)}> >> BDC\nBT\n3 Tr\n1 0 0 1 0 ${Math.max(0,PAGE_HEIGHT-lineIndex-1)} Tm\n${content}\nET\nEMC`;
+      return`/${role} << /MCID ${lineIndex} /ActualText <${utf16(`${line}\n`)}> >> BDC\nBT\n3 Tr\n1 0 0 1 0 ${Math.max(0,PAGE_HEIGHT-lineIndex-1)} Tm\n${content}\nET\nEMC`;
     }).join("\n");
-    const stream=`q\n${PAGE_WIDTH} 0 0 ${PAGE_HEIGHT} 0 0 cm\n/${imageName} Do\nQ${semantics?`\n${semantics}`:""}`;
-    const content=add(`<< /Length ${byteLength(stream)} >>\nstream\n${stream}\nendstream`);
-    const entry=add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << ${fonts.map((font)=>`/${font.name} ${font.id} 0 R`).join(" ")} >> /XObject << /${imageName} ${image} 0 R >> >> /Contents ${content} 0 R >>`);
-    pageIds.push(entry);
+    const stream=`/Artifact BMC\nq\n${PAGE_WIDTH} 0 0 ${PAGE_HEIGHT} 0 0 cm\n/${imageName} Do\nQ\nEMC${semantics?`\n${semantics}`:""}`;
+    objects[content-1]=encode(`<< /Length ${byteLength(stream)} >>\nstream\n${stream}\nendstream`);
+    objects[entry-1]=encode(`<< /Type /Page /Parent 2 0 R /StructParents ${index} /Tabs /S /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << ${fonts.map((font)=>`/${font.name} ${font.id} 0 R`).join(" ")} >> /XObject << /${imageName} ${image} 0 R >> >> /Contents ${content} 0 R >>`);
   });
 
+  objects[catalog-1]=encode(`<< /Type /Catalog /Pages 2 0 R /StructTreeRoot ${structureRoot} 0 R /MarkInfo << /Marked true >> /Lang (${pdfLanguage(options.language)}) /ViewerPreferences << /DisplayDocTitle true >> >>`);
   objects[1]=encode(`<< /Type /Pages /Kids [${pageIds.map((id)=>`${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`);
+  objects[structureRoot-1]=encode(`<< /Type /StructTreeRoot /K ${documentStructure} 0 R /ParentTree ${parentTree} 0 R /ParentTreeNextKey ${pages.length} >>`);
+  objects[documentStructure-1]=encode(`<< /Type /StructElem /S /Document /P ${structureRoot} 0 R /K [${sectionIds.map((id)=>`${id} 0 R`).join(" ")}] >>`);
+  objects[parentTree-1]=encode(`<< /Nums [${parentEntries.map((entry)=>`${entry.page} [${entry.leaves.map((id)=>`${id} 0 R`).join(" ")}]`).join(" ")}] >>`);
   const info=add(`<< /Title <${utf16(title)}> /Creator (Forma high-fidelity slideshow PDF export) >>`);
   const parts:Uint8Array[]=[encode("%PDF-1.4\n%Forma\n")];
   const offsets=[0];
@@ -171,7 +235,7 @@ export const presentationPdfFilename=(title:string)=>`${ascii(title).toLocaleLow
 export function createPresentationPdfFromRenderedSlides(pages:PresentationPdfRenderedPage[],options:PresentationPdfOptions={}):PresentationPdfResult{
   if(!pages.length)throw new TypeError("At least one rendered presentation slide is required.");
   const title=String(options.title??"").trim()||"Slide deck";
-  return{bytes:renderedPdf(pages,title),filename:presentationPdfFilename(title),pageCount:pages.length};
+  return{bytes:renderedPdf(pages,title,options),filename:presentationPdfFilename(title),pageCount:pages.length};
 }
 
 export function createPresentationPdf(items:DocumentArtifactDraftItem[],value:SlidePresentation|null,options:PresentationPdfOptions={}):PresentationPdfResult{

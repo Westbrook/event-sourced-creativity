@@ -9,17 +9,28 @@ export type AccountSnapshotIdentity = {
   policyVersion: string;
   accepted: boolean;
   impersonating: boolean;
+  principalUserId?:string;
+  audience?:string;
+  organizationId?:string|null;
+  projectAccessId?:string|null;
+  permissionEpoch?:string;
+  accessExpiresAt?:string|null;
 };
 
 export type AccountSnapshot = {
   key: string;
   userId: string;
+  principalUserId:string;
+  audience:string;
+  organizationId:string;
+  projectAccessId:string;
+  permissionEpoch:string;
   policyVersion: string;
   profile: AccountSnapshotProfile;
   head: number;
   events: CreativeEvent[];
   savedAt: number;
-  schemaVersion: 2;
+  schemaVersion: 3;
 };
 
 export type AnalyticsSnapshotIdentity = AccountSnapshotIdentity & { role: string };
@@ -36,7 +47,7 @@ export type AnalyticsSnapshot = {
 
 const DATABASE = "forma-account-snapshots-v1";
 const STORE = "snapshots";
-const SNAPSHOT_SCHEMA_VERSION = 2;
+const SNAPSHOT_SCHEMA_VERSION = 3;
 const MAX_AGE_MS = 15 * 60_000;
 const MAX_RECORDS = 6;
 const ANALYTICS_MAX_AGE_MS = 60_000;
@@ -67,7 +78,8 @@ function analyticsDatabase() {
 }
 
 function snapshotKey(identity: AccountSnapshotIdentity) {
-  return `${identity.userId}:${identity.policyVersion}:v2`;
+  const parts=[identity.principalUserId??identity.userId,identity.userId,identity.audience??"creative",identity.organizationId??"personal",identity.projectAccessId??"personal",identity.permissionEpoch??"legacy",identity.policyVersion];
+  return`${parts.map((part)=>encodeURIComponent(part)).join(":")}:v3`;
 }
 
 function analyticsSnapshotKey(identity: AnalyticsSnapshotIdentity, url: string) {
@@ -128,13 +140,13 @@ export async function clearAnalyticsSnapshots(identity: AccountSnapshotIdentity,
   } catch { /* A blocked local cache cannot weaken server-owned forgetting. */ }
 }
 
-export async function readAccountSnapshots(): Promise<AccountSnapshot[]> {
+export async function readAccountSnapshots(identity?:AccountSnapshotIdentity): Promise<AccountSnapshot[]> {
   try {
     const connection = await database();
     return await new Promise<AccountSnapshot[]>((resolve, reject) => {
       const transaction = connection.transaction(STORE, "readonly");
-      const request = transaction.objectStore(STORE).getAll();
-      request.onsuccess = () => resolve((request.result as AccountSnapshot[]).filter((snapshot) => snapshot.schemaVersion === SNAPSHOT_SCHEMA_VERSION && Date.now() - snapshot.savedAt <= MAX_AGE_MS));
+      const request=identity?transaction.objectStore(STORE).get(snapshotKey(identity)):transaction.objectStore(STORE).getAll();
+      request.onsuccess=()=>{const values=identity?(request.result?[request.result]:[]):request.result as AccountSnapshot[];resolve(values.filter((snapshot:AccountSnapshot)=>snapshot.schemaVersion===SNAPSHOT_SCHEMA_VERSION&&Date.now()-snapshot.savedAt<=MAX_AGE_MS));};
       request.onerror = () => reject(request.error);
       transaction.oncomplete = () => connection.close();
     });
@@ -148,11 +160,16 @@ export function matchingAccountSnapshot(
   identity: AccountSnapshotIdentity,
   requestedProfile: AccountSnapshotProfile,
 ) {
-  if (identity.impersonating || !identity.accepted) return null;
+  if (identity.impersonating || !identity.accepted || identity.accessExpiresAt&&Date.parse(identity.accessExpiresAt)<=Date.now()) return null;
   const snapshot = snapshots.find((candidate) =>
     candidate.key === snapshotKey(identity) &&
     candidate.schemaVersion === SNAPSHOT_SCHEMA_VERSION &&
     candidate.userId === identity.userId &&
+    candidate.principalUserId===(identity.principalUserId??identity.userId)&&
+    candidate.audience===(identity.audience??"creative")&&
+    candidate.organizationId===(identity.organizationId??"personal")&&
+    candidate.projectAccessId===(identity.projectAccessId??"personal")&&
+    candidate.permissionEpoch===(identity.permissionEpoch??"legacy")&&
     candidate.policyVersion === identity.policyVersion &&
     eventProfileRank(candidate.profile) >= eventProfileRank(requestedProfile) &&
     candidate.events.length > 0,
@@ -168,14 +185,14 @@ export async function writeAccountSnapshot(
   head: number,
   profile: AccountSnapshotProfile,
 ) {
-  if (identity.impersonating || !identity.accepted || !events.length) return;
+  if (identity.impersonating || !identity.accepted || !events.length || identity.accessExpiresAt&&Date.parse(identity.accessExpiresAt)<=Date.now()) return;
   try {
     const connection = await database();
     await new Promise<void>((resolve, reject) => {
       const transaction = connection.transaction(STORE, "readwrite");
       const store = transaction.objectStore(STORE);
       const safeEvents = profile === "full" ? events : events.filter((event) => eventMatchesProfile(profile, event.type, event.payload));
-      const snapshot: AccountSnapshot = { key: snapshotKey(identity), userId: identity.userId, policyVersion: identity.policyVersion, profile, head, events: safeEvents, savedAt: Date.now(), schemaVersion: SNAPSHOT_SCHEMA_VERSION };
+      const snapshot:AccountSnapshot={key:snapshotKey(identity),userId:identity.userId,principalUserId:identity.principalUserId??identity.userId,audience:identity.audience??"creative",organizationId:identity.organizationId??"personal",projectAccessId:identity.projectAccessId??"personal",permissionEpoch:identity.permissionEpoch??"legacy",policyVersion:identity.policyVersion,profile,head,events:safeEvents,savedAt:Date.now(),schemaVersion:SNAPSHOT_SCHEMA_VERSION};
       const existing = store.get(snapshot.key);
       existing.onsuccess = () => {
         const previous = existing.result as AccountSnapshot | undefined;

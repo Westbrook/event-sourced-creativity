@@ -1,7 +1,6 @@
-import { html } from "lit";
-import { FormaElement, icon } from "./forma-element";
-import type { FormaIconName } from "./icons";
-import { creativeNextActions } from "../model/workspace-intelligence";
+import { html, nothing } from "lit";
+import { FormaPresentationalElement } from "./presentational-element";
+import { icon, type FormaIconName } from "./icons";
 import { DOCUMENT_ARTIFACT_KINDS, documentArtifactDefinition } from "../model/document-artifacts";
 import "./icons-authoring";
 import "./icons-canvas";
@@ -9,10 +8,9 @@ import "./icons-formatting";
 import "./icons-history";
 import "./icons-media";
 import "./icons-navigation";
-import "./area-navigation";
 import "./design-primitives";
-import "./design-system/component-catalog";
 import "./design-system/component-catalog.css";
+import "./design-system/navigation";
 
 const palette = [
   { id: "canvas", label: "Canvas", token: "--paper" }, { id: "surface", label: "Surface", token: "--panel" }, { id: "quiet", label: "Quiet surface", token: "--panel-2" },
@@ -34,19 +32,67 @@ const iconFamilies: ReadonlyArray<{
   { key: "operations", label: "Operations", icons: [{ name: "clock", label: "History" }, { name: "replay", label: "Replay" }, { name: "branch", label: "Branch" }, { name: "flask", label: "Experiment" }] },
 ];
 
+const SYNTHETIC_DESIGN_FIXTURES = Object.freeze({
+  projectCount: 3,
+  decisionCount: 12,
+  outputCount: 5,
+  actions: Object.freeze([
+    Object.freeze({ id: "clarify-direction", label: "Clarify the creative direction", reason: "Three fictional context decisions support a more specific direction.", evidence: 3 }),
+    Object.freeze({ id: "review-audience", label: "Review the intended audience", reason: "Two fictional audience signals are ready for review.", evidence: 2 }),
+  ]),
+});
+
+const SYNTHETIC_AUDIENCE_TASKS = Object.freeze({
+  creative: Object.freeze(["projects", "create", "library", "sessions", "settings"]),
+  canvas: Object.freeze(["canvases", "proposals", "library", "projects"]),
+  operations: Object.freeze(["system", "providers", "release", "access"]),
+  product: Object.freeze(["insights", "delivery"]),
+  knowledge: Object.freeze(["components", "patterns", "guidance"]),
+  engineering: Object.freeze(["health", "events", "sync", "jobs"]),
+});
+
 /** Living, route-addressable component documentation built from production primitives. */
-export class FormaDesignSystemLab extends FormaElement {
+export class FormaDesignSystemLab extends FormaPresentationalElement {
+  static properties={view:{type:String}};
+  view:"components"|"patterns"|"guidance"="components";
   #fieldValue = "";
-  #example: "creative" | "canvas" | "operations" | "laboratory" = "creative";
+  #previewMessage = "";
+  #example: "creative" | "canvas" | "operations" | "product" | "knowledge" | "engineering" = "creative";
+
+  #cancelPreview(event:Event){
+    event.preventDefault();
+    this.#previewMessage=this.i18n.t("lab.previewConfirmed","Fictional preview only; no real application was opened.");
+    this.requestUpdate();
+  }
+
+  #architecture(){
+    const workspace=(id:"creative"|"canvas"|"operations"|"product"|"knowledge"|"engineering")=>({label:this.i18n.t(`shell.${id}`,id),value:id,href:`#synthetic-${id}`});
+    const selectedTasks=SYNTHETIC_AUDIENCE_TASKS[this.#example].map((id)=>({label:this.i18n.t(`shell.navigation.${id}`,id),value:id,href:`#synthetic-task-${id}`}));
+    return html`<section class="design-lab-section design-information-architecture" id="information-architecture" @forma-navigate=${(event:Event)=>this.#cancelPreview(event)}><header><div><span>${this.i18n.t("architecture.label","06 · Information architecture")}</span><h2>${this.i18n.t("architecture.heading","The right workspace for every audience")}</h2><p>${this.i18n.t("architecture.description","Real design-system navigation components receive only explicitly authorized, fictional destinations.")}</p></div></header>
+      <div class="design-architecture-examples"><article><h3>${this.i18n.t("architecture.single","One authorized workspace: no switcher")}</h3><forma-ui-workspace-switcher .label=${this.i18n.t("navigation.availableWorkspaces")} value="creative" .destinations=${[workspace("creative")]}></forma-ui-workspace-switcher></article><article><h3>${this.i18n.t("architecture.paired","Two authorized workspaces: direct links")}</h3><forma-ui-workspace-switcher .label=${this.i18n.t("navigation.availableWorkspaces")} value="creative" .destinations=${[workspace("creative"),workspace("canvas")]}></forma-ui-workspace-switcher></article><article><h3>${this.i18n.t("architecture.multiple","Several authorized workspaces: compact workspace picker")}</h3><forma-ui-workspace-switcher .label=${this.i18n.t("navigation.availableWorkspaces")} value="operations" .destinations=${[workspace("operations"),workspace("product"),workspace("knowledge")]}></forma-ui-workspace-switcher></article></div>
+      <div class="design-template-switch" role="group" aria-label=${this.i18n.t("lab.exampleApplication","Example application")}>${(Object.keys(SYNTHETIC_AUDIENCE_TASKS) as Array<keyof typeof SYNTHETIC_AUDIENCE_TASKS>).map((id)=>html`<button type="button" aria-pressed=${this.#example===id?"true":"false"} @click=${()=>{this.#example=id;this.requestUpdate();}}>${this.i18n.t(`shell.${id}`,id)}</button>`)}</div>
+      <h3>${this.i18n.t("architecture.tasks","Authorized tasks for the selected audience")}</h3><forma-ui-audience-navigation .label=${this.i18n.t(`shell.${this.#example}`,this.#example)} .value=${selectedTasks[0]?.value??""} .destinations=${selectedTasks}></forma-ui-audience-navigation>
+      <p>${this.i18n.t("architecture.creatorCanvas","Creator Workspace edits documents and reusable context; Canvas arranges the same project spatially.")}</p><p>${this.i18n.t("architecture.evaluation","Evaluation appears only when a separate synthetic-evaluation entitlement is present.")}</p><p>${this.i18n.t("architecture.guest","Guest review opens only the exact shared resource and never shows authenticated workspace navigation.")}</p><p role="status" aria-live="polite">${this.#previewMessage}</p></section>`;
+  }
+
+  #guidance(){
+    const rules=["ruleAuthorization","ruleTasks","ruleLanguages","ruleExamples"];
+    return html`<section class="design-lab-section design-guidance" id="approved-guidance"><header><div><h2>${this.i18n.t("architecture.guidanceHeading","Approved interaction and privacy rules")}</h2></div></header><ol>${rules.map((rule)=>html`<li>${this.i18n.t(`architecture.${rule}`)}</li>`)}</ol></section>`;
+  }
 
   override render() {
-    const projection = this.store.projection.get();
-    const actions = creativeNextActions({ blocks: projection.blocks, outputs: projection.outputs, artifacts: projection.artifacts });
+    const fixtures = SYNTHETIC_DESIGN_FIXTURES;
+    const actions = fixtures.actions;
+    const view=this.view;
+    const heading=this.i18n.t(`knowledge.${view}Heading`,view==="patterns"?"Audience and navigation patterns":view==="guidance"?"Design and accessibility guidance":"Components and foundations");
+    const description=this.i18n.t(`knowledge.${view}Description`,"A living inventory of accessible product foundations, reusable interface parts, and audience-led workflows.");
     return html`<section class="admin-page administrative-page design-system-lab">
-      <header class="page-header page-header--admin"><div class="page-header-copy"><span>${this.i18n.t("shell.laboratory", "Laboratory")}</span><h1>${this.i18n.t("lab.heading", "Design system")}</h1><p>${this.i18n.t("lab.description", "A living inventory of accessible product foundations, reusable interface parts, and outcome-led workflows.")}</p></div><div class="page-header-actions"><forma-ui-badge .label=${this.i18n.t("lab.production", "Production components")} tone="positive"></forma-ui-badge></div></header>
-      <forma-area-navigation area="laboratory" active="design-system"></forma-area-navigation>
+      <header class="page-header page-header--admin"><div class="page-header-copy"><span>${this.i18n.t("shell.knowledge", "Design & Knowledge")}</span><h1>${heading}</h1><p>${description}</p><p class="design-synthetic-notice">${this.i18n.t("lab.syntheticNotice", "All examples use fictional data. Your projects, documents, and media are never loaded.")}</p></div><div class="page-header-actions"><forma-ui-badge .label=${this.i18n.t("lab.production", "Production components")} tone="positive"></forma-ui-badge></div></header>
       <div class="design-lab-content">
-        <forma-component-catalog></forma-component-catalog>
+        ${view==="components"?html`<forma-component-catalog></forma-component-catalog>`:nothing}
+        ${view==="guidance"?this.#guidance():nothing}
+        ${view==="patterns"||view==="guidance"?this.#architecture():nothing}
+        ${view==="components"?html`
         <section class="design-lab-section"><header><div><span>${this.i18n.t("lab.foundationLabel", "01 · Foundations")}</span><h2>${this.i18n.t("lab.foundationHeading", "The work comes first")}</h2><p>${this.i18n.t("lab.foundationDescription", "A semantic, preference-reactive palette; browser-scaled typography; and one spacing system across every application.")}</p></div></header>
           <div class="design-palette">${palette.map((item) => { const label = this.i18n.t(`palette.${item.id}`, item.label); return html`<article><span class="design-swatch" style=${`--swatch-color:var(${item.token})`} aria-label=${label}></span><b>${label}</b><code dir="ltr">${item.token}</code></article>`; })}</div>
           <div class="design-foundation-grid"><article><h3>${this.i18n.t("lab.typography", "Typography")}</h3><p class="design-type-display">${this.i18n.t("lab.clarity", "Clarity without noise")}</p><p class="design-type-body">${this.i18n.t("lab.typographyDetail", "Readable body copy respects browser preferences. Component labels and supporting explanations start at 0.875rem.")}</p><small>${this.i18n.t("lab.captionDetail", "Captions explain state; they never replace content.")}</small></article><article><h3>${this.i18n.t("lab.spacing", "Spacing")}</h3><div class="design-spacing-scale">${[1, 2, 3, 4, 5, 6, 8, 12].map((step) => html`<div><span style=${`--space-example:var(--space-${step})`}></span><code dir="ltr">--space-${step}</code></div>`)}</div></article></div>
@@ -61,17 +107,18 @@ export class FormaDesignSystemLab extends FormaElement {
         </section>
         <section class="design-lab-section"><header><div><span>${this.i18n.t("lab.moleculesLabel", "03 · Molecules")}</span><h2>${this.i18n.t("lab.moleculesHeading", "Meaning before decoration")}</h2><p>${this.i18n.t("lab.moleculesDescription", "Fields, search, metrics, and disclosure patterns stay understandable wherever they appear.")}</p></div></header>
           <div class="design-molecule-grid"><form novalidate @submit=${(event:SubmitEvent)=>event.preventDefault()}><forma-ui-field .label=${this.i18n.t("lab.direction", "Creative direction")} .value=${this.#fieldValue} .placeholder=${this.i18n.t("sample.quietOpening", "An atmospheric opening")} .help=${this.i18n.t("lab.directionHelp", "Explain the outcome, not the underlying system.")} @forma-input=${(event: CustomEvent<{ value: string }>) => { this.#fieldValue = event.detail.value; }}></forma-ui-field></form><form novalidate @submit=${(event:SubmitEvent)=>event.preventDefault()}><forma-ui-field .label=${this.i18n.t("lab.audience", "Audience")} .placeholder=${this.i18n.t("lab.audiencePlaceholder", "Client team, festival audience…")} .help=${this.i18n.t("lab.audienceHelp", "Optional; previously used values appear when available.")}></forma-ui-field></form><form novalidate @submit=${(event:SubmitEvent)=>event.preventDefault()}><forma-ui-field .label=${this.i18n.t("lab.projectName", "Project name")} value="" .error=${this.i18n.t("lab.projectError", "Add a name before continuing.")} required></forma-ui-field></form></div>
-          <div class="design-metric-grid"><forma-ui-metric .label=${this.i18n.t("shell.navigation.projects", "Projects")} .value=${this.i18n.number(projection.projects.length)} .detail=${this.i18n.t("lab.projectsDetail", "Independent creative workspaces")}></forma-ui-metric><forma-ui-metric .label=${this.i18n.t("lab.decisions", "Reusable decisions")} .value=${this.i18n.number(projection.libraryBlocks.length)} .detail=${this.i18n.t("lab.decisionsDetail", "Available across the current project")}></forma-ui-metric><forma-ui-metric .label=${this.i18n.t("lab.outputs", "Finished outputs")} .value=${this.i18n.number(projection.libraryOutputs.length + projection.libraryArtifacts.length)} .detail=${this.i18n.t("lab.outputsDetail", "Images, stories, scenes, slides, and motion")}></forma-ui-metric></div>
+          <div class="design-metric-grid"><forma-ui-metric .label=${this.i18n.t("shell.navigation.projects", "Projects")} .value=${this.i18n.number(fixtures.projectCount)} .detail=${this.i18n.t("lab.syntheticMetric", "Fictional example data")}></forma-ui-metric><forma-ui-metric .label=${this.i18n.t("lab.decisions", "Reusable decisions")} .value=${this.i18n.number(fixtures.decisionCount)} .detail=${this.i18n.t("lab.syntheticMetric", "Fictional example data")}></forma-ui-metric><forma-ui-metric .label=${this.i18n.t("lab.outputs", "Finished outputs")} .value=${this.i18n.number(fixtures.outputCount)} .detail=${this.i18n.t("lab.syntheticMetric", "Fictional example data")}></forma-ui-metric></div>
           <forma-ui-disclosure class="design-disclosure"><span slot="summary">${this.i18n.t("lab.disclosure", "Progressive disclosure")}</span><p>${this.i18n.t("lab.disclosureDetail", "Diagnostics and technical receipts remain available without competing with the primary creative task.")}</p></forma-ui-disclosure>
         </section>
         <section class="design-lab-section"><header><div><span>${this.i18n.t("lab.organismsLabel", "04 · Organisms")}</span><h2>${this.i18n.t("lab.organismsHeading", "Reusable product patterns")}</h2><p>${this.i18n.t("lab.organismsDescription", "Output choices and context-aware next steps belong to the same system across Document, Canvas, and Library.")}</p></div></header>
           <div class="design-output-catalog">${DOCUMENT_ARTIFACT_KINDS.map((kind) => { const definition = documentArtifactDefinition(kind); return html`<article><span aria-hidden="true">${icon(kind === "video" ? "video" : kind === "slides" ? "slides" : kind === "storyboard" ? "storyboard" : kind === "scene" ? "scene" : "story")}</span><div><h3>${this.i18n.t(`artifact.${kind}.label`, definition.label)}</h3><p>${this.i18n.t(`artifact.${kind}.description`, definition.description)}</p></div></article>`; })}</div>
-          ${actions.length ? html`<div class="design-next-actions"><h3>${this.i18n.t("lab.relevant", "Relevant to your current document")}</h3>${actions.map((action) => html`<article><div><b>${this.i18n.t(`next.${action.id}.label`, action.label)}</b><p>${this.i18n.t(`next.${action.id}.reason`, action.reason, { count: this.i18n.number(action.evidence) })}</p></div><forma-ui-badge .label=${this.i18n.plural("lab.supporting", action.evidence, "{count} supporting signal", "{count} supporting signals")}></forma-ui-badge></article>`)}</div>` : html`<forma-ui-empty-state .heading=${this.i18n.t("lab.emptyHeading", "Begin with a clear intention")} .detail=${this.i18n.t("lab.emptyDetail", "A small amount of context unlocks relevant next steps without showing unnecessary controls.")} .action=${this.i18n.t("lab.emptyAction", "Create a project")} @forma-action=${() => this.store.setRoute("/projects")}></forma-ui-empty-state>`}
+          <div class="design-next-actions"><h3>${this.i18n.t("lab.fictionalActions", "Example actions for a fictional document")}</h3>${actions.map((action) => html`<article><div><b>${this.i18n.t(`next.${action.id}.label`, action.label)}</b><p>${this.i18n.t(`next.${action.id}.reason`, action.reason, { count: this.i18n.number(action.evidence) })}</p></div><forma-ui-badge .label=${this.i18n.plural("lab.supporting", action.evidence, "{count} supporting signal", "{count} supporting signals")}></forma-ui-badge></article>`)}</div>
         </section>
         <section class="design-lab-section"><header><div><span>${this.i18n.t("lab.templatesLabel", "05 · Templates")}</span><h2>${this.i18n.t("lab.templatesHeading", "One product, multiple working modes")}</h2><p>${this.i18n.t("lab.templatesDescription", "Each application exposes the same durable work through the vocabulary appropriate to its active task.")}</p></div></header>
-          <div class="design-template-switch" role="group" aria-label=${this.i18n.t("lab.exampleApplication", "Example application")}>${(["creative", "canvas", "operations", "laboratory"] as const).map((id) => html`<button type="button" aria-pressed=${this.#example === id ? "true" : "false"} @click=${() => { this.#example = id; this.requestUpdate(); }}>${this.i18n.t(`shell.${id}`, id)}</button>`)}</div>
-          <article class="design-template-preview"><header><div><small>${this.i18n.t(`shell.${this.#example}`, this.#example)}</small><h3>${this.i18n.t(`lab.${this.#example}Heading`, this.#example === "creative" ? "Shape the work" : this.#example === "canvas" ? "Arrange the possibilities" : this.#example === "operations" ? "Understand system health" : "Explore and verify")}</h3><p>${this.i18n.t(`lab.${this.#example}Detail`, this.#example === "creative" ? "Documents, reusable context, and every output format." : this.#example === "canvas" ? "Spatial thinking over the same projects, decisions, and finished work." : this.#example === "operations" ? "Private governance, trustworthy diagnostics, and actionable reporting." : "Isolated, safe experiments using the exact same product primitives.")}</p></div><forma-ui-button .label=${this.i18n.t("action.continue", "Continue")} value="continue" variant="primary" icon-name="arrow" @forma-press=${() => this.store.setRoute(this.#example === "creative" ? "/" : this.#example === "canvas" ? "/canvas" : this.#example === "operations" ? "/operations" : "/laboratory")}></forma-ui-button></header></article>
+          <div class="design-template-switch" role="group" aria-label=${this.i18n.t("lab.exampleApplication", "Example application")}>${(["creative", "canvas", "operations", "product", "knowledge", "engineering"] as const).map((id) => html`<button type="button" aria-pressed=${this.#example === id ? "true" : "false"} @click=${() => { this.#example = id; this.requestUpdate(); }}>${this.i18n.t(`shell.${id}`, id)}</button>`)}</div>
+          <article class="design-template-preview"><header><div><small>${this.i18n.t(`shell.${this.#example}`, this.#example)}</small><h3>${this.i18n.t(`lab.${this.#example}Heading`, this.#example === "creative" ? "Shape the work" : this.#example === "canvas" ? "Arrange the possibilities" : this.#example === "operations" ? "Understand platform health" : this.#example === "product" ? "Review product outcomes" : this.#example === "knowledge" ? "Explore safe design guidance" : "Diagnose reliability")}</h3><p>${this.i18n.t(`lab.${this.#example}Detail`, "A fictional, isolated preview. It cannot open or change a real account.")}</p></div><forma-ui-button .label=${this.i18n.t("lab.previewAction", "Preview interaction")} value="preview" variant="primary" icon-name="arrow" @forma-press=${() => { this.#previewMessage = this.i18n.t("lab.previewConfirmed", "Fictional preview only; no real application was opened."); this.requestUpdate(); }}></forma-ui-button></header><p role="status" aria-live="polite">${this.#previewMessage}</p></article>
         </section>
+        ${this.#architecture()}`:nothing}
       </div>
     </section>`;
   }

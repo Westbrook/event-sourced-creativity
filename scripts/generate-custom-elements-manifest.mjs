@@ -42,7 +42,9 @@ const typeText = (node) => {
     const text = checker.typeToString(type, node, ts.TypeFormatFlags.NoTruncation | (literalUnion ? ts.TypeFormatFlags.InTypeAlias : 0));
     return text === "FormaOption[]"
       ? "{ label: string; value: string; disabled?: boolean; description?: string }[]"
-      : text;
+      : text === "FormaNavigationDestination[]"
+        ? "{ label: string; value: string; href: string; disabled?: boolean; description?: string }[]"
+        : text;
   } catch {
     return "unknown";
   }
@@ -153,6 +155,7 @@ const publicFieldDescriptions = {
   checked: "Current native checked state.",
   compact: "Whether the compact presentation is requested.",
   controls: "ID of the element controlled by this action.",
+  destinations: "Property-only, server-authorized navigation destinations with localized labels and descriptions and invariant identifiers and URLs.",
   detail: "Author-supplied, localized supporting explanation.",
   disabled: "Whether user interaction is disabled.",
   error: "Author-supplied, localized validation or error message.",
@@ -398,7 +401,7 @@ function slotsOf(node) {
 function categoryFor(name, file) {
   if (name === "forma-component-catalog") return "organism";
   if (name === "forma-ui-theme" || name === "forma-ui-locale") return "foundation";
-  if (["forma-ui-empty-state", "forma-ui-dialog", "forma-ui-page-header", "forma-ui-popover", "forma-ui-card"].includes(name)) return "organism";
+  if (["forma-ui-empty-state", "forma-ui-dialog", "forma-ui-page-header", "forma-ui-popover", "forma-ui-card", "forma-ui-workspace-switcher"].includes(name)) return "organism";
   if (["forma-ui-button", "forma-ui-badge", "forma-ui-link"].includes(name) || file.endsWith("/atoms.ts")) return "atom";
   if (name.startsWith("forma-ui-")) return "molecule";
   return "application";
@@ -411,7 +414,7 @@ function moduleFor(name) {
 }
 
 const authorTextAttributes = new Set(["label", "heading", "detail", "help", "error", "placeholder", "action", "busy-label", "summary", "trigger", "confirm", "cancel", "eyebrow"]);
-const invariantValueElements = new Set(["forma-ui-button", "forma-ui-icon-button", "forma-ui-chip", "forma-ui-checkbox", "forma-ui-switch", "forma-ui-radio-group", "forma-ui-select", "forma-ui-segmented-control", "forma-ui-tabs", "forma-ui-list-item", "forma-ui-card", "forma-ui-page-header", "forma-ui-notice"]);
+const invariantValueElements = new Set(["forma-ui-button", "forma-ui-icon-button", "forma-ui-chip", "forma-ui-checkbox", "forma-ui-switch", "forma-ui-radio-group", "forma-ui-select", "forma-ui-segmented-control", "forma-ui-tabs", "forma-ui-list-item", "forma-ui-card", "forma-ui-page-header", "forma-ui-notice", "forma-ui-workspace-switcher", "forma-ui-audience-navigation"]);
 const internalMessagesByTag = {
   "forma-ui-button": ["action.default", "action.working", "action.busy"],
   "forma-ui-icon-button": ["action.more", "action.close", "field.search", "action.save", "action.open", "action.default"],
@@ -431,6 +434,8 @@ const internalMessagesByTag = {
   "forma-ui-number-field": ["field.number"],
   "forma-ui-segmented-control": ["field.choose"],
   "forma-ui-tabs": ["navigation.sections"],
+  "forma-ui-workspace-switcher": ["navigation.availableWorkspaces", "navigation.switchWorkspace", "navigation.switchWorkspaceCurrent"],
+  "forma-ui-audience-navigation": ["navigation.scopedNavigation"],
   "forma-ui-breadcrumbs": ["navigation.breadcrumbs"],
   "forma-ui-pagination": ["navigation.pagination", "navigation.previous", "navigation.next", "navigation.page"],
   "forma-ui-toolbar": ["navigation.actions"],
@@ -478,11 +483,11 @@ for (const registration of [...registrations.values()].sort((left, right) => com
   if (events.length) declaration.events = events;
   if (cssProperties.length) declaration.cssProperties = cssProperties;
   if (slots.length) declaration.slots = slots;
-  if (registration.name.startsWith("forma-ui-") || applicationDemonstration) declaration.demos = [{ url: `/laboratory/design-system#${registration.name}` }];
-  else if (registration.name === "forma-component-catalog") declaration.demos = [{ url: "/laboratory/design-system" }];
-  const optionCollections = ["options", "items", "actions"].filter((name) => members.some((member) => member.kind === "field" && member.name === name));
+  if (registration.name.startsWith("forma-ui-") || applicationDemonstration) declaration.demos = [{ url: `/knowledge/design-system#${registration.name}` }];
+  else if (registration.name === "forma-component-catalog") declaration.demos = [{ url: "/knowledge/design-system" }];
+  const optionCollections = ["options", "items", "actions", "destinations"].filter((name) => members.some((member) => member.kind === "field" && member.name === name));
   const localizedAttributes = attributes.filter((attribute) => authorTextAttributes.has(attribute.name) || registration.name === "forma-ui-avatar" && attribute.name === "name").map((attribute) => attribute.name);
-  const stableValues = [...optionCollections.map((name) => `${name}[].value`), ...(invariantValueElements.has(registration.name) && members.some((member) => member.name === "value") ? ["value"] : [])];
+  const stableValues = [...optionCollections.flatMap((name) => name === "destinations" ? [`${name}[].value`, `${name}[].href`] : [`${name}[].value`]), ...(invariantValueElements.has(registration.name) && members.some((member) => member.name === "value") ? ["value"] : [])];
   const localization = registration.name.startsWith("forma-ui-") || applicationDemonstration || registration.name === "forma-component-catalog"
     ? {
       documentationIdPrefix: `component.${registration.name}`,

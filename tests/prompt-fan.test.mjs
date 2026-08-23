@@ -58,8 +58,13 @@ test("keeps one image dialog open while keyboard navigation traverses a prompt f
   assert.match(visual,/Use the Left and Right Arrow keys/);
   assert.match(fanVisual,/\.fanOutputs=\$\{this\.outputs\}/);
   assert.match(review,/\.fanOutputs=\$\{fanOutputs\}/);
-  assert.match(shared,/\.fanOutputs=\$\{projection\.outputs\}/);
-  assert.match(shared,/\.readOnly=\$\{true\}/);
+  assert.match(shared,/const approvedFan=result\.outputs\.flatMap/);
+  assert.match(shared,/\/api\/shared\/\$\{encodeURIComponent\(this\.token\)\}\/media\//);
+  assert.match(shared,/shared-image-dialog/);
+  assert.match(shared,/#navigateImage\(event\.key===previous\?-1:1\)/);
+  assert.match(shared,/this\.matches\(":dir\(rtl\)"\)\?"ArrowRight":"ArrowLeft"/);
+  assert.match(shared,/this\.#returnFocus\?\.focus\(\)/);
+  assert.doesNotMatch(shared,/output-visual|state\/store|this\.store|ObjectViewed/);
   assert.match(sharesApi,/promptFanId,promptTechnique/);
   assert.match(scenarios,/source_surface:"fan-image-dialog"/);
   assert.match(scenarios,/navigation_method:viewedOrdinal===0\?"trigger":"keyboard"/);

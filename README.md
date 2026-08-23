@@ -7,21 +7,29 @@ history is infrastructure; the product experience is the creative work.
 
 ## Applications
 
-The platform has four independently loaded applications over shared domain contracts:
+The platform has six independently loaded, explicitly authorized applications
+over shared domain contracts:
 
-- **Creative** owns projects, Create, documents, the Library, Re-entry, Scout, and Taste & time.
+- **Creator Workspace** owns projects, Create, documents, the Library, Re-entry, creative intelligence, and personal privacy/sharing/spending.
 - **Canvas** owns project-level spatial composition, direct manipulation, Combined Contexts, and document preparation.
-- **Operations** owns governance, health, producer permissions, and durable-stream inspection.
-- **Laboratory** owns controlled replay, image-adapter qualification, focal-point experiments, and the living atomic design system.
+- **Platform Operations** owns governed platform access, provider configuration, operational policy, and release decisions.
+- **Product & Quality** owns privacy-preserving Insights, Delivery evidence, and separately authorized synthetic Evaluation.
+- **Design & Knowledge** owns living Components, audience Patterns, and approved Guidance using fictional examples only.
+- **Engineering Diagnostics** owns redacted event, synchronization, and job-health diagnostics.
 
-Canonical application routes begin with `/creative`, `/canvas`, `/operations`, and
-`/laboratory`. Existing document, project, Library, and Canvas deep links remain
-server-addressable before client hydration. Historical `/system` and `/admin/events`
-URLs are compatibility aliases.
+Canonical application routes begin with `/projects`, `/canvas`, `/operations`,
+`/product`, `/knowledge`, and `/engineering`. Existing document, project,
+Library, and Canvas deep links remain server-addressable before hydration.
+Historical `/system`, `/operations/analytics`, `/operations/events`, and
+`/laboratory/*` URLs resolve to their newly authorized audience owners.
+Exact-resource `/share/:token` review is a store-independent public boundary,
+not a signed-in application.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for ownership, dependency, security, and
 provider-boundary rules; [DESIGN.md](./DESIGN.md) for visual and interaction
-contracts; and [docs/product-architecture-review.md](./docs/product-architecture-review.md)
+contracts; [docs/components.md](./docs/components.md) for canonical audience
+navigation and component integration; and
+[docs/product-architecture-review.md](./docs/product-architecture-review.md)
 for the product audit and future decision register.
 
 ## Product capabilities
@@ -38,12 +46,14 @@ for the product audit and future decision register.
 - Server-resumable jobs, provider preflight, moderation diagnostics, retained input receipts, and reservation settlement.
 - Opt-in bounded attention signals, corrective Scout and taste evidence, outcome-oriented analytics, and reversible user control.
 - Deterministic and explicitly approved actual-data Replay fixtures with isolated fictional identities.
-- Independently loadable Operations, Canvas, and Laboratory applications, including `/laboratory/design-system`.
+- Six independently loadable audience applications, scoped capabilities, and fictional-only design documentation at `/knowledge/design-system`.
 
 Autonomous behavior, provider experimentation, replay impersonation, sharing,
-and Canvas access remain bounded by explicit server-side governance. Cross-account
-real-time collaboration is not claimed until project-scoped authorization and a
-shared synchronization backend exist.
+and Canvas access remain bounded by explicit server-side governance. Exact
+project authorization, actor-private jobs and conversations, combined personal/
+organization/platform budgets, owner-only review links, and authenticated
+adaptive Canvas polling support real cross-account project collaboration.
+Ephemeral cross-account live cursor presence is not implemented or claimed.
 
 ## Local development
 
@@ -68,22 +78,24 @@ The UI is implemented entirely as Lit custom elements. `signal-polyfill` and
 `signal-utils` are isolated behind `FormaStore` because both packages are still
 experimental. React and framework-specific UI runtimes are not dependencies.
 
-The design laboratory at `/laboratory/design-system` presents the actual
+Design & Knowledge at `/knowledge/design-system` presents the actual
 store-independent foundations, atoms, molecules, organisms, and application
 templates used by production surfaces. It is a review tool, not a second design
-implementation.
+implementation. `/knowledge/patterns` demonstrates entitlement-safe workspace
+switching and audience navigation; `/knowledge/guidance` explains approved
+privacy, accessibility, localization, and architectural boundaries.
 
 Every application-pattern entry also includes a clearly labeled interactive
 composition assembled from the same production primitives and synthetic sample
-content. The actual application element is not mounted, so previews never read
-or alter a project, initiate generation, or navigate away from the Laboratory.
+content. Actual application elements are not mounted, so previews never read or
+alter a project, initiate generation, or leave Design & Knowledge.
 
 Cards, page headers, list items, notices, and disclosures also support genuine
 default and named HTML slots for authored headings, media, rich content, and
 independent actions. Their existing attribute-only shorthand remains supported.
 Native form controls, transparent layouts, overlays, and production-critical
 primitives retain light DOM; the five slotted composition elements share one
-token-driven adopted stylesheet. Expand any component's API in the Laboratory
+token-driven adopted stylesheet. Expand any component's API in Design & Knowledge
 to inspect its actual slots, attribute fallback, events, and theme tokens.
 
 The machine-readable Custom Elements Manifest is generated into

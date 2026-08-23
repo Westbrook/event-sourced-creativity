@@ -1,20 +1,95 @@
 import { handleEvents, type WorkerEnv } from "./events-api";
 import { getMedia, uploadMedia } from "./media-api";
-import { handleAdminUsers, handleImpersonation, handleSession, requireUser } from "./pilot-policy";
+import { handleAdminUsers, handleImpersonation, handleSession, hasCapability, requireCapability, requireConsent, requireUser } from "./pilot-policy";
 import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api";
-import { applicationDefinition, resolveServerRoute } from "../src/platform/applications";
+import { applicationDefinition, authorizedApplicationHome, resolveServerRoute, routeRequiredCapabilities, type ApplicationId } from "../src/platform/applications";
 import { handleReplayApproval, handleReplayEstimate, handleReplaySessions } from "./replay-sessions-api";
 import { handleDocumentJobs } from "./document-jobs-api";
-import type { WorkerExecutionContext } from "./runtime";
+import { streamHead, type WorkerExecutionContext } from "./runtime";
 import { handleAnalytics } from "./analytics-api";
 import { handleGenerationReadiness } from "./generation-readiness";
 import { handleCanvasGovernance } from "./canvas-governance-api";
-import { handleImageAdapters } from "./image-adapters-api";
+import { handleImageAdapters, handleQualificationPreview } from "./image-adapters-api";
 import { streamNavigationSession } from "./session-bootstrap";
+import { handlePortfolio } from "./portfolio-api";
+import { readCanvasGovernance } from "./canvas-governance-policy";
+import { handleCapabilityGrants } from "./access-api";
+import { handleWorkspaces } from "./workspaces-api";
+import { readProjectRequestContext } from "./project-access";
+import { handlePerformanceSample } from "./performance-api";
+
+async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string) {
+    if(application==="creative"){
+      const workspace=path.match(/^\/settings\/workspaces(?:\/([^/]+)(?:\/([^/]+))?)?$/);
+      if(!workspace)return null;
+      if(!workspace[1]||workspace[1]==="invitations"){
+        const principal=await requireUser(request,env,"viewer",{account:"principal"});
+        return principal.response??null;
+      }
+      const organizationId=decodeURIComponent(workspace[1]);
+      const capabilities=workspace[2]==="members"?["workspace.member.read","workspace.member.manage"] as const:
+        workspace[2]==="projects"?["workspace.project.read","workspace.project.manage"] as const:
+        workspace[2]==="usage"?["workspace.usage.read","workspace.budget.manage"] as const:
+        workspace[2]==="activity"?["workspace.audit.read","workspace.policy.manage"] as const:
+        ["workspace.member.read","workspace.project.read","workspace.usage.read","workspace.audit.read"] as const;
+      const authorized=await requireCapability(request,env,capabilities,{organizationId});
+      return authorized.response??null;
+    }
+    if(application==="canvas"){
+      const authorization=await requireUser(request,env);
+      if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
+      const selected=await readProjectRequestContext(request,env,authorization.user);
+      if(selected.response)return selected.response;
+      const governance=await readCanvasGovernance(env,authorization.user.role);
+      if(selected.context&&!hasCapability(authorization.user,"project.canvas.use",{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId}))
+        return Response.json({error:"project_canvas_access_required"},{status:403,headers:{"cache-control":"private, no-store"}});
+      return governance.access?null:Response.json({error:"canvas_access_required"},{status:403});
+    }
+    const authorization=await requireCapability(request,env,routeRequiredCapabilities(path));
+    if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
+    const normalized=new URL(path,"https://forma.local").pathname.replace(/\/+$/,"")||"/";
+    if((normalized==="/product/evaluation/actual"||normalized==="/admin/events/replay")&&authorization.user.role!=="admin")return Response.json({error:"administrator_required"},{status:403});
+    const pathname=normalized;
+    if(pathname===applicationDefinition(application).home){
+      const destination=authorizedApplicationHome(application,{role:authorization.user.role,capabilities:authorization.user.access.capabilities});
+      if(destination!==pathname)return new Response(null,{status:302,headers:{location:new URL(destination,request.url).toString(),"cache-control":"private, no-store",vary:"Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email"}});
+    }
+    return null;
+}
 
 async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const url=new URL(request.url);
+    const scopedCookie=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
+    const accountOnly=url.pathname.startsWith("/api/generation-readiness/")||url.pathname==="/api/analytics"||url.pathname.startsWith("/api/portfolio/")||url.pathname.startsWith("/api/replay-sessions")||url.pathname.startsWith("/api/replay-approval");
+    if(scopedCookie&&accountOnly){
+      const principal=await requireUser(request,env,"viewer",{account:"principal"});
+      if(principal.response||!principal.user)return principal.response??Response.json({error:"authentication_required"},{status:401});
+      const selected=await readProjectRequestContext(request,env,principal.user);
+      if(selected.response)return selected.response;
+      if(selected.context)return Response.json({error:"project_operation_unavailable"},{status:403,headers:{"cache-control":"private, no-store"}});
+    }
+    if(url.pathname==="/api/portfolio/product/adapter-preview")return handleQualificationPreview(request,env);
+    const portfolioMatch=url.pathname.match(/^\/api\/portfolio\/(product|engineering|operations)\/(insights|delivery|evaluation|health|events|sync|jobs|overview|providers)$/);
+    if(portfolioMatch)return handlePortfolio(request,env,portfolioMatch[1],portfolioMatch[2]);
+    if(url.pathname==="/api/platform/access")return handleCapabilityGrants(request,env);
+    if(url.pathname.startsWith("/api/platform/access/")&&request.method==="DELETE")return handleCapabilityGrants(request,env,decodeURIComponent(url.pathname.slice("/api/platform/access/".length)));
+    if(url.pathname==="/api/workspaces"||url.pathname.startsWith("/api/workspaces/")){
+      const response=await handleWorkspaces(request,env,url.pathname.slice("/api/workspaces".length).split("/").filter(Boolean).map((part)=>decodeURIComponent(part)));
+      const headers=new Headers(response.headers);headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
+      return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
+    }
     if(url.pathname==="/api/session")return handleSession(request,env,context);
+    if(url.pathname==="/api/privacy/attention"&&request.method==="POST"){
+      const authorization=await requireUser(request,env,"viewer",{account:"principal"});
+      if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
+      const consent=requireConsent(authorization.user);if(consent)return consent;
+      if(scopedCookie){const selected=await readProjectRequestContext(request,env,authorization.user);if(selected.response)return selected.response;}
+      const principal={...authorization.user,streamId:`creative:${authorization.user.userId}`,projectExecution:undefined};
+      const before=await streamHead(env,principal.streamId);
+      const personal=new Request(new URL("/api/events",request.url),{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"append",clientId:"web:personal-privacy",event:{type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:before,reason:"user-requested",device_ledger_cleared:true}}})});
+      const response=await handleEvents(personal,env,false,principal);const headers=new Headers(response.headers);headers.set("cache-control","private, no-store");return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
+    }
+    if(url.pathname==="/api/performance")return handlePerformanceSample(request,env);
     if(url.pathname==="/api/impersonation")return handleImpersonation(request,env);
     if(url.pathname==="/api/admin/users")return handleAdminUsers(request,env);
     if(url.pathname==="/api/analytics")return handleAnalytics(request,env,context);
@@ -28,21 +103,32 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname.startsWith("/api/replay-sessions/"))return handleReplaySessions(request,env,decodeURIComponent(url.pathname.slice("/api/replay-sessions/".length)));
     if(url.pathname==="/api/document-jobs")return handleDocumentJobs(request,env,"",context);
     if(url.pathname.startsWith("/api/document-jobs/"))return handleDocumentJobs(request,env,url.pathname.slice("/api/document-jobs/".length),context);
-    if(url.pathname==="/api/events")return handleEvents(request,env);
-    if(url.pathname==="/api/events/hot")return handleEvents(request,env,true);
+    if(url.pathname==="/api/events"||url.pathname==="/api/events/hot"){
+      const response=await handleEvents(request,env,url.pathname.endsWith("/hot"));
+      if(!scopedCookie)return response;
+      const headers=new Headers(response.headers);headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email");
+      return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
+    }
     if(url.pathname==="/api/shares")return handleShares(request,env);
     if(url.pathname.startsWith("/api/shares/")&&request.method==="DELETE")return handleShares(request,env,decodeURIComponent(url.pathname.slice("/api/shares/".length)));
     if(url.pathname.startsWith("/api/shared/")&&request.method==="GET"){const rest=url.pathname.slice("/api/shared/".length);const marker=rest.indexOf("/media/");if(marker>=0)return handleSharedMedia(request,env,decodeURIComponent(rest.slice(0,marker)),decodeURIComponent(rest.slice(marker+"/media/".length)));return handleSharedView(request,env,decodeURIComponent(rest));}
     if(url.pathname==="/api/media"&&request.method==="POST")return uploadMedia(request,env);
     if(url.pathname.startsWith("/api/media/")&&request.method==="GET")return getMedia(request,decodeURIComponent(url.pathname.slice("/api/media/".length)),env);
     if(url.pathname.startsWith("/api/"))return Response.json({error:"not_found"},{status:404});
+    if(url.pathname==="/custom-elements.json"){
+      const authorization=await requireCapability(request,env,"design.catalog.read");
+      if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
+      const asset=await env.ASSETS.fetch(request);
+      const headers=new Headers(asset.headers);
+      headers.set("cache-control","private, no-store");
+      headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
+      return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
+    }
     if(request.method==="GET"||request.method==="HEAD"){
       const route=resolveServerRoute(url.pathname);
       if(route){
-        if(applicationDefinition(route.application).administratorOnly){
-          const authorization=await requireUser(request,env,"admin",{account:"principal"});
-          if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
-        }
+        const denied=await authorizeApplication(request,env,route.application,url.pathname);
+        if(denied)return denied;
         const entryUrl=new URL(route.entryPath,url);
         const trustedIdentity=Boolean(request.headers.get("oai-authenticated-user-id")&&request.headers.get("oai-authenticated-user-email")||request.headers.get("cf-access-authenticated-user-email")||url.hostname==="localhost"||url.hostname==="127.0.0.1");
         const personalize=request.method==="GET"&&!url.pathname.startsWith("/share")&&trustedIdentity;
@@ -52,7 +138,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
         const encoding=(asset.headers.get("content-encoding")??"identity").trim().toLowerCase();
         const response=personalize&&asset.ok&&asset.body&&/text\/html/i.test(asset.headers.get("content-type")??"")&&encoding==="identity"?streamNavigationSession(asset,authenticated!,authenticatedStarted):asset;
         const headers=new Headers(response.headers);
-        if(applicationDefinition(route.application).administratorOnly){headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");}
+        if(applicationDefinition(route.application).sensitivity!=="personal"||url.pathname.startsWith("/share")||url.pathname.startsWith("/settings/workspaces")){headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");}
         headers.set("x-forma-route-family",route.canonicalFamily);
         headers.set("x-forma-application",route.application);
         return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
@@ -62,8 +148,30 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     // assets, not navigations, and must reach the asset binding or the HTML
     // shell will never hydrate after a deep-link refresh.
     if(url.pathname.startsWith("/protected-assets/")){
-      const authorization=await requireUser(request,env,"admin",{account:"principal"});
-      if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
+      const assetParts=url.pathname.split("/");
+      const namespace=assetParts[2]??"";
+      const task=assetParts.length>4?assetParts[3]:"";
+      const application=["operations","product","knowledge","engineering"].includes(namespace)?namespace as ApplicationId:null;
+      if(application){
+        const taskPath=application==="product"&&["insights","delivery","evaluation"].includes(task)?`/product/${task}`
+          :application==="product"&&task==="adapters"?"/product/evaluation/adapters"
+          :application==="product"&&task==="actual"?"/product/evaluation/actual"
+          :application==="product"&&task==="replay"?"/product/evaluation/replay"
+          :application==="knowledge"&&task==="components"?"/knowledge/design-system"
+          :application==="operations"&&task==="release"?"/operations/canvas"
+          :application==="operations"&&task==="overview"?"/system"
+          :application==="operations"&&["access","providers"].includes(task)?`/operations/${task}`:"";
+        const authorization=await requireCapability(request,env,taskPath?routeRequiredCapabilities(taskPath):applicationDefinition(application).requiredCapabilities);
+        if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
+        if(application==="product"&&task==="actual"&&authorization.user.role!=="admin")return Response.json({error:"administrator_required"},{status:403});
+      }else if(namespace==="internal"){
+        const capabilities=["operations","product","knowledge","engineering"].flatMap((id)=>applicationDefinition(id as ApplicationId).requiredCapabilities);
+        const authorization=await requireCapability(request,env,capabilities);
+        if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
+      }else{
+        const authorization=await requireCapability(request,env,["platform.identity.manage","platform.policy.manage"]);
+        if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
+      }
       const asset=await env.ASSETS.fetch(request);
       const headers=new Headers(asset.headers);
       headers.set("cache-control","private, no-store");
@@ -72,15 +180,16 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     }
     const directHtmlPath=/\.html?$/i.test(url.pathname)?url.pathname.replace(/(?:\/index)?\.html?$/i,"")||"/":"";
     const directHtmlRoute=directHtmlPath?resolveServerRoute(directHtmlPath):null;
-    if(directHtmlRoute&&applicationDefinition(directHtmlRoute.application).administratorOnly){
-      const authorization=await requireUser(request,env,"admin",{account:"principal"});
-      if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
+    if(directHtmlRoute){
+      const denied=await authorizeApplication(request,env,directHtmlRoute.application,directHtmlPath);
+      if(denied)return denied;
     }
+    if(url.pathname.startsWith("/.vite/")||url.pathname.endsWith(".map"))return new Response("Not found",{status:404});
     const developmentAssetRequest=/^\/(?:@vite\/|@id\/|@fs\/|__vite_ping$|__open-in-editor)/.test(url.pathname);
     const assetRequest=developmentAssetRequest||/^\/(?:assets\/|og\.png$|favicon\.|robots\.txt$)|\.[a-z0-9]{2,8}$/i.test(url.pathname);
     if(assetRequest){
       const asset=await env.ASSETS.fetch(request);
-      if(directHtmlRoute&&applicationDefinition(directHtmlRoute.application).administratorOnly){
+      if(directHtmlRoute&&(applicationDefinition(directHtmlRoute.application).sensitivity!=="personal"||directHtmlPath==="/share"||directHtmlPath.startsWith("/share/"))){
         const headers=new Headers(asset.headers);
         headers.set("cache-control","private, no-store");
         headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import {
   DOCUMENT_JOB_STALE_AFTER_MS,
   documentGenerationRequestKey,
@@ -109,12 +110,55 @@ test("projects durable image and document-render checkpoints into honest progres
 
 test("recovers an expired running job before advancing queued document renders",async()=>{
   const jobsApi=await readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8");
-  assert.match(jobsApi,/if \(!rowIsStale\(active\)\) return;/);
-  assert.match(jobsApi,/const recovered = await runDocumentJob\(env, user, active\.job_id\);/);
+  assert.match(jobsApi,/if \(!rowIsStale\(running\)\) return;/);
+  assert.match(jobsApi,/const recovered = await runDocumentJob\(env, owner, running\.job_id\);/);
   assert.match(jobsApi,/if \(recoveryBlocker\) context\?\.waitUntil\(driveDocumentQueue\(env, user\)\);/);
   assert.match(jobsApi,/stage: "queue-recovery"/);
   assert.match(jobsApi,/An earlier operation lost contact\. The server is recovering it before this render starts\./);
   assert.doesNotMatch(jobsApi,/if \(running\) return;/);
+});
+
+test("atomically hands both paid-render reservations to the recovered provider attempt", async () => {
+  const jobsApi = await readFile(new URL("../worker/document-jobs-api.ts", import.meta.url), "utf8");
+  assert.match(jobsApi, /const claims = await env\.DB\.batch\(\[claimAttempt, tokenReservationHandoff, costReservationHandoff\]\);/);
+  assert.match(jobsApi, /if \(previousAttempt > 0 && !handoffPaidProviderReservations\) await releaseInterruptedAttempt/);
+
+  const tokenHandoff = jobsApi.match(/const TOKEN_RESERVATION_HANDOFF_SQL = "([^"]+)";/)?.[1];
+  const costHandoff = jobsApi.match(/const COST_RESERVATION_HANDOFF_SQL = "([^"]+)";/)?.[1];
+  assert.ok(tokenHandoff);
+  assert.ok(costHandoff);
+
+  const sqlite = new DatabaseSync(":memory:");
+  sqlite.exec("CREATE TABLE document_jobs (job_id TEXT,owner_id TEXT,stream_id TEXT,correlation_id TEXT,attempt_count INTEGER,status TEXT)");
+  sqlite.exec("CREATE TABLE budget_reservations (reservation_id TEXT,owner_id TEXT,stream_id TEXT,correlation_id TEXT,operation TEXT,period TEXT,status TEXT,updated_at TEXT)");
+  sqlite.exec("CREATE TABLE cost_budget_reservations (reservation_id TEXT,owner_id TEXT,stream_id TEXT,correlation_id TEXT,operation TEXT,period TEXT,status TEXT,updated_at TEXT)");
+
+  const previousCorrelation = "job-1:attempt:1";
+  const nextCorrelation = "job-1:attempt:2";
+  const now = "2026-08-22T12:00:00.000Z";
+  const operation="document-render:video";
+  const period="2026-08";
+  sqlite.prepare("INSERT INTO document_jobs VALUES (?,?,?,?,?,?)").run("job-1","creator","creative:owner",nextCorrelation,2,"running");
+  sqlite.prepare("INSERT INTO budget_reservations VALUES (?,?,?,?,?,?,?,?)").run("token-1","billing-owner","creative:owner",previousCorrelation,operation,period,"active","before");
+  sqlite.prepare("INSERT INTO budget_reservations VALUES (?,?,?,?,?,?,?,?)").run("token-other","another-owner","creative:owner",previousCorrelation,operation,period,"active","before");
+  sqlite.prepare("INSERT INTO cost_budget_reservations VALUES (?,?,?,?,?,?,?,?)").run("cost-1","billing-owner","creative:owner",previousCorrelation,operation,period,"executing","before");
+  sqlite.prepare("INSERT INTO cost_budget_reservations VALUES (?,?,?,?,?,?,?,?)").run("cost-other","another-owner","creative:owner",previousCorrelation,operation,period,"executing","before");
+
+  const tokenBindings=[nextCorrelation,now,"token-1","billing-owner","creative:owner",previousCorrelation,operation,"cost-1","job-1","creator",nextCorrelation,2];
+  const costBindings=[nextCorrelation,now,"cost-1","billing-owner","creative:owner",previousCorrelation,operation,"token-1",nextCorrelation,"job-1","creator",nextCorrelation,2];
+  assert.equal(Number(sqlite.prepare(tokenHandoff).run(...tokenBindings).changes), 1);
+  assert.equal(Number(sqlite.prepare(costHandoff).run(...costBindings).changes), 1);
+  assert.deepEqual({ ...sqlite.prepare("SELECT correlation_id,status FROM budget_reservations WHERE reservation_id='token-1'").get() }, { correlation_id: nextCorrelation, status: "active" });
+  assert.deepEqual({ ...sqlite.prepare("SELECT correlation_id,status FROM cost_budget_reservations WHERE reservation_id='cost-1'").get() }, { correlation_id: nextCorrelation, status: "active" });
+  assert.equal(sqlite.prepare("SELECT correlation_id FROM budget_reservations WHERE reservation_id='token-other'").get().correlation_id, previousCorrelation);
+  assert.deepEqual({ ...sqlite.prepare("SELECT correlation_id,status FROM cost_budget_reservations WHERE reservation_id='cost-other'").get() }, { correlation_id: previousCorrelation, status: "executing" });
+  assert.equal(Number(sqlite.prepare(tokenHandoff).run(...tokenBindings).changes), 0, "the previous attempt cannot hand off a token reservation twice");
+  assert.equal(Number(sqlite.prepare(costHandoff).run(...costBindings).changes), 0, "a competing stale worker cannot reactivate the handed-off provider reservation");
+
+  sqlite.prepare("INSERT INTO document_jobs VALUES (?,?,?,?,?,?)").run("job-missing","creator","creative:owner","job-missing:attempt:2",2,"running");
+  sqlite.prepare("INSERT INTO budget_reservations VALUES (?,?,?,?,?,?,?,?)").run("token-missing","billing-owner","creative:owner","job-missing:attempt:1",operation,period,"active","before");
+  const missingCostBindings=["job-missing:attempt:2",now,"token-missing","billing-owner","creative:owner","job-missing:attempt:1",operation,"missing-cost","job-missing","creator","job-missing:attempt:2",2];
+  assert.equal(Number(sqlite.prepare(tokenHandoff).run(...missingCostBindings).changes),0,"a token reservation cannot move without its matching cost reservation");
 });
 
 test("keeps pending artifact identity visible before its first worker checkpoint",async()=>{
@@ -237,8 +281,9 @@ test("settles generation capacity by reservation identity and repairs orphaned f
   assert.match(jobsApi,/releaseBudgetReservationsForCorrelation\(env,user,row\.correlation_id/);
   assert.doesNotMatch(jobsApi,/releaseBudget\(env, user\.userId, reservedTokens\)/);
   assert.doesNotMatch(eventsApi,/releaseBudget\(env,ownerId,reserved\)/);
-  assert.match(eventsApi,/const billingOwnerId=auth\.user\.billingUserId\?\?ownerId/);
+  assert.match(eventsApi,/const billingOwnerId=auth\.user\.billingUserId\?\?actorUserId/);
   assert.match(eventsApi,/settleBudget\(env,billingOwnerId,reservation\.reservationId/);
+  assert.match(eventsApi,/const plannerCharge=\(failedBillableTokens>0\|\|failedActualCost>0\)\?makeEvent/);
   assert.match(actions,/aria-describedby=\$\{previewFanBudgetBlocked&&budgetNoteVisible\?this\.#budgetNoteId:nothing\}/);
   assert.match(actions,/Failed work releases its reservation automatically/);
   assert.match(actions,/Dismiss generation capacity notification/);

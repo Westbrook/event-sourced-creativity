@@ -26,6 +26,7 @@ export const events = sqliteTable(
   (table) => [
     uniqueIndex("idx_events_stream_sequence").on(table.streamId, table.sequence),
     index("idx_events_stream_type").on(table.streamId, table.type),
+    index("idx_events_type_occurred_stream").on(table.type, table.occurredAt, table.streamId),
     index("idx_events_correlation").on(table.correlationId),
     index("idx_events_stream_actor").on(table.streamId, table.actor),
     index("idx_events_nonphantom_stream_sequence").on(table.streamId, table.sequence).where(sql.raw(`NOT (${PHANTOM_ATTENTION_EVENT_SQL})`)),
@@ -73,6 +74,252 @@ export const users = sqliteTable(
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [uniqueIndex("idx_users_email").on(table.email), index("idx_users_role").on(table.role)],
+);
+
+/** Organizations are durable ownership boundaries, never aliases for a global workspace. */
+export const organizations = sqliteTable(
+  "organizations",
+  {
+    organizationId: text("organization_id").primaryKey(),
+    name: text("name").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    status: text("status").notNull().default("active"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("idx_organizations_owner").on(table.ownerUserId)],
+);
+
+/** Membership and revocation are server-owned; an email is never itself an entitlement. */
+export const organizationMemberships = sqliteTable(
+  "organization_memberships",
+  {
+    membershipId: text("membership_id").primaryKey(),
+    organizationId: text("organization_id").notNull(),
+    userId: text("user_id").notNull(),
+    role: text("role").notNull(),
+    status: text("status").notNull().default("pending"),
+    invitedByUserId: text("invited_by_user_id").notNull(),
+    acceptedAt: text("accepted_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    revokedAt: text("revoked_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_organization_memberships_org_user").on(table.organizationId, table.userId),
+    index("idx_organization_memberships_user_status").on(table.userId, table.status),
+  ],
+);
+
+/** Identity-bound invitations work before an account exists and never store a raw token. */
+export const organizationInvitations = sqliteTable(
+  "organization_invitations",
+  {
+    invitationId: text("invitation_id").primaryKey(), organizationId: text("organization_id").notNull(),
+    emailNormalized: text("email_normalized").notNull(), role: text("role").notNull(),
+    invitedByUserId: text("invited_by_user_id").notNull(), tokenHash: text("token_hash").notNull(),
+    status: text("status").notNull().default("pending"), expiresAt: text("expires_at").notNull(),
+    createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+    acceptedAt: text("accepted_at"), revokedAt: text("revoked_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_organization_invitations_token").on(table.tokenHash),
+    index("idx_organization_invitations_email_status").on(table.emailNormalized, table.status, table.expiresAt),
+    index("idx_organization_invitations_organization").on(table.organizationId, table.status, table.createdAt),
+  ],
+);
+
+/** Customer-visible administration history contains only redacted, tenant-owned facts. */
+export const organizationAuditEvents = sqliteTable(
+  "organization_audit_events",
+  {
+    auditId: text("audit_id").primaryKey(), organizationId: text("organization_id").notNull(),
+    actorUserId: text("actor_user_id").notNull(), action: text("action").notNull(),
+    resourceKind: text("resource_kind").notNull(), resourceId: text("resource_id").notNull(),
+    detailJson: text("detail_json").notNull().default("{}"), occurredAt: text("occurred_at").notNull(),
+  },
+  (table) => [index("idx_organization_audit_scope_time").on(table.organizationId, table.occurredAt)],
+);
+
+/** Project ownership is additive to existing account streams; no collaborator inherits an owner stream. */
+export const organizationProjects = sqliteTable(
+  "organization_projects",
+  {
+    projectAccessId: text("project_access_id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    organizationId: text("organization_id").notNull(),
+    ownerUserId: text("owner_user_id").notNull(),
+    status: text("status").notNull().default("active"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_organization_projects_owner_project").on(table.ownerUserId, table.projectId),
+    index("idx_organization_projects_organization").on(table.organizationId, table.status),
+    index("idx_organization_projects_owner").on(table.ownerUserId),
+  ],
+);
+
+/** Explicit project access never grants unrelated projects, account content, media, or streams. */
+export const projectMemberships = sqliteTable(
+  "project_memberships",
+  {
+    membershipId: text("membership_id").primaryKey(),
+    projectAccessId: text("project_access_id").notNull(),
+    projectId: text("project_id").notNull(),
+    organizationId: text("organization_id").notNull(),
+    userId: text("user_id").notNull(),
+    role: text("role").notNull(),
+    status: text("status").notNull().default("active"),
+    grantedByUserId: text("granted_by_user_id").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    revokedAt: text("revoked_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_project_memberships_access_user").on(table.projectAccessId, table.userId),
+    index("idx_project_memberships_user_status").on(table.userId, table.status),
+  ],
+);
+
+/** Owner history is never exposed until every project resource has been safely attributed. */
+export const projectMigrationStates = sqliteTable(
+  "project_migration_states",
+  {
+    projectAccessId: text("project_access_id").primaryKey(), organizationId: text("organization_id").notNull(),
+    ownerUserId: text("owner_user_id").notNull(), status: text("status").notNull().default("pending"),
+    lastOwnerSequence: integer("last_owner_sequence").notNull().default(0), updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("idx_project_migration_organization_status").on(table.organizationId, table.status)],
+);
+
+/** Dense project sequences project immutable owner events without leaking another owner event. */
+export const projectEventScopes = sqliteTable(
+  "project_event_scopes",
+  {
+    eventId: text("event_id").primaryKey(), projectAccessId: text("project_access_id").notNull(),
+    organizationId: text("organization_id").notNull(), projectId: text("project_id").notNull(),
+    ownerUserId: text("owner_user_id").notNull(), sourceStreamId: text("source_stream_id").notNull(),
+    sourceSequence: integer("source_sequence").notNull(), projectSequence: integer("project_sequence").notNull(),
+    actorUserId: text("actor_user_id").notNull(), createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_project_event_scopes_sequence").on(table.projectAccessId, table.projectSequence),
+    index("idx_project_event_scopes_owner").on(table.ownerUserId, table.sourceSequence),
+  ],
+);
+
+/** Exact media, document, block, job, and content ownership overrides personal-owner fallbacks. */
+export const projectResourceScopes = sqliteTable(
+  "project_resource_scopes",
+  {
+    projectAccessId: text("project_access_id").notNull(), resourceKind: text("resource_kind").notNull(),
+    resourceId: text("resource_id").notNull(), organizationId: text("organization_id").notNull(),
+    projectId: text("project_id").notNull(), ownerUserId: text("owner_user_id").notNull(),
+    visibility: text("visibility").notNull().default("collaborative_output"), sourceEventId: text("source_event_id"),
+    actorUserId: text("actor_user_id").notNull(), createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectAccessId, table.resourceKind, table.resourceId] }),
+    index("idx_project_resource_scopes_resource").on(table.resourceKind, table.resourceId, table.ownerUserId),
+    index("idx_project_resource_scopes_owner_kind_actor").on(table.ownerUserId,table.resourceKind,table.resourceId,table.actorUserId),
+  ],
+);
+
+/** Project selection is an opaque, principal-bound, revocable server-owned capability. */
+export const projectContextSessions = sqliteTable(
+  "project_context_sessions",
+  {
+    contextId: text("context_id").primaryKey(), principalUserId: text("principal_user_id").notNull(),
+    organizationId: text("organization_id").notNull(), projectAccessId: text("project_access_id").notNull(),
+    createdAt: text("created_at").notNull(), expiresAt: text("expires_at").notNull(), revokedAt: text("revoked_at"),
+  },
+  (table) => [index("idx_project_context_principal_scope").on(table.principalUserId, table.organizationId, table.projectAccessId)],
+);
+
+/** Exact organization/project caps never overwrite existing personal or platform counters. */
+export const budgetScopePolicies = sqliteTable(
+  "budget_scope_policies",
+  {
+    scope: text("scope").notNull(), scopeId: text("scope_id").notNull(), organizationId: text("organization_id").notNull(),
+    tokenLimit: integer("token_limit").notNull(), microusdLimit: integer("microusd_limit").notNull(),
+    updatedByUserId: text("updated_by_user_id").notNull(), updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.scope, table.scopeId] }), index("idx_budget_scope_policies_organization").on(table.organizationId)],
+);
+
+/** Settlement and retries remain permanently bound to the original authorized tenant and actor. */
+export const projectBudgetReservationScopes = sqliteTable(
+  "project_budget_reservation_scopes",
+  {
+    reservationKind: text("reservation_kind").notNull(), reservationId: text("reservation_id").notNull(),
+    organizationId: text("organization_id").notNull(), projectAccessId: text("project_access_id").notNull(),
+    actorUserId: text("actor_user_id").notNull(), workspaceScopeId: text("workspace_scope_id").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.reservationKind, table.reservationId] }),
+    index("idx_project_budget_scope_organization").on(table.organizationId, table.projectAccessId, table.createdAt),
+  ],
+);
+
+/** Coarse fleet performance samples deliberately contain no user, tenant, project, or URL identifiers. */
+export const routePerformanceSamples = sqliteTable(
+  "route_performance_samples",
+  {
+    sampleId: text("sample_id").primaryKey(), audience: text("audience").notNull(),
+    routeFamily: text("route_family").notNull(), routeSurface: text("route_surface").notNull(),
+    cacheClass: text("cache_class").notNull(), routeLatencyMs: integer("route_latency_ms").notNull(),
+    lcpMs: integer("lcp_ms"), inpMs: integer("inp_ms"), clsMicrounits: integer("cls_microunits"),
+    recordedAt: text("recorded_at").notNull(),
+  },
+  (table) => [index("idx_route_performance_surface_time").on(table.audience, table.routeFamily, table.recordedAt),index("idx_route_performance_recorded_at").on(table.recordedAt)],
+);
+
+/** Specialist privileges are explicit, revocable, optionally tenant/project scoped grants. */
+export const capabilityGrants = sqliteTable(
+  "capability_grants",
+  {
+    grantId: text("grant_id").primaryKey(),
+    userId: text("user_id").notNull(),
+    capability: text("capability").notNull(),
+    scopeType: text("scope_type").notNull(),
+    organizationId: text("organization_id"),
+    projectAccessId: text("project_access_id"),
+    projectId: text("project_id"),
+    status: text("status").notNull().default("active"),
+    grantedByUserId: text("granted_by_user_id").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    expiresAt: text("expires_at"),
+    revokedAt: text("revoked_at"),
+  },
+  (table) => [
+    index("idx_capability_grants_user_status").on(table.userId, table.status, table.capability),
+    index("idx_capability_grants_organization").on(table.organizationId, table.capability),
+  ],
+);
+
+/** Internal delivery decisions are platform planning records, never creator documents or customer content. */
+export const deliveryDecisions = sqliteTable(
+  "delivery_decisions",
+  {
+    decisionId: text("decision_id").primaryKey(),
+    title: text("title").notNull(),
+    audience: text("audience").notNull(),
+    status: text("status").notNull().default("planned"),
+    ownerUserId: text("owner_user_id").notNull(),
+    ownerDisplayName: text("owner_display_name").notNull(),
+    evidence: text("evidence").notNull().default(""),
+    dependencyIdsJson: text("dependency_ids_json").notNull().default("[]"),
+    createdByUserId: text("created_by_user_id").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_delivery_decisions_status_updated").on(table.status, table.updatedAt),
+    index("idx_delivery_decisions_owner").on(table.ownerUserId),
+  ],
 );
 
 /** Private, erasable prompt and provider output content. Events only retain references. */
@@ -161,6 +408,7 @@ export const costBudgetReservations = sqliteTable(
   (table) => [
     index("idx_cost_budget_reservations_owner_status_period").on(table.ownerId, table.status, table.period),
     index("idx_cost_budget_reservations_owner_correlation").on(table.ownerId, table.correlationId),
+    index("idx_cost_budget_reservations_workspace_period_status").on(table.workspaceId, table.period, table.status),
   ],
 );
 
@@ -252,6 +500,8 @@ export const documentJobs = sqliteTable(
   (table) => [
     index("idx_document_jobs_owner_status").on(table.ownerId, table.status, table.requestedAt),
     index("idx_document_jobs_stream_document").on(table.streamId, table.documentId, table.requestedAt),
+    index("idx_document_jobs_stream_status_requested").on(table.streamId,table.status,table.requestedAt,table.jobId),
+    index("idx_document_jobs_stream_correlation").on(table.streamId,table.correlationId,table.jobId,table.ownerId),
   ],
 );
 

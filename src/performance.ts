@@ -76,13 +76,17 @@ const rounded = (value: number) => Math.round(value * 10) / 10;
 export function performanceRouteFamily(path: string) {
   const pathname = path.split(/[?#]/)[0]?.replace(/\/+$/, "") || "/";
   if (pathname.startsWith("/projects") || pathname === "/creative") return "projects";
+  if(pathname.startsWith("/product")||pathname==="/operations/analytics"||pathname==="/laboratory"||pathname==="/laboratory/replay"||pathname==="/laboratory/image-adapters"||pathname==="/admin/events/replay")return "product";
+  if(pathname.startsWith("/knowledge")||pathname==="/laboratory/design-system"||pathname==="/laboratory/focal-points"||pathname==="/system/focal-points")return "knowledge";
+  if(pathname.startsWith("/engineering")||pathname.startsWith("/operations/events")||pathname.startsWith("/admin/events")&&!pathname.startsWith("/admin/events/replay"))return "engineering";
+  if (pathname === "/canvas/projects" || pathname.startsWith("/canvas/projects/")) return "canvas-projects";
+  if (pathname === "/canvas/library" || pathname.startsWith("/canvas/library/")) return "canvas-library";
   if (pathname === "/canvas/proposals" || pathname.startsWith("/canvas/proposals/")) return "canvas-proposals";
   if (pathname.startsWith("/canvas/")) return "canvas-workspace";
   if (pathname.startsWith("/canvas")) return "canvas-home";
   if (pathname.startsWith("/document/")) return "document";
   if (pathname.startsWith("/studio/project")) return "project-contents";
   if (pathname.startsWith("/studio/")) return "studio";
-  if (pathname.startsWith("/laboratory") || pathname.startsWith("/admin/events/replay") || pathname.startsWith("/system/focal-points")) return "laboratory";
   if (pathname.startsWith("/operations") || pathname.startsWith("/admin/events") || pathname.startsWith("/system")) return "operations";
   if (pathname === "/share" || pathname.startsWith("/share/")) return "share";
   if (pathname.startsWith("/library")) return "library";
@@ -94,17 +98,21 @@ export function performanceRouteFamily(path: string) {
 
 export function performanceRouteSurface(path: string) {
   const pathname = path.split(/[?#]/)[0]?.replace(/\/+$/, "") || "/";
+  if(pathname==="/product/evaluation/adapters"||pathname==="/laboratory/image-adapters")return "product-adapters";
+  if(pathname==="/product/evaluation/replay"||pathname==="/laboratory/replay")return "product-replay";
+  if(pathname==="/product/evaluation/actual"||pathname==="/admin/events/replay")return "product-actual-replay";
+  if(pathname==="/laboratory")return "product-evaluation";
+  if(pathname==="/operations/analytics")return "product-insights";
+  if(["/operations/events/sync","/admin/events/sync"].includes(pathname))return "engineering-sync";
+  if(pathname.startsWith("/operations/events")||pathname.startsWith("/admin/events"))return "engineering-events";
+  if(["/laboratory/focal-points","/system/focal-points"].includes(pathname))return "knowledge-focal-points";
+  if(pathname==="/laboratory/design-system")return "knowledge-design-system";
+  if(pathname.startsWith("/product"))return `product-${pathname.split("/")[2]||"home"}`;
+  if(pathname.startsWith("/knowledge"))return `knowledge-${pathname.split("/")[2]||"home"}`;
+  if(pathname.startsWith("/engineering"))return `engineering-${pathname.split("/")[2]||"health"}`;
   if (pathname === "/share" || pathname.startsWith("/share/")) return "shared-document";
-  if (pathname === "/operations/analytics") return "operations-analytics";
   if (pathname === "/operations/canvas") return "operations-canvas-governance";
-  if (["/operations/events/sync", "/admin/events/sync"].includes(pathname)) return "operations-canvas-sync";
-  if (["/operations/events/permissions", "/admin/events/permissions"].includes(pathname)) return "operations-permissions";
-  if (["/operations/events", "/operations/events/stream", "/admin/events", "/admin/events/stream"].includes(pathname)) return "operations-event-stream";
   if (pathname === "/operations" || pathname === "/system") return "operations-system";
-  if (["/laboratory", "/laboratory/replay", "/admin/events/replay"].includes(pathname)) return "laboratory-replay";
-  if (pathname === "/laboratory/image-adapters") return "laboratory-image-adapters";
-  if (["/laboratory/focal-points", "/system/focal-points"].includes(pathname)) return "laboratory-focal-points";
-  if (pathname === "/laboratory/design-system") return "laboratory-design-system";
   if (pathname.startsWith("/studio/")) return `studio-${pathname.split("/")[2]}`;
   if (pathname.startsWith("/document/")) {
     const view = pathname.match(/\/view\/([^/]+)/)?.[1];
@@ -126,7 +134,7 @@ function observe(type: string, callback: (entry: PerformanceEntry) => void, opti
 function recordApiResource(resource: PerformanceResourceTiming) {
   let url: URL;
   try { url = new URL(resource.name); } catch { return; }
-  if (url.origin !== location.origin || !url.pathname.startsWith("/api/")) return;
+  if (url.origin !== location.origin || !url.pathname.startsWith("/api/") || url.pathname==="/api/performance") return;
   if (metrics.resources.some((item) => item.name === resource.name && item.startTime === resource.startTime)) return;
   const path = url.pathname.startsWith("/api/media/") ? "/api/media/:key"
     : url.pathname.startsWith("/api/shared/") ? "/api/shared/:token"
@@ -299,19 +307,18 @@ export function completeRoutePopulation(path: string, retry = 0) {
   if (family !== metrics.routeFamily || surface !== metrics.routeSurface || pathname !== metrics.routePath || pathname !== currentPathname || metrics.completed.has(surface)) return;
   requestAnimationFrame(() => {
     const main = document.querySelector("#main-content");
-    let meaningful = family === "projects"
+    let meaningful = family === "projects" || family === "canvas-projects"
       ? Boolean(main?.querySelector(".project-card,forma-ui-empty-state"))
       : Boolean(main && main.querySelectorAll("*").length > 2 && !main.querySelector(".application-loading"));
     if (surface === "shared-document") meaningful = Boolean(document.querySelector(".shared-view .shared-hero,.shared-view .shared-status h1"));
-    else if (surface === "operations-analytics") meaningful = Boolean(main?.querySelector("forma-analytics .analytics-overview,forma-analytics .analytics-error[role=alert]"));
+    else if (surface === "product-insights") meaningful = Boolean(main?.querySelector("forma-product-insights .role-metric-grid,forma-product-insights [role=alert]"));
     else if (surface === "operations-canvas-governance") meaningful = Boolean(main?.querySelector("forma-canvas-governance .canvas-governance-grid,forma-canvas-governance .canvas-governance-error[role=alert]"));
-    else if (surface === "operations-canvas-sync") meaningful = Boolean(main?.querySelector('forma-canvas-sync-inspector[data-forma-surface-ready="true"] .system-metrics'));
-    else if (surface === "operations-permissions") meaningful = Boolean(main?.querySelector("forma-admin-events .permission-table,forma-admin-events > .admin-page > .replay-empty"));
-    else if (surface === "operations-event-stream") meaningful = Boolean(main?.querySelector('forma-admin-events [data-forma-surface-ready="true"] .event-table tbody,forma-admin-events [data-forma-surface-ready="true"] [role="alert"],forma-admin-events > .admin-page > .replay-empty'));
-    else if (surface === "laboratory-replay") meaningful = Boolean(main?.querySelector('forma-admin-events .saved-replays[data-forma-surface-ready="true"],forma-admin-events > .admin-page > .replay-empty'));
-    else if (surface === "laboratory-image-adapters") meaningful = Boolean(main?.querySelector("forma-image-adapter-lab .adapter-lab-status,forma-image-adapter-lab .adapter-lab-warning[role=alert]"));
-    else if (surface === "laboratory-focal-points") meaningful = Boolean(main?.querySelector("forma-focal-point-lab .focal-lab-controls") && main.querySelector("forma-focal-point-lab .focal-lab-assets,forma-focal-point-lab .focal-lab-empty"));
-    else if (surface === "laboratory-design-system") meaningful = Boolean(main?.querySelector("forma-design-system-lab .design-lab-content forma-component-catalog") && main.querySelector("forma-design-system-lab .design-lab-section"));
+    else if (surface === "engineering-sync"||surface==="engineering-events") meaningful = Boolean(main?.querySelector("forma-engineering-diagnostics .role-metric-grid,forma-engineering-diagnostics [role=alert]"));
+    else if (surface === "product-replay") meaningful = Boolean(main?.querySelector("forma-synthetic-replay .synthetic-replay-controls,forma-synthetic-replay [role=note]"));
+    else if (surface === "product-actual-replay") meaningful = Boolean(main?.querySelector("forma-actual-replay #actual-saved-heading,forma-actual-replay [role=alert]"));
+    else if (surface === "product-adapters") meaningful = Boolean(main?.querySelector("forma-product-adapter-preview .adapter-preview-form,forma-product-adapter-preview [role=note]"));
+    else if (surface === "knowledge-focal-points") meaningful = Boolean(main?.querySelector("forma-focal-point-lab .focal-lab-controls") && main.querySelector("forma-focal-point-lab .focal-lab-assets,forma-focal-point-lab .focal-lab-empty"));
+    else if (surface === "knowledge-design-system") meaningful = Boolean(main?.querySelector("forma-design-system-lab .design-lab-content forma-component-catalog") && main.querySelector("forma-design-system-lab .design-lab-section"));
     const shell=document.querySelector("forma-shell") as (HTMLElement & {store?:{projection?:{get:()=>{documentId?:string;conditions?:unknown[]}};canvasProjection?:{get:()=>{selectedCanvasId?:string}};content?:{get:()=>Record<string,string>}}})|null;
     if(family==="memory"&&root().formaPrivateContentState==="pending"){const conditions=shell?.store?.projection?.get().conditions??[];const content=shell?.store?.content?.get()??{};if(conditions.some((condition)=>{const ref=String((condition as {condition_ref?:unknown}).condition_ref??"");return Boolean(ref&&ref!=="three-new-generations"&&!content[ref]);}))meaningful=false;}
     if ((surface === "document-chat" || surface === "studio-chat") && root().formaPrivateContentState === "pending") meaningful = false;
@@ -392,6 +399,12 @@ export function completeRoutePopulation(path: string, retry = 0) {
     };
     console.info("[forma-performance]", JSON.stringify(detail));
     window.dispatchEvent(new CustomEvent("forma-performance", { detail }));
+    const excluded=family==="share"||family==="knowledge"||surface.startsWith("product-evaluation")||surface.startsWith("product-replay")||surface.startsWith("product-adapters")||surface.startsWith("product-actual")||Boolean(document.querySelector(".impersonation-banner:not(.workspace-shared-banner)"));
+    if(!excluded){
+      const audience=family==="product"?"product":family==="engineering"?"engineering":family==="operations"?"operations":family.startsWith("canvas-")?"canvas":"creative";
+      const payload={audience,routeFamily:family,routeSurface:surface,cacheClass:detail.cache,routeLatencyMs:Math.min(120_000,Math.max(0,Math.round(detail.routeLatencyMs))),lcpMs:detail.lcpMs===null?null:Math.min(120_000,Math.max(0,Math.round(detail.lcpMs))),inpMs:detail.inpMs===null?null:Math.min(60_000,Math.max(0,Math.round(detail.inpMs))),clsMicrounits:Math.min(1_000_000,Math.max(0,Math.round(detail.cls*1_000_000)))};
+      void fetch("/api/performance",{method:"POST",credentials:"same-origin",keepalive:true,headers:{"content-type":"application/json"},body:JSON.stringify(payload)}).catch(()=>undefined);
+    }
   });
 }
 

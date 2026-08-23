@@ -26,7 +26,8 @@ test("projects and collections explain and expose their navigation effect",async
     readFile(new URL("../src/design-system.css",import.meta.url),"utf8"),
   ]);
   assert.match(projects,/Latest fan/);assert.match(projects,/forma-prompt-fan-visual/);assert.match(projects,/project-card-generation/);
-  assert.match(rail,/surface==="library"\?"\/library":"\/studio\/project"/);
+  assert.match(rail,/surface==="library"\?libraryRoute:overviewRoute/);
+  assert.match(rail,/canvasWorkspace\?"\/canvas\/projects":"\/projects"/);
   assert.match(tree,/Open one to filter project contents/);assert.match(tree,/Filtering by/);assert.match(tree,/Clear/);
   assert.match(contents,/Showing collection/);assert.match(contents,/Clear collection filter/);
   assert.match(styles,/\.project-card-generation/);assert.match(styles,/\.collection-rail-filter/);assert.match(styles,/\.project-contents-filter/);

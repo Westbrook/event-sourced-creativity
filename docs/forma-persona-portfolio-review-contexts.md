@@ -1,9 +1,10 @@
 # Forma-ready audience-portfolio review documents and context
 
-Date: 2026-08-22  
+Date: 2026-08-23
 Companion report: `docs/persona-oriented-application-portfolio-and-delivery-plan.md`  
 Verified Forma project: **Forma Audience-Focused Application Portfolio — Review Plan**
-Reviewed current-main / production baseline: `dc6f88508551e2bfded027c32d2f159e0cac3281` (version 117)
+Historical reviewed production baseline: `dc6f88508551e2bfded027c32d2f159e0cac3281` (version 117)
+Reviewed parent `main` baseline: `95b62c0`; the complete implementation described below is included in this release.
 
 This package contains reviewable documents and context blocks using Forma's real supported **Direction**, **Audience**, **Subject**, **Message**, **Brand**, **Accessibility**, **Exclusion**, and **Emotion** block types. It does not invent a native `report` artifact: these are authored Forma context documents with real, human-approved short-story, scene, Slides, and managed Video outputs.
 
@@ -18,29 +19,120 @@ The previous browser-security blocker no longer reproduces against the current F
 
 The managed videos are ordered, individually playable scene reels; they are not combined MP4 files. Explicitly enabled original environmental audio is distinct from a generated musical soundtrack. Existing provider receipts and creator-visible personal costs must never be confused with tenant chargeback or verified visual continuity.
 
-Open the existing project from `/projects` and inspect its documents from `/studio/project`. The block content below remains the editable, creator-readable source for the already-authored Forma materials and existing review outputs. The updated companion report evaluates **50 capability families**, the current managed-production foundation, and a four-role baseline of **53.35/100** overall with **44/100** weighted procurement readiness.
+Open the existing project from Creator `/projects` or Canvas
+`/canvas/projects`; inspect the identical Library records at `/library` or
+`/canvas/library`, and open document authoring explicitly in Creator Workspace
+at `/studio/project`. The blocks below preserve the historical four-application
+review context and its approved outputs; they were not silently rewritten inside
+Forma. The local implementation has since introduced six audience-owned
+application surfaces, scoped capability foundations, approved aggregate
+reporting, synthetic-only Design & Knowledge documentation, and shared
+workspace-switching/task-navigation components. The independently reviewed
+workspace picker keeps genuine links, shows the active workspace, and uses a
+native light-dismiss popover instead of a form select, generic disclosure, or
+unnecessary modal. The independently design-reviewed audience task rail is
+neutral and preference-reactive, uses one content-aligned gutter and a subtle
+active underline, retains and reveals its current authorized destination, and
+preserves native links, keyboard focus, forced colors, and right-to-left access
+without repeating the workspace heading. The historical **53.35/100**
+and **44/100** scores must not be represented as fresh implementation sign-off.
+The implemented local portfolio also provides actual durable product-delivery
+decisions, audience-minimized capability sessions, truthful three-gate release
+evidence, a free permission-separated adapter-contract simulation, creator-safe
+provenance, seeded/synthetic-excluding product cohorts, a catalog-entitled focal
+research handoff, and same-token keyboard-complete public image comparison with
+private provider prompts removed. The current local tranche additionally
+delivers real accepted organization invitations, exact project viewer/editor
+grants, redacted actor-attributed cross-account document events, scoped media,
+immediate owner/member revocation, independent organization token/USD budgets,
+pre-admission queued-generation enforcement, and nested customer Workspace
+Administration at `/settings/workspaces`. Creator and Canvas reuse the same
+Projects and Library data under their own routes, including Canvas-owned nested
+previews, block editing, accessible navigation, and clearly labeled Creator
+document handoffs. Browser-rendered presentation PDFs contain a genuine
+structure tree, Unicode/Arabic text, and tested logical reading order.
+
+The complete local Stage 4 collaboration implementation also includes
+independently granted cross-account Canvas boards; viewer-safe, actor-attributed
+downloads; scoped editor-authored document changes; actor-private paid provider
+jobs and creative conversations; fair cross-actor execution; exact personal,
+organization, and platform token/USD settlement; owner-only exact-document
+review links; immediate revocation; and principal-only personal privacy controls.
+Paid-provider acceptance is verified with a deterministic mock, not a real
+charge. Production publication requires its own explicit release decision;
+independent assistive-technology testing, formal PDF/UA certification,
+live-provider authorization, and longitudinal adoption require separate
+external or elapsed-time validation. Cross-account
+remote cursor presence is not implemented; durable boards synchronize through
+authenticated, adaptive polling. The final production-format regression suite
+passes **604 of 604 automated tests** alongside source typechecking and lint;
+the current generated Custom Elements Manifest describes **120 elements**.
+Every active end-user, product, design, architecture, performance,
+accessibility, collaboration, tenant-finance, administration, release, and
+documentation reviewer approved the completed local implementation without
+claiming those separate production-only or human-verification gates.
 
 ## Document 1: 01 — Capability Catalog and Audience Portfolio
 
 ### Direction block
 
-Explain why Forma should evolve from four existing, independently loaded applications—Creative, Canvas, Operations, and Laboratory—into audience-focused experiences over one shared creative platform. The problem is not a missing application split: it is that one shell, coarse permissions, internal reporting, personal privacy controls, and unrelated technical tools still mix distinct audiences. Describe the opportunity through **50 capability families** across end users, future customer/workspace administrators, platform administrators, production/product/evaluation teams, design teams, and engineering teams.
+Explain the historical evolution from four baseline applications—Creative,
+Canvas, Operations, and Laboratory—to the current six locally implemented
+audience surfaces over one shared platform. Describe implemented exact project
+tenancy, scoped budgets, customer administration, actor-private paid jobs,
+independently granted collaborative Canvas, and the remaining independent-
+verification, live-provider, optional-cursor-presence, and external-release gates.
+Cover **50 capability families** across end users, current customer workspace
+administrators, platform administrators, product/evaluation teams,
+design teams, and engineering teams.
 
 ### Audience block
 
-Address six principal stakeholder groups: creators/end users; future customer workspace administrators; platform administrators and trust/safety/support operators; product owners, delivery leads, production specialists, and evaluators; designers, accessibility specialists, and internal documentation readers; and engineering/reliability teams. Include external client/stakeholder reviewers as a separate exact-resource public-sharing audience. A person may have more than one grant, but their creator experience should stay clean until they deliberately switch to an authorized internal task.
+Address six principal stakeholder groups: creators/end users; current scoped
+customer workspace administrators; platform administrators and
+trust/safety/support operators; product owners, delivery leads, production
+specialists, and evaluators; designers, accessibility specialists, and internal
+documentation readers; and engineering/reliability teams. Include external
+client/stakeholder reviewers as a separate exact-resource public-sharing
+audience. A person may hold more than one grant, but their creator experience
+stays clean until they deliberately switch to an authorized internal task.
 
 ### Subject block
 
-Catalog the current capability families: project discovery; document/context authoring; seven interchangeable document lenses; project Library and reusable blocks; image/story/scene/slides/storyboard/video generation; six format-specific specialist-production contracts; authored claims/exclusions and target-scoped continuity; account-owned continuity anchors; work graphs and recoverable scene/frame checkpoints; truthful artifact-evidence coverage; editable output-to-context adoption; personal estimated/reserved/actual USD and token use; Canvas spatial composition; continuity/Scout/taste; privacy and exact-resource sharing; future tenant membership/access/budgets; platform identity/providers/finance/governance/release/audit; outcome analytics; delivery planning; release evidence; evaluation corpora; design-system documentation; accessibility/localization; event/projection diagnostics; account-partitioned synchronization; synthetic/actual-data replay; provider engineering; and performance/reliability.
+Catalog the current capability families: workspace-preserving paired project
+discovery and Library navigation; document/context authoring; seven
+interchangeable document lenses; reusable blocks; image/story/scene/slides/
+storyboard/video generation; six specialist-production contracts; authored
+claims/exclusions and target-scoped continuity; account-owned continuity
+anchors; work graphs and recoverable scene/frame checkpoints; truthful artifact
+evidence; editable output-to-context adoption; personal and tenant
+estimated/reserved/actual USD/token use; Canvas spatial composition;
+continuity/Scout/taste; privacy and exact-resource sharing; verified tenant
+membership, project viewer/editor access, redacted collaborative document/media
+reads, budget policies, and revocation; platform identity/providers/finance/
+governance/release/audit; outcome analytics; delivery planning; release
+evidence; evaluation corpora; design-system documentation; accessibility/
+localization; event/projection diagnostics; account-partitioned synchronization;
+synthetic/actual-data replay; provider engineering; and performance/reliability.
 
 ### Message block
 
-Recommend at most six authenticated task surfaces in the initial portfolio: (1) Creator Workspace, including projects, documents, contextual Library, all output formats, document-native managed Production Desk, creator-readable evidence/spending, assistance, and personal privacy; (2) the existing entitled Canvas companion for spatial composition of those same project resources; (3) Platform Operations; (4) Product & Quality with separately entitled Insights, Delivery, and Evaluation modules; (5) Design & Knowledge with interactive synthetic examples; and (6) Engineering Diagnostics. Public Review & Share remains a minimal unauthenticated exact-resource security boundary. Future Workspace Administration is blocked until genuine tenant/project authorization exists.
+Recommend at most six authenticated task surfaces: (1) Creator Workspace,
+including `/projects`, `/library`, documents, all output formats, managed
+production, creator spending/privacy, and scoped `/settings/workspaces`
+administration; (2) the entitled Canvas companion, including `/canvas`,
+`/canvas/projects`, and `/canvas/library` over the identical resources;
+(3) Platform Operations; (4) Product & Quality with separately entitled
+Insights, Delivery, and Evaluation modules; (5) Design & Knowledge with
+synthetic interactive examples; and (6) Engineering Diagnostics. Public Review
+& Share remains an unauthenticated exact-resource boundary. Customer Workspace
+Administration is an implemented Creator Settings module, not a seventh app.
+Cross-account editor jobs and permissioned Canvas board collaboration are
+implemented; live remote cursor presence remains an optional future capability.
 
 ### Brand block
 
-Describe the proposed experience in plain language that speaks to a person's goal: “Create,” “Projects,” “Library,” “Workspace settings,” “Product insights,” “Release evidence,” and “Design documentation.” Keep technical concepts such as event streams, provider keys, release gates, evaluation corpora, and platform policy out of normal creator navigation. Provide no more than three to five primary creator destinations and no more than five decision-oriented measures on any role-specific landing page.
+Describe the implemented experience in plain language that speaks to a person's goal: “Create,” “Projects,” “Library,” “Workspace settings,” “Product insights,” “Release evidence,” and “Design documentation.” Keep technical concepts such as event streams, provider keys, release gates, evaluation corpora, and platform policy out of normal creator navigation. Provide no more than three to five primary creator destinations and no more than five decision-oriented measures on any role-specific landing page.
 
 ### Accessibility block
 
@@ -62,37 +154,94 @@ Write for system architects, design engineers, performance engineers, accessibil
 
 ### Subject block
 
-Identify concrete source seams: `src/platform/applications.ts`, `src/route-loader.ts`, `src/apps/*/entry.ts`, `worker/index.ts`, `worker/pilot-policy.ts`, `worker/session-bootstrap.ts`, `src/state/store.ts`, `src/state/account-cache.ts`, `src/sync/canvas-offline-queue.ts`, `src/canvas/presence.ts`, `worker/analytics-api.ts`, `src/components/forma-design-system-lab.ts`, and `src/model/presentation-pdf.ts`. Add a shared capability registry, scoped route policy, role-shaped bootstrap profiles, store-independent platform shell, app-owned data controllers, redacted audience projections, and truly isolated public share entry.
+Identify concrete source seams: `src/platform/applications.ts`, `src/platform/capabilities.ts`, `src/route-loader.ts`, `src/apps/*/entry.ts`, `src/apps/public-share/entry.ts`, `worker/index.ts`, `worker/access-policy.ts`, `worker/project-access.ts`, `worker/workspaces-api.ts`, `worker/pilot-policy.ts`, `worker/session-bootstrap.ts`, `src/state/store.ts`, `src/state/account-cache.ts`, `src/sync/canvas-offline-queue.ts`, `src/canvas/presence.ts`, `worker/analytics-api.ts`, `src/components/forma-design-system-lab.ts`, and `src/model/presentation-pdf.ts`. Use the implemented shared capability registry, scoped route policy, role-shaped bootstrap profiles, store-independent platform shell, app-owned data controllers, redacted audience projections, and isolated public-share entry.
 
 ### Message block
 
-Enforce non-hierarchical, deny-by-default capability grants before any protected HTML, session payload, route metadata, internal entry/chunk, API response, export, redirect, or sensitive handoff is delivered. Existing roles are only viewer, agent, creator, and global admin; introduce granular self, project, platform, product, evaluation, design, and engineering scopes without treating platform admin as a customer tenant-admin shortcut. Shape creator sessions to personal policy and usage only; never disclose provider topology, global governance, all-user analytics, or raw customer events to unrelated audiences.
+Enforce deny-by-default, task-specific capability grants before protected HTML,
+session payloads, route metadata, internal entry/chunks, APIs, exports,
+redirects, or sensitive handoffs. Existing global administrators remain a
+documented controlled-pilot break-glass compatibility exception with an
+explicitly enumerated allowlist; delegated specialists have only their issued
+grants and are never promoted to customer tenant administrator. Audience
+sessions expose only current-audience capabilities plus safe authorized app IDs
+and landing URLs; creator sessions show personal policy/usage without unrelated
+provider topology, governance, all-user analytics, or raw event receipts.
 
 ### Brand block
 
-Treat the shared platform as one source of truth: immutable event provenance, rights receipts, explicit consent, generation readiness, provider approvals, reservations/settlement, exact-resource sharing, and the reusable design system each have one authoritative owner. Product owns outcome interpretation and delivery planning; Evaluation owns corpora and qualification evidence; Operations owns production activation and release approval; Engineering owns implementation diagnostics; Design owns approved standards and synthetic previews.
+Treat the shared platform as one source of truth: immutable event provenance,
+rights receipts, explicit consent, generation readiness, provider approvals,
+paired token/USD reservations and settlement, exact-resource sharing, and the
+reusable design system each have one authoritative owner. Paid-generation
+recovery must atomically preserve the original owner, creative stream,
+operation, accounting period, paired reservations, and provider attempt.
+Always report settled provider charges even when an earlier planner attempt
+already accounted for the tokens and the recovered operation adds zero tokens.
+Product owns outcome interpretation and delivery planning; Evaluation owns
+corpora and qualification evidence; Operations owns production activation and
+release approval; Engineering owns implementation diagnostics; Design owns
+approved standards and synthetic previews.
 
 ### Accessibility block
 
-Address concrete known gaps before shipping: route-specific localized document titles and a single transition announcement; exactly one main landmark and primary heading; a skip link on public shares; creator-native privacy; Canvas accessible reading order even for zero to three items; no nested interactive Canvas controls or uncontrolled single-letter shortcuts; correctly implemented analytics tabs; semantic reporting tables and chart alternatives; and accurate multilingual PDF claims. Current generated PDFs lack a real structure tree and the fallback strips Arabic, so accessible semantic HTML is the review source until truly tagged/validated PDF output exists.
+Preserve route-specific localized document titles, one transition announcement,
+exactly one main landmark and primary heading, guest skip links, creator-native
+privacy, accessible Canvas reading order, native modified-link gestures, modal
+close/focus return, and clear chart/table alternatives. Browser-rendered
+presentation PDFs now contain a genuine structure tree, tagged headings/lists,
+logical reading order, document language, Unicode, and Arabic. Semantic HTML
+remains directly reviewable; independent assistive-technology checks and formal
+PDF/UA certification are still unperformed.
 
 ### Exclusion block
 
-Do not authorize by hiding navigation alone. Do not stream protected HTML before validating the principal. Do not reuse full privileged cached projections for narrower roles, mix tenant/account data in offline queues or presence channels, scan all global events to serve a product dashboard, load live creator projections inside design documentation, or initialize a private creator store on public review. Do not launch tenant administration until real organizations, memberships, project ACLs, revocation, scoped media/budgets, identity-preserving stream migration, and multi-account isolation exist.
+Do not authorize by hiding navigation alone. Do not stream protected HTML
+before validating the principal. Revalidate Creator/Canvas handoffs against a
+fresh server session before committing client-side route changes. Do not reuse
+privileged cached projections for narrower roles, mix tenant/account data in
+offline queues or presence channels, scan global events for a product dashboard,
+load creator projections inside design documentation, or initialize a creator
+store on public review. Restrict existing tenant administration to exact active
+memberships, consent, exact project/Canvas grants, revocation, scoped media,
+actor-private jobs/content, principal-only personal privacy, exact-document
+owner sharing, audited exports, and personal/tenant/platform budgets. Never
+enable a provider action, review link, or board outside that exact authority.
 
 ## Document 3: 03 — Delivery Roadmap, Scorecard and Review Gates
 
 ### Direction block
 
-Provide an executable migration roadmap that first protects current creators, then creates enforceable audience boundaries, then incrementally extracts internal task surfaces, and only afterward considers customer-facing tenant administration. Define release blockers and measurable evidence rather than treating a navigation relabeling or a copied roadmap as a completed product split.
+Provide an executable migration roadmap that protects creators, enforces
+audience boundaries, extracts internal task surfaces, and carefully expands
+the implemented customer-admin/shared-document foundations. Distinguish
+delivered cross-account editor jobs, separately granted collaborative Canvas,
+actor-private content, exact scoped sharing/export receipts, and tenant billing
+from external release/manual-certification gates and optional remote cursors;
+define measurable evidence rather than treating relabeled navigation as a
+completed product split.
 
 ### Audience block
 
-Prepare the roadmap for the product owner, design lead, end-user representatives, system architect, design engineer, performance engineer, accessibility engineer, platform operations, evaluation/quality, engineering, and future customer administrators. Make owners, dependencies, decisions, role-specific success criteria, and release/rollback authority unambiguous.
+Prepare the roadmap for the product owner, design lead, end-user representatives, system architect, design engineer, performance engineer, accessibility engineer, platform operations, evaluation/quality, engineering, and current scoped customer workspace administrators. Make owners, dependencies, decisions, role-specific success criteria, and release/rollback authority unambiguous.
 
 ### Subject block
 
-Use this critical path: Stage 0 establishes persona/job inventory, route/data sensitivity, task baselines, schema inventory, owner assignments, and reproducible generated artifacts. Stage 1A delivers creator-owned privacy, usage, sharing, and understandable recovery before restricting Operations. Stage 1B implements deny-by-default route/asset/API/redirect authorization, granular scopes, shaped sessions, cache boundaries, and legacy-link protection. Stage 2 reduces creator navigation and publishes isolated synthetic Knowledge plus separately entitled Product modules. Stage 3 assigns canonical Operations/Product/Evaluation/Engineering ownership and role-safe aggregate reporting. Stage 4 implements real organization/project authorization and migration before any Workspace Administration launch. Stage 5 continuously verifies performance, accessibility, reliability, rollout, and long-term outcome value.
+Use this critical path: Stage 0 establishes the persona/job inventory,
+route/data sensitivity, baselines, schema, and owner assignments. Stage 1A
+delivers creator-owned privacy, usage, sharing, and recovery. Stage 1B enforces
+deny-by-default routes, assets, APIs, redirects, granular scopes, shaped
+sessions, cache boundaries, and server-revalidated workspace transitions.
+Stage 2 simplifies creator navigation, including paired Creator/Canvas Projects
+and Library, and publishes synthetic Knowledge plus separately entitled Product
+modules. Stage 3 assigns canonical Operations/Product/Evaluation/Engineering
+ownership and role-safe reporting. Stage 4 delivers exact organization
+membership, scoped administration, cross-account document/media collaboration,
+independent viewer/editor Canvas access, actor-private queued provider jobs and
+conversations, fair cross-actor execution, exact owner-only review links,
+receipt-before-download exports, immediate revocation, principal-only privacy,
+and combined actor/tenant/platform budgets. Stage 5 continuously verifies
+accessibility, performance, reliability, rollout, and measured long-term value.
 
 ### Message block
 
@@ -100,37 +249,109 @@ Adopt measurable acceptance gates: at least 90% unaided critical-task completion
 
 ### Brand block
 
-Keep reporting decision-oriented and appropriately scoped: creators see current work, next action, own usage, and saved/shared outcomes; future customer administrators see only tenant seats, access, spend, and policy; operators see readiness, launch blockers, incidents, and platform limits; product sees activation, retained value, reuse, friction, and cost per retained outcome; evaluators see corpus, threshold, regression, evidence, and approval status; designers see component, accessibility, and localization coverage; engineers see redacted reliability, synchronization, queue, and provider-implementation signals.
+Keep reporting decision-oriented and appropriately scoped: creators see current
+work, next actions, their own usage, and saved/shared outcomes; authorized
+customer administrators see only exact organization members, access, spend,
+policy, and activity; operators see readiness, blockers, incidents, and
+platform limits; product sees activation, retained value, reuse, friction, and
+cost per retained outcome; evaluators see corpus, threshold, regression,
+evidence, and approval; designers see component/accessibility/localization
+coverage; engineers see redacted reliability, synchronization, queue, and
+provider signals.
 
 ### Accessibility block
 
-Make WCAG 2.2 AA a release condition and preserve stronger existing contrast/focus targets, keyboard-only primary workflows, screen-reader route announcements, en/fr/ar and RTL, reduced motion/transparency, forced colors, 320-pixel layouts, 200% text enlargement, applicable 400% reflow, and accessible guest/privacy/denial states. Add real browser and assistive-technology testing instead of relying only on source-pattern assertions. Block accessible-PDF claims until actual structural tagging, Unicode/bidi support, and independent validation are present.
+Make WCAG 2.2 AA a release condition and preserve contrast/focus targets,
+keyboard-only journeys, screen-reader route announcements, English/French/
+Arabic and RTL, reduced motion/transparency, forced colors, 320-pixel layouts,
+200% text enlargement, applicable 400% reflow, and accessible guest/privacy/
+denial states. Current presentation PDFs have actual structural tagging,
+Unicode/Arabic support, and tested reading order; independent rendered-browser,
+assistive-technology, and PDF/UA validation still require separate execution.
 
 ### Emotion block
 
-Communicate calm confidence and practical honesty. Acknowledge that all seven independent reviewers—the end user, product owner, design lead, system architect, design engineer, performance engineer, and accessibility engineer—conditionally approve the revised plan because it offers higher value than today's mixed delivery, provided the documented security, privacy, accessibility, performance, data ownership, and tenant prerequisites become nonnegotiable release gates.
+Communicate calm confidence and practical honesty. Fresh end-user,
+product-owner, design-lead, architect, design-engineering, performance, and
+accessibility reviewers approve the complete local six-surface portfolio and
+its actor-private, tenant-scoped collaborative workflows. Exact document/media
+isolation, independently granted Canvas, editor-paid jobs, private conversations,
+personal/organization/platform settlement, owner-only review links, audited
+downloads, and principal-only privacy are implemented. Production publication
+requires a separately authorized release decision; independent human
+accessibility validation, live-provider approval, optional remote cursor
+presence, and longitudinal measurement remain separate external or future
+gates; historical scores are not current approval evidence.
 
 ### Exclusion block
 
-Do not claim unmeasured 30% gains as already achieved. Do not claim current Canvas collaboration is cross-account, a passed provider evaluation equals production activation, existing Markdown files already provide a planning application, generated PDF is PDF/UA-compliant, scene-reel video is a combined MP4, or uninspected visual media is verified. The older transient lint failure occurred while managed-production changes were actively being edited; those changes are now committed in reviewed main/production revision `dc6f885`. The reassessed implementation currently passes type checking, lint, the production build and **all 548 tests**, and Custom Elements Manifest validation for **102 elements**.
+Do not claim unmeasured 30% gains as already achieved. Do not confuse
+authenticated cross-account board synchronization with unimplemented live
+remote cursor presence, a passed provider evaluation with production
+activation, generated tagged PDF with independent PDF/UA certification,
+scene-reel video with a combined MP4, or uninspected visual media with verified
+quality. Product Delivery now
+really persists managed decisions; repository Markdown remains supporting
+documentation rather than that application's data store. The reviewed
+historical production baseline was `dc6f885`; the reviewed parent `main`
+revision was `95b62c0`; this release includes the verified six-surface,
+paired-route, shared-document, scoped-administration, and full Stage 4
+collaboration implementation.
+Report the freshly executed typecheck, lint, production-format build, full
+automated suite, realistic mocked-provider acceptance, and **120-element**
+Custom Elements Manifest; do not recycle the superseded historical
+580-test/119-element snapshot.
 
 ## Document 4: 04 — Review-Ready Presentation Brief
 
 ### Direction block
 
-Prepare an executive-readable, evidence-backed presentation that explains why Forma's current four applications still overwhelm unrelated user groups, which **50 capability families** exist, how specialist-managed creative production changes the opportunity, how a six-surface audience-oriented portfolio improves focus, which platform boundaries must remain shared, and what security, accessibility, performance, organizational, and release gates must precede rollout.
+Prepare an executive-readable, evidence-backed presentation explaining the
+historical four-application audience collision, the current six locally
+implemented audience surfaces, **50 capability families**, specialist-managed
+creative production, shared platform boundaries, reusable design-system
+navigation, and the remaining security, accessibility, performance, tenancy,
+and release gates.
 
 ### Audience block
 
-The presentation audience includes end-user representatives, product owners, the design lead, platform administrators, production/delivery managers, quality/evaluation specialists, system architects, design engineers, accessibility engineers, performance engineers, reliability teams, and future customer workspace administrators. Assume mixed technical familiarity and explain every decision in terms of the user group's concrete goal.
+The presentation audience includes end-user representatives, product owners, the design lead, platform administrators, production/delivery managers, quality/evaluation specialists, system architects, design engineers, accessibility engineers, performance engineers, reliability teams, and current scoped customer workspace administrators. Assume mixed technical familiarity and explain every decision in terms of the user group's concrete goal.
 
 ### Subject block
 
-Recommended slide progression: (1) executive problem and current four-application baseline; (2) six audience groups and 50 capability families; (3) one authored context powering six format-specific managed-production contracts; (4) today's creator/admin/evaluation/documentation collisions; (5) proposed six authenticated task surfaces plus exact-resource public review; (6) persona-to-capability and data-sensitivity matrix; (7) owner-bound cost reservations, creator-readable production evidence, and truthful scene-reel limitations; (8) one shared Worker/D1/R2 event platform with role-shaped entry points; (9) creator privacy, safe administrator bootstrap, server-first authorization, and account-partitioned offline work as immediate gates; (10) real tenancy prerequisites before customer Workspace Administration; (11) staged roadmap, owner decisions, and critical path; (12) four-role 53.35/100 current-state baseline, 44/100 procurement readiness, and measurable release gates.
+Recommended slide progression: (1) executive problem and historical
+four-application production baseline; (2) six audience groups and 50 capability
+families; (3) one authored context powering six format-specific
+managed-production contracts; (4) the former creator/admin/evaluation/
+documentation collisions; (5) six implemented authenticated task surfaces plus
+exact-resource public review; (6) persona-to-capability and data-sensitivity
+matrix; (7) owner-bound cost reservations, creator-readable production
+evidence, and truthful scene-reel limitations; (8) one shared Worker/D1/R2
+event platform with role-shaped entry points and reusable Design System
+navigation; (9) implemented principal-only creator privacy, safe administrator
+bootstrap, server-first authorization, effective-grant reporting, and exact
+actor/org/project-partitioned offline work; (10) delivered exact tenancy,
+scoped customer Workspace Administration, independently granted shared Canvas,
+actor-private editor jobs/conversations, owner-only review links, audited
+downloads, and personal/tenant/platform spending;
+(11) completed local stages, remaining rollout decisions, and
+critical path; (12) historical **53.35/100** product baseline and **44/100**
+procurement readiness contrasted honestly with the historical **88.5/100**
+market assessment, the freshly passed complete automated suite,
+**120 documented components**, current full-local-implementation reviewer
+approvals, and clearly separated production/manual/elapsed-time gates.
 
 ### Message block
 
-Anchor the recommendation in a single sentence: **Separate audiences, privileges, and decision-oriented reporting—not the creator's projects, documents, context, output history, or source of truth.** Explain why Context Library and Evaluation should remain modules until a validated specialist audience justifies independent products. Distinguish existing, extractable, new, and blocked capabilities. End with clear decision requests: fund privacy-first experience cleanup, scoped security/session foundations, role-safe reporting, and a later tenant-authorization discovery initiative.
+Anchor the recommendation in one sentence: **Separate audiences, privileges,
+and decision-oriented reporting—not the creator's projects, documents,
+context, output history, or source of truth.** Explain Creator/Canvas paired
+Projects and Library routes, why Context Library and Evaluation remain modules,
+and how implemented tenant authorization protects shared editor generation,
+private conversations, separately granted Canvas, audited downloads, and
+owner-controlled review links. End with controlled production rollout and
+independent human release evidence; do not portray optional remote cursor
+presence or elapsed adoption measurements as delivered.
 
 ### Brand block
 
@@ -138,7 +359,12 @@ Use a concise, structured research-and-planning treatment: trustworthy, calm, in
 
 ### Accessibility block
 
-Use meaningful headings, semantic lists, plain-language summaries, clear chart/table equivalents, high contrast, readable labels, concise speaker notes, and localization-aware copy. Treat semantic HTML slide review as the accessible deliverable. Do not describe the current visual PDF export as tagged, PDF/UA-compliant, or equivalent to an accessible report until its documented structural and Unicode defects are fixed.
+Use meaningful headings, semantic lists, plain-language summaries, clear
+chart/table equivalents, high contrast, readable labels, concise speaker notes,
+and localization-aware copy. Semantic HTML remains directly reviewable.
+Describe browser-rendered presentation PDFs truthfully as structurally tagged,
+multilingual, and tested for logical text order; do not claim independent
+assistive-technology review or PDF/UA certification.
 
 ### Exclusion block
 

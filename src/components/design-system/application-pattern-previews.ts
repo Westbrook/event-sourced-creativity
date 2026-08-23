@@ -31,13 +31,48 @@ export function renderApplicationPatternPreview(tag: string, messages: PatternMe
   const count = (value: number) => messages.number(value);
   switch (tag) {
     case "forma-area-navigation":
-      return html`<div class="component-pattern component-pattern-navigation" role="group" aria-label=${t("pattern.navigation", "Example Laboratory navigation")}>
-        <span class="component-pattern-kicker">${t("shell.laboratory", "Laboratory")}</span>
-        <forma-ui-segmented-control .label=${t("pattern.laboratorySections", "Example Laboratory sections")} value="design-system" .options=${[
-          { label: t("pattern.replay", "Replay"), value: "replay" },
-          { label: t("pattern.focal", "Focal points"), value: "focal-points" },
-          { label: t("pattern.design", "Design system"), value: "design-system" },
-        ]}></forma-ui-segmented-control>
+      return html`<div class="component-pattern component-pattern-navigation" role="group" aria-label=${t("pattern.navigation", "Example audience-specific navigation")}>
+        <span class="component-pattern-kicker">${t("shell.knowledge", "Design & Knowledge")}</span>
+        <forma-ui-audience-navigation .label=${t("pattern.knowledgeSections", "Example Design & Knowledge sections")} value="components" .destinations=${[
+          { label: t("shell.navigation.components", "Components"), value: "components", href: "#forma-area-navigation" },
+          { label: t("shell.navigation.patterns", "Patterns"), value: "patterns", href: "#forma-area-navigation" },
+          { label: t("shell.navigation.guidance", "Guidance"), value: "guidance", href: "#forma-area-navigation" },
+        ]}></forma-ui-audience-navigation>
+        <h4>${t("pattern.workspaceOwnedResources","Same project, workspace-owned destinations")}</h4>
+        <forma-ui-audience-navigation .label=${t("shell.canvas","Canvas")} value="library" .destinations=${[
+          {label:t("shell.navigation.canvases","Canvases"),value:"canvases",href:"#forma-area-navigation-canvas"},
+          {label:t("shell.navigation.projects","Projects"),value:"projects",href:"#forma-area-navigation-canvas-projects"},
+          {label:t("shell.navigation.library","Library"),value:"library",href:"#forma-area-navigation-canvas-library"},
+        ]}></forma-ui-audience-navigation>
+        <p><code>/canvas/projects</code> · <code>/canvas/library</code> — ${t("pattern.sharedProjectResources","Same project and Library; no unexpected workspace switch.")}</p>
+      </div>`;
+
+    case "forma-platform-shell":
+      return html`<div class="component-pattern component-pattern-navigation" role="group" aria-label=${t("pattern.platformShell", "Example isolated Product & Quality workspace")}>
+        <span class="component-pattern-kicker">${t("shell.product", "Product & Quality")}</span>
+        <forma-ui-workspace-switcher .label=${t("navigation.availableWorkspaces", "Available workspaces")} value="product" .destinations=${[
+          { label: t("shell.product", "Product & Quality"), value: "product", href: "#forma-platform-shell" },
+          { label: t("shell.knowledge", "Design & Knowledge"), value: "knowledge", href: "#forma-platform-shell" },
+        ]}></forma-ui-workspace-switcher>
+        <forma-ui-audience-navigation .label=${t("shell.product", "Product & Quality")} value="insights" .destinations=${[
+          { label: t("shell.navigation.insights", "Insights"), value: "insights", href: "#forma-platform-shell" },
+          { label: t("shell.navigation.delivery", "Delivery"), value: "delivery", href: "#forma-platform-shell" },
+        ]}></forma-ui-audience-navigation>
+      </div>`;
+
+    case "forma-workspace-settings":
+      return html`<div class="component-pattern component-pattern-navigation" role="group" aria-label=${t("pattern.workspaceAdministration","Example scoped Creator Workspace administration")}>
+        <span class="component-pattern-kicker">${t("workspace.admin.eyebrow","Creator settings")}</span>
+        <h4>${t("sample.campaign","Summer campaign")}</h4>
+        <forma-ui-audience-navigation .label=${t("workspace.admin.navigation","Organization settings")} value="members" .destinations=${[
+          {label:t("workspace.admin.section.members","Members"),value:"members",href:"#forma-workspace-settings"},
+          {label:t("workspace.admin.section.projects","Projects"),value:"projects",href:"#forma-workspace-settings"},
+          {label:t("workspace.admin.section.usage","Usage"),value:"usage",href:"#forma-workspace-settings"},
+        ]}></forma-ui-audience-navigation>
+        <forma-ui-list-item .label=${"Avery Park"} .detail=${t("workspace.admin.role.editor","Editor")} value="fictional-member"></forma-ui-list-item>
+        <forma-ui-switch .label=${t("workspace.admin.canvasAccessNamed","Allow Canvas access for {name}",{name:"Avery Park"})} .help=${t("workspace.admin.canvasAccessHelp","Their project role determines whether they can edit the board.")} .checked=${true}></forma-ui-switch>
+        <p>${t("workspace.admin.editorBudgetNotice","Editors can create outputs using their personal and organization budgets; viewers cannot.")}</p>
+        <forma-ui-notice .heading=${t("workspace.admin.readOnlyProject","You have view-only access to this shared project.")} tone="neutral" value="fictional-project-notice"></forma-ui-notice>
       </div>`;
 
     case "forma-collection-tree":

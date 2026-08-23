@@ -1,33 +1,27 @@
-/* This complete reference is loaded only by the Laboratory route. */
+/* This complete synthetic-only reference is loaded only by Design & Knowledge routes. */
 .design-system-lab > forma-area-navigation {
   display: block;
   min-inline-size: 0;
   max-inline-size: 100%;
 }
 
-.design-system-lab .area-navigation {
+.design-system-lab forma-ui-audience-navigation,
+.design-system-lab .ui-audience-navigation {
   min-inline-size: 0;
   max-inline-size: 100%;
   box-sizing: border-box;
 }
 
-.design-system-lab .area-navigation > div {
+.design-system-lab .ui-audience-navigation-list {
   min-inline-size: 0;
   max-inline-size: 100%;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
+}
+
+.component-library .ui-audience-navigation-list,
+.design-information-architecture .ui-audience-navigation-list,
+.component-pattern .ui-audience-navigation-list {
+  padding-inline: var(--forma-space-3,var(--space-3));
   scroll-padding-inline: var(--forma-space-3,var(--space-3));
-}
-
-.design-system-lab .area-navigation a {
-  display: inline-flex;
-  min-block-size: var(--forma-control-min-size,2.75rem);
-  align-items: center;
-  font-size: var(--forma-font-size-supporting,var(--type-small));
-}
-
-.design-system-lab .area-navigation > span {
-  font-size: var(--forma-font-size-supporting,var(--type-small));
 }
 
 .design-system-lab .design-disclosure > summary {

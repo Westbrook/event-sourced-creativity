@@ -90,7 +90,7 @@ test("shared chrome and replay content consume theme tokens while fixed dark med
   assert.match(design, /\.replay-explanation p,[^}]*\.replay-explanation small\s*\{\s*color:\s*var\(--muted\);\s*\}/s);
 });
 
-test("operations and laboratory navigation share readable fixed-dark chrome in either color scheme", () => {
+test("legacy administrative and laboratory chrome remains readable without defining shared audience navigation", () => {
   for (const token of ["admin-chrome", "admin-chrome-hover", "admin-chrome-line", "admin-chrome-muted", "admin-chrome-subtle"]) {
     assert.match(legacy, new RegExp(`--${token}:`));
   }
@@ -102,10 +102,14 @@ test("operations and laboratory navigation share readable fixed-dark chrome in e
   assert.match(design, /\.tabbar a\.active::after\s*\{\s*background:\s*var\(--orange\);\s*\}/);
 });
 
-test("Creative navigation uses the same full-width fixed-dark section row", () => {
-  assert.match(design, /\.app-shell > \.global-nav\s*\{[^}]*max-width:\s*none;[^}]*margin:\s*0;[^}]*padding-inline:\s*var\(--page-gutter\);[^}]*border-width:\s*0 0 1px;[^}]*border-radius:\s*0;/s);
-  assert.match(design, /\.global-nav a::after\s*\{\s*content:\s*none;\s*\}/);
-  assert.match(design, /\.global-nav > div\s*\{[^}]*overflow-x:\s*auto;[^}]*overscroll-behavior-inline:\s*contain;/s);
+test("every audience receives a neutral task rail with one gutter and a restrained current underline", () => {
+  assert.match(design, /\.app-shell > forma-ui-audience-navigation\s*,\s*\.forma-platform-shell > forma-ui-audience-navigation\s*\{[^}]*inline-size:\s*100%;[^}]*margin:\s*0;[^}]*padding:\s*0;[^}]*border:\s*0;/s);
+  assert.match(design, /\.ui-audience-navigation\s*\{[^}]*background:\s*var\(--forma-color-surface,\s*var\(--panel\)\);[^}]*border-block-end:\s*1px solid var\(--forma-color-border,\s*var\(--line\)\);/s);
+  assert.match(design, /\.ui-audience-navigation-list\s*\{[^}]*padding-inline:\s*var\(--page-gutter,[^;]+\);[^}]*overflow-x:\s*auto;[^}]*overscroll-behavior-inline:\s*contain;/s);
+  assert.doesNotMatch(design, /\.ui-audience-navigation-list\s*\{[^}]*padding-block:/s);
+  assert.match(design, /\.ui-audience-navigation a:focus-visible\s*\{\s*outline-offset:\s*calc\(-1\s*\*\s*var\(--forma-focus-ring-width,/);
+  assert.match(design, /\.ui-audience-navigation a\[aria-current="page"\]\s*\{[^}]*color:\s*var\(--forma-color-accent-text,\s*var\(--ink\)\);[^}]*background:\s*transparent;[^}]*border-block-end-color:\s*var\(--forma-color-accent,\s*var\(--accent\)\);/s);
+  assert.doesNotMatch(design, /\.app-shell > \.global-nav\s*,\s*\.app-shell > forma-ui-audience-navigation/);
 });
 
 test("creative, operations, and laboratory headers share one compact justified chrome contract", () => {

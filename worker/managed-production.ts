@@ -60,6 +60,7 @@ export type ProductionFrameReceipt = {
   mediaUrl: string;
   mediaType: string;
   costMicrousd: number;
+  costBreakdown?: ProviderCostBreakdown;
   usage: ProviderUsage;
   referenceInputs: Array<Record<string, unknown>>;
   authoredReferenceCount: number;
@@ -78,6 +79,27 @@ const addUsage = (left: ProviderUsage, right: ProviderUsage): ProviderUsage => (
   outputTokens: left.outputTokens + right.outputTokens,
   totalTokens: left.totalTokens + right.totalTokens,
 });
+
+const retainedProviderUsage = (value: unknown): ProviderUsage => {
+  const usage=value&&typeof value==="object"?value as Record<string,unknown>:{};
+  return{inputTokens:Math.max(0,Number(usage.inputTokens??0)),outputTokens:Math.max(0,Number(usage.outputTokens??0)),totalTokens:Math.max(0,Number(usage.totalTokens??0))};
+};
+
+const retainedCostBreakdown = (value: unknown, fallbackMicrousd: number): ProviderCostBreakdown => {
+  if(value&&typeof value==="object"){
+    const cost=value as Record<string,unknown>;
+    return{
+      textInputMicrousd:Math.max(0,Number(cost.textInputMicrousd??0)),
+      textOutputMicrousd:Math.max(0,Number(cost.textOutputMicrousd??0)),
+      imageTextInputMicrousd:Math.max(0,Number(cost.imageTextInputMicrousd??0)),
+      imageInputMicrousd:Math.max(0,Number(cost.imageInputMicrousd??0)),
+      imageOutputMicrousd:Math.max(0,Number(cost.imageOutputMicrousd??0)),
+      totalMicrousd:Math.max(0,Number(cost.totalMicrousd??fallbackMicrousd)),
+    };
+  }
+  const total=Math.max(0,Math.floor(fallbackMicrousd));
+  return{textInputMicrousd:0,textOutputMicrousd:0,imageTextInputMicrousd:0,imageInputMicrousd:0,imageOutputMicrousd:total,totalMicrousd:total};
+};
 
 function combinedSceneSnapshot(snapshot: Record<string, unknown>, scenes: ProductionScene[]) {
   const facts = new Map<string, Record<string, unknown>>();
@@ -318,6 +340,7 @@ export async function renderManagedVideoProduction(
   draft: DocumentArtifactDraft,
   production: ManagedProductionPlan,
   input: {
+    providerActorId?: string;
     snapshot: Record<string, unknown>;
     references: VideoReference[];
     videoSize: "1280x720" | "720x1280";
@@ -326,6 +349,7 @@ export async function renderManagedVideoProduction(
     existingSceneReceipts?: Record<string, ProductionSceneReceipt>;
     existingAnchor?: Record<string, unknown>;
     prepaidSceneIds?: string[];
+    prepaidAnchor?: boolean;
   } & ManagedProductionCallbacks,
 ) {
   const receipts = { ...(input.existingSceneReceipts ?? {}) };
@@ -334,6 +358,10 @@ export async function renderManagedVideoProduction(
   const costs: ProviderCostBreakdown[] = [];
   let imageUsage: ProviderUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   let anchor = input.existingAnchor;
+  if(anchor&&!input.prepaidAnchor&&!prepaidScenes.size){
+    imageUsage=addUsage(imageUsage,retainedProviderUsage(anchor.usage));
+    costs.push(retainedCostBreakdown(anchor.costBreakdown,Object.hasOwn(anchor,"costMicrousd")?Number(anchor.costMicrousd??0):500_000));
+  }
   let serializedCheckpoint = Promise.resolve();
   const persist = (message: string) => {
     const state = {
@@ -360,7 +388,7 @@ export async function renderManagedVideoProduction(
     const reference = prior ? [{ ...prior, source: "locked-study" as const, mode: prior.mode }] satisfies ImageReference[] : [];
     const continuity = providerFacingProductionContinuity(production, anchorScene);
     const format = providerRenderFormat(imageFormatForPreset(input.videoSize === "720x1280" ? "9:16" : "16:9"), "preview");
-    const image = await generateCreativeImage(env, ownerId, productionSceneSnapshot(input.snapshot, anchorScene), {
+    const image = await generateCreativeImage(env, input.providerActorId??ownerId, productionSceneSnapshot(input.snapshot, anchorScene), {
       title: anchorScene.title,
       rationale: production.anchorRationale,
       scene: `${anchorScene.imagePrompt}. Preserve this target-scoped production identity, wardrobe, location, palette, lighting, and lens: ${JSON.stringify(continuity)}.`,
@@ -376,7 +404,7 @@ export async function renderManagedVideoProduction(
       providerMediaUrl: image.providerMediaUrl ?? "",
       rights: "account-generated",
     });
-    anchor = { mediaUrl: stored.url, mediaType: stored.mimeType, sceneId: anchorScene.id, contextGroupIds: anchorScene.contextGroupIds, source: "account-generated", rights: "account-generated", frameGuidance: "reference-image-not-native-frame-lock" };
+    anchor = { mediaUrl: stored.url, mediaType: stored.mimeType, sceneId: anchorScene.id, contextGroupIds: anchorScene.contextGroupIds, source: "account-generated", rights: "account-generated", frameGuidance: "reference-image-not-native-frame-lock",usage:image.usage,costMicrousd:image.costBreakdown.totalMicrousd,costBreakdown:image.costBreakdown,provider:image.provider,providerModel:image.model,...(image.providerRequestId?{providerJobId:image.providerRequestId}:{}) };
     imageUsage = addUsage(imageUsage, image.usage);
     costs.push(image.costBreakdown);
     await persist("The reusable production anchor is safely stored with account-generated provenance.");
@@ -442,7 +470,7 @@ export async function renderManagedVideoProduction(
         seconds: scene.durationSeconds,
         size: input.videoSize,
         audioMode: input.audioMode,
-        endUserId: ownerId,
+        endUserId: input.providerActorId??ownerId,
         snapshot: sceneSnapshot,
         plan: sceneDraft,
         productionContinuity: { prohibitions: providerFacingProductionContinuity({ claims: production.claims.filter((claim) => !claim.contextGroupIds.length) }).prohibitions, scopedTargets },
@@ -544,12 +572,16 @@ export async function renderManagedStoryboardProduction(
   artifactId: string,
   draft: DocumentArtifactDraft,
   production: ManagedProductionPlan,
-  input: { snapshot: Record<string, unknown>; references?: VideoReference[]; existingItems?: Array<Record<string, unknown>>; existingFrameReceipts?: Record<string, ProductionFrameReceipt> } & ManagedProductionCallbacks,
+  input: { providerActorId?: string; snapshot: Record<string, unknown>; references?: VideoReference[]; existingItems?: Array<Record<string, unknown>>; existingFrameReceipts?: Record<string, ProductionFrameReceipt> } & ManagedProductionCallbacks,
 ) {
   const rendered = new Map<string, Record<string, unknown>>((input.existingItems ?? []).flatMap((item) => item.scene_id ? [[String(item.scene_id), { ...item }]] : []));
   const receipts: Record<string, ProductionFrameReceipt> = { ...(input.existingFrameReceipts ?? {}) };
   const usage: ProviderUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   const costs: ProviderCostBreakdown[] = [];
+  for(const receipt of Object.values(receipts)){
+    Object.assign(usage,addUsage(usage,retainedProviderUsage(receipt.usage)));
+    costs.push(retainedCostBreakdown(receipt.costBreakdown,receipt.costMicrousd));
+  }
   const sceneById = new Map(production.scenes.map((scene) => [scene.id, scene]));
   let latestModel = "";
   let latestProvider = "";
@@ -576,7 +608,7 @@ export async function renderManagedStoryboardProduction(
       const continuity = providerFacingProductionContinuity(production, scene);
       const frameFormat = providerRenderFormat(documentImageFormat(input.snapshot).format, "preview");
       await persist(`Rendering storyboard frame ${scene.narrativeOrder} of ${production.scenes.length}${references.length ? " from the approved production anchor" : ""}.`);
-      const image = await generateCreativeImage(env, ownerId, productionSceneSnapshot(input.snapshot, scene), {
+      const image = await generateCreativeImage(env, input.providerActorId??ownerId, productionSceneSnapshot(input.snapshot, scene), {
         title: item.title,
         rationale: `${item.notes} Preserve this target-scoped production continuity: ${JSON.stringify(continuity)}.`,
         scene: item.image_prompt,
@@ -605,6 +637,7 @@ export async function renderManagedStoryboardProduction(
         mediaUrl: media.url,
         mediaType: media.mimeType,
         costMicrousd: image.costBreakdown.totalMicrousd,
+        costBreakdown:image.costBreakdown,
         usage: image.usage,
         referenceInputs: image.referenceInputs.map((reference, index) => ({ ...reference, role: index < approved.length ? "authored-reference" : "inherited-production-continuity" })),
         authoredReferenceCount: approved.length,

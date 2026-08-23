@@ -143,10 +143,13 @@ const svgImage=async(host:PresentationSlide,css:string)=>{
 
   const wrapper=document.createElementNS(HTML_NAMESPACE,"div");
   wrapper.setAttribute("xmlns",HTML_NAMESPACE);
+  wrapper.setAttribute("lang",document.documentElement.lang||"en");
   wrapper.style.width=`${PRESENTATION_PDF_PAGE_WIDTH}px`;
   wrapper.style.height=`${PRESENTATION_PDF_PAGE_HEIGHT}px`;
   wrapper.style.overflow="hidden";
   const inherited=getComputedStyle(host);
+  wrapper.setAttribute("dir",inherited.direction||document.documentElement.dir||"ltr");
+  wrapper.style.direction=inherited.direction;
   wrapper.style.font=inherited.font;
   wrapper.style.fontFamily=inherited.fontFamily;
   const lineHeight=Number.parseFloat(inherited.lineHeight)/Number.parseFloat(inherited.fontSize);
@@ -247,10 +250,14 @@ export async function renderPresentationPdf(items:DocumentArtifactDraftItem[],pr
         height:canvas.height,
         bytes:await compressedRgb(canvas),
         text:host.innerText,
+        heading:host.querySelector<HTMLElement>("h1,h2,h3,h4,h5,h6")?.innerText||items[index]!.title,
+        bullets:Array.from(host.querySelectorAll<HTMLElement>("section > ul > li,section > ol > li")).map((item)=>item.innerText.trim()).filter(Boolean),
+        language:options.language||document.documentElement.lang||"en",
+        direction:options.direction||(getComputedStyle(host).direction==="rtl"?"rtl":"ltr"),
       });
     }
 
-    return createPresentationPdfFromRenderedSlides(pages,options);
+    return createPresentationPdfFromRenderedSlides(pages,{...options,language:options.language||document.documentElement.lang||"en"});
   }finally{
     stage.remove();
   }

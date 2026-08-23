@@ -18,6 +18,10 @@ import { performanceRouteFamily, performanceRouteSurface } from "../src/performa
 import { matchingAccountSnapshot, matchingAnalyticsSnapshot } from "../src/state/account-cache.ts";
 import { routeCapabilities } from "../src/state/route-capabilities.ts";
 import { consumeRoutePrefetch, consumeSessionBootstrap, consumeSessionPrefetch } from "../src/state/session-bootstrap.ts";
+import { IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE } from "../worker/image-adapter-evaluation-evidence.ts";
+import { reserveBudget, reserveCostBudget, settleBudget, settleCostBudget } from "../worker/pilot-policy.ts";
+import { EXTRACTOR_EVAL_FIXTURES } from "../src/model/extractors.ts";
+import { foldCanvasEvents } from "../src/canvas/model.ts";
 
 function measuredDatabase() {
   const sqlite = new DatabaseSync(":memory:");
@@ -85,6 +89,17 @@ async function productionWorker() {
   assert.equal((await request("/api/events?after=0&limit=2000&content=0")).status, 200);
   database.reset();
   return { database, environment, request, context, drainBackground };
+}
+
+async function specialistIdentity(database,request,userId,capabilities=[]){
+  const headers={"oai-authenticated-user-id":userId,"oai-authenticated-user-email":`${userId}@example.test`};
+  assert.equal((await request("/api/session",{headers})).status,200);
+  database.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id=?").run("pilot-2026-08-10",userId);
+  const now=new Date().toISOString();
+  const insert=database.sqlite.prepare("INSERT INTO capability_grants(grant_id,user_id,capability,scope_type,organization_id,project_access_id,project_id,status,granted_by_user_id,created_at,updated_at,expires_at,revoked_at) VALUES(?,?,?, ?,NULL,NULL,NULL,'active',?,?,?,NULL,NULL)");
+  for(const capability of capabilities)insert.run(crypto.randomUUID(),userId,capability,capability.startsWith("evaluation.synthetic.")||capability.startsWith("design.")?"synthetic":"platform","dev-local-creative",now,now);
+  database.reset();
+  return headers;
 }
 
 function htmlAssets(environment) {
@@ -169,13 +184,20 @@ function addCorrelatedTerminal(sqlite, stream, correlationId, now = new Date().t
       "DocumentRenderCompleted", JSON.stringify({ document_id: "doc-atmosphere", artifact_id: "artifact-1" }));
 }
 
-test("route timing correctly classifies Canvas proposals and Laboratory aliases", () => {
+test("route timing correctly attributes Canvas proposals and legacy aliases to their actual persona owners", () => {
   assert.equal(performanceRouteFamily("/canvas/proposals"), "canvas-proposals");
   assert.equal(performanceRouteFamily("/canvas/proposals/proposal-1"), "canvas-proposals");
   assert.equal(performanceRouteFamily("/canvas/canvas-1"), "canvas-workspace");
-  assert.equal(performanceRouteFamily("/system/focal-points"), "laboratory");
-  assert.equal(performanceRouteFamily("/admin/events/replay"), "laboratory");
-  assert.equal(performanceRouteFamily("/admin/events/permissions"), "operations");
+  assert.equal(performanceRouteFamily("/canvas/projects"), "canvas-projects");
+  assert.equal(performanceRouteFamily("/canvas/projects/project-1"), "canvas-projects");
+  assert.equal(performanceRouteFamily("/canvas/library"), "canvas-library");
+  assert.equal(performanceRouteFamily("/canvas/library/output/output-1"), "canvas-library");
+  assert.equal(performanceRouteSurface("/canvas/projects"), "canvas-projects");
+  assert.equal(performanceRouteSurface("/canvas/library/output/output-1"), "canvas-library");
+  assert.equal(performanceRouteFamily("/system/focal-points"), "knowledge");
+  assert.equal(performanceRouteFamily("/admin/events/replay"), "product");
+  assert.equal(performanceRouteFamily("/admin/events/permissions"), "engineering");
+  assert.equal(performanceRouteFamily("/laboratory/image-adapters"), "product");
 });
 
 test("paid storyboard and video work requires strict explicit consent at both server boundaries without side effects",async()=>{
@@ -190,14 +212,14 @@ test("paid storyboard and video work requires strict explicit consent at both se
 
 test("performance isolates operational, laboratory, document, and public entry points", () => {
   const cases = {
-    "/operations": "operations-system", "/system": "operations-system", "/operations/analytics": "operations-analytics",
-    "/operations/canvas": "operations-canvas-governance", "/operations/events": "operations-event-stream",
-    "/operations/events/stream": "operations-event-stream", "/admin/events": "operations-event-stream",
-    "/operations/events/permissions": "operations-permissions", "/admin/events/permissions": "operations-permissions",
-    "/operations/events/sync": "operations-canvas-sync", "/admin/events/sync": "operations-canvas-sync",
-    "/laboratory": "laboratory-replay", "/laboratory/replay": "laboratory-replay", "/admin/events/replay": "laboratory-replay",
-    "/laboratory/image-adapters": "laboratory-image-adapters", "/laboratory/focal-points": "laboratory-focal-points",
-    "/system/focal-points": "laboratory-focal-points", "/laboratory/design-system": "laboratory-design-system",
+    "/operations": "operations-system", "/system": "operations-system", "/operations/analytics": "product-insights",
+    "/operations/canvas": "operations-canvas-governance", "/operations/events": "engineering-events",
+    "/operations/events/stream": "engineering-events", "/admin/events": "engineering-events",
+    "/operations/events/permissions": "engineering-events", "/admin/events/permissions": "engineering-events",
+    "/operations/events/sync": "engineering-sync", "/admin/events/sync": "engineering-sync",
+    "/laboratory": "product-evaluation", "/laboratory/replay": "product-replay", "/admin/events/replay": "product-actual-replay",
+    "/laboratory/image-adapters": "product-adapters", "/laboratory/focal-points": "knowledge-focal-points",
+    "/system/focal-points": "knowledge-focal-points", "/laboratory/design-system": "knowledge-design-system",
     "/document/document-1/title/view/chat": "document-chat", "/document/document-1/title": "document-workspace",
     "/share": "shared-document", "/share/secret-token": "shared-document",
   };
@@ -234,7 +256,7 @@ test("six nested route profiles retain every surface's actual evidence", () => {
 test("nested snapshots downscope without crossing account, consent, policy, or impersonation", () => {
   const identity = { userId: "owner-a", policyVersion: "policy-2", accepted: true, impersonating: false };
   const types = ["ProjectCreated", "DocumentViewVisited", "AttentionEpisodeObserved", "AttentionSignalsForgotten", "CanvasInteractionRecorded", "ObjectViewed", "ComparisonOpened", "GenerationPreflightCompleted", "ValidationFailed", "ApplicationViewVisited", "GenerationPreflightRequested"];
-  const snapshot = { key: "owner-a:policy-2:v2", userId: "owner-a", policyVersion: "policy-2", profile: "full", head: types.length, events: types.map((type, index) => ({ type, sequence: index + 1 })), savedAt: Date.now(), schemaVersion: 2 };
+  const snapshot = { key: "owner-a:owner-a:creative:personal:personal:legacy:policy-2:v3", userId: "owner-a",principalUserId:"owner-a",audience:"creative",organizationId:"personal",projectAccessId:"personal",permissionEpoch:"legacy", policyVersion: "policy-2", profile: "full", head: types.length, events: types.map((type, index) => ({ type, sequence: index + 1 })), savedAt: Date.now(), schemaVersion: 3 };
   for (const requested of EVENT_PROFILE_ORDER) {
     const found = matchingAccountSnapshot([snapshot], identity, requested);
     assert.equal(found?.profile, requested);
@@ -247,6 +269,10 @@ test("nested snapshots downscope without crossing account, consent, policy, or i
   assert.equal(matchingAccountSnapshot([{ ...snapshot, userId: "owner-b" }], identity, "projects"), null);
   assert.equal(matchingAccountSnapshot([snapshot], { ...identity, accepted: false }, "projects"), null);
   assert.equal(matchingAccountSnapshot([snapshot], { ...identity, impersonating: true }, "projects"), null);
+  assert.equal(matchingAccountSnapshot([snapshot],{...identity,organizationId:"organization-b"},"projects"),null);
+  assert.equal(matchingAccountSnapshot([snapshot],{...identity,projectAccessId:"project-b"},"projects"),null);
+  assert.equal(matchingAccountSnapshot([snapshot],{...identity,permissionEpoch:"revoked"},"projects"),null);
+  assert.equal(matchingAccountSnapshot([snapshot],{...identity,principalUserId:"different-principal"},"projects"),null);
   assert.equal(matchingAccountSnapshot([{ ...snapshot, key: "owner-a:policy-2:v1", schemaVersion: 1 }], identity, "projects"), null);
 });
 
@@ -254,7 +280,7 @@ test("same-profile and downscoped snapshots remove timer artifacts without chang
   const identity={userId:"owner-a",policyVersion:"policy-2",accepted:true,impersonating:false};
   const phantom={surface:"studio",context:"studio-overview",terminal_type:"idle_timeout",terminal_ref:null,active_ms:30_000,idle_ms:30_000,visible_refs:[],outcome_weight:.013,friction_score:0,capture_version:"attention-v2"};
   const events=[{type:"ProjectCreated",sequence:1,payload:{}},{type:"AttentionEpisodeObserved",sequence:2,payload:phantom},{type:"AttentionEpisodeObserved",sequence:3,payload:{...phantom,visible_refs:["block:real"]}},{type:"AttentionSignalsForgotten",sequence:4,payload:{}}];
-  const snapshot={key:"owner-a:policy-2:v2",userId:"owner-a",policyVersion:"policy-2",profile:"full",head:40,events,savedAt:Date.now(),schemaVersion:2};
+  const snapshot={key:"owner-a:owner-a:creative:personal:personal:legacy:policy-2:v3",userId:"owner-a",principalUserId:"owner-a",audience:"creative",organizationId:"personal",projectAccessId:"personal",permissionEpoch:"legacy",policyVersion:"policy-2",profile:"full",head:40,events,savedAt:Date.now(),schemaVersion:3};
   for(const profile of ["memory","scout","sessions"]){
     const downscoped=matchingAccountSnapshot([snapshot],identity,profile);
     assert.equal(downscoped?.head,40);assert.deepEqual(downscoped?.events.map((item)=>item.sequence),[1,3,4]);
@@ -274,7 +300,7 @@ test("each route requests only its own evidence, private content, and historical
     "/laboratory/replay": ["projects", false, false], "/laboratory/image-adapters": ["projects", false, false],
     "/laboratory/focal-points": ["workspace", false, false], "/laboratory/design-system": ["workspace", false, false],
     "/studio/project": ["workspace", false, false], "/document/document-1": ["workspace", true, true],
-    "/canvas/canvas-1": ["workspace", true, true], "/library": ["workspace", true, true], "/share/token": ["projects", false, false],
+    "/canvas/canvas-1": ["workspace", true, true], "/canvas/projects": ["projects", false, false], "/canvas/projects/project-1": ["projects", false, false], "/canvas/library": ["workspace", true, true], "/canvas/library/output/output-1": ["workspace", true, true], "/library": ["workspace", true, true], "/share/token": ["projects", false, false],
   };
   for (const [path, [profile, privateContent, jobHistory]] of Object.entries(expected)) assert.deepEqual(routeCapabilities(`${path}?safe=1#section`), { profile, privateContent, jobHistory }, path);
   assert.deepEqual(routeCapabilities("/admin/events/replay"), routeCapabilities("/laboratory/replay"));
@@ -335,31 +361,33 @@ test("static HTML starts one authenticated session immediately without touching 
   assert.doesNotMatch(share, /forma-static-session-prefetch/);
 });
 
-test("administrative entries prefetch only their own read-only endpoint after verified authorization", async () => {
+test("persona entries prefetch only their exact authorized, audience-specific read-only endpoint", async () => {
   const entries = new Map([
-    ["/operations/analytics", "/api/analytics?days=30&includeSynthetic=false"],
-    ["/operations/canvas", "/api/canvas-governance"],
-    ["/operations/events", "/api/events?audit=1&limit=150"],
-    ["/operations/events/stream", "/api/events?audit=1&limit=150"],
-    ["/admin/events", "/api/events?audit=1&limit=150"],
-    ["/admin/events/stream", "/api/events?audit=1&limit=150"],
-    ["/laboratory/image-adapters", "/api/image-adapters"],
+    ["/operations",{endpoint:"/api/portfolio/operations/overview",capability:"platform.policy.manage"}],
+    ["/operations/analytics",{endpoint:"/api/portfolio/product/insights",capability:"product.analytics.read"}],
+    ["/operations/canvas",{endpoint:"/api/canvas-governance",capability:"platform.release.approve"}],
+    ["/operations/events",{endpoint:"/api/portfolio/engineering/events",capability:"engineering.events.read"}],
+    ["/operations/events/stream",{endpoint:"/api/portfolio/engineering/events",capability:"engineering.events.read"}],
+    ["/admin/events",{endpoint:"/api/portfolio/engineering/events",capability:"engineering.events.read"}],
+    ["/admin/events/stream",{endpoint:"/api/portfolio/engineering/events",capability:"engineering.events.read"}],
+    ["/laboratory/image-adapters",{endpoint:"/api/portfolio/product/evaluation",capability:"evaluation.qualification.read"}],
+    ["/admin/events/replay",{endpoint:"/api/replay-sessions",capability:"evaluation.actual.run",administratorOnly:true}],
   ]);
 
-  for (const [pathname, endpoint] of entries) {
+  for (const [pathname, {endpoint,capability,administratorOnly=false}] of entries) {
     const html = await readFile(new URL(`../dist/client${pathname}/index.html`, import.meta.url), "utf8");
     const match = /<script id="forma-static-route-prefetch">([\s\S]*?)<\/script>/.exec(html);
     assert.ok(match, pathname);
     assert.ok(match.index < html.indexOf('<script type="module"'), pathname);
 
-    for (const [role, impersonation, expected] of [["admin", null, 1], ["creator", null, 0], ["admin", { personaId: "other" }, 0]]) {
+    for (const [role, capabilities, impersonation, expected] of [["admin",[capability],null,1],["creator",[capability],null,administratorOnly?0:1],["admin",["design.docs.read"],null,0],["admin",[capability],{personaId:"other"},0]]) {
       const calls = [];
       const response = new Response("{}", { status: 200 });
       const context = {
         location: { pathname },
         document: { documentElement: { dataset: {} } },
         performance: { now: () => 26.34 },
-        window: { __formaInitialSession: Promise.resolve(Response.json({ user: { role }, impersonation })) },
+        window: { __formaInitialSession: Promise.resolve(Response.json({ user: { role }, capabilities, impersonation })) },
         fetch(url) { calls.push(url); return Promise.resolve(response); },
       };
       runInNewContext(match[1], context);
@@ -373,7 +401,7 @@ test("administrative entries prefetch only their own read-only endpoint after ve
     }
   }
 
-  for (const pathname of ["/projects", "/share", "/laboratory", "/laboratory/replay", "/admin/events/replay"]) {
+  for (const pathname of ["/projects", "/share", "/laboratory/replay"]) {
     const html = await readFile(new URL(`../dist/client${pathname}/index.html`, import.meta.url), "utf8");
     assert.doesNotMatch(html, /forma-static-route-prefetch/, pathname);
   }
@@ -432,8 +460,8 @@ test("background visits and unrelated job polling begin after meaningful route p
   const shell = await readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8");
   const store = await readFile(new URL("../src/state/store.ts", import.meta.url), "utf8");
   const analytics = await readFile(new URL("../src/components/forma-analytics.ts", import.meta.url), "utf8");
-  assert.match(shell, /addEventListener\("forma-performance", this\.#populated\)/);
-  assert.match(shell, /removeEventListener\("forma-performance", this\.#populated\)/);
+  assert.match(shell, /addEventListener\("forma-performance",\s*this\.#populated\)/);
+  assert.match(shell, /removeEventListener\("forma-performance",\s*this\.#populated\)/);
   assert.match(shell, /dataset\.formaPhase !== "populated"/);
   assert.doesNotMatch(shell, /completeRoutePopulation\(this\.store\.route\.get\(\)\);this\.#observeApplicationView/);
   assert.match(store, /#syncVisibleJobs\(path=this\.route\.get\(\)\)/);
@@ -453,7 +481,7 @@ test("background visits and unrelated job polling begin after meaningful route p
   assert.match(analytics, /writeAnalyticsSnapshot\(identity,url,body\.report\)/);
   assert.match(analytics, /Refreshing live data/);
   assert.match(analytics, /\[401,403,428\]\.includes\(response\.status\)/);
-  assert.match(store, /await clearAnalyticsSnapshots\(this\.#snapshotIdentity\(session\),true\)/);
+  assert.match(store, /const active=this\.session\.get\(\);if\(active\)await clearAnalyticsSnapshots\(this\.#snapshotIdentity\(active\),true\)/);
 });
 
 test("the early authenticated session request can only be adopted once", () => {
@@ -594,9 +622,16 @@ test("streamed impersonation preserves fictional identity, actor billing, and ca
   assert.equal(embedded.session.impersonation.active, true);
   assert.equal(embedded.session.impersonation.actor.userId, "dev-local-creative");
   assert.equal(embedded.session.impersonation.fictionalUser.userId, "fictional-user");
+  assert.deepEqual(embedded.session.organizations,[]);
+  assert.equal(embedded.session.capabilities.some((capability)=>/^(platform|product|evaluation|design|engineering)\./.test(capability)),false);
   assert.equal(embedded.session.budgets.user.used, 314);
   assert.equal(embedded.session.canvas.access, false);
   assert.equal(database.calls.length, 4);
+
+  for(const path of ["/api/session?audience=product","/api/portfolio/product/insights","/api/platform/access","/api/analytics","/api/replay-sessions","/api/workspaces","/operations/access","/product/evaluation/actual"]){
+    const denied=await request(path,{headers:{cookie:"forma_impersonation=imp-1"}});
+    assert.equal(denied.status,409,`${path} must require a return to the principal account`);
+  }
 
   const { matchingAccountSnapshot } = await import("../src/state/account-cache.ts");
   const identity = { userId: "fictional-user", policyVersion: embedded.session.policy.version, accepted: true, impersonating: true };
@@ -684,10 +719,10 @@ test("public sharing, HEAD requests, and unauthenticated HTML never contain anot
   const { database, environment, request } = await productionWorker();
   htmlAssets(environment);
 
-  for (const [path, options] of [["/share/public-token", undefined], ["/share", undefined], ["/projects", { method: "HEAD" }]]) {
+  for (const [path, options] of [["/share/public-token", undefined], ["/share", undefined], ["/share.html", undefined], ["/share/index.html", {method:"HEAD"}], ["/projects", { method: "HEAD" }]]) {
     database.reset();
     const response = await request(path, options);
-    assert.equal(response.headers.get("cache-control"), "public, max-age=3600");
+    assert.equal(response.headers.get("cache-control"),path.startsWith("/share")?"private, no-store":"public, max-age=3600");
     assert.equal(response.headers.get("etag"), '"public-shell"');
     assert.equal(database.calls.length, 0, `${path} must not access account data`);
     assert.doesNotMatch(await response.text(), /forma-session-bootstrap/);
@@ -829,7 +864,7 @@ test("every scoped event profile is nested, owner-scoped, paginated, and content
 });
 
 test("analytics excludes fictional streams in SQL and batches all dashboard reads", async () => {
-  const { database, request } = await productionWorker();
+  const { database, request, drainBackground } = await productionWorker();
   const response = await request("/api/analytics?days=all");
   assert.equal(response.status, 200);
   const body = await response.json();
@@ -843,12 +878,14 @@ test("analytics excludes fictional streams in SQL and batches all dashboard read
   assert.ok(database.calls.length <= 2, `expected admin authentication plus one dashboard batch, received ${database.calls.length}`);
   assert.equal(database.writeCount(), 0);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
+  await drainBackground();
   database.reset();
   const synthetic = await request("/api/analytics?days=all&includeSynthetic=true");
   assert.equal(synthetic.status, 200);
   const included = database.calls.find((call) => call.kind === "batch");
   assert.equal(included?.statements.length, 4);
   assert.doesNotMatch(included.statements[2].sql, /NOT IN/);
+  await drainBackground();
   database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("dev-local-creative");
   database.reset();
   assert.equal((await request("/api/analytics?days=all")).status, 403);
@@ -857,7 +894,7 @@ test("analytics excludes fictional streams in SQL and batches all dashboard read
 });
 
 test("analytics reuses immutable account evidence while every fresh report includes new events", async () => {
-  const { database, request } = await productionWorker();
+  const { database, request, drainBackground } = await productionWorker();
   const collaborator="analytics-collaborator";const created=new Date().toISOString();database.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,created_at,updated_at) VALUES (?,?,?,?,?,?)").run(collaborator,"collaborator@example.test","Original collaborator","creator",created,created);addCorrelatedTerminal(database.sqlite,`creative:${collaborator}`,"collaborator-seed",created);
   const initial = await request("/api/analytics?days=all");
   assert.equal(initial.status, 200);
@@ -867,6 +904,7 @@ test("analytics reuses immutable account evidence while every fresh report inclu
   assert.ok(full);
   const coldBytes = JSON.stringify(database.sqlite.prepare(full.sql).all(...full.values)).length;
 
+  await drainBackground();
   database.reset();
   const unchanged = await request("/api/analytics?days=all");
   const unchangedBody = await unchanged.json();
@@ -1108,7 +1146,7 @@ test("chat retrieves only its owner's unexpired conversation content", async () 
 });
 
 test("production-shaped idle histories collapse to one scoped page while raw audit and genuine attention stay intact",async()=>{
-  const {database,request}=await productionWorker();const stream="creative:dev-local-creative";const now=new Date().toISOString();
+  const {database,request,drainBackground}=await productionWorker();const stream="creative:dev-local-creative";const now=new Date().toISOString();
   const future=new Date(Date.now()+86_400_000).toISOString();
   let sequence=Number(database.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head);
   const insert=database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
@@ -1131,6 +1169,7 @@ test("production-shaped idle histories collapse to one scoped page while raw aud
   const analyticsStatement=database.calls.find((call)=>call.kind==="batch")?.statements[2];const analyticsPlan=database.sqlite.prepare(`EXPLAIN QUERY PLAN ${analyticsStatement.sql}`).all(...analyticsStatement.values);
   assert.match(analyticsPlan.map((step)=>step.detail).join(" "),/idx_events_nonphantom_stream_sequence/);
 
+  await drainBackground();
   database.reset();const auditResponse=await request("/api/events?audit=1&limit=150&content=1");const audit=await auditResponse.json();
   assert.equal(auditResponse.status,200);assert.equal(audit.events.length,150);assert.equal(audit.head,sequence);assert.equal(audit.total,sequence);assert.equal(audit.matched,sequence);assert.equal(audit.hasOlder,true);assert.equal("content" in audit,false);
   assert.ok(audit.events.some((item)=>item.type==="AttentionEpisodeObserved"&&item.payload.active_ms===30_000));assert.ok(audit.events.every((item)=>item.streamId===stream));
@@ -1235,7 +1274,7 @@ test("public shares disclose complete authored output only from the selected own
   const {database,request}=await productionWorker();const owner="dev-local-creative",stream=`creative:${owner}`,now=new Date().toISOString(),future=new Date(Date.now()+3_600_000).toISOString(),past=new Date(Date.now()-3_600_000).toISOString();let sequence=Number(database.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head);const insertEvent=database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
   for(const [artifactId,contentRef] of [["shared-story","shared-story-content"],["expired-story","expired-story-content"]])insertEvent.run(crypto.randomUUID(),stream,++sequence,now,now,"worker:renderer","share-test",crypto.randomUUID(),null,null,1,"DocumentRenderCompleted",JSON.stringify({artifact_id:artifactId,artifact_kind:"short_story",document_id:"doc-atmosphere",project_id:"project-atmosphere",title:artifactId,summary:"An authored narrative",content_ref:contentRef,item_count:1,items:[{id:`${artifactId}-item`,title:"Receipt heading only"}]}));
   const draft=(text)=>JSON.stringify({title:"A complete authored story",summary:"A real summary",content_markdown:text,presentation:null,items:[{title:"The actual opening",body:"The exact story section.",notes:"A private-to-this-document author note.",image_prompt:"A quiet dawn.",slide:null}]});const insertContent=database.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES (?,?,?,?,?,?,NULL)");insertContent.run("shared-story-content",owner,"document-artifact",draft("# The complete story\n\nEvery intentionally written word."),now,future);insertContent.run("expired-story-content",owner,"document-artifact",draft("EXPIRED PRIVATE MANUSCRIPT"),now,past);insertContent.run("unrelated-private-content",owner,"document-artifact",draft("UNRELATED PRIVATE MANUSCRIPT"),now,future);insertContent.run("private-input-receipt",owner,"document-artifact-input","PRIVATE PROVIDER RECEIPT",now,future);
-  const creation=await request("/api/shares",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere",expiresHours:1})});assert.equal(creation.status,200);const {share}=await creation.json();database.reset();const response=await request(`/api/shared/${encodeURIComponent(share.token)}`);assert.equal(response.status,200);const body=await response.json(),story=body.projection.artifacts.find((artifact)=>artifact.id==="shared-story"),expired=body.projection.artifacts.find((artifact)=>artifact.id==="expired-story");assert.equal(story.contentMarkdown,"# The complete story\n\nEvery intentionally written word.");assert.equal(story.items[0].title,"The actual opening");assert.equal(story.items[0].body,"The exact story section.");assert.equal(story.items[0].notes,"A private-to-this-document author note.");assert.equal(story.items[0].imagePrompt,"A quiet dawn.");assert.equal(expired.contentMarkdown,null);assert.equal(expired.contentAvailable,false);assert.doesNotMatch(JSON.stringify(body),/EXPIRED PRIVATE MANUSCRIPT|UNRELATED PRIVATE MANUSCRIPT|PRIVATE PROVIDER RECEIPT|content_ref|contentRef|input_ref|inputRef/);assert.ok(database.calls.length<=3,`owner-scoped artifact hydration must use one bounded additional batch; received ${database.calls.length}`);const hydration=database.calls.find((call)=>call.kind==="batch"&&call.statements.some((statement)=>/FROM private_content/.test(statement.sql)));assert.ok(hydration);assert.equal(hydration.statements.length,1);assert.match(hydration.statements[0].sql,/owner_id=\? AND kind='document-artifact' AND redacted_at IS NULL AND expires_at>\? AND content_id IN/);assert.equal(database.writeCount(),0);
+  const creation=await request("/api/shares",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere",expiresHours:1})});assert.equal(creation.status,200);const {share}=await creation.json();database.reset();const response=await request(`/api/shared/${encodeURIComponent(share.token)}`);assert.equal(response.status,200);const body=await response.json(),story=body.projection.artifacts.find((artifact)=>artifact.id==="shared-story"),expired=body.projection.artifacts.find((artifact)=>artifact.id==="expired-story");assert.equal(story.contentMarkdown,"# The complete story\n\nEvery intentionally written word.");assert.equal(story.items[0].title,"The actual opening");assert.equal(story.items[0].body,"The exact story section.");assert.equal(story.items[0].notes,"A private-to-this-document author note.");assert.equal("imagePrompt" in story.items[0],false);assert.equal("contextGroupIds" in story.items[0],false);assert.equal("provider" in story,false);assert.equal("modelId" in story,false);assert.equal(expired.contentMarkdown,null);assert.equal(expired.contentAvailable,false);assert.doesNotMatch(JSON.stringify(body),/A quiet dawn\.|EXPIRED PRIVATE MANUSCRIPT|UNRELATED PRIVATE MANUSCRIPT|PRIVATE PROVIDER RECEIPT|content_ref|contentRef|input_ref|inputRef|imagePrompt|image_prompt|contextGroupIds/);assert.ok(database.calls.length<=3,`owner-scoped artifact hydration must use one bounded additional batch; received ${database.calls.length}`);const hydration=database.calls.find((call)=>call.kind==="batch"&&call.statements.some((statement)=>/FROM private_content/.test(statement.sql)));assert.ok(hydration);assert.equal(hydration.statements.length,1);assert.match(hydration.statements[0].sql,/owner_id=\? AND kind='document-artifact' AND redacted_at IS NULL AND expires_at>\? AND content_id IN/);assert.equal(database.writeCount(),0);
 });
 
 test("full event pages and their heads share one consistent D1 round trip", async () => {
@@ -1640,4 +1679,679 @@ test("cached generation readiness avoids replaying the entire creative stream", 
   assert.ok(database.calls.length <= 2, `expected auth + one cached preflight query, received ${database.calls.length}`);
   assert.equal(database.calls.filter((call) => /SELECT \* FROM events WHERE stream_id=\?/i.test(call.sql)).length, 0);
   assert.equal(database.writeCount(), 0);
+});
+
+test("specialist sessions expose only the selected audience's grants while preserving safe authorized workspace switching",async()=>{
+  const {database,request}=await productionWorker();
+  const headers=await specialistIdentity(database,request,"mixed-specialist",["product.delivery.read","evaluation.synthetic.run","engineering.sync.read","design.docs.read"]);
+  const expected={product:["product.delivery.read","evaluation.synthetic.run"],engineering:["engineering.sync.read"],knowledge:["design.docs.read"]};
+  for(const [audience,capabilities] of Object.entries(expected)){
+    const response=await request(`/api/session?audience=${audience}`,{headers});assert.equal(response.status,200,audience);
+    const session=await response.json();assert.deepEqual([...session.capabilities].sort(),[...capabilities].sort(),audience);assert.deepEqual(session.organizations,[]);assert.equal(session.provider,undefined);assert.equal(session.budgets,undefined);assert.equal(session.costBudgets,undefined);
+    assert.deepEqual(session.availableApplications,[{id:"creative",href:"/projects"},{id:"product",href:"/product/delivery"},{id:"knowledge",href:"/knowledge/patterns"},{id:"engineering",href:"/engineering/sync"}]);
+  }
+  assert.equal((await request("/api/session?audience=operations",{headers})).status,403);
+});
+
+test("active-access reporting excludes expired and revoked grants while retaining current and unbounded privileges",async()=>{
+  const {database,request}=await productionWorker();
+  const subject=await specialistIdentity(database,request,"grant-subject",["product.delivery.read","evaluation.synthetic.run","engineering.sync.read"]);
+  await specialistIdentity(database,request,"unbounded-subject",["design.docs.read"]);
+  const past=new Date(Date.now()-60_000).toISOString();const future=new Date(Date.now()+60_000).toISOString();
+  database.sqlite.prepare("UPDATE capability_grants SET expires_at=? WHERE user_id=? AND capability=?").run(past,"grant-subject","product.delivery.read");
+  database.sqlite.prepare("UPDATE capability_grants SET expires_at=? WHERE user_id=? AND capability=?").run(future,"grant-subject","evaluation.synthetic.run");
+  database.sqlite.prepare("UPDATE capability_grants SET status='revoked',revoked_at=? WHERE user_id=? AND capability=?").run(past,"grant-subject","engineering.sync.read");
+  database.reset();const response=await request("/api/platform/access");assert.equal(response.status,200);assert.equal(database.writeCount(),0);
+  const {grants}=await response.json();assert.deepEqual(grants.map((grant)=>`${grant.user_id}:${grant.capability}`).sort(),["grant-subject:evaluation.synthetic.run","unbounded-subject:design.docs.read"]);
+  assert.equal(grants.find((grant)=>grant.user_id==="grant-subject")?.expires_at,future);
+  const product=await request("/api/session?audience=product",{headers:subject});assert.equal(product.status,200);assert.deepEqual((await product.json()).capabilities,["evaluation.synthetic.run"]);
+  assert.equal((await request("/api/session?audience=engineering",{headers:subject})).status,403);
+});
+
+test("customer workspace administration enforces verified invitations, exact project ACLs, private-content isolation, and immediate revocation",async()=>{
+  const {database,environment,request}=await productionWorker();
+  const ownerA=await specialistIdentity(database,request,"workspace-owner-a");
+  const ownerB=await specialistIdentity(database,request,"workspace-owner-b");
+  const collaborator=await specialistIdentity(database,request,"workspace-collaborator");
+  const outsider=await specialistIdentity(database,request,"workspace-outsider");
+  database.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run("workspace-collaborator");
+  const json=(headers,body,method="POST")=>({method,headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
+  for(const headers of [ownerA,ownerB])assert.equal((await request("/api/events?after=0&limit=2000&content=0",{headers})).status,200);
+
+  const key="workspace-owner-a/generated/collaborative-slides.pdf",secretKey="workspace-owner-a/generated/private-orphan.pdf",referenceKey="workspace-owner-a/reference-existing.png";
+  const media=new Map([[key,{ownerId:"workspace-owner-a"}],[secretKey,{ownerId:"workspace-owner-a"}],[referenceKey,{ownerId:"workspace-owner-a"}]]);
+  environment.MEDIA={
+    get:async(candidate)=>media.has(candidate)?{customMetadata:media.get(candidate),httpEtag:"test-media",writeHttpMetadata(headers){headers.set("content-type",candidate.endsWith(".png")?"image/png":"application/pdf");},body:new Blob([candidate===key?"shared artifact":candidate===secretKey?"PRIVATE ORPHAN":"reference image"]).stream()}:null,
+    put:async(candidate,_value,options)=>{media.set(candidate,options.customMetadata);},
+    delete:async(candidate)=>{media.delete(candidate);},
+  };
+  const stream="creative:workspace-owner-a";let sequence=Number(database.sqlite.prepare("SELECT MAX(sequence) AS value FROM events WHERE stream_id=?").get(stream).value);
+  const now=new Date().toISOString(),expires=new Date(Date.now()+86_400_000).toISOString();
+  const content=database.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)");
+  content.run("shared-artifact-content","workspace-owner-a","document-artifact","PROJECT A SHARED RESULT",now,expires);
+  content.run("secret-orphan-content","workspace-owner-a","document-artifact","PRIVATE ORPHAN CONTENT",now,expires);
+  content.run("private-owner-prompt","workspace-owner-a","document-artifact-input","PRIVATE OWNER PROMPT",now,expires);
+  const insertEvent=database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  const addOwnerEvent=(type,payload,actor="user")=>insertEvent.run(crypto.randomUUID(),stream,++sequence,now,now,actor,"server:test",crypto.randomUUID(),null,null,1,type,JSON.stringify(payload));
+  addOwnerEvent("BlockCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"block-sensitive-removed",scope:"document",type:"direction",handle:"direction/confidential",properties:{text:"REMOVED DOCUMENT INLINE SECRET"}});
+  addOwnerEvent("ContextCompiled",{project_id:"project-atmosphere",document_id:"doc-atmosphere",generation_id:"generation-shared",compiled_snapshot:{facts:[],standing_constraints:[{preference_id:"owner-private-preference",value:"OWNER ACCOUNT PRIVATE TASTE",source_event_refs:["private-account-event"]}]}});
+  addOwnerEvent("DocumentRenderCompleted",{artifact_id:"shared-artifact",artifact_kind:"slides",document_id:"doc-atmosphere",title:"Shared result",content_ref:"shared-artifact-content",input_ref:"private-owner-prompt",media_url:`/api/media/${encodeURIComponent(key)}`,items:[{id:"slide-private-removed",title:"REMOVED DOCUMENT SLIDE TITLE",body:"REMOVED DOCUMENT SLIDE BODY",notes:"REMOVED DOCUMENT SPEAKER NOTES"}]},"worker:renderer");
+  addOwnerEvent("ProjectCreated",{project_id:"project-secret",name:"Private project"});
+  addOwnerEvent("DocumentCreated",{project_id:"project-secret",document_id:"doc-secret",title:"Private document"});
+  addOwnerEvent("CollectionCreated",{project_id:"project-secret",collection_id:"foreign-collection",handle:"private-collection"});
+  addOwnerEvent("DocumentRenderCompleted",{project_id:"project-secret",document_id:"missing-secret-doc",artifact_id:"secret-orphan",artifact_kind:"slides",title:"Private orphan",content_ref:"secret-orphan-content",media_url:`/api/media/${encodeURIComponent(secretKey)}`,items:[{media_url:`/api/media/${encodeURIComponent(secretKey)}`}]},"worker:renderer");
+  addOwnerEvent("ReferenceIngested",{project_id:"project-atmosphere",reference_id:"reference-existing",source_type:"upload",source_ref:`/api/media/${encodeURIComponent(referenceKey)}`,content_hash:referenceKey,rights_class:"owned"});
+  addOwnerEvent("BlockCreated",{project_id:"project-atmosphere",block_id:"block-reference-existing",scope:"library",type:"reference",handle:"reference/existing",properties:{reference_id:"reference-existing",media_url:`/api/media/${encodeURIComponent(referenceKey)}`}});
+
+  const create=async(headers,name)=>{const response=await request("/api/workspaces",json(headers,{name}));assert.equal(response.status,201);return(await response.json()).organizationId;};
+  const organizationA=await create(ownerA,"Organization A"),organizationB=await create(ownerB,"Organization B");
+  const register=async(headers,organizationId)=>{const response=await request(`/api/workspaces/${organizationId}/projects`,json(headers,{projectId:"project-atmosphere"}));assert.equal(response.status,201);const project=await response.json();assert.ok(project.eventCount>0);return project.projectAccessId;};
+  const projectA=await register(ownerA,organizationA),projectB=await register(ownerB,organizationB);
+  assert.notEqual(projectA,projectB,"duplicate bare project IDs in different accounts require distinct opaque ACL IDs");
+  assert.deepEqual(database.sqlite.prepare("SELECT resource_kind,resource_id FROM project_resource_scopes WHERE project_access_id=? AND resource_id IN(?,?,?)").all(projectA,"secret-orphan","secret-orphan-content",secretKey),[],"unknown-document assets can never enter another project manifest");
+
+  database.sqlite.prepare("UPDATE users SET consent_version=NULL WHERE user_id=?").run("workspace-owner-a");
+  for(const [path,options] of [["/api/workspaces",json(ownerA,{name:"Unconsented organization"})],[`/api/workspaces/${organizationA}/policy`,json(ownerA,{tokenLimit:100,microusdLimit:100},"PATCH")],[`/api/workspaces/${organizationA}/members/unavailable`,{method:"DELETE",headers:ownerA}]]){
+    database.reset();assert.equal((await request(path,options)).status,428,path);assert.equal(database.writeCount(),0,"withdrawn consent blocks all customer-administration mutations before writes");
+  }
+  database.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id=?").run("pilot-2026-08-10","workspace-owner-a");
+
+  database.reset();assert.equal((await request(`/api/workspaces/${organizationA}`,{headers:outsider})).status,403);assert.equal(database.writeCount(),0);
+  database.reset();assert.equal((await request(`/api/workspaces/${organizationA}/projects/${projectA}/events`,{headers:ownerB})).status,403);assert.equal(database.writeCount(),0);
+  const unknownInvite=await request(`/api/workspaces/${organizationA}/members`,json(ownerA,{email:"future-collaborator@example.test",role:"member"}));assert.equal(unknownInvite.status,201);const future=await unknownInvite.json();
+  const pending=await(await request(`/api/workspaces/${organizationA}/members`,{headers:ownerA})).json();assert.ok(pending.invitations.some((item)=>item.invitation_id===future.invitationId));assert.doesNotMatch(JSON.stringify(pending),/token_hash|token=/);
+  database.reset();assert.equal((await request(`/api/workspaces/${organizationA}/invitations/${future.invitationId}`,{method:"DELETE",headers:outsider})).status,403);assert.equal(database.writeCount(),0);
+  assert.equal((await request(`/api/workspaces/${organizationA}/invitations/${future.invitationId}`,{method:"DELETE",headers:ownerA})).status,200);
+  const futureIdentity=await specialistIdentity(database,request,"future-collaborator");database.reset();assert.equal((await request(`/api/workspaces/${organizationA}/invitations/${future.invitationId}/accept`,{method:"POST",headers:futureIdentity})).status,403);assert.equal(database.writeCount(),0);
+  const invited=await request(`/api/workspaces/${organizationA}/members`,json(ownerA,{email:"workspace-collaborator@example.test",role:"member"}));assert.equal(invited.status,201);const invitation=await invited.json();assert.ok(invitation.invitationUrl.includes("token="));
+  const inbox=await(await request("/api/workspaces",{headers:collaborator})).json();assert.equal(inbox.invitations.length,1);assert.equal(inbox.invitations[0].organization_id,organizationA);assert.deepEqual(inbox.projects,[]);
+  database.reset();assert.equal((await request(`/api/workspaces/${organizationA}/invitations/${invitation.invitationId}/accept`,{method:"POST",headers:outsider})).status,403);assert.equal(database.writeCount(),0);
+  database.reset();assert.equal((await request(`/api/workspaces/${organizationA}/invitations/${invitation.invitationId}/accept`,json(collaborator,{token:"forged-invitation-token"}))).status,403);assert.equal(database.writeCount(),0);
+  const invitationToken=new URL(invitation.invitationUrl).searchParams.get("token");assert.equal((await request(`/api/workspaces/${organizationA}/invitations/${invitation.invitationId}/accept`,json(collaborator,{token:invitationToken}))).status,200);
+  assert.equal((await request(`/api/workspaces/${organizationA}/invitations/${invitation.invitationId}/accept`,{method:"POST",headers:collaborator})).status,403,"invitations are consumed exactly once");
+  assert.equal((await request(`/api/workspaces/${organizationA}/projects/${projectA}/context`,{method:"POST",headers:collaborator})).status,403,"accepted membership alone never grants project access");
+
+  const granted=await request(`/api/workspaces/${organizationA}/projects/${projectA}/members`,json(ownerA,{userId:"workspace-collaborator",role:"viewer"}));assert.equal(granted.status,201);
+  const opened=await request(`/api/workspaces/${organizationA}/projects/${projectA}/context`,{method:"POST",headers:collaborator});assert.equal(opened.status,200);
+  const cookie=opened.headers.get("set-cookie")?.split(";")[0];assert.ok(cookie);
+  let scoped={...collaborator,cookie};
+  const session=await(await request("/api/session",{headers:scoped})).json();assert.equal(session.projectContext.projectAccessId,projectA);assert.equal(session.capabilities.includes("project.author"),false);
+  assert.equal(session.costBudgets.workspace.limitMicrousd,session.costBudgets.user.limitMicrousd,"a project-only viewer never receives organization-wide financial totals");
+  assert.match(session.permissionEpoch,/^[a-f0-9]{64}$/,"permission topology is reduced to an opaque fixed-length digest");
+  assert.equal(session.canvas.access,false);assert.equal(session.projects.find((project)=>project.projectAccessId===projectA)?.projectName,"Studio launch");
+  const ownerProjects=await(await request(`/api/workspaces/${organizationA}/projects`,{headers:ownerA})).json();assert.equal(ownerProjects.projects.find((project)=>project.project_access_id===projectA)?.project_name,"Studio launch");
+  const response=await request("/api/events?after=0&limit=2000&content=1",{headers:scoped});assert.equal(response.status,200);const page=await response.json();
+  assert.match(response.headers.get("cache-control")??"",/private,\s*no-store/);
+  assert.doesNotMatch(JSON.stringify(page),/OWNER ACCOUNT PRIVATE TASTE|owner-private-preference|private-account-event/,"account-global taste and its evidence never leak into a shared project snapshot");
+  assert.ok(page.events.length>0);assert.ok(page.events.every((event)=>event.streamId===`project:${projectA}`));assert.deepEqual(page.events.map((event)=>event.sequence),Array.from({length:page.events.length},(_,index)=>index+1));
+  assert.equal(page.content["shared-artifact-content"],"PROJECT A SHARED RESULT");assert.equal(page.content["private-owner-prompt"],undefined);assert.equal(page.content["secret-orphan-content"],undefined);assert.doesNotMatch(JSON.stringify(page),/PRIVATE OWNER PROMPT|PRIVATE ORPHAN|secret-orphan|creative:workspace-owner-a|"input_ref"/);
+  assert.equal((await request(`/api/media/${encodeURIComponent(key)}`,{headers:scoped})).status,200);
+  assert.equal((await request(`/api/media/${encodeURIComponent(referenceKey)}`,{headers:scoped})).status,200,"existing owner references remain available inside their exact shared project");
+  assert.equal((await request(`/api/media/${encodeURIComponent(secretKey)}`,{headers:scoped})).status,403);
+  assert.equal((await request(`/api/workspaces/${organizationB}/projects/${projectB}/events`,{headers:scoped})).status,403);
+  for(const path of ["/api/document-jobs","/api/shares"]){database.reset();assert.equal((await request(path,{headers:scoped})).status,403,path);assert.equal(database.writeCount(),0,path);}
+  database.reset();assert.equal((await request("/api/generation-readiness",json(scoped,{documentId:"doc-atmosphere"}))).status,403);assert.equal(database.writeCount(),0);
+  for(const path of ["/api/generation-readiness/provider/refresh","/api/generation-readiness/prompt-techniques"]){
+    database.reset();assert.equal((await request(path,json(scoped,{documentId:"doc-atmosphere"}))).status,403,path);
+    assert.equal(database.writeCount(),0,"selected project access never mutates global provider readiness through an unscoped subroute");
+  }
+  database.reset();assert.equal((await request("/api/events",json(scoped,{action:"append",event:{type:"BlockPropertyEdited",payload:{block_id:"block-direction",property_path:"text",new_value:"viewer attempt"}}}))).status,403);assert.equal(database.writeCount(),0);
+
+  const membershipId=database.sqlite.prepare("SELECT membership_id FROM project_memberships WHERE project_access_id=? AND user_id=?").get(projectA,"workspace-collaborator").membership_id;
+  assert.equal((await request(`/api/workspaces/${organizationA}/projects/${projectA}/members/${membershipId}`,json(ownerA,{role:"editor"},"PATCH"))).status,200);
+  database.sqlite.prepare("UPDATE users SET consent_version=NULL WHERE user_id=?").run("workspace-collaborator");
+  const withdrawn={action:"append",event:{type:"BlockPropertyEdited",payload:{block_id:"block-direction",property_path:"text",new_value:"WITHDRAWN CONSENT"}}};
+  for(const path of ["/api/events",`/api/workspaces/${organizationA}/projects/${projectA}/events`]){
+    database.reset();assert.equal((await request(path,json(scoped,withdrawn))).status,428,path);assert.equal(database.writeCount(),0,"direct workspace aliases cannot bypass current collaborator consent");
+  }
+  database.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id=?").run("pilot-2026-08-10","workspace-collaborator");
+  const alternateProject=await request(`/api/workspaces/${organizationA}/projects`,json(ownerA,{projectId:"project-secret"}));assert.equal(alternateProject.status,201);const alternateProjectId=(await alternateProject.json()).projectAccessId;
+  assert.equal((await request(`/api/workspaces/${organizationA}/projects/${alternateProjectId}/members`,json(ownerA,{userId:"workspace-collaborator",role:"editor"}))).status,201);
+  for(const [path,options] of [[`/api/workspaces/${organizationA}/projects/${alternateProjectId}/events`,{headers:scoped}],[`/api/workspaces/${organizationA}/projects/${alternateProjectId}/events`,json(scoped,withdrawn)]]){
+    database.reset();assert.equal((await request(path,options)).status,403,"an active project-A cookie cannot be used as a confused deputy for separately granted project B");assert.equal(database.writeCount(),0);
+  }
+  const edit=await request("/api/events",json(scoped,{action:"append",event:{type:"BlockPropertyEdited",payload:{block_id:"block-direction",property_path:"text",new_value:"AUTHORIZED COLLABORATIVE EDIT"}}}));assert.equal(edit.status,200);const receipt=await edit.json();assert.equal(receipt.appended[0].actor,"user:workspace-collaborator");
+  assert.equal(database.sqlite.prepare("SELECT actor FROM events WHERE json_extract(payload,'$.new_value')=?").get("AUTHORIZED COLLABORATIVE EDIT").actor,"user:workspace-collaborator");
+  database.reset();assert.equal((await request("/api/events",json(scoped,{action:"append",event:{type:"BlockPropertyEdited",payload:{block_id:"foreign-block",property_path:"text",new_value:"forbidden"}}}))).status,403);assert.equal(database.writeCount(),0);
+  for(const event of [
+    {type:"EmptyCanvasChosen",payload:{}},
+    {type:"BlockPropertyEdited",payload:{block_id:"block-direction",property_path:"media_url",new_value:`/api/media/${encodeURIComponent(secretKey)}`}},
+    {type:"ChipEdited",payload:{block_id:"block-direction",property:"media_url",new_value:`/api/media/${encodeURIComponent(secretKey)}`}},
+    {type:"BlockPropertyEdited",payload:{block_id:"block-direction",property_path:"reference_id",new_value:"foreign-reference"}},
+    {type:"DocumentRenamed",payload:{new_title:"Hijack the owner’s active private document"}},
+    {type:"DocumentCreated",payload:{document_id:"doc-secret",title:"Duplicate private identifier"}},
+    {type:"CollectionCreated",payload:{collection_id:"evil-child",handle:"Child",parent_collection_id:"foreign-collection"}},
+    {type:"CollectionItemAdded",payload:{collection_id:"collection-studio",item_ref:{collection_id:"foreign-collection"}}},
+    {type:"CollectionItemMoved",payload:{from_collection_id:"collection-studio",to_collection_id:"collection-client",item_ref:{collection_id:"foreign-collection"}}},
+    {type:"CollectionItemAdded",payload:{collection_id:"collection-studio",item_ref:{document_id:"doc-atmosphere",collection_id:"foreign-collection"}}},
+  ]){database.reset();assert.equal((await request("/api/events",json(scoped,{action:"append",event}))).status,403,event.type);assert.equal(database.writeCount(),0,event.type);}
+  const events=[
+    {type:"DocumentCreated",payload:{document_id:"doc-collaborative-batch",title:"Collaborative draft"}},
+    {type:"BlockCreated",payload:{document_id:"doc-collaborative-batch",block_id:"block-collaborative-a",scope:"document",type:"direction",handle:"direction/a",properties:{text:"first"}}},
+    {type:"BlockCreated",payload:{document_id:"doc-collaborative-batch",block_id:"block-collaborative-b",scope:"document",type:"direction",handle:"direction/b",properties:{text:"second"}}},
+    {type:"BlockPropertyEdited",payload:{block_id:"block-collaborative-a",property_path:"text",new_value:"ready"}},
+    {type:"CollectionCreated",payload:{collection_id:"collection-collaborative",handle:"collaborative",parent_collection_id:"collection-studio"}},
+    {type:"CollectionItemAdded",payload:{collection_id:"collection-collaborative",item_ref:{document_id:"doc-collaborative-batch"}}},
+    {type:"BlockRelationAdded",payload:{document_id:"doc-collaborative-batch",relation_id:"relation-collaborative",from_block_id:"block-collaborative-a",to_block_id:"block-collaborative-b",kind:"related"}},
+  ];
+  const batched=await request("/api/events",json(scoped,{action:"batch",events}));assert.equal(batched.status,200,JSON.stringify(await batched.clone().json()));const batchReceipt=await batched.json();assert.equal(batchReceipt.appended.length,events.length);assert.ok(batchReceipt.appended.every((event)=>event.actor==="user:workspace-collaborator"));
+  assert.deepEqual(database.sqlite.prepare("SELECT resource_kind,resource_id FROM project_resource_scopes WHERE project_access_id=? AND resource_id IN(?,?,?,?) ORDER BY resource_kind,resource_id").all(projectA,"doc-collaborative-batch","block-collaborative-a","collection-collaborative","relation-collaborative").map((row)=>({...row})),[{resource_kind:"block",resource_id:"block-collaborative-a"},{resource_kind:"collection",resource_id:"collection-collaborative"},{resource_kind:"document",resource_id:"doc-collaborative-batch"},{resource_kind:"relation",resource_id:"relation-collaborative"}]);
+  database.reset();const poisoned=[{type:"DocumentCreated",payload:{document_id:"doc-poisoned",title:"Poisoned"}},{type:"CollectionItemAdded",payload:{collection_id:"collection-studio",item_ref:{collection_id:"foreign-collection"}}}];assert.equal((await request("/api/events",json(scoped,{action:"batch",events:poisoned}))).status,403);assert.equal(database.writeCount(),0);assert.equal(database.sqlite.prepare("SELECT 1 FROM project_resource_scopes WHERE resource_id='doc-poisoned'").get(),undefined);
+
+  const uploadForm=new FormData();uploadForm.set("file",new File(["reference"],"collaborative-reference.png",{type:"image/png"}));uploadForm.set("rightsConfirmed","true");
+  const upload=await request("/api/media",{method:"POST",headers:scoped,body:uploadForm});assert.equal(upload.status,200);const uploaded=await upload.json();
+  const referenceEvents=[
+    {type:"ReferenceIngested",payload:{reference_id:"reference-collaborative",source_type:"upload",source_ref:uploaded.url,content_hash:uploaded.key,rights_class:"asserted"}},
+    {type:"RightsAsserted",payload:{reference_id:"reference-collaborative",rights_class:"owned_or_licensed",assertion_method:"explicit-confirmation"}},
+    {type:"BlockCreated",payload:{block_id:"block-reference-collaborative",scope:"library",type:"reference",handle:"reference/collaborative",properties:{reference_id:"reference-collaborative",media_url:uploaded.url}}},
+  ];
+  const referenceBatch=await request("/api/events",json(scoped,{action:"batch",events:referenceEvents}));assert.equal(referenceBatch.status,200,JSON.stringify(await referenceBatch.clone().json()));
+  assert.ok(database.sqlite.prepare("SELECT source_event_id FROM project_resource_scopes WHERE project_access_id=? AND resource_kind='media' AND resource_id=?").get(projectA,uploaded.key).source_event_id);
+  assert.equal((await request(`/api/media/${encodeURIComponent(uploaded.key)}`,{headers:scoped})).status,200);
+  const removal=await request("/api/events",json(scoped,{action:"append",event:{type:"BlockRemoved",payload:{block_id:"block-reference-collaborative"}}}));assert.equal(removal.status,200);
+  assert.equal((await request(`/api/media/${encodeURIComponent(uploaded.key)}`,{headers:scoped})).status,403,"removing a shared reference revokes its attached media immediately");
+  const removedDocument=await request("/api/events",json(scoped,{action:"append",event:{type:"DocumentRemoved",payload:{document_id:"doc-atmosphere",title:"REMOVED DOCUMENT CONFIDENTIAL TITLE"}}}));assert.equal(removedDocument.status,200);
+  assert.equal((await request(`/api/media/${encodeURIComponent(key)}`,{headers:scoped})).status,403,"document removal revokes generated-media access immediately");
+  const removedPage=await(await request("/api/events?after=0&limit=2000&content=1",{headers:scoped})).json();assert.ok(removedPage.events.some((event)=>event.type==="DocumentRemoved"&&event.payload.document_id==="doc-atmosphere"));assert.equal(removedPage.content["shared-artifact-content"],undefined);assert.doesNotMatch(JSON.stringify(removedPage),/REMOVED DOCUMENT INLINE SECRET|REMOVED DOCUMENT SLIDE TITLE|REMOVED DOCUMENT SLIDE BODY|REMOVED DOCUMENT SPEAKER NOTES|REMOVED DOCUMENT CONFIDENTIAL TITLE|shared-artifact-content|collaborative-slides\.pdf/,"historical project events are tombstoned immediately when their document is removed");
+
+  const exit=await request("/api/workspaces/context",{method:"DELETE",headers:scoped});assert.equal(exit.status,200);assert.match(exit.headers.get("set-cookie")??"",/Max-Age=0/);assert.equal((await(await request("/api/session",{headers:collaborator})).json()).projectContext,undefined);
+  const reopened=await request(`/api/workspaces/${organizationA}/projects/${projectA}/context`,{method:"POST",headers:collaborator});assert.equal(reopened.status,200);scoped={...collaborator,cookie:reopened.headers.get("set-cookie")?.split(";")[0]??""};
+
+  assert.equal((await request(`/api/workspaces/${organizationA}/projects/${projectA}/members/${membershipId}`,{method:"DELETE",headers:ownerA})).status,200);
+  assert.equal((await request("/api/events?after=0&content=1",{headers:scoped})).status,403);
+  assert.equal((await request(`/api/media/${encodeURIComponent(key)}`,{headers:scoped})).status,403);
+  assert.equal((await request(`/api/workspaces/${organizationA}/projects/${projectA}/members`,json(ownerA,{userId:"workspace-collaborator",role:"viewer"}))).status,201,"revoked project members can be safely regranted");
+
+  const organizationMember=database.sqlite.prepare("SELECT membership_id FROM organization_memberships WHERE organization_id=? AND user_id=?").get(organizationA,"workspace-collaborator").membership_id;
+  assert.equal((await request(`/api/workspaces/${organizationA}/members/${organizationMember}`,{method:"DELETE",headers:ownerA})).status,200);
+  assert.equal((await request(`/api/workspaces/${organizationA}/projects/${projectA}/events`,{headers:collaborator})).status,403);
+  const reinvited=await request(`/api/workspaces/${organizationA}/members`,json(ownerA,{email:"workspace-collaborator@example.test",role:"member"}));assert.equal(reinvited.status,201);const fresh=await reinvited.json();assert.notEqual(fresh.invitationId,invitation.invitationId);
+  assert.equal((await request(`/api/workspaces/${organizationA}/invitations/${invitation.invitationId}/accept`,{method:"POST",headers:collaborator})).status,403);
+  assert.equal((await request(`/api/workspaces/${organizationA}/invitations/${fresh.invitationId}/accept`,{method:"POST",headers:collaborator})).status,200);
+  assert.deepEqual((await(await request("/api/workspaces",{headers:collaborator})).json()).projects,[],"reinvitation never resurrects prior project access");
+});
+
+test("shared Canvas permissions, actor-isolated outputs, removal, restoration, and long-history receipts stay tenant-safe",async()=>{
+  const {database,environment,request,drainBackground}=await productionWorker();
+  htmlAssets(environment);
+  const owner=await specialistIdentity(database,request,"canvas-project-owner");
+  const collaborator=await specialistIdentity(database,request,"canvas-project-editor",["product.analytics.read"]);
+  const teammate=await specialistIdentity(database,request,"canvas-project-teammate");
+  database.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run("canvas-project-editor");
+  database.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run("canvas-project-teammate");
+  assert.equal((await request("/api/events?after=0&limit=1000&content=0",{headers:owner})).status,200);
+  const stream="creative:canvas-project-owner",timestamp=new Date().toISOString();
+  let ownerSequence=Number(database.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head);
+  const insertEvent=database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  const append=(type,payload)=>{const id=crypto.randomUUID();insertEvent.run(id,stream,++ownerSequence,timestamp,timestamp,"user","server:canvas-test",crypto.randomUUID(),null,null,1,type,JSON.stringify(payload));return id;};
+  append("GenerationCompleted",{project_id:"project-atmosphere",document_id:"doc-atmosphere",generation_id:"shared-generation",object_ids:["shared-output"],quality:"high"});
+  append("DocumentRenderCompleted",{project_id:"project-atmosphere",document_id:"doc-atmosphere",artifact_id:"shared-artifact",artifact_kind:"short_story",title:"Shared story",summary:"Approved shared output",item_count:1,items:[]});
+  append("CanvasCreated",{project_id:"project-atmosphere",canvas_id:"shared-board",name:"Shared board",slug:"shared-board"});
+  append("CanvasItemPlaced",{project_id:"project-atmosphere",canvas_id:"shared-board",item_id:"shared-item",source_kind:"document",source_id:"doc-atmosphere",title:"PRIVATE BOARD CARD TITLE",frame:{x:10,y:20,w:320,h:220,z:"a1"}});
+  append("ProjectCreated",{project_id:"private-project",name:"Private project"});
+  append("DocumentCreated",{project_id:"private-project",document_id:"private-document",title:"Private document"});
+  append("ReferenceIngested",{project_id:"private-project",document_id:"private-document",reference_id:"private-reference",source_type:"upload",source_ref:"private://reference",content_hash:"private-reference",rights_class:"owned"});
+  append("BlockCreated",{project_id:"private-project",document_id:"private-document",block_id:"private-reference-block",type:"reference",handle:"reference/private",properties:{reference_id:"private-reference",label:"Private reference"},position:"z1"});
+  append("CanvasCreated",{project_id:"private-project",canvas_id:"private-board",name:"Private board"});
+  append("CanvasItemPlaced",{project_id:"private-project",canvas_id:"private-board",item_id:"private-item",source_kind:"document",source_id:"private-document",title:"PRIVATE PROJECT CARD",frame:{x:10,y:20,w:320,h:220,z:"a1"}});
+  append("CanvasArrangementCreated",{project_id:"private-project",canvas_id:"private-board",arrangement_id:"private-arrangement",kind:"row",item_ids:["private-item"],frames:[{item_id:"private-item",x:1,y:1,w:100,h:100}]});
+  append("ContextSetFormalized",{project_id:"private-project",canvas_id:"private-board",context_set_id:"private-context",item_ids:["private-item"],name:"Private context"});
+  const json=(headers,body,method="POST")=>({method,headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
+  const legacyCreation=await request("/api/shares",json(owner,{resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere"}));assert.equal(legacyCreation.status,200);const legacyShare=(await legacyCreation.json()).share;
+  assert.equal((await request(`/api/shared/${encodeURIComponent(legacyShare.token)}`)).status,200,"personal review links work until their project enters tenant custody");
+  const created=await request("/api/workspaces",json(owner,{name:"Canvas collaboration organization"}));assert.equal(created.status,201);const organizationId=(await created.json()).organizationId;
+  const registration=await request(`/api/workspaces/${organizationId}/projects`,json(owner,{projectId:"project-atmosphere"}));assert.equal(registration.status,201);const projectAccessId=(await registration.json()).projectAccessId;
+  assert.equal((await request(`/api/shared/${encodeURIComponent(legacyShare.token)}`)).status,404,"legacy personal review links close immediately when a project enters an organization");
+  database.reset();assert.equal((await request("/api/shares",json(owner,{resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere"}))).status,403);assert.equal(database.writeCount(),0,"registered projects cannot create an unscoped owner review link");
+  const invitation=await(await request(`/api/workspaces/${organizationId}/members`,json(owner,{email:"canvas-project-editor@example.test",role:"member"}))).json();
+  assert.equal((await request(`/api/workspaces/${organizationId}/invitations/${invitation.invitationId}/accept`,json(collaborator,{token:new URL(invitation.invitationUrl).searchParams.get("token")}))).status,200);
+  assert.equal((await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/members`,json(owner,{userId:"canvas-project-editor",role:"viewer"}))).status,201);
+  const teammateInvite=await(await request(`/api/workspaces/${organizationId}/members`,json(owner,{email:"canvas-project-teammate@example.test",role:"member"}))).json();
+  assert.equal((await request(`/api/workspaces/${organizationId}/invitations/${teammateInvite.invitationId}/accept`,json(teammate,{token:new URL(teammateInvite.invitationUrl).searchParams.get("token")}))).status,200);
+  assert.equal((await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/members`,json(owner,{userId:"canvas-project-teammate",role:"editor"}))).status,201);
+  const membershipId=database.sqlite.prepare("SELECT membership_id FROM project_memberships WHERE project_access_id=? AND user_id=?").get(projectAccessId,"canvas-project-editor").membership_id;
+  const teammateMembershipId=database.sqlite.prepare("SELECT membership_id FROM project_memberships WHERE project_access_id=? AND user_id=?").get(projectAccessId,"canvas-project-teammate").membership_id;
+  const evidence=IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE;
+  const approval=database.sqlite.prepare("INSERT INTO canvas_governance_requirements(requirement_id,status,evidence_ref,details_json,updated_at) VALUES(?,?,?,?,?)");
+  approval.run("trust_safety","approved","review/trust-safety","{}",timestamp);
+  approval.run("counsel","approved","review/counsel","{}",timestamp);
+  approval.run("second_image_adapter","approved",evidence.evaluationRef,JSON.stringify({adapter_id:evidence.adapterId,contract_version:evidence.adapterVersion,corpus_version:evidence.corpusVersion,evaluation_ref:evidence.evaluationRef,evaluation_passed:true}),timestamp);
+  const open=async(identity=collaborator)=>{const response=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST",headers:identity});assert.equal(response.status,200);return{...identity,cookie:response.headers.get("set-cookie")?.split(";")[0]??""};};
+  let scoped=await open();
+  assert.equal((await request("/canvas",{headers:scoped})).status,403,"project membership never silently grants Canvas");
+  const restricted=await(await request("/api/events?after=0&limit=5000&content=0",{headers:scoped})).json();
+  assert.ok(restricted.events.some((event)=>event.type==="ProjectResourceRestricted"));
+  const permissionPath=`/api/workspaces/${organizationId}/projects/${projectAccessId}/members/${membershipId}`;
+  assert.equal((await request(permissionPath,json(owner,{canvasAccess:true},"PATCH"))).status,200);
+  database.sqlite.prepare("INSERT INTO capability_grants(grant_id,user_id,capability,scope_type,organization_id,project_access_id,project_id,status,granted_by_user_id,created_at,updated_at,expires_at,revoked_at) VALUES(?,?,?,'project',?,?,?,'active',?,?,?,NULL,NULL)")
+    .run(crypto.randomUUID(),"canvas-project-editor","project.output.request",organizationId,projectAccessId,"project-atmosphere","canvas-project-owner",timestamp,timestamp);
+  const viewerSession=await(await request("/api/session",{headers:scoped})).json();assert.equal(viewerSession.canvas.access,true);assert.equal(viewerSession.projectContext.permissions.includes("project.canvas.use"),true);
+  assert.equal(viewerSession.projectContext.permissions.includes("project.output.request"),false,"viewer membership remains a hard ceiling even after a separately supplied output grant");
+  for(const path of ["/api/generation-readiness","/api/document-jobs"]){database.reset();assert.equal((await request(path,{method:path==="/api/generation-readiness"?"POST":"GET",headers:scoped})).status,403);assert.equal(database.writeCount(),0,"an explicit output grant cannot elevate a project viewer");}
+  assert.equal((await request("/canvas",{headers:scoped})).status,200);
+  const visible=await(await request("/api/events?after=0&limit=5000&content=0",{headers:scoped})).json();assert.ok(visible.events.some((event)=>event.type==="CanvasCreated"&&event.payload.canvas_id==="shared-board"));assert.doesNotMatch(JSON.stringify(visible),/PRIVATE PROJECT CARD|private-board|private-item/);
+  for(const event of [{type:"ObjectExported",payload:{object_id:"shared-output",destination_class:"download",format:"image/png"}},{type:"DocumentArtifactExported",payload:{artifact_id:"shared-artifact",document_id:"doc-atmosphere",format:"markdown"}}]){
+    const exported=await request("/api/events",json(scoped,{action:"append",event}));const receipt=await exported.json();assert.equal(exported.status,200,JSON.stringify(receipt));assert.equal(receipt.appended[0].actor,"user:canvas-project-editor","viewer downloads retain an actor-attributed project audit receipt");
+  }
+  database.reset();assert.equal((await request("/api/events",json(scoped,{action:"append",event:{type:"DocumentArtifactExported",payload:{artifact_id:"private-artifact",document_id:"doc-atmosphere"}}}))).status,403);assert.equal(database.writeCount(),0,"viewer export receipts cannot reference another project");
+  const makeEvent=(type,payload,id=crypto.randomUUID())=>({type,payload:{project_id:"project-atmosphere",canvas_id:"shared-board",history_owner_id:"canvas-project-editor",client_event_id:id,...payload}});
+  const register=makeEvent("CanvasRegisterSet",{item_id:"shared-item",operation:{object:{item_id:"shared-item"},prop:"x",value:120,hlc:{pt:Date.now(),c:0,site:"canvas-project-editor:device"}}},"first-collaborative-receipt");
+  database.reset();assert.equal((await request("/api/events",json(scoped,{action:"canvas_sync",events:[register]}))).status,403);assert.equal(database.writeCount(),0,"Canvas viewers cannot mutate a board");
+  database.reset();assert.equal((await request("/api/document-jobs",{headers:scoped})).status,403);assert.equal(database.writeCount(),0,"project viewers cannot inspect another actor's output jobs");
+  assert.equal((await request("/api/portfolio/product/insights",{headers:collaborator})).status,200,"the collaborator has real principal reporting access outside the selected project");
+  database.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id=?").run("canvas-project-editor");
+  assert.equal((await request("/api/analytics",{headers:collaborator})).status,200,"an authorized principal can use account analytics outside the selected project");
+  await drainBackground();
+  for(const path of ["/api/analytics","/api/portfolio/product/insights"]){database.reset();assert.equal((await request(path,{headers:scoped})).status,403,`selected projects never open account-wide reporting: ${path}`);assert.equal(database.writeCount(),0);}
+  database.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run("canvas-project-editor");
+  assert.equal((await request(permissionPath,json(owner,{role:"editor"},"PATCH"))).status,200);
+  const first=await request("/api/events",json(scoped,{action:"canvas_sync",events:[register]}));const firstBody=await first.json();assert.equal(first.status,200,JSON.stringify(firstBody));assert.equal(firstBody.appended.length,1);assert.equal(firstBody.appended[0].actor,"user:canvas-project-editor");
+  const firstEventId=firstBody.appended[0].eventId;
+  assert.equal(database.sqlite.prepare("SELECT actor FROM events WHERE event_id=?").get(firstEventId).actor,"user:canvas-project-editor");
+  assert.equal(database.sqlite.prepare("SELECT actor_user_id FROM project_event_scopes WHERE event_id=?").get(firstEventId).actor_user_id,"canvas-project-editor");
+  const undoRegister={...makeEvent("CanvasRegisterSet",{item_id:"shared-item",previous_value:120,operation:{object:{item_id:"shared-item"},prop:"x",value:10,hlc:{pt:Date.now()+1,c:0,site:"canvas-project-editor:undo:web:lit"}}}),compensatesEventId:firstEventId};
+  const undone=await request("/api/events",json(scoped,{action:"canvas_sync",events:[undoRegister]}));assert.equal(undone.status,200,JSON.stringify(await undone.clone().json()));
+  const redoRegister=makeEvent("CanvasRegisterSet",{item_id:"shared-item",previous_value:10,operation:{object:{item_id:"shared-item"},prop:"x",value:120,hlc:{pt:Date.now()+2,c:0,site:"canvas-project-editor:redo:web:lit"}}});
+  const redone=await request("/api/events",json(scoped,{action:"canvas_sync",events:[redoRegister]}));assert.equal(redone.status,200,JSON.stringify(await redone.clone().json()));
+  for(const event of [
+    makeEvent("CanvasRegisterSet",{canvas_id:"private-board",item_id:"private-item",operation:{object:{item_id:"private-item"},prop:"x",value:1,hlc:{pt:Date.now(),c:0,site:"canvas-project-editor:device"}}}),
+    makeEvent("CanvasRegisterSet",{item_id:"private-item",operation:{object:{item_id:"private-item"},prop:"x",value:1,hlc:{pt:Date.now(),c:0,site:"canvas-project-editor:device"}}}),
+    makeEvent("CanvasRegisterSet",{item_id:"shared-item",operation:{object:{item_id:"shared-item"},prop:"x",value:1,hlc:{pt:Date.now(),c:0,site:"another-person:device"}}}),
+    makeEvent("CanvasItemPlaced",{item_id:"private-item",source_kind:"document",source_id:"doc-atmosphere",frame:{x:1,y:1,w:120,h:120}}),
+    makeEvent("CanvasArrangementCreated",{arrangement_id:"private-arrangement",kind:"row",item_ids:["shared-item"],frames:[{item_id:"shared-item",x:1,y:1,w:120,h:120}]}),
+    makeEvent("ContextSetFormalized",{context_set_id:"private-context",name:"Override",item_ids:["shared-item"]}),
+  ]){database.reset();const rejected=await request("/api/events",json(scoped,{action:"canvas_sync",events:[event]}));assert.equal(rejected.status,403,`${event.type}: ${JSON.stringify(await rejected.json())}`);assert.equal(database.writeCount(),0,`${event.type} cannot alter owner-private resources`);}
+  const extraction={kind:"extract_reference",documentId:"doc-atmosphere",sourceSurface:"document",payload:{blockId:"block-reference",referenceId:"ref-window-light",sample:EXTRACTOR_EVAL_FIXTURES[0].sample}};
+  for(const forged of [{blockId:"private-reference-block",referenceId:"private-reference"},{blockId:"block-reference",referenceId:"private-reference"},{blockId:"block-direction",referenceId:"ref-window-light"}]){
+    database.reset();const rejected=await request("/api/document-jobs",json(scoped,{...extraction,payload:{...extraction.payload,...forged}}));assert.equal(rejected.status,403,JSON.stringify(await rejected.json()));assert.equal(database.writeCount(),0,"scoped extraction cannot alter another project or a mismatched reference");
+  }
+  const queued=await request("/api/document-jobs",json(scoped,extraction));const queuedBody=await queued.json();assert.equal(queued.status,202,JSON.stringify(queuedBody));
+  assert.equal(database.sqlite.prepare("SELECT owner_id,stream_id FROM document_jobs WHERE job_id=?").get(queuedBody.job.jobId).owner_id,"canvas-project-editor");
+  assert.deepEqual({...database.sqlite.prepare("SELECT owner_user_id,actor_user_id,visibility FROM project_resource_scopes WHERE resource_kind='job' AND resource_id=?").get(queuedBody.job.jobId)},{owner_user_id:"canvas-project-owner",actor_user_id:"canvas-project-editor",visibility:"actor_private"});
+  const provenance=database.sqlite.prepare("SELECT event.actor,event.type,event.payload FROM project_resource_scopes resource JOIN events event ON event.event_id=resource.source_event_id WHERE resource.resource_kind='job' AND resource.resource_id=?").get(queuedBody.job.jobId);
+  assert.equal(provenance.actor,"user:canvas-project-editor");assert.equal(provenance.type,"ProjectDocumentJobQueued");assert.deepEqual(JSON.parse(provenance.payload),{job_id:queuedBody.job.jobId,document_id:"doc-atmosphere",kind:"extract_reference",organization_id:organizationId,project_access_id:projectAccessId,project_id:"project-atmosphere",history_owner_user_id:"canvas-project-owner",actor_user_id:"canvas-project-editor"});
+  await drainBackground();
+  database.reset();assert.equal((await request(`/api/document-jobs/${queuedBody.job.jobId}`,{headers:collaborator})).status,404);assert.equal(database.writeCount(),0,"removing project context cannot expose an actor's tenant-owned job");
+  database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("canvas-project-editor");
+  for(const action of ["ack","dismiss","cancel","retry","run"]){database.reset();assert.equal((await request(`/api/document-jobs/${queuedBody.job.jobId}/${action}`,{method:"POST",headers:collaborator})).status,404,action);assert.equal(database.writeCount(),0,`personal ${action} cannot alter an exact project job`);}
+  database.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run("canvas-project-editor");
+  database.reset();const jobList=await request("/api/document-jobs",{headers:scoped});assert.equal(jobList.status,200);assert.equal(database.writeCount(),0,"shared status polling is read-only");assert.ok((await jobList.json()).jobs.some((job)=>job.jobId===queuedBody.job.jobId));
+  assert.equal((await request(`/api/document-jobs/${queuedBody.job.jobId}`,{headers:owner})).status,404,"the owner's private job list never exposes collaborator inputs");
+  const completed=await(await request(`/api/document-jobs/${queuedBody.job.jobId}`,{headers:scoped})).json();assert.equal(completed.job.status,"completed",JSON.stringify(completed));
+  const teammateScope=await open(teammate);
+  const ownerScope=await open(owner);
+  for(const identity of [scoped,teammateScope]){database.reset();assert.equal((await request("/api/shares",{headers:identity})).status,403);assert.equal(database.writeCount(),0,"review links remain exclusive to the exact project owner");}
+  const share=await request("/api/shares",json(ownerScope,{resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere"}));const shared=await share.json();assert.equal(share.status,200,JSON.stringify(shared));
+  assert.equal(database.sqlite.prepare("SELECT organization_id,project_access_id,owner_user_id,actor_user_id FROM project_resource_scopes WHERE resource_kind='share' AND resource_id=?").get(shared.share.shareId).organization_id,organizationId);
+  assert.equal((await request(`/api/shared/${encodeURIComponent(shared.share.token)}`)).status,200,"the owner can issue an exact-project read-only review link");
+  assert.equal((await request("/api/shares",json(ownerScope,{resourceKind:"document",documentId:"private-document",projectId:"private-project"}))).status,404);
+  const scopedShares=await(await request("/api/shares",{headers:ownerScope})).json();assert.ok(scopedShares.shares.some((item)=>item.shareId===shared.share.shareId));
+  const ownerHeadBeforePrivacy=Number(database.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head);
+  const forgotten=await request("/api/privacy/attention",{method:"POST",headers:scoped});assert.equal(forgotten.status,200,JSON.stringify(await forgotten.clone().json()));
+  assert.equal(Number(database.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head),ownerHeadBeforePrivacy,"personal privacy controls never alter the shared owner's history");
+  assert.equal(database.sqlite.prepare("SELECT type FROM events WHERE stream_id=? ORDER BY sequence DESC LIMIT 1").get("creative:canvas-project-editor").type,"AttentionSignalsForgotten");
+  assert.equal((await request("/api/session",{headers:scoped})).status,200,"all exact personal, organization, and platform budget rows are initialized");
+  const readBudget=(table,column,scope,id)=>Number(database.sqlite.prepare(`SELECT ${column} AS amount FROM ${table} WHERE scope=? AND scope_id=?`).get(scope,id)?.amount??0);
+  const baseline={actorTokens:readBudget("budget_counters","used_tokens","user","canvas-project-editor"),ownerTokens:readBudget("budget_counters","used_tokens","user","canvas-project-owner"),organizationTokens:readBudget("budget_counters","used_tokens","workspace",organizationId),platformTokens:readBudget("budget_counters","used_tokens","workspace","forma"),actorCost:readBudget("cost_budget_counters","used_microusd","user","canvas-project-editor"),ownerCost:readBudget("cost_budget_counters","used_microusd","user","canvas-project-owner"),organizationCost:readBudget("cost_budget_counters","used_microusd","workspace",organizationId),platformCost:readBudget("cost_budget_counters","used_microusd","workspace","forma")};
+  assert.equal((await request("/api/events?after=0&limit=5000&content=0",{headers:scoped})).status,200,"existing owner history is indexed before testing read-only budget admission");
+  const previousFetch=globalThis.fetch;environment.OPENAI_API_KEY="local-mocked-provider-only";let providerCalls=0;
+  try{
+    globalThis.fetch=async(input)=>{providerCalls+=1;assert.equal(String(input),"https://api.openai.com/v1/responses");return Response.json({id:"response-private-collaborator-chat",model:"gpt-5.6-terra",output_text:JSON.stringify({reply:"PRIVATE COLLABORATOR ASSISTANT REPLY",mutations:[],preview_worthy:false,preview_direction:""}),usage:{input_tokens:1000,output_tokens:200,total_tokens:1200}});};
+    for(const [table,used,limit] of [["budget_counters","used_tokens","hard_limit_tokens"],["cost_budget_counters","used_microusd","hard_limit_microusd"]]){
+      const original=database.sqlite.prepare(`SELECT ${used} AS used FROM ${table} WHERE scope='workspace' AND scope_id='forma'`).get().used;
+      database.sqlite.prepare(`UPDATE ${table} SET ${used}=${limit} WHERE scope='workspace' AND scope_id='forma'`).run();
+      const durableCounts=()=>Object.fromEntries(["document_jobs","events","budget_reservations","cost_budget_reservations"].map((name)=>[name,Number(database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${name}`).get().count)])),before=durableCounts();
+      database.reset();const blocked=await request("/api/document-jobs",json(scoped,{kind:"chat",documentId:"doc-atmosphere",sourceSurface:"chat",payload:{message:"GLOBAL BUDGET EXHAUSTED",livePreview:false}}));const rejected=await blocked.json();
+      assert.equal(blocked.status,429,JSON.stringify(rejected));assert.equal(rejected.scope,"workspace",`${table} enforces the platform ceiling on organization work`);assert.deepEqual(durableCounts(),before,"an exhausted platform budget cannot create jobs, events, or reservations");assert.equal(providerCalls,0,"exhausted platform limits never contact a provider");
+      database.sqlite.prepare(`UPDATE ${table} SET ${used}=? WHERE scope='workspace' AND scope_id='forma'`).run(original);
+    }
+    const chat=await request("/api/document-jobs",json(scoped,{kind:"chat",documentId:"doc-atmosphere",sourceSurface:"chat",payload:{message:"PRIVATE COLLABORATOR CHAT MESSAGE",livePreview:false}}));const accepted=await chat.json();assert.equal(chat.status,202,JSON.stringify(accepted));
+    await drainBackground();
+    const terminal=database.sqlite.prepare("SELECT status,error_message FROM document_jobs WHERE job_id=?").get(accepted.job.jobId);assert.equal(terminal.status,"completed",JSON.stringify(terminal));
+    database.reset();const actorPage=await(await request("/api/events?after=0&limit=5000&content=1",{headers:scoped})).json();assert.match(JSON.stringify(actorPage.content),/PRIVATE COLLABORATOR CHAT MESSAGE/);assert.match(JSON.stringify(actorPage.content),/PRIVATE COLLABORATOR ASSISTANT REPLY/);
+    const contentBatch=database.calls.find((call)=>call.kind==="batch"&&call.statements.some((statement)=>statement.sql.includes("CROSS JOIN private_content"))),contentStatement=contentBatch?.statements.find((statement)=>statement.sql.includes("CROSS JOIN private_content"));assert.ok(contentStatement,"actor-private hydration begins from exact project resource custody");
+    const contentPlan=database.sqlite.prepare(`EXPLAIN QUERY PLAN ${contentStatement.sql}`).all(...contentStatement.values).map((row)=>row.detail).join("\n");assert.match(contentPlan,/SEARCH scope USING INDEX sqlite_autoindex_project_resource_scopes_1 \(project_access_id=\? AND resource_kind=\?\)/);assert.doesNotMatch(contentPlan,/SEARCH content USING INDEX idx_private_content_owner_expiry/);
+    for(const identity of [teammateScope,ownerScope,collaborator,owner]){const forbidden=await(await request("/api/events?after=0&limit=5000&content=1",{headers:identity})).json();assert.doesNotMatch(JSON.stringify(forbidden),/PRIVATE COLLABORATOR CHAT MESSAGE|PRIVATE COLLABORATOR ASSISTANT REPLY/,"conversation inputs and replies remain actor-private in both project and personal views");}
+    assert.ok(database.sqlite.prepare("SELECT COUNT(*) AS total FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND resource_kind='content' AND visibility='actor_private' AND actor_user_id=?").get(projectAccessId,organizationId,"canvas-project-editor").total>=2);
+    for(const [scope,id,key] of [["user","canvas-project-editor","actorTokens"],["workspace",organizationId,"organizationTokens"],["workspace","forma","platformTokens"]])assert.equal(readBudget("budget_counters","used_tokens",scope,id),baseline[key]+1200,`${scope}:${id} settles the exact collaborator token receipt`);
+    assert.equal(readBudget("budget_counters","used_tokens","user","canvas-project-owner"),baseline.ownerTokens,"the project owner never pays another actor's personal token balance");
+    for(const [scope,id,key] of [["user","canvas-project-editor","actorCost"],["workspace",organizationId,"organizationCost"],["workspace","forma","platformCost"]])assert.equal(readBudget("cost_budget_counters","used_microusd",scope,id),baseline[key]+4_400,`${scope}:${id} settles the exact $0.004400 collaborator cost receipt`);
+    assert.equal(readBudget("cost_budget_counters","used_microusd","user","canvas-project-owner"),baseline.ownerCost,"the project owner never pays another actor's personal dollar balance");
+    for(const table of ["budget_reservations","cost_budget_reservations"])assert.equal(database.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE owner_id=? AND status IN('authorizing','active','executing')`).get("canvas-project-editor").count,0,"completed paid work leaves no active or orphaned reservation");
+    const privateMediaKey="canvas-project-owner/generated/another-private-project.png",privateMediaUrl=`/api/media/${encodeURIComponent(privateMediaKey)}`,previousMedia=environment.MEDIA;let privatePixelReads=0;
+    environment.MEDIA={get:async(key)=>{if(key!==privateMediaKey)return null;privatePixelReads+=1;return{customMetadata:{ownerId:"canvas-project-owner"},writeHttpMetadata(headers){headers.set("content-type","image/png");},body:new Blob(["PRIVATE OTHER PROJECT PIXELS"]).stream()};}};
+    try{
+      const callsBeforeForgery=providerCalls,snapshot={facts:[{block_id:"block-reference",document_id:"doc-atmosphere",type:"reference",active:true,position:"a",properties:{reference_id:"ref-window-light",label:"Forged private reference",weight:1,pixel_reference_mode:"preserve_composition",media_url:privateMediaUrl}}]};
+      const forged=await request("/api/document-jobs",json(scoped,{kind:"render_document",documentId:"doc-atmosphere",sourceSurface:"document",payload:{artifactKind:"storyboard",productionMode:"managed",itemCount:1,paidMediaConfirmed:true,budgetAcknowledged:true,snapshot}}));const admitted=await forged.json();assert.equal(forged.status,202,JSON.stringify(admitted));await drainBackground();
+      const rejected=database.sqlite.prepare("SELECT status,error_message FROM document_jobs WHERE job_id=?").get(admitted.job.jobId);assert.equal(rejected.status,"failed",JSON.stringify(rejected));assert.match(String(rejected.error_message),/not authorized for the selected project/);assert.equal(privatePixelReads,0,"forged owner-owned media is rejected before its private pixels are read");assert.equal(providerCalls,callsBeforeForgery,"cross-project snapshot media never reaches a provider");
+    }finally{environment.MEDIA=previousMedia;}
+  }finally{globalThis.fetch=previousFetch;delete environment.OPENAI_API_KEY;}
+  assert.equal((await request(`/api/shares/${encodeURIComponent(shared.share.shareId)}`,{method:"DELETE",headers:ownerScope})).status,200);
+  assert.equal((await request(`/api/shared/${encodeURIComponent(shared.share.token)}`)).status,404,"tenant review links stop immediately after revocation");
+  const concurrent=await Promise.all([request("/api/document-jobs",json(scoped,extraction)),request("/api/document-jobs",json(teammateScope,extraction))]);
+  const concurrentJobs=await Promise.all(concurrent.map(async(response)=>{const body=await response.json();assert.equal(response.status,202,JSON.stringify(body));return body.job;}));
+  await drainBackground();
+  for(const job of concurrentJobs)assert.equal(database.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(job.jobId).status,"completed","the shared owner stream advances across independently authenticated collaborators");
+  const ownJobs=await(await request("/api/document-jobs",{headers:scoped})).json(),teamJobs=await(await request("/api/document-jobs",{headers:teammateScope})).json();
+  assert.ok(ownJobs.jobs.some((job)=>job.jobId===concurrentJobs[0].jobId));assert.ok(!ownJobs.jobs.some((job)=>job.jobId===concurrentJobs[1].jobId));assert.ok(teamJobs.jobs.some((job)=>job.jobId===concurrentJobs[1].jobId));assert.ok(!teamJobs.jobs.some((job)=>job.jobId===concurrentJobs[0].jobId));
+  database.sqlite.prepare("UPDATE document_jobs SET status='running',lease_expires_at=?,completed_at=NULL WHERE job_id=?").run(new Date(Date.now()+60_000).toISOString(),concurrentJobs[0].jobId);
+  const awaiting=await request("/api/document-jobs",json(teammateScope,extraction));const awaitingBody=await awaiting.json();assert.equal(awaiting.status,202);
+  assert.equal(database.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(awaitingBody.job.jobId).status,"queued");
+  const revokeTeammate=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/members/${teammateMembershipId}`,{method:"DELETE",headers:owner});assert.equal(revokeTeammate.status,200);
+  database.sqlite.prepare("UPDATE document_jobs SET status='completed',completed_at=?,lease_expires_at=NULL WHERE job_id=?").run(new Date().toISOString(),concurrentJobs[0].jobId);
+  await drainBackground();
+  const canceled=database.sqlite.prepare("SELECT status,error_message FROM document_jobs WHERE job_id=?").get(awaitingBody.job.jobId);assert.equal(canceled.status,"canceled");assert.equal(canceled.error_message,"project_access_revoked");
+  assert.equal((await request(`/api/document-jobs/${awaitingBody.job.jobId}`,{headers:teammateScope})).status,403);
+  const ownerQueue=await request("/api/document-jobs",json(owner,extraction));const ownerQueued=await ownerQueue.json();assert.equal(ownerQueue.status,202,JSON.stringify(ownerQueued));await drainBackground();assert.equal(database.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(ownerQueued.job.jobId).status,"completed","a revoked actor never strands the project owner's queue");
+  const removed=makeEvent("CanvasItemRemoved",{item_id:"shared-item"},"remove-shared-item");const removal=await request("/api/events",json(scoped,{action:"canvas_sync",events:[removed]}));assert.equal(removal.status,200,JSON.stringify(await removal.clone().json()));
+  const removedPage=await(await request("/api/events?after=0&limit=5000&content=0",{headers:scoped})).json();assert.ok(removedPage.events.some((event)=>event.type==="CanvasItemRemoved"&&event.payload.item_id==="shared-item"));assert.doesNotMatch(JSON.stringify(removedPage),/PRIVATE BOARD CARD TITLE/);assert.equal(foldCanvasEvents(removedPage.events,"project-atmosphere","shared-board").items.length,0);
+  const removedRetry=await request("/api/events",json(scoped,{action:"canvas_sync",events:[register]}));const removedReceipt=await removedRetry.json();assert.equal(removedRetry.status,200);assert.equal(removedReceipt.appended[0].eventId,firstEventId);assert.equal(removedReceipt.appended[0].payload.client_event_id,"first-collaborative-receipt","actor-only receipts retain their device acknowledgment after resource removal");
+  const restored=await request("/api/events",json(scoped,{action:"canvas_sync",events:[makeEvent("CanvasItemRestored",{item_id:"shared-item"})]}));assert.equal(restored.status,200,JSON.stringify(await restored.clone().json()));
+  const restoredPage=await(await request("/api/events?after=0&limit=5000&content=0",{headers:scoped})).json();assert.equal(foldCanvasEvents(restoredPage.events,"project-atmosphere","shared-board").items.length,1);
+  const boardRemoval=await request("/api/events",json(scoped,{action:"canvas_sync",events:[makeEvent("CanvasRemoved",{})]}));assert.equal(boardRemoval.status,200,JSON.stringify(await boardRemoval.clone().json()));
+  const boardRemovedPage=await(await request("/api/events?after=0&limit=5000&content=0",{headers:scoped})).json();assert.ok(boardRemovedPage.events.some((event)=>event.type==="CanvasRemoved"&&event.payload.canvas_id==="shared-board"));assert.doesNotMatch(JSON.stringify(boardRemovedPage),/PRIVATE BOARD CARD TITLE/);assert.equal(foldCanvasEvents(boardRemovedPage.events,"project-atmosphere").canvases.length,0);
+  const boardRestore=await request("/api/events",json(scoped,{action:"canvas_sync",events:[makeEvent("CanvasRestored",{})]}));assert.equal(boardRestore.status,200,JSON.stringify(await boardRestore.clone().json()));
+  const sidecar=database.sqlite.prepare("INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)");
+  let projectSequence=Number(database.sqlite.prepare("SELECT MAX(project_sequence) AS head FROM project_event_scopes WHERE project_access_id=?").get(projectAccessId).head);
+  ownerSequence=Number(database.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head);
+  database.sqlite.exec("BEGIN");try{for(let index=0;index<5_050;index+=1){const id=crypto.randomUUID();insertEvent.run(id,stream,++ownerSequence,timestamp,timestamp,"user:canvas-project-editor","server:canvas-history",crypto.randomUUID(),null,null,1,"BlockPropertyEdited",JSON.stringify({project_id:"project-atmosphere",block_id:"block-direction",property_path:"text",new_value:`History ${index}`}));sidecar.run(id,projectAccessId,organizationId,"project-atmosphere","canvas-project-owner",stream,ownerSequence,++projectSequence,"canvas-project-editor",timestamp);}database.sqlite.prepare("UPDATE project_migration_states SET last_owner_sequence=? WHERE project_access_id=?").run(ownerSequence,projectAccessId);database.sqlite.exec("COMMIT");}catch(error){database.sqlite.exec("ROLLBACK");throw error;}
+  database.reset();const longRetry=await request("/api/events",json(scoped,{action:"canvas_sync",events:[register]}));const longReceipt=await longRetry.json();assert.equal(longRetry.status,200,JSON.stringify(longReceipt));assert.equal(longReceipt.appended[0].eventId,firstEventId);assert.equal(database.writeCount(),0,"old exact receipts remain idempotent beyond the first 5,000 project events");
+  assert.equal((await request(permissionPath,json(owner,{canvasAccess:false},"PATCH"))).status,200);
+  database.reset();assert.equal((await request("/canvas",{headers:scoped})).status,403);assert.equal(database.writeCount(),0);
+  database.reset();assert.equal((await request("/api/events",json(scoped,{action:"canvas_sync",events:[register]}))).status,403);assert.equal(database.writeCount(),0,"grant revocation stops stale queued board edits immediately");
+});
+
+test("revoking a project-owning organization administrator quarantines their project and immediately closes collaborator access",async()=>{
+  const {database,environment,request}=await productionWorker();
+  const owner=await specialistIdentity(database,request,"revocation-org-owner");
+  const projectOwner=await specialistIdentity(database,request,"revocation-project-owner");
+  const collaborator=await specialistIdentity(database,request,"revocation-collaborator");
+  const json=(headers,body,method="POST")=>({method,headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
+  for(const headers of [owner,projectOwner])assert.equal((await request("/api/events?after=0&content=0",{headers})).status,200);
+  const media=new Map();
+  environment.MEDIA={put:async(key,_value,options)=>{media.set(key,options.customMetadata);},get:async(key)=>media.has(key)?{customMetadata:media.get(key),httpEtag:"reference",writeHttpMetadata(headers){headers.set("content-type","image/png");},body:new Blob(["shared reference"]).stream()}:null,delete:async(key)=>{media.delete(key);}};
+  const created=await request("/api/workspaces",json(owner,{name:"Owner revocation boundary"}));assert.equal(created.status,201);const organizationId=(await created.json()).organizationId;
+  const invite=async(headers,userId,role)=>{const response=await request(`/api/workspaces/${organizationId}/members`,json(headers,{email:`${userId}@example.test`,role}));assert.equal(response.status,201);const invitation=await response.json();const accepted=await request(`/api/workspaces/${organizationId}/invitations/${invitation.invitationId}/accept`,json(userId==="revocation-project-owner"?projectOwner:collaborator,{token:new URL(invitation.invitationUrl).searchParams.get("token")}));assert.equal(accepted.status,200);};
+  await invite(owner,"revocation-project-owner","administrator");
+  await invite(owner,"revocation-collaborator","member");
+  const register=async(headers)=>{const response=await request(`/api/workspaces/${organizationId}/projects`,json(headers,{projectId:"project-atmosphere"}));assert.equal(response.status,201);return(await response.json()).projectAccessId;};
+  const unaffected=await register(owner),quarantined=await register(projectOwner);
+  assert.notEqual(unaffected,quarantined);
+  const ownerOpened=await request(`/api/workspaces/${organizationId}/projects/${quarantined}/context`,{method:"POST",headers:projectOwner});assert.equal(ownerOpened.status,200);const ownerScoped={...projectOwner,cookie:ownerOpened.headers.get("set-cookie")?.split(";")[0]??""};
+  const ownerLink=await request("/api/shares",json(ownerScoped,{resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere"}));assert.equal(ownerLink.status,200,JSON.stringify(await ownerLink.clone().json()));const quarantineShare=(await ownerLink.json()).share;assert.equal((await request(`/api/shared/${encodeURIComponent(quarantineShare.token)}`)).status,200);
+  const granted=await request(`/api/workspaces/${organizationId}/projects/${quarantined}/members`,json(projectOwner,{userId:"revocation-collaborator",role:"editor"}));assert.equal(granted.status,201);
+  const opened=await request(`/api/workspaces/${organizationId}/projects/${quarantined}/context`,{method:"POST",headers:collaborator});assert.equal(opened.status,200);const scoped={...collaborator,cookie:opened.headers.get("set-cookie")?.split(";")[0]??""};
+  assert.equal((await request("/api/events?after=0&content=1",{headers:scoped})).status,200);
+  const form=new FormData();form.set("file",new File(["reference"],"owner-shared-reference.png",{type:"image/png"}));form.set("rightsConfirmed","true");const upload=await request("/api/media",{method:"POST",headers:scoped,body:form});assert.equal(upload.status,200);const uploaded=await upload.json();assert.equal((await request(`/api/media/${encodeURIComponent(uploaded.key)}`,{headers:scoped})).status,200);
+  const administratorMembership=database.sqlite.prepare("SELECT membership_id FROM organization_memberships WHERE organization_id=? AND user_id=?").get(organizationId,"revocation-project-owner").membership_id;
+  const revoke=await request(`/api/workspaces/${organizationId}/members/${administratorMembership}`,{method:"DELETE",headers:owner});assert.equal(revoke.status,200);
+  assert.equal((await request(`/api/shared/${encodeURIComponent(quarantineShare.token)}`)).status,404,"quarantining a registered project immediately closes its owner's public review link");
+  assert.equal(database.sqlite.prepare("SELECT status FROM organization_projects WHERE project_access_id=?").get(quarantined).status,"quarantine");
+  assert.equal(database.sqlite.prepare("SELECT status FROM project_migration_states WHERE project_access_id=?").get(quarantined).status,"quarantine");
+  assert.equal(database.sqlite.prepare("SELECT status FROM organization_projects WHERE project_access_id=?").get(unaffected).status,"active","another owner's project remains available");
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_memberships WHERE project_access_id=? AND status='active'").get(quarantined).count,0);
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_context_sessions WHERE project_access_id=? AND revoked_at IS NULL").get(quarantined).count,0);
+  for(const [path,options] of [["/api/events?after=0&content=1",{headers:scoped}],[`/api/workspaces/${organizationId}/projects/${quarantined}/events`,{headers:collaborator}],[`/api/workspaces/${organizationId}/projects/${quarantined}/events`,{headers:scoped}],[`/api/media/${encodeURIComponent(uploaded.key)}`,{headers:scoped}],[`/api/workspaces/${organizationId}/projects/${quarantined}/events`,json(collaborator,{action:"append",event:{type:"BlockPropertyEdited",payload:{block_id:"block-direction",property_path:"text",new_value:"REVOKED OWNER"}}})]]){
+    database.reset();assert.equal((await request(path,options)).status,403,path);assert.equal(database.writeCount(),0,"revoked owner access cannot mutate history or recreate a project session");
+  }
+  const audit=await(await request(`/api/workspaces/${organizationId}/audit`,{headers:owner})).json();assert.ok(audit.audit.some((entry)=>entry.action==="OrganizationMembershipRevoked"));
+});
+
+test("workspace settings HTML and usage policies require exact organization-scoped server capability",async()=>{
+  const {database,environment,request}=await productionWorker();const owner=await specialistIdentity(database,request,"tenant-owner");const stranger=await specialistIdentity(database,request,"tenant-stranger");htmlAssets(environment);
+  const created=await request("/api/workspaces",{method:"POST",headers:{...owner,"content-type":"application/json"},body:JSON.stringify({name:"Bounded organization"})});assert.equal(created.status,201);const organizationId=(await created.json()).organizationId;
+  for(const path of [`/settings/workspaces/${organizationId}/overview`,`/settings/workspaces/${organizationId}/members`,`/settings/workspaces/${organizationId}/projects`,`/settings/workspaces/${organizationId}/usage`,`/settings/workspaces/${organizationId}/activity`]){
+    assert.equal((await request(path,{headers:owner})).status,200,path);
+    database.reset();assert.equal((await request(path,{headers:stranger})).status,403,path);assert.equal(database.writeCount(),0,path);
+  }
+  assert.equal((await request("/settings/workspaces/invitations",{headers:stranger})).status,200);
+  const usage=await request(`/api/workspaces/${organizationId}/usage`,{headers:owner});assert.equal(usage.status,200);const report=await usage.json();assert.equal(report.policy.microusd_limit,1_000_000_000);assert.equal(report.cost,null,"new tenant usage never imports historical global charges");
+  assert.equal((await request(`/api/workspaces/${organizationId}/usage`,{headers:stranger})).status,403);
+  const updated=await request(`/api/workspaces/${organizationId}/policy`,{method:"PATCH",headers:{...owner,"content-type":"application/json"},body:JSON.stringify({tokenLimit:500,microusdLimit:25_000_000})});assert.equal(updated.status,200);assert.equal((await updated.json()).policy.microusd_limit,25_000_000);
+  assert.equal(database.sqlite.prepare("SELECT used_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id='dev-local-creative'").get().used_microusd,0,"customer administration must not rebuild a manually reset personal budget");
+});
+
+test("organization budgets enforce exact tenant, actor, personal, and global caps without corrupting personal history",async()=>{
+  const {database,environment,request}=await productionWorker();
+  const ownerA=await specialistIdentity(database,request,"budget-owner-a"),ownerB=await specialistIdentity(database,request,"budget-owner-b");
+  const json=(headers,body,method="POST")=>({method,headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
+  for(const headers of [ownerA,ownerB])assert.equal((await request("/api/events?after=0&content=0",{headers})).status,200);
+  const create=async(headers,name,tokenLimit,microusdLimit)=>{
+    const organization=await request("/api/workspaces",json(headers,{name}));assert.equal(organization.status,201);const organizationId=(await organization.json()).organizationId;
+    const registered=await request(`/api/workspaces/${organizationId}/projects`,json(headers,{projectId:"project-atmosphere"}));assert.equal(registered.status,201);const projectAccessId=(await registered.json()).projectAccessId;
+    const policy=await request(`/api/workspaces/${organizationId}/policy`,json(headers,{tokenLimit,microusdLimit},"PATCH"));assert.equal(policy.status,200);
+    return{organizationId,projectAccessId};
+  };
+  const tenantA=await create(ownerA,"Budget A",100,2_000_000),tenantB=await create(ownerB,"Budget B",200,3_000_000);
+  const scopeA={...tenantA,actorUserId:"budget-owner-a"},scopeB={...tenantB,actorUserId:"budget-owner-b"};
+  const tokenOptions={streamId:"creative:budget-owner-a",correlationId:"tenant-operation",operation:"tenant-test",reservationId:"tenant-tokens-a",projectScope:scopeA};
+  const tokenA=await reserveBudget(environment,"budget-owner-a",60,tokenOptions);assert.equal(tokenA.ok,true);
+  assert.equal((await reserveBudget(environment,"budget-owner-a",60,tokenOptions)).reused,true,"exact retries never reserve the same tenant amount twice");
+  assert.equal((await reserveBudget(environment,"budget-owner-a",50,{...tokenOptions,reservationId:"tenant-over-token"})).ok,false,"an exact tenant cap below the platform default is binding");
+  const tokenB=await reserveBudget(environment,"budget-owner-b",150,{streamId:"creative:budget-owner-b",correlationId:"tenant-b",operation:"tenant-test",reservationId:"tenant-tokens-b",projectScope:scopeB});assert.equal(tokenB.ok,true,"tenant B cannot consume tenant A's limit");
+  assert.equal((await reserveBudget(environment,"budget-owner-b",1,{projectScope:scopeA})).ok,false,"the billed actor must own the accepted exact project grant");
+  const costOptions={maximumMicrousd:2_000_000,allowUserOverage:false,reservationId:"tenant-cost-a",streamId:"creative:budget-owner-a",correlationId:"tenant-operation",operation:"tenant-test",projectScope:scopeA};
+  const costA=await reserveCostBudget(environment,"budget-owner-a",1_250_000,costOptions);assert.equal(costA.ok,true);
+  assert.equal((await reserveCostBudget(environment,"budget-owner-a",1_250_000,costOptions)).reused,true);
+  assert.equal((await reserveCostBudget(environment,"budget-owner-a",800_000,{...costOptions,reservationId:"tenant-cost-over",correlationId:"tenant-over"})).ok,false);
+  const current=(await request(`/api/workspaces/${tenantA.organizationId}/usage`,{headers:ownerA}));assert.equal(current.status,200);const usage=await current.json();assert.equal(usage.tokens.reserved_tokens,60);assert.equal(usage.cost.reserved_microusd,1_250_000);assert.equal(usage.cost.hard_limit_microusd,2_000_000);
+  const selected=await request(`/api/workspaces/${tenantA.organizationId}/projects/${tenantA.projectAccessId}/context`,{method:"POST",headers:ownerA});assert.equal(selected.status,200);const cookie=selected.headers.get("set-cookie")?.split(";")[0]??"";
+  const scopedSession=await(await request("/api/session",{headers:{...ownerA,cookie}})).json();assert.equal(scopedSession.budgets.workspace.limit,100);assert.equal(scopedSession.costBudgets.workspace.limitMicrousd,2_000_000);assert.equal(scopedSession.costBudgets.workspace.reservedMicrousd,1_250_000);
+  assert.equal((await settleBudget(environment,"budget-owner-a",tokenA.reservationId,35)).settled,true);assert.equal((await settleBudget(environment,"budget-owner-a",tokenA.reservationId,80)).settled,false);
+  assert.equal((await settleCostBudget(environment,"budget-owner-a",costA.reservationId,750_000)).settled,true);assert.equal((await settleCostBudget(environment,"budget-owner-a",costA.reservationId,1_900_000)).settled,false);
+  const settled=await(await request(`/api/workspaces/${tenantA.organizationId}/usage`,{headers:ownerA})).json();assert.equal(settled.tokens.used_tokens,35);assert.equal(settled.tokens.reserved_tokens,0);assert.equal(settled.cost.used_microusd,750_000);assert.equal(settled.cost.reserved_microusd,0);
+  const lower=await request(`/api/workspaces/${tenantA.organizationId}/policy`,json(ownerA,{tokenLimit:34,microusdLimit:749_999},"PATCH"));assert.equal(lower.status,409);assert.equal(database.sqlite.prepare("SELECT token_limit,microusd_limit FROM budget_scope_policies WHERE scope_id=?").get(tenantA.organizationId).token_limit,100);
+  environment.OPENAI_API_KEY="tenant-budget-provider-must-not-be-called";
+  for(const documentId of ["doc-atmosphere",undefined]){
+    database.reset();
+    const generated=await request("/api/events",json(ownerA,{action:"generate",...(documentId?{documentId}:{}),sourceSurface:"document",budgetAcknowledged:true}));
+    assert.equal(generated.status,429,"direct generation resolves its actual registered document before organization token enforcement");
+    assert.equal((await generated.json()).scope,"workspace");
+    assert.equal(database.writeCount(),0,"an over-limit direct generation must not reserve, append, or contact a provider");
+    database.reset();
+    const queued=await request("/api/document-jobs",json(ownerA,{kind:"generate",...(documentId?{documentId}:{}),payload:{budgetAcknowledged:true}}));
+    assert.equal(queued.status,429,"the actual queued generation workflow enforces the exact organization token limit before admission");
+    assert.equal((await queued.json()).scope,"workspace");
+    assert.equal(database.writeCount(),0,"an over-limit queued request must not reconcile, reserve, or create a job");
+  }
+  database.reset();
+  const forged=await request("/api/events",json(ownerA,{action:"generate",documentId:"foreign-unregistered-document",budgetAcknowledged:true}));
+  assert.equal(forged.status,404,"an invented document cannot fall back to the current registered project or bypass its budget");
+  assert.equal(database.writeCount(),0);
+  const freshDocument="doc-registered-after-sharing";
+  const created=await request("/api/events",json(ownerA,{action:"append",event:{type:"DocumentCreated",payload:{project_id:"project-atmosphere",document_id:freshDocument,title:"Fresh registered document"}}}));
+  assert.equal(created.status,200);
+  assert.equal(database.sqlite.prepare("SELECT 1 FROM project_resource_scopes WHERE project_access_id=? AND resource_kind='document' AND resource_id=?").get(tenantA.projectAccessId,freshDocument),undefined,"the owner's direct document write has not yet refreshed the collaborator manifest");
+  for(const [path,body] of [["/api/events",{action:"generate",documentId:freshDocument,budgetAcknowledged:true}],["/api/document-jobs",{kind:"generate",documentId:freshDocument,payload:{budgetAcknowledged:true}}]]){
+    database.reset();const response=await request(path,json(ownerA,body));assert.equal(response.status,429,`${path} derives the tenant from the authoritative owner document instead of a stale sharing manifest`);assert.equal((await response.json()).scope,"workspace");assert.equal(database.writeCount(),0);
+  }
+  for(const [artifactKind,tokenLimit,itemCount] of [["video",55_000,undefined],["slides",63_000,12],["storyboard",70_000,3]]){
+    const configured=await request(`/api/workspaces/${tenantA.organizationId}/policy`,json(ownerA,{tokenLimit,microusdLimit:100_000_000},"PATCH"));assert.equal(configured.status,200);
+    const payload={artifactKind,productionMode:"managed",paidMediaConfirmed:true,budgetAcknowledged:true,...(itemCount?{itemCount}:{}),snapshot:{}};
+    for(const [path,body] of [["/api/events",{action:"render_document",documentId:freshDocument,...payload}],["/api/document-jobs",{kind:"render_document",documentId:freshDocument,payload}]]){
+      database.reset();const denied=await request(path,json(ownerA,body));assert.equal(denied.status,429,`${path} estimates the exact managed ${artifactKind} scene plan before queue/provider admission`);assert.equal((await denied.json()).scope,"workspace");assert.equal(database.writeCount(),0,"managed production cannot create a doomed job or reservation");
+    }
+  }
+  const costPolicy=await request(`/api/workspaces/${tenantA.organizationId}/policy`,json(ownerA,{tokenLimit:100_000,microusdLimit:1_200_000},"PATCH"));assert.equal(costPolicy.status,200);
+  database.reset();const overCost=await request("/api/document-jobs",json(ownerA,{kind:"generate",documentId:freshDocument,payload:{budgetAcknowledged:true}}));assert.equal(overCost.status,429);assert.equal((await overCost.json()).scope,"workspace");assert.equal(database.writeCount(),0,"organization dollar caps are enforced before queue admission as well");
+  assert.equal(Number(database.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs WHERE owner_id=?").get("budget-owner-a").count),0,"no denied operation creates a document job");
+  assert.equal(database.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope='workspace' AND scope_id=?").get(tenantA.organizationId).used_microusd,750_000);
+  assert.equal(database.sqlite.prepare("SELECT used_microusd FROM cost_budget_counters WHERE scope='workspace' AND scope_id=?").get(tenantB.organizationId)?.used_microusd??0,0,"another tenant remains financially untouched");
+  assert.equal(database.sqlite.prepare("SELECT used_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id='dev-local-creative'").get().used_microusd,0,"never overwrite the user's explicitly reset personal budget");
+});
+
+test("delivery decisions enforce canonical evidence gates, scoped ownership, immutable dependencies, and independent release approval",async()=>{
+  const {database,environment,request}=await productionWorker();htmlAssets(environment);
+  const reader=await specialistIdentity(database,request,"delivery-reader",["product.delivery.read"]);
+  const releaseReader=await specialistIdentity(database,request,"delivery-release-reader",["product.release.read"]);
+  const manager=await specialistIdentity(database,request,"delivery-manager",["product.delivery.manage"]);
+  await specialistIdentity(database,request,"delivery-alternate",["product.delivery.manage"]);
+  const approver=await specialistIdentity(database,request,"delivery-approver",["product.delivery.manage","platform.release.approve"]);
+  const json=(headers,body,method="POST")=>({method,headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
+  const initial=await(await request("/api/portfolio/product/delivery",{headers:reader})).json();assert.equal(initial.report.metrics.find((metric)=>metric.id==="openReleaseGates").value,3);
+  assert.equal((await request("/product/delivery",{headers:releaseReader})).status,200);
+  const releaseSession=await(await request("/api/session?audience=product",{headers:releaseReader})).json();assert.deepEqual(releaseSession.capabilities,["product.release.read"]);
+  const releaseReport=await(await request("/api/portfolio/product/delivery",{headers:releaseReader})).json();assert.equal(releaseReport.report.decisions,undefined);assert.equal(releaseReport.report.owners,undefined);assert.equal(releaseReport.report.approvalAuthority,undefined);
+  database.reset();assert.equal((await request("/api/portfolio/product/delivery",json(reader,{title:"Forbidden",audience:"product"}))).status,403);assert.equal(database.writeCount(),0);
+  database.reset();assert.equal((await request("/api/portfolio/product/delivery",json(releaseReader,{title:"Forbidden",audience:"product"}))).status,403);assert.equal(database.writeCount(),0);
+  const managerReport=await(await request("/api/portfolio/product/delivery",{headers:manager})).json();assert.equal(managerReport.report.approvalAuthority,false);assert.ok(managerReport.report.owners.some((owner)=>owner.userId==="delivery-alternate"));
+  database.reset();assert.equal((await request("/api/portfolio/product/delivery",json(manager,{title:"Invalid owner",audience:"product",ownerUserId:"foreign-user"}))).status,403);assert.equal(database.writeCount(),0);
+  assert.equal((await request("/api/portfolio/product/delivery",json(manager,{title:"Forged display",audience:"product",owner:"forged owner"}))).status,400);
+  assert.equal((await request("/api/portfolio/product/delivery",json(approver,{title:"Direct approval",audience:"product",status:"approved",evidence:"bypassed review"}))).status,409);
+  const created=await request("/api/portfolio/product/delivery",json(manager,{title:"Establish audience-specific launch criteria",audience:"product",status:"active",evidence:"Acceptance checklist retained"}));assert.equal(created.status,201);let first=(await created.json()).decision;
+  assert.equal(first.owner,"delivery-manager");assert.equal(first.status,"running");assert.equal(first.ownerUserId,"delivery-manager");
+  const reassigned=await request("/api/portfolio/product/delivery",json(manager,{decisionId:first.decisionId,title:"Assigned audience-specific launch criteria",status:"running",evidence:"Acceptance checklist retained",ownerUserId:"delivery-alternate",expectedUpdatedAt:first.updatedAt},"PATCH"));assert.equal(reassigned.status,200);first=(await reassigned.json()).decision;assert.equal(first.ownerUserId,"delivery-alternate");
+  const dependency=await request("/api/portfolio/product/delivery",json(manager,{title:"Verify release evidence",audience:"operations",dependencyIds:[first.decisionId]}));assert.equal(dependency.status,201);let dependent=(await dependency.json()).decision;assert.deepEqual(dependent.dependencyIds,[first.decisionId]);
+  const unknown=await request("/api/portfolio/product/delivery",json(manager,{title:"Unknown dependency",audience:"product",dependencyIds:["missing-decision"]}));assert.equal(unknown.status,409);
+  const revise=(decision,status,evidence=decision.evidence,headers=manager)=>request("/api/portfolio/product/delivery",json(headers,{decisionId:decision.decisionId,title:decision.title,status,evidence,ownerUserId:decision.ownerUserId,expectedUpdatedAt:decision.updatedAt},"PATCH"));
+  let transition=await revise(dependent,"running");assert.equal(transition.status,200);dependent=(await transition.json()).decision;
+  transition=await revise(dependent,"passed","Dependency evidence");assert.equal(transition.status,409);assert.equal((await transition.json()).error,"delivery_dependencies_incomplete");
+  transition=await revise(first,"passed","");assert.equal(transition.status,409);assert.equal((await transition.json()).error,"delivery_evidence_required");
+  transition=await revise(first,"approval_required","Skipped evidence checkpoint");assert.equal(transition.status,409);
+  transition=await revise(first,"completed","Reviewed by delivery");assert.equal(transition.status,200);const stale=first;first=(await transition.json()).decision;assert.equal(first.status,"passed");
+  assert.equal((await revise(stale,"passed","Reviewed again")).status,409);
+  assert.equal((await request("/api/portfolio/product/delivery",json(manager,{decisionId:first.decisionId,title:first.title,status:"passed",evidence:first.evidence,expectedUpdatedAt:first.updatedAt,dependencyIds:[]},"PATCH"))).status,400);
+  transition=await revise(dependent,"passed","Dependency evidence");assert.equal(transition.status,200);dependent=(await transition.json()).decision;
+  transition=await revise(dependent,"approval_required","Ready for independent approval");assert.equal(transition.status,200);dependent=(await transition.json()).decision;
+  const aggregateOnly=await(await request("/api/portfolio/product/delivery",{headers:releaseReader})).json();assert.equal(aggregateOnly.report.evidence.find((item)=>item.id==="decisionOwnership").status,"passed","release readers see truthful aggregate ownership without individual decision disclosure");
+  database.reset();transition=await revise(dependent,"approved","Approved without authority");assert.equal(transition.status,403);assert.equal(database.writeCount(),0);
+  const personal=await request("/api/portfolio/product/delivery",json(approver,{title:"Decision owned by the release approver",audience:"product",status:"running",evidence:"Initial independent-review candidate"}));assert.equal(personal.status,201);let owned=(await personal.json()).decision;
+  transition=await revise(owned,"passed","Release evidence is complete",approver);assert.equal(transition.status,200);owned=(await transition.json()).decision;
+  transition=await revise(owned,"approval_required","Awaiting a different approver",approver);assert.equal(transition.status,200);owned=(await transition.json()).decision;
+  database.reset();transition=await revise(owned,"approved","Self-approved",approver);assert.equal(transition.status,403);assert.equal((await transition.json()).error,"independent_release_approver_required");assert.equal(database.writeCount(),0,"dual authority never bypasses distinct-person release review");
+  transition=await revise(dependent,"approved","Independently approved",approver);assert.equal(transition.status,200);dependent=(await transition.json()).decision;
+  database.reset();transition=await revise(dependent,"superseded","Unauthorized approval bypass");assert.equal(transition.status,403);assert.equal(database.writeCount(),0);
+  transition=await revise(dependent,"revoked","Approval explicitly revoked",approver);assert.equal(transition.status,200);dependent=(await transition.json()).decision;assert.equal(dependent.status,"revoked");
+  assert.ok((await(await request("/api/portfolio/product/delivery",{headers:approver})).json()).report.approvalAuthority);
+  const readerReport=await(await request("/api/portfolio/product/delivery",{headers:reader})).json();assert.ok(readerReport.report.decisions.every((decision)=>!("ownerUserId" in decision)));assert.equal(readerReport.report.owners,undefined);
+  const final=await(await request("/api/portfolio/product/delivery",{headers:reader})).json();assert.equal(final.report.decisions.length,3);assert.ok(database.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE stream_id='platform:product-delivery'").get().count>=3);
+});
+
+test("release reporting counts absent and stale approvals, and only release approvers can mutate governance",async()=>{
+  const {database,request}=await productionWorker();
+  const policy=await specialistIdentity(database,request,"release-policy",["platform.policy.manage"]);
+  const approver=await specialistIdentity(database,request,"release-approver",["platform.release.approve"]);
+  const report=async(path,headers)=>{const response=await request(path,{headers});assert.equal(response.status,200);return(await response.json()).report.metrics.find((metric)=>metric.id==="openReleaseGates")?.value;};
+  assert.equal(await report("/api/portfolio/product/delivery",undefined),3);assert.equal(await report("/api/portfolio/operations/overview",policy),3);assert.equal(await report("/api/portfolio/engineering/health",undefined),3);
+  const approval={action:"approve",requirement:"trust_safety",confirmation:"I understand, record this Canvas approval",evidenceRef:"review/trust-safety"};
+  database.reset();assert.equal((await request("/api/canvas-governance",{method:"POST",headers:{...policy,"content-type":"application/json"},body:JSON.stringify(approval)})).status,403);assert.equal(database.writeCount(),0);
+  assert.equal((await request("/api/canvas-governance",{method:"POST",headers:{...approver,"content-type":"application/json"},body:JSON.stringify(approval)})).status,200);assert.equal(await report("/api/portfolio/product/delivery",undefined),2);
+  const now=new Date().toISOString();database.sqlite.prepare("INSERT INTO canvas_governance_requirements(requirement_id,status,details_json,updated_at) VALUES(?,?,?,?)").run("counsel","approved","{}",now);
+  database.sqlite.prepare("INSERT INTO canvas_governance_requirements(requirement_id,status,evidence_ref,details_json,updated_at) VALUES(?,?,?,?,?)").run("second_image_adapter","approved","obsolete-evidence",JSON.stringify({adapter_id:"stale-adapter"}),now);
+  assert.equal(await report("/api/portfolio/product/delivery",undefined),1);assert.equal(await report("/api/portfolio/operations/overview",policy),1);
+  const evidence=IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE;const details={adapter_id:evidence.adapterId,contract_version:evidence.adapterVersion,corpus_version:evidence.corpusVersion,evaluation_ref:evidence.evaluationRef,evaluation_passed:true};
+  database.sqlite.prepare("UPDATE canvas_governance_requirements SET evidence_ref=?,details_json=? WHERE requirement_id='second_image_adapter'").run(evidence.evaluationRef,JSON.stringify(details));
+  assert.equal(await report("/api/portfolio/product/delivery",undefined),0);assert.equal(await report("/api/portfolio/operations/overview",policy),0);
+  const qualification=(await(await request("/api/portfolio/product/evaluation")).json()).report.qualification;assert.equal(qualification.productionApproved,true);
+});
+
+test("qualification readers cannot simulate, qualification runners cannot inspect retained provider evidence, and previews cannot spend",async()=>{
+  const {database,environment,request}=await productionWorker();environment.FAL_KEY="DO_NOT_DISCLOSE_FAL_SECRET";environment.OPENAI_API_KEY="DO_NOT_DISCLOSE_OPENAI_SECRET";
+  const reader=await specialistIdentity(database,request,"qualification-reader",["evaluation.qualification.read"]);
+  const runner=await specialistIdentity(database,request,"qualification-runner",["evaluation.qualification.run"]);
+  const synthetic=await specialistIdentity(database,request,"synthetic-reader",["evaluation.synthetic.read"]);
+  const reportFor=async(headers)=>(await(await request("/api/portfolio/product/evaluation",{headers})).json()).report;
+  const retained=await reportFor(reader);assert.equal(retained.qualification.adapterVersion,"v52");assert.equal(retained.qualification.reports.find((item)=>item.adapterVersion==="v52")?.candidateUsable,43);
+  assert.equal((await reportFor(runner)).qualification,undefined);assert.equal((await reportFor(synthetic)).qualification,undefined);
+  const input={provider:"fal-ideogram",quality:"high",size:"1024x1024",outputFormat:"jpeg",referenceCount:1,prompt:"PRIVATE_GENERATION_PROMPT"};const send=(headers)=>request("/api/portfolio/product/adapter-preview",{method:"POST",headers:{...headers,"content-type":"application/json"},body:JSON.stringify(input)});
+  database.reset();assert.equal((await send(reader)).status,403);assert.equal(database.writeCount(),0);assert.equal((await send(synthetic)).status,403);
+  database.reset();const simulated=await send(runner);assert.equal(simulated.status,200);const preview=await simulated.json();assert.equal(preview.dryRun,true);assert.equal(preview.providerCall,false);assert.equal(preview.pixelsTransmitted,false);assert.equal(preview.selection.provider,"fal-ideogram");assert.equal(preview.request.referenceCount,1);assert.equal(database.writeCount(),0);assert.doesNotMatch(JSON.stringify(preview),/DO_NOT_DISCLOSE|PRIVATE_GENERATION_PROMPT|providerRequestId|costBudgets|configuredProvider/);
+  assert.equal((await request("/api/image-adapters",{headers:reader})).status,403);assert.equal((await request("/api/image-adapters",{headers:runner})).status,403);assert.equal((await request("/api/image-adapters")).status,200);
+});
+
+test("seeded and simulated activity never defeats the three-real-creator product privacy threshold",async()=>{
+  const {database,request}=await productionWorker();
+  const second=await specialistIdentity(database,request,"real-creator-two");const third=await specialistIdentity(database,request,"real-creator-three");
+  assert.equal((await request("/api/events?after=0&limit=2000&content=0",{headers:second})).status,200);assert.equal((await request("/api/events?after=0&limit=2000&content=0",{headers:third})).status,200);
+  const insights=async()=>{const response=await request("/api/portfolio/product/insights");assert.equal(response.status,200);return(await response.json()).report;};
+  assert.equal((await insights()).metrics.find((metric)=>metric.id==="activeCreators").value,null,"seed-only accounts must never count as real activity");
+  const add=(owner,payload={},type="BlockCreated",occurredAt=new Date().toISOString())=>{const stream=`creative:${owner}`;const sequence=Number(database.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head)+1;database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").run(crypto.randomUUID(),stream,sequence,occurredAt,occurredAt,"user","actual-user-action",crypto.randomUUID(),null,null,1,type,JSON.stringify(payload));};
+  add("dev-local-creative");add("real-creator-two");add("real-creator-three",{simulation:true});assert.equal((await insights()).metrics.find((metric)=>metric.id==="activeCreators").value,null,"two real creators plus simulation must remain suppressed");
+  add("real-creator-three");let report=await insights();assert.equal(report.metrics.find((metric)=>metric.id==="activeCreators").value,3);assert.equal(report.metrics.find((metric)=>metric.id==="activationRate").value,null,"activation is independently suppressed below three completed creator outcomes");assert.equal(report.evidence.find((item)=>item.id==="minimumCohort").status,"passed");assert.doesNotMatch(JSON.stringify(report),/real-creator|actual-user-action/);
+  const old=new Date(Date.now()-31*86_400_000).toISOString();
+  for(const owner of ["dev-local-creative","real-creator-two","real-creator-three"]){
+    add(owner,{document_id:"doc-atmosphere",object_ids:[`historical-${owner}`]},"GenerationCompleted",old);
+    add(owner,{document_id:"doc-atmosphere",object_ids:[`retained-${owner}`]},"GenerationCompleted");
+    add(owner,{document_id:"doc-atmosphere",cost_microusd:1_000_000},"GenerationUsageRecorded");
+    add(owner,{document_id:"doc-atmosphere",source_block_versions:[{block_id:`block-${owner}`,version:1}]},"ContextCompiled");
+    add(owner,{document_id:"doc-atmosphere",source_block_versions:[{block_id:`block-${owner}`,version:2}]},"ContextCompiled");
+  }
+  report=await insights();assert.equal(report.metrics.find((metric)=>metric.id==="activationRate").value,null,"completion alone never demonstrates human retention");assert.equal(report.metrics.find((metric)=>metric.id==="retainedOutcomes").value,null);assert.equal(report.metrics.find((metric)=>metric.id==="costPerRetainedOutcome").value,null);
+  for(const owner of ["dev-local-creative","real-creator-two","real-creator-three"]){
+    add(owner,{object_id:`historical-${owner}`},"ObjectSaved",old);
+    add(owner,{object_id:`retained-${owner}`},"ObjectSaved");
+  }
+  add("dev-local-creative",{object_id:"retained-dev-local-creative"},"ObjectExported");
+  report=await insights();assert.equal(report.metrics.find((metric)=>metric.id==="activationRate").value,"100%");assert.equal(report.metrics.find((metric)=>metric.id==="retainedOutcomes").value,3);assert.equal(report.metrics.find((metric)=>metric.id==="contextReuseRate").value,"100%");assert.equal(report.metrics.find((metric)=>metric.id==="costPerRetainedOutcome").value,"$1.00");assert.equal(report.evidence.find((item)=>item.id==="longitudinal30").status,"passed");assert.equal(report.evidence.find((item)=>item.id==="longitudinal60").status,"pending");assert.equal(report.evidence.find((item)=>item.id==="longitudinal90").status,"pending");
+  add("real-creator-three",{object_id:"retained-real-creator-three"},"ObjectDiscarded");report=await insights();assert.equal(report.metrics.find((metric)=>metric.id==="activeCreators").value,3);assert.equal(report.metrics.find((metric)=>metric.id==="retainedOutcomes").value,null,"discarding an outcome below its independent three-creator cohort suppresses the entire measure");
+});
+
+test("product insights exclude expired, phantom, forgotten, and low-friction personal attention",async()=>{
+  const {database,request}=await productionWorker();
+  const owners=["dev-local-creative","attention-creator-two","attention-creator-three"];
+  for(const userId of owners.slice(1)){const identity=await specialistIdentity(database,request,userId);assert.equal((await request("/api/events?after=0&content=0",{headers:identity})).status,200);}
+  const now=new Date().toISOString(),future=new Date(Date.now()+3_600_000).toISOString(),expired=new Date(Date.now()-60_000).toISOString();
+  const append=(owner,type,payload)=>{const stream=`creative:${owner}`,sequence=Number(database.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head)+1;database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").run(crypto.randomUUID(),stream,sequence,now,now,"user","actual-attention",crypto.randomUUID(),null,null,1,type,JSON.stringify(payload));};
+  const genuine={surface:"studio",context:"writing-direction",terminal_type:"ObjectSaved",terminal_ref:"object:real",active_ms:48_000,idle_ms:5_000,visible_refs:["object:real"],outcome_weight:.2,friction_score:.72,capture_version:"attention-v2",expires_at:future};
+  const phantom={surface:"studio",context:"studio-overview",terminal_type:"idle_timeout",terminal_ref:null,active_ms:30_000,idle_ms:30_000,visible_refs:[],outcome_weight:.013,friction_score:0,capture_version:"attention-v2",expires_at:future};
+  const insights=async()=>{const response=await request("/api/portfolio/product/insights");assert.equal(response.status,200);return(await response.json()).report;};
+  append(owners[0],"AttentionEpisodeObserved",{...genuine,expires_at:expired});append(owners[1],"AttentionEpisodeObserved",phantom);append(owners[2],"AttentionEpisodeObserved",genuine);append(owners[2],"AttentionSignalsForgotten",{});
+  let report=await insights();assert.equal(report.metrics.find((metric)=>metric.id==="activeCreators").value,null,"expired, phantom, and explicitly forgotten signals never create an identifiable cohort");assert.equal(report.evidence.find((item)=>item.id==="recentFriction").status,"pending");
+  for(const owner of owners)append(owner,"AttentionEpisodeObserved",{...genuine,active_ms:180_000,friction_score:.12});
+  report=await insights();assert.equal(report.metrics.find((metric)=>metric.id==="activeCreators").value,3);assert.equal(report.evidence.find((item)=>item.id==="recentFriction").status,"pending","a long successful episode is not product friction");
+  for(const owner of owners)append(owner,"AttentionEpisodeObserved",{...genuine,active_ms:48_000,friction_score:.72});
+  report=await insights();assert.equal(report.evidence.find((item)=>item.id==="recentFriction").status,"passed","three real short, unexpired, genuinely high-friction episodes produce only a safe aggregate");
+});
+
+test("anonymous route telemetry rejects forged audiences and reports genuine bounded engineering percentiles",async()=>{
+  const {database,environment,request,context}=await productionWorker();
+  const creator=await specialistIdentity(database,request,"performance-creator");
+  const body={audience:"creative",routeFamily:"projects",routeSurface:"projects",cacheClass:"miss",routeLatencyMs:120,lcpMs:200,inpMs:30,clsMicrounits:100};
+  const post=(headers,payload)=>request("/api/performance",{method:"POST",headers:{...headers,"content-type":"application/json"},body:JSON.stringify(payload)});
+  database.reset();const anonymous=await worker.fetch(new Request("https://forma.example/api/performance",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}),environment,context);assert.equal(anonymous.status,401);assert.equal(database.writeCount(),0);
+  database.sqlite.prepare("UPDATE users SET consent_version=NULL WHERE user_id=?").run("performance-creator");database.reset();assert.equal((await post(creator,body)).status,428);assert.equal(database.writeCount(),0,"route telemetry requires current participant consent");database.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id=?").run("pilot-2026-08-10","performance-creator");
+  database.reset();assert.equal((await post(creator,{...body,padding:"x".repeat(2100)})).status,413);assert.equal(database.writeCount(),0);
+  for(const payload of [
+    {...body,audience:"product",routeFamily:"product",routeSurface:"product-delivery"},
+    {...body,routeFamily:"share",routeSurface:"shared-document"},
+    {...body,routeFamily:"knowledge",routeSurface:"knowledge-patterns"},
+    {...body,audience:"product"},
+    {...body,userId:"private-account"},
+    {...body,routeLatencyMs:-1},
+  ]){database.reset();assert.ok([400,403].includes((await post(creator,payload)).status));assert.equal(database.writeCount(),0);}
+  const before=database.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count;
+  assert.equal((await post(creator,body)).status,202);
+  assert.equal((await post(creator,body)).status,202);assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM route_performance_samples").get().count,1,"replayed samples are ignored without storing a creator identifier");
+  let health=(await(await request("/api/portfolio/engineering/health")).json()).report;assert.equal(health.metrics.find((metric)=>metric.id==="routeLatencyP75").value,null);assert.equal(health.evidence.find((item)=>item.id==="fleetLatency").status,"pending");
+  assert.equal((await post(creator,{...body,routeLatencyMs:300,lcpMs:500,inpMs:90,clsMicrounits:300})).status,202);
+  assert.equal((await post(creator,{...body,routeLatencyMs:180,lcpMs:350,inpMs:60,clsMicrounits:200})).status,202);
+  database.reset();health=(await(await request("/api/portfolio/engineering/health")).json()).report;assert.equal(health.metrics.find((metric)=>metric.id==="routeLatencyP75").value,300);assert.equal(health.metrics.find((metric)=>metric.id==="largestPaintP75").value,500);assert.equal(health.metrics.find((metric)=>metric.id==="interactionP75").value,90);assert.equal(health.metrics.find((metric)=>metric.id==="layoutShiftP75").value,300);assert.equal(health.evidence.find((item)=>item.id==="fleetLatency").status,"passed");
+  const batch=database.calls.find((call)=>call.kind==="batch");assert.equal(batch.statements.length,3);assert.equal(batch.statements.some((statement)=>/FROM events/i.test(statement.sql)),false);
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count,before,"telemetry never appends creator history");
+  assert.deepEqual(database.sqlite.prepare("PRAGMA table_info(route_performance_samples)").all().map((column)=>column.name),["sample_id","audience","route_family","route_surface","cache_class","route_latency_ms","lcp_ms","inp_ms","cls_microunits","recorded_at"]);
+  assert.doesNotMatch(JSON.stringify(health),/performance-creator|"user_id"|"organization_id"|"project_id"|user_agent/);
+  for(const family of ["canvas-projects","canvas-library"]){
+    const sample={...body,audience:"canvas",routeFamily:family,routeSurface:family};
+    database.reset();assert.equal((await post(creator,sample)).status,403,"a creator without current Canvas approval cannot forge its telemetry");assert.equal(database.writeCount(),0);
+    assert.equal((await post({},sample)).status,202,"an entitled Canvas workspace records its own bounded route family");
+    assert.equal(database.sqlite.prepare("SELECT audience,route_surface FROM route_performance_samples WHERE route_family=?").get(family).route_surface,family);
+  }
+});
+
+test("overview and health projections never scan global events; event and synchronization projections do",async()=>{
+  const {database,request}=await productionWorker();
+  for(const path of ["/api/portfolio/operations/overview","/api/portfolio/engineering/health","/api/portfolio/engineering/jobs"]){database.reset();assert.equal((await request(path)).status,200,path);const batch=database.calls.find((call)=>call.kind==="batch");assert.ok(batch);assert.equal(batch.statements.length,path.endsWith("/health")?3:2,path);assert.equal(batch.statements.some((statement)=>/FROM events/i.test(statement.sql)),false,path);}
+  for(const path of ["/api/portfolio/engineering/events","/api/portfolio/engineering/sync"]){database.reset();assert.equal((await request(path)).status,200,path);const batch=database.calls.find((call)=>call.kind==="batch");assert.ok(batch);assert.equal(batch.statements.length,3,path);assert.equal(batch.statements.some((statement)=>/FROM events/i.test(statement.sql)),true,path);}
+});
+
+test("capability and delivery migrations safely replay after runtime initialization without altering the schema",async()=>{
+  const {database}=await productionWorker();const migrations=await Promise.all(["0011_swift_redwing.sql","0012_green_james_howlett.sql","0013_long_midnight.sql","0014_perfect_robbie_robertson.sql"].map((name)=>readFile(new URL(`../drizzle/${name}`,import.meta.url),"utf8")));
+  const snapshot=()=>database.sqlite.prepare("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index') ORDER BY type,name").all();const initial=snapshot();
+  for(let attempt=0;attempt<2;attempt+=1)for(const migration of migrations)database.sqlite.exec(migration);
+  assert.deepEqual(snapshot(),initial);assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table'").get().count,42);assert.ok(initial.some((item)=>item.name==="capability_grants"));assert.ok(initial.some((item)=>item.name==="delivery_decisions"));assert.ok(initial.some((item)=>item.name==="project_event_scopes"));assert.ok(initial.some((item)=>item.name==="organization_invitations"));assert.ok(initial.some((item)=>item.name==="route_performance_samples"));
+});
+
+test("creator provenance defaults to human-readable history and exposes Engineering handoffs only to exact event specialists",async()=>{
+  const sources=await Promise.all(["forma-workspace.ts","event-inspector.ts"].map((name)=>readFile(new URL(`../src/components/${name}`,import.meta.url),"utf8")));
+  for(const source of sources){assert.match(source,/capabilities\?\.includes\("engineering\.events\.read"\)===true/);assert.match(source,/\$\{engineering\?html`<details class="provenance-technical"/);assert.match(source,/workspace\.provenance\.description/);assert.match(source,/setRoute\("\/engineering\/events"\)/);assert.doesNotMatch(source,/Open in Operations|setRoute\("\/operations\/events"\)/);}
 });

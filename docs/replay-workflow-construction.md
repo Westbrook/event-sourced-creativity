@@ -18,7 +18,7 @@ An image or artifact completion means the result is **ready**, not that its goal
 
 A successful nothing-to-something journey formalizes one accepted set of authored decisions, references, locked studies, and exclusions. Every image, short story, scene, presentation, storyboard, and video treatment cites the same project, document, source context, context fingerprint, context revision, and exact source block-version receipt.
 
-Formats carry different titles, audiences, purposes, success criteria, and creator consumption receipts. Presentations retain genuinely distinct slide copy and an accessible PDF export. A previously accepted result can itself become an authored input; the derived result must cite that exact reviewed source block and a new context revision. Provider-backed mocks never claim a paid video render without its own separate approval.
+Formats carry different titles, audiences, purposes, success criteria, and creator consumption receipts. Presentations retain genuinely distinct slide copy, accessible semantic HTML, and a browser-rendered multilingual PDF with actual structural tags and Poppler-verified reading order. The older text-only helper is untagged; no output is represented as PDF/UA-certified or independently assistive-technology-validated. A previously accepted result can itself become an authored input; the derived result must cite that exact reviewed source block and a new context revision. Provider-backed mocks never claim a paid video render without its own separate approval.
 
 ## Reverse reconstruction is hypothetical
 

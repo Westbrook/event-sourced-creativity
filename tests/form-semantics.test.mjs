@@ -39,7 +39,9 @@ test("Canvas creation, source selection, membership, and view settings each own 
   assert.match(sources.canvas, /<form class="canvas-context-source-form" @submit=/);
   assert.match(sources.canvas, /<form class="modal-card canvas-compact-dialog canvas-combine-dialog" @submit=/);
   assert.match(sources.canvas, /<form class="modal-card canvas-compact-dialog canvas-document-dialog" @submit=/);
-  assert.match(sources.canvas, /<form class="canvas-member-form" @submit=/);
+  assert.doesNotMatch(sources.canvas, /<form class="canvas-member-form"/);
+  assert.match(sources.canvas, /href="\/settings\/workspaces"/);
+  assert.match(sources.canvas, /Canvas boards are available when a project administrator grants Canvas access\./);
   assert.match(sources.canvas, /<form class="canvas-view-preferences" @submit=/);
   assert.match(sources.canvas, /type="submit"[^>]*>Create board/);
   assert.match(sources.canvas, /type="submit"[^>]*>Add \$\{selected\.length\|\|""\} to canvas/);

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { renderVideoReel } from "../src/components/video-reel.ts";
 import { creatorProductionSummary } from "../src/model/production-summary.ts";
-import { APPLICATIONS, applicationAccessible, resolveServerRoute } from "../src/platform/applications.ts";
+import { APPLICATIONS, applicationAccessible, navigationItemAccessible, resolveServerRoute, routeRequiredCapabilities } from "../src/platform/applications.ts";
 import { CanvasOfflineQueue, canvasBatchBelongsToScope } from "../src/sync/canvas-offline-queue.ts";
 
 const scopeA = { ownerId: "creator-a", projectId: "project-a" };
@@ -58,15 +58,23 @@ function indexedDbFixture() {
   };
 }
 
-test("creator and internal application entitlements use one explicit audience contract", () => {
-  assert.deepEqual(APPLICATIONS.filter((application) => application.administratorOnly).map(({ id }) => id), ["operations", "laboratory"]);
+test("creator and internal application entitlements use explicit, independently scoped capabilities", () => {
+  assert.deepEqual(APPLICATIONS.map(({id})=>id),["creative","canvas","operations","product","knowledge","engineering"]);
+  assert.ok(APPLICATIONS.every((application)=>application.administratorOnly===false),"coarse administrator labels do not replace capability grants");
   assert.equal(applicationAccessible("creative", { role: "creator" }), true);
   assert.equal(applicationAccessible("canvas", { role: "creator", canvasAccess: false }), false);
   assert.equal(applicationAccessible("canvas", { role: "creator", canvasAccess: true }), true);
   assert.equal(applicationAccessible("operations", { role: "creator" }), false);
-  assert.equal(applicationAccessible("laboratory", { role: "creator" }), false);
+  for(const id of ["product","knowledge","engineering"])assert.equal(applicationAccessible(id,{role:"creator"}),false,`${id} is hidden without its own grant`);
   assert.equal(applicationAccessible("operations", { role: "creator", principalRole: "admin" }), true);
   assert.equal(applicationAccessible("operations", { role: null, principalRole: "admin" }), false);
+  assert.equal(applicationAccessible("product",{role:"creator",capabilities:["product.analytics.read"]}),true);
+  assert.equal(applicationAccessible("engineering",{role:"creator",capabilities:["product.analytics.read"]}),false);
+  const product=APPLICATIONS.find(({id})=>id==="product");
+  assert.deepEqual(product.navigation.filter((item)=>navigationItemAccessible(item,{role:"creator",capabilities:["product.analytics.read"]})).map(({id})=>id),["insights"]);
+  assert.deepEqual(routeRequiredCapabilities("/operations/analytics"),["product.analytics.read"]);
+  assert.deepEqual(routeRequiredCapabilities("/operations/events"),["engineering.events.read"]);
+  assert.deepEqual(routeRequiredCapabilities("/laboratory/design-system"),["design.catalog.read"]);
   assert.deepEqual(resolveServerRoute("/settings"), { application: "creative", entryPath: "/settings/", canonicalFamily: "/settings" });
 });
 
@@ -175,8 +183,36 @@ test("creator privacy, managed evidence, and Canvas reading order remain outside
   assert.match(artifacts, /combined MP4 is not available/);
   assert.doesNotMatch(canvas, /enoughToOrganize\?html`<button[^`]*>Reading order/);
   assert.doesNotMatch(canvas, /enoughToOrganize\?html`<button[^`]*>Accessible reading order/);
-  assert.match(worker, /administratorOnly\)\{[\s\S]*?requireUser\(request,env,"admin"/);
-  assert.match(worker, /directHtmlRoute&&applicationDefinition\(directHtmlRoute\.application\)\.administratorOnly/);
+  assert.match(worker, /requireCapability\(request,env,routeRequiredCapabilities\(path\)\)/);
+  assert.match(worker, /const denied=await authorizeApplication\(request,env,directHtmlRoute\.application,directHtmlPath\)/);
+  assert.match(shell, /<forma-ui-workspace-switcher/);
+  assert.match(shell, /<forma-ui-audience-navigation/);
+  assert.doesNotMatch(shell, /open-replay|\/operations#governance/);
   assert.match(worker, /\/protected-assets\//);
   assert.match(config, /protected-assets/);
+});
+
+test("shared downloads, invitation secrets, review links, and delayed mutations retain their original authorization",async()=>{
+  const [store,shell,outputs,artifacts,presentations,settings,shares]=await Promise.all([
+    "../src/state/store.ts","../src/components/forma-shell.ts","../src/components/output-card.ts",
+    "../src/components/document-artifacts.ts","../src/components/presentation-deck.ts",
+    "../src/components/forma-workspace-settings.ts","../worker/shares-api.ts",
+  ].map((file)=>readFile(new URL(file,import.meta.url),"utf8")));
+  assert.match(store,/captureAuthorizationScope\(\):CapturedAuthorizationScope\|null/);
+  assert.match(store,/authorizeProjectExport\(event:EventInput,expectedScope:CapturedAuthorizationScope\|null/);
+  assert.match(store,/if\(!session\|\|!expectedScope\|\|!this\.authorizationScopeActive\(expectedScope\)\)return false/);
+  assert.match(store,/const authorization=this\.#activeAuthorizationScope\(\),pending=this\.#appendPipeline\.then\(\(\)=>this\.#scopeStillActive\(authorization\)/);
+  assert.match(store,/#sessionRevision=0/);
+  for(const source of [outputs,artifacts,presentations]){
+    assert.match(source,/captureAuthorizationScope\(\)/);
+    assert.match(source,/authorizeProjectExport\(receipt,authorization\)/);
+    assert.match(source,/authorizationScopeActive\(authorization\)/);
+  }
+  assert.match(shell,/authorizeProjectExport\(receipt,authorization\)/);
+  assert.match(shell,/await copyTextToClipboard\(this\.#freshShareUrl\)/);
+  assert.match(shell,/this\.i18n\.t\("clipboard\.failure"/);
+  assert.match(settings,/organizationId!==organizationId\|\|this\.#loadRevision!==revision/);
+  assert.match(settings,/this\.store\.authorizationScopeActive\(candidate\.authorization\)/);
+  assert.match(shares,/NOT EXISTS\(SELECT 1 FROM organization_projects registered WHERE registered\.owner_user_id=shares\.owner_id AND registered\.project_id=scope\.project_id\)/);
+  assert.match(shares,/error:"project_share_context_required"/);
 });

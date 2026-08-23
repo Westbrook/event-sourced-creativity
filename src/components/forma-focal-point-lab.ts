@@ -1,11 +1,10 @@
 import { html, nothing } from "lit";
-import { FormaElement, icon } from "./forma-element";
-import type { CreativeBlock, CreativeOutput } from "../model/events";
-import { CURRENT_FOCAL_POINT_METHOD, normalizeImageFocalPoint, type ImageFocalPoint } from "../model/focal-point";
+import { FormaPresentationalElement } from "./presentational-element";
+import { icon } from "./icons";
+import type { CreativeOutput } from "../model/events";
+import { CURRENT_FOCAL_POINT_METHOD, focalPointCss, type ImageFocalPoint } from "../model/focal-point";
 import { diverseFocalPointCandidates } from "../model/focal-point-lab";
 import { resolveImageFocalComparison, type ImageFocalComparison } from "../model/image-focus";
-import "./area-navigation";
-import "./output-visual";
 import "../focal-point-lab.css";
 
 type CropShape = "wide" | "square" | "portrait";
@@ -76,18 +75,7 @@ function diagnosticOutput(id: string, mediaUrl: string, point: ImageFocalPoint, 
   };
 }
 
-function referenceOutput(block: CreativeBlock, point: ImageFocalPoint, index: number): CreativeOutput {
-  return {
-    ...diagnosticOutput(`focal-lab-reference-${block.id}`, String(block.properties.media_url), point, index, "uploaded reference"),
-    documentId: block.documentId,
-    mediaType: String(block.properties.media_type ?? "image/*"),
-    width: Number(block.properties.width ?? 1536),
-    height: Number(block.properties.height ?? 1024),
-    sourceEventId: block.sourceEvents.at(-1) ?? "focal-point-lab",
-  };
-}
-
-export class FormaFocalPointLab extends FormaElement {
+export class FormaFocalPointLab extends FormaPresentationalElement {
   #shape: CropShape = "wide";
   #density: SampleDensity = "expanded";
   #verdicts = new Map<string, Verdict>();
@@ -108,8 +96,7 @@ export class FormaFocalPointLab extends FormaElement {
   }
 
   #rawCandidates(): RawLabAsset[] {
-    const projection = this.store.projection.get();
-    const diagnostics = PROVIDED_DIAGNOSTICS.map((asset, index) => {
+    return PROVIDED_DIAGNOSTICS.map((asset, index) => {
       const comparison = this.#comparisons.get(asset.mediaUrl);
       const focalPoint = comparison?.focalPoint ?? null;
       return {
@@ -123,49 +110,6 @@ export class FormaFocalPointLab extends FormaElement {
         output: diagnosticOutput(asset.id, asset.mediaUrl, focalPoint ?? FALLBACK_POINT, index, "provided diagnostic"),
       };
     });
-    const seen = new Set<string>(PROVIDED_DIAGNOSTICS.map((asset) => asset.mediaUrl));
-    const outputs = [...projection.outputs, ...projection.libraryOutputs]
-      .filter((output) => output.mediaUrl && !seen.has(output.mediaUrl) && seen.add(output.mediaUrl))
-      .map((output) => {
-        const comparison = this.#comparisons.get(output.mediaUrl!);
-        const focalPoint = comparison?.focalPoint ?? normalizeImageFocalPoint(output.focalPoint) ?? null;
-        return {
-          id: output.id,
-          label: `${output.purpose === "ideate" ? "Draft" : "Full-quality"} generation · ${output.id}`,
-          source: "generation" as const,
-          mediaUrl: output.mediaUrl!,
-          width: output.width ?? 1536,
-          height: output.height ?? 1024,
-          focalPoint,
-          legacyFocalPoint: comparison?.legacyFocalPoint,
-          comparison,
-          output: focalPoint ? { ...output, focalPoint } : output,
-        };
-      });
-    const references = [...projection.blocks, ...projection.libraryBlocks]
-      .filter((block) => block.type === "reference" && block.properties.media_url)
-      .filter((block) => {
-        const mediaUrl = String(block.properties.media_url);
-        return !seen.has(mediaUrl) && Boolean(seen.add(mediaUrl));
-      })
-      .map((block, index) => {
-        const mediaUrl = String(block.properties.media_url);
-        const comparison = this.#comparisons.get(mediaUrl);
-        const focalPoint = comparison?.focalPoint ?? normalizeImageFocalPoint(block.properties.focal_point) ?? null;
-        return {
-          id: block.id,
-          label: `Uploaded reference · ${String(block.properties.label ?? block.handle)}`,
-          source: "reference" as const,
-          mediaUrl,
-          width: Number(block.properties.width ?? 1536),
-          height: Number(block.properties.height ?? 1024),
-          focalPoint,
-          legacyFocalPoint: comparison?.legacyFocalPoint,
-          comparison,
-          output: referenceOutput(block, focalPoint ?? FALLBACK_POINT, index),
-        };
-      });
-    return [...diagnostics, ...outputs, ...references];
   }
 
   #assets(): LabAsset[] {
@@ -183,11 +127,10 @@ export class FormaFocalPointLab extends FormaElement {
     const sampleDuration = current ? comparison?.sampleDurationMs : comparison?.legacySampleDurationMs;
     const calculationDuration = current ? comparison?.calculationDurationMs : comparison?.legacyCalculationDurationMs;
     const providerCost = current ? comparison?.providerCostUsd : comparison?.legacyProviderCostUsd;
-    const output = { ...asset.output, focalPoint: point };
     return html`<article class=${`focal-lab-result ${current ? "recommended" : "legacy"}`}>
       <header><div><span>${current ? "Current production" : "Baseline"}</span><h3>${current ? "Attention regions" : "Saliency centroid"}</h3></div>${current ? html`<em>Recommended</em>` : nothing}</header>
       <figure class=${`focal-lab-crop focal-lab-crop--${this.#shape}`}>
-        <div class="focal-lab-crop-stage"><forma-output-visual .output=${output}></forma-output-visual></div>
+        <div class="focal-lab-crop-stage"><img class="generated-output-image" src=${asset.mediaUrl} style=${focalPointCss(point)} alt=${`${current?"Current":"Baseline"} focal crop for ${asset.label}`}></div>
         <figcaption><b>x ${asPercent(point.x)} · y ${asPercent(point.y)}</b><span>${point.method}</span></figcaption>
       </figure>
       <dl><div><dt>This browser run</dt><dd>${asDuration(totalDuration)}</dd></div><div><dt>Sampling</dt><dd>${asDuration(sampleDuration)}</dd></div><div><dt>Calculation</dt><dd>${asDuration(calculationDuration)}</dd></div><div><dt>Provider cost</dt><dd>${asCost(providerCost)}</dd></div><div><dt>Sample</dt><dd>${point.sampleWidth} × ${point.sampleHeight}</dd></div><div><dt>Confidence</dt><dd>${Math.round(point.confidence * 100)}%</dd></div></dl>
@@ -239,8 +182,7 @@ export class FormaFocalPointLab extends FormaElement {
     const unresolved = rawCandidates.filter((candidate) => !candidate.focalPoint).length;
     const availableProject = rawCandidates.filter((candidate) => candidate.source !== "provided diagnostic").length;
     return html`<section class="focal-point-lab page-pad">
-      <forma-area-navigation area="laboratory" active="focal-points"></forma-area-navigation>
-      <header class="page-header page-header--hero"><div class="page-header-copy"><span class="eyebrow">Laboratory / Image presentation</span><h1>Focal-point laboratory</h1><p>Compare two local focal-point calculations by their crop, execution time, and provider cost. No choice on this page changes the document or its durable stream.</p></div><div class="page-header-actions"><a class="button secondary" href="/operations" @click=${(event:MouseEvent) => { event.preventDefault(); this.store.setRoute("/operations"); }}>Open operations ${icon("arrow")}</a></div></header>
+      <header class="page-header page-header--hero"><div class="page-header-copy"><span class="eyebrow">${this.i18n.t("shell.knowledge","Design & Knowledge")} / ${this.i18n.t("shell.navigation.patterns","Patterns")}</span><h1>${this.i18n.t("knowledge.focal.heading","Focal-point comparison")}</h1><p>${this.i18n.t("knowledge.focal.description","Compare local focal-point calculations using approved fictional images only. Creator projects, generated images, and private references are never loaded.")}</p></div><div class="page-header-actions"><a class="button secondary" href="/knowledge/patterns">${this.i18n.t("knowledge.focal.return","Return to patterns")} ${icon("arrow")}</a></div></header>
       <section class="focal-lab-controls" aria-label="Focal-point review controls"><div class="focal-lab-filter-groups"><div class="focal-lab-filter"><span>Crop shape</span><div role="group" aria-label="Crop shape">${(["wide", "square", "portrait"] as const).map((shape) => html`<button aria-pressed=${this.#shape === shape} @click=${() => { this.#shape = shape; this.requestUpdate(); }}>${shape}</button>`)}</div></div><div class="focal-lab-filter"><span>Image set</span><div role="group" aria-label="Image set">${(["representative", "expanded", "all"] as const).map((density) => html`<button aria-pressed=${this.#density === density} @click=${() => { this.#density = density; this.requestUpdate(); }}>${density === "representative" ? "8" : density === "expanded" ? "16" : "All"}</button>`)}</div></div></div><dl><div><dt>Visible</dt><dd>${assets.length}/${rawCandidates.length}</dd></div><div><dt>Reviewed</dt><dd>${visibleVerdicts.length}</dd></div><div><dt>Attention</dt><dd>${attention}</dd></div><div><dt>Saliency</dt><dd>${saliency}</dd></div><div><dt>Neither</dt><dd>${neither}</dd></div></dl></section>
       <section class="focal-lab-method" aria-labelledby="focal-method-title"><header><span>Implementation tradeoffs</span><h2 id="focal-method-title">Two calculations, one crop contract</h2><p>Both approaches run in the browser and send no pixels to a provider. Times shown with each image are observed runs that include loading, decoding, sampling, and calculation; they are device- and cache-dependent.</p></header><div class="focal-lab-implementations"><article><span>Current production</span><h3>Attention regions</h3><p>Preserves aspect ratio, scores local visual evidence, compares coherent regions at several scales, and anchors the crop at the winning region’s weighted center.</p><dl><div><dt>Provider cost</dt><dd>$0.000000</dd></div><div><dt>Privacy</dt><dd>Pixels stay local</dd></div></dl></article><article><span>Baseline</span><h3>Saliency centroid</h3><p>Uses the original square sample and averages thresholded high-contrast pixels. It is simpler and often faster, but can drift toward canopy, sky, or image edges.</p><dl><div><dt>Provider cost</dt><dd>$0.000000</dd></div><div><dt>Privacy</dt><dd>Pixels stay local</dd></div></dl></article></div></section>
       <aside class="focal-lab-reading-note"><b>How to read each comparison</b><p>The source overlays both calculations: the orange rectangle and solid marker represent attention regions; the hollow marker represents the saliency centroid. The two adjacent previews apply those points to the same crop shape, making output quality and computational tradeoffs directly comparable.</p></aside>

@@ -60,14 +60,26 @@ test("document sharing freezes one authorized document and its exact owner-scope
     content_ref: "private-snake",
     contentRef: "private-camel",
     promptRef: "private-prompt",
-    nested: { input_ref: "private-input",media_url:"/api/media/owner-1%2Fgenerated%2Fscene-2.mp4",foreign_media:"/api/media/other-user%2Fgenerated%2Fprivate.mp4" },
+    storyboard_frame_prompt:"PRIVATE STORYBOARD PROVIDER PROMPT",
+    framePrompt:"PRIVATE FRAME PROMPT",
+    compiledPrompt:"PRIVATE COMPILED PROMPT",
+    plannerModelId:"PRIVATE_MODEL",
+    adapterVersion:"PRIVATE_ADAPTER_VERSION",
+    authoredText:"This authored paragraph may safely discuss the word prompt.",
+    externalImage: {mediaUrl:"https://tracker.example/pixel",image_url:"//tracker.example/pixel",posterUrl:"data:image/svg+xml,<svg/>",note:"https://reference.example/research"},
+    nested: { input_ref: "private-input",frame_prompt:"PRIVATE NESTED PROMPT",providerRequestId:"PRIVATE_PROVIDER_REQUEST",media_url:"/api/media/owner-1%2Fgenerated%2Fscene-2.mp4",foreign_media:"/api/media/other-user%2Fgenerated%2Fprivate.mp4" },
   }, scope, "share-token");
   assert.equal(sanitized.mediaUrl, "/api/shared/share-token/media/owner-1%2Fgenerated%2Fimage.png");
   assert.equal(sanitized.privateMedia, null);
   assert.equal(sanitized.nested.media_url,"/api/shared/share-token/media/owner-1%2Fgenerated%2Fscene-2.mp4");assert.equal(sanitized.nested.foreign_media,null);
+  assert.deepEqual(sanitized.externalImage,{mediaUrl:null,image_url:null,posterUrl:null,note:"https://reference.example/research"});
   assert.equal("content_ref" in sanitized, false);
   assert.equal("contentRef" in sanitized, false);
   assert.equal("promptRef" in sanitized, false);
+  for(const key of ["storyboard_frame_prompt","framePrompt","compiledPrompt","plannerModelId","adapterVersion"])assert.equal(key in sanitized,false,key);
+  for(const key of ["frame_prompt","providerRequestId"])assert.equal(key in sanitized.nested,false,key);
+  assert.equal(sanitized.authoredText,"This authored paragraph may safely discuss the word prompt.");
+  assert.doesNotMatch(JSON.stringify(sanitized),/PRIVATE STORYBOARD|PRIVATE FRAME|PRIVATE COMPILED|PRIVATE_MODEL|PRIVATE_ADAPTER|PRIVATE NESTED|PRIVATE_PROVIDER/);
   assert.equal("input_ref" in sanitized.nested,false);
 });
 
@@ -184,8 +196,8 @@ test("unaccepted assistant proposals explain the actual creative change without 
   assert.doesNotMatch(changes.join(" "),/secret-block-id|BlockCreated|BlockPropertyEdited/);
 });
 
-test("the standalone atomic-design laboratory and artifact deep links remain server-addressable", async () => {
-  assert.equal(resolveServerRoute("/laboratory/design-system")?.application, "laboratory");
+test("the standalone Design & Knowledge system and artifact deep links remain server-addressable", async () => {
+  assert.equal(resolveServerRoute("/laboratory/design-system")?.application, "knowledge");
   assert.equal(resolveServerRoute("/library/artifact/story-1/creative-study")?.application, "creative");
   const [primitives, presentational, presentation, lab, shell] = await Promise.all([
     readFile(new URL("../src/components/design-primitives.ts", import.meta.url), "utf8"),
@@ -231,9 +243,13 @@ test("public document shares expose every authorized outcome without touching a 
   assert.match(shared, /projection\.artifacts/);
   assert.match(shared, /documentArtifactDefinition/);
   assert.match(shared, /forma-presentation-slide/);
-  assert.match(shared, /\.readOnly=\$\{true\}/);
+  assert.match(shared,/shared-image-dialog/);
+  assert.match(shared,/const approvedFan=result\.outputs\.flatMap/);
+  assert.match(shared,/\/api\/shared\/\$\{encodeURIComponent\(this\.token\)\}\/media\//);
+  assert.match(shared,/ensureModalDialog/);
+  assert.doesNotMatch(shared,/from "\.\/forma-element"|state\/store|this\.store/);
   assert.doesNotMatch(shared, /event #\$\{|outputs\.slice\(0, 4\)/);
-  assert.match(visual, /if\(this\.readOnly\)return/);
+  assert.match(visual, /if\(this\.readOnly\|\|this\.store\.session\.get\(\)\?\.projectContext\)return/);
   assert.match(visual, /this\.readOnly\?\[output,\.\.\.this\.fanOutputs\]/);
 });
 
@@ -258,8 +274,11 @@ test("creation, sharing, project editing, and image inspection remain complete a
   ]);
   assert.match(shell,/run: \(\) => this\.#openContextComposer\(\)/);
   assert.doesNotMatch(shell,/A new creative direction|Export full graph|Blocks, weights, constraints, and compiler snapshot/);
-  assert.match(shell,/canAdminister\?\[/);
-  assert.match(shell,/applicationId!=="operations"\|\|item\.id==="system"\|\|canAdminister/);
+  assert.match(shell,/APPLICATIONS\.filter\(\(candidate\)=>applicationAccessible\(candidate\.id,access\)\)/);
+  assert.doesNotMatch(shell,/\(!shared\|\|candidate\.id!=="canvas"\)/,"an explicitly authorized collaborator must retain access to the shared Canvas application");
+  assert.match(shell,/navigationItemAccessible\(item,/);
+  assert.match(shell,/<forma-ui-workspace-switcher/);
+  assert.match(shell,/<forma-ui-audience-navigation/);
   assert.match(shell,/Latest result \+ plan/);
   assert.match(shell,/result:latestResult\?\?null/);
   assert.match(shell,/text, image, or video providers/);

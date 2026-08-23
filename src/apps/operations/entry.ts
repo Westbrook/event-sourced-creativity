@@ -1,18 +1,17 @@
 import { html } from "lit";
-import { FormaElement } from "../../components/forma-element";
+import { FormaPresentationalElement } from "../../components/presentational-element";
 import { routePathname } from "../../model/routes";
 
-const isEventsRoute=(path:string)=>path.startsWith("/operations/events")||path.startsWith("/admin/events");
-
 export function loadOperationsRoute(path: string): Promise<unknown> {
-  if(routePathname(path)==="/operations/analytics")return import("../../components/forma-analytics");
-  if(routePathname(path)==="/operations/canvas")return import("./canvas-governance");
-  if(["/operations/events/sync","/admin/events/sync"].includes(routePathname(path)))return import("./canvas-sync-inspector");
-  return isEventsRoute(routePathname(path))?import("../../components/forma-admin-events"):import("../../components/forma-system");
+  const route=routePathname(path);
+  if(route==="/operations/access")return import("./access-management");
+  if(route==="/operations/providers")return import("./providers");
+  if(route==="/operations/canvas")return import("./canvas-governance");
+  return import("./overview");
 }
 
-export class FormaOperationsApplication extends FormaElement {
-  override render(){const path=routePathname(this.store.route.get());if(path==="/operations/analytics")return html`<forma-analytics></forma-analytics>`;if(path==="/operations/canvas")return html`<forma-canvas-governance></forma-canvas-governance>`;if(["/operations/events/sync","/admin/events/sync"].includes(path))return html`<forma-canvas-sync-inspector></forma-canvas-sync-inspector>`;return isEventsRoute(path)?html`<forma-admin-events></forma-admin-events>`:html`<forma-system></forma-system>`;}
+export class FormaOperationsApplication extends FormaPresentationalElement {
+  override render(){const path=routePathname(location.pathname);if(path==="/operations/access")return html`<forma-access-management></forma-access-management>`;if(path==="/operations/providers")return html`<forma-operations-providers></forma-operations-providers>`;if(path==="/operations/canvas")return html`<forma-canvas-governance></forma-canvas-governance>`;return html`<forma-operations-overview></forma-operations-overview>`;}
 }
 
 if(!customElements.get("forma-operations-application"))customElements.define("forma-operations-application",FormaOperationsApplication);

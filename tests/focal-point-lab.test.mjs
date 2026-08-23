@@ -18,14 +18,14 @@ test("selects a focal-point review set with spatial diversity", () => {
 });
 
 test("focal-point lab compares calculation output, runtime, and provider cost", async () => {
-  const [component, css, loader, shell, entries, imageFocus, laboratoryEntry, applications] = await Promise.all([
+  const [component, css, loader, shell, entries, imageFocus, knowledgeEntry, applications] = await Promise.all([
     readFile(new URL("../src/components/forma-focal-point-lab.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/focal-point-lab.css", import.meta.url), "utf8"),
     readFile(new URL("../src/route-loader.ts", import.meta.url), "utf8"),
-    readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/forma-platform-shell.ts", import.meta.url), "utf8"),
     readFile(new URL("../build/sites-vite-plugin.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/model/image-focus.ts", import.meta.url), "utf8"),
-    readFile(new URL("../src/apps/laboratory/entry.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/apps/knowledge/entry.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/platform/applications.ts", import.meta.url), "utf8"),
   ]);
   assert.match(component, /Attention regions/);
@@ -43,9 +43,12 @@ test("focal-point lab compares calculation output, runtime, and provider cost", 
   assert.match(component, /children-in-park-03\.png/);
   assert.match(css, /object-position:\s*var\(--focal-x, 50%\) var\(--focal-y, 50%\)/);
   assert.doesNotMatch(css, /calc\(100% - var\(--focal-x/);
-  assert.match(loader, /apps\/laboratory\/entry/);
-  assert.match(shell, /forma-laboratory-application/);
-  assert.match(laboratoryEntry, /forma-focal-point-lab/);
+  assert.match(loader, /apps\/knowledge\/entry/);
+  assert.match(shell, /forma-knowledge-application/);
+  assert.match(knowledgeEntry, /forma-focal-point-lab/);
+  assert.match(knowledgeEntry, /design\.catalog\.read/);
+  assert.match(knowledgeEntry, /\/knowledge\/focal-points/);
+  assert.doesNotMatch(component,/this\.store|state\/store/);
   assert.match(applications, /\/laboratory\/focal-points/);
   assert.match(entries, /SITE_ROUTE_ENTRIES/);
   assert.match(imageFocus, /sampleImageUrlLegacySquare/);

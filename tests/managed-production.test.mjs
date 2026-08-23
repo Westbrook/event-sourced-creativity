@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { generationBudgetGate, generationBudgetPreferenceKey } from "../src/model/generation-budget.ts";
@@ -295,6 +296,8 @@ test("monthly dollar gates use strict 60/80 thresholds, every-generation warning
   assert.equal(constrainedOrg.level, "every-generation");
   assert.notEqual(generationBudgetPreferenceKey("person-one", "2026-08", "suppressed"), generationBudgetPreferenceKey("person-one", "2026-09", "suppressed"));
   assert.notEqual(generationBudgetPreferenceKey("person-one", "2026-08", "suppressed"), generationBudgetPreferenceKey("person-two", "2026-08", "suppressed"));
+  assert.notEqual(generationBudgetPreferenceKey("person-one","2026-08","suppressed","organization-a"),generationBudgetPreferenceKey("person-one","2026-08","suppressed","organization-b"));
+  assert.equal(generationBudgetPreferenceKey("person-one","2026-08","suppressed",null),generationBudgetPreferenceKey("person-one","2026-08","suppressed"));
 });
 
 test("failed managed scene productions remain visibly recoverable without exposing private provider receipts", () => {
@@ -445,7 +448,8 @@ test("managed storyboards checkpoint exact completed-frame costs and scoped refe
     get: async (key) => { const value = media.get(key); return value ? { body: value.bytes, customMetadata: value.options.customMetadata, writeHttpMetadata: (headers) => headers.set("content-type", value.options.httpMetadata.contentType) } : null; },
   } };
   try {
-    await assert.rejects(renderManagedStoryboardProduction(env, "owner", "board-one", draft, production, { snapshot, references, checkpoint: (value) => checkpoints.push(structuredClone(value)) }));
+    const providerActorId="paying-collaborator",expectedActor=`forma_${createHash("sha256").update(providerActorId).digest("hex").slice(0,32)}`;
+    await assert.rejects(renderManagedStoryboardProduction(env, "owner", "board-one", draft, production, { providerActorId,snapshot, references, checkpoint: (value) => checkpoints.push(structuredClone(value)) }));
     const latest = checkpoints.at(-1);
     const completed = Object.values(latest.productionFrameReceipts);
     assert.equal(completed.length, 2, "each successfully paid frame must survive a later failed frame");
@@ -454,6 +458,8 @@ test("managed storyboards checkpoint exact completed-frame costs and scoped refe
     assert.ok(completed.some((receipt) => receipt.referenceInputs.some((reference) => reference.role === "inherited-production-continuity")));
     assert.equal(latest.renderedItems.length, 2);
     assert.equal(requests.length, 3);
+    assert.ok(requests.every(({body})=>body instanceof FormData&&body.get("user")===expectedActor),"managed image providers identify the paying collaborator, not the storage owner");
+    assert.ok([...media.values()].every(({options})=>options.customMetadata.ownerId==="owner"),"generated shared media remains owned by the project owner");
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -500,7 +506,8 @@ test("managed film rendering submits the chosen anchor first and assembles only 
   };
   try {
     const env = { FAL_KEY: "test-only", FORMA_VIDEO_PROVIDER: "fal", MEDIA: { put: async (key, _body, options) => stored.push({ key, options }) } };
-    const result = await renderManagedVideoProduction(env, "owner", "film-one", draft, production, { snapshot, references, videoSize: "1280x720", audioMode: "silent" });
+    const providerActorId="paying-collaborator",expectedActor=`forma_${createHash("sha256").update(providerActorId).digest("hex").slice(0,32)}`;
+    const result = await renderManagedVideoProduction(env, "owner", "film-one", draft, production, { providerActorId,snapshot, references, videoSize: "1280x720", audioMode: "silent" });
     assert.equal(requests.length, 3);
     assert.match(requests[0].prompt, /hidden compass reveals the observatory/i);
     assert.deepEqual(result.receipts.map((scene) => scene.narrativeOrder), [1, 2, 3]);
@@ -512,11 +519,14 @@ test("managed film rendering submits the chosen anchor first and assembles only 
     assert.equal(stored.length, 3);
     assert.ok(result.receipts.every((scene) => scene.providerJobId));
     assert.ok(requests.every((request) => request.duration <= 15));
+    assert.ok(requests.every((request)=>request.end_user_id===expectedActor),"managed video identifies the paying collaborator at the provider");
+    assert.ok(stored.every(({options})=>options.customMetadata.ownerId==="owner"),"collaborator-paid scene media remains owned by the project");
 
     const anchor = result.receipts.find((scene) => scene.sceneId === production.anchorSceneId);
     const resumedReceipts = Object.fromEntries(result.receipts.map((scene) => [scene.sceneId, scene.sceneId === anchor.sceneId ? { ...scene, status: "submitted", mediaUrl: undefined, mediaType: undefined } : scene]));
     const resumed = await renderManagedVideoProduction(env, "owner", "film-one", draft, production, {
       snapshot,
+      providerActorId,
       references,
       videoSize: "1280x720",
       audioMode: "silent",

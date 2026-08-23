@@ -1,11 +1,17 @@
 import { appendAuditEvent, ensureSchema, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
 import { MICRO_USD_PER_USD } from "./replay-cost.ts";
+import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./document-job-reservations.ts";
 import { readCanvasGovernance } from "./canvas-governance-policy.ts";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
+import { PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow, principalHasCapability, type PrincipalAccess } from "./access-policy.ts";
+import type { FormaCapability } from "../src/platform/capabilities.ts";
+import { APPLICATIONS, applicationDefinition, applicationIdFromRoute, authorizedApplicationHome, routeRequiredCapabilities, type ApplicationId } from "../src/platform/applications.ts";
+import { readProjectRequestContext } from "./project-access.ts";
 
 export const POLICY_VERSION = "pilot-2026-08-10";
 export type PilotRole = "admin" | "creator" | "agent" | "viewer";
-export type PilotUser = { userId: string; email: string; displayName: string; role: PilotRole; consentVersion: string | null; consentedAt: string | null; streamId: string; fictional?: boolean; billingUserId?: string };
+export type ProjectExecutionScope={organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string;actorUserId:string};
+export type PilotUser = { userId: string; email: string; displayName: string; role: PilotRole; consentVersion: string | null; consentedAt: string | null; streamId: string; access: PrincipalAccess; fictional?: boolean; billingUserId?: string;projectExecution?:ProjectExecutionScope };
 export type PilotImpersonation = { impersonationId:string; personaId:string; replaySessionId:string; actor:PilotUser; fictionalUser:PilotUser; startedAt:string; expiresAt:string };
 
 const roleRank: Record<PilotRole, number> = { viewer: 0, agent: 1, creator: 2, admin: 3 };
@@ -38,7 +44,7 @@ async function activeImpersonation(request:Request,env:WorkerEnv,actor:PilotUser
   const id=decodedCookieValue(request,"forma_impersonation");if(!id)return null;const row=await env.DB.prepare(`SELECT impersonation.*,persona.display_name,fictional.email,fictional.role AS fictional_role,fictional.consent_version,fictional.consented_at
     FROM impersonation_sessions impersonation JOIN replay_personas persona ON persona.persona_id=impersonation.persona_id JOIN users fictional ON fictional.user_id=impersonation.fictional_user_id
     WHERE impersonation.impersonation_id=? AND impersonation.actor_user_id=? AND impersonation.status='active' AND impersonation.expires_at>? AND persona.status='ready'`).bind(id,actor.userId,new Date().toISOString()).first<Record<string,unknown>>();
-  if(!row)return null;const fictionalUser:PilotUser={userId:String(row.fictional_user_id),email:String(row.email),displayName:String(row.display_name),role:String(row.fictional_role??"creator") as PilotRole,consentVersion:row.consent_version?String(row.consent_version):null,consentedAt:row.consented_at?String(row.consented_at):null,streamId:`creative:${String(row.fictional_user_id)}`,fictional:true,billingUserId:actor.userId};
+  if(!row)return null;const fictionalUser:PilotUser={userId:String(row.fictional_user_id),email:String(row.email),displayName:String(row.display_name),role:String(row.fictional_role??"creator") as PilotRole,consentVersion:row.consent_version?String(row.consent_version):null,consentedAt:row.consented_at?String(row.consented_at):null,streamId:`creative:${String(row.fictional_user_id)}`,access:await principalAccessFromRow({updated_at:row.updated_at??""},"creator"),fictional:true,billingUserId:actor.userId};
   return{impersonationId:String(row.impersonation_id),personaId:String(row.persona_id),replaySessionId:String(row.replay_session_id),actor,fictionalUser,startedAt:String(row.started_at),expiresAt:String(row.expires_at)};
 }
 
@@ -46,7 +52,7 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
   await ensureSchema(env);
   const identity = identityFromRequest(request);
   if (!identity) return { response: Response.json({ error: "authentication_required" }, { status: 401 }), user: null };
-  let row = await env.DB.prepare("SELECT * FROM users WHERE user_id=?").bind(identity.userId).first<Record<string, unknown>>();
+  let row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
   if (!row) {
     const now = new Date().toISOString();
     const count = await env.DB.prepare("SELECT COUNT(*) AS count FROM users").first<{ count: number }>();
@@ -55,16 +61,42 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
     const localBootstrap=(hostname==="localhost"||hostname==="127.0.0.1")&&adminEmails.size===0&&Number(count?.count??0)===0;
     const initialRole: PilotRole = adminEmails.has(identity.email)||localBootstrap ? "admin" : "creator";
     await env.DB.prepare("INSERT OR IGNORE INTO users (user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,?,?)").bind(identity.userId, identity.email, identity.displayName, initialRole, now, now).run();
-    row = await env.DB.prepare("SELECT * FROM users WHERE user_id=?").bind(identity.userId).first<Record<string, unknown>>();
+    row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
   } else if (row.email !== identity.email || row.display_name !== identity.displayName) {
     await env.DB.prepare("UPDATE users SET email=?, display_name=?, updated_at=? WHERE user_id=?").bind(identity.email, identity.displayName, new Date().toISOString(), identity.userId).run();
     row = { ...row, email: identity.email, display_name: identity.displayName };
   }
-  const principal: PilotUser = { userId: String(row?.user_id), email: String(row?.email), displayName: String(row?.display_name), role: String(row?.role) as PilotRole, consentVersion: row?.consent_version ? String(row.consent_version) : null, consentedAt: row?.consented_at ? String(row.consented_at) : null, streamId: `creative:${identity.userId}` };
+  const role=String(row?.role) as PilotRole;
+  if(!Object.hasOwn(roleRank,role)||!Object.hasOwn(roleRank,minimum))return{response:Response.json({error:"invalid_account_role"},{status:403}),user:null,principal:null,impersonation:null};
+  const principal: PilotUser = { userId: String(row?.user_id), email: String(row?.email), displayName: String(row?.display_name), role, consentVersion: row?.consent_version ? String(row.consent_version) : null, consentedAt: row?.consented_at ? String(row.consented_at) : null, streamId: `creative:${identity.userId}`, access: await principalAccessFromRow(row??{},role) };
   if (roleRank[principal.role] < roleRank[minimum]) return { response: Response.json({ error: "insufficient_role", required: minimum, role: principal.role }, { status: 403 }), user: null, principal, impersonation:null };
-  const impersonation=options.account==="principal"?null:await activeImpersonation(request,env,principal);const user=impersonation?.fictionalUser??principal;
+  const principalOnly=options.account==="principal";
+  const checkPrincipalImpersonation=principalOnly&&new URL(request.url).pathname!=="/api/impersonation"&&Boolean(decodedCookieValue(request,"forma_impersonation"));
+  const impersonation=principalOnly&&!checkPrincipalImpersonation?null:await activeImpersonation(request,env,principal);
+  if(principalOnly&&impersonation)return{response:Response.json({error:"return_to_principal_before_internal_access"},{status:409}),user:null,principal,impersonation};
+  const user=impersonation?.fictionalUser??principal;
   if(impersonation&&!impersonationMutationExempt(request)&&request.headers.get("x-forma-impersonation-confirmation")!=="I understand, continue")return{response:Response.json({error:"impersonation_confirmation_required",message:`You are acting as ${user.displayName}. Confirm this individual interaction before it changes the fictional account.`},{status:428}),user:null,principal,impersonation};
   return { response: null, user, principal, impersonation };
+}
+
+export function hasCapability(user: PilotUser, capability: FormaCapability, scope?: { organizationId?: string | null; projectAccessId?: string | null }) {
+  return principalHasCapability(user.access, capability, scope);
+}
+
+/** Evaluate the real principal and current accepted membership before any protected response. */
+export async function requireCapability(
+  request: Request,
+  env: WorkerEnv,
+  required: FormaCapability | readonly FormaCapability[],
+  options: { organizationId?: string | null; projectAccessId?: string | null } = {},
+) {
+  const authorization = await requireUser(request, env, "viewer", { account: "principal" });
+  if (authorization.response || !authorization.user) return authorization;
+  const capabilities = Array.isArray(required) ? required : [required];
+  if (!capabilities.some((capability) => hasCapability(authorization.user!, capability, options))) {
+    return { ...authorization, user: null, response: Response.json({ error: "access_denied" }, { status: 403 }) };
+  }
+  return authorization;
 }
 
 export function requireConsent(user: PilotUser) {
@@ -78,15 +110,33 @@ const budgetLimits = (env: WorkerEnv) => {
 };
 const BUDGET_RECONCILIATION_AGE_MS = 5 * 60_000;
 type BudgetReservationRow = { reservation_id: string; owner_id: string; stream_id: string; correlation_id: string; operation: string; period: string; reserved_tokens: number; used_tokens: number; status: string; settlement_reason: string | null; created_at: string; settled_at: string | null; updated_at: string };
-type BudgetReservationContext = { streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string };
+export type ProjectBudgetScope={organizationId:string;projectAccessId:string;actorUserId:string};
+type BudgetReservationContext = { streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string;reservationId?:string;projectScope?:ProjectBudgetScope };
 
-async function ensureBudgetRow(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limit: number) {
+const activeProjectBillingSql=`EXISTS(SELECT 1 FROM organization_projects project
+  JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
+  JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=? AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
+  JOIN organization_memberships owner_member ON owner_member.organization_id=project.organization_id AND owner_member.user_id=project.owner_user_id
+    AND owner_member.status='active' AND owner_member.accepted_at IS NOT NULL AND owner_member.revoked_at IS NULL
+  LEFT JOIN project_memberships project_member ON project_member.project_access_id=project.project_access_id AND project_member.organization_id=project.organization_id AND project_member.project_id=project.project_id
+    AND project_member.user_id=? AND project_member.status='active' AND project_member.revoked_at IS NULL
+  WHERE project.project_access_id=? AND project.organization_id=? AND project.status='active' AND (project.owner_user_id=? OR project_member.role IN('owner','editor')))`;
+
+async function projectBudgetPolicy(env:WorkerEnv,userId:string,scope:ProjectBudgetScope){
+  if(!scope.organizationId||!scope.projectAccessId||scope.actorUserId!==userId)return null;
+  return env.DB.prepare(`SELECT token_limit,microusd_limit FROM budget_scope_policies
+    WHERE scope='workspace' AND scope_id=? AND organization_id=? AND ${activeProjectBillingSql}`)
+    .bind(scope.organizationId,scope.organizationId,userId,userId,scope.projectAccessId,scope.organizationId,userId)
+    .first<{token_limit:number;microusd_limit:number}>();
+}
+
+async function ensureBudgetRow(env: WorkerEnv, scope: "user" | "workspace", scopeId: string, limit: number,reservationPeriod=period()) {
   const now = new Date().toISOString();
   await env.DB.prepare(`INSERT INTO budget_counters (scope,scope_id,period,used_tokens,reserved_tokens,hard_limit_tokens,updated_at)
     VALUES (?,?,?,0,0,?,?) ON CONFLICT(scope,scope_id,period) DO UPDATE
     SET hard_limit_tokens=excluded.hard_limit_tokens,updated_at=excluded.updated_at
     WHERE budget_counters.hard_limit_tokens IS NOT excluded.hard_limit_tokens`)
-    .bind(scope, scopeId, period(), limit, now).run();
+    .bind(scope, scopeId, reservationPeriod, limit, now).run();
 }
 
 export async function readBudgets(env: WorkerEnv, userId: string) {
@@ -115,18 +165,41 @@ export async function readBudgets(env: WorkerEnv, userId: string) {
 
 export async function reserveBudget(env: WorkerEnv, userId: string, tokens: number, context: BudgetReservationContext = {}) {
   const amount = Math.max(0, Math.floor(tokens)); const limits = budgetLimits(env); const reservationPeriod = context.period ?? period();
-  await ensureBudgetRow(env, "user", userId, limits.user); await ensureBudgetRow(env, "workspace", "forma", limits.workspace);
-  const reservationId = uuidV7(); const now = context.createdAt ?? new Date().toISOString();
-  const results = await env.DB.batch([
-    env.DB.prepare(`INSERT INTO budget_reservations (reservation_id,owner_id,stream_id,correlation_id,operation,period,reserved_tokens,used_tokens,status,settlement_reason,created_at,settled_at,updated_at)
-      SELECT ?,?,?,?,?,?,?,0,'active',NULL,?,NULL,?
+  const scope=context.projectScope;
+  const policy=scope?await projectBudgetPolicy(env,userId,scope):null;
+  if(scope&&!policy)return{ok:false as const,scope:"workspace" as const};
+  await ensureBudgetRow(env,"user",userId,limits.user,reservationPeriod);await ensureBudgetRow(env,"workspace","forma",limits.workspace,reservationPeriod);
+  if(scope&&policy)await ensureBudgetRow(env,"workspace",scope.organizationId,Number(policy.token_limit),reservationPeriod);
+  const reservationId=context.reservationId??uuidV7();const now=context.createdAt??new Date().toISOString();
+  const scopedPredicates=scope&&policy?` AND EXISTS(SELECT 1 FROM budget_counters WHERE scope='workspace' AND scope_id=? AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)
+    AND EXISTS(SELECT 1 FROM budget_scope_policies WHERE scope='workspace' AND scope_id=? AND organization_id=? AND token_limit=?) AND ${activeProjectBillingSql}`:"";
+  const reservationStatement=env.DB.prepare(`INSERT OR IGNORE INTO budget_reservations (reservation_id,owner_id,stream_id,correlation_id,operation,period,reserved_tokens,used_tokens,status,settlement_reason,created_at,settled_at,updated_at)
+      SELECT ?,?,?,?,?,?,?,0,'authorizing',NULL,?,NULL,?
       WHERE ?>0
       AND EXISTS (SELECT 1 FROM budget_counters WHERE scope='user' AND scope_id=? AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)
-      AND EXISTS (SELECT 1 FROM budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)`).bind(reservationId,userId,context.streamId??"",context.correlationId??"",context.operation??"provider-operation",reservationPeriod,amount,now,now,amount,userId,reservationPeriod,amount,reservationPeriod,amount),
-    env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=? AND EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=? AND status='active')").bind(amount,now,userId,reservationPeriod,reservationId),
-    env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=? AND EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=? AND status='active')").bind(amount,now,reservationPeriod,reservationId),
-  ]);
+      AND EXISTS (SELECT 1 FROM budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)${scopedPredicates}`)
+    .bind(reservationId,userId,context.streamId??"",context.correlationId??"",context.operation??"provider-operation",reservationPeriod,amount,now,now,amount,userId,reservationPeriod,amount,reservationPeriod,amount,...(scope&&policy?[scope.organizationId,reservationPeriod,amount,scope.organizationId,scope.organizationId,Number(policy.token_limit),userId,userId,scope.projectAccessId,scope.organizationId,userId]:[]));
+  const statements=[
+    reservationStatement,
+    env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=? AND EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=? AND status='authorizing')").bind(amount,now,userId,reservationPeriod,reservationId),
+    env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=? AND EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=? AND status='authorizing')").bind(amount,now,reservationPeriod,reservationId),
+  ];
+  if(scope){
+    statements.push(env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='workspace' AND scope_id=? AND period=? AND EXISTS(SELECT 1 FROM budget_reservations WHERE reservation_id=? AND status='authorizing')").bind(amount,now,scope.organizationId,reservationPeriod,reservationId));
+    statements.push(env.DB.prepare("INSERT OR IGNORE INTO project_budget_reservation_scopes(reservation_kind,reservation_id,organization_id,project_access_id,actor_user_id,workspace_scope_id,created_at) SELECT 'tokens',?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM budget_reservations WHERE reservation_id=? AND owner_id=? AND status='authorizing')")
+      .bind(reservationId,scope.organizationId,scope.projectAccessId,userId,scope.organizationId,now,reservationId,userId));
+  }
+  statements.push(env.DB.prepare("UPDATE budget_reservations SET status='active',updated_at=? WHERE reservation_id=? AND owner_id=? AND status='authorizing'").bind(now,reservationId,userId));
+  const results=await env.DB.batch(statements);
   if (Number(results[0]?.meta.changes ?? 0) !== 1) {
+    if(context.reservationId){
+      const existing=await budgetReservation(env,userId,reservationId);
+      if(existing?.status==="active"&&existing.reserved_tokens===amount&&existing.period===reservationPeriod&&existing.stream_id===(context.streamId??"")&&existing.correlation_id===(context.correlationId??"")&&existing.operation===(context.operation??"provider-operation")){
+        if(!scope)return{ok:true as const,reservationId,reservedTokens:amount,period:reservationPeriod,reused:true as const};
+        const bound=await env.DB.prepare("SELECT organization_id,project_access_id,actor_user_id FROM project_budget_reservation_scopes WHERE reservation_kind='tokens' AND reservation_id=?").bind(reservationId).first<Record<string,unknown>>();
+        if(bound?.organization_id===scope.organizationId&&bound.project_access_id===scope.projectAccessId&&bound.actor_user_id===userId)return{ok:true as const,reservationId,reservedTokens:amount,period:reservationPeriod,reused:true as const};
+      }
+    }
     const budgets = await readBudgets(env, userId); const userRemaining = budgets.user.limit - budgets.user.used - budgets.user.reserved;
     return { ok: false as const, scope: userRemaining < amount ? "user" as const : "workspace" as const };
   }
@@ -145,14 +218,18 @@ async function adoptLegacyBudgetReservation(env: WorkerEnv, userId: string, rese
 
 export async function settleBudget(env: WorkerEnv, userId: string, reservationId: string, used: number, reason = "provider_usage_recorded") {
   const reservation = await budgetReservation(env,userId,reservationId); if(!reservation)return{settled:false as const,reservedTokens:0,usedTokens:0,status:"missing"};
+  const scope=await env.DB.prepare("SELECT organization_id,project_access_id,actor_user_id FROM project_budget_reservation_scopes WHERE reservation_kind='tokens' AND reservation_id=? AND actor_user_id=?")
+    .bind(reservationId,userId).first<{organization_id:string;project_access_id:string;actor_user_id:string}>();
   const actual = Math.max(0,Math.floor(used)); const now = new Date().toISOString(); const status = actual > 0 ? "settled" : "released";
   const active = "EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=? AND owner_id=? AND status='active')";
-  const results = await env.DB.batch([
+  const statements=[
     env.DB.prepare(`UPDATE budget_counters SET reserved_tokens=MAX(0,reserved_tokens-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_tokens=used_tokens+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='user' AND scope_id=? AND period=?`).bind(reservationId,userId,reservation.reserved_tokens,reservationId,userId,actual,now,userId,reservation.period),
     env.DB.prepare(`UPDATE budget_counters SET reserved_tokens=MAX(0,reserved_tokens-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_tokens=used_tokens+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=?`).bind(reservationId,userId,reservation.reserved_tokens,reservationId,userId,actual,now,reservation.period),
-    env.DB.prepare("UPDATE budget_reservations SET used_tokens=?,status=?,settlement_reason=?,settled_at=?,updated_at=? WHERE reservation_id=? AND owner_id=? AND status='active'").bind(actual,status,reason,now,now,reservationId,userId),
-  ]);
-  const settled = Number(results[2]?.meta.changes ?? 0) === 1;
+  ];
+  if(scope)statements.push(env.DB.prepare(`UPDATE budget_counters SET reserved_tokens=MAX(0,reserved_tokens-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_tokens=used_tokens+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='workspace' AND scope_id=? AND period=?`).bind(reservationId,userId,reservation.reserved_tokens,reservationId,userId,actual,now,scope.organization_id,reservation.period));
+  statements.push(env.DB.prepare("UPDATE budget_reservations SET used_tokens=?,status=?,settlement_reason=?,settled_at=?,updated_at=? WHERE reservation_id=? AND owner_id=? AND status='active'").bind(actual,status,reason,now,now,reservationId,userId));
+  const results=await env.DB.batch(statements);
+  const settled=Number(results.at(-1)?.meta.changes??0)===1;
   return { settled, reservedTokens: reservation.reserved_tokens, usedTokens: settled ? actual : reservation.used_tokens, status: settled ? status : reservation.status };
 }
 
@@ -166,15 +243,121 @@ export async function releaseBudgetReservationsForCorrelation(env:WorkerEnv,user
   const legacy=await env.DB.prepare(`SELECT occurred_at,json_extract(payload,'$.reservation_id') AS reservation_id,CAST(json_extract(payload,'$.reserved_tokens') AS INTEGER) AS reserved_tokens,COALESCE(json_extract(payload,'$.operation'),'provider-operation') AS operation,COALESCE(json_extract(payload,'$.period'),substr(occurred_at,1,7)) AS period FROM events reserved
     WHERE stream_id=? AND correlation_id=? AND type='BudgetReserved' AND NOT EXISTS (SELECT 1 FROM events terminal WHERE terminal.stream_id=reserved.stream_id AND terminal.type IN ('BudgetReleased','GenerationUsageRecorded') AND json_extract(terminal.payload,'$.reservation_id')=json_extract(reserved.payload,'$.reservation_id'))`).bind(user.streamId,correlationId).all<Record<string,unknown>>();
   for(const row of legacy.results){const reservationId=String(row.reservation_id??"");const tokens=Number(row.reserved_tokens??0);if(reservationId&&tokens>0)await adoptLegacyBudgetReservation(env,billingUserId,reservationId,tokens,{streamId:user.streamId,correlationId,operation:String(row.operation??"provider-operation"),period:String(row.period??period()),createdAt:String(row.occurred_at??new Date().toISOString())});}
-  const active=await env.DB.prepare("SELECT * FROM budget_reservations WHERE owner_id=? AND correlation_id=? AND status='active' ORDER BY created_at").bind(billingUserId,correlationId).all<BudgetReservationRow>();const released=[] as Array<{id:string;tokens:number;operation:string}>;
+  const active=await env.DB.prepare("SELECT * FROM budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status='active' ORDER BY created_at").bind(billingUserId,user.streamId,correlationId).all<BudgetReservationRow>();const released=[] as Array<{id:string;tokens:number;operation:string}>;
   for(const reservation of active.results){const result=await releaseBudget(env,billingUserId,reservation.reservation_id,{reason});if(result.settled)released.push({id:reservation.reservation_id,tokens:result.reservedTokens,operation:reservation.operation});}
   return released;
 }
 
-/** Repairs reservations whose event has no terminal settlement and whose server job is no longer active. */
+type DocumentReservationJob = {
+  job_id: string;
+  owner_id: string;
+  stream_id: string;
+  document_id: string;
+  kind: string;
+  status: string;
+  correlation_id: string;
+  request_json: string;
+  result_json: string | null;
+};
+
+const parseDocumentReservationJson = (value: string | null | undefined): Record<string, unknown> => {
+  try {
+    const parsed: unknown = value ? JSON.parse(value) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+};
+
+async function terminalReservationJob(
+  env: WorkerEnv,
+  user: PilotUser,
+  correlationId: string,
+  tokenReservationId = "",
+  costReservationId = "",
+) {
+  const jobId = correlationId.split(":attempt:")[0] ?? "";
+  return env.DB.prepare(`SELECT job_id,owner_id,stream_id,document_id,kind,status,correlation_id,request_json,result_json
+    FROM document_jobs
+    WHERE owner_id=? AND stream_id=? AND status IN ('completed','partial','failed','canceled')
+      AND (correlation_id=? OR job_id=?
+        OR (?<>'' AND json_extract(COALESCE(result_json,'{}'),'$.reservationId')=?)
+        OR (?<>'' AND json_extract(COALESCE(result_json,'{}'),'$.costReservationId')=?))
+    ORDER BY CASE WHEN (?<>'' AND json_extract(COALESCE(result_json,'{}'),'$.reservationId')=?)
+      OR (?<>'' AND json_extract(COALESCE(result_json,'{}'),'$.costReservationId')=?) THEN 0 ELSE 1 END,updated_at DESC LIMIT 1`)
+    .bind(user.userId,user.streamId,correlationId,jobId,tokenReservationId,tokenReservationId,costReservationId,costReservationId,tokenReservationId,tokenReservationId,costReservationId,costReservationId)
+    .first<DocumentReservationJob>();
+}
+
+/** Settle a terminal document attempt from durable paid-work receipts rather than erasing incurred usage. */
+export async function settleInterruptedDocumentJobReservations(
+  env: WorkerEnv,
+  user: PilotUser,
+  job: Pick<DocumentReservationJob,"job_id"|"stream_id"|"document_id"|"correlation_id"|"request_json"|"result_json">,
+  options: { tokenReservationId?: string; costReservationId?: string; reason: string; automatic?: boolean } = { reason: "document_job_interrupted" },
+) {
+  const checkpoint=parseDocumentReservationJson(job.result_json);
+  const request=parseDocumentReservationJson(job.request_json);
+  const billingUserId=user.billingUserId??user.userId;
+  const tokenReservationId=String(options.tokenReservationId??checkpoint.reservationId??"");
+  const costReservationId=String(options.costReservationId??checkpoint.costReservationId??"");
+  const token=tokenReservationId?await budgetReservation(env,billingUserId,tokenReservationId):null;
+  const cost=costReservationId?await costBudgetReservation(env,billingUserId,costReservationId):null;
+  const expectedOperation=`document-render:${String(request.artifactKind??"unknown")}`;
+  const jobCorrelation=(correlation:string)=>correlation===job.correlation_id||correlation===job.job_id||correlation.startsWith(`${job.job_id}:attempt:`);
+  const ownedToken=token&&token.stream_id===user.streamId&&token.operation===expectedOperation&&jobCorrelation(token.correlation_id)&&token.status==="active"?token:null;
+  const scopedCost=cost&&cost.stream_id===user.streamId&&cost.operation===expectedOperation&&jobCorrelation(cost.correlation_id)&&(cost.status==="active"||cost.status==="executing")?cost:null;
+  const ownedCost=scopedCost&&(!ownedToken||(scopedCost.correlation_id===ownedToken.correlation_id&&scopedCost.period===ownedToken.period))?scopedCost:null;
+  if(!ownedToken&&!ownedCost)return{settled:false,usedTokens:0,releasedTokens:0,usedMicrousd:0,releasedMicrousd:0};
+
+  const plannerResponseId=String(checkpoint.plannerResponseId??"");
+  const plannerReceipts=plannerResponseId?await env.DB.prepare("SELECT payload FROM events WHERE stream_id=? AND type='GenerationUsageRecorded' AND json_extract(payload,'$.planner_response_id')=?")
+    .bind(user.streamId,plannerResponseId).all<{payload:string}>():{results:[]};
+  const expectedPlannerCost=interruptedDocumentJobUsage(checkpoint,request).plannerCostMicrousd;
+  const recordedPlanner=recordedDocumentPlannerUsage(plannerReceipts.results.map((event)=>({payload:parseDocumentReservationJson(event.payload)})),plannerResponseId,expectedPlannerCost);
+  const usage=interruptedDocumentJobUsage(checkpoint,request,{plannerTokensAlreadyRecorded:recordedPlanner.tokensRecorded,plannerCostAlreadyRecordedMicrousd:recordedPlanner.recordedCostMicrousd});
+  const tokenSettlement=ownedToken?await settleBudget(env,billingUserId,ownedToken.reservation_id,usage.totalTokens,options.reason):null;
+  const costSettlement=ownedCost?await settleCostBudget(env,billingUserId,ownedCost.reservation_id,Math.min(ownedCost.reserved_microusd,usage.totalCostMicrousd)):null;
+  const tokenSettled=Boolean(tokenSettlement?.settled);
+  const costSettled=Boolean(costSettlement?.settled);
+  if(!tokenSettled&&!costSettled)return{settled:false,usedTokens:0,releasedTokens:0,usedMicrousd:0,releasedMicrousd:0};
+
+  const correlationId=ownedToken?.correlation_id??ownedCost?.correlation_id??job.correlation_id;
+  const operation=ownedToken?.operation??ownedCost?.operation??`document-render:${String(request.artifactKind??"unknown")}`;
+  const usedTokens=tokenSettled?Number(tokenSettlement?.usedTokens??0):0;
+  const usedMicrousd=costSettled?Number(costSettlement?.usedMicrousd??0):0;
+  const recordedPlannerCost=costSettled?Math.min(usedMicrousd,usage.plannerCostMicrousd):0;
+  const releasedTokens=tokenSettled?Math.max(0,Number(tokenSettlement?.reservedTokens??0)-usedTokens):0;
+  const releasedMicrousd=costSettled?Math.max(0,Number(costSettlement?.reservedMicrousd??0)-usedMicrousd):0;
+
+  if((tokenSettled&&usedTokens>0)||(costSettled&&usedMicrousd>0)){
+    await appendAuditEvent(env,user.streamId,"worker:policy","GenerationUsageRecorded",{
+      operation:`${operation}:interrupted`,job_id:job.job_id,document_id:job.document_id,
+      reservation_id:ownedToken?.reservation_id,cost_reservation_id:ownedCost?.reservation_id??costReservationId,
+      input_tokens:tokenSettled?usage.inputTokens:0,output_tokens:tokenSettled?usage.outputTokens:0,total_tokens:usedTokens,
+      planner_tokens:tokenSettled?usage.plannerUsage.totalTokens:0,
+      reserved_tokens:tokenSettlement?.reservedTokens??0,reserved_microusd:ownedCost?.reserved_microusd??0,
+      cost_microusd:usedMicrousd,planner_cost_microusd:recordedPlannerCost,
+      video_cost_microusd:usage.sceneCostMicrousd+usage.singleVideoCostMicrousd,
+      planner_response_id:plannerResponseId||null,model_ids:[usage.plannerModel],
+      reason:options.reason,automatic_reconciliation:Boolean(options.automatic),
+    },correlationId);
+  }
+  await appendAuditEvent(env,user.streamId,"worker:policy","BudgetReleased",{
+    operation,job_id:job.job_id,document_id:job.document_id,
+    reservation_id:ownedToken?.reservation_id??tokenReservationId,cost_reservation_id:ownedCost?.reservation_id??costReservationId,
+    reserved_tokens:tokenSettlement?.reservedTokens??0,used_tokens:usedTokens,released_tokens:releasedTokens,
+    reserved_microusd:costSettlement?.reservedMicrousd??0,used_microusd:usedMicrousd,released_microusd:releasedMicrousd,
+    reason:options.reason,automatic_reconciliation:Boolean(options.automatic),
+  },correlationId);
+
+  return{settled:true,usedTokens,releasedTokens,usedMicrousd,releasedMicrousd};
+}
+
+/** Repairs orphaned owner-and-stream-scoped reservations without discarding documented provider usage. */
 export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: PilotUser, now = Date.now()) {
-  await ensureSchema(env); const cutoff = new Date(now-BUDGET_RECONCILIATION_AGE_MS).toISOString();const billingUserId=user.billingUserId??user.userId;
-  const legacy = await env.DB.prepare(`SELECT reserved.event_id,reserved.correlation_id,reserved.occurred_at,
+  await ensureSchema(env);const cutoff=new Date(now-BUDGET_RECONCILIATION_AGE_MS).toISOString();const billingUserId=user.billingUserId??user.userId;
+  const legacy=await env.DB.prepare(`SELECT reserved.event_id,reserved.correlation_id,reserved.occurred_at,
       json_extract(reserved.payload,'$.reservation_id') AS reservation_id,
       CAST(json_extract(reserved.payload,'$.reserved_tokens') AS INTEGER) AS reserved_tokens,
       COALESCE(json_extract(reserved.payload,'$.operation'),'image-generation') AS operation,
@@ -185,18 +368,44 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
       AND NOT EXISTS (SELECT 1 FROM events terminal WHERE terminal.stream_id=reserved.stream_id AND terminal.type IN ('BudgetReleased','GenerationUsageRecorded') AND json_extract(terminal.payload,'$.reservation_id')=json_extract(reserved.payload,'$.reservation_id'))
     ORDER BY reserved.occurred_at ASC LIMIT 200`).bind(user.streamId,cutoff).all<Record<string,unknown>>();
   for(const row of legacy.results){const reservationId=String(row.reservation_id??"");const reservedTokens=Number(row.reserved_tokens??0);if(!reservationId||reservedTokens<=0)continue;await adoptLegacyBudgetReservation(env,billingUserId,reservationId,reservedTokens,{streamId:user.streamId,correlationId:String(row.correlation_id??""),operation:String(row.operation??"image-generation"),period:String(row.period??period()),createdAt:String(row.occurred_at??new Date(now).toISOString())});}
-  const active = await env.DB.prepare(`SELECT * FROM budget_reservations reservation
-    WHERE reservation.owner_id=? AND reservation.status='active' AND reservation.created_at<=?
-      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.status IN ('queued','running','committing') AND job.correlation_id=reservation.correlation_id)
-    ORDER BY reservation.created_at ASC LIMIT 100`).bind(billingUserId,cutoff,user.streamId).all<BudgetReservationRow>();
-  let released = 0;let count=0;
+
+  const active=await env.DB.prepare(`SELECT * FROM budget_reservations reservation
+    WHERE reservation.owner_id=? AND reservation.stream_id=? AND reservation.status='active' AND reservation.created_at<=?
+      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND job.status IN ('queued','running','committing')
+        AND (job.correlation_id=reservation.correlation_id OR json_extract(COALESCE(job.result_json,'{}'),'$.reservationId')=reservation.reservation_id))
+    ORDER BY reservation.created_at ASC LIMIT 100`).bind(billingUserId,user.streamId,cutoff,user.streamId,user.userId).all<BudgetReservationRow>();
+
+  let released=0;let count=0;let releasedMicrousd=0;let costReservationCount=0;
   for(const row of active.results){
+    const job=await terminalReservationJob(env,user,row.correlation_id,row.reservation_id);
+    if(job&&row.operation.startsWith("document-render:")){
+      const settlement=await settleInterruptedDocumentJobReservations(env,user,job,{tokenReservationId:row.reservation_id,reason:"orphaned_failed_reservation_reconciled",automatic:true});
+      if(!settlement.settled)continue;
+      released+=settlement.releasedTokens;count+=1;releasedMicrousd+=settlement.releasedMicrousd;if(settlement.releasedMicrousd||settlement.usedMicrousd)costReservationCount+=1;
+      continue;
+    }
     const settlement=await releaseBudget(env,billingUserId,row.reservation_id,{reason:"orphaned_failed_reservation_reconciled"});
     if(!settlement.settled)continue;
     released+=settlement.reservedTokens;count+=1;
-    await appendAuditEvent(env,user.streamId,"worker:policy","BudgetReleased",{reservation_id:row.reservation_id,reserved_tokens:settlement.reservedTokens,reason:"orphaned_failed_reservation_reconciled",operation:row.operation,automatic_reconciliation:true},row.correlation_id||uuidV7());
+    await appendAuditEvent(env,user.streamId,"worker:policy","BudgetReleased",{reservation_id:row.reservation_id,reserved_tokens:settlement.reservedTokens,used_tokens:0,released_tokens:settlement.reservedTokens,reason:"orphaned_failed_reservation_reconciled",operation:row.operation,automatic_reconciliation:true},row.correlation_id||uuidV7());
   }
-  return { releasedTokens: released, reservationCount: count };
+
+  const activeCosts=await env.DB.prepare(`SELECT * FROM cost_budget_reservations reservation
+    WHERE reservation.owner_id=? AND reservation.stream_id=? AND reservation.operation LIKE 'document-render:%'
+      AND reservation.status IN ('active','executing') AND reservation.created_at<=?
+      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND job.status IN ('queued','running','committing')
+        AND (job.correlation_id=reservation.correlation_id OR json_extract(COALESCE(job.result_json,'{}'),'$.costReservationId')=reservation.reservation_id))
+    ORDER BY reservation.created_at ASC LIMIT 100`).bind(billingUserId,user.streamId,cutoff,user.streamId,user.userId).all<CostBudgetReservationRow>();
+  for(const row of activeCosts.results){
+    const job=await terminalReservationJob(env,user,row.correlation_id,"",row.reservation_id);
+    if(!job)continue;
+    const settlement=await settleInterruptedDocumentJobReservations(env,user,job,{costReservationId:row.reservation_id,reason:"orphaned_failed_cost_reservation_reconciled",automatic:true});
+    if(!settlement.settled)continue;
+    released+=settlement.releasedTokens;if(settlement.usedTokens||settlement.releasedTokens)count+=1;
+    releasedMicrousd+=settlement.releasedMicrousd;costReservationCount+=1;
+  }
+
+  return{releasedTokens:released,reservationCount:count,releasedMicrousd,costReservationCount};
 }
 
 export type CostBudgetSnapshot = { usedMicrousd: number; reservedMicrousd: number; limitMicrousd: number; remainingMicrousd: number };
@@ -238,25 +447,32 @@ export async function readCostBudgets(env: WorkerEnv, userId: string) {
 }
 
 /** Keep authenticated session bootstrap on one steady-state D1 budget read. */
-export async function readAccountBudgets(env: WorkerEnv, userId: string) {
+export async function readAccountBudgets(env: WorkerEnv, userId: string,organizationId?:string) {
   const tokens = budgetLimits(env);
   const costs = costBudgetLimits(env);
   const currentPeriod = period();
+  const policy=organizationId?await env.DB.prepare("SELECT token_limit,microusd_limit FROM budget_scope_policies WHERE scope='workspace' AND scope_id=? AND organization_id=?")
+    .bind(organizationId,organizationId).first<{token_limit:number;microusd_limit:number}>():null;
+  if(organizationId&&!policy)throw new Error("workspace_budget_policy_unavailable");
+  const workspaceId=organizationId??"forma";
+  const workspaceTokenLimit=policy?Number(policy.token_limit):tokens.workspace;
+  const workspaceCostLimit=policy?Number(policy.microusd_limit):costs.workspace;
   const query = () => env.DB.prepare(`
-    SELECT 'tokens' AS currency,scope,used_tokens AS used,reserved_tokens AS reserved,hard_limit_tokens AS hard_limit
+    SELECT 'tokens' AS currency,scope,scope_id,used_tokens AS used,reserved_tokens AS reserved,hard_limit_tokens AS hard_limit
     FROM budget_counters
-    WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma'))
+    WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id IN(?,'forma')))
     UNION ALL
-    SELECT 'USD' AS currency,scope,used_microusd AS used,reserved_microusd AS reserved,hard_limit_microusd AS hard_limit
+    SELECT 'USD' AS currency,scope,scope_id,used_microusd AS used,reserved_microusd AS reserved,hard_limit_microusd AS hard_limit
     FROM cost_budget_counters
-    WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id='forma'))
-  `).bind(currentPeriod, userId, currentPeriod, userId);
+    WHERE period=? AND ((scope='user' AND scope_id=?) OR (scope='workspace' AND scope_id IN(?,'forma')))
+  `).bind(currentPeriod,userId,workspaceId,currentPeriod,userId,workspaceId);
   let rows = (await query().all<Record<string, unknown>>()).results;
   const expected = new Map([
-    ["tokens:user", tokens.user], ["tokens:workspace", tokens.workspace],
-    ["USD:user", costs.user], ["USD:workspace", costs.workspace],
+    [`tokens:user:${userId}`,tokens.user],[`tokens:workspace:${workspaceId}`,workspaceTokenLimit],
+    [`USD:user:${userId}`,costs.user],[`USD:workspace:${workspaceId}`,workspaceCostLimit],
+    ...(organizationId?[["tokens:workspace:forma",tokens.workspace],["USD:workspace:forma",costs.workspace]] as Array<[string,number]>:[]),
   ]);
-  if (rows.length !== 4 || rows.some((row) => Number(row.hard_limit) !== expected.get(`${String(row.currency)}:${String(row.scope)}`))) {
+  if (rows.length !== expected.size || rows.some((row) => Number(row.hard_limit) !== expected.get(`${String(row.currency)}:${String(row.scope)}:${String(row.scope_id)}`))) {
     const now = new Date().toISOString();
     const tokenUpsert = (scope: "user" | "workspace", scopeId: string, limit: number) => env.DB.prepare(`
       INSERT INTO budget_counters (scope,scope_id,period,used_tokens,reserved_tokens,hard_limit_tokens,updated_at)
@@ -271,22 +487,28 @@ export async function readAccountBudgets(env: WorkerEnv, userId: string) {
       WHERE cost_budget_counters.hard_limit_microusd IS NOT excluded.hard_limit_microusd
     `).bind(scope, scopeId, currentPeriod, limit, now);
     const results = await env.DB.batch<Record<string, unknown>>([
-      tokenUpsert("user", userId, tokens.user), tokenUpsert("workspace", "forma", tokens.workspace),
-      costUpsert("user", userId, costs.user), costUpsert("workspace", "forma", costs.workspace),
+      tokenUpsert("user",userId,tokens.user),tokenUpsert("workspace",workspaceId,workspaceTokenLimit),
+      ...(organizationId?[tokenUpsert("workspace","forma",tokens.workspace)]:[]),
+      costUpsert("user",userId,costs.user),costUpsert("workspace",workspaceId,workspaceCostLimit),
+      ...(organizationId?[costUpsert("workspace","forma",costs.workspace)]:[]),
       query(),
     ]);
     rows = results.at(-1)?.results ?? [];
   }
-  const entry = (currency: "tokens" | "USD", scope: "user" | "workspace") => rows.find((row) => row.currency === currency && row.scope === scope);
+  const entry = (currency: "tokens" | "USD", scope: "user" | "workspace",scopeId=scope==="user"?userId:workspaceId) => rows.find((row) => row.currency === currency && row.scope === scope&&row.scope_id===scopeId);
   const tokenScope = (scope: "user" | "workspace") => {
     const row = entry("tokens", scope);
-    return { used: Number(row?.used ?? 0), reserved: Number(row?.reserved ?? 0), limit: Number(row?.hard_limit ?? tokens[scope]) };
+    const used=Number(row?.used??0),reserved=Number(row?.reserved??0);
+    let limit=Number(row?.hard_limit??(scope==="workspace"?workspaceTokenLimit:tokens.user));
+    if(scope==="workspace"&&organizationId){const platform=entry("tokens","workspace","forma");const available=Math.max(0,Number(platform?.hard_limit??tokens.workspace)-Number(platform?.used??0)-Number(platform?.reserved??0));limit=Math.min(limit,used+reserved+available);}
+    return{used,reserved,limit};
   };
   const costScope = (scope: "user" | "workspace"): CostBudgetSnapshot => {
     const row = entry("USD", scope);
     const usedMicrousd = Number(row?.used ?? 0);
     const reservedMicrousd = Number(row?.reserved ?? 0);
-    const limitMicrousd = Number(row?.hard_limit ?? costs[scope]);
+    let limitMicrousd=Number(row?.hard_limit??(scope==="workspace"?workspaceCostLimit:costs.user));
+    if(scope==="workspace"&&organizationId){const platform=entry("USD","workspace","forma");const available=Math.max(0,Number(platform?.hard_limit??costs.workspace)-Number(platform?.used??0)-Number(platform?.reserved??0));limitMicrousd=Math.min(limitMicrousd,usedMicrousd+reservedMicrousd+available);}
     return { usedMicrousd, reservedMicrousd, limitMicrousd, remainingMicrousd: Math.max(0, limitMicrousd - usedMicrousd - reservedMicrousd) };
   };
   return {
@@ -320,6 +542,7 @@ type CostReservationOptions = {
   streamId?: string;
   correlationId?: string;
   operation?: string;
+  projectScope?:ProjectBudgetScope;
 };
 
 export async function costBudgetReservation(env: WorkerEnv, userId: string, reservationId: string) {
@@ -334,25 +557,40 @@ export async function reserveCostBudget(env: WorkerEnv, userId: string, requeste
   const now = new Date().toISOString();
   const reservationPeriod = options.period ?? period();
   const reservationId = options.reservationId ?? uuidV7();
+  const scope=options.projectScope;
+  const policy=scope?await projectBudgetPolicy(env,userId,scope):null;
+  if(scope&&!policy)return{ok:false as const,scope:"workspace" as const};
+  const workspaceId=scope?.organizationId??"forma";
   await ensureCostBudgetRow(env, "user", userId, limits.user, reservationPeriod);
   await ensureCostBudgetRow(env, "workspace", "forma", limits.workspace, reservationPeriod);
+  if(scope&&policy)await ensureCostBudgetRow(env,"workspace",scope.organizationId,Number(policy.microusd_limit),reservationPeriod);
   const userBefore = await env.DB.prepare("SELECT used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=?").bind(userId, reservationPeriod).first<Record<string, unknown>>();
   const authorizing = "EXISTS (SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status='authorizing')";
-  const results = await env.DB.batch([
+  const scopedPredicates=scope&&policy?` AND EXISTS(SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id=? AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)
+    AND EXISTS(SELECT 1 FROM budget_scope_policies WHERE scope='workspace' AND scope_id=? AND organization_id=? AND microusd_limit=?) AND ${activeProjectBillingSql}`:"";
+  const statements=[
     env.DB.prepare(`INSERT OR IGNORE INTO cost_budget_reservations (reservation_id,owner_id,workspace_id,stream_id,correlation_id,operation,period,reserved_microusd,used_microusd,status,allow_user_overage,created_at,settled_at,updated_at)
-      SELECT ?,?,'forma',?,?,?,?,?,0,'authorizing',?,?,NULL,?
+      SELECT ?,?,?,?,?,?,?,?,0,'authorizing',?,?,NULL,?
       WHERE ?>0
       AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=? AND (?=1 OR used_microusd+reserved_microusd+?<=hard_limit_microusd))
-      AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)`)
-      .bind(reservationId, userId, options.streamId ?? "", options.correlationId ?? "", options.operation ?? "provider-operation", reservationPeriod, amount, options.allowUserOverage ? 1 : 0, now, now, amount, userId, reservationPeriod, options.allowUserOverage ? 1 : 0, amount, reservationPeriod, amount),
+      AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)${scopedPredicates}`)
+      .bind(reservationId,userId,workspaceId,options.streamId??"",options.correlationId??"",options.operation??"provider-operation",reservationPeriod,amount,options.allowUserOverage?1:0,now,now,amount,userId,reservationPeriod,options.allowUserOverage?1:0,amount,reservationPeriod,amount,...(scope&&policy?[scope.organizationId,reservationPeriod,amount,scope.organizationId,scope.organizationId,Number(policy.microusd_limit),userId,userId,scope.projectAccessId,scope.organizationId,userId]:[])),
     env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=? AND ${authorizing}`).bind(amount, now, userId, reservationPeriod, reservationId, userId),
     env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=? AND ${authorizing}`).bind(amount, now, reservationPeriod, reservationId, userId),
-    env.DB.prepare("UPDATE cost_budget_reservations SET status='active',updated_at=? WHERE reservation_id=? AND owner_id=? AND status='authorizing'").bind(now, reservationId, userId),
-  ]);
+  ];
+  if(scope){
+    statements.push(env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='workspace' AND scope_id=? AND period=? AND ${authorizing}`).bind(amount,now,scope.organizationId,reservationPeriod,reservationId,userId));
+    statements.push(env.DB.prepare("INSERT OR IGNORE INTO project_budget_reservation_scopes(reservation_kind,reservation_id,organization_id,project_access_id,actor_user_id,workspace_scope_id,created_at) SELECT 'usd',?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status='authorizing')")
+      .bind(reservationId,scope.organizationId,scope.projectAccessId,userId,scope.organizationId,now,reservationId,userId));
+  }
+  statements.push(env.DB.prepare("UPDATE cost_budget_reservations SET status='active',updated_at=? WHERE reservation_id=? AND owner_id=? AND status='authorizing'").bind(now,reservationId,userId));
+  const results=await env.DB.batch(statements);
   if (Number(results[0]?.meta.changes ?? 0) !== 1) {
     const existing = options.reservationId ? await costBudgetReservation(env, userId, reservationId) : null;
-    if (existing?.status === "active" && Number(existing.reserved_microusd) === amount && existing.period === reservationPeriod && (!options.correlationId || existing.correlation_id === options.correlationId) && (!options.operation || existing.operation === options.operation)) {
-      return { ok: true as const, reservationId, reservedMicrousd: amount, period: reservationPeriod, userOverageMicrousd: 0, reused: true as const };
+    if(existing?.status==="active"&&Number(existing.reserved_microusd)===amount&&existing.period===reservationPeriod&&existing.workspace_id===workspaceId&&existing.stream_id===(options.streamId??"")&&existing.correlation_id===(options.correlationId??"")&&existing.operation===(options.operation??"provider-operation")){
+      if(!scope)return{ok:true as const,reservationId,reservedMicrousd:amount,period:reservationPeriod,userOverageMicrousd:0,reused:true as const};
+      const bound=await env.DB.prepare("SELECT organization_id,project_access_id,actor_user_id FROM project_budget_reservation_scopes WHERE reservation_kind='usd' AND reservation_id=?").bind(reservationId).first<Record<string,unknown>>();
+      if(bound?.organization_id===scope.organizationId&&bound.project_access_id===scope.projectAccessId&&bound.actor_user_id===userId)return{ok:true as const,reservationId,reservedMicrousd:amount,period:reservationPeriod,userOverageMicrousd:0,reused:true as const};
     }
     const projectedUser = Number(userBefore?.used_microusd ?? 0) + Number(userBefore?.reserved_microusd ?? 0) + amount;
     return { ok: false as const, scope: !options.allowUserOverage && projectedUser > Number(userBefore?.hard_limit_microusd ?? limits.user) ? "user" as const : "workspace" as const };
@@ -379,16 +617,23 @@ export async function claimCostBudgetReservation(env: WorkerEnv, userId: string,
 export async function settleCostBudget(env: WorkerEnv, userId: string, reservation: string | number, usedMicrousd: number) {
   const row = await resolveCostReservation(env, userId, reservation);
   if (!row) return { settled: false as const, reservedMicrousd: 0, usedMicrousd: 0, status: "missing" as const };
+  if(row.workspace_id!=="forma"){
+    const scoped=await env.DB.prepare("SELECT 1 AS valid FROM project_budget_reservation_scopes WHERE reservation_kind='usd' AND reservation_id=? AND organization_id=? AND workspace_scope_id=? AND actor_user_id=?")
+      .bind(row.reservation_id,row.workspace_id,row.workspace_id,userId).first();
+    if(!scoped)return{settled:false as const,reservedMicrousd:0,usedMicrousd:0,status:"missing" as const};
+  }
   const now = new Date().toISOString();
   const used = Math.max(0, Math.floor(usedMicrousd));
   const status = used > 0 ? "settled" : "released";
   const active = "EXISTS (SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status IN ('active','executing'))";
-  const results = await env.DB.batch([
+  const statements=[
     env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=MAX(0,reserved_microusd-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_microusd=used_microusd+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='user' AND scope_id=? AND period=?`).bind(row.reservation_id, userId, row.reserved_microusd, row.reservation_id, userId, used, now, userId, row.period),
     env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=MAX(0,reserved_microusd-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_microusd=used_microusd+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='workspace' AND scope_id=? AND period=?`).bind(row.reservation_id, userId, row.reserved_microusd, row.reservation_id, userId, used, now, row.workspace_id, row.period),
-    env.DB.prepare("UPDATE cost_budget_reservations SET used_microusd=?,status=?,settled_at=?,updated_at=? WHERE reservation_id=? AND owner_id=? AND status IN ('active','executing')").bind(used, status, now, now, row.reservation_id, userId),
-  ]);
-  const settled = Number(results[2]?.meta.changes ?? 0) === 1;
+  ];
+  if(row.workspace_id!=="forma")statements.push(env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=MAX(0,reserved_microusd-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_microusd=used_microusd+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=?`).bind(row.reservation_id,userId,row.reserved_microusd,row.reservation_id,userId,used,now,row.period));
+  statements.push(env.DB.prepare("UPDATE cost_budget_reservations SET used_microusd=?,status=?,settled_at=?,updated_at=? WHERE reservation_id=? AND owner_id=? AND status IN ('active','executing')").bind(used,status,now,now,row.reservation_id,userId));
+  const results=await env.DB.batch(statements);
+  const settled=Number(results.at(-1)?.meta.changes??0)===1;
   return { settled, reservationId: row.reservation_id, reservedMicrousd: row.reserved_microusd, usedMicrousd: settled ? used : row.used_microusd, period: row.period, status: settled ? status : row.status };
 }
 
@@ -405,31 +650,45 @@ export async function adoptLegacyCostReservation(env: WorkerEnv, userId: string,
     SELECT ?,?,'forma',?,?,?,?,?,0,'active',0,?,NULL,?
     WHERE EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=? AND reserved_microusd>=?)
     AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND reserved_microusd>=?)
-    AND NOT EXISTS (SELECT 1 FROM cost_budget_reservations WHERE owner_id=? AND correlation_id=? AND status IN ('active','executing'))`)
-    .bind(input.reservationId,userId,input.streamId,input.correlationId,input.operation,input.period,amount,now,now,userId,input.period,amount,input.period,amount,userId,input.correlationId).run();
+    AND NOT EXISTS (SELECT 1 FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status IN ('active','executing'))`)
+    .bind(input.reservationId,userId,input.streamId,input.correlationId,input.operation,input.period,amount,now,now,userId,input.period,amount,input.period,amount,userId,input.streamId,input.correlationId).run();
   return Number(result.meta.changes ?? 0) === 1;
 }
 
-export async function releaseCostReservationsForCorrelation(env: WorkerEnv, userId: string, correlationId: string) {
-  const active = await env.DB.prepare("SELECT reservation_id FROM cost_budget_reservations WHERE owner_id=? AND correlation_id=? AND status IN ('active','executing')").bind(userId, correlationId).all<{ reservation_id: string }>();
+export async function releaseCostReservationsForCorrelation(env: WorkerEnv, userId: string, correlationId: string, streamId: string) {
+  const active = await env.DB.prepare("SELECT reservation_id FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status IN ('active','executing')").bind(userId, streamId, correlationId).all<{ reservation_id: string }>();
   for (const row of active.results) await releaseCostBudget(env, userId, row.reservation_id);
   return active.results.length;
 }
 
-export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: "prompt" | "provider-output" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input", content: string) {
+export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: "prompt" | "provider-output" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input", content: string, projectScope?: ProjectExecutionScope) {
   const contentId = uuidV7(); const createdAt = new Date(); const days = intEnv(env.FORMA_RETENTION_DAYS, 30); const expiresAt = new Date(createdAt.getTime() + days * 86_400_000);
   const now=createdAt.toISOString();
-  await env.DB.batch([
-    env.DB.prepare("INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES (?,?,?,?,?,?,NULL)").bind(contentId, ownerId, kind, content, now, expiresAt.toISOString()),
-    env.DB.prepare("UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND expires_at<=?").bind(now,ownerId,now),
-  ]);
+  if(projectScope&&projectScope.actorUserId!==ownerId)throw new Error("project_private_content_actor_mismatch");
+  const statements=projectScope?[
+    env.DB.prepare(`INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at)
+      SELECT ?,?,?,?,?,?,NULL WHERE ${activeProjectBillingSql}
+        AND EXISTS(SELECT 1 FROM organization_projects WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND status='active')`)
+      .bind(contentId,ownerId,kind,content,now,expiresAt.toISOString(),ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId),
+    env.DB.prepare(`INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at)
+      SELECT ?,'content',?,?,?,?,'actor_private',NULL,?,? WHERE EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)`)
+      .bind(projectScope.projectAccessId,contentId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,ownerId,now,contentId,ownerId),
+  ]:[env.DB.prepare("INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES (?,?,?,?,?,?,NULL)").bind(contentId,ownerId,kind,content,now,expiresAt.toISOString())];
+  statements.push(env.DB.prepare("UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND expires_at<=?").bind(now,ownerId,now));
+  const results=await env.DB.batch(statements);
+  if(Number(results[0]?.meta.changes??0)!==1||projectScope&&Number(results[1]?.meta.changes??0)!==1)throw new Error("project_private_content_access_revoked");
   return { contentId, expiresAt: expiresAt.toISOString() };
 }
 
-export async function loadPrivateContent(env: WorkerEnv, ownerId: string, scope: "all" | "chat" | "memory" = "all") {
+export async function loadPrivateContent(env: WorkerEnv, ownerId: string, scope: "all" | "chat" | "memory" = "all", projectScope?: ProjectExecutionScope) {
   const now = new Date().toISOString();
+  if(projectScope&&projectScope.actorUserId!==ownerId)return{};
   const restricted = scope === "chat" ? " AND kind IN ('chat-user','chat-assistant')" : scope === "memory" ? " AND kind='condition'" : "";
-  const rows = await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>?${restricted}`).bind(ownerId, now).all<{ content_id: string; content: string }>();
+  const containment=projectScope?` AND EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id
+    AND resource.project_access_id=? AND resource.organization_id=? AND resource.project_id=? AND resource.owner_user_id=? AND resource.actor_user_id=? AND resource.visibility='actor_private') AND ${activeProjectBillingSql}`:
+    " AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id AND resource.actor_user_id=private_content.owner_id AND resource.owner_user_id!=private_content.owner_id AND resource.visibility='actor_private')";
+  const bindings=projectScope?[ownerId,now,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,ownerId,ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId]:[ownerId,now];
+  const rows=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>?${restricted}${containment}`).bind(...bindings).all<{content_id:string;content:string}>();
   return Object.fromEntries(rows.results.map((row) => [row.content_id, row.content]));
 }
 
@@ -443,10 +702,47 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
     await appendAuditEvent(env, user.streamId, "user", "ConsentAccepted", { policy_version: POLICY_VERSION, ownership_confirmed: true, external_provider_processing_confirmed: true });
     user.consentVersion = POLICY_VERSION; user.consentedAt = now;
   } else if (request.method !== "GET") return new Response("Method not allowed", { status: 405 });
-  const budgetUser=auth.principal??user;
+  const url=new URL(request.url);
+  const requestedAudience=url.searchParams.get("audience");
+  if(requestedAudience&&!APPLICATIONS.some((application)=>application.id===requestedAudience))return Response.json({error:"invalid_audience"},{status:400});
+  const audience=(requestedAudience??(url.pathname.startsWith("/api/")?"creative":applicationIdFromRoute(url.pathname))) as ApplicationId;
+  const principal=auth.principal??user;
+  const selected=(audience==="creative"||audience==="canvas")&&!auth.impersonation?await readProjectRequestContext(request,env,principal):{context:null,response:null};
+  if(selected.response)return selected.response;
+  const required=audience==="canvas"?[]:routeRequiredCapabilities(requestedAudience?`/${audience}`:url.pathname);
+  if(required.length&&!required.some((capability)=>hasCapability(principal,capability)))return Response.json({error:"access_denied"},{status:403});
+  const publicUser=(candidate:PilotUser)=>({userId:candidate.userId,email:candidate.email,displayName:candidate.displayName,role:candidate.role,consentVersion:candidate.consentVersion,consentedAt:candidate.consentedAt,...(candidate.fictional?{fictional:true,billingUserId:candidate.billingUserId}:{})});
+  const safeUser=publicUser(user);
+  const safeImpersonation=auth.impersonation?{active:true,impersonationId:auth.impersonation.impersonationId,personaId:auth.impersonation.personaId,replaySessionId:auth.impersonation.replaySessionId,actor:publicUser(auth.impersonation.actor),fictionalUser:publicUser(auth.impersonation.fictionalUser),startedAt:auth.impersonation.startedAt,expiresAt:auth.impersonation.expiresAt}:null;
+  if(["operations","product","knowledge","engineering"].includes(audience)){
+    if(auth.impersonation)return Response.json({error:"return_to_principal_before_internal_access"},{status:409,headers:{"cache-control":"private, no-store"}});
+    const allowed=new Set<FormaCapability>(applicationDefinition(audience).requiredCapabilities);
+    if(audience==="product"&&principal.role==="admin")allowed.add("evaluation.actual.run");
+    const capabilities=principal.access.capabilities.filter((capability)=>allowed.has(capability));
+    const access={role:principal.role,capabilities:principal.access.capabilities,canvasAccess:principal.access.canvasAccess};
+    const availableApplications=APPLICATIONS.filter((application)=>application.id==="creative"||application.id==="canvas"&&principal.access.canvasAccess||application.requiredCapabilities.some((capability)=>principal.access.capabilities.includes(capability)))
+      .map((application)=>({id:application.id,href:authorizedApplicationHome(application.id,access)}));
+    return Response.json({user:publicUser(principal),audience,capabilities,availableApplications,permissionEpoch:principal.access.permissionEpoch,organizations:[],canvas:{access:principal.access.canvasAccess},impersonation:null},{headers:{"cache-control":"private, no-store"}});
+  }
+  const budgetUser=principal;
   if(request.method==="POST")await reconcileFailedBudgetReservations(env,budgetUser);
-  const [canvas,accountBudgets]=await Promise.all([readCanvasGovernance(env,user.role),readAccountBudgets(env,budgetUser.userId)]);
-  return Response.json({ user, impersonation:auth.impersonation?{active:true,impersonationId:auth.impersonation.impersonationId,personaId:auth.impersonation.personaId,replaySessionId:auth.impersonation.replaySessionId,actor:auth.impersonation.actor,fictionalUser:auth.impersonation.fictionalUser,startedAt:auth.impersonation.startedAt,expiresAt:auth.impersonation.expiresAt}:null, policy: { version: POLICY_VERSION, accepted: user.consentVersion === POLICY_VERSION, passiveCapture: false, attentionCapture: { available: true, defaultOn: false, retentionDays: 14, rawInputCapture: false }, externalAssetsRequireAssertion: true, retentionDays: intEnv(env.FORMA_RETENTION_DAYS, 30), sharing: "private-expiring-revocable" }, canvas, provider: { name: "OpenAI Responses · OpenAI + Fal image adapters · Fal video", model: env.OPENAI_IMAGE_MODEL ?? "gpt-image-2", plannerModel: env.OPENAI_MODEL ?? "gpt-5.6-terra", configured: Boolean(env.OPENAI_API_KEY), imageProvider:env.FORMA_IMAGE_PROVIDER??"openai", imageProviders:[{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",configured:Boolean(env.OPENAI_API_KEY)},{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4",previewModel:env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast",editModel:env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image",configured:Boolean(env.FAL_KEY)}], videoProvider: env.FORMA_VIDEO_PROVIDER??"fal", videoModel:env.FAL_VIDEO_MODEL??DEFAULT_VIDEO_MODEL, videoReferenceModel:env.FAL_REFERENCE_VIDEO_MODEL??DEFAULT_REFERENCE_VIDEO_MODEL, videoAdapterVersion:VIDEO_ADAPTER_CONTRACT.adapterVersion, videoConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY), videoApiSunset:null }, ...accountBudgets });
+  const canReadTenantUsage=Boolean(selected.context&&hasCapability(principal,"workspace.usage.read",{organizationId:selected.context.organizationId}));
+  const [canvas,accountBudgets]=await Promise.all([readCanvasGovernance(env,user.role),readAccountBudgets(env,budgetUser.userId,canReadTenantUsage?selected.context?.organizationId:undefined)]);
+  const privileged=audience==="operations"&&(hasCapability(principal,"platform.provider.configure")||hasCapability(principal,"platform.policy.manage"));
+  const selectedImageProvider=env.FORMA_IMAGE_PROVIDER??"openai";
+  const provider={name:"Approved creative generation",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",plannerModel:env.OPENAI_MODEL??"gpt-5.6-terra",configured:Boolean(env.OPENAI_API_KEY&&(!["fal","fal-ideogram","ideogram"].includes(selectedImageProvider)||env.FAL_KEY)),videoModel:env.FAL_VIDEO_MODEL??DEFAULT_VIDEO_MODEL,videoReferenceModel:env.FAL_REFERENCE_VIDEO_MODEL??DEFAULT_REFERENCE_VIDEO_MODEL,videoConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY),...(privileged?{name:"OpenAI Responses · OpenAI + Fal image adapters · Fal video",imageProvider:selectedImageProvider,imageProviders:[{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",configured:Boolean(env.OPENAI_API_KEY)},{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4",previewModel:env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast",editModel:env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image",configured:Boolean(env.FAL_KEY)}],videoProvider:env.FORMA_VIDEO_PROVIDER??"fal",videoAdapterVersion:VIDEO_ADAPTER_CONTRACT.adapterVersion,videoApiSunset:null}:{})};
+  const selectedCanvasAccess=Boolean(selected.context&&canvas.access&&hasCapability(principal,"project.canvas.use",{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId}));
+  const safeCanvas=selected.context?{...canvas,access:selectedCanvasAccess,blockedBy:[],requirements:[]}:privileged?canvas:{...canvas,blockedBy:[],requirements:[]};
+  const effectiveAccess=auth.impersonation?user.access:principal.access;
+  const personalCapabilities=canvas.access?[...new Set<FormaCapability>([...effectiveAccess.capabilities,"project.canvas.use"])]:effectiveAccess.capabilities;
+  const capabilities=selected.context?[
+    ...effectiveAccess.capabilities.filter((capability)=>capability.startsWith("self.")),
+    ...selected.context.permissions.filter((capability)=>capability!=="project.canvas.use"||selectedCanvasAccess),
+  ]:personalCapabilities;
+  const visibleBudgets=privileged||canReadTenantUsage?accountBudgets:{budgets:{...accountBudgets.budgets,workspace:{...accountBudgets.budgets.user}},costBudgets:{...accountBudgets.costBudgets,workspace:{...accountBudgets.costBudgets.user}}};
+  return Response.json({user:safeUser,audience,capabilities,permissionEpoch:effectiveAccess.permissionEpoch,organizations:auth.impersonation?[]:principal.access.organizations,projects:auth.impersonation?[]:principal.access.projects,
+    ...(selected.context?{projectContext:{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId,projectId:selected.context.projectId,ownerUserId:selected.context.ownerUserId,role:selected.context.role,permissions:selected.context.permissions.filter((capability)=>capability!=="project.canvas.use"||selectedCanvasAccess),expiresAt:selected.context.expiresAt}}:{}),
+    impersonation:safeImpersonation,policy:{version:POLICY_VERSION,accepted:user.consentVersion===POLICY_VERSION,passiveCapture:false,attentionCapture:{available:true,defaultOn:false,retentionDays:14,rawInputCapture:false},externalAssetsRequireAssertion:true,retentionDays:intEnv(env.FORMA_RETENTION_DAYS,30),sharing:"private-expiring-revocable"},canvas:safeCanvas,provider,...visibleBudgets});
 }
 
 export async function handleImpersonation(request:Request,env:WorkerEnv){
@@ -466,13 +762,16 @@ export async function handleImpersonation(request:Request,env:WorkerEnv){
 }
 
 export async function handleAdminUsers(request: Request, env: WorkerEnv) {
-  const auth = await requireUser(request, env, "admin", {account:"principal"}); if (auth.response || !auth.user) return auth.response!;
+  const auth = await requireCapability(request, env, "platform.identity.manage"); if (auth.response || !auth.user) return auth.response!;
   if (request.method === "GET") {
     const result = await env.DB.prepare("SELECT user_id,email,display_name,role,consent_version,consented_at,created_at FROM users ORDER BY created_at").all(); return Response.json({ users: result.results });
   }
   if (request.method !== "PATCH") return new Response("Method not allowed", { status: 405 });
-  const body = await request.json() as { userId?: string; role?: PilotRole }; if (!body.userId || !body.role || !(body.role in roleRank)) return Response.json({ error: "valid_user_and_role_required" }, { status: 400 });
-  if (body.userId === auth.user.userId && body.role !== "admin") return Response.json({ error: "admin_cannot_demote_self" }, { status: 409 });
+  const body = await request.json() as { userId?: string; role?: PilotRole }; if (!body.userId || !body.role || !Object.hasOwn(roleRank,body.role)) return Response.json({ error: "valid_user_and_role_required" }, { status: 400 });
+  if(body.userId===auth.user.userId)return Response.json({error:auth.user.role==="admin"?"admin_cannot_change_self":"self_role_change_forbidden"},{status:auth.user.role==="admin"?409:403});
+  const target=await env.DB.prepare("SELECT role FROM users WHERE user_id=?").bind(body.userId).first<{role:string}>();
+  if(!target)return Response.json({error:"user_not_found"},{status:404});
+  if((body.role==="admin"||target.role==="admin")&&auth.user.role!=="admin")return Response.json({error:"administrator_approval_required"},{status:403});
   const result = await env.DB.prepare("UPDATE users SET role=?,updated_at=? WHERE user_id=?").bind(body.role, new Date().toISOString(), body.userId).run(); if (Number(result.meta.changes ?? 0) !== 1) return Response.json({ error: "user_not_found" }, { status: 404 });
   await appendAuditEvent(env, auth.user.streamId, "user", "RoleAssigned", { subject_user_id: body.userId, role: body.role }); return Response.json({ ok: true });
 }

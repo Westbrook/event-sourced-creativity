@@ -26,6 +26,9 @@ import { beginRoutePopulation, completeBackgroundHydration, recordEventPage, rec
 import { clearAnalyticsSnapshots, matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
 import { consumeSessionBootstrap, consumeSessionPrefetch } from "./session-bootstrap";
 import { routeCapabilities } from "./route-capabilities";
+import type { FormaCapability } from "../platform/capabilities";
+import { applicationIdFromRoute, type ApplicationId } from "../platform/applications";
+import { workspaceTransitionAuthorized } from "../platform/workspace-transitions";
 
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
@@ -38,8 +41,15 @@ export type PilotSession = {
   provider: { name: string; model: string; plannerModel?: string; configured: boolean; imageProvider?:string; imageProviders?:Array<{provider:string;model:string;previewModel?:string;editModel?:string;configured:boolean}>; videoProvider?:string; videoModel?:string; videoReferenceModel?:string; videoAdapterVersion?:string; videoConfigured?:boolean; videoApiSunset?:string|null };
   budgets: { period: string; user: { used: number; reserved: number; limit: number }; workspace: { used: number; reserved: number; limit: number } };
   costBudgets: GenerationCostBudgets;
+  audience?: ApplicationId;
+  capabilities?: FormaCapability[];
+  permissionEpoch?: string;
+  organizations?: Array<{ organizationId: string; name: string; role: string }>;
+  projects?: Array<{organizationId:string;projectAccessId:string;projectId:string;projectName:string;role:string}>;
+  projectContext?:{organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string;role:string;permissions:FormaCapability[];expiresAt:string};
 };
 export type ShareRecord = { shareId: string; token?: string; resourceKind?: string; resourceId?: string; projectId?: string; expiresAt: string; revokedAt?: string | null; createdAt?: string; active: boolean };
+export type CapturedAuthorizationScope = { key:string; shared:boolean };
 
 export class FormaStore {
   readonly events = new Signal.State<CreativeEvent[]>([]);
@@ -76,6 +86,9 @@ export class FormaStore {
   #rememberedClientEventIds = new Set<string>();
   #appendPipeline:Promise<void> = Promise.resolve();
   #navigationCommit:Promise<boolean>|null=null;
+  #workspaceTransition=0;
+  #loadRevision=0;
+  #sessionRevision=0;
   #focalInFlight = new Set<string>();
   #focalAppendQueue: Promise<void> = Promise.resolve();
   #jobPollTimer = 0;
@@ -147,15 +160,18 @@ export class FormaStore {
   generationReadinessFor(kind:GenerationReadinessKind,sourcePreviewId?:string|null,promptTechnique:PromptTechnique=this.promptTechniquePreference().technique,productionMode:ProductionMode="manual"){return this.generationReadiness.get()[this.generationReadinessRequestKey(kind,sourcePreviewId,promptTechnique,productionMode)]??null;}
   generationRiskAcknowledged(requestKey:string){return this.#readinessAcknowledgements.has(requestKey);}
   acknowledgeGenerationRisk(requestKey:string){this.#readinessAcknowledgements.add(requestKey);this.notify();}
-  async ensureGenerationReadiness(kind:GenerationReadinessKind,options:{sourcePreviewId?:string|null;promptTechnique?:PromptTechnique;productionMode?:ProductionMode;sourceSurface?:string;force?:boolean}={}){const technique=normalizePromptTechnique(options.promptTechnique??this.promptTechniquePreference().technique);const productionMode=options.productionMode??"manual";const context=this.#generationContext();const requestKey=this.generationReadinessRequestKey(kind,options.sourcePreviewId,technique,productionMode);if(this.#readinessInFlight.has(requestKey))return this.generationReadiness.get()[requestKey]??null;const existing=this.generationReadiness.get()[requestKey];if(existing&&!options.force&&Date.parse(existing.expiresAt)>Date.now())return existing;this.#readinessInFlight.add(requestKey);this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:existing?{...existing,status:"checking",summary:"Checking current generation readiness…"}:{preflightId:"",requestKey,documentId:context.documentId,documentRevision:context.documentRevision,kind,productionMode,promptTechnique:technique,status:"checking",summary:"Checking current generation readiness…",probes:[],provider:{status:"unknown",scope:"unknown",message:"Checking provider status.",observedAt:new Date().toISOString(),expiresAt:new Date().toISOString(),retryAfterMs:null,requestId:null},estimatedTokens:0,estimatedCostMicrousd:0,estimatedSeconds:0,requiresAcknowledgement:false,checkedAt:new Date().toISOString(),expiresAt:new Date().toISOString(),cached:false,version:"pending"}});this.notify();try{const response=await fetch("/api/generation-readiness",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...context,kind,requestKey,productionMode,sourcePreviewId:options.sourcePreviewId??null,promptTechnique:technique,sourceSurface:options.sourceSurface??"generation-controls",force:Boolean(options.force)})});const body=await response.json() as {readiness?:GenerationReadiness;error?:string;message?:string};if(!response.ok||!body.readiness)throw new Error(body.message??body.error??"Generation readiness could not be checked");this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});if(body.readiness.status!=="review")this.#readinessAcknowledgements.delete(requestKey);this.notify();return body.readiness;}catch(error){const failed={...(this.generationReadiness.get()[requestKey]??existing!),status:"unknown" as const,summary:error instanceof Error?error.message:"Generation readiness could not be checked",expiresAt:new Date(Date.now()+30_000).toISOString()};this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:failed});this.notify();return failed;}finally{this.#readinessInFlight.delete(requestKey);}}
-  async refreshGenerationProviderStatus(){try{const response=await this.guardedFetch("/api/generation-readiness/provider/refresh",{method:"POST"},"refresh provider readiness");const body=await response.json() as {error?:string};if(!response.ok)throw new Error(body.error??"Provider status could not be refreshed");this.generationReadiness.set({});this.#readinessAcknowledgements.clear();this.toast("Provider status cleared. Rechecking the current document…");this.notify();return true;}catch(error){this.toast(error instanceof Error?error.message:"Provider status could not be refreshed");return false;}}
+  async ensureGenerationReadiness(kind:GenerationReadinessKind,options:{sourcePreviewId?:string|null;promptTechnique?:PromptTechnique;productionMode?:ProductionMode;sourceSurface?:string;force?:boolean}={}){const authorization=this.#activeAuthorizationScope();const technique=normalizePromptTechnique(options.promptTechnique??this.promptTechniquePreference().technique);const productionMode=options.productionMode??"manual";const context=this.#generationContext();const requestKey=this.generationReadinessRequestKey(kind,options.sourcePreviewId,technique,productionMode);if(this.#readinessInFlight.has(requestKey))return this.generationReadiness.get()[requestKey]??null;const existing=this.generationReadiness.get()[requestKey];if(existing&&!options.force&&Date.parse(existing.expiresAt)>Date.now())return existing;this.#readinessInFlight.add(requestKey);this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:existing?{...existing,status:"checking",summary:"Checking current generation readiness…"}:{preflightId:"",requestKey,documentId:context.documentId,documentRevision:context.documentRevision,kind,productionMode,promptTechnique:technique,status:"checking",summary:"Checking current generation readiness…",probes:[],provider:{status:"unknown",scope:"unknown",message:"Checking provider status.",observedAt:new Date().toISOString(),expiresAt:new Date().toISOString(),retryAfterMs:null,requestId:null},estimatedTokens:0,estimatedCostMicrousd:0,estimatedSeconds:0,requiresAcknowledgement:false,checkedAt:new Date().toISOString(),expiresAt:new Date().toISOString(),cached:false,version:"pending"}});this.notify();try{const response=await fetch("/api/generation-readiness",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...context,kind,requestKey,productionMode,sourcePreviewId:options.sourcePreviewId??null,promptTechnique:technique,sourceSurface:options.sourceSurface??"generation-controls",force:Boolean(options.force)})});this.#assertAuthorizationScope(authorization);const body=await response.json() as {readiness?:GenerationReadiness;error?:string;message?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.readiness)throw new Error(body.message??body.error??"Generation readiness could not be checked");this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});if(body.readiness.status!=="review")this.#readinessAcknowledgements.delete(requestKey);this.notify();return body.readiness;}catch(error){if(!this.#scopeStillActive(authorization))return null;const failed={...(this.generationReadiness.get()[requestKey]??existing!),status:"unknown" as const,summary:error instanceof Error?error.message:"Generation readiness could not be checked",expiresAt:new Date(Date.now()+30_000).toISOString()};this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:failed});this.notify();return failed;}finally{if(this.#scopeStillActive(authorization))this.#readinessInFlight.delete(requestKey);}}
+  async refreshGenerationProviderStatus(){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch("/api/generation-readiness/provider/refresh",{method:"POST"},"refresh provider readiness");this.#assertAuthorizationScope(authorization);const body=await response.json() as {error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"Provider status could not be refreshed");this.generationReadiness.set({});this.#readinessAcknowledgements.clear();this.toast("Provider status cleared. Rechecking the current document…");this.notify();return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Provider status could not be refreshed");return false;}}
   async comparePromptTechniqueSafety(job:DocumentJob,failedTechnique:PromptTechnique=job.promptTechnique,failedPrompt=""){
-    const context=this.#generationContext(job.documentId);
+    const authorization=this.#activeAuthorizationScope(),context=this.#generationContext(job.documentId);
     const kind=job.kind==="prompt_fan"?job.fanKind??"generate":job.kind==="preview"?"preview":"generate";
     const response=await this.guardedFetch("/api/generation-readiness/prompt-techniques",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...context,kind,productionMode:job.productionMode??"manual",sourcePreviewId:job.sourcePreviewId,failedTechnique:normalizePromptTechnique(failedTechnique),failedPrompt,sourceSurface:job.sourceSurface||"generation-failure"})},"run a moderation-only prompt comparison");
+    this.#assertAuthorizationScope(authorization);
     const body=await response.json() as {comparison?:PromptTechniqueSafetyComparison;error?:string;message?:string};
+    this.#assertAuthorizationScope(authorization);
     if(!response.ok||!body.comparison)throw new Error(body.message??body.error??"Prompt structures could not be compared");
     await this.#refreshEvents();
+    this.#assertAuthorizationScope(authorization);
     return body.comparison;
   }
   documentGenerationJobs(documentId=this.projection.get().documentId){return this.documentJobs.get().filter((job)=>job.documentId===documentId&&(job.kind==="prompt_fan"||(job.kind==="preview"||job.kind==="generate")&&!job.parentJobId)&&(job.status==="queued"||job.status==="running"||job.status==="committing")).sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId));}
@@ -174,11 +190,13 @@ export class FormaStore {
   #jobNotice(job:DocumentJob){const title=this.projection.get().documents.find((document)=>document.id===job.documentId)?.title??"your document";const labels:Record<DocumentJobKind,string>={preview:"Draft generation",generate:"Full-quality generation",prompt_fan:"Fan generation",chat:"Creative chat",structure_adaptive:"Adaptive planning",extract_reference:"Reference analysis",render_document:"Document render"};if(job.status==="partial"&&job.kind==="prompt_fan"){const completed=Number(job.result?.completedCount??0),failed=Number(job.result?.failedCount??0);return`Fan generation finished partially for ${title}: ${completed} image${completed===1?"":"s"} ready and ${failed} failed. Open the comparison for details.`;}if(job.status==="failed"){const detail=documentJobFailure(job);const guidance=generationFailureGuidance(detail,job.error??"");return`${labels[job.kind]} could not finish for ${title}. ${guidance.title}. ${guidance.summary}${detail?.requestId?` Request ${detail.requestId}.`:""}`;}const ready:Record<DocumentJobKind,string>={preview:"A draft image is ready",generate:"A full-quality image is ready",prompt_fan:"A four-image fan is ready",chat:"A chat response is ready",structure_adaptive:"An adaptive plan is ready",extract_reference:"Reference analysis is ready",render_document:"A new document artifact is ready"};return`${ready[job.kind]} in ${title}.`;}
   async #ackJob(jobId:string){try{await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/ack`,{method:"POST"});}catch{/* A later poll can offer the notice again. */}}
   async loadDocumentJobDetail(jobId:string){
+    const authorization=this.#activeAuthorizationScope();
     const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
     const cached=this.#jobDetails.get(jobId);
     if(cached&&cached.updatedAt===current?.updatedAt)return cached;
     const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}`);
     const body=await response.json() as {job?:DocumentJob;error?:string};
+    this.#assertAuthorizationScope(authorization);
     if(!response.ok||!body.job)throw new Error(body.error??"The retained generation inputs could not be loaded.");
     this.#jobDetails.set(jobId,body.job);
     if(this.#jobDetails.size>24)this.#jobDetails.delete(this.#jobDetails.keys().next().value!);
@@ -186,21 +204,25 @@ export class FormaStore {
     this.notify();
     return body.job;
   }
-  async dismissDocumentJobFailure(jobId:string){try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/dismiss`,{method:"POST"},"dismiss this generation issue");const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok||!body.job)throw new Error(body.error??"Generation issue could not be dismissed");this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast("Generation notice dismissed. Its retained inputs remain in this document’s failure history.");this.notify();return true;}catch(error){this.toast(error instanceof Error?error.message:"Generation issue could not be dismissed");return false;}}
-  async recoverDocumentRender(jobId:string){try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/retry`,{method:"POST"},"recover this completed provider render");const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok||!body.job)throw new Error(body.error??"The saved provider render could not be recovered");this.documentJobs.set([body.job,...this.documentJobs.get().filter((job)=>job.jobId!==jobId)]);this.toast("Recovering the saved Fal video. No second paid video was submitted.");this.notify();this.#driveDocumentJobs(this.documentJobs.get());this.#scheduleJobPoll(800);return true;}catch(error){this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}}
-  async stopDocumentJob(jobId:string,force=false){try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/${force?"force-fail":"cancel"}`,{method:"POST"},force?"force-fail this document operation":"stop this document operation");const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok||!body.job){const messages:Record<string,string>={job_finalizing:"This operation is already finalizing and can no longer be stopped.",admin_required:"Only an administrator can force-fail an operation."};throw new Error(messages[body.error??""]??body.error??"The operation could not be stopped");}this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast(force?"Operation force-failed. Its audit receipt and released budget remain available.":"Operation stopped. Any reserved application budget was released.");await Promise.all([this.syncDocumentJobs(),this.refreshSession()]);return true;}catch(error){this.toast(error instanceof Error?error.message:"The operation could not be stopped");return false;}}
+  async dismissDocumentJobFailure(jobId:string){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/dismiss`,{method:"POST"},"dismiss this generation issue");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job)throw new Error(body.error??"Generation issue could not be dismissed");this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast(this.session.get()?.projectContext?"Generation notice dismissed. Failure details remain available; generation inputs stay private to their author.":"Generation notice dismissed. Its retained inputs remain in this document’s failure history.");this.notify();return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Generation issue could not be dismissed");return false;}}
+  async recoverDocumentRender(jobId:string){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/retry`,{method:"POST"},"recover this completed provider render");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job)throw new Error(body.error??"The saved provider render could not be recovered");this.documentJobs.set([body.job,...this.documentJobs.get().filter((job)=>job.jobId!==jobId)]);this.toast("Recovering the saved Fal video. No second paid video was submitted.");this.notify();this.#driveDocumentJobs(this.documentJobs.get());this.#scheduleJobPoll(800);return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}}
+  async stopDocumentJob(jobId:string,force=false){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/${force?"force-fail":"cancel"}`,{method:"POST"},force?"force-fail this document operation":"stop this document operation");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job){const messages:Record<string,string>={job_finalizing:"This operation is already finalizing and can no longer be stopped.",admin_required:"Only an administrator can force-fail an operation."};throw new Error(messages[body.error??""]??body.error??"The operation could not be stopped");}this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast(force?"Operation force-failed. Its audit receipt and released budget remain available.":"Operation stopped. Any reserved application budget was released.");await Promise.all([this.syncDocumentJobs(),this.refreshSession()]);this.#assertAuthorizationScope(authorization);return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The operation could not be stopped");return false;}}
   #flushPendingJobNotices(){if(document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;const jobs=this.#pendingJobNotices.splice(0);this.toast(jobs.length===1?this.#jobNotice(jobs[0]):`${jobs.length} background document operations finished.`);for(const job of jobs)void this.#ackJob(job.jobId);}
   async #readEventPages(after=0){return this.#readEventStream(after,"full",after===0);}
-  async replayAuthoritativeHistory(sequence:number){const complete=await this.#readEventStream(0,"full",false);this.replayEvents.set(complete.events);this.setReplayAsOf(sequence);}
+  async replayAuthoritativeHistory(sequence:number){const authorization=this.#activeAuthorizationScope(),complete=await this.#readEventStream(0,"full",false);this.#assertAuthorizationScope(authorization);this.replayEvents.set(complete.events);this.setReplayAsOf(sequence);}
   async #readEventStream(after:number,profile:AccountSnapshotProfile,includeContent=false){
+    const authorization=this.#activeAuthorizationScope();
+    this.#assertAuthorizationScope(authorization);
     let cursor=Math.max(0,after),head=cursor,first=true,initialHead=Number.POSITIVE_INFINITY;
     const events:CreativeEvent[]=[];let content:Record<string,string>={};
     for(let page=0;page<500;page+=1){
       const limit=profile==="full"?5000:6500;
       const selection=profile==="full"?"":`&profile=${profile}`;
       const response=await fetch(`/api/events?after=${cursor}&limit=${limit}&content=${first&&includeContent?1:0}${selection}`);
+      this.#assertAuthorizationScope(authorization);
       if(!response.ok)throw new Error(`Event stream returned ${response.status}`);
       const body=await response.json() as {events?:CreativeEvent[];content?:Record<string,string>;head?:number;nextAfter?:number;hasMore?:boolean};
+      this.#assertAuthorizationScope(authorization);
       const responseHead=Math.max(0,Number(body.head??head));
       head=first?responseHead:Math.max(head,responseHead);
       if(first)initialHead=head;
@@ -213,8 +235,10 @@ export class FormaStore {
       if(!hasMore){
         if(profile==="full"&&after>0&&events.some((event)=>Object.entries(event.payload).some(([key,value])=>/(?:^|_)(?:content|prompt|intent|input|response|message|statement|condition|note|output|direction)_ref$/.test(key)&&typeof value==="string"&&!this.content.get()[value]))){
           const hydration=await fetch(`/api/events?after=${head}&limit=1&content=1`);
-          if(hydration.ok){const hydrated=await hydration.json() as {content?:Record<string,string>};content={...content,...(hydrated.content??{})};}
+          this.#assertAuthorizationScope(authorization);
+          if(hydration.ok){const hydrated=await hydration.json() as {content?:Record<string,string>};this.#assertAuthorizationScope(authorization);content={...content,...(hydrated.content??{})};}
         }
+        this.#assertAuthorizationScope(authorization);
         return{events,content,head:Math.min(head,initialHead)};
       }
     }
@@ -230,14 +254,38 @@ export class FormaStore {
   }
 
   #snapshotIdentity(session:PilotSession):AccountSnapshotIdentity{
-    return{userId:session.user.userId,policyVersion:session.policy.version,accepted:session.policy.accepted,impersonating:Boolean(session.impersonation)};
+    return{
+      userId:session.user.userId,
+      principalUserId:session.impersonation?.actor.userId??session.user.userId,
+      audience:session.audience??"creative",
+      organizationId:session.projectContext?.organizationId??null,
+      projectAccessId:session.projectContext?.projectAccessId??null,
+      permissionEpoch:session.permissionEpoch??"legacy",
+      accessExpiresAt:session.projectContext?.expiresAt??null,
+      policyVersion:session.policy.version,
+      accepted:session.policy.accepted,
+      impersonating:Boolean(session.impersonation),
+    };
   }
 
+  #authorizationScope(session:PilotSession){
+    const identity=this.#snapshotIdentity(session);
+    return[identity.principalUserId,identity.userId,identity.audience,identity.organizationId??"personal",identity.projectAccessId??"personal",identity.permissionEpoch,identity.impersonating].join("\u0000");
+  }
+
+  #activeAuthorizationScope(){const session=this.session.get();return session?this.#authorizationScope(session):"";}
+  #scopeStillActive(scope:string){return Boolean(scope)&&this.#activeAuthorizationScope()===scope;}
+  #assertAuthorizationScope(scope:string){if(!this.#scopeStillActive(scope))throw new Error("The active workspace changed; the previous result was safely discarded.");}
+  captureAuthorizationScope():CapturedAuthorizationScope|null{const session=this.session.get();return session?{key:this.#authorizationScope(session),shared:Boolean(session.projectContext)}:null;}
+  authorizationScopeActive(scope:CapturedAuthorizationScope|null){return Boolean(scope&&this.#scopeStillActive(scope.key)&&Boolean(this.session.get()?.projectContext)===scope.shared);}
+
   async #upgradeHistory(profile:AccountSnapshotProfile){
+    const authorization=this.#activeAuthorizationScope();
     if(eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;
-    if(this.#historyUpgrade){await this.#historyUpgrade;if(eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;}
+    if(this.#historyUpgrade){await this.#historyUpgrade;this.#assertAuthorizationScope(authorization);if(eventProfileRank(this.#historyProfile)>=eventProfileRank(profile))return;}
     const upgrade=(async()=>{
       const incoming=await this.#readEventStream(0,profile,profile==="full"&&routeCapabilities(this.route.get()).privateContent);
+      this.#assertAuthorizationScope(authorization);
       const merged=new Map(incoming.events.map((event)=>[event.eventId,event]));
       for(const event of this.events.get())merged.set(event.eventId,event);
       this.events.set([...merged.values()].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));
@@ -257,14 +305,15 @@ export class FormaStore {
     const required: "chat"|"memory"|"all"=routeCapabilities(this.route.get()).profile==="memory"?"memory":documentViewFromRoute(this.route.get())==="chat"?"chat":"all";
     if(this.#privateContentScope==="all"||this.#privateContentScope===required){recordPrivateContentState("ready",required);return;}
     const hydrationPath=this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/";
-    const owner=this.session.get()?.user.userId;
+    const initialSession=this.session.get(),owner=initialSession?.user.userId,authorization=initialSession?this.#authorizationScope(initialSession):"";
     if(this.#contentHydration){try{await this.#contentHydration;if(String(this.#privateContentScope)!=="all"&&String(this.#privateContentScope)!==required)return this.#hydrateVisiblePrivateContent();if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("ready",required);}catch(error){if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState("unavailable",required);throw error;}return;}
     recordPrivateContentState("pending",required);
     const hydration=(async()=>{
       const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1${required!=="all"?`&contentScope=${required}`:""}`);
       if(!response.ok)throw new Error(`Private content returned ${response.status}`);
       const body=await response.json() as {content?:Record<string,string>};
-      if(!owner||this.session.get()?.user.userId!==owner)throw new Error("Private content no longer belongs to the active account");
+      const currentSession=this.session.get();
+      if(!owner||!currentSession||currentSession.user.userId!==owner||this.#authorizationScope(currentSession)!==authorization)throw new Error("Private content no longer belongs to the active account or project");
       this.#privateContentScope=required;
       if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}
     })();
@@ -275,18 +324,19 @@ export class FormaStore {
 
   async ensurePrivateContent(reference:string){
     if(!reference)return null;
-    const owner=this.session.get()?.user.userId;if(!owner)return null;
+    const initialSession=this.session.get(),owner=initialSession?.user.userId,authorization=initialSession?this.#authorizationScope(initialSession):"";if(!owner)return null;
     const existing=this.content.get()[reference];if(typeof existing==="string")return existing;
-    if(this.#contentHydration){try{await this.#contentHydration;}catch{/* A targeted retry below preserves the exact missing-reference contract. */}const hydrated=this.content.get()[reference];if(typeof hydrated==="string")return hydrated;}
-    try{const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1`);if(!response.ok)return null;const body=await response.json() as {content?:Record<string,string>};if(this.session.get()?.user.userId!==owner)return null;this.#privateContentScope="all";if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}return this.content.get()[reference]??null;}catch{return null;}
+    if(this.#contentHydration){try{await this.#contentHydration;}catch{/* A targeted retry below preserves the exact missing-reference contract. */}const active=this.session.get();if(!active||this.#authorizationScope(active)!==authorization)return null;const hydrated=this.content.get()[reference];if(typeof hydrated==="string")return hydrated;}
+    try{const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1`);if(!response.ok)return null;const body=await response.json() as {content?:Record<string,string>};const active=this.session.get();if(!active||active.user.userId!==owner||this.#authorizationScope(active)!==authorization)return null;this.#privateContentScope="all";if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}return this.content.get()[reference]??null;}catch{return null;}
   }
   #clientEventIds(events:CreativeEvent[]){return new Set(events.map((event)=>String(event.payload.client_event_id??"")).filter(Boolean));}
+  #principalEventActor(){const session=this.session.get();return session?.projectContext?`user:${session.user.userId}`:"user";}
   #mergeConfirmed(appended:CreativeEvent[],head=this.head.get(),remember=false){
     const known=new Set(this.events.get().map((event)=>event.eventId));const fresh=appended.filter((event)=>!known.has(event.eventId));
     if(fresh.length)this.events.set([...this.events.get(),...fresh].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));
     const confirmedClientIds=this.#clientEventIds(appended);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));
     this.head.set(Math.max(this.head.get(),head,...appended.map((event)=>event.sequence)));
-    if(remember){const remembered=appended.filter((event)=>{const clientEventId=String(event.payload.client_event_id??"");if(event.actor!=="user"||event.compensatesEventId||!inverseEvent(event)||clientEventId&&this.#rememberedClientEventIds.has(clientEventId))return false;if(clientEventId)this.#rememberedClientEventIds.add(clientEventId);return true;});if(remembered.length){this.#undo.push(remembered);this.#redo=[];}}
+    if(remember){const actor=this.#principalEventActor();const remembered=appended.filter((event)=>{const clientEventId=String(event.payload.client_event_id??"");if(event.actor!==actor||event.compensatesEventId||!inverseEvent(event)||clientEventId&&this.#rememberedClientEventIds.has(clientEventId))return false;if(clientEventId)this.#rememberedClientEventIds.add(clientEventId);return true;});if(remembered.length){this.#undo.push(remembered);this.#redo=[];}}
     this.#publishAppended(fresh);return fresh;
   }
   stageOptimisticCanvasEvents(events:EventInput[]){
@@ -297,26 +347,29 @@ export class FormaStore {
   discardOptimisticCanvasEvents(clientEventIds:Iterable<string>){const ids=new Set(clientEventIds);if(!ids.size)return;this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!ids.has(String(event.payload.client_event_id??""))));this.notify();}
   async syncCanvasBatch(events:EventInput[],options:{remember?:boolean}={}):Promise<CanvasSyncResult>{
     if(!events.length)return{appended:[],rejected:[],head:this.head.get(),retryable:false,error:""};
+    const authorization=this.#activeAuthorizationScope();
     let response:Response;let body:{appended?:CreativeEvent[];rejected?:Array<{index?:number;type?:string;reason:string}>;head?:number;error?:string}={};
-    try{response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"canvas_sync",events,clientId:"web:canvas"})},events.length>1?`apply ${events.length} ordered board changes`:`record ${events[0].type}`);try{body=await response.json() as typeof body;}catch{body={error:`Canvas sync returned HTTP ${response.status} without a readable receipt.`};}}
-    catch(error){const message=error instanceof Error?error.message:"The Canvas server could not be reached.";this.appendFailure.set(message);return{appended:[],rejected:[],head:this.head.get(),retryable:true,error:message};}
+    try{response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"canvas_sync",events,clientId:"web:canvas"})},events.length>1?`apply ${events.length} ordered board changes`:`record ${events[0].type}`);this.#assertAuthorizationScope(authorization);try{body=await response.json() as typeof body;}catch{body={error:`Canvas sync returned HTTP ${response.status} without a readable receipt.`};}this.#assertAuthorizationScope(authorization);}
+    catch(error){const message=error instanceof Error?error.message:"The Canvas server could not be reached.";if(this.#scopeStillActive(authorization))this.appendFailure.set(message);return{appended:[],rejected:[],head:this.head.get(),retryable:true,error:message};}
+    this.#assertAuthorizationScope(authorization);
     const appended=body.appended??[];if(appended.length)this.#mergeConfirmed(appended,body.head??this.head.get(),options.remember!==false);
     const error=response.ok?"":body.error??`Canvas sync returned HTTP ${response.status}`;const retryable=!response.ok&&(response.status>=500||[408,425,429].includes(response.status)||response.status===409&&body.error==="stale_sequence");
     this.appendFailure.set(error||((body.rejected?.length??0)>0?body.rejected!.map((item)=>item.reason).join("; "):""));this.notify();
     return{appended,rejected:body.rejected??[],head:body.head??this.head.get(),retryable,error};
   }
-  async #refreshEvents(){const previous=this.events.get();const known=new Set(previous.map((event)=>event.eventId));const after=this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();let replace=after===0;let body=await this.#readEventPages(after);if(body.head<after){body=await this.#readEventPages(0);replace=true;this.#historyProfile="full";}if(!replace&&!body.events.length&&body.head===after&&!Object.keys(body.content).length)return false;const complete=replace?body.events:[...previous,...body.events.filter((event)=>!known.has(event.eventId))];this.events.set(complete);const confirmedClientIds=this.#clientEventIds(complete);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));if(Object.keys(body.content).length)this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#publishAppended(complete.filter((event)=>!known.has(event.eventId)));return true;}
+  async #refreshEvents(){const authorization=this.#activeAuthorizationScope(),previous=this.events.get();const known=new Set(previous.map((event)=>event.eventId));const after=this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();let replace=after===0;let body=await this.#readEventPages(after);this.#assertAuthorizationScope(authorization);if(body.head<after){body=await this.#readEventPages(0);this.#assertAuthorizationScope(authorization);replace=true;this.#historyProfile="full";}if(!replace&&!body.events.length&&body.head===after&&!Object.keys(body.content).length)return false;const complete=replace?body.events:[...previous,...body.events.filter((event)=>!known.has(event.eventId))];this.#assertAuthorizationScope(authorization);this.events.set(complete);const confirmedClientIds=this.#clientEventIds(complete);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));if(Object.keys(body.content).length)this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#publishAppended(complete.filter((event)=>!known.has(event.eventId)));return true;}
   async refreshEvents(){if(await this.#refreshEvents())this.notify();}
-  #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
-  #syncVisibleJobs(path=this.route.get()){if(path!==this.route.get())return;if(routeCapabilities(path).jobHistory||this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){this.#pendingPassiveJobPath="";void this.syncDocumentJobs();return;}window.clearTimeout(this.#jobPollTimer);if(document.documentElement.dataset.formaPhase==="populated"){this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);}else this.#pendingPassiveJobPath=path;}
+  #canRequestProjectOutputs(){const context=this.session.get()?.projectContext;return!context||context.permissions.includes("project.output.request");}
+  #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);if(!this.#canRequestProjectOutputs())return;this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
+  #syncVisibleJobs(path=this.route.get()){if(path!==this.route.get()||!this.#canRequestProjectOutputs()){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath="";return;}if(routeCapabilities(path).jobHistory||this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){this.#pendingPassiveJobPath="";void this.syncDocumentJobs();return;}window.clearTimeout(this.#jobPollTimer);if(document.documentElement.dataset.formaPhase==="populated"){this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);}else this.#pendingPassiveJobPath=path;}
   #jobScope(path=this.route.get()){const documentId=documentIdFromRoute(path);return documentId?`?document=${encodeURIComponent(documentId)}`:routeCapabilities(path).jobHistory?"":"?scope=active";}
   #driveDocumentJobs(jobs:DocumentJob[]){const next=[...jobs].filter((job)=>job.kind!=="prompt_fan"&&(job.status==="queued"||job.status==="running"||job.status==="committing")).sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId))[0];if(next&&(next.status==="queued"||documentJobIsStale(next))&&!this.#jobsDriving.has(next.jobId))void this.#driveDocumentJob(next);}
-  async #driveDocumentJob(job:DocumentJob){this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});const body=await response.json() as {job?:DocumentJob;error?:string};if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}
-  async syncDocumentJobs(){const scope=this.#jobScope();if(this.#jobsSyncing){if(scope!==this.#jobSyncScope)this.#jobResyncRequested=true;return;}this.#jobsSyncing=true;this.#jobSyncScope=scope;try{const response=await fetch(`/api/document-jobs${scope}`);if(!response.ok)throw new Error(`Job status returned ${response.status}`);const body=await response.json() as {jobs?:DocumentJob[]};if(this.#jobScope()!==scope){this.#jobResyncRequested=true;return;}const previous=new Map(this.documentJobs.get().map((job)=>[job.jobId,job]));const jobs=(body.jobs??[]).map((job)=>{const detail=this.#jobDetails.get(job.jobId);if(detail&&detail.updatedAt===job.updatedAt)return{...job,result:detail.result};if(detail)this.#jobDetails.delete(job.jobId);return job;});this.documentJobs.set(jobs);this.#jobPollFailures=0;this.#jobPollIssueNotified=false;
-      const terminalChanges=jobs.filter((job)=>documentJobTerminal(job)&&(previous.has(job.jobId)?previous.get(job.jobId)?.status!==job.status:!job.notifiedAt&&!job.parentJobId));const fanProgress=jobs.some((job)=>job.kind==="prompt_fan"&&previous.has(job.jobId)&&previous.get(job.jobId)?.updatedAt!==job.updatedAt);const disappearedActive=[...previous.values()].some((job)=>(job.status==="queued"||job.status==="running"||job.status==="committing")&&!jobs.some((current)=>current.jobId===job.jobId));const completed=terminalChanges.filter((job)=>!job.notifiedAt&&!job.parentJobId);if(terminalChanges.length||fanProgress||disappearedActive){this.#pendingJobEventRefresh=true;this.#pendingJobSessionRefresh=true;}if(this.#pendingJobEventRefresh){await this.#refreshEvents();this.#pendingJobEventRefresh=false;}if(this.#pendingJobSessionRefresh){try{await this.refreshSession();this.#pendingJobSessionRefresh=false;}catch{/* Retry account totals independently; a temporary session failure must not hide completed creative work. */}}this.#syncAdaptiveSuggestionSets(jobs);
+  async #driveDocumentJob(job:DocumentJob){const authorization=this.#activeAuthorizationScope();this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(this.#scopeStillActive(authorization)&&document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{if(this.#scopeStillActive(authorization)){this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}}
+  async syncDocumentJobs(){if(!this.#canRequestProjectOutputs()){window.clearTimeout(this.#jobPollTimer);return;}const scope=this.#jobScope(),initialSession=this.session.get(),authorization=initialSession?this.#authorizationScope(initialSession):"";if(this.#jobsSyncing){if(scope!==this.#jobSyncScope)this.#jobResyncRequested=true;return;}this.#jobsSyncing=true;this.#jobSyncScope=scope;try{const response=await fetch(`/api/document-jobs${scope}`);if(!response.ok)throw new Error(`Job status returned ${response.status}`);const body=await response.json() as {jobs?:DocumentJob[]};const currentSession=this.session.get();if(this.#jobScope()!==scope||!currentSession||this.#authorizationScope(currentSession)!==authorization){this.#jobResyncRequested=true;return;}const previous=new Map(this.documentJobs.get().map((job)=>[job.jobId,job]));const jobs=(body.jobs??[]).map((job)=>{const detail=this.#jobDetails.get(job.jobId);if(detail&&detail.updatedAt===job.updatedAt)return{...job,result:detail.result};if(detail)this.#jobDetails.delete(job.jobId);return job;});this.documentJobs.set(jobs);this.#jobPollFailures=0;this.#jobPollIssueNotified=false;
+      const terminalChanges=jobs.filter((job)=>documentJobTerminal(job)&&(previous.has(job.jobId)?previous.get(job.jobId)?.status!==job.status:!job.notifiedAt&&!job.parentJobId));const fanProgress=jobs.some((job)=>job.kind==="prompt_fan"&&previous.has(job.jobId)&&previous.get(job.jobId)?.updatedAt!==job.updatedAt);const disappearedActive=[...previous.values()].some((job)=>(job.status==="queued"||job.status==="running"||job.status==="committing")&&!jobs.some((current)=>current.jobId===job.jobId));const completed=terminalChanges.filter((job)=>!job.notifiedAt&&!job.parentJobId);if(terminalChanges.length||fanProgress||disappearedActive){this.#pendingJobEventRefresh=true;this.#pendingJobSessionRefresh=true;}if(this.#pendingJobEventRefresh){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);this.#pendingJobEventRefresh=false;}if(this.#pendingJobSessionRefresh){try{await this.refreshSession();this.#assertAuthorizationScope(authorization);this.#pendingJobSessionRefresh=false;}catch(error){if(!this.#scopeStillActive(authorization))throw error;/* Retry account totals independently; a temporary session failure must not hide completed creative work. */}}this.#assertAuthorizationScope(authorization);this.#syncAdaptiveSuggestionSets(jobs);
       for(const job of completed){if(job.kind==="structure_adaptive"&&job.status==="completed"&&job.result?.structure)this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId);continue;}if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);}
       this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(jobs.some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")?1_500:this.#pendingJobSessionRefresh?5_000:60_000);
-    }catch{this.#jobPollFailures+=1;if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}this.#scheduleJobPoll(5_000);}finally{this.#jobsSyncing=false;if(this.#jobResyncRequested||this.#jobScope()!==scope){this.#jobResyncRequested=false;queueMicrotask(()=>void this.syncDocumentJobs());}}}
+    }catch{if(this.#scopeStillActive(authorization)){this.#jobPollFailures+=1;if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}this.#scheduleJobPoll(5_000);}}finally{this.#jobsSyncing=false;if(this.#scopeStillActive(authorization)&&(this.#jobResyncRequested||this.#jobScope()!==scope)){this.#jobResyncRequested=false;queueMicrotask(()=>void this.syncDocumentJobs());}}}
   #budgetPreference(key:string){try{return localStorage.getItem(key)==="true";}catch{return false;}}
   #setBudgetPreference(key:string){try{localStorage.setItem(key,"true");}catch{/* A blocked browser storage policy only affects reminder persistence. */}}
   #generationEstimate(kind:DocumentJobKind,payload:Record<string,unknown>){
@@ -330,14 +383,15 @@ export class FormaStore {
   async #authorizeGenerationBudget(kind:DocumentJobKind,payload:Record<string,unknown>){
     if(!["preview","generate","prompt_fan","render_document","chat","structure_adaptive"].includes(kind))return;
     const session=this.session.get();if(!session?.costBudgets)return;
+    const authorization=this.#authorizationScope(session);
     const billingUserId=session.impersonation?.actor.userId??session.user.userId;
-    const noticeKey=generationBudgetPreferenceKey(billingUserId,session.costBudgets.period,"notice");
-    const suppressionKey=generationBudgetPreferenceKey(billingUserId,session.costBudgets.period,"suppressed");
+    const noticeKey=generationBudgetPreferenceKey(billingUserId,session.costBudgets.period,"notice",session.projectContext?.organizationId);
+    const suppressionKey=generationBudgetPreferenceKey(billingUserId,session.costBudgets.period,"suppressed",session.projectContext?.organizationId);
     const suppressed=this.#budgetPreference(suppressionKey);
     const acknowledged=this.#budgetPreference(noticeKey);
     const gate=generationBudgetGate(session.costBudgets,{projectedMicrousd:this.#generationEstimate(kind,payload),suppressedUntilCritical:suppressed,noticeAcknowledged:acknowledged});
     if(gate.level==="blocked")throw new Error(`This generation exceeds the remaining ${gate.scope==="workspace"?"organization":"personal"} monthly budget.`);
-    if(!gate.requiresAcknowledgement){payload.budgetAcknowledged=acknowledged;payload.budgetWarningSuppressed=suppressed&&gate.level!=="critical";return;}
+    if(!gate.requiresAcknowledgement){this.#assertAuthorizationScope(authorization);payload.budgetAcknowledged=acknowledged;payload.budgetWarningSuppressed=suppressed&&gate.level!=="critical";return;}
     const dialog=document.createElement("dialog");dialog.className="modal generation-budget-approval";const dialogId=crypto.randomUUID();dialog.setAttribute("aria-labelledby",`generation-budget-title-${dialogId}`);dialog.setAttribute("aria-describedby",`generation-budget-description-${dialogId}`);
     const card=document.createElement("section");card.className="modal-card";
     const heading=document.createElement("h2");heading.id=`generation-budget-title-${dialogId}`;heading.textContent=gate.level==="critical"?"Your monthly generation budget is almost exhausted":"Review your monthly generation budget";
@@ -346,11 +400,12 @@ export class FormaStore {
     let suppression:HTMLInputElement|null=null;
     if(gate.dismissible){const label=document.createElement("label");suppression=document.createElement("input");suppression.type="checkbox";label.append(suppression,document.createTextNode(" I no longer want to see this until 95% of the monthly budget is used."));card.append(label);}
     const footer=document.createElement("footer"),cancel=document.createElement("button"),continueButton=document.createElement("button");cancel.type="button";cancel.className="button ghost";cancel.textContent="Cancel";continueButton.type="button";continueButton.className="button primary";continueButton.textContent="I understand, continue";footer.append(cancel,continueButton);card.append(footer);dialog.append(card);document.body.append(dialog);
-    const accepted=await new Promise<boolean>((resolve)=>{let settled=false;const finish=(value:boolean)=>{if(settled)return;settled=true;if(value&&suppression?.checked)this.#setBudgetPreference(suppressionKey);if(value&&gate.level==="notice")this.#setBudgetPreference(noticeKey);dialog.close();dialog.remove();resolve(value);};cancel.addEventListener("click",()=>finish(false));continueButton.addEventListener("click",()=>finish(true));dialog.addEventListener("cancel",(event)=>{event.preventDefault();finish(false);});dialog.showModal();});
+    const accepted=await new Promise<boolean>((resolve)=>{let settled=false;const finish=(requested:boolean)=>{if(settled)return;settled=true;window.removeEventListener("forma-authorization-changed",changed);const value=requested&&this.#scopeStillActive(authorization);if(value&&suppression?.checked)this.#setBudgetPreference(suppressionKey);if(value&&gate.level==="notice")this.#setBudgetPreference(noticeKey);if(dialog.open)dialog.close();dialog.remove();resolve(value);};const changed=()=>finish(false);window.addEventListener("forma-authorization-changed",changed,{once:true});cancel.addEventListener("click",()=>finish(false));continueButton.addEventListener("click",()=>finish(true));dialog.addEventListener("cancel",(event)=>{event.preventDefault();finish(false);});if(!this.#scopeStillActive(authorization)){finish(false);return;}dialog.showModal();});
+    this.#assertAuthorizationScope(authorization);
     if(!accepted)throw new Error("Generation canceled before any provider work was started.");
     payload.budgetAcknowledged=true;payload.budgetWarningSuppressed=this.#budgetPreference(suppressionKey)&&gate.level!=="critical";
   }
-  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string){const documentId=documentIdOverride??this.projection.get().documentId;const requestKey=String(payload.requestKey??"");if(requestKey&&this.#jobStarts.has(requestKey))throw new Error("This exact image request is already being queued.");if(requestKey){this.#jobStarts.add(requestKey);this.notify();}try{const navigation=this.#navigationCommit;await this.#appendPipeline;if(navigation&&!await navigation)throw new Error("The selected project could not be opened safely.");await this.#authorizeGenerationBudget(kind,payload);const action=kind==="preview"?"start a draft image":kind==="generate"?"start a full-quality image":kind==="prompt_fan"?"start a four-image prompt fan":`start ${kind.replaceAll("_"," ")}`;const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action);const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness};if(body.readiness&&requestKey)this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});if(!response.ok||!body.job)throw new Error(body.message??body.error??"Document operation could not be started");const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);if(requestKey)this.#readinessAcknowledgements.delete(requestKey);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);return{job:body.job,reused:Boolean(body.reused)};}finally{if(requestKey){this.#jobStarts.delete(requestKey);this.notify();}}}
+  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string){const authorization=this.#activeAuthorizationScope();if(!this.#canRequestProjectOutputs())throw new Error("Your project role does not permit creating outputs.");const documentId=documentIdOverride??this.projection.get().documentId;const requestKey=String(payload.requestKey??"");if(requestKey&&this.#jobStarts.has(requestKey))throw new Error("This exact image request is already being queued.");if(requestKey){this.#jobStarts.add(requestKey);this.notify();}try{const navigation=this.#navigationCommit;await this.#appendPipeline;this.#assertAuthorizationScope(authorization);if(navigation&&!await navigation)throw new Error("The selected project could not be opened safely.");this.#assertAuthorizationScope(authorization);await this.#authorizeGenerationBudget(kind,payload);this.#assertAuthorizationScope(authorization);const action=kind==="preview"?"start a draft image":kind==="generate"?"start a full-quality image":kind==="prompt_fan"?"start a four-image prompt fan":`start ${kind.replaceAll("_"," ")}`;const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action);this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job)throw new Error(body.message??body.error??"Document operation could not be started");const activeSession=this.session.get();if(!activeSession||this.#authorizationScope(activeSession)!==authorization)throw new Error("The selected project changed before this request finished.");if(body.readiness&&requestKey)this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);if(requestKey)this.#readinessAcknowledgements.delete(requestKey);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);return{job:body.job,reused:Boolean(body.reused)};}finally{if(requestKey&&this.#scopeStillActive(authorization)){this.#jobStarts.delete(requestKey);this.notify();}}}
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
   toast(message: string) { this.ui.toast = message; this.notify(); window.setTimeout(() => { if (this.ui.toast === message) { this.ui.toast = ""; this.notify(); } }, 2800); }
   async confirmImpersonatedInteraction(action="change this fictional account"){
@@ -358,13 +413,46 @@ export class FormaStore {
   }
   resolveImpersonatedInteraction(confirmed:boolean){const resolve=this.#impersonationConfirmation;this.#impersonationConfirmation=undefined;this.patchUi({impersonationConfirmOpen:false,impersonationAction:""});resolve?.(confirmed);if(!confirmed)this.toast("Canceled. The fictional account was not changed.");}
   async guardedFetch(input:RequestInfo|URL,init:RequestInit={},action="change this fictional account"){
-    const method=String(init.method??(input instanceof Request?input.method:"GET")).toUpperCase();if(!this.session.get()?.impersonation||["GET","HEAD","OPTIONS"].includes(method))return fetch(input,init);const confirmed=await this.confirmImpersonatedInteraction(action);if(!confirmed)return Response.json({error:"Action canceled. No changes were made to the fictional account."},{status:409});const headers=new Headers(input instanceof Request?input.headers:undefined);new Headers(init.headers).forEach((value,key)=>headers.set(key,value));headers.set("x-forma-impersonation-confirmation","I understand, continue");return fetch(input,{...init,headers});
+    const authorization=this.#activeAuthorizationScope(),method=String(init.method??(input instanceof Request?input.method:"GET")).toUpperCase();
+    if(!this.session.get()?.impersonation||["GET","HEAD","OPTIONS"].includes(method)){const response=await fetch(input,init);if(authorization)this.#assertAuthorizationScope(authorization);return response;}
+    const confirmed=await this.confirmImpersonatedInteraction(action);this.#assertAuthorizationScope(authorization);if(!confirmed)return Response.json({error:"Action canceled. No changes were made to the fictional account."},{status:409});const headers=new Headers(input instanceof Request?input.headers:undefined);new Headers(init.headers).forEach((value,key)=>headers.set(key,value));headers.set("x-forma-impersonation-confirmation","I understand, continue");const response=await fetch(input,{...init,headers});this.#assertAuthorizationScope(authorization);return response;
   }
   async startImpersonating(personaId:string,route="/projects"){
     const response=await fetch("/api/impersonation",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({personaId,confirmation:"I understand, continue"})});const body=await response.json() as {route?:string;error?:string};if(!response.ok)throw new Error(body.error??"The fictional account could not be opened");window.location.assign(body.route??route);
   }
   async stopImpersonating(){const response=await fetch("/api/impersonation",{method:"DELETE"});const body=await response.json() as {route?:string;error?:string};if(!response.ok)throw new Error(body.error??"Your regular account could not be restored");window.location.assign(body.route??"/laboratory/replay");}
   setRoute(path: string, options: { replace?: boolean; documentFocus?: boolean } = {}) {
+    const current=applicationIdFromRoute(this.route.get()),destination=applicationIdFromRoute(path);
+    if(current!==destination){
+      if(!["creative","canvas"].includes(current)||!["creative","canvas"].includes(destination)){location.assign(path);return;}
+      void this.transitionWorkspace(path,options);
+      return;
+    }
+    this.#commitRoute(path,options);
+  }
+
+  async transitionWorkspace(path:string,options:{replace?:boolean;documentFocus?:boolean}={}){
+    const source=applicationIdFromRoute(this.route.get()),destination=applicationIdFromRoute(path);
+    if(source===destination){this.#commitRoute(path,options);return true;}
+    if(!["creative","canvas"].includes(source)||!["creative","canvas"].includes(destination)){location.assign(path);return true;}
+    const previous=this.session.get(),attempt=++this.#workspaceTransition;
+    try{
+      const response=await fetch(`/api/session?audience=${encodeURIComponent(destination)}`,{cache:"no-store",credentials:"same-origin"});
+      const current=await response.json() as PilotSession&{error?:string};
+      if(!response.ok)throw new Error(current.error??"The selected workspace is no longer available.");
+      if(attempt!==this.#workspaceTransition||applicationIdFromRoute(this.route.get())!==source)return false;
+      if(!workspaceTransitionAuthorized(previous,current,destination)){
+        if(previous&&previous.user.userId===current.user.userId)this.#applySession({...current,audience:previous.audience});
+        this.toast(destination==="canvas"?"Canvas is no longer available for this account or project.":"Your workspace authorization has changed. Reload your current project.");
+        return false;
+      }
+      this.#applySession({...current,audience:previous?.audience});
+      this.#commitRoute(path,options);
+      return true;
+    }catch(error){if(attempt===this.#workspaceTransition)this.toast(error instanceof Error?error.message:"The selected workspace could not be authorized.");return false;}
+  }
+
+  #commitRoute(path:string,options:{replace?:boolean;documentFocus?:boolean}={}){
     const projection = this.projection.get();
     const requestedFocus = options.documentFocus ?? (documentFocusFromRoute(path) || documentFocusFromRoute(this.route.get()));
     const focusAwarePath = isDocumentViewRoute(path) ? withDocumentFocusInRoute(path, requestedFocus) : path;
@@ -415,9 +503,11 @@ export class FormaStore {
   }
   setAttentionCapture(enabled:boolean){if(this.session.get()?.impersonation){this.patchUi({attentionCapture:false,attentionPaused:true});this.toast("Attention capture stays off while you experience a fictional account.");return;}writeAttentionPreference(enabled,this.session.get()?.user.userId??"anonymous");this.patchUi({attentionCapture:enabled,attentionPaused:false});this.toast(enabled?"Attention signals enabled for this account on this device.":"Attention signals disabled; the current episode was closed.");}
   setAttentionPaused(paused:boolean){this.patchUi({attentionPaused:paused});this.toast(paused?"Attention capture paused on this device.":"Attention capture resumed.");}
-  async forgetAttentionSignals(){window.dispatchEvent(new Event("forma-attention-forget"));const appended=await this.append({type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:this.head.get(),reason:"user-requested",device_ledger_cleared:true}});if(appended.length){const session=this.session.get();if(session)await clearAnalyticsSnapshots(this.#snapshotIdentity(session),true);this.toast("Attention episodes were forgotten and excluded from Scout and Memory.");}return appended;}
+  async forgetAttentionSignals(){window.dispatchEvent(new Event("forma-attention-forget"));const session=this.session.get();let appended:CreativeEvent[]=[];if(session?.projectContext){const authorization=this.#authorizationScope(session),response=await fetch("/api/privacy/attention",{method:"POST"}),body=await response.json() as {appended?:CreativeEvent[];error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok){this.toast(body.error??"Your personal attention data could not be forgotten.");return[];}appended=body.appended??[];}else appended=await this.append({type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:this.head.get(),reason:"user-requested",device_ledger_cleared:true}});if(appended.length){const active=this.session.get();if(active)await clearAnalyticsSnapshots(this.#snapshotIdentity(active),true);this.toast("Your personal attention episodes were forgotten and excluded from Scout and Memory.");}return appended;}
 
   async load() {
+    const loadRevision=++this.#loadRevision;let loadAuthorization="";
+    const ownsLoad=()=>loadRevision===this.#loadRevision&&(!loadAuthorization||this.#scopeStillActive(loadAuthorization));
     const path=this.route.get();const profile=this.#profileForRoute(path);const started=performance.now();
     beginRoutePopulation(path);
     recordRouteHistoryProfile(profile);
@@ -426,10 +516,10 @@ export class FormaStore {
     try {
       // The document's streamed session is verified on this exact request. Cached
       // account data remains invisible until that authoritative identity is known.
-      const snapshotsPromise=readAccountSnapshots();
       const bootstrap=consumeSessionBootstrap();
       const prefetched=consumeSessionPrefetch();
       const sessionPromise=bootstrap?Promise.resolve(this.#applySession(bootstrap)):this.refreshSession(prefetched);
+      const snapshotsPromise=sessionPromise.then((verified)=>readAccountSnapshots(this.#snapshotIdentity(verified)));
       if(documentViewFromRoute(path)==="chat")void sessionPromise.then((verified)=>{if(this.session.get()?.user.userId!==verified.user.userId||this.route.get()!==path)return;return this.#hydrateVisiblePrivateContent();}).catch(()=>undefined);
       const live=snapshotsPromise.then(async(snapshots)=>{
         if(snapshots.length){
@@ -440,37 +530,76 @@ export class FormaStore {
         return this.#readEventStream(0,profile,false);
       });
       const [session,snapshots]=await Promise.all([sessionPromise,snapshotsPromise]);
+      const authorization=this.#authorizationScope(session);loadAuthorization=authorization;if(!ownsLoad())throw new Error("The active workspace changed before its history finished loading.");this.#assertAuthorizationScope(authorization);
       recordSessionReady(started,bootstrap?"document":prefetched?"prefetch":"request");
       const identity=this.#snapshotIdentity(session);
       const cached=matchingAccountSnapshot(snapshots,identity,profile);
       if(cached){
+        this.#assertAuthorizationScope(authorization);
         this.events.set(cached.events);this.head.set(cached.head);this.#historyProfile=cached.profile;
         recordPopulationSource("indexeddb",cached.events.length);
         void live.then(async(current)=>{
-          if(current.head<cached.head){const restored=await this.#readEventStream(0,profile,false);this.events.set(restored.events);this.content.set({...this.content.get(),...restored.content});this.head.set(restored.head);this.#historyProfile=profile;this.notify();}
-          else if(current.head>cached.head){const merged=new Map([...this.events.get(),...current.events].map((event)=>[event.eventId,event]));this.events.set([...merged.values()].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));if(Object.keys(current.content).length)this.content.set({...this.content.get(),...current.content});this.head.set(current.head);this.#publishAppended(current.events);this.notify();void writeAccountSnapshot(identity,this.events.get(),this.head.get(),this.#historyProfile);}
+          this.#assertAuthorizationScope(authorization);
+          if(current.head<cached.head){const restored=await this.#readEventStream(0,profile,false);this.#assertAuthorizationScope(authorization);this.events.set(restored.events);this.content.set({...this.content.get(),...restored.content});this.head.set(restored.head);this.#historyProfile=profile;this.notify();}
+          else if(current.head>cached.head){this.#assertAuthorizationScope(authorization);const merged=new Map([...this.events.get(),...current.events].map((event)=>[event.eventId,event]));this.events.set([...merged.values()].sort((left,right)=>left.sequence-right.sequence||left.eventId.localeCompare(right.eventId)));if(Object.keys(current.content).length)this.content.set({...this.content.get(),...current.content});this.head.set(current.head);this.#publishAppended(current.events);this.notify();void writeAccountSnapshot(identity,this.events.get(),this.head.get(),this.#historyProfile);}
         }).catch((error)=>console.warn("[forma-performance]",JSON.stringify({phase:"cache-revalidation",message:error instanceof Error?error.message:"cache_revalidation_failed"})));
       }else{
         const body=await live;
+        this.#assertAuthorizationScope(authorization);
         this.events.set(body.events);this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#historyProfile=profile;
         recordPopulationSource("miss",body.events.length);
         void writeAccountSnapshot(identity,body.events,body.head,profile);
       }
-      this.error.set("");this.loading.set(false);this.notify();
+      this.#assertAuthorizationScope(authorization);this.error.set("");this.loading.set(false);this.notify();
       requestAnimationFrame(()=>{
+        if(!ownsLoad())return;
         void this.syncDocumentFromRoute(this.route.get());
         this.#syncVisibleJobs(this.route.get());
         if(routeCapabilities(this.route.get()).privateContent)void this.#hydrateVisiblePrivateContent().catch(()=>undefined);
       });
-    } catch (error) { this.error.set(error instanceof Error ? error.message : "Unable to load event stream"); }
-    finally { this.loading.set(false); this.notify(); }
+    }catch(error){if(ownsLoad())this.error.set(error instanceof Error?error.message:"Unable to load event stream");}
+    finally{if(ownsLoad()){this.loading.set(false);this.notify();}}
   }
 
-  #applySession(body:PilotSession){const previousUserId=this.session.get()?.user.userId;if(previousUserId&&previousUserId!==body.user.userId){this.content.set({});this.optimisticEvents.set([]);this.documentJobs.set([]);this.#jobDetails.clear();this.#privateContentScope="none";}this.session.set(body);if(body.impersonation){this.ui.attentionCapture=false;this.ui.attentionPaused=true;}else if(previousUserId!==body.user.userId){this.ui.attentionCapture=readAttentionPreference(body.user.userId);this.ui.attentionPaused=false;}this.notify();return body;}
+  #applySession(body:PilotSession,revision?:number){
+    if(revision===undefined)this.#sessionRevision+=1;
+    const previous=this.session.get(),previousUserId=previous?.user.userId;
+    if(previous&&this.#authorizationScope(previous)!==this.#authorizationScope(body)){
+      this.events.set([]);this.head.set(0);this.content.set({});this.shares.set([]);this.optimisticEvents.set([]);
+      this.documentJobs.set([]);this.generationReadiness.set({});this.#jobDetails.clear();this.#privateContentScope="none";
+      this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});this.replayEvents.set([]);this.replayAsOf.set(0);this.asOf.set(Number.POSITIVE_INFINITY);
+      this.#pendingAdaptiveIntents.clear();this.#pendingJobNotices=[];this.#readinessAcknowledgements.clear();this.#dismissedAdaptiveSuggestions.clear();this.#readinessInFlight.clear();this.#jobStarts.clear();this.#jobsDriving.clear();this.#focalInFlight.clear();
+      this.#pendingJobEventRefresh=false;this.#pendingJobSessionRefresh=false;this.#pendingPassiveJobPath="";this.#historyProfile="full";this.#historyUpgrade=undefined;this.#contentHydration=undefined;
+      this.ui.shareOpen=false;this.ui.accountOpen=false;this.ui.compareOpen=false;
+      this.#undo=[];this.#redo=[];this.#rememberedClientEventIds.clear();window.clearTimeout(this.#jobPollTimer);window.clearTimeout(this.#focalBackfillTimer);
+      window.dispatchEvent(new CustomEvent("forma-authorization-changed",{detail:{previous:this.#authorizationScope(previous),current:this.#authorizationScope(body)}}));
+    }
+    this.session.set(body);
+    if(body.impersonation){this.ui.attentionCapture=false;this.ui.attentionPaused=true;}
+    else if(previousUserId!==body.user.userId){this.ui.attentionCapture=readAttentionPreference(body.user.userId);this.ui.attentionPaused=false;}
+    this.notify();return body;
+  }
 
   async refreshSession(prefetched:Promise<Response>|null=null) {
-    const response = await (prefetched?prefetched.catch(()=>fetch("/api/session")):fetch("/api/session")); const body = await response.json() as PilotSession & { error?: string };
-    if (!response.ok) throw new Error(body.error ?? "Authentication required");return this.#applySession(body);
+    const revision=++this.#sessionRevision,response=await(prefetched?prefetched.catch(()=>fetch("/api/session")):fetch("/api/session"));
+    if(revision!==this.#sessionRevision){const active=this.session.get();if(active)return active;throw new Error("A newer workspace session is already loading.");}
+    const body=await response.json() as PilotSession & {error?:string};
+    if(revision!==this.#sessionRevision){const active=this.session.get();if(active)return active;throw new Error("A newer workspace session is already loading.");}
+    if(!response.ok)throw new Error(body.error??"Authentication required");return this.#applySession(body,revision);
+  }
+
+  async leaveProjectContext(){
+    if(!this.session.get()?.projectContext)return true;
+    try{
+      const response=await fetch("/api/workspaces/context",{method:"DELETE",credentials:"same-origin"});
+      const body=await response.json() as {error?:string};
+      if(!response.ok)throw new Error(body.error??"project_context_exit_failed");
+      await this.refreshSession();
+      this.patchUi({commandOpen:false,accountOpen:false,shareOpen:false,compareOpen:false});
+      this.setRoute("/projects");
+      await this.load();
+      return true;
+    }catch(error){this.toast(error instanceof Error?error.message:"The shared project could not be closed.");return false;}
   }
 
   async acceptTerms() {
@@ -487,24 +616,41 @@ export class FormaStore {
     return this.appendBatch([event], options);
   }
 
-  async appendBatch(events: EventInput[], options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean; background?: boolean } = {}) {
-    const pending=this.#appendPipeline.then(()=>this.#appendBatchNow(events,options));this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
+  /** A selected-project download is permitted only after its exact actor/resource audit receipt commits. */
+  async authorizeProjectExport(event:EventInput,expectedScope:CapturedAuthorizationScope|null=this.captureAuthorizationScope()){
+    const session=this.session.get(),context=session?.projectContext;
+    if(!session||!expectedScope||!this.authorizationScopeActive(expectedScope))return false;
+    if(!context)return !expectedScope.shared;
+    if(!expectedScope.shared)return false;
+    const authorization=expectedScope.key,resource=String(event.payload.artifact_id??event.payload.object_id??"");
+    if(!resource||!["DocumentArtifactExported","ObjectExported"].includes(event.type))return false;
+    const receipts=await this.append(event,{remember:false,silent:true});
+    if(!this.#scopeStillActive(authorization))return false;
+    const accepted=receipts.some((receipt)=>receipt.type===event.type&&receipt.actor===`user:${session.user.userId}`&&String(receipt.payload.project_id??"")===context.projectId&&String(receipt.payload.artifact_id??receipt.payload.object_id??"")===resource);
+    if(!accepted)this.toast("The download was canceled because your project access could not be confirmed.");
+    return accepted;
   }
 
-  async #appendBatchNow(events: EventInput[], options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean; background?: boolean } = {}) {
+  async appendBatch(events: EventInput[], options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean; background?: boolean } = {}) {
+    const authorization=this.#activeAuthorizationScope(),pending=this.#appendPipeline.then(()=>this.#scopeStillActive(authorization)?this.#appendBatchNow(events,options,authorization):[]);this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
+  }
+
+  async #appendBatchNow(events: EventInput[], options: { expected?: number; remember?: boolean; rebaseAttempts?: number; silent?: boolean; background?: boolean } = {},authorization=this.#activeAuthorizationScope()) {
+    if(!this.#scopeStillActive(authorization))return[];
     if(!options.background)this.busy.set(events[0]?.type ?? "append"); this.appendFailure.set(""); this.notify();
     try {
       let response:Response;let body:{ appended?: CreativeEvent[]; rejected?: Array<{ index?: number; type?: string; reason: string }>; head?: number; error?: string }={};
       const attempts=options.expected===undefined?Math.max(1,Math.min(6,options.rebaseAttempts??2)):1;
-      for(let attempt=0;attempt<attempts;attempt+=1){response=await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: events.length > 1 ? "batch" : "append", event: events[0], events, expectedSequence: options.expected ?? this.head.get(), clientId: "web:lit" }) },events.length>1?`apply ${events.length} document changes`:`record ${events[0]?.type??"this change"}`);body=await response.json() as typeof body;if(response.status===409&&body.error==="stale_sequence"&&options.expected===undefined&&attempt<attempts-1){await this.#refreshEvents();continue;}if(!response.ok)throw new Error(body.error==="stale_sequence"?"The document changed elsewhere. Its latest state is now loaded; try that change again.":body.error??"Append rejected");break;}
+      for(let attempt=0;attempt<attempts;attempt+=1){response=await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: events.length > 1 ? "batch" : "append", event: events[0], events, expectedSequence: options.expected ?? this.head.get(), clientId: "web:lit" }) },events.length>1?`apply ${events.length} document changes`:`record ${events[0]?.type??"this change"}`);this.#assertAuthorizationScope(authorization);body=await response.json() as typeof body;this.#assertAuthorizationScope(authorization);if(response.status===409&&body.error==="stale_sequence"&&options.expected===undefined&&attempt<attempts-1){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);continue;}if(!response.ok)throw new Error(body.error==="stale_sequence"?"The document changed elsewhere. Its latest state is now loaded; try that change again.":body.error??"Append rejected");break;}
+      this.#assertAuthorizationScope(authorization);
       const appended = body.appended ?? [];
       this.events.set([...this.events.get(), ...appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(appended);
       this.#reflectDocumentInRoute();
-      if (options.remember !== false) { const remembered=appended.filter((e) => e.actor === "user" && !e.compensatesEventId && inverseEvent(e));if(remembered.length)this.#undo.push(remembered);this.#redo = []; }
+      if (options.remember !== false) { const actor=this.session.get()?.projectContext?`user:${this.session.get()?.user.userId}`:"user";const remembered=appended.filter((e) => e.actor === actor && !e.compensatesEventId && inverseEvent(e));if(remembered.length)this.#undo.push(remembered);this.#redo = []; }
       if (body.rejected?.length) {const reasons=[...new Set(body.rejected.map((item)=>`${item.type?`${item.type}: `:""}${item.reason}`))];this.appendFailure.set(reasons.join("; "));this.toast(documentViewFromRoute(this.route.get()) === "editor" ? `${body.rejected.length} change${body.rejected.length === 1 ? "" : "s"} could not be saved; the other changes are safe.` : `${body.rejected.length} event${body.rejected.length === 1 ? "" : "s"} rejected; valid events still appended.`);}
       return appended;
-    } catch (error) { const message=error instanceof Error ? error.message : "Append failed";this.appendFailure.set(message);if(!options.silent)this.toast(message); return []; }
-    finally { if(!options.background)this.busy.set(""); this.notify(); }
+    } catch (error) {const message=error instanceof Error?error.message:"Append failed";if(this.#scopeStillActive(authorization)){this.appendFailure.set(message);if(!options.silent)this.toast(message);}return[];}
+    finally {if(this.#scopeStillActive(authorization)){if(!options.background)this.busy.set("");this.notify();}}
   }
 
   async copyLibraryBlockSet(rootBlockId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="library"){
@@ -599,24 +745,31 @@ export class FormaStore {
 
   async hot(event: EventInput, options: { keepalive?: boolean } = {}) {
     if(this.session.get()?.impersonation)return;
+    const authorization=this.#activeAuthorizationScope();
     try {
       if(!options.keepalive)await this.#appendPipeline;
+      this.#assertAuthorizationScope(authorization);
       const response = await fetch("/api/events/hot", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "hot", event, events: [event], clientId: "web:lit" }), keepalive: options.keepalive });
+      this.#assertAuthorizationScope(authorization);
       if (!response.ok) return;
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number };
+      this.#assertAuthorizationScope(authorization);
       const appended=body.appended??[];this.events.set([...this.events.get(), ...appended].sort((left,right)=>left.sequence-right.sequence)); this.head.set(Math.max(this.head.get(),body.head??0)); this.#publishAppended(appended);this.notify();
     } catch { /* Engagement instrumentation never blocks the creative action. */ }
   }
 
   async propose(prompt: string, events: EventInput[], exemplarRefs: Array<Record<string, unknown>> = []) {
+    const authorization=this.#activeAuthorizationScope();
     this.busy.set("proposal"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "propose", prompt, events, exemplarRefs, expectedSequence: this.head.get(), clientId: "web:lit" }) },"ask the assistant to propose document changes");
+      this.#assertAuthorizationScope(authorization);
       if (!response.ok) throw new Error("Proposal could not be recorded");
       const body = await response.json() as { appended: CreativeEvent[]; head: number };
+      this.#assertAuthorizationScope(authorization);
       this.events.set([...this.events.get(), ...body.appended]); this.head.set(body.head); this.toast("Proposal recorded — review it before applying.");
       return body.appended[0];
-    } finally { this.busy.set(""); this.notify(); }
+    } finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
 
   async preview(sourceSurface?: string,promptTechnique?:PromptTechnique,productionMode:ProductionMode="manual") {
@@ -688,8 +841,8 @@ export class FormaStore {
 
   async chat(message:string,livePreview=true) {
     try{
-      const documentId=this.projection.get().documentId;await this.#startDocumentJob("chat",{message,livePreview,documentId,promptTechnique:this.promptTechniquePreference().technique},"chat");return[];
-    }catch(error){this.toast(error instanceof Error?error.message:"Forma could not respond");return[];}
+      const documentId=this.projection.get().documentId;await this.#startDocumentJob("chat",{message,livePreview,documentId,promptTechnique:this.promptTechniquePreference().technique},"chat");return true;
+    }catch(error){this.toast(error instanceof Error?error.message:"Forma could not respond");return false;}
   }
 
   async structureAdaptive(prompt:string,options:{documentId?:string;sourceSurface?:string;projectScope?:boolean}={}) {
@@ -706,20 +859,22 @@ export class FormaStore {
     const projection=this.projection.get();if(!projectId||projectId===projection.projectId){this.setRoute(destination);return true;}
     const target=projection.projects.find((project)=>project.id===projectId);if(!target){this.toast("That project is no longer available.");return false;}
     const previousRoute=this.route.get(),clientEventId=crypto.randomUUID(),now=new Date().toISOString();
-    const input:EventInput={type:"ProjectOpened",payload:{project_id:projectId,previous_project_id:projection.projectId,source_surface:"projects",client_event_id:clientEventId}};
+    const canvasDestination=destination==="/canvas"||destination.startsWith("/canvas/");
+    const input:EventInput={type:"ProjectOpened",payload:{project_id:projectId,previous_project_id:projection.projectId,source_surface:canvasDestination?"canvas-projects":"projects",client_event_id:clientEventId}};
     const optimistic:CreativeEvent={eventId:`optimistic:${clientEventId}`,streamId:"optimistic:project",sequence:this.head.get()+1,occurredAt:now,recordedAt:now,actor:"user",clientId:"web:project-optimistic",correlationId:clientEventId,causationId:null,compensatesEventId:null,schemaVersion:1,type:input.type,payload:input.payload};
     this.optimisticEvents.set([...this.optimisticEvents.get(),optimistic]);
     this.patchUi({focusBlockId:"",focusCollectionId:"",selectedOutputId:"",compareOpen:false});const persisted=this.append(input,{rebaseAttempts:6,silent:true,background:true});const committed=persisted.then((events)=>events.length>0,()=>false);this.#navigationCommit=committed;this.setRoute(destination);
     const appended=await persisted;if(this.#navigationCommit===committed)this.#navigationCommit=null;
     this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>event.eventId!==optimistic.eventId));
     if(!appended.length){this.setRoute(previousRoute,{replace:true});this.toast("That project could not be opened. Your current workspace was restored.");return false;}
-    this.notify();this.toast(`${target.name} opened in Studio.`);return true;
+    this.notify();this.toast(`${target.name} opened in ${canvasDestination?"Canvas":"Creator Workspace"}.`);return true;
   }
 
   async openDocument(documentId: string, destination="/", sourceSurface?: string) {
     const projection=this.projection.get();const target=projection.documents.find((document)=>document.id===documentId);const routedDestination = withDocumentInRoute(destination, documentId, target?.title ?? "");
     if(!documentId||documentId===projection.documentId){this.setRoute(routedDestination);return true;}
     if(!target){this.toast("That document is no longer available.");return false;}
+    if(this.session.get()?.projectContext){this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});this.setRoute(routedDestination);return true;}
     const previousDocumentId=projection.documentId;this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});
     const persisted=this.append({type:"DocumentOpened",payload:{document_id:documentId,previous_document_id:previousDocumentId,source_surface:sourceSurface??(documentViewFromRoute(destination)==="document"?"studio":"studio-alternative")}},{rebaseAttempts:6,silent:true,background:true});const committed=persisted.then((events)=>events.length>0,()=>false);this.#navigationCommit=committed;this.setRoute(routedDestination);
     const appended=await persisted;if(this.#navigationCommit===committed)this.#navigationCommit=null;
@@ -734,26 +889,32 @@ export class FormaStore {
   }
 
   async evaluateExtractors() {
+    const authorization=this.#activeAuthorizationScope();
     this.busy.set("extractor-eval"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "evaluate_extractors", expectedSequence: this.head.get(), clientId: "web:system" }) },"run reference extraction");
+      this.#assertAuthorizationScope(authorization);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string };
+      this.#assertAuthorizationScope(authorization);
       if (!response.ok) throw new Error(body.error === "admin_required" ? "An admin must witness the quality-gate rerun." : body.error ?? "Extractor evaluation failed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Extractor gate passed and the result was appended to the event stream.");
-    } catch (error) { this.toast(error instanceof Error ? error.message : "Extractor evaluation failed"); }
-    finally { this.busy.set(""); this.notify(); }
+    } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Extractor evaluation failed");}
+    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
 
   async rebuildIndex() {
+    const authorization=this.#activeAuthorizationScope();
     this.busy.set("phase7-index"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "rebuild_index", expectedSequence: this.head.get(), clientId: "web:library" }) },"rebuild the fictional account’s library index");
+      this.#assertAuthorizationScope(authorization);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; report?: { indexedItems?: number; exemplars?: number; families?: number } };
+      this.#assertAuthorizationScope(authorization);
       if (!response.ok) throw new Error(body.error === "admin_required" ? "An admin must run the derived index." : body.error ?? "Index rebuild failed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get());
       this.toast(body.appended?.length ? `Indexed ${body.report?.indexedItems ?? 0} objects, ${body.report?.exemplars ?? 0} exemplars, and ${body.report?.families ?? 0} families.` : "The Phase 7 index is already fresh.");
-    } catch (error) { this.toast(error instanceof Error ? error.message : "Index rebuild failed"); }
-    finally { this.busy.set(""); this.notify(); }
+    } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Index rebuild failed");}
+    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
 
   async extractReference(blockId: string, referenceId: string, sample: ImageSample, findingKinds: ReferenceFindingKind[] = []) {
@@ -763,125 +924,149 @@ export class FormaStore {
   }
 
   async calculateImageFocalPoint(input:{targetKind:"generation"|"reference"|"artifact";targetId:string;mediaUrl:string;referenceId?:string;sample?:ImageSample}){
-    const key=`${input.targetKind}:${input.targetId}:${input.mediaUrl}`;if(!input.mediaUrl||this.#focalInFlight.has(key)||this.#hasFocalPoint(input.targetKind,input.targetId))return null;this.#focalInFlight.add(key);
+    const authorization=this.#activeAuthorizationScope(),key=`${input.targetKind}:${input.targetId}:${input.mediaUrl}`;if(!input.mediaUrl||this.#focalInFlight.has(key)||this.#hasFocalPoint(input.targetKind,input.targetId))return null;this.#focalInFlight.add(key);
     try{
       const sample=input.sample??(await resolveImageFocalAnalysis(input.mediaUrl)).sample;
+      this.#assertAuthorizationScope(authorization);
       let resolved:unknown=null;
-      const append=async()=>{if(this.#hasFocalPoint(input.targetKind,input.targetId))return;const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"calculate_focal_point",clientId:"web:focal-extractor",targetKind:input.targetKind,targetId:input.targetId,referenceId:input.referenceId,mediaUrl:input.mediaUrl,sample})},"calculate and save this image’s focal point");const body=await response.json() as {appended?:CreativeEvent[];head?:number;focalPoint?:unknown;error?:string};if(!response.ok)throw new Error(body.error??"focal_point_calculation_failed");const appended=body.appended??[];if(appended.length){this.events.set([...this.events.get(),...appended]);this.head.set(body.head??this.head.get());this.#publishAppended(appended);this.notify();}resolved=body.focalPoint??null;};
-      const task=this.#focalAppendQueue.then(append);this.#focalAppendQueue=task.catch(()=>{});await task;return normalizeImageFocalPoint(resolved);
-    }catch{return null;}finally{this.#focalInFlight.delete(key);}
+      const append=async()=>{this.#assertAuthorizationScope(authorization);if(this.#hasFocalPoint(input.targetKind,input.targetId))return;const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"calculate_focal_point",clientId:"web:focal-extractor",targetKind:input.targetKind,targetId:input.targetId,referenceId:input.referenceId,mediaUrl:input.mediaUrl,sample})},"calculate and save this image’s focal point");this.#assertAuthorizationScope(authorization);const body=await response.json() as {appended?:CreativeEvent[];head?:number;focalPoint?:unknown;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"focal_point_calculation_failed");const appended=body.appended??[];if(appended.length){this.events.set([...this.events.get(),...appended]);this.head.set(body.head??this.head.get());this.#publishAppended(appended);this.notify();}resolved=body.focalPoint??null;};
+      const task=this.#focalAppendQueue.then(append);this.#focalAppendQueue=task.catch(()=>{});await task;this.#assertAuthorizationScope(authorization);return normalizeImageFocalPoint(resolved);
+    }catch{return null;}finally{if(this.#scopeStillActive(authorization))this.#focalInFlight.delete(key);}
   }
 
   async closeSession() {
+    const authorization=this.#activeAuthorizationScope();
     this.busy.set("close-session"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "close_session", expectedSequence: this.head.get(), clientId: "web:sessions" }) },"close this fictional work session");
+      this.#assertAuthorizationScope(authorization);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; eligibility?: { closedSessions?: number; requiredClosedSessions?: number } };
+      this.#assertAuthorizationScope(authorization);
       if (!response.ok) throw new Error(body.error === "no_open_session" ? "Open a session before closing it." : body.error ?? "Session could not be closed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast(`Session closed with a state receipt · ${body.eligibility?.closedSessions ?? 0}/${body.eligibility?.requiredClosedSessions ?? 3} toward brief eligibility.`);
-    } catch (error) { this.toast(error instanceof Error ? error.message : "Session could not be closed"); }
-    finally { this.busy.set(""); this.notify(); }
+    } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Session could not be closed");}
+    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
 
   async openSession() {
+    const authorization=this.#activeAuthorizationScope();
     this.busy.set("open-session"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "open_session", expectedSequence: this.head.get(), clientId: "web:sessions" }) },"open a fictional work session");
+      this.#assertAuthorizationScope(authorization);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; briefComposed?: boolean };
+      this.#assertAuthorizationScope(authorization);
       if (!response.ok) throw new Error(body.error === "session_already_open" ? "The current session is already open." : body.error ?? "Session could not be opened");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast(body.briefComposed ? "Session opened with an eligible re-entry brief; every impression was witnessed." : "Session opened. More history is needed before composing a valid brief.");
-    } catch (error) { this.toast(error instanceof Error ? error.message : "Session could not be opened"); }
-    finally { this.busy.set(""); this.notify(); }
+    } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Session could not be opened");}
+    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
 
   async composeBrief() {
+    const authorization=this.#activeAuthorizationScope();
     this.busy.set("compose-brief"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "compose_brief", expectedSequence: this.head.get(), clientId: "web:sessions" }) },"compose a re-entry brief for this fictional account");
+      this.#assertAuthorizationScope(authorization);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; eligibility?: { reasons?: string[] } };
+      this.#assertAuthorizationScope(authorization);
       if (!response.ok) throw new Error(body.error === "brief_not_eligible" ? `Brief is not eligible: ${body.eligibility?.reasons?.join(" and ") ?? "more history required"}.` : body.error === "open_session_required" ? "Open a session before composing a brief." : body.error ?? "Brief could not be composed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Re-entry brief composed from the event stream; impressions were witnessed in the same batch.");
-    } catch (error) { this.toast(error instanceof Error ? error.message : "Brief could not be composed"); }
-    finally { this.busy.set(""); this.notify(); }
+    } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Brief could not be composed");}
+    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
 
   async declareIntent(statement: string, deadline: string | null = null) {
+    const authorization=this.#activeAuthorizationScope();
     this.busy.set("declare-intent"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "declare_intent", expectedSequence: this.head.get(), clientId: "web:sessions", statement, deadline }) },"record this intent in the fictional account");
+      this.#assertAuthorizationScope(authorization);
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string };
+      this.#assertAuthorizationScope(authorization);
       if (!response.ok) throw new Error(body.error ?? "Intent could not be recorded");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast("Intent recorded privately; the immutable event keeps only its expiring reference.");
-    } catch (error) { this.toast(error instanceof Error ? error.message : "Intent could not be recorded"); }
-    finally { this.busy.set(""); this.notify(); }
+    } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Intent could not be recorded");}
+    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
 
   async runScout(maxObservations: number) {
+    const authorization=this.#activeAuthorizationScope();
     this.busy.set("run-scout"); this.notify();
     try {
       const response = await this.guardedFetch("/api/events", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({action:"run_scout",expectedSequence:this.head.get(),clientId:"web:scout",maxObservations}) },"run Scout against the fictional account");
+      this.#assertAuthorizationScope(authorization);
       const body = await response.json() as {appended?:CreativeEvent[];head?:number;error?:string};
+      this.#assertAuthorizationScope(authorization);
       if(!response.ok) throw new Error(body.error === "phase6_advance_required" ? "Record the Phase 6 advance-with-monitoring decision first." : body.error ?? "Scout run failed");
       this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast("Scout report completed inside its hard planning envelope.");
-    } catch(error) { this.toast(error instanceof Error?error.message:"Scout run failed"); }
-    finally { this.busy.set("");this.notify(); }
+    } catch(error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Scout run failed");}
+    finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
 
   async refreshTasteModel() {
+    const authorization=this.#activeAuthorizationScope();
     this.busy.set("taste-model");this.notify();
     try {
       const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"refresh_taste_model",expectedSequence:this.head.get(),clientId:"web:memory"})},"refresh the fictional account’s taste model");
-      const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string;beliefs?:number};if(!response.ok)throw new Error(body.error === "phase6_advance_required"?"Record the Phase 6 advance-with-monitoring decision first.":body.error??"Taste model refresh failed");
+      this.#assertAuthorizationScope(authorization);
+      const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string;beliefs?:number};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error === "phase6_advance_required"?"Record the Phase 6 advance-with-monitoring decision first.":body.error??"Taste model refresh failed");
       this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast(`Taste model versioned with ${body.beliefs??0} ranking-only belief${body.beliefs===1?"":"s"}.`);
-    } catch(error){this.toast(error instanceof Error?error.message:"Taste model refresh failed");}
-    finally{this.busy.set("");this.notify();}
+    } catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Taste model refresh failed");}
+    finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
 
   async setCondition(condition:string,triggerKind:"generation_count"|"on_date",threshold:number,onDate:string|null){
+    const authorization=this.#activeAuthorizationScope();
     this.busy.set("set-condition");this.notify();
-    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"set_condition",expectedSequence:this.head.get(),clientId:"web:memory",condition,triggerKind,threshold,onDate})},"set a time condition in the fictional account");const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};if(!response.ok)throw new Error(body.error??"Condition could not be set");this.events.set([...this.events.get(),...(body.appended??[])]);this.content.set({...this.content.get(),...(body.content??{})});this.head.set(body.head??this.head.get());this.toast("Time policy recorded privately.");return true;}catch(error){this.toast(error instanceof Error?error.message:"Condition could not be set");return false;}finally{this.busy.set("");this.notify();}
+    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"set_condition",expectedSequence:this.head.get(),clientId:"web:memory",condition,triggerKind,threshold,onDate})},"set a time condition in the fictional account");this.#assertAuthorizationScope(authorization);const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"Condition could not be set");this.events.set([...this.events.get(),...(body.appended??[])]);this.content.set({...this.content.get(),...(body.content??{})});this.head.set(body.head??this.head.get());this.toast("Time policy recorded privately.");return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Condition could not be set");return false;}finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
 
   async checkConditions(){
+    const authorization=this.#activeAuthorizationScope();
     this.busy.set("check-conditions");this.notify();
-    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"check_conditions",expectedSequence:this.head.get(),clientId:"web:memory"})},"check time conditions in the fictional account");const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string};if(!response.ok)throw new Error(body.error??"Policy check failed");this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast(body.appended?.length?`${Math.floor(body.appended.length/2)} condition${body.appended.length===2?"":"s"} resurfaced.`:"No time policies are due yet.");}catch(error){this.toast(error instanceof Error?error.message:"Policy check failed");}finally{this.busy.set("");this.notify();}
+    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"check_conditions",expectedSequence:this.head.get(),clientId:"web:memory"})},"check time conditions in the fictional account");this.#assertAuthorizationScope(authorization);const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"Policy check failed");this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast(body.appended?.length?`${Math.floor(body.appended.length/2)} condition${body.appended.length===2?"":"s"} resurfaced.`:"No time policies are due yet.");}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Policy check failed");}finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
 
   async critiqueObject(objectId:string,axis:string,polarity:"positive"|"negative",value:string,note:string){
+    const authorization=this.#activeAuthorizationScope();
     this.busy.set("critique-object");this.notify();
-    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"critique_object",expectedSequence:this.head.get(),clientId:"web:studio",objectId,axis,polarity,value,note})},"record this critique in the fictional account");const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};if(!response.ok)throw new Error(body.error??"Critique could not be recorded");this.events.set([...this.events.get(),...(body.appended??[])]);this.content.set({...this.content.get(),...(body.content??{})});this.head.set(body.head??this.head.get());this.toast("Axis-specific critique recorded for the taste ledger.");return true;}catch(error){this.toast(error instanceof Error?error.message:"Critique could not be recorded");return false;}finally{this.busy.set("");this.notify();}
+    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"critique_object",expectedSequence:this.head.get(),clientId:"web:studio",objectId,axis,polarity,value,note})},"record this critique in the fictional account");this.#assertAuthorizationScope(authorization);const body=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"Critique could not be recorded");this.events.set([...this.events.get(),...(body.appended??[])]);this.content.set({...this.content.get(),...(body.content??{})});this.head.set(body.head??this.head.get());this.toast("Axis-specific critique recorded for the taste ledger.");return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Critique could not be recorded");return false;}finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
 
+  canManageProjectShares(){const session=this.session.get(),context=session?.projectContext;return Boolean(session)&&(!context||context.role==="owner"&&context.ownerUserId===session.user.userId);}
   async loadShares() {
-    const response = await fetch("/api/shares"); if (!response.ok) return; const body = await response.json() as { shares: ShareRecord[] }; this.shares.set(body.shares); this.notify();
+    if(!this.canManageProjectShares()){this.shares.set([]);return;}
+    const authorization=this.#activeAuthorizationScope(),response=await fetch("/api/shares");if(!response.ok||!this.#scopeStillActive(authorization))return;const body=await response.json() as {shares:ShareRecord[]};if(!this.#scopeStillActive(authorization))return;this.shares.set(body.shares);this.notify();
   }
 
   async createShare(expiresHours: number) {
-    const projection=this.projection.get();if(!projection.documentId||!projection.projectId){this.toast("Open the document you want to share first.");return null;}
-    const response = await this.guardedFetch("/api/shares", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ expiresHours, resourceKind:"document", documentId:projection.documentId, projectId:projection.projectId }) },"create a share link for this fictional document"); const body = await response.json() as { share?: ShareRecord; error?: string };
-    if (!response.ok || !body.share) { this.toast(body.error ?? "Share link could not be created"); return null; }
-    await this.loadShares(); this.toast("Private read-only link created."); return body.share;
+    if(!this.canManageProjectShares()){this.toast("Only this project's owner can manage its private review links.");return null;}
+    const authorization=this.#activeAuthorizationScope(),projection=this.projection.get();if(!projection.documentId||!projection.projectId){this.toast("Open the document you want to share first.");return null;}
+    const response=await this.guardedFetch("/api/shares",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({expiresHours,resourceKind:"document",documentId:projection.documentId,projectId:projection.projectId})},"create a share link for this fictional document");this.#assertAuthorizationScope(authorization);const body=await response.json() as {share?:ShareRecord;error?:string};this.#assertAuthorizationScope(authorization);
+    if(!response.ok||!body.share){this.toast(body.error??"Share link could not be created");return null;}
+    await this.loadShares();this.#assertAuthorizationScope(authorization);if(this.projection.get().documentId!==projection.documentId||this.projection.get().projectId!==projection.projectId)throw new Error("The active document changed before its review link was ready.");this.toast("Private read-only link created.");return body.share;
   }
 
   async revokeShare(shareId: string) {
-    const response = await this.guardedFetch(`/api/shares/${encodeURIComponent(shareId)}`, { method: "DELETE" },"revoke this fictional document’s share link"); const body = await response.json() as { error?: string };
-    if (!response.ok) return this.toast(body.error ?? "Share link could not be revoked"); await this.loadShares(); this.toast("Share link revoked immediately.");
+    const authorization=this.#activeAuthorizationScope(),response=await this.guardedFetch(`/api/shares/${encodeURIComponent(shareId)}`,{method:"DELETE"},"revoke this fictional document’s share link");this.#assertAuthorizationScope(authorization);const body=await response.json() as {error?:string};this.#assertAuthorizationScope(authorization);
+    if(!response.ok)return this.toast(body.error??"Share link could not be revoked");await this.loadShares();this.#assertAuthorizationScope(authorization);this.toast("Share link revoked immediately.");
   }
 
   #canvasHistoryEvent(event:CreativeEvent,canvasId:string){return String(event.payload.canvas_id??event.payload.source_canvas_id??"")===canvasId&&Boolean(inverseEvent(event));}
   #historyIndex(groups:HistoryGroup[],canvasId=""){for(let index=groups.length-1;index>=0;index-=1)if(groups[index].some((event)=>canvasId?this.#canvasHistoryEvent(event,canvasId):Boolean(inverseEvent(event))))return index;return-1;}
-  #streamCanvasUndoGroup(canvasId:string){const ownerId=this.session.get()?.user.userId??"";if(!ownerId)return null;const events=this.events.get();const compensated=new Set(events.map((event)=>event.compensatesEventId).filter(Boolean));const owned=events.filter((event)=>event.actor==="user"&&!event.compensatesEventId&&event.payload.history_owner_id===ownerId&&this.#canvasHistoryEvent(event,canvasId));const eligible=owned.filter((event)=>!compensated.has(event.eventId));const latest=eligible.at(-1);if(!latest)return null;const actionId=String(latest.payload.history_action_id??latest.eventId);const action=owned.filter((event)=>String(event.payload.history_action_id??event.eventId)===actionId);return action.some((event)=>event.type==="CanvasArrangementCreated")?action:eligible.filter((event)=>String(event.payload.history_action_id??event.eventId)===actionId);}
+  #streamCanvasUndoGroup(canvasId:string){const ownerId=this.session.get()?.user.userId??"";if(!ownerId)return null;const actor=this.#principalEventActor(),events=this.events.get();const compensated=new Set(events.map((event)=>event.compensatesEventId).filter(Boolean));const owned=events.filter((event)=>event.actor===actor&&!event.compensatesEventId&&event.payload.history_owner_id===ownerId&&this.#canvasHistoryEvent(event,canvasId));const eligible=owned.filter((event)=>!compensated.has(event.eventId));const latest=eligible.at(-1);if(!latest)return null;const actionId=String(latest.payload.history_action_id??latest.eventId);const action=owned.filter((event)=>String(event.payload.history_action_id??event.eventId)===actionId);return action.some((event)=>event.type==="CanvasArrangementCreated")?action:eligible.filter((event)=>String(event.payload.history_action_id??event.eventId)===actionId);}
   canUndo() {
     const canvasId=canvasIdFromRoute(this.route.get())??"";if(this.#historyIndex(this.#undo,canvasId)>=0)return true;if(canvasId)return Boolean(this.#streamCanvasUndoGroup(canvasId));
     const compensated=new Set(this.events.get().map((event)=>event.compensatesEventId).filter(Boolean));
-    return this.events.get().some((event)=>event.actor==="user"&&!event.compensatesEventId&&!compensated.has(event.eventId)&&Boolean(inverseEvent(event)));
+    const actor=this.#principalEventActor();return this.events.get().some((event)=>event.actor===actor&&!event.compensatesEventId&&!compensated.has(event.eventId)&&Boolean(inverseEvent(event)));
   }
   canRedo() { return this.#historyIndex(this.#redo,canvasIdFromRoute(this.route.get())??"")>=0; }
   #undoCandidate(canvasId="") {
     if(canvasId){const streamed=this.#streamCanvasUndoGroup(canvasId);if(streamed?.length){const actionId=String(streamed.at(-1)?.payload.history_action_id??streamed.at(-1)?.eventId??"");const remembered=this.#undo.findLastIndex((group)=>group.some((event)=>String(event.payload.history_action_id??event.eventId)===actionId));if(remembered>=0)this.#undo.splice(remembered,1);return streamed;}return null;}
     const index=this.#historyIndex(this.#undo);if(index>=0)return this.#undo.splice(index,1)[0];
     const compensated=new Set(this.events.get().map((event)=>event.compensatesEventId).filter(Boolean));
-    const fallback=[...this.events.get()].reverse().find((event)=>event.actor==="user"&&!event.compensatesEventId&&!compensated.has(event.eventId)&&Boolean(inverseEvent(event)));return fallback?[fallback]:null;
+    const actor=this.#principalEventActor(),fallback=[...this.events.get()].reverse().find((event)=>event.actor===actor&&!event.compensatesEventId&&!compensated.has(event.eventId)&&Boolean(inverseEvent(event)));return fallback?[fallback]:null;
   }
   async undo() {
     const canvasId=canvasIdFromRoute(this.route.get())??"";const source = this.#undoCandidate(canvasId); if (!source?.length) return this.toast(canvasId?"Nothing to undo on this board.":documentViewFromRoute(this.route.get()) === "editor" ? "Nothing to undo." : "Nothing reversible remains in this document history.");
@@ -893,7 +1078,7 @@ export class FormaStore {
   async redo() {
     const canvasId=canvasIdFromRoute(this.route.get())??"";const index=this.#historyIndex(this.#redo,canvasId);const source=index>=0?this.#redo.splice(index,1)[0]:null;if (!source?.length) return this.toast(canvasId?"Nothing to redo on this board.":"Nothing to redo in this session.");
     const appended = await this.appendBatch(source.map(redoEvent), { remember: false });
-    const redone=appended.filter((event)=>event.actor==="user"&&Boolean(inverseEvent(event)));if(redone.length)this.#undo.push(redone);
+    const actor=this.#principalEventActor(),redone=appended.filter((event)=>event.actor===actor&&Boolean(inverseEvent(event)));if(redone.length)this.#undo.push(redone);
   }
 
   buildReplay(events: CreativeEvent[]) { this.replayEvents.set(events); this.replayAsOf.set(0); this.notify(); }
@@ -903,7 +1088,8 @@ export class FormaStore {
 let historyClock=0;
 function historyHlc(event:CreativeEvent,mode:"undo"|"redo"){
   const operation=event.payload.operation&&typeof event.payload.operation==="object"&&!Array.isArray(event.payload.operation)?event.payload.operation as Record<string,unknown>:{};const source=operation.hlc&&typeof operation.hlc==="object"&&!Array.isArray(operation.hlc)?operation.hlc as Record<string,unknown>:{};
-  historyClock=Math.max(Date.now(),Number(source.pt??0)+1,historyClock+1);return{pt:historyClock,c:0,site:`${mode}:${event.clientId}`};
+  const principal=event.actor.startsWith("user:")?event.actor.slice(5):"";
+  historyClock=Math.max(Date.now(),Number(source.pt??0)+1,historyClock+1);return{pt:historyClock,c:0,site:principal?`${principal}:${mode}:${event.clientId}`:`${mode}:${event.clientId}`};
 }
 
 function inverseEvent(event: CreativeEvent): EventInput | null {

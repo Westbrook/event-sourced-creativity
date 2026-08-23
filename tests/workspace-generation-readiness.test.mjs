@@ -163,7 +163,8 @@ test("compact primary controls skip passive checks while paid and fan safety rem
   assert.match(controls, /previewFanBudgetBlocked\|\|readinessDisabled\(previewFanReadiness\)/);
   assert.match(controls, /fullFanBudgetBlocked\|\|readinessDisabled\(generateFanReadiness\)/);
   assert.match(controls, /formaGenerationActionableMs/);
-  assert.match(controls, /provider\.provider==="fal"\)\?\.configured/);
+  assert.match(controls, /Boolean\(session\?\.provider\.configured\)/);
+  assert.doesNotMatch(controls, /provider\.provider==="fal"\)\?\.configured/);
   assert.match(controls, /Date\.parse\(value\.expiresAt\)>Date\.now\(\)/);
   assert.match(jobs, /force:true[^\n]*allowCache:false/);
 });

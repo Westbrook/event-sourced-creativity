@@ -2,7 +2,7 @@ import { selectImageAdapter } from "./image-adapter";
 import { FAL_IDEOGRAM_ADAPTER_ID, FAL_IDEOGRAM_ADAPTER_VERSION, falExpansionModel, falIdeogramAdapterReadiness, falRenderingSpeed, validateFalImageSize } from "./fal-image-adapter";
 import { priceFalIdeogramImageBreakdownMicrousd } from "./replay-cost";
 import { ensureSchema, type WorkerEnv } from "./runtime";
-import { requireUser } from "./pilot-policy";
+import { requireCapability } from "./pilot-policy";
 import { readCanvasGovernance } from "./canvas-governance-policy";
 import { IMAGE_ADAPTER_CYCLE_5_SEARCH_EVIDENCE, IMAGE_ADAPTER_CYCLE_4_SEARCH_EVIDENCE, IMAGE_ADAPTER_CYCLE_3_SEARCH_EVIDENCE, IMAGE_ADAPTER_CYCLE_2_SEARCH_EVIDENCE, IMAGE_ADAPTER_CYCLE_SEARCH_EVIDENCE, IMAGE_ADAPTER_V9_DIAGNOSTIC_EVIDENCE, IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE, IMAGE_ADAPTER_EVALUATION_PLAN, RETAINED_IMAGE_ADAPTER_EVALUATIONS } from "./image-adapter-evaluation-evidence";
 import { IDEOGRAM_PROMPT_ADAPTER_VERSION } from "./ideogram-prompt-adapter";
@@ -40,7 +40,7 @@ function preview(env:WorkerEnv,input:PreviewInput){
 }
 
 export async function handleImageAdapters(request:Request,env:WorkerEnv){
-  await ensureSchema(env);const auth=await requireUser(request,env,"admin",{account:"principal"});if(auth.response||!auth.user)return auth.response!;
+  await ensureSchema(env);const auth=await requireCapability(request,env,"platform.provider.configure");if(auth.response||!auth.user)return auth.response!;
   if(request.method==="POST"){const body=await request.json().catch(()=>({})) as PreviewInput;return Response.json(preview(env,body));}
   if(request.method!=="GET")return new Response("Method not allowed",{status:405});
   const governance=await readCanvasGovernance(env,auth.user.role);const second=governance.requirements.find((item)=>item.id==="second_image_adapter");const readiness=falIdeogramAdapterReadiness(env);
@@ -61,4 +61,20 @@ export async function handleImageAdapters(request:Request,env:WorkerEnv){
     scenarios,
     qualification:{approved:Boolean(second?.approved),pilotAvailable:governance.pilotAvailable,corpusMinimum:50,receiptReady:true,evaluationRequired:!second?.approved,evidenceRef:second?.evidenceRef??null,lastEvaluation:IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE,lastDiagnostic:IMAGE_ADAPTER_V9_DIAGNOSTIC_EVIDENCE,lastCycleSearch:IMAGE_ADAPTER_CYCLE_5_SEARCH_EVIDENCE,cycleSearches:[IMAGE_ADAPTER_CYCLE_5_SEARCH_EVIDENCE,IMAGE_ADAPTER_CYCLE_4_SEARCH_EVIDENCE,IMAGE_ADAPTER_CYCLE_3_SEARCH_EVIDENCE,IMAGE_ADAPTER_CYCLE_2_SEARCH_EVIDENCE,IMAGE_ADAPTER_CYCLE_SEARCH_EVIDENCE],currentEvaluation:IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE,evaluationPlan:IMAGE_ADAPTER_EVALUATION_PLAN,retainedEvaluations:RETAINED_IMAGE_ADAPTER_EVALUATIONS},
   });
+}
+
+/** A capability-scoped contract simulation; no pixels, provider requests, audit events, or durable writes occur. */
+export async function handleQualificationPreview(request:Request,env:WorkerEnv){
+  if(request.method!=="POST")return new Response("Method not allowed",{status:405});
+  await ensureSchema(env);
+  const auth=await requireCapability(request,env,["evaluation.qualification.run","platform.provider.configure"]);
+  if(auth.response||!auth.user)return auth.response!;
+  const input=await request.json().catch(()=>({})) as PreviewInput;
+  const simulation=preview(env,input);
+  const {provider,model,adapterId,adapterVersion,reason,renderingSpeed,sizeValid,sizeMessage,estimatedProviderCostUsd}=simulation.selection;
+  return Response.json({dryRun:true,providerCall:false,pixelsTransmitted:false,
+    request:{provider:simulation.request.provider,quality:simulation.request.quality,size:simulation.request.size,outputFormat:simulation.request.outputFormat,referenceCount:simulation.request.referenceCount,wouldTransmitReferencePixels:simulation.request.referenceCount>0},
+    selection:{provider,model,adapterId,adapterVersion,reason,renderingSpeed,sizeValid,sizeMessage,estimatedProviderCostUsd},
+    stages:simulation.stages.map(({id,label,provider})=>({id,label,wouldContactProvider:provider})),
+  },{headers:{"cache-control":"private, no-store"}});
 }

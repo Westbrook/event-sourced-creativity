@@ -1,28 +1,14 @@
-import { html, nothing } from "lit";
+import { html } from "lit";
 import { FormaElement } from "./forma-element";
-import { applicationDefinition } from "../platform/applications";
+import { applicationDefinition, navigationItemAccessible } from "../platform/applications";
+import "./design-system/navigation";
 
-type Area = "intelligence" | "operations" | "laboratory";
+type Area = "intelligence" | "operations" | "product" | "knowledge" | "engineering";
 
 const intelligenceIds = new Set(["sessions", "scout", "memory"]);
 
 export class AreaNavigation extends FormaElement {
-  #revealedLocation = "";
-
-  protected override updated() {
-    const location = `${this.getAttribute("area") ?? ""}:${this.getAttribute("active") ?? ""}:${this.i18n.locale}:${this.matches(":dir(rtl)")}`;
-    if (location === this.#revealedLocation) return;
-    const scroller = this.querySelector<HTMLElement>(".area-navigation > div");
-    const current = scroller?.querySelector<HTMLElement>('[aria-current="page"]');
-    if (!scroller || !current) return;
-    this.#revealedLocation = location;
-    const viewport = scroller.getBoundingClientRect();
-    const target = current.getBoundingClientRect();
-    if (target.right > viewport.right) scroller.scrollLeft += target.right - viewport.right;
-    else if (target.left < viewport.left) scroller.scrollLeft -= viewport.left - target.left;
-  }
-
-  #go(event: MouseEvent, href: string) {
+  #go(event: Event, href: string) {
     event.preventDefault();
     this.store.setRoute(href);
     window.scrollTo({ top: 0 });
@@ -30,21 +16,18 @@ export class AreaNavigation extends FormaElement {
 
   override render() {
     const requestedArea=this.getAttribute("area");
-    const area = (requestedArea === "operations" || requestedArea === "administration" ? "operations" : requestedArea === "laboratory" ? "laboratory" : "intelligence") as Area;
+    const area = (requestedArea === "operations" || requestedArea === "administration" ? "operations" : requestedArea === "laboratory" ? "product" : ["product","knowledge","engineering"].includes(requestedArea??"") ? requestedArea : "intelligence") as Area;
     const active = this.getAttribute("active") ?? "";
     const session = this.store.session.get();
+    const access = { role: session?.user.role, capabilities: session?.capabilities, canvasAccess: session?.canvas.access };
     const items = area === "operations"
-      ? applicationDefinition("operations").navigation.filter((item) => item.id === "system" || session?.user.role === "admin")
-      : area === "laboratory"
-        ? applicationDefinition("laboratory").navigation.filter(() => session?.user.role === "admin")
+      ? applicationDefinition("operations").navigation.filter((item) => navigationItemAccessible(item, access))
+      : area !== "intelligence"
+        ? applicationDefinition(area).navigation.filter((item) => navigationItemAccessible(item, access))
         : applicationDefinition("creative").navigation.filter((item) => intelligenceIds.has(item.id));
-    const label = area === "operations" ? this.i18n.t("shell.operations") : area === "laboratory" ? this.i18n.t("shell.laboratory") : this.i18n.t("shell.intelligence", "Creative intelligence");
-    const administrative = area === "operations" || area === "laboratory";
-    const classes = `area-navigation${administrative ? " area-navigation--administrative" : ""} area-navigation--${area}`;
-    return html`<nav class=${classes} aria-label=${label}>
-      <span>${label}</span>
-      <div>${items.map((item) => html`<a href=${item.href} title=${this.i18n.t("shell.description." + item.id, item.description)} class=${active === item.id ? "active" : ""} aria-current=${active === item.id ? "page" : nothing} @click=${(event:MouseEvent)=>this.#go(event,item.href)}>${this.i18n.t("shell.navigation." + item.id, item.label)}</a>`)}</div>
-    </nav>`;
+    const label = area === "intelligence" ? this.i18n.t("shell.intelligence", "Creative intelligence") : this.i18n.t(`shell.${area}`,applicationDefinition(area).label);
+    const destinations=items.map((item)=>({label:this.i18n.t("shell.navigation."+item.id,item.label),value:item.id,href:item.href,description:this.i18n.t("shell.description."+item.id,item.description)}));
+    return html`<forma-ui-audience-navigation class=${`area-navigation--${area}`} .label=${label} .value=${active} .destinations=${destinations} @forma-navigate=${(event:CustomEvent<{value:string;href:string}>)=>this.#go(event,event.detail.href)}></forma-ui-audience-navigation>`;
   }
 }
 

@@ -52,12 +52,18 @@ export class FormaAccountSettings extends FormaElement {
           ${usage.length ? html`<h3>${this.i18n.t("settings.recentCharges", "Recent personal charges")}</h3><ol class="creator-settings-charges">${usage.map((event) => html`<li><span>${String(event.payload.artifact_kind ?? event.payload.operation ?? "Creative generation").replaceAll("_", " ").replaceAll("-", " ")}</span><b>${formatGenerationUsd(Number(event.payload.cost_microusd ?? 0))}</b></li>`)}</ol>` : html`<p class="creator-settings-empty">${this.i18n.t("settings.noCharges", "No personal generation charges have been recorded.")}</p>`}
         </section>
 
-        <section class="creator-settings-card" aria-labelledby="settings-sharing-heading">
+        ${this.store.canManageProjectShares()?html`<section class="creator-settings-card" aria-labelledby="settings-sharing-heading">
           <header><h2 id="settings-sharing-heading">${this.i18n.t("settings.sharingHeading", "Your active review links")}</h2><p>${this.i18n.t("settings.sharingDescription", "Each private link opens exactly one approved document and its current authorized media. Close a link here whenever review is finished.")}</p></header>
           ${shares.length ? html`<ol class="creator-settings-shares">${shares.map((share) => {
             const document = this.store.projection.get().documents.find((candidate) => candidate.id === share.resourceId);
             return html`<li><div><b>${document?.title ?? this.i18n.t("settings.sharedDocument", "Shared document")}</b><span>${this.i18n.t("share.expires", "Expires {date}", { date: this.i18n.date(new Date(share.expiresAt), { dateStyle: "medium", timeStyle: "short" }) })}</span></div><button type="button" class="button secondary compact" @click=${() => this.store.revokeShare(share.shareId)}>${this.i18n.t("share.revoke", "Revoke")}</button></li>`;
           })}</ol>` : html`<p class="creator-settings-empty">${this.i18n.t("settings.noShares", "You have no active private review links.")}</p>`}
+        </section>`:nothing}
+
+        <section class="creator-settings-card" aria-labelledby="settings-workspaces-heading">
+          <header><h2 id="settings-workspaces-heading">${this.i18n.t("workspace.admin.organizations","Your organizations")}</h2><p>${this.i18n.t("workspace.admin.settingsDescription","Review your invitations, open shared projects, or manage organizations you own.")}</p></header>
+          <div class="creator-settings-facts"><span>${this.i18n.t("workspace.admin.organizations","Your organizations")}</span><b>${this.i18n.number(session.organizations?.length??0)}</b><span>${this.i18n.t("workspace.admin.sharedProjects","Projects shared with you")}</span><b>${this.i18n.number(session.projects?.length??0)}</b></div>
+          <a class="button secondary compact" href="/settings/workspaces" @click=${(event:MouseEvent)=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();this.store.setRoute("/settings/workspaces");}}>${this.i18n.t("workspace.admin.open","Open workspace settings")}</a>
         </section>
       </div>
     </section>`;

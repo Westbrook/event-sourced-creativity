@@ -3,6 +3,8 @@ import { icon } from "../icons";
 import { FormaPresentationalElement } from "../presentational-element";
 import { defineFormaElements, emitFormaEvent, nextFormaId, type FormaOption } from "./contracts";
 
+export type FormaNavigationDestination = FormaOption & { href: string };
+
 /**
  * @tag forma-ui-segmented-control
  * @summary Named native-button group with honest pressed states.
@@ -83,10 +85,112 @@ export class FormaUiLink extends FormaPresentationalElement {
   override render() { return html`<a class="ui-link" href=${this.href} target=${this.external ? "_blank" : nothing} rel=${this.external ? "noopener noreferrer" : nothing} @click=${this.#navigate}>${this.label || this.i18n.t("navigation.openLink")}${this.external ? html`<span aria-hidden="true"> ${icon("share")}</span><span class="sr-only"> ${this.i18n.t("navigation.opensInNewTab")}</span>` : nothing}</a>`; }
 }
 
+/**
+ * @tag forma-ui-workspace-switcher
+ * @summary Audience-safe workspace picker with native navigation links and an automatically dismissed popover.
+ * @fires {CustomEvent<{ value: string; href: string }>} forma-navigate - An authorized workspace identifier and destination were activated.
+ * @cssprop {<length>} --forma-control-min-size - Minimum workspace-switcher hit area.
+ * @cssprop {<color>} --forma-color-accent - Active workspace indicator.
+ */
+export class FormaUiWorkspaceSwitcher extends FormaPresentationalElement {
+  static properties = { label: { type: String }, value: { type: String }, destinations: { attribute: false } };
+  label = ""; value = ""; destinations: FormaNavigationDestination[] = [];
+  #id = nextFormaId("workspace-switcher");
+  #open = false;
+  #returnFocus = false;
+
+  #toggle(event: ToggleEvent) {
+    this.#open = event.newState === "open";
+    if (this.#open) {
+      const panel = event.currentTarget as HTMLElement;
+      (panel.querySelector<HTMLAnchorElement>('a[aria-current="page"]') ?? panel.querySelector<HTMLAnchorElement>("a"))?.focus();
+    } else if (this.#returnFocus) {
+      this.querySelector<HTMLButtonElement>(".ui-workspace-switcher-trigger")?.focus();
+    }
+    this.#returnFocus = false;
+    this.requestUpdate();
+  }
+
+  #activate(event: MouseEvent, destination: FormaNavigationDestination) {
+    if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
+    if (!emitFormaEvent(this, "forma-navigate", { value: destination.value, href: destination.href }, { cancelable: true })) event.preventDefault();
+    const panel = this.querySelector<HTMLElement>(".ui-workspace-switcher-panel");
+    if (panel?.matches(":popover-open")) {
+      this.#returnFocus = true;
+      panel.hidePopover();
+    }
+  }
+
+  override render() {
+    const destinations = this.destinations.filter((destination) => !destination.disabled);
+    if (destinations.length < 2) return nothing;
+    const label = this.label || this.i18n.t("navigation.availableWorkspaces", "Available workspaces");
+    const current = destinations.find((destination) => destination.value === this.value) ?? destinations[0];
+    const links = destinations.map((destination) => html`<a href=${destination.href} title=${destination.description || nothing} class=${destination.value === this.value ? "active" : ""} aria-current=${destination.value === this.value ? "page" : nothing} @click=${(event: MouseEvent) => this.#activate(event, destination)}>${destination.label}</a>`);
+    if (destinations.length === 2) return html`<nav class="ui-workspace-switcher application-switcher" aria-label=${label}>${links}</nav>`;
+    const triggerLabel = this.i18n.t("navigation.switchWorkspaceCurrent", "Switch workspace. Current workspace: {workspace}", { workspace: current.label });
+    return html`<div class="ui-workspace-switcher platform-switcher ui-popover">
+      <button type="button" class="button secondary compact ui-popover-trigger ui-workspace-switcher-trigger" popovertarget=${this.#id} aria-controls=${this.#id} aria-expanded=${String(this.#open)} aria-label=${triggerLabel}>
+        <span dir="auto">${current.label}</span><span class="ui-workspace-switcher-indicator" aria-hidden="true"></span>
+      </button>
+      <nav id=${this.#id} class="ui-popover-panel ui-workspace-switcher-panel" popover="auto" aria-label=${label} @toggle=${this.#toggle} @keydown=${(event: KeyboardEvent) => { if (event.key === "Escape") this.#returnFocus = true; }}>${links}</nav>
+    </div>`;
+  }
+}
+
+/**
+ * @tag forma-ui-audience-navigation
+ * @summary Audience-neutral task rail containing only explicitly authorized native navigation links.
+ * @fires {CustomEvent<{ value: string; href: string }>} forma-navigate - An authorized task identifier and destination were activated.
+ * @cssprop {<length>} --forma-control-min-size - Minimum audience-navigation hit area.
+ * @cssprop {<color>} --forma-color-surface - Preference-reactive task-rail surface.
+ * @cssprop {<color>} --forma-color-border - Quiet task-rail boundary.
+ * @cssprop {<color>} --forma-color-text - Hovered task foreground.
+ * @cssprop {<color>} --forma-color-text-muted - Default task foreground.
+ * @cssprop {<color>} --forma-color-accent-text - Current-task foreground.
+ * @cssprop {<color>} --forma-color-accent - Current-task underline.
+ */
+export class FormaUiAudienceNavigation extends FormaPresentationalElement {
+  static properties = { label: { type: String }, value: { type: String }, destinations: { attribute: false } };
+  label = ""; value = ""; destinations: FormaNavigationDestination[] = [];
+  #revealedLocation = "";
+
+  protected override updated() {
+    const location = `${this.value}:${this.destinations.map((destination) => destination.value).join(",")}:${this.i18n.locale}:${this.matches(":dir(rtl)")}`;
+    if (location === this.#revealedLocation) return;
+    const scroller = this.querySelector<HTMLElement>(".ui-audience-navigation-list");
+    const current = scroller?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!scroller || !current) return;
+    this.#revealedLocation = location;
+    const viewport = scroller.getBoundingClientRect();
+    const target = current.getBoundingClientRect();
+    const focusClearance = Number.parseFloat(getComputedStyle(current).outlineWidth) || 3;
+    if (target.right > viewport.right - focusClearance) scroller.scrollLeft += target.right - viewport.right + focusClearance;
+    else if (target.left < viewport.left + focusClearance) scroller.scrollLeft -= viewport.left - target.left + focusClearance;
+  }
+
+  #activate(event: MouseEvent, destination: FormaNavigationDestination) {
+    if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
+    if (!emitFormaEvent(this, "forma-navigate", { value: destination.value, href: destination.href }, { cancelable: true })) event.preventDefault();
+  }
+
+  override render() {
+    const authorized = this.destinations.filter((destination) => !destination.disabled);
+    if (!authorized.length) return nothing;
+    const destinations = authorized.slice(0, 5);
+    const current = authorized.find((destination) => destination.value === this.value);
+    if (current && !destinations.includes(current)) destinations[destinations.length - 1] = current;
+    const currentIndex = destinations.findIndex((destination) => destination.value === this.value);
+    const label = this.label || this.i18n.t("navigation.scopedNavigation", "Workspace navigation");
+    return html`<nav class="ui-audience-navigation" aria-label=${label}><ul class="ui-audience-navigation-list">${destinations.map((destination, index) => html`<li><a href=${destination.href} title=${destination.description || nothing} aria-current=${index === currentIndex ? "page" : nothing} @click=${(event: MouseEvent) => this.#activate(event, destination)}>${destination.label}</a></li>`)}</ul></nav>`;
+  }
+}
+
 const definitions = [
   ["forma-ui-segmented-control", FormaUiSegmentedControl], ["forma-ui-tabs", FormaUiTabs],
   ["forma-ui-breadcrumbs", FormaUiBreadcrumbs], ["forma-ui-pagination", FormaUiPagination],
   ["forma-ui-toolbar", FormaUiToolbar], ["forma-ui-link", FormaUiLink],
+  ["forma-ui-workspace-switcher", FormaUiWorkspaceSwitcher], ["forma-ui-audience-navigation", FormaUiAudienceNavigation],
 ] as const;
 defineFormaElements(definitions);
 
@@ -95,5 +199,6 @@ declare global {
     "forma-ui-segmented-control": FormaUiSegmentedControl; "forma-ui-tabs": FormaUiTabs;
     "forma-ui-breadcrumbs": FormaUiBreadcrumbs; "forma-ui-pagination": FormaUiPagination;
     "forma-ui-toolbar": FormaUiToolbar; "forma-ui-link": FormaUiLink;
+    "forma-ui-workspace-switcher": FormaUiWorkspaceSwitcher; "forma-ui-audience-navigation": FormaUiAudienceNavigation;
   }
 }

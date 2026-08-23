@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { documentContextBlockFromRoute, documentContextBlockRoute, documentEntryPath, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentFocusInRoute, withDocumentInRoute } from "../src/model/routes.ts";
+import { documentContextBlockFromRoute, documentContextBlockRoute, documentEntryPath, documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, libraryBaseRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, libraryFocusFromRoute, libraryFocusRoute, libraryRootRoute, routePathname, withDocumentFocusInRoute, withDocumentInRoute } from "../src/model/routes.ts";
 import { applicationEntryPath, applicationIdFromRoute } from "../src/platform/applications.ts";
 
 test("document views use a readable path for the selected durable document", () => {
@@ -79,12 +79,31 @@ test("Library Block editor targets are durable refresh-safe paths",()=>{
   assert.equal(applicationEntryPath("/library/blocks/editor/block-42"),"/creative/");
 });
 
+test("Canvas reuses the same project Library without escaping its application",()=>{
+  const canvas="/canvas/library?scope=kept#preview";
+  const focus=libraryFocusRoute("block","block/42","Direction / Quiet confidence",canvas);
+  assert.equal(libraryBaseRoute(canvas),"/canvas/library");
+  assert.equal(focus,"/canvas/library/block/block%2F42/direction-quiet-confidence");
+  assert.deepEqual(libraryFocusFromRoute(focus),{kind:"block",id:"block/42"});
+  assert.deepEqual(libraryFocusFromRoute("/canvas/library/output/output-7"),{kind:"output",id:"output-7"});
+  assert.deepEqual(libraryFocusFromRoute("/canvas/library/artifact/artifact-9/study"),{kind:"artifact",id:"artifact-9"});
+  assert.deepEqual(libraryFocusFromRoute("/canvas/library/family/family-3"),{kind:"family",id:"family-3"});
+  assert.equal(libraryRootRoute(`${focus}?scope=kept#preview`),"/canvas/library?scope=kept#preview");
+  assert.equal(libraryBlockEditorRoute("block/42",canvas),"/canvas/library/blocks/editor/block%2F42");
+  assert.equal(libraryBlockEditorRoute("",canvas),"/canvas/library/blocks/editor/new");
+  assert.deepEqual(libraryBlockEditorFromRoute("/canvas/library/blocks/editor/block%2F42"),{blockId:"block/42"});
+  assert.deepEqual(libraryBlockEditorFromRoute("/canvas/library/blocks/editor/new"),{blockId:null});
+  assert.equal(applicationEntryPath(focus),"/canvas/");
+  assert.equal(applicationEntryPath("/canvas/library/blocks/editor/new"),"/canvas/");
+  assert.equal(libraryBaseRoute("/library/output/output-7"),"/library","Creator Workspace keeps its existing routes");
+});
+
 test("application routes select one canonical runtime boundary",()=>{
   assert.equal(applicationIdFromRoute("/document/doc-a/study/view/chat/focus"),"creative");
   assert.equal(applicationIdFromRoute("/creative/create/conversational"),"creative");
-  assert.equal(applicationIdFromRoute("/operations/events/permissions"),"operations");
-  assert.equal(applicationIdFromRoute("/admin/events/stream"),"operations");
-  assert.equal(applicationIdFromRoute("/laboratory/replay"),"laboratory");
-  assert.equal(applicationIdFromRoute("/admin/events/replay"),"laboratory");
-  assert.equal(applicationEntryPath("/system/focal-points"),"/laboratory/");
+  assert.equal(applicationIdFromRoute("/operations/events/permissions"),"engineering");
+  assert.equal(applicationIdFromRoute("/admin/events/stream"),"engineering");
+  assert.equal(applicationIdFromRoute("/laboratory/replay"),"product");
+  assert.equal(applicationIdFromRoute("/admin/events/replay"),"product");
+  assert.equal(applicationEntryPath("/system/focal-points"),"/knowledge/");
 });

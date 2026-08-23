@@ -10,21 +10,35 @@ const { d1, r2 } = hostingConfig;
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
-const protectedSurfaceModules = new Set([
-  "/src/components/forma-system.ts",
-  "/src/components/forma-analytics.ts",
-  "/src/components/forma-admin-events.ts",
-  "/src/components/forma-image-adapter-lab.ts",
-  "/src/components/forma-focal-point-lab.ts",
-  "/src/components/forma-design-system-lab.ts",
-  "/src/components/design-system/component-catalog.ts",
+const protectedSurfaceModules = new Map([
+  ["/src/components/forma-system.ts", "operations"],
+  ["/src/components/forma-analytics.ts", "operations"],
+  ["/src/components/forma-admin-events.ts", "operations"],
+  ["/src/components/forma-image-adapter-lab.ts", "operations"],
+  ["/src/components/forma-focal-point-lab.ts", "knowledge/components"],
+  ["/src/components/forma-design-system-lab.ts", "knowledge"],
+  ["/src/components/design-system/component-catalog.ts", "knowledge/components"],
+  ["/src/components/forma-platform-shell.ts", "internal"],
+  ["/src/components/forma-role-dashboard.ts", "internal"],
 ]);
 
-function applicationChunkName(chunk: { facadeModuleId?: string | null }) {
+function applicationChunkName(chunk: { facadeModuleId?: string | null; moduleIds?: readonly string[] }) {
   const path = chunk.facadeModuleId?.replaceAll("\\", "/") ?? "";
   if (path.includes("virtual:cloudflare/worker-entry")) return "index.js";
-  const protectedSurface = path.includes("/src/apps/operations/") || path.includes("/src/apps/laboratory/") || [...protectedSurfaceModules].some((module) => path.endsWith(module));
-  return `${protectedSurface ? "protected-assets" : "assets"}/[name]-[hash].js`;
+  const app = ["operations", "product", "knowledge", "engineering"].find((candidate) => path.includes(`/src/apps/${candidate}/`));
+  const productFile=path.match(/\/([^/]+)\.ts$/)?.[1]??"";
+  const task=app==="product"&&["insights","delivery","evaluation","actual-replay","synthetic-replay","adapter-preview"].includes(productFile)?({"actual-replay":"actual","synthetic-replay":"replay","adapter-preview":"adapters"} as Record<string,string>)[productFile]??productFile
+    :app==="operations"&&/\/(?:access-management|canvas-governance|providers|overview)\.ts$/.test(path)?({"access-management":"access","canvas-governance":"release",providers:"providers",overview:"overview"} as Record<string,string>)[path.match(/\/([^/]+)\.ts$/)?.[1]??""]
+    :"";
+  const explicit = [...protectedSurfaceModules].find(([module]) => path.endsWith(module))?.[1];
+  const inherited = [...new Set((chunk.moduleIds ?? []).flatMap((module) => {
+    const normalized = module.replaceAll("\\", "/");
+    const explicitOwner=[...protectedSurfaceModules].find(([protectedModule])=>normalized.endsWith(protectedModule))?.[1];
+    const owner = explicitOwner??["operations", "product", "knowledge", "engineering"].find((candidate) => normalized.includes(`/src/apps/${candidate}/`));
+    return owner ? [owner] : [];
+  }))];
+  const owner = app?`${app}${task?`/${task}`:""}`:explicit ?? (inherited.length === 1 ? inherited[0] : inherited.length > 1 ? "internal" : "");
+  return `${owner ? `protected-assets/${owner}` : "assets"}/[name]-[hash].js`;
 }
 
 const localBindingConfig = {
