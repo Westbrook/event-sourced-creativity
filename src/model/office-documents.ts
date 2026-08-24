@@ -1,4 +1,4 @@
-import { authoritativeSlideDatumWeight, type DocumentArtifactDraftItem, type SlidePresentation, type SlideVisualData } from "./document-artifacts.ts";
+import { authoritativeSlideDatumWeight, formatPresentationQuantity, type DocumentArtifactDraftItem, type SlidePresentation, type SlideVisualData } from "./document-artifacts.ts";
 import { localizedSourceAnchor } from "./source-anchor.ts";
 
 export const WORD_DOCUMENT_MIME="application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -137,12 +137,14 @@ function connector(id:number,name:string,x1:number,y1:number,x2:number,y2:number
 const relativeLuminance=(hex:string)=>[0,2,4].map((offset)=>Number.parseInt(hex.slice(offset,offset+2),16)/255).map((channel)=>channel<=.04045?channel/12.92:((channel+.055)/1.055)**2.4).reduce((sum,value,index)=>sum+value*[.2126,.7152,.0722][index]!,0);
 const contrastRatio=(first:string,second:string)=>{const left=relativeLuminance(first),right=relativeLuminance(second);return(Math.max(left,right)+.05)/(Math.min(left,right)+.05);};
 const readableInk=(background:string,preferred:string,minimum=4.5)=>contrastRatio(background,preferred)>=minimum?preferred:contrastRatio(background,"111827")>=contrastRatio(background,"FFFFFF")?"111827":"FFFFFF";
-const unitValue=(value:string,unit:string)=>value&&unit&&!value.endsWith(unit)?`${value} ${unit}`:value;
+const unitValue=(value:string,unit:string)=>formatPresentationQuantity(value,unit,{numericOnly:true});
 const opaqueSourceReference=(value:string)=>/^(?:(?:blk|grp|clm|source|decision)(?:_|-)\d+|context_group_\d+|[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12})$/i.test(value.trim());
 const publicSourceLabel=(value:string,fallback="")=>opaqueSourceReference(value)?fallback:value;
 
 function addVisualShapes(shapes:string[],nextId:()=>number,slide:SlideVisualData,box:SlideBox,colors:SlideColors,locale:string,rtl:boolean,localization:OfficeLocalization){
   const visual=slide.visual,kind=String(visual.kind),layout=String(slide.layout),data=visual.data??[],unit=String(visual.unit??"").trim();
+  const qualitativeScorecard=(kind==="scorecard"||kind==="bars"||layout==="scorecard")&&!visual.exactValue&&!visual.displayValue&&!/(?:\/\s*100|%)/u.test(unit)&&data.length>=2&&data.every((datum)=>/\p{L}/u.test(String(datum.exactValue??datum.displayValue??datum.value??"")));
+  if(qualitativeScorecard){addVisualShapes(shapes,nextId,{...slide,layout:"comparison",visual:{...visual,kind:"comparison"}},box,colors,locale,rtl,localization);return;}
   if(slide.quote?.text&&kind!=="quote"&&layout!=="quote"&&(data.length||visual.value||visual.exactValue||visual.displayValue)){
     const quoteHeight=Math.min(Math.max(650000,box.height-380000),Math.max(860000,Math.min(1450000,Math.round(box.height*.42))));
     const quoteSlide:SlideVisualData={...slide,layout:"quote",visual:{...visual,kind:"quote",value:"",data:[],exactValue:undefined,displayValue:undefined}};
@@ -152,12 +154,19 @@ function addVisualShapes(shapes:string[],nextId:()=>number,slide:SlideVisualData
   }
   const add=(name:string,text:string,x:number,y:number,width:number,height:number,ink=colors.foreground,size=1400,bold=false,options:ShapeOptions={})=>shapes.push(shape(nextId(),name,text,x,y,width,height,ink,size,bold,locale,rtl,options,localization));
   const summary=[] as Array<{kind:"exact"|"displayed";label:string;value:string}>;
-  if(visual.exactValue)summary.push({kind:"exact",label:localization.translate?.("Exact value")??"Exact value",value:String(visual.exactValue)});
-  if(visual.displayValue)summary.push({kind:"displayed",label:localization.translate?.("Rounded display")??"Rounded display",value:String(visual.displayValue)});
+  const showNumericPrecision=kind!=="roadmap"&&kind!=="timeline"&&layout!=="roadmap"&&layout!=="timeline";
+  if(showNumericPrecision&&visual.exactValue)summary.push({kind:"exact",label:localization.translate?.("Exact value")??"Exact value",value:String(visual.exactValue)});
+  if(showNumericPrecision&&visual.displayValue)summary.push({kind:"displayed",label:localization.translate?.("Rounded display")??"Rounded display",value:String(visual.displayValue)});
   if(summary.length){
     const column=Math.floor(box.width/Math.max(summary.length,1));
-    summary.forEach((entry,index)=>{const x=box.x+index*column,valueWidth=unit?Math.min(column-420000,Math.max(950000,Math.ceil(entry.value.length*220000))):column-120000;add(`Editable ${entry.kind} value label`,entry.label,x,box.y,column-120000,200000,colors.muted,1150);add(`Editable ${entry.kind} value`,entry.value,x,box.y+185000,valueWidth,350000,colors.accentInk,1900,true);if(unit)add(`Editable ${entry.kind} value unit`,unit,x+valueWidth+40000,box.y+250000,Math.max(200000,column-valueWidth-150000),220000,colors.muted,1250);});
-    box={...box,y:box.y+610000,height:Math.max(300000,box.height-610000)};
+    summary.forEach((entry,index)=>{
+      const x=box.x+index*column,hasSeparateUnit=Boolean(unit)&&unitValue(entry.value,unit)!==entry.value;
+      const valueWidth=hasSeparateUnit?Math.min(column-420000,Math.max(950000,Math.ceil(entry.value.length*220000))):column-120000;
+      add(`Editable ${entry.kind} value label`,entry.label,x,box.y,column-120000,195000,colors.muted,1150);
+      add(`Editable ${entry.kind} value`,entry.value,x,box.y+210000,valueWidth,350000,colors.accentInk,1900,true);
+      if(hasSeparateUnit)add(`Editable ${entry.kind} value unit`,unit,x+valueWidth+40000,box.y+275000,Math.max(200000,column-valueWidth-150000),200000,colors.muted,1250);
+    });
+    box={...box,y:box.y+630000,height:Math.max(300000,box.height-630000)};
   }
 
   if(slide.quote?.text||kind==="quote"||layout==="quote"){
@@ -175,16 +184,19 @@ function addVisualShapes(shapes:string[],nextId:()=>number,slide:SlideVisualData
   if(kind==="bars"||kind==="scorecard"||layout==="scorecard"){
     if(visual.label)add("Editable scorecard heading",visual.label,box.x,box.y,box.width,250000,colors.accentInk,1450,true);
     const top=box.y+(visual.label?340000:0),height=Math.max(200000,box.height-(visual.label?340000:0));
-    const columns=Math.max(1,Math.ceil(data.length/8)),rows=Math.max(1,Math.ceil(data.length/columns)),gap=200000,columnWidth=Math.max(260000,Math.floor((box.width-gap*(columns-1))/columns)),rowHeight=Math.max(145000,Math.floor(height/rows));
+    const includesExactNote=data.some((datum)=>datum.exactValue&&datum.displayValue&&datum.exactValue!==datum.displayValue);
+    const minimumRowHeight=includesExactNote?430000:265000,maxRows=Math.max(1,Math.min(8,Math.floor(height/minimumRowHeight)));
+    const columns=Math.max(1,Math.ceil(data.length/maxRows)),rows=Math.max(1,Math.ceil(data.length/columns)),gap=200000,columnWidth=Math.max(260000,Math.floor((box.width-gap*(columns-1))/columns)),rowHeight=Math.max(minimumRowHeight,Math.floor(height/rows));
     data.forEach((datum,index)=>{
       const column=Math.floor(index/rows),row=index%rows,x=box.x+column*(columnWidth+gap),y=top+row*rowHeight;
-      const value=unitValue(datum.displayValue||datum.value||datum.exactValue||"",unit),valueWidth=Math.min(1350000,Math.max(550000,Math.floor(columnWidth*.26))),labelWidth=Math.max(160000,columnWidth-valueWidth-50000),trackY=y+Math.min(240000,Math.floor(rowHeight*.56)),trackHeight=Math.max(34000,Math.min(74000,Math.floor(rowHeight*.2)));
-      add(`Editable score label ${index+1}`,datum.label,x,y,labelWidth,Math.max(110000,trackY-y-14000),colors.foreground,rows>8?1150:1350,false,{description:`Score category: ${datum.label}`});
-      add(`Editable score value ${index+1}`,value,x+labelWidth+50000,y,valueWidth,Math.max(110000,trackY-y-14000),colors.foreground,rows>8?1150:1400,true,{align:"r",description:`${datum.label}: ${value}`});
+      const value=unitValue(datum.displayValue||datum.value||datum.exactValue||"",unit),valueWidth=Math.min(1350000,Math.max(550000,Math.floor(columnWidth*.26))),labelWidth=Math.max(160000,columnWidth-valueWidth-50000);
+      const labelHeight=195000,trackY=y+labelHeight+18000,trackHeight=Math.max(34000,Math.min(65000,rowHeight-labelHeight-36000-(includesExactNote?155000:0)));
+      add(`Editable score label ${index+1}`,datum.label,x,y,labelWidth,labelHeight,colors.foreground,1350,false,{description:`Score category: ${datum.label}`});
+      add(`Editable score value ${index+1}`,value,x+labelWidth+50000,y,valueWidth,labelHeight,colors.foreground,1400,true,{align:"r",description:`${datum.label}: ${value}`});
       add(`Editable score track ${index+1}`,"",x,trackY,columnWidth,trackHeight,colors.surfaceInk,1100,false,{fill:colors.surface,geometry:"roundRect"});
       const ratio=authoritativeSlideDatumWeight(visual,datum);
       add(`Editable score bar ${index+1}`,"",x,trackY,Math.max(trackHeight,Math.round(columnWidth*ratio)),trackHeight,colors.accent,1100,false,{fill:colors.accent,geometry:"roundRect",description:`${datum.label}: ${value}`});
-      if(datum.exactValue&&datum.displayValue&&datum.exactValue!==datum.displayValue)add(`Editable score exact value ${index+1}`,`${localization.translate?.("Exact")??"Exact"}: ${datum.exactValue}`,x,trackY+trackHeight+12000,columnWidth,Math.max(75000,rowHeight-(trackY-y)-trackHeight-18000),colors.muted,1100);
+      if(datum.exactValue&&datum.displayValue&&datum.exactValue!==datum.displayValue)add(`Editable score exact value ${index+1}`,`${localization.translate?.("Exact")??"Exact"}: ${datum.exactValue}`,x,trackY+trackHeight+12000,columnWidth,Math.max(155000,rowHeight-(trackY-y)-trackHeight-18000),colors.muted,1100);
     });
     return;
   }
@@ -201,6 +213,7 @@ function addVisualShapes(shapes:string[],nextId:()=>number,slide:SlideVisualData
   }
 
   if(kind==="comparison"||kind==="personas"||layout==="comparison"||layout==="personas"||layout==="columns"){
+    if(visual.label){add("Editable comparison heading",visual.label,box.x,box.y,box.width,205000,colors.accentInk,1450,true);box={...box,y:box.y+265000,height:Math.max(230000,box.height-265000)};}
     const columns=Math.max(1,Math.min(data.length||1,data.length>6?4:3)),rows=Math.max(1,Math.ceil(data.length/columns)),gap=160000,width=Math.max(180000,Math.floor((box.width-gap*(columns-1))/columns)),height=Math.max(180000,Math.floor((box.height-gap*(rows-1))/rows));
     data.forEach((datum,index)=>{const x=box.x+(index%columns)*(width+gap),y=box.y+Math.floor(index/columns)*(height+gap),value=unitValue(datum.displayValue||datum.value||datum.exactValue||"",unit);add(`Editable comparison card ${index+1}`,"",x,y,width,height,colors.surfaceInk,1100,false,{fill:colors.surface,geometry:"roundRect",description:`${datum.label}: ${value}`});add(`Editable comparison label ${index+1}`,datum.label,x+120000,y+105000,width-240000,Math.min(380000,Math.floor(height*.36)),colors.surfaceInk,1450,true);if(value)add(`Editable comparison value ${index+1}`,value,x+120000,y+Math.min(465000,Math.floor(height*.43)),width-240000,Math.max(110000,height-Math.min(465000,Math.floor(height*.43))-105000),colors.surfaceInk,1300);});
     if(!data.length&&visual.value)add("Editable comparison summary",visual.value,box.x,box.y,box.width,box.height,colors.foreground,1850,true);
@@ -208,15 +221,17 @@ function addVisualShapes(shapes:string[],nextId:()=>number,slide:SlideVisualData
   }
 
   if(kind==="timeline"||kind==="roadmap"||layout==="timeline"||layout==="roadmap"){
+    const duration=unitValue(String(visual.displayValue??visual.exactValue??visual.value??""),unit);
+    if(duration){add("Editable roadmap duration",duration,box.x,box.y,box.width,190000,colors.accentInk,1350,true);box={...box,y:box.y+240000,height:Math.max(230000,box.height-240000)};}
     const columns=Math.max(1,Math.min(data.length||1,4)),rows=Math.max(1,Math.ceil(data.length/columns)),columnWidth=Math.floor(box.width/columns),rowHeight=Math.floor(box.height/rows),marker=120000;
     data.forEach((datum,index)=>{const column=index%columns,row=Math.floor(index/columns),x=box.x+column*columnWidth+24000,y=box.y+row*rowHeight+60000,centerX=x+marker/2,centerY=y+marker/2;if(column<columns-1&&index+1<data.length)shapes.push(connector(nextId(),`Editable timeline connector ${index+1}`,centerX+marker/2,centerY,box.x+(column+1)*columnWidth+24000,centerY,colors.accent,localization));add(`Editable timeline milestone ${index+1}`,"",x,y,marker,marker,colors.accent,1100,false,{fill:colors.accent,geometry:"ellipse",description:`Milestone ${index+1}: ${datum.label}`});add(`Editable timeline label ${index+1}`,datum.label,x,y+marker+95000,columnWidth-100000,Math.min(390000,Math.floor(rowHeight*.32)),colors.foreground,1350,true);const value=unitValue(datum.displayValue||datum.value||datum.exactValue||"",unit);if(value)add(`Editable timeline value ${index+1}`,value,x,y+marker+Math.min(505000,Math.floor(rowHeight*.48)),columnWidth-100000,Math.max(130000,rowHeight-marker-Math.min(565000,Math.floor(rowHeight*.55))),colors.muted,1250);});
     return;
   }
 
   if(kind==="diagram"||kind==="architecture"||layout==="architecture"){
+    if(visual.value){add("Editable diagram summary",visual.value,box.x,box.y,box.width,185000,colors.muted,1200);box={...box,y:box.y+235000,height:Math.max(240000,box.height-235000)};}
     const columns=Math.max(1,Math.min(data.length||1,data.length>4?3:2)),rows=Math.max(1,Math.ceil(data.length/columns)),gapX=300000,gapY=220000,width=Math.max(190000,Math.floor((box.width-gapX*(columns-1))/columns)),height=Math.max(160000,Math.floor((box.height-gapY*(rows-1))/rows));
-    data.forEach((datum,index)=>{const column=index%columns,row=Math.floor(index/columns),x=box.x+column*(width+gapX),y=box.y+row*(height+gapY),value=unitValue(datum.displayValue||datum.value||datum.exactValue||"",unit);if(column>0)shapes.push(connector(nextId(),`Editable diagram connector ${index}`,x-gapX,y+height/2,x,y+height/2,colors.accent,localization));else if(row>0)shapes.push(connector(nextId(),`Editable diagram connector ${index}`,x+width/2,y-gapY,x+width/2,y,colors.accent,localization));add(`Editable diagram node ${index+1}`,"",x,y,width,height,colors.surfaceInk,1100,false,{fill:colors.surface,stroke:colors.accent,lineWidth:12000,geometry:"roundRect",description:[datum.label,value].filter(Boolean).join(": ")});add(`Editable diagram label ${index+1}`,datum.label,x+95000,y+Math.max(65000,Math.floor(height*.2)),width-190000,Math.max(120000,Math.floor(height*.32)),colors.surfaceInk,1400,true);if(value)add(`Editable diagram value ${index+1}`,value,x+95000,y+Math.floor(height*.56),width-190000,Math.max(105000,Math.floor(height*.3)),colors.surfaceInk,1200);});
-    if(visual.value)add("Editable diagram summary",visual.value,box.x,Math.max(0,box.y-285000),box.width,230000,colors.muted,1200);
+    data.forEach((datum,index)=>{const column=index%columns,row=Math.floor(index/columns),x=box.x+column*(width+gapX),y=box.y+row*(height+gapY),value=unitValue(datum.displayValue||datum.value||datum.exactValue||"",unit);if(column>0)shapes.push(connector(nextId(),`Editable diagram connector ${index}`,x-gapX,y+height/2,x,y+height/2,colors.accent,localization));else if(row>0)shapes.push(connector(nextId(),`Editable diagram connector ${index}`,x+width/2,y-gapY,x+width/2,y,colors.accent,localization));add(`Editable diagram node ${index+1}`,"",x,y,width,height,colors.surfaceInk,1100,false,{fill:colors.surface,stroke:colors.accent,lineWidth:12000,geometry:"roundRect",description:[datum.label,value].filter(Boolean).join(": ")});const labelTop=y+Math.min(65000,Math.max(0,height-340000)),labelHeight=Math.max(180000,Math.min(Math.floor(height*.35),height-160000));add(`Editable diagram label ${index+1}`,datum.label,x+95000,labelTop,width-190000,labelHeight,colors.surfaceInk,1400,true);if(value){const valueTop=Math.max(labelTop+labelHeight+12000,y+Math.floor(height*.56));add(`Editable diagram value ${index+1}`,value,x+95000,valueTop,width-190000,Math.max(155000,height-(valueTop-y)-15000),colors.surfaceInk,1200);}});
     return;
   }
 
@@ -262,14 +277,14 @@ export function createPowerPointDocument(items:DocumentArtifactDraftItem[],prese
     const sourceEntries=(slide?.citations??[]).map((citation)=>({visible:[publicSourceLabel(citation.label,translated("Authored source")),localizedSourceAnchor(publicSourceLabel(citation.anchor),localization.translate,localization.number)].filter(Boolean).join(" · ")||citation.excerpt,excerpt:citation.excerpt})).filter((citation)=>citation.visible);
     const quoteCitation=slide?.quote?.citation?publicSourceLabel(slide.quote.citation,translated("Authored source")):"";
     if(quoteCitation&&!sourceEntries.some((citation)=>citation.visible===quoteCitation))sourceEntries.push({visible:quoteCitation,excerpt:""});
-    const citationColumns=sourceEntries.length>3?2:1,citationRows=Math.ceil(sourceEntries.length/citationColumns),longestCitation=sourceEntries.reduce((length,citation)=>Math.max(length,citation.visible.length+(citation.excerpt&&citation.excerpt!==citation.visible?citation.excerpt.length+3:0)),0),citationRowHeight=Math.min(480000,185000*Math.max(1,Math.ceil(longestCitation/(citationColumns>1?72:145)))),citationHeight=citationRows*citationRowHeight,citationBottom=6230000,citationTop=citationBottom-citationHeight;
+    const citationColumns=sourceEntries.length>3?2:1,citationRows=Math.ceil(sourceEntries.length/citationColumns),longestCitation=sourceEntries.reduce((length,citation)=>Math.max(length,citation.visible.length+(citation.excerpt&&citation.excerpt!==citation.visible?citation.excerpt.length+3:0)),0),citationRowHeight=Math.min(480000,185000*Math.max(1,Math.ceil(longestCitation/(citationColumns>1?58:118)))),citationHeight=citationRows*citationRowHeight,citationBottom=6230000,citationTop=citationBottom-citationHeight;
     const hasVisual=Boolean(slide&&(slide.quote?.text||slide.visual.value||slide.visual.data.length||slide.visual.exactValue||slide.visual.displayValue));
     const richVisual=hasVisual&&(["quote","scorecard","comparison","matrix","architecture","personas","roadmap","timeline","columns"].includes(layoutName)||["quote","bars","scorecard","comparison","matrix","architecture","personas","roadmap","timeline","diagram"].includes(kind));
     const cover=(layoutName==="cover"||layoutName==="closing")&&!richVisual;
     let id=2;
     const nextId=()=>id++,chapter=[slide?.section,slide?.kicker].filter((value,ordinal,values)=>value&&values.indexOf(value)===ordinal).join(" · ")||`${translated("Slide")} ${localization.number?.(index+1)??index+1}`;
     const shapes=[
-      shape(nextId(),"Chapter label",chapter,790000,475000,9800000,320000,colors.accentInk,1350,true,locale,rtl,{},localization),
+      shape(nextId(),"Chapter label",chapter,790000,475000,9460000,320000,colors.accentInk,1350,true,locale,rtl,{},localization),
       shape(nextId(),"Editable slide number",`${String(index+1).padStart(2,"0")} / ${String(items.length).padStart(2,"0")}`,10470000,480000,950000,280000,muted,1200,false,locale,rtl,{align:"r"},localization),
       shape(nextId(),"Editable section rule","",800000,880000,10580000,16000,accent,1100,false,locale,rtl,{fill:accent,description:"Section divider"},localization),
       shape(nextId(),"Editable slide title",item.title,790000,cover?1210000:1050000,10600000,cover?1540000:1000000,foreground,cover?4200:3200,true,locale,rtl,{},localization),
@@ -277,7 +292,15 @@ export function createPowerPointDocument(items:DocumentArtifactDraftItem[],prese
     if(richVisual){
       let visualY=2180000;
       if(item.body){shapes.push(shape(nextId(),"Editable slide content",item.body,820000,2050000,10400000,460000,foreground,1700,false,locale,rtl,{},localization));visualY=2610000;}
-      if(bulletLines.length){const bulletHeight=Math.min(760000,Math.max(205000,bulletLines.length*155000));shapes.push(shape(nextId(),"Editable supporting points",bulletLines.join("\n"),840000,visualY,10350000,bulletHeight,foreground,1450,false,locale,rtl,{},localization));visualY+=bulletHeight+110000;}
+      if(bulletLines.length){
+        const columns=bulletLines.length>=5?2:1,gap=240000,width=Math.floor((10350000-gap*(columns-1))/columns),rows=Math.ceil(bulletLines.length/columns);
+        const grouped=Array.from({length:columns},(_,column)=>bulletLines.slice(column*rows,(column+1)*rows));
+        const charactersPerLine=Math.max(12,Math.floor(width/(14.5*12700*.56)));
+        const wrappedRows=Math.max(...grouped.map((lines)=>lines.reduce((total,line)=>total+Math.max(1,Math.ceil(line.length/charactersPerLine)),0)));
+        const bulletHeight=Math.max(205000,wrappedRows*205000);
+        grouped.forEach((lines,column)=>{if(lines.length)shapes.push(shape(nextId(),column?`Editable supporting points ${column+1}`:"Editable supporting points",lines.join("\n"),840000+column*(width+gap),visualY,width,bulletHeight,foreground,1450,false,locale,rtl,{},localization));});
+        visualY+=bulletHeight+110000;
+      }
       addVisualShapes(shapes,nextId,slide!,{x:850000,y:visualY,width:10470000,height:Math.max(250000,(sourceEntries.length?citationTop:6100000)-visualY-110000)},colors,locale,rtl,localization);
     }else{
       const contentWidth=hasVisual?7200000:10400000;

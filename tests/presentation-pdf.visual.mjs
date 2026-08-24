@@ -77,6 +77,7 @@ try{
       console.log(JSON.stringify(diagnostics));
     }
     if(entry.via==="deck"){
+      await page.getByRole("button",{name:"Export"}).click();
       const [download]=await Promise.all([
         page.waitForEvent("download",{timeout:60_000}),
         page.getByRole("button",{name:"Download PDF"}).click(),
@@ -120,6 +121,7 @@ try{
   },reported);
   let unexpectedDownload=false;
   page.on("download",()=>{unexpectedDownload=true;});
+  await page.getByRole("button",{name:"Export"}).click();
   await page.getByRole("button",{name:"Download PDF"}).click();
   await page.waitForFunction(()=>document.querySelector("#status")?.value.includes("could not preserve your slide design"),null,{timeout:15_000});
   if(unexpectedDownload)throw new Error("A failed high-fidelity capture downloaded an incompatible PDF.");

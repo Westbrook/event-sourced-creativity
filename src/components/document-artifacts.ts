@@ -1,7 +1,7 @@
 import { html, nothing } from "lit";
 import { ensureModalDialog } from "./modal-dialog";
 import { DOCUMENT_ARTIFACT_KINDS, SLIDE_STYLE_PRESETS, documentArtifactDefinition, parseDocumentArtifactContent, type DocumentArtifact, type DocumentArtifactDraftItem, type DocumentArtifactItem, type DocumentArtifactKind, type SlideStylePresetId } from "../model/document-artifacts";
-import { documentJobCanRecoverProviderRender, documentJobFailure, documentJobFailureVisible, generationFailureGuidance, type DocumentJob } from "../model/document-jobs";
+import { authorizedGenerationFailureRemediation, documentJobCanRecoverProviderRender, documentJobFailure, documentJobFailureVisible, generationFailureGuidance, type DocumentJob } from "../model/document-jobs";
 import { documentRenderSuggestions } from "../model/document-render-suggestions";
 import { foldEvents } from "../model/events";
 import { focalPointCss } from "../model/focal-point";
@@ -18,7 +18,6 @@ import { renderVideoReel } from "./video-reel";
 import type { FormaIconName } from "./icons";
 import { readSlideFooterLabelPreference } from "./presentation-slide";
 import { artifactReviewState, artifactSourceVersions } from "../model/context-health";
-import { createOfficeArchive, createWordDocument, WORD_DOCUMENT_MIME } from "../model/office-documents";
 import type { ArtifactRevisionDetail, ArtifactRevisionSummary } from "../state/store";
 import { localizedDocumentJobProgress, localizedGenerationFailureGuidance } from "./design-system/localized-runtime-copy";
 import "./icons-media";
@@ -31,6 +30,9 @@ const kindIcon=(kind:DocumentArtifactKind):FormaIconName=>kind==="short_story"?"
 export class DocumentArtifacts extends FormaElement {
   static properties={compact:{type:Boolean},source:{type:String},documentId:{type:String,attribute:"document-id"},launcherOnly:{type:Boolean,attribute:"launcher-only"}};
   compact=false;source="document";documentId="";launcherOnly=false;#kind:DocumentArtifactKind="short_story";#productionMode:ProductionMode="manual";#itemCount=6;#managedSlideInput="";#invalidSlideCount=false;#presentationStyle:SlideStylePresetId|"document"="document";#presentationFidelity:"faithful"|"creative"="faithful";#audience="";#tone="";#rememberedAudiences=new Set<string>();#rememberedTones=new Set<string>();#seconds:VideoDurationSeconds=VIDEO_ADAPTER_CONTRACT.defaultDuration;#videoSize:"1280x720"|"720x1280"="1280x720";#videoAudioMode:VideoAudioMode=VIDEO_ADAPTER_CONTRACT.defaultAudioMode;#confirmed=false;#submitting=false;#referenceBusy=false;#activeId="";#inputId="";#failedInputJob:DocumentJob|null=null;#runningInputJob:DocumentJob|null=null;#actorInputContent:Record<string,string>={};#createOpen=false;#convertingId="";#showAll=false;#editingId="";#editMarkdown="";#editItems:Array<{title:string;body:string;notes:string}>=[];#editRevision=0;#savingEdit=false;#historyOpen=false;#historyBusy=false;#revisionHistory:ArtifactRevisionSummary[]=[];#revisionBefore:number|null=null;#revisionPreview:ArtifactRevisionDetail|null=null;#reviewers:Array<{userId:string;displayName:string}>=[];#selectedReviewerId="";#reviewNote="";
+  #clearPrivateGenerationInputs=()=>{this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=null;this.requestUpdate();};
+  override connectedCallback(){super.connectedCallback();window.addEventListener("forma-authorization-changed",this.#clearPrivateGenerationInputs);}
+  override disconnectedCallback(){window.removeEventListener("forma-authorization-changed",this.#clearPrivateGenerationInputs);this.#actorInputContent={};this.#failedInputJob=null;this.#runningInputJob=null;super.disconnectedCallback();}
   #projection(){const current=this.store.projection.get();return this.documentId&&this.documentId!==current.documentId?foldEvents(this.store.events.get(),Number.POSITIVE_INFINITY,this.documentId,current.projectId):current;}
   #targetDocumentId(){return this.documentId||this.store.projection.get().documentId;}
   #presentationOutline(){return inferPresentationSourceOutline(this.#projection().blocks.filter((block)=>Number(block.properties.weight??.5)>0));}
@@ -58,6 +60,16 @@ export class DocumentArtifacts extends FormaElement {
   async #stop(jobId:string){await this.store.stopDocumentJob(jobId);this.requestUpdate();}
   async #recover(jobId:string){await this.store.recoverDocumentRender(jobId);this.requestUpdate();}
   async #prepareRetry(kind:DocumentArtifactKind){await this.openRender(kind,this.#targetDocumentId());}
+  async #dismissFailure(jobId:string,event:Event){
+    const trigger=event.currentTarget as HTMLElement;
+    const cards=Array.from(this.querySelectorAll<HTMLElement>(".document-artifact-failure-card"));
+    const index=cards.findIndex((card)=>card.contains(trigger));
+    if(!await this.store.dismissDocumentJobFailure(jobId))return;
+    await this.updateComplete;
+    const remaining=Array.from(this.querySelectorAll<HTMLElement>(".document-artifact-failure-card"));
+    const next=remaining[Math.min(Math.max(index,0),remaining.length-1)];
+    (next?.querySelector<HTMLElement>(".document-artifact-failure-actions > .button")??this.querySelector<HTMLElement>(".document-artifacts > header > button"))?.focus({preventScroll:true});
+  }
   async #inspectFailedInputs(job:DocumentJob){const authorization=this.store.captureAuthorizationScope();if(!authorization)return;this.#actorInputContent={};this.#failedInputJob=job;this.requestUpdate();try{let detail:DocumentJob;if(authorization.shared){const inspected=await this.store.loadActorDocumentGenerationReceipt(job.jobId);if(!this.store.authorizationScopeActive(authorization))return;detail=inspected.job;this.#actorInputContent=inspected.content;}else{detail=await this.store.loadDocumentJobDetail(job.jobId);if(detail.moderationPromptRef&&!this.store.content.get()[detail.moderationPromptRef])await this.store.ensurePrivateContent(detail.moderationPromptRef);}if(this.store.authorizationScopeActive(authorization)&&this.#failedInputJob?.jobId===job.jobId){this.#failedInputJob=detail;this.requestUpdate();}}catch(error){if(this.store.authorizationScopeActive(authorization))this.store.toast(error instanceof Error?error.message:"The retained generation inputs could not be loaded.");}}
   async #inspectRunningInputs(job:DocumentJob){const authorization=this.store.captureAuthorizationScope();if(!authorization)return;this.#actorInputContent={};this.#runningInputJob=job;this.requestUpdate();try{let detail:DocumentJob;if(authorization.shared){const inspected=await this.store.loadActorDocumentGenerationReceipt(job.jobId);if(!this.store.authorizationScopeActive(authorization))return;detail=inspected.job;this.#actorInputContent=inspected.content;}else detail=await this.store.loadDocumentJobDetail(job.jobId);if(!this.store.authorizationScopeActive(authorization)||this.#runningInputJob?.jobId!==job.jobId)return;this.#runningInputJob=detail;this.requestUpdate();}catch(error){if(this.store.authorizationScopeActive(authorization))this.store.toast(error instanceof Error?error.message:"The in-progress generation receipt could not be loaded.");}}
   #content(artifact:DocumentArtifact){return parseDocumentArtifactContent(this.store.content.get()[artifact.contentRef??""]);}
@@ -73,6 +85,8 @@ export class DocumentArtifacts extends FormaElement {
     const retained=this.store.content.get()[artifact.contentRef??""];if(!retained)return;
     const revision=this.store.events.get().filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifact.id).length;
     try{
+      const{createWordDocument,WORD_DOCUMENT_MIME}=await import("../model/office-documents");
+      if(!this.store.authorizationScopeActive(authorization))return;
       const structured=content.items.length>1||["slides","storyboard","video"].includes(artifact.kind)?`\n\n${content.items.map((item,index)=>`## ${this.i18n.system(artifact.kind==="slides"?"Slide":artifact.kind==="storyboard"?"Frame":artifact.kind==="video"?"Scene":"Part")} ${this.i18n.number(index+1)}: ${item.title}\n\n${item.body}${item.notes?`\n\n${this.i18n.system("Notes")}: ${item.notes}`:""}`).join("\n\n")}`:"";
       const bytes=createWordDocument(content.content_markdown+structured,{title:artifact.title,language:this.i18n.locale,direction:this.i18n.direction,translate:(source)=>this.i18n.system(source)});
       const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(retained))),(byte)=>byte.toString(16).padStart(2,"0")).join("");
@@ -111,6 +125,8 @@ export class DocumentArtifacts extends FormaElement {
         files.push({name:filename,content:bytes});
         manifest.push({position:index+1,title:item.title,description:item.body,notes:item.notes,file:filename,mimeType:mime,...(item.durationSeconds?{durationSeconds:item.durationSeconds}:{})});
       }
+      const{createOfficeArchive}=await import("../model/office-documents");
+      if(!this.store.authorizationScopeActive(authorization))return;
       const bytes=createOfficeArchive([{name:"README.md",content:content.content_markdown},{name:"manifest.json",content:JSON.stringify({title:artifact.title,kind:artifact.kind,revision:binding.artifact_revision,contentSha256:binding.content_sha256,items:manifest},null,2)},...files],{media:true});
       if(!this.store.authorizationScopeActive(authorization)||this.store.content.get()[artifact.contentRef??""]!==retained)return;
       const receipt={type:"DocumentArtifactExported",payload:{artifact_id:artifact.id,artifact_kind:artifact.kind,document_id:artifact.documentId,format:"application/zip",...binding,source_surface:`${this.source}-artifact-viewer`}};
@@ -270,7 +286,27 @@ export class DocumentArtifacts extends FormaElement {
     return html`<section class=${`document-artifacts ${this.compact?"compact":""}`} aria-label="Stories, presentations, storyboards, and videos">
       <header><div><span class="eyebrow">Stories, presentations & motion</span><h2>${artifactHeading}</h2>${this.compact?nothing:html`<p>Every result comes from the same decisions and remains attached to this document in every view.</p>`}</div>${readOnly?nothing:html`<button type="button" class="button secondary compact" @click=${this.#openCreate}>Create output</button>`}</header>
       ${jobs.length?html`<div class="document-artifact-jobs" aria-live="polite">${jobs.map((job)=>html`<span><i></i><b>${DOCUMENT_ARTIFACT_KINDS.includes(job.result?.artifactKind as DocumentArtifactKind)?this.i18n.system(documentArtifactDefinition(job.result!.artifactKind as DocumentArtifactKind).label):this.i18n.system("Artifact")}</b><small>${job.progressMessage?localizedDocumentJobProgress(job,this.i18n):this.i18n.system(job.stage)}</small>${job.result?.artifactKind==="slides"?html`<button type="button" class="button ghost compact" @click=${()=>this.#inspectRunningInputs(job)}>Inspect inputs</button>`:nothing}<button type="button" class="button ghost compact" ?disabled=${job.status==="committing"} title=${job.status==="committing"?this.i18n.system("This result is already being saved"):this.i18n.system("Stop this render and release any unspent reservation")} @click=${()=>this.#stop(job.jobId)}>${job.status==="committing"?this.i18n.system("Saving…"):this.i18n.system("Stop")}</button></span>`)}</div>`:nothing}
-      ${failedJobs.length?html`<div class="document-artifact-failures" aria-label="Recent document render issues">${failedJobs.map((job)=>{const kind=DOCUMENT_ARTIFACT_KINDS.includes(job.result?.artifactKind as DocumentArtifactKind)?job.result!.artifactKind as DocumentArtifactKind:"short_story";const detail=documentJobFailure(job);const guidance=localizedGenerationFailureGuidance(generationFailureGuidance(detail,job.error??""),detail,job.error??"",this.i18n);const recoverable=documentJobCanRecoverProviderRender(job)&&guidance.retryAllowed;return html`<article><div><b>${this.i18n.system(documentArtifactDefinition(kind).label)}: ${guidance.title}</b><p>${guidance.summary}</p>${detail?.requestId||detail?.code||job.error?html`<details class="creative-diagnostics document-artifact-failure-details"><summary>Technical details</summary>${detail?.code?html`<code>Reason: ${detail.code}</code>`:nothing}${detail?.requestId?html`<code>Provider request: ${detail.requestId}</code>`:nothing}${detail?.httpStatus?html`<code>Provider status: ${detail.httpStatus}</code>`:nothing}</details>`:nothing}</div><div><button class="button ghost compact" @click=${()=>this.#inspectFailedInputs(job)}>Inspect inputs</button><button class="button secondary compact" @click=${()=>recoverable?this.#recover(job.jobId):this.#prepareRetry(kind)}>${recoverable?this.i18n.system("Recover saved render"):this.i18n.system("Review & change request")}</button><button class="button ghost compact" @click=${()=>this.store.dismissDocumentJobFailure(job.jobId)}>Dismiss</button></div></article>`;})}</div>`:nothing}
+      ${failedJobs.length?html`<div class="document-artifact-failures" role="region" aria-label="Recent document render issues">${failedJobs.map((job)=>{
+        const kind=DOCUMENT_ARTIFACT_KINDS.includes(job.result?.artifactKind as DocumentArtifactKind)?job.result!.artifactKind as DocumentArtifactKind:"short_story";
+        const detail=documentJobFailure(job);
+        const guidance=localizedGenerationFailureGuidance(generationFailureGuidance(detail,job.error??""),detail,job.error??"",this.i18n);
+        const recoverable=documentJobCanRecoverProviderRender(job)&&guidance.retryAllowed;
+        const session=this.store.session.get();
+        const infrastructureBlocked=Boolean(detail&&!recoverable&&!guidance.retryAllowed&&guidance.actionUrl&&(["authentication","quota","access"].includes(detail.category)||["review_budget","add_credits","verify_organization"].includes(detail.action)||detail.code==="video_provider_not_configured"));
+        const remediation=infrastructureBlocked&&session&&!session.impersonation?authorizedGenerationFailureRemediation(guidance,session)??{href:"/settings",label:this.i18n.system("Review settings"),external:false}:null;
+        return html`<article class=${`document-artifact-failure-card${guidance.retryAllowed?"":" document-artifact-failure-card--terminal"}`}>
+          <div class="document-artifact-failure-copy">
+            <div class="document-artifact-failure-heading"><span class="document-artifact-failure-icon" aria-hidden="true">${icon("info")}</span><div><span class="document-artifact-failure-format">${this.i18n.system(documentArtifactDefinition(kind).label)}</span><h3>${guidance.title}</h3></div></div>
+            <p>${guidance.summary}</p>
+          </div>
+          <div class="document-artifact-failure-actions">
+            ${remediation?html`<a class="button primary compact" href=${remediation.href} target=${remediation.external?"_blank":"_self"} rel=${remediation.external?"noopener noreferrer":nothing}>${remediation.label}</a><button type="button" class="button secondary compact" @click=${()=>this.#prepareRetry(kind)}>Review & change request</button>`:html`<button type="button" class="button primary compact" @click=${()=>recoverable?this.#recover(job.jobId):this.#prepareRetry(kind)}>${recoverable?this.i18n.system("Recover saved render"):this.i18n.system("Review & change request")}</button>`}
+            <button type="button" class="button secondary compact" @click=${()=>this.#inspectFailedInputs(job)}>Inspect inputs</button>
+            <button type="button" class="button ghost compact" aria-label=${this.i18n.system("Dismiss this generation issue")} @click=${(event:Event)=>void this.#dismissFailure(job.jobId,event)}>Dismiss</button>
+          </div>
+          ${detail?.requestId||detail?.code||detail?.httpStatus?html`<details class="creative-diagnostics document-artifact-failure-details"><summary>Technical details</summary><div class="document-artifact-failure-receipt" tabindex="0" aria-label=${this.i18n.system("Technical receipt")}>${detail?.code?html`<code>Reason: ${detail.code}</code>`:nothing}${detail?.requestId?html`<code>Provider request: ${detail.requestId}</code>`:nothing}${detail?.httpStatus?html`<code>Provider status: ${detail.httpStatus}</code>`:nothing}</div></details>`:nothing}
+        </article>`;
+      })}</div>`:nothing}
       ${this.#productionDesk(artifacts,jobs)}
       ${artifacts.length?html`<div class="document-artifact-list">${artifacts.slice(0,this.compact&&!this.#showAll?3:Math.max(12,artifacts.length)).map((artifact)=>{const review=artifactReviewState(artifact,this.#projection().blocks,this.store.events.get());return html`<button type="button" @click=${()=>this.#openArtifact(artifact)}>${this.#preview(artifact)}<span><b>${artifact.title}</b><small>${this.i18n.system(documentArtifactDefinition(artifact.kind).label)} · ${artifact.itemCount} ${artifact.kind==="slides"?this.i18n.system("slides"):artifact.kind==="storyboard"?this.i18n.system("frames"):this.i18n.system(artifact.itemCount===1 ? "part" : "parts")} · ${this.#reviewLabel(review)}</small>${this.#createdTime(artifact)}</span></button>`;})}</div>${this.compact&&artifacts.length>3?html`<button type="button" class="button ghost compact artifact-show-all" @click=${()=>{this.#showAll=!this.#showAll;this.requestUpdate();}}>${this.#showAll?this.i18n.system("Show fewer"):this.i18n.system("View all {count} outputs", { count: this.i18n.number(artifacts.length) })}</button>`:nothing}`:nothing}
       ${dialogs}

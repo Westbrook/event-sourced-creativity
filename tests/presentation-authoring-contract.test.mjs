@@ -62,6 +62,14 @@ test("presentation authoring names the real paid provider, bounded repair exposu
   assert.match(authoringSource, /presentationFidelity:this\.#presentationFidelity/);
 });
 
+test("clears actor-private presentation receipts immediately when authorization changes", () => {
+  assert.match(authoringSource, /#actorInputContent:Record<string,string>/);
+  assert.match(authoringSource, /#clearPrivateGenerationInputs=\(\)=>\{this\.#actorInputContent=\{\};this\.#failedInputJob=null;this\.#runningInputJob=null/);
+  assert.match(authoringSource, /addEventListener\("forma-authorization-changed",this\.#clearPrivateGenerationInputs\)/);
+  assert.match(authoringSource, /removeEventListener\("forma-authorization-changed",this\.#clearPrivateGenerationInputs\)/);
+  assert.match(authoringSource, /loadActorDocumentGenerationReceipt\(job\.jobId\)/);
+});
+
 test("managed presentation requests reject unsupported counts, prevent duplicate submission, and retain evidence assignments", () => {
   assert.equal(MAX_MANAGED_PRESENTATION_SLIDES, 100);
   assert.throws(

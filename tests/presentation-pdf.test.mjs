@@ -426,7 +426,8 @@ test("exports the actual themed slide component instead of reconstructing its la
   assert.match(exporter,/CompressionStream\("deflate"\)/);
   assert.match(exporter,/EXPORT_SCALE=2/);
   assert.match(deck,/renderPresentationPdf\(items,presentation,options\)/);
-  assert.match(deck,/language:this\.i18n\.locale,direction:this\.i18n\.direction/);
+  assert.match(deck,/inferPresentationAudienceLocale\(source,this\.i18n\.locale\)/,"presentation language must follow authored content independently of the application chrome");
+  assert.match(deck,/const audience=this\.#audienceLocalization\(items\),options=/,"PDF and PowerPoint must share their authored audience-language policy");
   assert.match(deck,/render_mode:"browser-slide-capture"/);
   assert.doesNotMatch(deck,/\bcreatePresentationPdf\s*\(/);
   assert.doesNotMatch(deck,/compatible-vector/);

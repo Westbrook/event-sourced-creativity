@@ -22,7 +22,7 @@ import { applicationFailureDetail, classifyProviderFailure, publicFailureDetail,
 import { documentJobCompletionBindings } from "./document-job-sql";
 import { preflightGeneration } from "./generation-readiness";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter";
-import { estimatePlannerOperationMicrousd, generationBudgetGate } from "../src/model/generation-budget";
+import { clearPresentationServerOwnedCheckpointFields, estimatePlannerOperationMicrousd, generationBudgetGate, presentationServerOwnedCheckpointField, presentationTokenReservation } from "../src/model/generation-budget";
 import { buildManagedProductionPlan, MAX_MANAGED_PRESENTATION_SLIDES, type ManagedProductionPlan } from "../src/model/managed-production";
 import { buildPresentationSourceContract, inferPresentationSourceOutline } from "../src/model/presentation-source";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./document-job-reservations";
@@ -628,6 +628,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
 
   try {
     const payload = JSON.parse(row.request_json) as Record<string, unknown>;
+    if(row.kind==="render_document"&&payload.artifactKind==="slides")clearPresentationServerOwnedCheckpointFields(payload);
     const inputRef = String(payload.jobInputRef ?? "");
     if (inputRef) {
       const privateContent = await loadPrivateContent(env, user.userId, row.kind === "chat" ? "chat" : "all", user.projectExecution); const input = privateContent[inputRef];
@@ -1096,6 +1097,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   if (kind !== "extract_reference" && !env.OPENAI_API_KEY) return Response.json({ error: "provider_not_configured" }, { status: 503 });
   if (JSON.stringify(payload).length > MAX_PAYLOAD_BYTES) return Response.json({ error: "document_job_payload_too_large" }, { status: 413 });
   if(kind==="render_document"&&payload.artifactKind==="slides"){
+    if(presentationServerOwnedCheckpointField(payload))return Response.json({error:"presentation_recovery_state_server_owned",message:"Presentation recovery, provider receipts, and budget reservations can only come from an existing server-owned job checkpoint."},{status:400});
     const maximum=payload.productionMode==="managed"?MAX_MANAGED_PRESENTATION_SLIDES:12;
     const supplied=[payload.itemCount,payload.requestedSlideCount].filter((value)=>value!==undefined);
     if(supplied.some((value)=>typeof value!=="number"||!Number.isSafeInteger(value)||value<1||value>maximum))return Response.json({error:"presentation_slide_count_invalid",message:`${payload.productionMode==="managed"?"Managed":"Manual"} presentations support between 1 and ${maximum} slides.`,supported:{minimum:1,maximum}},{status:400});
@@ -1181,7 +1183,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     if(gate.level==="blocked")return Response.json({error:"budget_hard_cap_reached",message:`This generation exceeds the remaining ${gate.scope==="workspace"?"organization":"personal"} monthly budget.`,scope:gate.scope,gate},{status:429});
     if(account){
       const sceneCount=production?.scenes.length??Math.max(1,Math.floor(Number(payload.itemCount??6)));
-      const estimatedTokens=kind==="chat"||kind==="structure_adaptive"?12_000:kind==="preview"?24_000:kind==="prompt_fan"?(fanKindFromRequest(payload)==="preview"?96_000:128_000):production?Math.max(32_000*Math.ceil(sceneCount/8),artifactKind==="storyboard"?sceneCount*24_000:artifactKind==="video"?56_000:32_000):kind==="render_document"&&artifactKind==="storyboard"?Math.max(56_000,sceneCount*24_000):32_000;
+      const estimatedTokens=kind==="chat"||kind==="structure_adaptive"?12_000:kind==="preview"?24_000:kind==="prompt_fan"?(fanKindFromRequest(payload)==="preview"?96_000:128_000):kind==="render_document"&&artifactKind==="slides"?presentationTokenReservation(production?.maximumProviderCallCount):production?Math.max(32_000*Math.ceil(sceneCount/8),artifactKind==="storyboard"?sceneCount*24_000:artifactKind==="video"?56_000:32_000):kind==="render_document"&&artifactKind==="storyboard"?Math.max(56_000,sceneCount*24_000):32_000;
       const tokenScope=account.budgets.user.used+account.budgets.user.reserved+estimatedTokens>account.budgets.user.limit?"user":account.budgets.workspace.used+account.budgets.workspace.reserved+estimatedTokens>account.budgets.workspace.limit?"workspace":null;
       if(tokenScope)return Response.json({error:"budget_hard_cap_reached",message:`This generation exceeds the remaining ${tokenScope==="workspace"?"organization":"personal"} monthly token budget.`,scope:tokenScope},{status:429});
     }

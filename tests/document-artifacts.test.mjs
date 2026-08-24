@@ -53,6 +53,31 @@ test("removes repeated slide copy, empty bullets, and unfinished visual placehol
   const item=content?.items[0];assert.ok(item?.slide);assert.equal(item.body,"");assert.equal(item.slide.kicker,"Overview");assert.deepEqual(item.slide.bullets,["A specific conflict"]);assert.equal(item.slide.visual.kind,"hero-type");assert.equal(item.slide.visual.value,"A Reluctant Ally");assert.equal(item.slide.visual.label,"Visual emphasis");assert.deepEqual(item.slide.visual.data,[]);assert.equal(slideVisualIsComplete(item.slide),true);assert.doesNotMatch(JSON.stringify(item),/Point [23]/);
 });
 
+test("retains meaningful label-only qualitative visuals while quantitative scorecards remain strict",()=>{
+  for(const kind of ["comparison","personas","roadmap","timeline"]){
+    const visual=normalizeSlideVisual({layout:kind==="timeline"?"timeline":kind,kicker:"Source evidence",bullets:[],visual:{kind,label:"Authored categories",value:"",data:[{label:"Phone",value:"",weight:1},{label:"Tablet",value:"",weight:1}]}},{title:"Distinct executive claim"});
+    assert.equal(visual.visual.data.length,2,`${kind} keeps meaningful authored category labels`);
+    assert.equal(slideVisualIsComplete(visual),true,`${kind} does not invent unsupported qualitative values`);
+  }
+  for(const kind of ["scorecard","bars","matrix"]){
+    const visual=normalizeSlideVisual({layout:kind==="bars"?"scorecard":kind,kicker:"Quantitative evidence",bullets:[],visual:{kind,label:"Measured categories",value:"",data:[{label:"Phone",value:"",weight:1},{label:"Tablet",value:"",weight:1}]}},{title:"Measured executive claim"});
+    assert.equal(slideVisualIsComplete(visual),false,`${kind} never accepts missing protected values`);
+  }
+  const alternate=normalizeSlideVisual({layout:"scorecard",kicker:"Evidence",bullets:[],visual:{kind:"scorecard",label:"Assessment",value:"",data:[{label:"Phone",value:"",display_value:"39.75",weight:.1},{label:"Tablet",value:"",exact_value:"53.00",weight:.2}]}},{title:"Distinct source scores"});
+  assert.deepEqual(alternate.visual.data.map(({value})=>value),["39.75","53.00"],"authored exact/display values are recovered without inventing or dropping facts");
+});
+
+test("reclassifies prose-only scorecards as honest readable qualitative comparisons",()=>{
+  const prose=[{label:"Project context",value:"Durable shared project context",weight:1/6},{label:"Exports",value:"Editable PPTX/DOCX with slide speaker notes; PDF exports",weight:1/6},{label:"Controls",value:"Output revisions, organization retention and spending controls",weight:1/6}];
+  const qualitative=normalizeSlideVisual({layout:"scorecard",kicker:"Authored product assets",bullets:[],visual:{kind:"scorecard",label:"Existing foundation",value:"",data:prose}},{title:"Proven assets"});
+  assert.equal(qualitative.layout,"comparison");
+  assert.equal(qualitative.visual.kind,"comparison");
+  assert.deepEqual(qualitative.visual.data.map(({label,value})=>({label,value})),prose.map(({label,value})=>({label,value})));
+  const protectedScores=normalizeSlideVisual({layout:"scorecard",kicker:"Protected assessment",bullets:[],visual:{kind:"scorecard",label:"Six measured dimensions",value:"",unit:"/100",exact_value:"61.125",display_value:"61.13",data:[{label:"Phone",value:"39.75",weight:.3975},{label:"Tablet",value:"53.00",weight:.53}]}},{title:"Product gap"});
+  assert.equal(protectedScores.layout,"scorecard");
+  assert.equal(protectedScores.visual.kind,"scorecard");
+});
+
 test("treats punctuation, line breaks, quote fragments, and close restatements as repeated slide copy",()=>{
   const quote='“Careful,” says the librarian. Then: “Show me what you found.”';const echo='“Careful,” says the librarian\nThen: “Show me what you found';
   assert.equal(slideCopyIsNearDuplicate(quote,echo),true);

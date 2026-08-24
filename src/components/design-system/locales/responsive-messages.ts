@@ -80,6 +80,8 @@ const english = {
   "deliver.review.changes-requested": "Changes requested",
   "deliver.review.in-review": "In review",
   "deliver.review.draft": "Review not requested",
+  "presentation.export.powerpoint": "PowerPoint / Google Slides / Keynote (.pptx)",
+  "presentation.export.powerpointHint": "Download editable slides and speaker notes. Open the .pptx in PowerPoint or Keynote, or upload it to Google Drive to open in Google Slides.",
 } as const;
 
 type ResponsiveMessages = Record<keyof typeof english, string>;
@@ -166,6 +168,8 @@ const french: ResponsiveMessages = {
   "deliver.review.changes-requested": "Modifications demandées",
   "deliver.review.in-review": "En cours de révision",
   "deliver.review.draft": "Révision non demandée",
+  "presentation.export.powerpoint": "PowerPoint / Google Slides / Keynote (.pptx)",
+  "presentation.export.powerpointHint": "Téléchargez les diapositives et les notes modifiables. Ouvrez le fichier .pptx dans PowerPoint ou Keynote, ou importez-le dans Google Drive pour l’ouvrir dans Google Slides.",
 };
 
 const arabic: ResponsiveMessages = {
@@ -250,6 +254,8 @@ const arabic: ResponsiveMessages = {
   "deliver.review.changes-requested": "تم طلب تغييرات",
   "deliver.review.in-review": "قيد المراجعة",
   "deliver.review.draft": "لم تُطلب المراجعة",
+  "presentation.export.powerpoint": "PowerPoint / Google Slides / Keynote (.pptx)",
+  "presentation.export.powerpointHint": "نزّل الشرائح وملاحظات المتحدث القابلة للتحرير. افتح ملف .pptx في PowerPoint أو Keynote، أو ارفعه إلى Google Drive لفتحه في Google Slides.",
 };
 
 const japanese: ResponsiveMessages = {
@@ -334,6 +340,8 @@ const japanese: ResponsiveMessages = {
   "deliver.review.changes-requested": "修正依頼あり",
   "deliver.review.in-review": "レビュー中",
   "deliver.review.draft": "レビュー未依頼",
+  "presentation.export.powerpoint": "PowerPoint / Google スライド / Keynote (.pptx)",
+  "presentation.export.powerpointHint": "編集可能なスライドと発表者ノートをダウンロードします。.pptx を PowerPoint または Keynote で開くか、Google ドライブにアップロードして Google スライドで開いてください。",
 };
 
 export const FORMA_RESPONSIVE_MESSAGES = { en: english, fr: french, ar: arabic, ja: japanese };

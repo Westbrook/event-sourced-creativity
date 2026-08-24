@@ -55,6 +55,12 @@ function shapeText(xml,name){
   return [...editableShape(xml,name).matchAll(/<a:t>([^<]*)<\/a:t>/g)].map(([,value])=>value).join("\n");
 }
 
+function shapeBox(xml,name){
+  const shape=editableShape(xml,name),offset=shape.match(/<a:off x="(\d+)" y="(\d+)"\/>/),extent=shape.match(/<a:ext cx="(\d+)" cy="(\d+)"\/>/);
+  assert.ok(offset&&extent,`${name} has an editable PowerPoint bounding box`);
+  return{x:Number(offset[1]),y:Number(offset[2]),width:Number(extent[1]),height:Number(extent[2])};
+}
+
 test("editable Word exports round-trip real paragraphs, headings, lists, and safe Unicode",async()=>{
   const markdown="# Approved creative brief\n\n## Boundaries\n- Keep the customer's exact words\n- Preserve **licensed evidence** & <creative intent>\n\nA real paragraph with café and 東京.";
   const bytes=createWordDocument(markdown,{title:"Customer & product <brief>"});
@@ -146,6 +152,10 @@ test("PowerPoint scorecards keep all six independently editable categories and d
     assert.equal(shapeText(slide,`Editable score value ${index+1}`),`${value} / 100`);
     assert.match(editableShape(slide,`Editable score track ${index+1}`),/<a:prstGeom prst="roundRect">/);
     assert.match(editableShape(slide,`Editable score bar ${index+1}`),/<a:solidFill><a:srgbClr val="287260"\/><\/a:solidFill>/);
+    const labelBox=shapeBox(slide,`Editable score label ${index+1}`),valueBox=shapeBox(slide,`Editable score value ${index+1}`),trackBox=shapeBox(slide,`Editable score track ${index+1}`);
+    assert.ok(labelBox.height>=1350/100*12700,`score label ${index+1} fits its declared 13.5pt text`);
+    assert.ok(valueBox.height>=1400/100*12700,`score value ${index+1} fits its declared 14pt text`);
+    assert.ok(trackBox.y>=labelBox.y+labelBox.height,`score bar ${index+1} cannot strike through its readable label`);
   }
   assert.equal([...slide.matchAll(/name="Editable score bar \d+"/g)].length,6,"all six values have independently editable native PowerPoint geometry");
   assert.match(shapeText(slide,"Editable evidence citation 1"),/Responsive product assessment · Assessment scores/);
@@ -160,6 +170,63 @@ test("PowerPoint scorecards keep all six independently editable categories and d
   for(const [,size,text] of slide.matchAll(/<a:rPr\b[^>]*\bsz="(\d+)"[^>]*>[\s\S]*?<a:t>([^<]+)<\/a:t>/g)){
     if(text.trim())assert.ok(Number(size)>=1200,`visible PowerPoint text stays at least 12pt: ${text}`);
   }
+});
+
+test("dense architecture bullets reflow without collisions or clipped editable labels",()=>{
+  const long="A responsive creative experience must preserve every authored source decision, reviewer boundary, accessibility requirement, reusable evidence relationship, and cross-device continuity checkpoint without hiding the enterprise controls that keep ownership and accountability clear.";
+  const bullets=[long,...Array.from({length:7},(_,index)=>`Distinct authored supporting argument ${index+2}`)];
+  const item={title:"Responsive architecture",body:"Every essential authored argument remains readable.",notes:"",image_prompt:"",slide:{layout:"architecture",kicker:"Evidence",bullets,visual:{kind:"architecture",label:"Five connected product surfaces",value:"Each surface shares governed continuity.",data:Array.from({length:5},(_,index)=>({label:`Product surface ${index+1}`,value:`Accountable outcome ${index+1}`,weight:.5}))}}};
+  const parts=verifyOfficeArchive(createPowerPointDocument([item],defaultSlidePresentation("field-notes"))),slide=parts.get("ppt/slides/slide1.xml");
+  const first=shapeBox(slide,"Editable supporting points"),second=shapeBox(slide,"Editable supporting points 2"),summary=shapeBox(slide,"Editable diagram summary");
+  assert.ok(first.height>=8*205000,"the exceptionally long authored bullet receives enough wrapped lines");
+  assert.equal(second.y,first.y,"dense bullets become two parallel readable columns");
+  assert.ok(summary.y>=first.y+first.height,"diagram summary never obscures a supporting argument");
+  assert.match(shapeText(slide,"Editable supporting points"),/responsive creative experience must preserve every authored source decision/u);
+  for(let index=1;index<=5;index+=1){
+    const label=shapeBox(slide,`Editable diagram label ${index}`),value=shapeBox(slide,`Editable diagram value ${index}`),node=shapeBox(slide,`Editable diagram node ${index}`);
+    assert.ok(label.height>=1400/100*12700,`diagram label ${index} fits its 14pt text`);
+    assert.ok(value.height>=1200/100*12700,`diagram value ${index} fits its 12pt text`);
+    assert.ok(value.y>=label.y+label.height,`diagram node ${index} separates label from value`);
+    assert.ok(value.y+value.height<=node.y+node.height,`diagram node ${index} contains its visible value`);
+  }
+  const chapter=shapeBox(slide,"Chapter label"),number=shapeBox(slide,"Editable slide number");
+  assert.ok(chapter.x+chapter.width<=number.x,"chapter and page number occupy separate horizontal space");
+});
+
+test("roadmap duration remains editable and round-trippable exactly once without units on qualitative milestones",async()=>{
+  const item={title:"A fully governed program",body:"Deliver independently useful milestones.",notes:"",image_prompt:"",slide:{layout:"roadmap",kicker:"Delivery",bullets:[],visual:{kind:"roadmap",label:"Program milestones",value:"",exactValue:"12–16",displayValue:"12–16 weeks",unit:"weeks",data:[{label:"1",value:"truth/baseline",weight:.25},{label:"2",value:"adaptive shell",weight:.5},{label:"3",value:"secure Activity",weight:.75},{label:"4",value:"phone Work/Chat",weight:1}]}}};
+  const bytes=createPowerPointDocument([item],defaultSlidePresentation("field-notes")),slide=verifyOfficeArchive(bytes).get("ppt/slides/slide1.xml");
+  assert.equal(shapeText(slide,"Editable roadmap duration"),"12–16 weeks");
+  assert.doesNotMatch(slide,/12–16 weeks weeks|secure Activity weeks|adaptive shell weeks/u);
+  assert.equal(shapeText(slide,"Editable timeline value 3"),"secure Activity");
+  const extracted=await extractSourceDocument(new File([bytes],"governed-roadmap.pptx",{type:POWERPOINT_DOCUMENT_MIME}));
+  assert.match(extracted.text,/12–16 weeks/u,"the source importer retains the authored roadmap duration");
+});
+
+test("qualitative scorecards export as readable editable comparisons without invented numerical bars",async()=>{
+  const rows=[
+    ["Project context","Durable shared project context"],
+    ["Lenses","Seven lenses"],
+    ["Applications","Six genuinely scoped applications"],
+    ["Exports","Editable PPTX/DOCX with slide speaker notes; PDF exports"],
+    ["Review","Source-aware review and output revisions"],
+    ["Controls","Organization retention and spending controls"],
+  ];
+  const item={title:"Proven assets",body:"The investment builds on durable product capabilities already in hand.",notes:"Inspect all approved qualitative assets.",image_prompt:"",slide:{layout:"scorecard",kicker:"Investment case",bullets:[],visual:{kind:"scorecard",label:"Existing foundation",value:"",data:rows.map(([label,value])=>({label,value,weight:1/6}))}}};
+  const bytes=createPowerPointDocument([item],defaultSlidePresentation("editorial")),slide=verifyOfficeArchive(bytes).get("ppt/slides/slide1.xml");
+  assert.equal(shapeText(slide,"Editable comparison heading"),"Existing foundation","the authored qualitative visual caption remains visible and editable");
+  assert.doesNotMatch(slide,/name="Editable score (?:track|bar) \d+"/u,"qualitative capabilities must not pretend to be measured assessment scores");
+  for(const [[label,value],index] of rows.map((entry,index)=>[entry,index])){
+    assert.equal(shapeText(slide,`Editable comparison label ${index+1}`),label);
+    assert.equal(shapeText(slide,`Editable comparison value ${index+1}`),value);
+    const valueBox=shapeBox(slide,`Editable comparison value ${index+1}`);
+    const capacity=Math.max(1,Math.floor(valueBox.width/(13*12700*.56)));
+    const lines=Math.ceil(value.length/capacity);
+    assert.ok(valueBox.height>=lines*13*12700,`qualitative description ${index+1} fits every wrapped 13pt line`);
+  }
+  const extracted=await extractSourceDocument(new File([bytes],"proven-assets.pptx",{type:POWERPOINT_DOCUMENT_MIME}));
+  assert.ok(extracted.text.includes("Existing foundation"),"the authored qualitative caption survives PowerPoint source re-import");
+  for(const [label,value] of rows){assert.ok(extracted.text.includes(label));assert.ok(extracted.text.includes(value));}
 });
 
 test("PowerPoint quote cards preserve complete verbatim stakeholder quotations, attribution, citations, and independent notes",()=>{

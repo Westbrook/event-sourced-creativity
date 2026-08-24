@@ -282,6 +282,52 @@ test("derives an authored-versus-planned mismatch without inventing provider or 
   assert.equal(receipt.settled_cost_microusd,null);
 });
 
+test("keeps a failed two-request presentation truthful after source transmission and final settlement", () => {
+  const failure = job({
+    status: "failed",
+    stage: "source-fidelity-validation",
+    attemptCount: 1,
+    completedAt: "2026-08-24T11:03:25.928Z",
+    result: {
+      artifactKind: "slides",
+      generationReceipt: generationReceipt({
+        provider_request_status: "submitted",
+        source_transmission_status: "transmitted",
+        reservation_status: "settled",
+        settled_cost_microusd: 198_586,
+        actual_provider_call_count: 2,
+        failure_stage: "source_fidelity_validation",
+        failure_code: "source_fidelity_validation_failed",
+      }),
+    },
+    errorDetail: {
+      code: "source_fidelity_validation_failed",
+      category: "provider",
+      scope: "request",
+      action: "edit_request",
+      message: "The completed presentation failed source-fidelity validation.",
+      retryable: false,
+      retryAfterMs: null,
+      requestId: null,
+      httpStatus: 502,
+    },
+  });
+
+  const inspection = failedGenerationInputInspection(failure, [], authorizedContent());
+  const receipt = inspection.receipt.generation_receipt;
+  assert.equal(inspection.outcome, "failed");
+  assert.equal(receipt.provider_request_status, "submitted");
+  assert.equal(receipt.provider_contacted, true);
+  assert.equal(receipt.source_transmission_status, "transmitted");
+  assert.equal(receipt.source_transmitted, true);
+  assert.equal(receipt.actual_provider_call_count, 2);
+  assert.equal(receipt.maximum_provider_call_count, 2);
+  assert.equal(receipt.reservation_microusd, 1_000_000);
+  assert.equal(receipt.settled_cost_microusd, 198_586);
+  assert.equal(receipt.reservation_status, "settled");
+  assert.equal(receipt.failure_code, "source_fidelity_validation_failed");
+});
+
 test("keeps completed inspection truthful after provider settlement",()=>{
   const complete=job({status:"completed",stage:"completed",attemptCount:1,completedAt:"2026-08-23T12:02:00.000Z",result:{artifactKind:"slides",generationReceipt:generationReceipt({provider_request_status:"completed",source_transmission_status:"transmitted",reservation_status:"settled",settled_cost_microusd:52_952,actual_provider_call_count:1,actual_slide_count:12})}});
 

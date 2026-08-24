@@ -2,6 +2,7 @@ import { html, nothing } from "lit";
 import {
   authoritativeSlideDatumWeight,
   defaultSlidePresentation,
+  formatPresentationQuantity,
   normalizeSlideItem,
   normalizeSlidePresentation,
   normalizeSlideVisual,
@@ -11,6 +12,7 @@ import {
   type SlideVisualData,
 } from "../model/document-artifacts";
 import { localizedSourceAnchor } from "../model/source-anchor";
+import { inferPresentationAudienceLocale } from "../model/presentation-source";
 import { FormaPresentationalElement } from "./presentational-element";
 
 type PresentationQuote = {
@@ -105,15 +107,29 @@ export class PresentationSlide extends FormaPresentationalElement {
   compact = false;
   showFooterLabel = true;
 
+  #audienceLocale(){return inferPresentationAudienceLocale([this.item.title,this.item.body,this.item.notes,...(this.item.slide?.bullets??[])].join(" "),this.i18n.locale);}
+  #audienceText(key:string,fallback:string,values?:Record<string,string|number>){
+    return this.#audienceLocale().split("-")[0]===this.i18n.locale.split("-")[0]
+      ?this.i18n.t(key,fallback,values)
+      :fallback.replace(/\{(\w+)\}/g,(_,name:string)=>String(values?.[name]??""));
+  }
+  #audienceSystem(source:string,values?:Record<string,string|number>){
+    return this.#audienceLocale().split("-")[0]===this.i18n.locale.split("-")[0]
+      ?this.i18n.system(source,values)
+      :source.replace(/\{(\w+)\}/g,(_,name:string)=>String(values?.[name]??""));
+  }
+  #audienceNumber(value:number,options?:Intl.NumberFormatOptions){
+    const locale=this.#audienceLocale();return locale.split("-")[0]===this.i18n.locale.split("-")[0]?this.i18n.number(value,options):new Intl.NumberFormat(locale,options).format(value);
+  }
+
   #precision(visual: PresentationVisual) {
     const exactValue = visual.exactValue ?? "";
     const displayValue = visual.displayValue ?? "";
-    if (!exactValue && !displayValue) return nothing;
+    if ((!exactValue && !displayValue) || visual.kind === "roadmap" || visual.kind === "timeline") return nothing;
 
-    const unit = visual.unit ? ` ${visual.unit}` : "";
     return html`<dl class="presentation-slide__scorecard-summary presentation-slide__precision">
-      ${exactValue ? html`<dt>${this.i18n.t("presentation.exactValue", "Exact")}</dt><dd><data value=${exactValue}>${exactValue}${unit}</data></dd>` : nothing}
-      ${displayValue ? html`<dt>${this.i18n.t("presentation.displayValue", "Displayed")}</dt><dd><data value=${displayValue}>${displayValue}${unit}</data></dd>` : nothing}
+      ${exactValue ? html`<dt>${this.#audienceText("presentation.exactValue", "Exact")}</dt><dd><data value=${exactValue}>${formatPresentationQuantity(exactValue,visual.unit,{numericOnly:true})}</data></dd>` : nothing}
+      ${displayValue ? html`<dt>${this.#audienceText("presentation.displayValue", "Displayed")}</dt><dd><data value=${displayValue}>${formatPresentationQuantity(displayValue,visual.unit,{numericOnly:true})}</data></dd>` : nothing}
     </dl>`;
   }
 
@@ -130,7 +146,7 @@ export class PresentationSlide extends FormaPresentationalElement {
   #quote(quote: PresentationQuote, label: string) {
     const role = quote.role && quote.role !== quote.speaker ? quote.role : "";
     const citation = quote.citation && privateSourceLabel(quote.citation)
-      ? this.i18n.t("presentation.authoredSource", "Authored source")
+      ? this.#audienceText("presentation.authoredSource", "Authored source")
       : quote.citation;
     return html`<figure class="presentation-slide__quote-card" aria-label=${label}>
       <blockquote><p class="presentation-slide__quote-text" dir="auto">${quote.text}</p></blockquote>
@@ -156,7 +172,7 @@ export class PresentationSlide extends FormaPresentationalElement {
           <i aria-hidden="true"><b style=${`--slide-value:${Math.round(authoritativeSlideDatumWeight(visual,datum) * 100)}%`}></b></i>
           <small class="presentation-slide__chart-value" dir="auto">
             <data value=${value}>${value}</data>
-            ${exactValue && exactValue !== value ? html`<span> (${this.i18n.t("presentation.exactValue", "Exact")}: ${exactValue})</span>` : nothing}
+            ${exactValue && exactValue !== value ? html`<span> (${this.#audienceText("presentation.exactValue", "Exact")}: ${exactValue})</span>` : nothing}
           </small>
         </div>`;
       })}
@@ -174,9 +190,9 @@ export class PresentationSlide extends FormaPresentationalElement {
       <table class="presentation-slide__table">
         <caption class="presentation-slide__caption" dir="auto">${visual.label || visual.value}</caption>
         <thead><tr>
-          <th scope="col">${this.i18n.t("presentation.dimension", "Dimension")}</th>
-          <th scope="col">${this.i18n.t("presentation.value", "Value")}</th>
-          ${hasExactValues ? html`<th scope="col">${this.i18n.t("presentation.exactValue", "Exact")}</th>` : nothing}
+          <th scope="col">${this.#audienceText("presentation.dimension", "Dimension")}</th>
+          <th scope="col">${this.#audienceText("presentation.value", "Value")}</th>
+          ${hasExactValues ? html`<th scope="col">${this.#audienceText("presentation.exactValue", "Exact")}</th>` : nothing}
         </tr></thead>
         <tbody>${data.map((datum) => html`<tr>
           <th scope="row" dir="auto">${datum.label}</th>
@@ -191,6 +207,8 @@ export class PresentationSlide extends FormaPresentationalElement {
 
   #timeline(visual: PresentationVisual) {
     const data = visual.data as PresentationDatum[];
+    const duration=formatPresentationQuantity(visual.displayValue??visual.exactValue,visual.unit,{numericOnly:true});
+    const summary=visual.value&&visual.value!==visual.label?visual.value:duration;
     return html`<figure class="presentation-slide__timeline">
       ${visual.label ? html`<figcaption class="presentation-slide__caption" dir="auto">${visual.label}</figcaption>` : nothing}
       <ol class="presentation-visual-timeline" aria-label=${visual.label}>
@@ -199,7 +217,7 @@ export class PresentationSlide extends FormaPresentationalElement {
           <span><b dir="auto">${datum.label}</b><small dir="auto">${datumDisplayValue(datum)}</small></span>
         </li>`)}
       </ol>
-      ${visual.value && visual.value !== visual.label ? html`<p class="presentation-slide__timeline-summary" dir="auto">${visual.value}</p>` : nothing}
+      ${summary ? html`<p class="presentation-slide__timeline-summary" dir="auto">${summary}</p>` : nothing}
       ${this.#precision(visual)}
     </figure>`;
   }
@@ -256,14 +274,14 @@ export class PresentationSlide extends FormaPresentationalElement {
 
   #citations(slide: EnrichedSlideVisualData) {
     if (!slide.citations?.length) return nothing;
-    return html`<section class="presentation-slide__footnotes" aria-label=${this.i18n.t("presentation.evidence", "Evidence and sources")}>
+    return html`<section class="presentation-slide__footnotes" aria-label=${this.#audienceText("presentation.evidence", "Evidence and sources")}>
       <ol>${slide.citations.map((citation) => {
         const label = privateSourceLabel(citation.label)
-          ? this.i18n.t("presentation.authoredSource", "Authored source")
+          ? this.#audienceText("presentation.authoredSource", "Authored source")
           : citation.label;
         const anchor = privateSourceLabel(citation.anchor) ? "" : citation.anchor;
         return html`<li class="presentation-slide__citation" dir="auto">
-          ${anchor ? html`<span class="presentation-slide__citation-anchor">${localizedSourceAnchor(anchor,(source,values)=>this.i18n.system(source,values),(value)=>this.i18n.number(value))}</span> ` : nothing}
+          ${anchor ? html`<span class="presentation-slide__citation-anchor">${localizedSourceAnchor(anchor,(source,values)=>this.#audienceSystem(source,values),(value)=>this.#audienceNumber(value))}</span> ` : nothing}
           <cite>${label}</cite>
           ${citation.excerpt ? html`<span class="presentation-slide__citation-excerpt"> — ${citation.excerpt}</span>` : nothing}
         </li>`;
@@ -283,22 +301,22 @@ export class PresentationSlide extends FormaPresentationalElement {
     return html`<article
       class=${`presentation-slide style-${presentation.stylePreset} layout-${slide.layout} visual-${kind}${hasVisual ? "" : " no-visual"}${this.compact ? " compact" : ""}`}
       style=${slideStyle(presentation)}
-      aria-label=${this.i18n.t("presentation.slide", "Slide {index} of {total}: {title}", {
-        index: this.i18n.number(this.index + 1),
-        total: this.i18n.number(this.total),
+      aria-label=${this.#audienceText("presentation.slide", "Slide {index} of {total}: {title}", {
+        index: this.#audienceNumber(this.index + 1),
+        total: this.#audienceNumber(this.total),
         title: "\u2068" + item.title + "\u2069",
       })}
     >
       <header>
         <span dir="auto">${slide.kicker}</span>
-        <small>${this.i18n.number(this.index + 1, { minimumIntegerDigits: 2 })} / ${this.i18n.number(this.total, { minimumIntegerDigits: 2 })}</small>
+        <small>${this.#audienceNumber(this.index + 1, { minimumIntegerDigits: 2 })} / ${this.#audienceNumber(this.total, { minimumIntegerDigits: 2 })}</small>
       </header>
       <div class="presentation-slide-body">
         <section>
           <h3 dir="auto">${item.title}</h3>
           ${item.body ? html`<p dir="auto">${item.body}</p>` : nothing}
           ${slide.bullets.length ? html`<ul>${slide.bullets.map((bullet) => html`<li dir="auto">${bullet}</li>`)}</ul>` : nothing}
-          ${inlineQuote ? this.#quote(inlineQuote, this.i18n.t("presentation.stakeholderQuote", "Stakeholder quotation")) : nothing}
+          ${inlineQuote ? this.#quote(inlineQuote, this.#audienceText("presentation.stakeholderQuote", "Stakeholder quotation")) : nothing}
           ${this.#citations(slide)}
         </section>
         ${hasVisual ? html`<aside aria-label=${slide.visual.label}>${this.#visual(slide)}</aside>` : nothing}

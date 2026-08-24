@@ -69,6 +69,28 @@ export const generationBudgetPreferenceKey = (userId: string, period: string, pr
 
 export const formatGenerationUsd = (microusd: number) => `$${(Math.max(0, Number(microusd) || 0) / 1_000_000).toFixed(2)}`;
 
+/** Reserve enough for bounded slideshow repair requests before touching monthly token budgets. */
+export function presentationTokenReservation(maximumProviderCalls = 2) {
+  return Math.max(128_000, 32_000 * Math.max(1, Math.ceil(Number(maximumProviderCalls) || 0)));
+}
+
+const PRESENTATION_SERVER_OWNED_CHECKPOINT_FIELDS = [
+  "artifactId", "artifactPlan", "plannerUsage", "plannerResponseId", "plannerResponseIds", "plannerModel", "plannerLatencyMs", "plannerInput",
+  "reservationId", "costReservationId", "costReservationPeriod", "costReservationMicrousd", "prepaidProviderCostMicrousd",
+  "providerJobId", "providerModel", "providerStatusUrl", "providerResponseUrl", "providerCancelUrl", "videoInputReceipt", "renderedItems",
+  "productionPlan", "productionSceneReceipts", "productionFrameReceipts", "productionPrepaidSceneIds", "productionPrepaidAnchor", "productionAnchor",
+] as const;
+
+/** Durable recovery state belongs to a worker-owned checkpoint, never an initial slideshow request. */
+export function presentationServerOwnedCheckpointField(request: Record<string, unknown>) {
+  return PRESENTATION_SERVER_OWNED_CHECKPOINT_FIELDS.find((field) => Object.hasOwn(request, field)) ?? null;
+}
+
+/** Legacy queued submissions cannot smuggle recovery state into an otherwise trusted worker execution. */
+export function clearPresentationServerOwnedCheckpointFields(request: Record<string, unknown>) {
+  for (const field of PRESENTATION_SERVER_OWNED_CHECKPOINT_FIELDS) delete request[field];
+}
+
 /** Model-aware admission estimates match the actual bounded provider-price receipt. */
 export function estimatePlannerOperationMicrousd(model: string | undefined, operation: "chat" | "structure_adaptive") {
   const rates = model === "gpt-5.6-terra" ? { input: 2, output: 12 }

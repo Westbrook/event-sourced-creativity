@@ -290,6 +290,105 @@ test("the strict slideshow schema preserves complete attributed quotes, editable
   });
 });
 
+test("preserves the authored audience language when the application interface uses Japanese",async()=>{
+  await withProviderResponses([executivePresentation()],async(requests)=>{
+    await generateExecutivePresentation({locale:"ja-JP"});
+    assert.equal(requests.length,1);
+    assert.match(requests[0].request.instructions,/selected language \(en\)/u);
+    assert.match(requests[0].request.instructions,/interface language \(ja-JP\)/u);
+    assert.doesNotMatch(requests[0].request.instructions,/selected language \(ja(?:-JP)?\)/u);
+  });
+});
+
+test("canonicalizes public source labels and hides producer-only instructions before retaining a slide deck",async()=>{
+  const output=executivePresentation();
+  output.items[1].slide.citations[0].label="blk_001";
+  output.items[1].slide.citations[0].anchor="grp_001";
+  output.items[1].slide.quote.citation="blk_001";
+  const hidden="Authored presentation-ready narrative only; no generation, spend, publication or unsupported ROI claims.";
+  output.items[1].slide.bullets=[hidden];
+  output.items[1].notes+=`\n${hidden}`;
+  output.content_markdown+=`\n\n## 1. Responsive assessment\nSources: blk_001\n\n## 2. Stakeholder decision\nSources: blk_001\n${hidden}`;
+  await withProviderResponses([output],async(requests)=>{
+    const result=await generateExecutivePresentation();
+    assert.equal(requests.length,1);
+    assert.doesNotMatch(result.output.content_markdown,/\b(?:blk|grp|clm)_\d+\b/u);
+    assert.doesNotMatch(result.output.content_markdown,/no generation, spend, publication/u);
+    assert.doesNotMatch(result.output.items[1].notes,/no generation, spend, publication/u);
+    assert.deepEqual(result.output.items[1].slide.bullets,[]);
+    assert.equal(result.output.items[1].slide.citations[0].label,"STAKEHOLDER DIFFERENTIATOR");
+    assert.equal(result.output.items[1].slide.citations[0].anchor,"");
+    assert.equal(result.output.items[1].slide.quote.citation,"STAKEHOLDER DIFFERENTIATOR");
+  });
+});
+
+test("repairs a fabricated citation excerpt once without disclosing private identifiers",async()=>{
+  const invented=executivePresentation();
+  invented.items[0].slide.citations[0].excerpt="Independent auditors certify 999.99% unrestricted enterprise readiness.";
+  await withProviderResponses([invented,executivePresentation()],async(requests)=>{
+    const result=await generateExecutivePresentation();
+    assert.equal(requests.length,2);
+    assert.equal(result.inputReceipt.validation.repair_attempted,true);
+    assert.ok(result.inputReceipt.validation.initial_issues.some((issue)=>issue.code==="ungrounded_citation_excerpt"));
+    assertRequestContainsNoPrivateSourceIdentifiers(requests[1].request);
+  });
+});
+
+test("fails closed after the bounded repair if a citation excerpt remains fabricated",async()=>{
+  const invented=executivePresentation();
+  invented.items[0].slide.citations[0].excerpt="Independent auditors certify 999.99% unrestricted enterprise readiness.";
+  await withProviderResponses([invented,invented],async(requests)=>{
+    await assert.rejects(generateExecutivePresentation(),(error)=>error.detail?.code==="source_fidelity_validation_failed"&&error.detail.retryable===false);
+    assert.equal(requests.length,2);
+    requests.forEach(({request})=>assertRequestContainsNoPrivateSourceIdentifiers(request));
+  });
+});
+
+test("locally restores authored posture, mode, and roadmap visuals without a second paid request",async()=>{
+  const snapshot=executiveSourceSnapshot();
+  snapshot.facts[0].properties.text+=[
+    "",
+    "Slide 3 — ONE PRODUCT, FOUR POSTURES",
+    "ONE PRODUCT, FOUR POSTURES: Phone = exact next action; Tablet = touch-rich exploration and two useful panes; Small/snapped monitor = complete work + one chosen pane; Large monitor = source → work → result → review relationships.",
+    "Slide 4 — UNDERSTANDABLE MODES",
+    "UNDERSTANDABLE MODES: preserve seven document views; present explicit Write / Shape / Present families without changing routes, ownership or entitlement.",
+    "Slide 5 — FIRST RELEASE, 4–6 WEEKS",
+    "FIRST RELEASE, 4–6 WEEKS: visible phone Search/Send, complete collections, measured 44×44px essential targets, short-height posture, stable destinations, exact scoped Activity/review access.",
+    "Slide 6 — FULL PROGRAM, 12–16 WEEKS",
+    "FULL PROGRAM, 12–16 WEEKS: truth/baseline → adaptive shell → secure Activity → phone Work/Chat → Explore continuity → touch-native tablet Canvas → wide workbench/truthful collaboration → accessibility/trust evidence.",
+  ].join("\n");
+  const output=executivePresentation();
+  for(const [number,title,kind,bullets] of [
+    [3,"ONE PRODUCT, FOUR POSTURES","comparison",["Phone = exact next action","Tablet = touch-rich exploration and two useful panes","Small/snapped monitor = complete work + one chosen pane","Large monitor = source → work → result → review relationships"]],
+    [4,"UNDERSTANDABLE MODES","matrix",["Write","Shape","Present"]],
+    [5,"FIRST RELEASE, 4–6 WEEKS","roadmap",["visible phone Search/Send","complete collections","measured 44×44px essential targets","short-height posture","stable destinations","exact scoped Activity/review access"]],
+    [6,"FULL PROGRAM, 12–16 WEEKS","timeline",["truth/baseline","adaptive shell","secure Activity","phone Work/Chat","Explore continuity","touch-native tablet Canvas","wide workbench/truthful collaboration","accessibility/trust evidence"]],
+  ]){
+    output.items.push({title,body:`Authored executive decision ${number}.`,notes:`Discuss ${title} with the executive audience.`,image_prompt:"Source-grounded semantic editable visual.",context_group_ids:["context_group_1"],slide:{layout:kind,kicker:`Authored position ${number}`,bullets,quote:null,citations:[{source_id:"blk_001",label:"Authorized executive source",anchor:`Slide ${number}`,excerpt:title}],source_ids:["blk_001"],section:"Responsive evidence and stakeholder decision",source_order:number,visual:{kind,label:`Source evidence ${number}`,value:number===6?"12–16 weeks":"",exact_value:null,display_value:null,unit:null,data:[]}}});
+    output.content_markdown+=`\n\n## ${number}. ${title}\n${bullets.join("\n")}`;
+  }
+  await withProviderResponses([output],async(requests)=>{
+    const result=await generateExecutivePresentation({itemCount:6,requestedSlideCount:6},snapshot);
+    assert.equal(requests.length,1,"source-local visual completion must not incur a metered repair");
+    assert.equal(result.inputReceipt.validation.repair_attempted,false);
+    const [postures,modes,roadmap,fullProgram]=result.output.items.slice(2);
+    assert.deepEqual(postures.slide.visual.data.map(({label,value})=>[label,value]),[["Phone","exact next action"],["Tablet","touch-rich exploration and two useful panes"],["Small/snapped monitor","complete work + one chosen pane"],["Large monitor","source → work → result → review relationships"]]);
+    assert.equal(modes.slide.layout,"architecture");
+    assert.equal(modes.slide.visual.kind,"architecture");
+    assert.deepEqual(modes.slide.visual.data.map(({label})=>label),["Write","Shape","Present"]);
+    assert.equal(roadmap.slide.visual.kind,"roadmap");
+    assert.equal(roadmap.slide.visual.value,"4–6 weeks");
+    assert.deepEqual(roadmap.slide.visual.data.map(({label})=>label),["visible phone Search/Send","complete collections","measured 44×44px essential targets","short-height posture","stable destinations","exact scoped Activity/review access"]);
+    assert.equal(fullProgram.slide.visual.value,"12–16 weeks");
+    assert.deepEqual(fullProgram.slide.visual.data.map(({label})=>label),["truth/baseline","adaptive shell","secure Activity","phone Work/Chat","Explore continuity","touch-native tablet Canvas","wide workbench/truthful collaboration","accessibility/trust evidence"]);
+    for(const item of [postures,modes,roadmap,fullProgram]){
+      assert.deepEqual(item.slide.bullets,[],"claims promoted into the editable visual must not remain duplicated bullets");
+      assert.equal(item.slide.visual.data.every((datum)=>datum.sourceIds?.[0]===PRIVATE_BLOCK_ID),true);
+    }
+    assert.equal(result.output.items[0].slide.visual.data.length,6,"protected scorecard fidelity remains independently enforced");
+  });
+});
+
 test("locally preserves authored brand typography without broadening the provider output schema",async()=>{
   const snapshot=executiveSourceSnapshot();
   snapshot.facts[0].properties.text=`Typography: Helvetica Neue\n${snapshot.facts[0].properties.text}`;
@@ -298,6 +397,69 @@ test("locally preserves authored brand typography without broadening the provide
     assert.equal(requests.length,1);
     assert.equal(requests[0].input.presentation_source.style.typography,"Helvetica Neue");
     assert.equal(result.output.presentation.fontFamily,"Helvetica Neue");
+  });
+});
+
+test("accepts source-authored roadmap duration precision without a needless paid repair", async () => {
+  const snapshot = executiveSourceSnapshot();
+  snapshot.facts[0].properties.text += [
+    "",
+    "Slide 3 — FIRST RELEASE, 4–6 WEEKS",
+    "First release: 4–6 weeks. Visible phone search and send.",
+    "Slide 4 — FULL PROGRAM, 12–16 WEEKS",
+    "Full program: 12–16 weeks. Accessible adaptive creative work.",
+  ].join("\n");
+
+  const output = executivePresentation();
+  output.content_markdown += "\n\nFirst release: 4–6 weeks.\nFull program: 12–16 weeks.";
+  for (const [index, label, duration, milestone] of [
+    [3, "First release", "4–6 weeks", "Visible phone search and send"],
+    [4, "Full program", "12–16 weeks", "Accessible adaptive creative work"],
+  ]) {
+    output.items.push({
+      title: `${label.toUpperCase()}, ${duration.toUpperCase()}`,
+      body: `${label}: ${duration}. ${milestone}.`,
+      notes: `${label} remains ${duration}. ${milestone}.`,
+      image_prompt: `An editable ${label.toLowerCase()} delivery roadmap.`,
+      context_group_ids: ["context_group_1"],
+      slide: {
+        layout: "roadmap",
+        kicker: "Delivery phase",
+        bullets: [],
+        quote: null,
+        citations: [{ source_id: "blk_001", label, anchor: `Authored slide ${index}`, excerpt: `${label}: ${duration}` }],
+        source_ids: ["blk_001"],
+        section: "Responsive evidence and stakeholder decision",
+        source_order: index,
+        visual: {
+          kind: "roadmap",
+          label,
+          value: duration,
+          exact_value: duration,
+          display_value: duration,
+          unit: "weeks",
+          data: [
+            { label: "Phase", value: duration, weight: 1, exact_value: null, display_value: null, source_ids: ["blk_001"] },
+            { label: "Outcome", value: milestone, weight: 1, exact_value: null, display_value: null, source_ids: ["blk_001"] },
+          ],
+        },
+      },
+    });
+  }
+
+  await withProviderResponses([output], async (requests) => {
+    const result = await generateExecutivePresentation({ itemCount: 4, requestedSlideCount: 4 }, snapshot);
+    assert.equal(requests.length, 1, "valid authored roadmap durations must not initiate a second paid model request");
+    assert.equal(result.inputReceipt.validation.repair_attempted, false);
+    assert.deepEqual(result.inputReceipt.validation.initial_issues, []);
+    assert.deepEqual(result.output.items.slice(2).map((item) => ({
+      exact: item.slide.visual.exactValue,
+      display: item.slide.visual.displayValue,
+    })), [
+      { exact: "4–6 weeks", display: "4–6 weeks" },
+      { exact: "12–16 weeks", display: "12–16 weeks" },
+    ]);
+    assertRequestContainsNoPrivateSourceIdentifiers(requests[0].request);
   });
 });
 

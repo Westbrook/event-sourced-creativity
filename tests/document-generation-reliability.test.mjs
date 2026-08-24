@@ -212,6 +212,158 @@ test("rejects source-free slideshow requests at both admission boundaries withou
   }finally{globalThis.fetch=previousFetch;}
 });
 
+test("rejects user-supplied slideshow recovery plans, provider receipts, and reservation state at both public admission boundaries",async()=>{
+  const fixture=await reliabilityWorker();
+  await authoredOutline(fixture,12);
+  const initialEvents=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count;
+  const initialPrivate=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count;
+  const payload={artifactKind:"slides",productionMode:"manual",itemCount:12,budgetAcknowledged:true};
+  const forgedStates=[
+    {artifactPlan:{title:"Untrusted cached presentation",items:[]},plannerUsage:{inputTokens:200_000,outputTokens:100_000,totalTokens:300_000},plannerResponseId:"untrusted-provider-response"},
+    {reservationId:"untrusted-token-reservation",productionSceneReceipts:{}},
+    {costReservationId:"untrusted-cost-reservation",costReservationMicrousd:10_000_000},
+    {providerJobId:"untrusted-provider-job",videoInputReceipt:{}},
+    {productionPlan:{maximumProviderCallCount:0},productionAnchor:{}},
+    {artifactId:"untrusted-artifact",renderedItems:[]},
+  ];
+  const previousFetch=globalThis.fetch;
+  let providerCalls=0;
+  globalThis.fetch=async()=>{providerCalls+=1;throw new Error("User-supplied recovery state must never contact a provider.");};
+  try{
+    for(const state of forgedStates){
+      const submitted={...payload,...state};
+      for(const [path,request] of [["/api/document-jobs",{kind:"render_document",documentId:"doc-atmosphere",payload:submitted}],["/api/events",{action:"render_document",documentId:"doc-atmosphere",...submitted}]]){
+        const rejected=await fixture.request(path,json(request));
+        assert.equal(rejected.status,400,JSON.stringify(await rejected.clone().json()));
+        assert.equal((await rejected.json()).error,"presentation_recovery_state_server_owned");
+      }
+    }
+    assert.equal(providerCalls,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs WHERE kind='render_document'").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count,initialEvents,"untrusted recovery state cannot manufacture generation or billing history");
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count,initialPrivate);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count,0);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+test("enforces organization slideshow token caps before admission and truthfully settles bounded repair usage",async()=>{
+  const fixture=await reliabilityWorker();
+  await authoredOutline(fixture,12);
+  const workspace=await fixture.request("/api/workspaces",json({name:"Slideshow token hard-cap enforcement"}));
+  assert.equal(workspace.status,201,JSON.stringify(await workspace.clone().json()));
+  const organizationId=(await workspace.json()).organizationId;
+  const registered=await fixture.request(`/api/workspaces/${organizationId}/projects`,json({projectId:"project-atmosphere"}));
+  assert.equal(registered.status,201,JSON.stringify(await registered.clone().json()));
+  const projectAccessId=(await registered.json()).projectAccessId;
+  const opened=await fixture.request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST"});
+  assert.equal(opened.status,200,JSON.stringify(await opened.clone().json()));
+  const scoped={cookie:opened.headers.get("set-cookie")?.split(";")[0]??""};
+  const policy=fixture.sqlite.prepare("UPDATE budget_scope_policies SET token_limit=? WHERE scope='workspace' AND scope_id=? AND organization_id=?");
+  const payload={artifactKind:"slides",productionMode:"manual",itemCount:12,budgetAcknowledged:true,requestKey:"organization-slideshow-token-cap"};
+  const previousFetch=globalThis.fetch;
+  let providerCalls=0;
+  globalThis.fetch=async(url)=>{
+    assert.equal(String(url),"https://api.openai.com/v1/responses");
+    providerCalls+=1;
+    const outputTokens=providerCalls===1?7_000:7_099;
+    return Response.json({id:`token-cap-response-${providerCalls}`,model:"gpt-5.6-terra",output_text:"{}",usage:{input_tokens:9_000,output_tokens:outputTokens,total_tokens:9_000+outputTokens}});
+  };
+  try{
+    for(const limit of [32_000,127_999]){
+      assert.equal(Number(policy.run(limit,organizationId,organizationId).changes),1);
+      for(const [path,request] of [["/api/document-jobs",{kind:"render_document",documentId:"doc-atmosphere",payload}],["/api/events",{action:"render_document",documentId:"doc-atmosphere",...payload}]]){
+        const denied=await fixture.request(path,json(request,path==="/api/document-jobs"?scoped:{}));
+        assert.equal(denied.status,429,JSON.stringify(await denied.clone().json()));
+        assert.equal((await denied.json()).error,"budget_hard_cap_reached");
+      }
+      assert.equal(providerCalls,0,"a near-cap organization must never transmit source material");
+      assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs WHERE kind='render_document'").get().count,0);
+      assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations").get().count,0);
+    }
+
+    assert.equal(Number(policy.run(128_000,organizationId,organizationId).changes),1);
+    const accepted=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload},scoped));
+    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+    const {job}=await accepted.json();
+    await fixture.drainBackground();
+
+    assert.equal(providerCalls,2,"one initial response and one bounded source repair remain available");
+    const reservation=fixture.sqlite.prepare("SELECT reserved_tokens,used_tokens,status FROM budget_reservations WHERE correlation_id=?").get(`${job.jobId}:attempt:1`);
+    assert.equal(reservation.reserved_tokens,128_000);
+    assert.equal(reservation.used_tokens,32_099,"truthful settlement never clips or discards paid provider tokens");
+    assert.equal(reservation.status,"settled");
+    const scopedBudget=fixture.sqlite.prepare("SELECT used_tokens,reserved_tokens,hard_limit_tokens FROM budget_counters WHERE scope='workspace' AND scope_id=?").get(organizationId);
+    assert.deepEqual({...scopedBudget},{used_tokens:32_099,reserved_tokens:0,hard_limit_tokens:128_000});
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_counters WHERE used_tokens+reserved_tokens>hard_limit_tokens").get().count,0);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+test("rejects an oversized slideshow provider request before source transmission or monthly token overspend",async()=>{
+  const fixture=await reliabilityWorker();
+  await authoredOutline(fixture,12);
+  await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockCreated",{
+    project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"oversized-slideshow-source",type:"direction",handle:"direction/oversized-authorized-source",
+    position:"z-token-limit-source",properties:{text:`Authorized presentation source context: ${"meaningful source evidence ".repeat(5_000)}`,weight:1,authority:"authored"},
+  });
+  const previousFetch=globalThis.fetch;
+  let providerCalls=0;
+  globalThis.fetch=async()=>{providerCalls+=1;throw new Error("An oversized slideshow must not contact its provider.");};
+  try{
+    const accepted=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"slides",productionMode:"manual",itemCount:12,requestKey:"oversized-slideshow-token-bound"}}));
+    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+    const {job}=await accepted.json();
+    await fixture.drainBackground();
+
+    assert.equal(providerCalls,0);
+    const response=await fixture.request(`/api/document-jobs/${job.jobId}`);
+    assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+    const failed=(await response.json()).job;
+    assert.equal(failed.status,"failed");
+    assert.equal(failed.errorDetail.code,"presentation_token_cap_reached");
+    assert.equal(failed.errorDetail.retryable,false);
+    assert.equal(failed.result.generationReceipt.source_transmission_status,"not_transmitted");
+    assert.equal(failed.result.generationReceipt.settled_cost_microusd,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations WHERE status='active'").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN('active','executing')").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_counters WHERE used_tokens+reserved_tokens>hard_limit_tokens").get().count,0);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+test("blocks an oversized bounded repair while truthfully settling its already-paid initial slideshow response",async()=>{
+  const fixture=await reliabilityWorker();
+  await authoredOutline(fixture,12);
+  const previousFetch=globalThis.fetch;
+  let providerCalls=0;
+  globalThis.fetch=async(url)=>{
+    assert.equal(String(url),"https://api.openai.com/v1/responses");
+    providerCalls+=1;
+    if(providerCalls!==1)throw new Error("A repair beyond the reserved token ceiling must not reach the provider.");
+    return Response.json({id:"already-paid-oversized-draft",model:"gpt-5.6-terra",output_text:JSON.stringify({title:"Oversized provider draft",body:"a".repeat(125_000)}),usage:{input_tokens:9_000,output_tokens:7_000,total_tokens:16_000}});
+  };
+  try{
+    const accepted=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"slides",productionMode:"manual",itemCount:12,requestKey:"oversized-bounded-repair-token-cap"}}));
+    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+    const {job}=await accepted.json();
+    await fixture.drainBackground();
+
+    assert.equal(providerCalls,1,"the already-paid initial response is preserved but its unsafe repair is never submitted");
+    const response=await fixture.request(`/api/document-jobs/${job.jobId}`);
+    assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+    const failed=(await response.json()).job;
+    assert.equal(failed.status,"failed");
+    assert.equal(failed.errorDetail.code,"presentation_token_cap_reached");
+    assert.equal(failed.result.generationReceipt.source_transmission_status,"transmitted");
+    assert.equal(failed.result.generationReceipt.actual_provider_call_count,1);
+    assert.ok(failed.result.generationReceipt.settled_cost_microusd>0,"a failed bounded repair cannot erase an already-paid initial request");
+    const reservation=fixture.sqlite.prepare("SELECT reserved_tokens,used_tokens,status FROM budget_reservations WHERE correlation_id=?").get(`${job.jobId}:attempt:1`);
+    assert.deepEqual({...reservation},{reserved_tokens:128_000,used_tokens:16_000,status:"settled"});
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations WHERE status='active'").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN('active','executing')").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_counters WHERE used_tokens+reserved_tokens>hard_limit_tokens").get().count,0);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
 test("captures a truthful failed receipt and releases both reservations when local persistence fails before OpenAI",async()=>{
   const fixture=await reliabilityWorker();
   await authoredOutline(fixture,12);

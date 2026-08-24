@@ -1,5 +1,5 @@
 import { combinedContextGroups } from "../src/model/combined-context.ts";
-import { documentArtifactValidationIssues, normalizeSlideDeckItems, slideCopyIsNearDuplicate, type DocumentArtifactDraft, type DocumentArtifactDraftItem, type DocumentArtifactKind, type DocumentArtifactValidationIssue, type SlideStylePresetId } from "../src/model/document-artifacts.ts";
+import { documentArtifactValidationIssues, formatPresentationQuantity, normalizeSlideDeckItems, slideCopyIsNearDuplicate, type DocumentArtifactDraft, type DocumentArtifactDraftItem, type DocumentArtifactKind, type DocumentArtifactValidationIssue, type SlideStylePresetId } from "../src/model/document-artifacts.ts";
 import { documentImageFormat, imageFormatForPreset, providerRenderFormat } from "../src/model/image-format.ts";
 import {
   MANAGED_PRODUCTION_BATCH_SIZE,
@@ -10,7 +10,7 @@ import {
   type ManagedProductionPlan,
   type ProductionScene,
 } from "../src/model/managed-production.ts";
-import { buildPresentationSourceContract, validatePresentationSourceCoverage } from "../src/model/presentation-source.ts";
+import { buildPresentationSourceContract, inferPresentationAudienceLocale, validatePresentationSourceCoverage } from "../src/model/presentation-source.ts";
 import { VIDEO_ADAPTER_CONTRACT, type VideoAudioMode } from "../src/model/video-adapter.ts";
 import { generateCreativeImage } from "./image-adapter.ts";
 import { readGeneratedImageReference, storeGeneratedImage, storeGeneratedMedia } from "./media-api.ts";
@@ -174,8 +174,8 @@ function managedSlideMarkdown(title: string, items: DocumentArtifactDraftItem[],
     if (visual?.value.trim() && !quote?.includes(visual.value.trim())) {
       lines.push(visual.label.trim() ? `**${visual.label.trim()}:** ${visual.value.trim()}` : visual.value.trim());
     }
-    if (visual?.exactValue?.trim()) lines.push(`**${labels.exactValue}:** ${visual.exactValue.trim()}${visual.unit ? ` ${visual.unit}` : ""}`);
-    if (visual?.displayValue?.trim()) lines.push(`**${labels.displayedValue}:** ${visual.displayValue.trim()}${visual.unit ? ` ${visual.unit}` : ""}`);
+    if (visual?.exactValue?.trim()) lines.push(`**${labels.exactValue}:** ${formatPresentationQuantity(visual.exactValue,visual.unit,{numericOnly:true})}`);
+    if (visual?.displayValue?.trim()) lines.push(`**${labels.displayedValue}:** ${formatPresentationQuantity(visual.displayValue,visual.unit,{numericOnly:true})}`);
     for (const datum of visual?.data ?? []) {
       const value = datum.displayValue?.trim() || datum.value.trim();
       const exact = datum.exactValue?.trim();
@@ -210,7 +210,7 @@ function managedSlideVisibleCopy(item: DocumentArtifactDraftItem): string[] {
 
 function managedProductionValidationFailure(kind: DocumentArtifactKind, issues: DocumentArtifactValidationIssue[], phase: "review" | "assembly") {
   const sourceFidelityFailure = kind === "slides" && issues.some((issue) =>
-    /(?:source|protected|precision|scorecard|numeric|quote|roadmap|outline|context_group|exact_value|display_value|slide_count_mismatch)/u.test(issue.code));
+    /(?:source|citation|protected|precision|scorecard|numeric|quote|roadmap|outline|context_group|exact_value|display_value|slide_count_mismatch)/u.test(issue.code));
   const diagnostic = issues.map((issue) => `${issue.code} ${issue.path}`).join(", ");
   const stage = phase === "review" ? "its bounded production review" : "final assembly";
   return new ProviderRequestError({
@@ -269,6 +269,7 @@ export async function generateManagedArtifactDraft(
       fidelity: input.presentationFidelity,
     })
     : null;
+  const presentationAudienceLocale=presentationSources?inferPresentationAudienceLocale(presentationSources.outline.sourceText,input.locale??"en"):input.locale??"en";
   const privateSourceIdentifiers = [...new Set([
     ...input.production.claims.flatMap((claim) => [claim.id, claim.blockId, ...claim.contextGroupIds]),
     ...input.production.scenes.flatMap((scene) => [...scene.sourceBlockIds, ...scene.sourceClaimIds, ...scene.contextGroupIds]),
@@ -307,6 +308,7 @@ export async function generateManagedArtifactDraft(
         audience: input.audience,
         tone: input.tone,
         locale: input.locale,
+        outputLocale:presentationAudienceLocale,
         presentationStyle: input.presentationStyle,
         presentationFidelity: input.presentationFidelity,
         requestedSlideCount: input.requestedSlideCount,
@@ -357,7 +359,7 @@ export async function generateManagedArtifactDraft(
         const missingCitationLabels = [...new Set((item.slide.citations ?? [])
           .map((citation) => citation.label.trim())
           .filter((label) => label && !notes.includes(label)))];
-        if (missingCitationLabels.length) notes = [notes.trim(), `[${managedSlideLabels(input.locale).sources}] ${missingCitationLabels.join("; ")}`].filter(Boolean).join("\n\n");
+        if (missingCitationLabels.length) notes = [notes.trim(), `[${managedSlideLabels(presentationAudienceLocale).sources}] ${missingCitationLabels.join("; ")}`].filter(Boolean).join("\n\n");
         return {
           ...item,
           notes,
@@ -373,7 +375,7 @@ export async function generateManagedArtifactDraft(
       if (normalizeSlides) items = normalizeSlideDeckItems(items);
     }
     const content = kind === "slides"
-      ? managedSlideMarkdown(first.output.title, items,input.locale)
+      ? managedSlideMarkdown(first.output.title, items,presentationAudienceLocale)
       : pages.length === 1 ? first.output.content_markdown
         : pages.map((page, index) => {
           const markdown = page.output.content_markdown.trim();
@@ -441,7 +443,7 @@ export async function generateManagedArtifactDraft(
       const repaired = await generateDocumentArtifact(env, ownerId, kind, {
         documentTitle: input.documentTitle,
         snapshot: combinedSceneSnapshot(input.snapshot, scenes),
-        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal, onProviderAttempt:recordPaidAttempt,onBeforeProviderAttempt:input.plannerPreflight },
+        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, outputLocale:presentationAudienceLocale,presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal, onProviderAttempt:recordPaidAttempt,onBeforeProviderAttempt:input.plannerPreflight },
       });
       pages[pageIndex] = repaired;
       attempts.push(repaired);

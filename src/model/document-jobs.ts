@@ -223,10 +223,14 @@ export function documentJobCanRecoverProviderRender(job: DocumentJob) {
   return Boolean((failure?.retryable||recoverableReservationFailure)&&failure?.category!=="safety"&&failure?.httpStatus!==400&&failure?.httpStatus!==422);
 }
 
+const TRUSTED_GENERATION_FAILURE_FALLBACKS = new Set([
+  "Change this request or its reference before trying again.",
+  "This prompt structure did not produce an image.",
+]);
+
 export function generationFailureGuidance(detail: DocumentJobError | null, fallback = "") : GenerationFailureGuidance {
   if (!detail) {
-    const machineOnly = /^[a-z][a-z\d]*(?:_[a-z\d]+)+$/i.test(fallback.trim());
-    return { title: "The generation could not be completed", summary: fallback && !machineOnly ? fallback : "The provider could not complete this request. Review the saved inputs and technical receipt before trying again.", actionLabel: null, actionUrl: null, retryAllowed: true };
+    return { title: "The generation could not be completed", summary: TRUSTED_GENERATION_FAILURE_FALLBACKS.has(fallback) ? fallback : "The provider could not complete this request. Review the saved inputs and technical receipt before trying again.", actionLabel: null, actionUrl: null, retryAllowed: true };
   }
   if (detail.code === "local_persistence_failed") return { title: "Forma could not save this generation", summary: "A local event or database write failed while Forma was saving this generation. No provider outage was reported. Contact support or review the server's persistence and event-storage diagnostics.", actionLabel: null, actionUrl: null, retryAllowed: false };
   if (detail.code === "source_fidelity_validation_failed") return { title: "The presentation did not preserve its source", summary: "The generated presentation failed source-fidelity validation and was not accepted. Review the source document and adjust the presentation requirements before starting a new request.", actionLabel: null, actionUrl: null, retryAllowed: false };
@@ -240,7 +244,7 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
   if (detail.code === "fal_queue_route_method_not_allowed") return { title: "The video finished, but its queue route was incompatible", summary: "Fal preserved the paid render. Retry resumes that provider request through its application-level status and result URLs; it does not submit a second video.", actionLabel: null, actionUrl: null, retryAllowed: true };
   if (/^fal_(status|result)_response_invalid$/.test(detail.code)||detail.code === "fal_status_receipt_invalid") return { title: "Fal returned an incomplete video update", summary: "The server retried the safe status read and preserved the provider request ID. Retrying resumes that durable provider job instead of starting a duplicate paid render.", actionLabel: null, actionUrl: null, retryAllowed: true };
   if (detail.code === "fal_reference_upload_failed") return { title: "A video reference could not be staged", summary: "The original image remains safe in this document. Check the Fal connection and retry; the app uploads references to short-lived provider storage before submitting the video request.", actionLabel: null, actionUrl: null, retryAllowed: true };
-  if (detail.code === "provider_returned_incomplete_document_artifact") return { title: "The output plan was incomplete", summary: detail.message || "The provider returned structurally incomplete output data. The technical receipt identifies the exact fields that still need correction.", actionLabel: null, actionUrl: null, retryAllowed: true };
+  if (detail.code === "provider_returned_incomplete_document_artifact") return { title: "The output plan was incomplete", summary: "The provider returned structurally incomplete output data. The technical receipt identifies the exact fields that still need correction.", actionLabel: null, actionUrl: null, retryAllowed: true };
   if (detail.category === "safety") return { title: "Safety checks stopped this generation", summary: "Change the request or reference image before trying again. Repeating the exact request is not expected to help.", actionLabel: "Review safety guidance", actionUrl: "https://developers.openai.com/api/docs/guides/safety-best-practices", retryAllowed: false };
   if (detail.action === "review_budget") return { title: detail.scope === "workspace" ? "The workspace generation budget is exhausted" : "Your generation budget is exhausted", summary: "This application limit resets with the next budget period. An administrator can raise the configured token limit; retrying now would be rejected before an OpenAI request is sent.", actionLabel: "Review operational limits", actionUrl: "/operations", retryAllowed: false };
   if (detail.action === "add_credits") return { title: "The OpenAI account has no available API credit", summary: "Add credits or resolve billing on the OpenAI organization, then retry this image.", actionLabel: "Open billing settings", actionUrl: "https://platform.openai.com/settings/organization/billing/overview", retryAllowed: false };
@@ -252,7 +256,37 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
   if (detail.category === "rate_limit") return { title: "OpenAI is limiting image throughput", summary: detail.retryAfterMs ? `The server already retried. Wait about ${Math.max(1, Math.ceil(detail.retryAfterMs / 1000))} seconds before trying again.` : "The server already retried with backoff. Wait briefly before trying again.", actionLabel: "Review rate limits", actionUrl: "https://platform.openai.com/settings/organization/limits", retryAllowed: true };
   if (detail.category === "network" || detail.category === "server") return { title: "The provider connection was interrupted", summary: detail.retryable ? "No terminal account or request block was reported. It is reasonable to retry." : "Review the saved technical receipt and resolve the reported connection or server issue before starting a new request.", actionLabel: null, actionUrl: null, retryAllowed: detail.retryable };
   if (detail.category === "canceled") return { title: "The generation request was stopped", summary: "No late provider result will be adopted. Start a new request whenever the document is ready.", actionLabel: null, actionUrl: null, retryAllowed: true };
-  return { title: "The provider did not produce the requested output", summary: detail.message || fallback || "Review the technical receipt, adjust the request if needed, and try again.", actionLabel: null, actionUrl: null, retryAllowed: detail.retryable };
+  return { title: "The provider did not produce the requested output", summary: "Review the technical receipt, adjust the request if needed, and try again.", actionLabel: null, actionUrl: null, retryAllowed: detail.retryable };
+}
+
+const PROVIDER_CREDENTIAL_DESTINATIONS = new Set([
+  "https://fal.ai/dashboard/keys",
+  "https://platform.openai.com/api-keys",
+]);
+
+const PROVIDER_POLICY_DESTINATIONS = new Set([
+  "https://fal.ai/dashboard/billing",
+  "https://platform.openai.com/settings/organization/billing/overview",
+  "https://platform.openai.com/settings/organization/limits",
+  "https://platform.openai.com/settings/organization/general",
+  "https://platform.openai.com/settings/organization/projects",
+]);
+
+/** Privileged provider destinations are visible only to the exact nonimpersonating platform principal. */
+export function authorizedGenerationFailureRemediation(
+  guidance: GenerationFailureGuidance,
+  principal: { capabilities?: readonly string[]; projectContext?: unknown; impersonation?: unknown } | null,
+) {
+  if (!principal || principal.projectContext || principal.impersonation || guidance.retryAllowed || !guidance.actionUrl || !guidance.actionLabel || !Array.isArray(principal.capabilities)) return null;
+  const capabilities = principal.capabilities;
+  const provider = capabilities.includes("platform.provider.configure");
+  const policy = capabilities.includes("platform.policy.manage");
+  const destination = guidance.actionUrl;
+  const allowed = PROVIDER_CREDENTIAL_DESTINATIONS.has(destination) ? provider
+    : PROVIDER_POLICY_DESTINATIONS.has(destination) ? policy
+      : destination === "/operations" ? policy
+        : false;
+  return allowed ? { href: destination, label: guidance.actionLabel, external: destination.startsWith("https://") } : null;
 }
 
 export function documentJobIsStale(job: Pick<DocumentJob, "status" | "leaseExpiresAt" | "updatedAt">, now = Date.now()) {

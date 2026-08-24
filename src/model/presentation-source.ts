@@ -151,8 +151,42 @@ const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
 const compact = (value: unknown) => clean(value).replace(/\s+/gu, " ");
 const unique = (values: Iterable<string>) => [...new Set([...values].map(clean).filter(Boolean))];
 const sourceKey = (value: string) => value.toLocaleLowerCase().replace(/[\p{P}\p{S}\s]+/gu, " ").trim();
+const citationEvidenceKey = (value: string) => value.normalize("NFKC").toLocaleLowerCase()
+  .replace(/(?<![\p{L}\p{N}])[−-](?=\d)/gu," negativesign ")
+  .replace(/(?<![\p{L}\p{N}])\+(?=\d)/gu," positivesign ")
+  .replace(/(?<=\d)\.(?=\d)/gu, " decimaldot ")
+  .replace(/(?<=\d),(?=\d)/gu, " decimalcomma ")
+  .replace(/%/gu, " percentunit ")
+  .replace(/[\p{P}\p{S}]+/gu, " ")
+  .replace(/\s+/gu, " ").trim();
 const stylePresets = new Set(["gallery", "editorial", "nocturne", "field-notes"]);
 const negativeSourceIntents = new Set(["avoid", "prohibit", "exclude", "must_not_include", "exclusion", "forbid"]);
+const englishAudienceWords = new Set(["the", "and", "with", "for", "from", "that", "this", "these", "each", "every", "your", "their", "are", "is", "of", "to", "in", "on", "user", "project", "product", "slide", "slides", "weeks"]);
+const frenchAudienceWords = new Set(["le", "la", "les", "un", "une", "des", "du", "de", "dans", "avec", "pour", "sur", "est", "sont", "et", "vous", "votre", "nous", "notre", "cette", "ces", "plus", "projet", "présentation", "équipe", "semaine", "semaines"]);
+
+/** Keep presentation audience language separate from the application's chrome. */
+export function inferPresentationAudienceLocale(source: string, fallback = "en", requested?: string): string {
+  const supported = (value: string) => {
+    try {
+      const locale = Intl.getCanonicalLocales(value || "en")[0] ?? "en";
+      return /^(?:en|fr|ar|ja)(?:-|$)/iu.test(locale) ? locale : "en";
+    } catch { return "en"; }
+  };
+  if (requested?.trim()) return supported(requested);
+  const content = clean(source);
+  if (!content) return supported(fallback);
+  const arabic = (content.match(/\p{Script=Arabic}/gu) ?? []).length;
+  const japanese = (content.match(/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/gu) ?? []).length;
+  const latin = (content.match(/\p{Script=Latin}/gu) ?? []).length;
+  if (arabic >= 4 && arabic > Math.max(japanese, latin / 3)) return "ar";
+  if (japanese >= 4 && japanese > Math.max(arabic, latin / 3)) return "ja";
+  const words = content.toLocaleLowerCase().match(/[\p{Script=Latin}]+/gu) ?? [];
+  const english = words.reduce((score, word) => score + Number(englishAudienceWords.has(word)), 0);
+  const french = words.reduce((score, word) => score + Number(frenchAudienceWords.has(word)), 0) + (content.match(/[àâçéèêëîïôûùüÿœæ]/giu) ?? []).length;
+  if (french >= 2 && french > english) return "fr";
+  if (english >= 2 && english >= french) return "en";
+  return latin >= 12 && !/^(?:en|fr)(?:-|$)/iu.test(fallback) ? "en" : supported(fallback);
+}
 
 function sourceBlockText(value: Record<string, unknown>) {
   const properties = asRecord(value.properties);
@@ -705,6 +739,7 @@ export function validatePresentationSourceCoverage(values: readonly unknown[], c
   const add = (code: string, path: string, message: string) => issues.push({ code, path, message });
   const visible = items.map(visibleSlideText);
   const visibleDeck = visible.join("\n");
+  const exactFact = contract.protectedFacts.find((fact) => fact.precision === "exact");
 
   const requiredCount = contract.requestedSlideCount ?? contract.predictedSlideCount ?? contract.authoredSlideCount;
   if (complete && requiredCount !== null && items.length !== requiredCount) add("slide_count_mismatch", "items", `The planned presentation contains ${requiredCount} slides, but the generated deck contains ${items.length}.`);
@@ -725,12 +760,46 @@ export function validatePresentationSourceCoverage(values: readonly unknown[], c
       }
     } else if (requireGrounding) add("missing_slide_source", `items.${index}.slide.sourceIds`, `Slide ${pageStart + index + 1} has no authorized source attribution.`);
 
-    const visual = asRecord(asRecord(item.slide).visual);
+    const slide = asRecord(item.slide);
+    const citations = Array.isArray(slide.citations) ? slide.citations.map(asRecord) : [];
+    const expectedSource = expected[index]?.sourceBlockId;
+    const expectedGroups = expectedSource ? contract.sources.find((source) => source.sourceKind === "block" && source.sourceId === expectedSource)?.contextGroupIds ?? [] : [];
+    const matchesAuthoredSource = (references:readonly unknown[]) => {
+      if(!expectedSource)return true;
+      const resolution=resolvePresentationSourceReferences(references,contract,{allowDurableIds:true});
+      return resolution.blockIds.includes(expectedSource)||resolution.contextGroupIds.some((groupId)=>expectedGroups.includes(groupId));
+    };
+    for (const [citationIndex, citation] of citations.entries()) {
+      const sourceReference = clean(citation.sourceId ?? citation.source_id);
+      if (sourceReference && !matchesAuthoredSource([sourceReference])) add("incorrect_citation_source", `items.${index}.slide.citations.${citationIndex}.sourceId`, `A citation on slide ${pageStart + index + 1} is not attributed to that slide's authored source.`);
+      const anchoredSlide=clean(citation.anchor).match(/\b(?:authored\s+)?slide\s+(\d+)\b/iu)?.[1];
+      if(anchoredSlide&&expected[index]?.number&&Number(anchoredSlide)!==expected[index]!.number)add("incorrect_citation_anchor",`items.${index}.slide.citations.${citationIndex}.anchor`,`A citation on slide ${pageStart+index+1} identifies a different authored slide.`);
+      const excerpt = clean(citation.excerpt), authoredContent = clean(expected[index]?.content);
+      if (excerpt && authoredContent) {
+        const excerptKey = citationEvidenceKey(excerpt), authoredKey = citationEvidenceKey(authoredContent);
+        if (excerptKey && !` ${authoredKey} `.includes(` ${excerptKey} `)) add("ungrounded_citation_excerpt", `items.${index}.slide.citations.${citationIndex}.excerpt`, `A citation on slide ${pageStart + index + 1} does not quote its authored source.`);
+      }
+    }
+
+    const visual = asRecord(slide.visual);
+    const quote=asRecord(slide.quote??visual.quote),quoteSource=clean(quote.sourceId??quote.source_id);
+    if(quoteSource&&!matchesAuthoredSource([quoteSource]))add("incorrect_quote_source",`items.${index}.slide.quote.sourceId`,`A stakeholder quotation on slide ${pageStart+index+1} is not attributed to its authored source.`);
+    const visualData=Array.isArray(visual.data)?visual.data.map(asRecord):[];
+    for(const [datumIndex,datum] of visualData.entries()){
+      const references=[...(Array.isArray(datum.sourceIds)?datum.sourceIds:[]),...(Array.isArray(datum.source_ids)?datum.source_ids:[])];
+      if(references.length&&!references.every((reference)=>matchesAuthoredSource([reference])))add("incorrect_visual_source",`items.${index}.slide.visual.data.${datumIndex}.sourceIds`,`A visual data point on slide ${pageStart+index+1} is not attributed to its authored source.`);
+    }
     const exact = clean(visual.exactValue ?? visual.exact_value);
     const display = clean(visual.displayValue ?? visual.display_value);
-    const exactFact = contract.protectedFacts.find((fact) => fact.precision === "exact");
-    if (exactFact && exact && exact !== exactFact.exactValue) add("incorrect_exact_value", `items.${index}.slide.visual.exactValue`, `The exact value must remain ${exactFact.exactValue}, not ${exact}.`);
-    if (exactFact && display && display !== exactFact.displayValue) add("incorrect_display_value", `items.${index}.slide.visual.displayValue`, `The rounded display value must remain ${exactFact.displayValue}, not ${display}.`);
+    // Precision fields describe their own visual; roadmap durations and other
+    // independent metrics must never be mistaken for the overall score.
+    const averageVisual = exactFact && (
+      expected[index]?.number === exactFact.slideNumber
+      || [exact, display].some((value) => Boolean(value) && (value === exactFact.exactValue || value === exactFact.displayValue))
+      || /\b(?:overall|equal[- ]weight(?:ed)?|arithmetic|average|mean|composite|aggregate)\b/iu.test(`${clean(visual.label)} ${clean(visual.value)}`)
+    );
+    if (averageVisual && exact && exact !== exactFact.exactValue) add("incorrect_exact_value", `items.${index}.slide.visual.exactValue`, `The exact value must remain ${exactFact.exactValue}, not ${exact}.`);
+    if (averageVisual && display && display !== exactFact.displayValue) add("incorrect_display_value", `items.${index}.slide.visual.displayValue`, `The rounded display value must remain ${exactFact.displayValue}, not ${display}.`);
     if (exactFact?.exactValue && exactFact.displayValue && exactFact.exactValue !== exactFact.displayValue) {
       const reversedExact = new RegExp(`\\b(?:exact|unrounded|precise)\\b[^\\d\\n]{0,50}\\b${escaped(exactFact.displayValue)}\\b`, "iu");
       const reversedDisplay = new RegExp(`\\b(?:display(?:ed)?|rounded)\\b[^\\d\\n]{0,50}\\b${escaped(exactFact.exactValue)}\\b`, "iu");

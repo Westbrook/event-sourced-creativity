@@ -217,6 +217,7 @@ const quoteContinuation=(initial:string,continuations:string[])=>continuations.r
 
 export function normalizeSlideVisual(value: unknown, item: { title?: unknown; body?: unknown } = {}, index = 0): SlideVisualData {
   const input=record(value),visual=record(input.visual);let rawData=Array.isArray(visual.data)?visual.data:[];
+  let layout=slideLayout(input.layout,index);
   const title=text(item.title),body=text(item.body),used=[title,body].filter(Boolean),bulletSource=Array.isArray(input.bullets)?input.bullets:[],bullets:string[]=[];
   for(const candidate of bulletSource){const bullet=listText(candidate),accepted=distinctText(bullet,used);if(!accepted)continue;bullets.push(accepted);if(bullets.length===24)break;}
   const requestedKicker=text(input.kicker),acceptedKicker=distinctText(requestedKicker,used),kicker=acceptedKicker||(index===0?"Overview":`Chapter ${String(index+1).padStart(2,"0")}`);if(!acceptedKicker)used.push(kicker);
@@ -231,19 +232,22 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
   const citations=(Array.isArray(input.citations)?input.citations:[]).flatMap((entry)=>{const citation=normalizeSlideCitation(entry);return citation?[citation]:[];}),section=text(input.section),requestedSourceOrder=Number(input.sourceOrder??input.source_order),sourceOrder=Number.isSafeInteger(requestedSourceOrder)&&requestedSourceOrder>0?requestedSourceOrder:undefined;
   let kind=quote&&continuations.length?"quote" as SlideVisualKind:slideVisualKind(visual.kind,index);const valueIsVisible=kind==="hero-type"||kind==="metric"||kind==="diagram"||kind==="quote";let visualValue=kind==="quote"&&quote?quote.text:valueIsVisible?distinctText(visual.value,used):placeholderText(visual.value)?"":text(visual.value);let visualLabel=distinctText(visual.label,used);const exactValue=text(visual.exactValue??visual.exact_value),displayValue=text(visual.displayValue??visual.display_value),unit=text(visual.unit),data:SlideVisualDatum[]=[];
   for(const datum of rawData){
-    const entry=record(datum);let label=text(entry.label),datumValue=text(entry.value);if(placeholderText(label))label="";if(placeholderText(datumValue))datumValue="";if(!label&&datumValue){label=datumValue;datumValue="";}if(!label)continue;
+    const entry=record(datum);let label=text(entry.label),datumValue=text(entry.value)||text(entry.displayValue??entry.display_value)||text(entry.exactValue??entry.exact_value);if(placeholderText(label))label="";if(placeholderText(datumValue))datumValue="";if(!label&&datumValue){label=datumValue;datumValue="";}if(!label)continue;
     const weight=Number(entry.weight),datumExact=text(entry.exactValue??entry.exact_value),datumDisplay=text(entry.displayValue??entry.display_value),sourceIds=uniqueText(entry.sourceIds??entry.source_ids);
     const candidate={label,value:datumValue,weight:Number.isFinite(weight)?Math.max(0,Math.min(1,weight)):1,...(datumExact?{exactValue:datumExact}:{}),...(datumDisplay?{displayValue:datumDisplay}:{}),...(sourceIds.length?{sourceIds}:{})};
     candidate.weight=authoritativeSlideDatumWeight({kind,unit,value:visualValue},candidate);
     data.push(candidate);
   }
-  if(kind==="bars"||kind==="timeline"){const complete=data.filter((datum)=>Boolean(contentKey(datum.value)));data.splice(0,data.length,...complete);}
+  const quantitativeIntent=Boolean(exactValue||displayValue||/(?:\/\s*100|%)/u.test(unit));
+  const qualitativeScorecard=(kind==="scorecard"||kind==="bars")&&!quantitativeIntent&&data.length>=2&&data.every((datum)=>{const value=datum.exactValue??datum.displayValue??datum.value;return/\p{L}/u.test(value)&&preciseNumber(value)===null;});
+  if(qualitativeScorecard){kind="comparison";if(layout==="scorecard"||layout==="metric")layout="comparison";}
+  if(kind==="bars"){const complete=data.filter((datum)=>Boolean(contentKey(datum.value)));data.splice(0,data.length,...complete);}
   if((kind==="bars"||kind==="timeline"||kind==="diagram"||kind==="color-field")&&data.length<2){const singular=valueIsVisible?visualValue:distinctText(visualValue,used)||data[0]?.label||"";kind="hero-type";visualValue=singular;data.splice(0,data.length);}
   if((kind==="hero-type"||kind==="metric")&&!visualValue){visualValue=data[0]?.label??"";data.splice(0,data.length);}
   if(!visualLabel&&visualValue)visualLabel=kind==="quote"?"Stakeholder perspective":"Visual emphasis";
   const sourceIds=[...new Set([...uniqueText(input.sourceIds??input.source_ids),...(quote?.sourceId?[quote.sourceId]:[]),...citations.flatMap((citation)=>citation.sourceId?[citation.sourceId]:[]),...data.flatMap((datum)=>datum.sourceIds??[])])];
   return{
-    layout:slideLayout(input.layout,index),kicker,bullets,...(quote?{quote}:{}),...(citations.length?{citations}:{}),...(sourceIds.length?{sourceIds}:{}),...(section?{section}:{}),...(sourceOrder===undefined?{}:{sourceOrder}),
+    layout,kicker,bullets,...(quote?{quote}:{}),...(citations.length?{citations}:{}),...(sourceIds.length?{sourceIds}:{}),...(section?{section}:{}),...(sourceOrder===undefined?{}:{sourceOrder}),
     visual:{kind,label:visualLabel,value:visualValue,...(exactValue?{exactValue}:{}),...(displayValue?{displayValue}:{}),...(unit?{unit}:{}),data},
   };
 }
@@ -277,7 +281,13 @@ export function normalizeSlideDeckItems(values:unknown[]):DocumentArtifactDraftI
 export function slideVisualIsComplete(slide:SlideVisualData){
   if(slide.visual.kind==="quote")return Boolean(slide.quote?.text.trim())&&Boolean(slide.quote?.speaker.trim())&&Boolean(slide.quote?.role.trim())&&(!slide.visual.value||slide.visual.value===slide.quote?.text);
   if(slide.visual.kind==="hero-type"||slide.visual.kind==="metric")return Boolean(contentKey(slide.visual.value));
-  if(slide.visual.kind==="bars"||slide.visual.kind==="timeline"||slide.visual.kind==="scorecard"||slide.visual.kind==="comparison"||slide.visual.kind==="matrix"||slide.visual.kind==="roadmap")return slide.visual.data.length>=2&&slide.visual.data.every((datum)=>Boolean(contentKey(datum.label))&&Boolean(contentKey(datum.value)));
+  if(slide.visual.kind==="bars"||slide.visual.kind==="scorecard"||slide.visual.kind==="matrix")return slide.visual.data.length>=2&&slide.visual.data.every((datum)=>Boolean(contentKey(datum.label))&&Boolean(contentKey(datum.value)));
+  if(slide.visual.kind==="timeline"||slide.visual.kind==="comparison"||slide.visual.kind==="personas"||slide.visual.kind==="roadmap"){
+    if(slide.visual.data.length<2)return false;
+    const labels=slide.visual.data.map((datum)=>contentKey(datum.label));
+    if(labels.some((label)=>!label)||new Set(labels).size!==labels.length)return false;
+    return slide.visual.data.every((datum)=>Boolean(contentKey(datum.value)))||slide.visual.data.every((datum)=>/\p{L}/u.test(datum.label)&&contentKey(datum.label).length>=3);
+  }
   return slide.visual.data.length>=2&&slide.visual.data.every((datum)=>Boolean(contentKey(datum.label)));
 }
 
@@ -288,6 +298,14 @@ const preciseNumber=(value:unknown):number|null=>{
   if(!/^[+-]?(?:\d+\.?\d*|\.\d+)$/u.test(normalized))return null;
   const parsed=Number(normalized);return Number.isFinite(parsed)?parsed:null;
 };
+
+/** Append units once, and optionally limit them to actual quantitative values. */
+export function formatPresentationQuantity(value:string|undefined,unit:string|undefined,options:{numericOnly?:boolean}={}):string{
+  const quantity=String(value??"").trim(),measurement=String(unit??"").trim();
+  if(!quantity||!measurement||quantity.toLocaleLowerCase().endsWith(measurement.toLocaleLowerCase()))return quantity;
+  if(options.numericOnly&&!/^[+-]?(?:\d+(?:[.,]\d+)?|\.\d+)(?:\s*[–—-]\s*[+-]?(?:\d+(?:[.,]\d+)?|\.\d+))?$/u.test(quantity))return quantity;
+  return`${quantity} ${measurement}`;
+}
 
 /** Percentage-scaled assessment bars derive geometry from the displayed evidence. */
 export function authoritativeSlideDatumWeight(visual:Pick<SlideVisualData["visual"],"kind"|"value"|"unit">,datum:SlideVisualDatum){
@@ -393,7 +411,10 @@ export function documentArtifactValidationIssues(kind:DocumentArtifactKind,outpu
     const path=`items.${index}`;
     if(!item.title.trim())add("missing_title",`${path}.title`,"Every slide needs a title.");
     if(!item.slide){add("missing_slide",`${path}.slide`,"Every slide needs structured visual data.");return;}
-    if(!slideVisualIsComplete(item.slide))add("incomplete_visual",`${path}.slide.visual`,"The slide visual group is incomplete or still contains scaffolding.");
+    if(!slideVisualIsComplete(item.slide)){
+      const kind=item.slide.visual.kind,points=item.slide.visual.data.length,missingValues=item.slide.visual.data.filter((datum)=>!datum.value.trim()).map((datum)=>datum.label).slice(0,4);
+      add("incomplete_visual",`${path}.slide.visual`,`${kind} visual needs at least two distinct source-authored points${["scorecard","bars","matrix"].includes(kind)?" with meaningful values":""}; found ${points}${missingValues.length?` and missing values for ${missingValues.join(", ")}`:""}. If only category names are authored, use an architecture visual; never invent evidence.`);
+    }
     if(item.slide.visual.kind==="quote"&&!item.slide.quote?.text)add("missing_quote",`${path}.slide.quote`,"A quotation slide must retain its complete verbatim stakeholder quotation.");
     if(item.slide.quote&&(!item.slide.quote.speaker.trim()||!item.slide.quote.role.trim()))add("missing_quote_attribution",`${path}.slide.quote`,"Every protected stakeholder quotation must preserve its speaker and role attribution.");
     if(options.requireSourceGrounding&&!slideSourceIds(item.slide).length&&!(item.context_group_ids??[]).length)add("missing_source_grounding",`${path}.slide.source_ids`,"Every generated slide must identify at least one authorized source claim, block, or context group.");

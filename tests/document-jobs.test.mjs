@@ -256,6 +256,15 @@ test("exposes retained document failure history to document and Canvas surfaces"
   assert.match(jobsApi,/kind IN \('preview','generate','prompt_fan','render_document'\)/);assert.match(jobsApi,/expires_at>\?/);assert.match(jobsApi,/response\.ok\?\{\}:parseResult\(row\)/);
   assert.match(eventsApi,/retainFailurePrompt/);assert.doesNotMatch(eventsApi,/detail\.category==="safety"\?providerFailurePrompt/);
   assert.match(actions,/Failed generation attempts/);assert.match(actions,/Inspect failed inputs/);assert.match(actions,/Review all \$\{allFailures\.length\} failed attempts/);assert.match(actions,/failedGenerationInputInspection/);
+  assert.match(actions,/#actorInputContent:Record<string,string>/);
+  assert.match(actions,/addEventListener\("forma-authorization-changed",this\.#clearPrivateFailureInputs\)/);
+  assert.match(actions,/removeEventListener\("forma-authorization-changed",this\.#clearPrivateFailureInputs\)/);
+  assert.match(actions,/loadActorDocumentGenerationReceipt\(job\.jobId\)/);
+  assert.match(actions,/authorization\.shared\s*&&\s*job\.kind\s*!==\s*"render_document"/);
+  assert.match(actions,/authorizationScopeActive\(authorization\)/);
+  assert.match(actions,/projectContext\s*\|\|\s*job\.kind\s*===\s*"render_document"/);
+  assert.match(actions,/failedGenerationInputInspection\(this\.#failureInputJob,this\.store\.events\.get\(\),this\.store\.session\.get\(\)\?\.projectContext\?this\.#actorInputContent:this\.store\.content\.get\(\)\)/);
+  assert.doesNotMatch(actions,/this\.store\.content\.set\(/);
   assert.match(canvas,/Failed attempts/);assert.match(canvas,/#documentOutputFailures/);assert.match(canvas,/failedGenerationInputInspection/);assert.match(inputDialog,/retained inputs captured before the attempt failed/i);
 });
 

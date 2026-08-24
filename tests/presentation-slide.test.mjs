@@ -59,6 +59,7 @@ function renderSlide(slide, overrides = {}) {
   element.index = overrides.index ?? 0;
   element.total = overrides.total ?? 12;
   element.compact = overrides.compact ?? false;
+  if(overrides.locale)Object.defineProperty(element,"i18n",{value:overrides.locale});
   return renderMarkup(element.render());
 }
 
@@ -93,6 +94,22 @@ test("real slide renderer exposes all six scorecard values and distinguishes exa
   assert.match(markup, /<dt>Displayed<\/dt>\s*<dd><data value=61\.13>61\.13 \/ 100<\/data><\/dd>/);
   assert.ok(markup.indexOf("<dt>Exact</dt>") < markup.indexOf("<dt>Displayed</dt>"));
   assert.match(markup, /<i aria-hidden="true">/);
+});
+
+test("audience-facing slide labels stay English when authored content is English and the application uses Japanese",()=>{
+  const japanese={locale:"ja-JP",t:(_key,fallback)=>`日本語${fallback}`,system:(source)=>`日本語${source}`,number:(value,options)=>new Intl.NumberFormat("ja-JP",options).format(value)};
+  const slide=scorecard({citations:[{label:"Approved source evidence",anchor:"Slide 1",excerpt:"The authored source remains accurate."}]});
+  const markup=renderSlide(slide,{locale:japanese});
+  assert.match(markup,/<dt>Exact<\/dt>/u);
+  assert.match(markup,/<dt>Displayed<\/dt>/u);
+  assert.match(markup,/Slide 1/u);
+  assert.doesNotMatch(markup,/日本語|[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u);
+});
+
+test("roadmaps retain their authored duration even when no separate summary was generated",()=>{
+  const markup=renderSlide({layout:"roadmap",kicker:"Delivery",bullets:[],visual:{kind:"roadmap",label:"Program",value:"",exactValue:"12–16",displayValue:"12–16 weeks",unit:"weeks",data:[{label:"1",value:"Secure Activity",weight:.5},{label:"2",value:"Phone Work/Chat",weight:1}]}});
+  assert.match(markup,/<p class="presentation-slide__timeline-summary" dir="auto">12–16 weeks<\/p>/u);
+  assert.doesNotMatch(markup,/12–16 weeks weeks|<dt>Exact<\/dt>|<dt>Displayed<\/dt>/u);
 });
 
 test("full attributed stakeholder quotations remain visible on quote and evidence slides without leaking source identifiers", () => {

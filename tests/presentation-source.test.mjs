@@ -5,6 +5,7 @@ import {
   buildPresentationSourceContract,
   extractPresentationSourceContract,
   inferPresentationSourceOutline,
+  inferPresentationAudienceLocale,
   inferPresentationStyleContract,
   providerFacingPresentationSourceContract,
   resolvePresentationSourceReferences,
@@ -98,6 +99,16 @@ test("protects every original assessment value and distinguishes exact 61.125 fr
   const computed = buildPresentationSourceContract("Phone: 39.75\nTablet: 53.00\nSmall monitor: 67.25\nLarge monitor: 68.50\nAdaptive/accessibility: 58.75\nGoverned creative loop: 79.50");
   assert.equal(computed.protectedFacts.find((fact) => fact.precision === "exact")?.value, "61.125");
   assert.equal(computed.protectedFacts.find((fact) => fact.precision === "display")?.value, "61.13");
+});
+
+test("infers the authored presentation audience language independently of the application locale", () => {
+  const contract = buildPresentationSourceContract(executive.snapshot);
+  assert.equal(inferPresentationAudienceLocale(contract.outline.sourceText, "ja-JP"), "en");
+  assert.equal(inferPresentationAudienceLocale("このプレゼンテーションは利用者の体験と製品の価値を説明します。", "en-US"), "ja");
+  assert.equal(inferPresentationAudienceLocale("تشرح هذه العروض قيمة المنتج وتجربة المستخدم للفريق.", "en-US"), "ar");
+  assert.equal(inferPresentationAudienceLocale("Cette présentation explique le projet et les besoins de votre équipe pour les prochaines semaines.", "ja-JP"), "fr");
+  assert.equal(inferPresentationAudienceLocale(contract.outline.sourceText, "ja-JP", "fr-FR"), "fr-FR");
+  assert.equal(inferPresentationAudienceLocale("", "ja-JP"), "ja-JP");
 });
 
 test("retains all four exact, role-attributed quotations without the former 120-character truncation", () => {
@@ -262,6 +273,48 @@ test("accepts fully faithful twelve- and twenty-three-slide presentations, inclu
   assert.equal(validatePresentationSourceCoverage(slides, contract, { requireEverySlideSource: true, requireAllProtectedContent: true }).some((issue) => issue.code === "slide_count_mismatch"), false);
 });
 
+test("grounds each citation in its own authored slide while tolerating punctuation and case", () => {
+  const contract = buildPresentationSourceContract(executive.snapshot);
+  const slides = faithfulSlides(contract);
+  const excerpt = "search and Send become harder to access on the smallest screens; async events do not reliably return a person to the exact work.";
+  slides[2].slide.citations = [{ sourceId: "executive-opening", label: "User contradiction", anchor: "Slide 3", excerpt }];
+  assert.deepEqual(validatePresentationSourceCoverage(slides, contract, { requireEverySlideSource: true, requireAllProtectedContent: true }), []);
+
+  slides[2].slide.citations[0].excerpt = "Independent auditors certify 999.99% unrestricted enterprise readiness.";
+  let issues = validatePresentationSourceCoverage(slides, contract, { requireEverySlideSource: true, requireAllProtectedContent: true });
+  assert.ok(issues.some((issue) => issue.code === "ungrounded_citation_excerpt" && issue.path === "items.2.slide.citations.0.excerpt"));
+
+  slides[2].slide.citations[0].excerpt = excerpt;
+  slides[2].slide.citations[0].sourceId = "executive-architecture";
+  issues = validatePresentationSourceCoverage(slides, contract, { requireEverySlideSource: true, requireAllProtectedContent: true });
+  assert.ok(issues.some((issue) => issue.code === "incorrect_citation_source" && issue.path === "items.2.slide.citations.0.sourceId"));
+
+  slides[2].slide.citations[0].sourceId = "executive-opening";
+  slides[2].slide.citations[0].anchor = "Slide 12";
+  assert.ok(validatePresentationSourceCoverage(slides, contract, { requireEverySlideSource: true, requireAllProtectedContent: true }).some((issue) => issue.code === "incorrect_citation_anchor" && issue.path === "items.2.slide.citations.0.anchor"));
+  slides[2].slide.citations[0].anchor = "Slide 3";
+  slides[2].slide.citations[0].excerpt = "search and Send become harder to access; touch and short-height landscapes remain underserved.";
+  assert.ok(validatePresentationSourceCoverage(slides, contract, { requireEverySlideSource: true, requireAllProtectedContent: true }).some((issue) => issue.code === "ungrounded_citation_excerpt"));
+
+  slides[1].slide.citations = [{ sourceId: "executive-opening", label: "Assessment", anchor: "Slide 2", excerpt: "39.75%" }];
+  assert.ok(validatePresentationSourceCoverage(slides, contract, { requireEverySlideSource: true, requireAllProtectedContent: true }).some((issue) => issue.code === "ungrounded_citation_excerpt" && issue.path === "items.1.slide.citations.0.excerpt"));
+  slides[1].slide.citations[0].excerpt = "39,75";
+  assert.ok(validatePresentationSourceCoverage(slides, contract, { requireEverySlideSource: true, requireAllProtectedContent: true }).some((issue) => issue.code === "ungrounded_citation_excerpt" && issue.path === "items.1.slide.citations.0.excerpt"));
+});
+
+test("rejects real authorized source blocks when individual quotations or score rows cite the wrong slide",()=>{
+  const contract=buildPresentationSourceContract(executive.snapshot);
+  const slides=faithfulSlides(contract,{scorecard:true});
+  const quote=executive.quotes.find((candidate)=>candidate.slide===4);
+  slides[3].slide.quote={text:quote.text,speaker:quote.speaker,role:quote.speaker,sourceId:"executive-architecture"};
+  let issues=validatePresentationSourceCoverage(slides,contract,{requireEverySlideSource:true,requireAllProtectedContent:true});
+  assert.ok(issues.some((issue)=>issue.code==="incorrect_quote_source"&&issue.path==="items.3.slide.quote.sourceId"));
+  slides[3].slide.quote.sourceId="executive-opening";
+  slides[1].slide.visual.data[0].sourceIds=["executive-architecture"];
+  issues=validatePresentationSourceCoverage(slides,contract,{requireEverySlideSource:true,requireAllProtectedContent:true});
+  assert.ok(issues.some((issue)=>issue.code==="incorrect_visual_source"&&issue.path==="items.1.slide.visual.data.0.sourceIds"));
+});
+
 test("rejects swapped protected assessment labels even when every required number remains visible", () => {
   const contract = buildPresentationSourceContract(executive.snapshot);
   const slides = faithfulSlides(contract);
@@ -340,6 +393,49 @@ test("rejects roadmap phases moved to the wrong authored slide even when both pr
 
   const issues=validatePresentationSourceCoverage(slides,contract,{requireEverySlideSource:true,requireAllProtectedContent:true});
   assert.equal(issues.filter((issue)=>issue.code==="misplaced_roadmap_milestone").length,2);
+});
+
+test("keeps overall-score precision separate from authored roadmap durations and individual visual metrics", () => {
+  const contract = buildPresentationSourceContract(executive.snapshot);
+  const slides = faithfulSlides(contract, { scorecard: true });
+  slides[1].slide.visual.exactValue = "61.125";
+  slides[1].slide.visual.displayValue = "61.13";
+
+  for (const [index, duration] of [[9, "4–6 weeks"], [10, "12–16 weeks"]]) {
+    slides[index].slide.visual = {
+      kind: "roadmap",
+      label: index === 9 ? "First release" : "Full program",
+      value: duration,
+      exactValue: duration,
+      displayValue: duration,
+      unit: "weeks",
+      data: [],
+    };
+  }
+  slides[5].slide.visual = {
+    kind: "metric",
+    label: "Phone assessment",
+    value: "39.75",
+    exactValue: "39.75",
+    displayValue: "39.75",
+    unit: "/100",
+    data: [],
+  };
+
+  assert.deepEqual(validatePresentationSourceCoverage(slides, contract, {
+    requireEverySlideSource: true,
+    requireAllProtectedContent: true,
+  }), []);
+
+  slides[1].slide.visual.exactValue = "61.13";
+  slides[1].slide.visual.displayValue = "61.125";
+  const issues = validatePresentationSourceCoverage(slides, contract, {
+    requireEverySlideSource: true,
+    requireAllProtectedContent: true,
+  });
+  assert.equal(issues.some((issue) => issue.code === "incorrect_exact_value" && issue.path === "items.1.slide.visual.exactValue"), true);
+  assert.equal(issues.some((issue) => issue.code === "incorrect_display_value" && issue.path === "items.1.slide.visual.displayValue"), true);
+  assert.equal(issues.some((issue) => issue.path.startsWith("items.9.") || issue.path.startsWith("items.10.")), false);
 });
 
 test("preserves separate roadmap phase labels when both protected ranges share one authored slide", () => {
