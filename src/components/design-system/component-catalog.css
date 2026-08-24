@@ -229,6 +229,7 @@ forma-component-catalog,
   min-block-size: 4rem;
   align-content: center;
   padding-block: var(--forma-space-3,var(--space-3));
+  padding-inline: var(--forma-focus-clearance,.5rem);
   border-block: 1px solid var(--forma-color-border,var(--line));
 }
 
@@ -239,8 +240,7 @@ forma-component-catalog,
 
 .component-preview .ui-empty-state > p { font-size: var(--forma-font-size-supporting,var(--type-small)); }
 .component-preview > forma-ui-card {
-  --forma-space-5: 0px;
-  --forma-color-border: transparent;
+  --forma-card-inset: var(--forma-space-4,1rem);
   --forma-heading-size: 1.125rem;
 }
 .component-preview > forma-ui-page-header { --forma-heading-size: 1.125rem; }

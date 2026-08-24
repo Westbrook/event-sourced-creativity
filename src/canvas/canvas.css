@@ -99,3 +99,97 @@ html[data-canvas-focus] .canvas-board-identity small{display:none}
 .canvas-item>footer.has-resize-handles{min-height:calc(var(--forma-control-min-size,2.75rem) / var(--canvas-zoom))}
 @media(max-width:560px){.application-canvas .canvas-board-identity small,.application-canvas .canvas-sync-status{display:block}.application-canvas .canvas-commandbar{gap:.375rem;padding-inline:.5rem}.application-canvas .canvas-command-actions{gap:.2rem}.application-canvas .canvas-board-identity{gap:.25rem}.application-canvas .canvas-board-identity small,.application-canvas .canvas-sync-status{max-width:6rem;overflow:hidden;text-overflow:ellipsis}.canvas-intent-dock{bottom:max(.75rem,env(safe-area-inset-bottom,0px))}}
 @media(max-height:37.5rem){.application-canvas .canvas-commandbar{padding-block:.25rem}.application-canvas .canvas-workspace{min-height:0;min-block-size:0}.application-canvas .canvas-batch-select>small{display:none}}
+
+/* Decision surfaces remain inset; the authored Canvas itself stays full bleed. */
+.application-canvas .canvas-source-list button,
+.application-canvas .canvas-semantic-dialog li button,
+.application-canvas .canvas-member-list > li,
+.application-canvas .canvas-source-batch-actions {
+  min-inline-size: 0;
+  padding-inline: var(--forma-row-inset-inline, .75rem);
+  text-align: start;
+}
+
+.application-canvas .canvas-source-list--selectable button {
+  padding-inline: max(.7rem, var(--forma-row-inset-inline, .75rem));
+}
+
+.application-canvas .canvas-selection-hud,
+.application-canvas .canvas-zoom-hud {
+  padding: var(--forma-focus-clearance, .5rem);
+}
+
+.application-canvas .canvas-zoom-hud {
+  left: auto;
+  inset-inline-start: max(.75rem, var(--forma-safe-inline-start, 0px));
+}
+
+.application-canvas .canvas-view-menu > div {
+  right: auto;
+  inset-inline-end: 0;
+}
+
+.application-canvas .canvas-view-menu > div button {
+  text-align: start;
+}
+
+.application-canvas .canvas-organize-options button,
+.application-canvas .canvas-size-options button,
+.application-canvas .canvas-list-view li button,
+.application-canvas .canvas-folder-view > section button,
+.application-canvas .canvas-add-choices button,
+.application-canvas .canvas-render-choices button {
+  text-align: start;
+}
+
+.application-canvas .canvas-image-open,
+.application-canvas .canvas-item .reference-image-open,
+.application-canvas .canvas-artifact-open {
+  min-inline-size: calc(var(--forma-control-min-size, 2.75rem) / var(--canvas-zoom, 1));
+  min-block-size: calc(var(--forma-control-min-size, 2.75rem) / var(--canvas-zoom, 1));
+}
+
+.application-canvas .canvas-item.selected :is(.canvas-image-open, .reference-image-open, .canvas-artifact-open) {
+  right: auto;
+  bottom: auto;
+  inset-block-start: auto;
+  inset-inline-end: calc((var(--forma-control-min-size, 2.75rem) + .5rem) / var(--canvas-zoom, 1));
+  inset-block-end: calc((var(--forma-control-min-size, 2.75rem) + .5rem) / var(--canvas-zoom, 1));
+}
+
+@media (max-width: 560px) {
+  .application-canvas .canvas-commandbar {
+    padding-inline-start: max(var(--forma-row-inset-inline, .75rem), var(--forma-safe-inline-start, 0px));
+    padding-inline-end: max(var(--forma-row-inset-inline, .75rem), var(--forma-safe-inline-end, 0px));
+  }
+}
+
+@media (max-width: 680px) {
+  .application-canvas :is(.canvas-intent-dock, .canvas-selection-hud, .canvas-organize-menu, .canvas-intent-stack) {
+    inset-inline-start: max(.75rem, var(--forma-safe-inline-start, 0px));
+    inset-inline-end: max(.75rem, var(--forma-safe-inline-end, 0px));
+  }
+}
+
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .application-canvas .canvas-commandbar {
+    padding-inline-start: max(var(--forma-row-inset-inline, .75rem), var(--forma-safe-inline-start, 0px));
+    padding-inline-end: max(var(--forma-row-inset-inline, .75rem), var(--forma-safe-inline-end, 0px));
+  }
+
+  .application-canvas :is(.canvas-intent-dock, .canvas-organize-menu) {
+    inset-inline-start: auto;
+    inset-inline-end: max(.75rem, var(--forma-safe-inline-end, 0px));
+  }
+
+  .application-canvas .canvas-intent-stack {
+    inset-inline-start: max(.75rem, var(--forma-safe-inline-start, 0px));
+    inset-inline-end: auto;
+  }
+
+  .application-canvas .canvas-selection-hud {
+    inset-inline-start: max(.75rem, var(--forma-safe-inline-start, 0px));
+    inset-inline-end: max(.75rem, var(--forma-safe-inline-end, 0px));
+    max-inline-size: none;
+  }
+}

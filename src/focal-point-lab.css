@@ -12,7 +12,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 1.5rem;
-  padding: .8rem 0;
+  padding-block: .8rem;
+  padding-inline: var(--forma-row-inset-inline, .75rem);
   background: color-mix(in srgb, var(--paper) 94%, transparent);
   border-block: 1px solid var(--line);
   backdrop-filter: blur(18px);
@@ -30,12 +31,12 @@
 .focal-lab-controls > div { gap: .75rem; }
 .focal-lab-filter-groups { min-width: 0; flex-wrap: wrap; }
 .focal-lab-filter { display: flex; align-items: center; gap: .55rem; }
-.focal-lab-filter + .focal-lab-filter { padding-left: .75rem; border-left: 1px solid var(--line); }
+.focal-lab-filter + .focal-lab-filter { padding-inline-start: .75rem; border-inline-start: 1px solid var(--line); }
 .focal-lab-filter > span { color: var(--muted); font-size: var(--type-caption); }
 .focal-lab-controls [role="group"] { gap: .2rem; }
 .focal-lab-controls button,
 .focal-lab-asset > footer button {
-  min-height: 2.25rem;
+  min-height: var(--forma-hit-target, 2.75rem);
   padding: 0 .8rem;
   color: var(--muted);
   border: 1px solid transparent;
@@ -290,7 +291,7 @@
   .focal-lab-controls { position: static; align-items: flex-start; flex-direction: column; }
   .focal-lab-controls dl { width: 100%; justify-content: space-between; }
   .focal-lab-filter-groups { width: 100%; }
-  .focal-lab-filter + .focal-lab-filter { padding-left: 0; border-left: 0; }
+  .focal-lab-filter + .focal-lab-filter { padding-inline-start: 0; border-inline-start: 0; }
   .focal-lab-reading-note { grid-template-columns: minmax(0, 1fr); gap: .5rem; }
   .focal-lab-method { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
   .focal-lab-implementations { grid-template-columns: minmax(0, 1fr); }

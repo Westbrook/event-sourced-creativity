@@ -161,6 +161,10 @@ export class FormaUiSkeleton extends FormaPresentationalElement {
  * @cssprop {<length>} --forma-space-2 - Second inherited spacing step.
  * @cssprop {<length>} --forma-radius-medium - Scoped component corner radius.
  * @cssprop {<length>} --forma-space-3 - Scoped component spacing.
+ * @cssprop {<length>} --forma-card-inset - Article interior spacing.
+ * @cssprop {<length>} --forma-row-inset-inline - Scoped component spacing.
+ * @cssprop {<length>} --forma-control-inset-inline - Scoped component spacing.
+ * @cssprop {<length>} --forma-focus-clearance - Scoped component spacing.
  * @cssprop {<length>} --forma-space-4 - Fourth inherited spacing step.
  * @cssprop {<length>} --forma-space-5 - Fifth inherited spacing step.
  * @cssprop {<length>} --forma-space-6 - Sixth inherited spacing step.

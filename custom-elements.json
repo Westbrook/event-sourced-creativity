@@ -3682,6 +3682,11 @@
               "description": "Comfortable, script-aware body line height."
             },
             {
+              "name": "--forma-card-inset",
+              "syntax": "<length>",
+              "description": "Article interior spacing."
+            },
+            {
               "name": "--forma-color-accent",
               "syntax": "<color>",
               "description": "Scoped component accent."
@@ -3772,6 +3777,11 @@
               "description": "At-least-7:1 warning-state foreground."
             },
             {
+              "name": "--forma-control-inset-inline",
+              "syntax": "<length>",
+              "description": "Scoped component spacing."
+            },
+            {
               "name": "--forma-control-min-size",
               "syntax": "<length>",
               "description": "Minimum 44px interaction target."
@@ -3790,6 +3800,11 @@
               "name": "--forma-ease-standard",
               "syntax": "<easing-function>",
               "description": "Shared easing curve."
+            },
+            {
+              "name": "--forma-focus-clearance",
+              "syntax": "<length>",
+              "description": "Scoped component spacing."
             },
             {
               "name": "--forma-focus-ring-color",
@@ -3845,6 +3860,11 @@
               "name": "--forma-radius-small",
               "syntax": "<length>",
               "description": "Compact component corner radius."
+            },
+            {
+              "name": "--forma-row-inset-inline",
+              "syntax": "<length>",
+              "description": "Scoped component spacing."
             },
             {
               "name": "--forma-space-1",
@@ -4521,6 +4541,11 @@
               "name": "--forma-control-min-size",
               "syntax": "<length>",
               "description": "Minimum disclosure-summary target."
+            },
+            {
+              "name": "--forma-row-inset-inline",
+              "syntax": "<length>",
+              "description": "Scoped component spacing."
             }
           ],
           "slots": [
@@ -7178,6 +7203,11 @@
           ],
           "cssProperties": [
             {
+              "name": "--forma-card-inset",
+              "syntax": "<length>",
+              "description": "Article interior spacing."
+            },
+            {
               "name": "--forma-color-surface",
               "syntax": "<color>",
               "description": "Article background."
@@ -7443,6 +7473,11 @@
               "name": "--forma-control-min-size",
               "syntax": "<length>",
               "description": "Minimum row-action target size."
+            },
+            {
+              "name": "--forma-row-inset-inline",
+              "syntax": "<length>",
+              "description": "Scoped component spacing."
             }
           ],
           "slots": [

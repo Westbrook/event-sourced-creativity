@@ -49,6 +49,7 @@ export class FormaUiSurface extends FormaPresentationalElement {
  * @slot media - Meaningful visual content; images require useful alternative text.
  * @fires {CustomEvent<{ value: string }>} forma-action - The card follow-up was requested.
  * @cssprop {<color>} --forma-color-surface - Article background.
+ * @cssprop {<length>} --forma-card-inset - Article interior spacing.
  * @cssprop {<length>} --forma-space-5 - Article interior spacing.
  * @cssprop {<length>} --forma-heading-size - Scoped article-heading size.
  */
@@ -77,6 +78,7 @@ export class FormaUiCard extends FormaSlottedElement {
  * @slot trailing - Keyboard-operable actions, status, or other trailing content.
  * @fires {CustomEvent<{ value: string }>} forma-action - The row's explicit action was requested.
  * @cssprop {<length>} --forma-control-min-size - Minimum row-action target size.
+ * @cssprop {<length>} --forma-row-inset-inline - Scoped component spacing.
  */
 export class FormaUiListItem extends FormaSlottedElement {
   static properties = { label: { type: String }, detail: { type: String }, action: { type: String }, value: { type: String }, iconName: { type: String, attribute: "icon-name" } };

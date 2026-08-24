@@ -41,6 +41,7 @@ export class FormaUiNotice extends FormaSlottedElement {
  * @slot summary - Text or noninteractive phrasing content; never include a button, link, or form control.
  * @fires {CustomEvent<{ open: boolean }>} forma-toggle - The disclosure opened or closed.
  * @cssprop {<length>} --forma-control-min-size - Minimum disclosure-summary target.
+ * @cssprop {<length>} --forma-row-inset-inline - Scoped component spacing.
  */
 export class FormaUiDisclosure extends FormaSlottedElement {
   static properties = { label: { type: String }, detail: { type: String }, open: { type: Boolean }, group: { type: String } };

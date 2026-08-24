@@ -118,7 +118,7 @@ const compositionStyles = css`
     min-inline-size: 0;
     justify-items: start;
     gap: var(--forma-space-2, var(--space-2));
-    padding: var(--forma-space-5, var(--space-5));
+    padding: var(--forma-card-inset, var(--forma-space-5, var(--space-5)));
     background: var(--forma-color-surface, var(--panel));
     border: 1px solid var(--forma-color-border, var(--line));
     border-radius: var(--forma-radius-medium, var(--radius-medium));
@@ -161,6 +161,7 @@ const compositionStyles = css`
     min-block-size: var(--forma-control-min-size, 2.75rem);
     align-items: center;
     gap: var(--forma-space-3, var(--space-3));
+    padding-inline: var(--forma-row-inset-inline, var(--forma-space-3, .75rem));
   }
   .ui-list-item-copy {
     display: grid;
@@ -230,6 +231,7 @@ const compositionStyles = css`
     display: flex;
     min-block-size: var(--forma-control-min-size, 2.75rem);
     align-items: center;
+    padding-inline: var(--forma-row-inset-inline, var(--forma-space-3, .75rem));
     color: var(--forma-color-text, var(--ink));
     font-weight: 600;
     cursor: pointer;
@@ -237,6 +239,10 @@ const compositionStyles = css`
   .ui-disclosure > p {
     margin: var(--forma-space-2, var(--space-2)) 0
       var(--forma-space-3, var(--space-3));
+    padding-inline: var(--forma-row-inset-inline, var(--forma-space-3, .75rem));
+  }
+  .ui-disclosure > slot:not([name])::slotted(p) {
+    padding-inline: var(--forma-row-inset-inline, var(--forma-space-3, .75rem));
   }
 
   @media (forced-colors: active) {

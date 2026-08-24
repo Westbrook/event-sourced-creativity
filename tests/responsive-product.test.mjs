@@ -14,11 +14,12 @@ import japanese from "../src/components/design-system/locales/ja.ts";
 
 const postcss = createRequire(import.meta.resolve("vite"))("postcss");
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
-const [base, design, responsive, canvas, shell, creativeEntry, studio, chat, activity, deliver, publicShare, localization] = await Promise.all([
+const [base, design, responsive, canvas, focal, shell, creativeEntry, studio, chat, activity, deliver, publicShare, localization] = await Promise.all([
   read("../src/styles.css"),
   read("../src/design-system.css"),
   read("../src/responsive-foundation.css"),
   read("../src/canvas/canvas.css"),
+  read("../src/focal-point-lab.css"),
   read("../src/components/forma-shell.ts"),
   read("../src/apps/creative/entry.ts"),
   read("../src/components/studio-navigation.ts"),
@@ -29,14 +30,19 @@ const [base, design, responsive, canvas, shell, creativeEntry, studio, chat, act
   read("../src/components/design-system/localization.ts"),
 ]);
 
-const [workspace, projectContents, projectRail, canvasApplication] = await Promise.all([
+const [workspace, projectContents, projectRail, canvasApplication, slottedComponents, componentCatalog, artifacts, accessManagement, library] = await Promise.all([
   read("../src/components/forma-workspace.ts"),
   read("../src/components/forma-project-contents.ts"),
   read("../src/components/project-rail.ts"),
   read("../src/canvas/canvas-application.ts"),
+  read("../src/components/design-system/slotted-element.ts"),
+  read("../src/components/design-system/component-catalog.css"),
+  read("../src/components/document-artifacts.ts"),
+  read("../src/apps/operations/access-management.ts"),
+  read("../src/components/forma-library.ts"),
 ]);
 
-const sheets = [["styles.css", base], ["design-system.css", design], ["responsive-foundation.css", responsive], ["canvas.css", canvas]]
+const sheets = [["styles.css", base], ["design-system.css", design], ["responsive-foundation.css", responsive], ["canvas.css", canvas], ["focal-point-lab.css", focal]]
   .map(([name, source]) => ({ name, root: postcss.parse(source, { from: name }) }));
 
 const viewports = [
@@ -67,9 +73,14 @@ function mediaMatches(params, viewport) {
   });
 }
 
-function ruleActive(rule, viewport) {
+function ruleActive(rule, viewport, container) {
   for (let parent = rule.parent; parent; parent = parent.parent) {
     if (parent.type === "atrule" && parent.name === "media" && !mediaMatches(parent.params, viewport)) return false;
+    if (container && parent.type === "atrule" && parent.name === "container") {
+      const name = parent.params.match(/^([\w-]+)\s+\(/)?.[1];
+      if (name && name !== container.name) continue;
+      if (!mediaMatches(parent.params, { ...viewport, width: container.width })) return false;
+    }
   }
   return true;
 }
@@ -83,12 +94,12 @@ function specificity(selector) {
   ];
 }
 
-function winning(selectors, property, viewport) {
+function winning(selectors, property, viewport, container) {
   const matching = new Set(Array.isArray(selectors) ? selectors : [selectors]);
   let winner;
   let order = 0;
   for (const sheet of sheets) sheet.root.walkRules((rule) => {
-    if (!ruleActive(rule, viewport)) return;
+    if (!ruleActive(rule, viewport, container)) return;
     for (const selector of rule.selectors ?? []) {
       if (!matching.has(selector)) continue;
       const weight = specificity(selector);
@@ -103,6 +114,233 @@ function winning(selectors, property, viewport) {
   });
   return winner;
 }
+
+test("every posture keeps text, actions, and trailing icons inside a shared logical edge inset", () => {
+  const insetCases = [
+    [[".context-next-actions>button", ".context-column > .context-next-actions > button"], "--forma-pane-inset"],
+    [[".document-combined-contexts > summary", ".context-column > .document-combined-contexts > summary"], "--forma-pane-inset"],
+    [[".system-application-list>a", ".system-application-list > a"], "--forma-row-inset-inline"],
+    [[".role-evidence > ol > li"], "--forma-row-inset-inline"],
+    [[".generation-readiness > summary"], "--forma-row-inset-inline"],
+    [[".generation-context-links > li > a"], "--forma-row-inset-inline"],
+    [[".adapter-scenarios button"], "--forma-row-inset-inline"],
+    [[".workspace-settings-list > li"], "--forma-row-inset-inline"],
+    [[".analytics-review-list article"], "--forma-row-inset-inline"],
+    [[".design-next-actions article"], "--forma-row-inset-inline"],
+    [[".focal-lab-controls"], "--forma-row-inset-inline"],
+    [[".document-card > :is(header, h3, p, .document-card-actions)"], "--forma-card-inset"],
+    [[".asset-card > :is(.block-type, h3, p, div:last-child)"], "--forma-card-inset"],
+    [[".library-output-actions"], "--forma-card-inset"],
+    [[".document-artifact-jobs > span"], "--forma-row-inset-inline"],
+    [[".text-button"], "--forma-control-inset-inline"],
+    [[".icon-button.labeled"], "--forma-control-inset-inline"],
+    [[".gate-review .button"], "--forma-control-inset-inline"],
+    [[".reality-tools button"], "--forma-control-inset-inline"],
+    [[".editor-toolbar button"], "--forma-control-inset-inline"],
+    [[".creative-editor-item-main"], "--forma-control-inset-inline"],
+    [[".decision-spine button"], "--forma-control-inset-inline"],
+    [[".new-layer-button"], "--forma-control-inset-inline"],
+    [[".canvas-source-list button", ".application-canvas .canvas-source-list button"], "--forma-row-inset-inline"],
+    [[".canvas-semantic-dialog li button", ".application-canvas .canvas-semantic-dialog li button"], "--forma-row-inset-inline"],
+    [[".canvas-source-batch-actions", ".application-canvas .canvas-source-batch-actions"], "--forma-row-inset-inline"],
+  ];
+
+  for (const viewport of viewports) {
+    for (const [selectors, token] of insetCases) {
+      const declaration = winning(selectors, "padding-inline", viewport);
+      assert.ok(declaration?.value.includes(token), `${viewport.name}: ${selectors.join(" or ")} must resolve ${token}; got ${JSON.stringify(declaration)}`);
+    }
+
+    assert.match(winning(".document-generation-list > button > span", "padding-inline-end", viewport)?.value ?? "", /--forma-control-inset-inline/);
+    assert.equal(winning(".document-artifact-list > button", "padding", viewport)?.value, "0", `${viewport.name}: artwork remains intentionally full bleed`);
+    assert.equal(winning(".document-artifact-list > button > span", "padding", viewport)?.value, ".9rem 1rem 1rem", `${viewport.name}: full-bleed artwork retains its inset caption`);
+    assert.equal(winning([".context-next-actions>button", ".context-column > .context-next-actions > button"], "text-align", viewport)?.value, "start");
+    assert.equal(winning(".adapter-scenarios button", "text-align", viewport)?.value, "start");
+    for (const selector of [".forma-activity-card", ".forma-deliver-card", ".forma-deliver-summary > div"]) {
+      assert.equal(winning(selector, "padding", viewport)?.value, "var(--forma-card-inset)", `${viewport.name}: ${selector} respects density-aware surface spacing`);
+    }
+  }
+});
+
+test("safe-area gutters, scroll focus, and analytics separators adapt correctly to direction and width", () => {
+  assert.equal(winning(":root", "--forma-safe-inline-start", viewports[0])?.value, "env(safe-area-inset-left, 0px)");
+  assert.equal(winning(":root", "--forma-safe-inline-end", viewports[0])?.value, "env(safe-area-inset-right, 0px)");
+  assert.equal(winning(':root[dir="rtl"]', "--forma-safe-inline-start", viewports[0])?.value, "env(safe-area-inset-right, 0px)");
+  assert.equal(winning(':root[dir="rtl"]', "--forma-safe-inline-end", viewports[0])?.value, "env(safe-area-inset-left, 0px)");
+
+  for (const viewport of viewports.filter((entry) => entry.width <= 760)) {
+    assert.match(winning(".topbar", "padding-inline-start", viewport)?.value ?? "", /--forma-safe-inline-start/);
+    assert.match(winning(".topbar", "padding-inline-end", viewport)?.value ?? "", /--forma-safe-inline-end/);
+  }
+
+  for (const selector of [".workspace-settings-navigation > ul", ".artifact-kind-picker", ".studio-mode-links"]) {
+    assert.match(winning(selector, "scroll-padding-inline", viewports[0])?.value ?? "", /--forma-focus-clearance/, selector);
+  }
+
+  const divider = ".analytics-canvas-summary > div + div";
+  assert.equal(winning(divider, "border-inline-start", viewports[0])?.value, "0", "stacked phone metrics need horizontal separators only");
+  assert.match(winning(divider, "border-inline-start", viewports[5])?.value ?? "", /1px solid/, "side-by-side metrics retain a visible start divider");
+  assert.match(winning(divider, "padding-inline-start", viewports[0])?.value ?? "", /--forma-row-inset-inline/);
+
+  const landscape = viewports[2];
+  const navigation = ".application-creative > .application-task-navigation .ui-audience-navigation-list";
+  const chatResult = '.application-creative .chat-view-page .chat-workspace[data-result-open="true"] .chat-generation';
+  assert.match(winning(navigation, "padding-inline-start", landscape)?.value ?? "", /--forma-safe-inline-start/);
+  assert.doesNotMatch(winning(navigation, "padding-inline-start", landscape)?.value ?? "", /\bmin\(/, "landscape notch clearance is never capped");
+  assert.match(winning(".application-creative > #main-content", "padding-inline-start", landscape)?.value ?? "", /--forma-landscape-rail-width/);
+  assert.match(winning(".application-creative > #main-content", "padding-inline-end", landscape)?.value ?? "", /--forma-safe-inline-end/);
+  assert.match(winning(".application-creative .composer-dock", "inset-inline-end", landscape)?.value ?? "", /--forma-safe-inline-end/);
+  assert.match(winning(chatResult, "inset-inline-start", landscape)?.value ?? "", /--forma-landscape-rail-width/);
+  assert.match(winning(chatResult, "inset-inline-end", landscape)?.value ?? "", /--forma-safe-inline-end/);
+  assert.equal(winning(".application-canvas :is(.canvas-intent-dock, .canvas-organize-menu)", "inset-inline-start", landscape)?.value, "auto");
+  assert.equal(winning(".application-canvas .canvas-intent-stack", "inset-inline-end", landscape)?.value, "auto");
+  assert.match(winning(".application-canvas .canvas-zoom-hud", "inset-inline-start", landscape)?.value ?? "", /--forma-safe-inline-start/);
+});
+
+test("component shadow roots and component-library previews share the same nonzero spacing contract", () => {
+  const shadowSource = slottedComponents.match(/const compositionStyles = css`([\s\S]*?)`;/)?.[1];
+  assert.ok(shadowSource, "the shared shadow-root stylesheet is available for inspection");
+  const shadow = postcss.parse(shadowSource, { from: "slotted-element.ts" });
+
+  for (const [selector, token] of [
+    [".ui-card", "--forma-card-inset"],
+    [".ui-list-item", "--forma-row-inset-inline"],
+    [".ui-disclosure > summary", "--forma-row-inset-inline"],
+    [".ui-disclosure > p", "--forma-row-inset-inline"],
+    [".ui-disclosure > slot:not([name])::slotted(p)", "--forma-row-inset-inline"],
+  ]) {
+    let declaration;
+    shadow.walkRules(selector, (rule) => rule.walkDecls(/^(?:padding|padding-inline)$/, (candidate) => { declaration = candidate; }));
+    assert.ok(declaration?.value.includes(token), `${selector}: expected ${token}, got ${declaration?.toString()}`);
+  }
+
+  assert.doesNotMatch(componentCatalog, /--forma-space-5\s*:\s*0(?:px)?\s*;/, "the reference must not teach edge-flush cards");
+  assert.match(componentCatalog, /\.component-preview\s*>\s*forma-ui-card\s*\{[^}]*--forma-card-inset:\s*var\(--forma-space-4,\s*1rem\)/s);
+  assert.match(responsive, /forma-ui-theme\[density="compact"\],[\s\S]*?--forma-row-inset-inline:\s*max\(\.75rem,\s*var\(--forma-space-3/s);
+  assert.match(winning('forma-ui-theme[density="compact"]', "--forma-card-inset", viewports[0])?.value ?? "", /max\(1rem,/);
+  assert.match(winning('forma-ui-theme[density="spacious"]', "--forma-card-inset", viewports[0])?.value ?? "", /max\(1\.5rem,/);
+});
+
+test("review, asynchronous production, organizational context, and exact-access workflows remain inset and reachable", () => {
+  assert.match(artifacts, /class="artifact-review-guidance"/);
+  assert.match(artifacts, /class="artifact-review-actions"/);
+  assert.match(artifacts, /Independent reviewer<select/);
+  assert.match(artifacts, /Required changes<textarea/);
+
+  for (const selector of [".document-artifact-reader > .artifact-review-guidance", ".document-artifact-reader > .artifact-review-actions"]) {
+    assert.match(winning(selector, "padding-inline", viewports[0])?.value ?? "", /--page-gutter/, selector);
+  }
+  assert.equal(winning(".document-artifact-reader", "overflow-y", viewports[2])?.value, "auto", "short landscape review remains scroll-reachable");
+  assert.equal(winning(".document-artifact-jobs > span", "display", viewports[0])?.value, "flex", "Inspect and Stop can wrap without implicit grid collisions");
+  assert.equal(winning(".document-artifact-jobs > span", "flex-wrap", viewports[0])?.value, "wrap");
+
+  assert.match(accessManagement, /class="access-grant-form"/);
+  assert.match(accessManagement, /class="access-grant-list"/);
+  assert.equal(winning(".access-grant-form", "display", viewports[0])?.value, "grid");
+  assert.equal(winning(".access-grant-list > li", "flex-wrap", viewports[0])?.value, "wrap");
+
+  assert.match(library, /class="library-context-version-review"/);
+  assert.match(library, /class="library-context-block-selection"/);
+  assert.equal(winning(".library-context-version-review li", "overflow-wrap", viewports[0])?.value, "anywhere");
+  assert.equal(winning(".library-assigned-reviews .workspace-settings-list > li", "flex-wrap", viewports[0])?.value, "wrap");
+  assert.match(winning(".drag-handle", "min-inline-size", viewports[0])?.value ?? "", /--forma-hit-target/);
+  assert.match(winning(".layer-order > button", "min-inline-size", viewports[0])?.value ?? "", /--forma-hit-target/);
+
+  for (const selector of [
+    ".filterbar input", ".filterbar select", ".builder-controls select", ".timeline-control select", ".analytics-controls select",
+    ".output-actions > button", ".document-insight > button", ".compile-bridge > button", ".creative-plan-section > header > button",
+    ".creative-editor-item-toggle", ".creative-inspector-order > button", ".creative-inspector-actions > button",
+  ]) {
+    assert.match(winning(selector, "min-block-size", viewports[0])?.value ?? "", /--forma-hit-target/, `${selector} remains a real 44px target`);
+  }
+  assert.match(winning(".document-artifact-failures article > div:last-child > .button", "min-height", viewports[0])?.value ?? "", /--forma-hit-target/);
+  assert.match(winning(".reference-finding-preferences label > span", "min-block-size", viewports[0])?.value ?? "", /--forma-hit-target/);
+  assert.match(winning(".focal-lab-controls button", "min-height", viewports[0])?.value ?? "", /--forma-hit-target/);
+});
+
+test("generation failure recovery cards adapt to their actual pane instead of crushing guidance beside actions", () => {
+  const card = [".document-artifact-failures article", ".document-artifact-failures > article.document-artifact-failure-card"];
+  const actions = [
+    ".document-artifact-failures article > div:last-child",
+    ".document-artifact-failures article>div:last-child",
+    ".document-artifact-failures article > div.document-artifact-failure-actions",
+  ];
+  const actionButton = ".document-artifact-failures article > div.document-artifact-failure-actions > .button";
+
+  assert.equal(winning(".document-artifact-failures", "container", viewports[6])?.value, "document-artifact-failures / inline-size");
+  assert.match(artifacts, /class="document-artifact-failures" role="region" aria-label="Recent document render issues"/);
+  assert.match(artifacts, /class="document-artifact-failure-copy"/);
+  assert.match(artifacts, /class="document-artifact-failure-actions"/);
+  assert.match(artifacts, /class="document-artifact-failure-format"/);
+  assert.match(artifacts, /<h3>\$\{guidance\.title\}<\/h3>/);
+  const cardRule = sheets.find((sheet) => sheet.name === "responsive-foundation.css")?.root.nodes.find((rule) =>
+    rule.type === "rule" && rule.selector === ".document-artifact-failures > article.document-artifact-failure-card",
+  );
+  assert.ok(cardRule, "failure cards have their own explicit design-system surface");
+  assert.match(cardRule.nodes.find((declaration) => declaration.prop === "border")?.value ?? "", /^1px solid /);
+  assert.equal(cardRule.nodes.some((declaration) => /^border-(?:inline|block)(?:-(?:start|end))?$/.test(declaration.prop ?? "")), false, "rounded failure cards preserve equally balanced borders on every edge");
+
+  for (const viewport of viewports) for (const width of [240, 280, 320, 390, 480, 640, 799, 800, 960]) {
+    const container = { name: "document-artifact-failures", width };
+    const label = `${viewport.name}, ${width}px available pane`;
+    assert.equal(winning(card, "display", viewport, container)?.value, "grid", `${label}: card layout overrides the legacy nonwrapping flex row`);
+    assert.equal(
+      winning(card, "grid-template-columns", viewport, container)?.value,
+      width >= 800 ? "minmax(18rem, 1fr) minmax(0, 27rem)" : "minmax(0, 1fr)",
+      `${label}: copy only shares its row when the component itself has enough space`,
+    );
+    assert.equal(winning(actions, "flex", viewport, container)?.value, "1 1 auto", `${label}: buttons never retain their legacy flex:none intrinsic width`);
+    assert.equal(winning(actions, "display", viewport, container)?.value, width >= 544 ? "flex" : "grid", `${label}: narrow panes use a compact two-row action grid`);
+    assert.match(winning(card, "padding", viewport, container)?.value ?? "", /--forma-card-inset/, `${label}: content preserves density-aware breathing room`);
+    assert.equal(winning(actionButton, "white-space", viewport, container)?.value, "normal", `${label}: translated recovery actions can wrap`);
+    assert.equal(winning(actionButton, "overflow-wrap", viewport, container)?.value, "anywhere", `${label}: unusually long recovery labels cannot overflow`);
+    assert.match(winning(actionButton, "min-height", viewport, container)?.value ?? "", /--forma-hit-target/, `${label}: action controls remain at least 44px tall`);
+  }
+
+  assert.equal(winning(".document-artifact-failures article > div.document-artifact-failure-actions > .button:first-child", "grid-column", viewports[0])?.value, "1 / -1");
+  assert.equal(winning(".document-artifact-failures article > div.document-artifact-failure-actions > .button:nth-child(4)", "grid-column", viewports[0])?.value, "1 / -1", "rare four-action administrative failures keep dismissal comfortably touchable");
+  assert.match(winning(".document-artifact-failure-details > summary", "min-block-size", viewports[0])?.value ?? "", /--forma-hit-target/);
+  assert.equal(winning(".document-artifact-failure-receipt", "overflow", viewports[0])?.value, "auto");
+  assert.match(winning(".document-artifact-failure-receipt", "max-block-size", viewports[0])?.value ?? "", /11rem/);
+  assert.equal(winning(".document-artifact-failure-receipt > code", "overflow-wrap", viewports[0])?.value, "anywhere");
+
+  const failureMarkup = artifacts.split('class="document-artifact-failures"')[1].split("${this.#productionDesk")[0];
+  assert.ok(failureMarkup.indexOf('class="button primary compact"') < failureMarkup.indexOf(">Inspect inputs</button>"), "the truthful recovery action is first in DOM and keyboard order");
+  assert.ok(failureMarkup.indexOf(">Inspect inputs</button>") < failureMarkup.indexOf(">Dismiss</button>"), "inspection remains available before durable dismissal");
+  assert.ok(failureMarkup.indexOf(">Dismiss</button>") < failureMarkup.indexOf("<summary>Technical details</summary>"), "bounded technical diagnostics stay collapsed after essential actions");
+  assert.match(failureMarkup, /const infrastructureBlocked=Boolean\(detail&&!recoverable&&!guidance\.retryAllowed&&guidance\.actionUrl/);
+  assert.match(failureMarkup, /authorizedGenerationFailureRemediation\(guidance,session\)/);
+  assert.match(failureMarkup, /\{href:"\/settings",label:this\.i18n\.system\("Review settings"\),external:false\}/);
+  assert.match(failureMarkup, /session&&!session\.impersonation/);
+  assert.match(failureMarkup, /rel=\$\{remediation\.external\?"noopener noreferrer":nothing\}/);
+  assert.ok(failureMarkup.indexOf('href=${remediation.href}') < failureMarkup.indexOf('>${this.i18n.system("Review & change request")}</button>'), "authorized terminal account failures prioritize their actual remedy without losing localized manual request review");
+  assert.match(failureMarkup, /detail\?\.requestId\|\|detail\?\.code\|\|detail\?\.httpStatus\?html`<details/);
+  assert.match(failureMarkup, /class="document-artifact-failure-receipt" tabindex="0" aria-label=/);
+  assert.doesNotMatch(failureMarkup, /\$\{(?:detail\?\.message|job\.error)\}/, "raw provider messages never enter the visible card or hidden disclosure");
+  assert.match(artifacts, /#dismissFailure\(jobId:string,event:Event\)/);
+  assert.match(artifacts, /next\?\.querySelector<HTMLElement>\("\.document-artifact-failure-actions > \.button"\)/);
+});
+
+test("the document overview adapts to actual workbench width without losing keyboard access or desktop state", () => {
+  assert.match(workspace, /#workbenchInspectorOpen=true/);
+  assert.match(workspace, /#inlineInspectorOpen=true/);
+  assert.match(workspace, /#drawerInspectorOpen=false/);
+  assert.match(workspace, /new ResizeObserver\(this\.#syncInspectorPosture\)/);
+  assert.match(workspace, /const compact=width<70\*rootSize/);
+  assert.match(workspace, /const restoreFocus=this\.querySelector\("#document-workbench-inspector"\)\?\.contains\(document\.activeElement\)/);
+  assert.match(workspace, /this\.#inspectorObserver\?\.disconnect\(\)/);
+  assert.match(workspace, /#toggleWorkbenchInspector\(open=!this\.#workbenchInspectorOpen\)/);
+  assert.match(workspace, /event\.key==="Escape"[\s\S]*?this\.#toggleWorkbenchInspector\(false\)/);
+  assert.match(workspace, /open\?"\.document-inspector-close":"\.document-inspector-toggle"\)\?\.focus\(\{preventScroll:true\}\)/);
+  assert.match(workspace, /aria-expanded=\$\{this\.#workbenchInspectorOpen\}/);
+  assert.match(responsive, /@container studio \(max-width: 69\.99rem\)[\s\S]*?\.document-workbench-inspector:not\(\[hidden\]\)\s*\{[^}]*position:\s*fixed/s);
+  assert.match(responsive, /@container studio \(min-width: 70rem\)[\s\S]*?\.studio-grid\[data-inspector-open="true"\]/);
+  assert.equal(winning(".document-inspector-toggle", "display", viewports[0])?.value, "inline-flex");
+  assert.match(responsive, /\.layers-panel\s*>\s*ol\s*\{\s*container:\s*layers\s*\/\s*inline-size/);
+  assert.match(responsive, /@container layers \(max-width: 19rem\)[\s\S]*?\.layers-panel li > \.layer-order/);
+  assert.match(responsive, /@container studio \(max-width: 720px\)[\s\S]*?\.layers-panel > ol\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(min\(19rem,\s*100%\),\s*1fr\)\)/);
+  assert.equal(winning(".application-canvas .canvas-item.selected :is(.canvas-image-open, .reference-image-open, .canvas-artifact-open)", "inset-block-start", viewports[1])?.value, "auto", "selected artifact controls never stretch between legacy top and logical bottom anchors");
+});
 
 test("the final responsive cascade keeps Search, Ask, and every collection accessible", () => {
   for (const viewport of viewports.filter((entry) => entry.width <= 760)) {
@@ -132,6 +370,10 @@ test("custom controls and zoomed Canvas handles retain real 44-pixel hit areas",
 });
 
 test("document view links stay on one line without losing their intrinsic content width",()=>{
+  for(const viewport of viewports){
+    assert.equal(winning(".studio-mode-links","margin-block",viewport)?.value,"-8px",`${viewport.name}: scrollbars retain vertical breathing room`);
+    assert.equal(winning(".studio-mode-links","padding-block",viewport)?.value,"8px",`${viewport.name}: scrollbar spacing does not change the navigation row height`);
+  }
   for(const viewport of viewports)for(const selector of [".studio-mode-nav > .studio-mode-links > a",".studio-mode-nav > .studio-mode-families > a"]){
     assert.equal(winning([".studio-mode-nav a",selector],"white-space",viewport)?.value,"nowrap",`${viewport.name}: ${selector}`);
     assert.equal(winning([".studio-mode-nav a",selector],"inline-size",viewport)?.value,"max-content",`${viewport.name}: ${selector}`);

@@ -39,9 +39,50 @@ export class FormaWorkspace extends FormaElement {
   #projectSettings=false;#projectName="";#projectState="active";#deleteDocument=false;
   #linkedBlockId="";
   #workbenchInspectorOpen=true;
+  #inlineInspectorOpen=true;
+  #drawerInspectorOpen=false;
+  #compactInspector=false;
+  #inspectorObserver?:ResizeObserver;
+  #inspectorObserved?:Element;
+
+  #syncInspectorPosture=(entries:ResizeObserverEntry[])=>{
+    const width=entries[0]?.contentRect.width;
+    if(!width)return;
+    const rootSize=Number.parseFloat(getComputedStyle(document.documentElement).fontSize)||16;
+    const compact=width<70*rootSize;
+    if(compact===this.#compactInspector)return;
+    const restoreFocus=this.querySelector("#document-workbench-inspector")?.contains(document.activeElement)??false;
+    this.#compactInspector=compact;
+    this.#workbenchInspectorOpen=compact?this.#drawerInspectorOpen:this.#inlineInspectorOpen;
+    this.requestUpdate();
+    if(restoreFocus)void this.updateComplete.then(()=>this.querySelector<HTMLElement>(".document-inspector-toggle")?.focus({preventScroll:true}));
+  };
+
+  #toggleWorkbenchInspector(open=!this.#workbenchInspectorOpen){
+    this.#workbenchInspectorOpen=open;
+    if(this.#compactInspector)this.#drawerInspectorOpen=open;
+    else this.#inlineInspectorOpen=open;
+    this.requestUpdate();
+    if(this.#compactInspector)void this.updateComplete.then(()=>{
+      this.querySelector<HTMLElement>(open?".document-inspector-close":".document-inspector-toggle")?.focus({preventScroll:true});
+    });
+  }
+
+  override disconnectedCallback(){
+    this.#inspectorObserver?.disconnect();
+    this.#inspectorObserved=undefined;
+    super.disconnectedCallback();
+  }
 
   protected override updated() {
     this.querySelectorAll<HTMLDialogElement>("dialog.workspace-modal").forEach((dialog)=>ensureModalDialog(dialog));
+    const studio=this.querySelector(".studio-main");
+    if(studio&&studio!==this.#inspectorObserved){
+      this.#inspectorObserver?.disconnect();
+      this.#inspectorObserver??=new ResizeObserver(this.#syncInspectorPosture);
+      this.#inspectorObserver.observe(studio);
+      this.#inspectorObserved=studio;
+    }
     const linkedBlockId=documentContextBlockFromRoute(this.store.route.get())??"";
     if(linkedBlockId&&linkedBlockId!==this.#linkedBlockId){
       this.#linkedBlockId=linkedBlockId;
@@ -264,13 +305,13 @@ export class FormaWorkspace extends FormaElement {
             ${p.blocks.length?html`<div class="document-insight"><span>${icon("branch")}</span><p>${documentInsight}</p>${canAuthor?html`<button @click=${()=>this.store.setRoute("/studio/board")}>See spatially ${icon("arrow")}</button>`:nothing}</div>`:nothing}
             <details class="context-provenance"><summary>How these decisions are preserved</summary><div class="compile-bridge"><span>${icon("branch")}</span><div><b>Traceable creative history</b><small>${p.latestCompile ? this.i18n.system("The latest result retains its exact creative inputs") : this.i18n.system("Every decision will remain available with its next result")}</small></div><button @click=${() => this.store.patchUi({ inspectorOpen:true })}>Inspect</button></div></details>
           </section>
-          <section class="output-column" aria-labelledby="output-title"><div class="section-heading"><div><span class="eyebrow">${this.store.session.get()?.provider.configured ? this.i18n.system("Images, stories, presentations & motion") : this.i18n.system("Connect a provider to begin")}</span><h2 id="output-title">Your results</h2></div><div class="output-heading-actions"><button class="text-button" ?disabled=${!canCompare} title=${canCompare?this.i18n.system("Compare output history"):this.i18n.system("Generate one more output to compare")} @click=${this.#compare}>Compare history</button><button type="button" class="button secondary compact document-inspector-toggle" aria-controls="document-workbench-inspector" aria-expanded=${this.#workbenchInspectorOpen} @click=${()=>{this.#workbenchInspectorOpen=!this.#workbenchInspectorOpen;this.requestUpdate();}}>${this.i18n.t(this.#workbenchInspectorOpen?"workbench.hideInspector":"workbench.showInspector",this.#workbenchInspectorOpen?"Hide overview":"Show overview")}</button></div></div>
+          <section class="output-column" aria-labelledby="output-title"><div class="section-heading"><div><span class="eyebrow">${this.store.session.get()?.provider.configured ? this.i18n.system("Images, stories, presentations & motion") : this.i18n.system("Connect a provider to begin")}</span><h2 id="output-title">Your results</h2></div><div class="output-heading-actions"><button class="text-button" ?disabled=${!canCompare} title=${canCompare?this.i18n.system("Compare output history"):this.i18n.system("Generate one more output to compare")} @click=${this.#compare}>Compare history</button><button type="button" class="button secondary compact document-inspector-toggle" aria-controls="document-workbench-inspector" aria-expanded=${this.#workbenchInspectorOpen} @click=${()=>this.#toggleWorkbenchInspector()}>${this.i18n.t(this.#workbenchInspectorOpen?"workbench.hideInspector":"workbench.showInspector",this.#workbenchInspectorOpen?"Hide overview":"Show overview")}</button></div></div>
             <forma-document-artifacts compact source="document"></forma-document-artifacts>
             ${previewProgress?html`<div class="output-card primary streaming-output-card"><div class="output-art"><div class="streaming-preview"><img class="streaming-preview-image" src=${previewProgress.mediaUrl} width=${previewProgress.width} height=${previewProgress.height} alt="Early image preview still being refined"><span>Early preview · finalizing</span></div></div><div class="output-info"><div><span class="output-quality draft">Draft arriving</span><b>The plan is becoming visible</b><small>The finished draft will appear here automatically.</small></div></div></div>`:selectedItem?.kind==="fan"?html`<article class="output-card primary prompt-fan-output-card"><forma-prompt-fan-visual .outputs=${selectedItem.outputs}></forma-prompt-fan-visual><div class="output-info"><div><span class=${`output-quality ${selectedItem.purpose==="ideate"?"draft":"full"}`}>${selectedItem.purpose==="ideate"?this.i18n.system("Draft fan"):this.i18n.system("Full-quality fan")}</span><b>One generation · four prompt processes</b><small>${selectedItem.complete} of 4 ready · ${selectedItem.standaloneCount} promoted to stand alone</small></div></div><forma-prompt-fan-review .fanId=${selectedItem.id}></forma-prompt-fan-review></article>`:output ? html`<forma-output-card .output=${output} .primary=${true}></forma-output-card>` : html`<div class="empty-output"><span>${icon("image")}</span><h3>${p.blocks.length ? this.i18n.system("Context is ready") : this.i18n.system("A genuinely blank canvas")}</h3><p>${p.blocks.length ? this.i18n.system("Your creative decisions are ready to become an image or another finished result.") : this.i18n.system("Nothing has been added yet. Start only when you are ready.")}</p></div>`}
             ${history.length > 1 ? html`<div class="output-filmstrip" aria-label="Previous generations">${history.slice(1,5).map((item:GenerationHistoryItem)=>{const id=item.kind==="fan"?`fan:${item.id}`:item.id;return html`<button class="mini-output ${this.store.ui.selectedOutputId===id?"selected":""}" aria-label=${item.kind==="fan"?this.i18n.system("Select fan generation"):this.i18n.system("Select {id}", { id: item.id })} aria-pressed=${this.store.ui.selectedOutputId===id} @click=${() => { this.store.patchUi({ selectedOutputId:id }); if (!projectContext&&item.kind==="output"&&this.store.ui.instrumentation) void this.store.hot({type:"ObjectViewed",payload:{object_id:item.id}}); }}>${item.kind==="fan"?html`<forma-prompt-fan-visual .outputs=${item.outputs} .compact=${true}></forma-prompt-fan-visual>`:html`<forma-output-visual .output=${item.output} .compact=${true}></forma-output-visual>`}</button>`;})}</div>` : nothing}
             ${canAuthor?html`<form class="reference-picker-form" @submit=${(event:SubmitEvent)=>event.preventDefault()}><label class="dropzone"><input type="file" accept="image/*,.pdf,.txt,.md,.csv,.json,.docx,.pptx,.xlsx" @change=${this.#queueUpload}><span>${icon("plus")}</span><b>${this.#uploading ? this.i18n.system("Uploading…") : this.i18n.system("Drop or choose an image or source document")}</b><small>Private, rights-confirmed evidence with a verifiable content hash.</small></label></form>`:nothing}
           </section>
-          <aside id="document-workbench-inspector" class="document-workbench-inspector" ?hidden=${!this.#workbenchInspectorOpen} aria-labelledby="document-workbench-inspector-heading"><header><span class="eyebrow">${p.projectName}</span><h2 id="document-workbench-inspector-heading">${this.i18n.t("workbench.inspector","Document overview")}</h2><p dir="auto">${p.documentTitle}</p></header><section><h3>${this.i18n.t("workbench.contextHealth","Context health")}</h3><strong>${this.i18n.number(health.score)}/100</strong><small>${this.i18n.number(p.blocks.length)} ${this.i18n.system("creative decisions")}</small>${health.issues.length?html`<ul>${health.issues.slice(0,3).map((issue)=>html`<li>${this.#healthIssueCopy(issue,"label")}</li>`)}</ul>`:nothing}</section><section><h3>${this.i18n.t("workbench.activeTasks","Active tasks")}</h3>${documentTasks.length?html`<ul>${documentTasks.map((job)=>html`<li><span>${this.i18n.t(`activity.kind.${job.kind}`,job.kind)}</span><small>${this.i18n.t(`activity.status.${job.status}`,job.status)}</small></li>`)}</ul>`:html`<small>${this.i18n.t("workbench.noTasks","No active tasks")}</small>`}</section><section><h3>${this.i18n.t("workbench.reviewQueue","Review queue")}</h3>${documentReviews.length?html`<ul>${documentReviews.map((review)=>html`<li><b dir="auto">${review.artifactTitle}</b><button type="button" class="button secondary compact" @click=${()=>void this.store.openAssignedReview(review)}>${this.i18n.t("activity.openReview","Open assigned review")}</button></li>`)}</ul>`:html`<small>${this.i18n.number(0)}</small>`}</section><section><h3>${this.i18n.t("workbench.deliveryReady","Ready to deliver")}</h3><strong>${this.i18n.number(history.length+p.artifacts.length)}</strong><button type="button" class="button secondary compact" @click=${()=>this.store.setRoute("/deliver")}>${this.i18n.t("shell.navigation.deliver","Deliver")} ${icon("arrow")}</button></section><button type="button" class="button ghost compact" @click=${()=>this.store.setRoute("/activity")}>${this.i18n.t("shell.navigation.activity","Activity")} ${icon("arrow")}</button></aside>
+          <aside id="document-workbench-inspector" class="document-workbench-inspector" ?hidden=${!this.#workbenchInspectorOpen} aria-labelledby="document-workbench-inspector-heading" @keydown=${(event:KeyboardEvent)=>{if(this.#compactInspector&&event.key==="Escape"){event.preventDefault();this.#toggleWorkbenchInspector(false);}}}><header>${this.#compactInspector?html`<button type="button" class="icon-button document-inspector-close" aria-label=${this.i18n.t("workbench.hideInspector","Hide overview")} @click=${()=>this.#toggleWorkbenchInspector(false)}>${icon("close")}</button>`:nothing}<span class="eyebrow">${p.projectName}</span><h2 id="document-workbench-inspector-heading">${this.i18n.t("workbench.inspector","Document overview")}</h2><p dir="auto">${p.documentTitle}</p></header><section><h3>${this.i18n.t("workbench.contextHealth","Context health")}</h3><strong>${this.i18n.number(health.score)}/100</strong><small>${this.i18n.number(p.blocks.length)} ${this.i18n.system("creative decisions")}</small>${health.issues.length?html`<ul>${health.issues.slice(0,3).map((issue)=>html`<li>${this.#healthIssueCopy(issue,"label")}</li>`)}</ul>`:nothing}</section><section><h3>${this.i18n.t("workbench.activeTasks","Active tasks")}</h3>${documentTasks.length?html`<ul>${documentTasks.map((job)=>html`<li><span>${this.i18n.t(`activity.kind.${job.kind}`,job.kind)}</span><small>${this.i18n.t(`activity.status.${job.status}`,job.status)}</small></li>`)}</ul>`:html`<small>${this.i18n.t("workbench.noTasks","No active tasks")}</small>`}</section><section><h3>${this.i18n.t("workbench.reviewQueue","Review queue")}</h3>${documentReviews.length?html`<ul>${documentReviews.map((review)=>html`<li><b dir="auto">${review.artifactTitle}</b><button type="button" class="button secondary compact" @click=${()=>void this.store.openAssignedReview(review)}>${this.i18n.t("activity.openReview","Open assigned review")}</button></li>`)}</ul>`:html`<small>${this.i18n.number(0)}</small>`}</section><section><h3>${this.i18n.t("workbench.deliveryReady","Ready to deliver")}</h3><strong>${this.i18n.number(history.length+p.artifacts.length)}</strong><button type="button" class="button secondary compact" @click=${()=>this.store.setRoute("/deliver")}>${this.i18n.t("shell.navigation.deliver","Deliver")} ${icon("arrow")}</button></section><button type="button" class="button ghost compact" @click=${()=>this.store.setRoute("/activity")}>${this.i18n.t("shell.navigation.activity","Activity")} ${icon("arrow")}</button></aside>
         </div>
       </div>
       ${this.store.ui.inspectorOpen ? this.#inspector() : nothing}

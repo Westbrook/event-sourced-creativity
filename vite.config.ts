@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import { resolve } from "node:path";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
@@ -85,7 +86,24 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
-    build: { manifest: true, rollupOptions: { output: { entryFileNames: applicationChunkName, chunkFileNames: applicationChunkName } } },
+    build: {
+      manifest: true,
+      rollupOptions: {
+        output: { entryFileNames: applicationChunkName, chunkFileNames: applicationChunkName },
+      },
+    },
+    environments: {
+      client: {
+        build: {
+          rollupOptions: {
+            input: {
+              index: resolve(import.meta.dirname, "index.html"),
+              marketing: resolve(import.meta.dirname, "marketing.html"),
+            },
+          },
+        },
+      },
+    },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,

@@ -300,7 +300,7 @@ export class DocumentArtifacts extends FormaElement {
             <p>${guidance.summary}</p>
           </div>
           <div class="document-artifact-failure-actions">
-            ${remediation?html`<a class="button primary compact" href=${remediation.href} target=${remediation.external?"_blank":"_self"} rel=${remediation.external?"noopener noreferrer":nothing}>${remediation.label}</a><button type="button" class="button secondary compact" @click=${()=>this.#prepareRetry(kind)}>Review & change request</button>`:html`<button type="button" class="button primary compact" @click=${()=>recoverable?this.#recover(job.jobId):this.#prepareRetry(kind)}>${recoverable?this.i18n.system("Recover saved render"):this.i18n.system("Review & change request")}</button>`}
+            ${remediation?html`<a class="button primary compact" href=${remediation.href} target=${remediation.external?"_blank":"_self"} rel=${remediation.external?"noopener noreferrer":nothing}>${remediation.label}</a><button type="button" class="button secondary compact" @click=${()=>this.#prepareRetry(kind)}>${this.i18n.system("Review & change request")}</button>`:html`<button type="button" class="button primary compact" @click=${()=>recoverable?this.#recover(job.jobId):this.#prepareRetry(kind)}>${recoverable?this.i18n.system("Recover saved render"):this.i18n.system("Review & change request")}</button>`}
             <button type="button" class="button secondary compact" @click=${()=>this.#inspectFailedInputs(job)}>Inspect inputs</button>
             <button type="button" class="button ghost compact" aria-label=${this.i18n.system("Dismiss this generation issue")} @click=${(event:Event)=>void this.#dismissFailure(job.jobId,event)}>Dismiss</button>
           </div>

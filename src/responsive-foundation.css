@@ -14,8 +14,38 @@
   --forma-stage-min: 35rem;
   --forma-reading-max: 75ch;
   --forma-pane-gap: clamp(.625rem, 1.2vi, 1.125rem);
+  --forma-pane-inset: clamp(1rem, 1.6vi, 1.25rem);
+  --forma-surface-inset: clamp(1rem, 1.8vi, 1.5rem);
+  --forma-card-inset: clamp(1rem, 1.5vi, 1.25rem);
+  --forma-row-inset-inline: max(.75rem, var(--forma-space-3, .75rem));
+  --forma-row-inset-block: var(--forma-space-2, .5rem);
+  --forma-control-inset-inline: var(--forma-row-inset-inline);
+  --forma-cluster-gap: var(--forma-space-2, .5rem);
+  --forma-focus-clearance: .5rem;
+  --forma-safe-inline-start: env(safe-area-inset-left, 0px);
+  --forma-safe-inline-end: env(safe-area-inset-right, 0px);
+  --forma-landscape-rail-width: calc(var(--forma-nav-rail-width) + var(--forma-safe-inline-start));
   --forma-workbench-chrome: 10.5rem;
   --forma-keyboard-offset: 0px;
+}
+
+:root[dir="rtl"] {
+  --forma-safe-inline-start: env(safe-area-inset-right, 0px);
+  --forma-safe-inline-end: env(safe-area-inset-left, 0px);
+}
+
+forma-ui-theme[density="compact"],
+forma-ui-theme[density="spacious"] {
+  --forma-row-inset-inline: max(.75rem, var(--forma-space-3, .75rem));
+  --forma-control-inset-inline: var(--forma-row-inset-inline);
+}
+
+forma-ui-theme[density="compact"] {
+  --forma-card-inset: max(1rem, var(--forma-space-4, .875rem));
+}
+
+forma-ui-theme[density="spacious"] {
+  --forma-card-inset: max(1.5rem, var(--forma-space-6, 1.5rem));
 }
 
 .app-shell,
@@ -31,6 +61,821 @@
 .forma-activity-main,
 .forma-deliver-main {
   min-inline-size: 0;
+}
+
+:root[dir="rtl"] forma-project-rail,
+:root[dir="rtl"] .context-column {
+  border-right: 0;
+}
+
+/* Panes own modest, bounded gutters; separators and authored media may bleed. */
+.context-column > .section-heading,
+.output-column > .section-heading {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  padding-inline: var(--forma-pane-inset);
+}
+
+.context-column > .context-next-actions > button,
+.context-column > .document-combined-contexts > summary,
+.context-column > .document-combined-contexts > div {
+  min-inline-size: 0;
+  padding-inline: var(--forma-pane-inset);
+  text-align: start;
+}
+
+.context-column > .context-next-actions > button,
+.context-column > .document-combined-contexts > summary {
+  min-block-size: var(--forma-hit-target);
+}
+
+.context-column > .context-next-actions > button > span {
+  min-inline-size: 0;
+}
+
+.context-column > .context-next-actions > button > svg {
+  flex: 0 0 auto;
+}
+
+.context-column > :is(.blank-context, .add-block, .document-insight, .context-provenance),
+.output-column > :is(forma-document-artifacts, forma-output-card, .output-card, .output-filmstrip, .reference-picker-form) {
+  margin-inline: var(--forma-pane-inset);
+}
+
+.output-column > :is(forma-document-artifacts, forma-output-card) {
+  display: block;
+  min-inline-size: 0;
+}
+
+.context-column > .add-block {
+  inline-size: calc(100% - 2 * var(--forma-pane-inset));
+}
+
+.studio-subpage-body:not(.studio-subpage-body--chat) {
+  box-sizing: border-box;
+  padding-inline: var(--page-gutter);
+}
+
+html[data-document-focus] .studio-subpage-body {
+  padding-inline: 0;
+}
+
+/* Gallery imagery stays full bleed; its decision-making copy owns the inset. */
+.document-library-grid > .document-card {
+  background: var(--forma-color-surface);
+  border: 1px solid var(--forma-color-border);
+  border-radius: var(--forma-radius-medium, .625rem);
+}
+
+.document-library-grid > .document-card.current {
+  border-color: var(--forma-color-accent, var(--orange));
+}
+
+.asset-grid,
+.library-output-grid,
+.document-library-grid,
+.project-block-grid {
+  gap: clamp(1rem, 1.5vi, 1.5rem);
+}
+
+.view-readiness,
+.next-best-action,
+.context-board > .board-lane {
+  padding: var(--forma-card-inset);
+  background: var(--forma-color-surface);
+  border: 1px solid var(--forma-color-border);
+  border-radius: var(--forma-radius-medium, .625rem);
+}
+
+.context-board {
+  gap: clamp(1rem, 2vi, 1.75rem);
+}
+
+.document-card > :is(header, h3, p, .document-card-actions),
+.asset-card > :is(.block-type, h3, p, div:last-child),
+.library-output-actions,
+.family-card > div:not(.family-collage) {
+  padding-inline: var(--forma-card-inset);
+}
+
+.document-card > header {
+  padding-block-start: var(--forma-card-inset);
+}
+
+.document-card > .document-card-actions,
+.asset-card > div:last-child,
+.library-output-actions {
+  padding-block-end: var(--forma-card-inset);
+}
+
+.asset-card-actions {
+  display: flex;
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  gap: var(--forma-cluster-gap);
+}
+
+.focus-preview-actions {
+  display: flex;
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  gap: var(--forma-row-inset-inline);
+  margin-block-start: var(--forma-row-inset-inline);
+}
+
+.family-members {
+  padding: var(--forma-focus-clearance);
+  scroll-padding-inline: var(--forma-focus-clearance);
+}
+
+.asset-card-actions > button,
+.family-members > :is(a, button),
+.account-nav > a,
+.tree-name,
+.rail-project-actions > :is(a, button),
+.collection-rail-filter > button {
+  min-block-size: var(--forma-hit-target);
+}
+
+.asset-card-actions > button,
+.family-members > :is(a, button),
+.account-nav > a,
+.tree-name {
+  padding-inline: var(--forma-control-inset-inline);
+}
+
+.document-generation-list > button > span {
+  min-inline-size: 0;
+  padding-inline-end: var(--forma-control-inset-inline);
+}
+
+/* One border-adjacent row contract spans Creator and specialist applications. */
+.system-application-list > a,
+.design-next-actions article,
+.design-output-catalog article,
+.design-disclosure > summary,
+.role-evidence > ol > li,
+.generation-readiness > summary,
+.generation-readiness-qualities > li,
+.generation-readiness-probes > article,
+.generation-context-links > li > a,
+.generation-context-links li.unresolved,
+.adapter-scenarios button,
+.adapter-contracts article,
+.canvas-governance-card,
+.canvas-governance-card dl > div,
+.canvas-gate-requirements article,
+.canvas-adapter-readiness article,
+.actual-cost-breakdown > div,
+.workflow-memory-list > div,
+.adaptive-model-suggestions article,
+.guided-brief--focused .guided-question,
+.whole-document-groups > section,
+.share-list > div,
+.reference-finding-grid article,
+.corpus-results article,
+.workspace-settings-list > li,
+.workspace-settings-project-list > li,
+.workspace-settings-audit > li,
+.analytics-improvement li,
+.analytics-evidence summary,
+.analytics-evidence-item,
+.analytics-review-list article,
+.analytics-view-list article,
+.analytics-reliability dl div,
+.analytics-failure-surfaces p,
+.analytics-warning-outcome dl div,
+.analytics-quality dl > div,
+.analytics-block-grid > div,
+.analytics-canvas-summary > div {
+  min-inline-size: 0;
+  padding-inline: var(--forma-row-inset-inline);
+}
+
+.adapter-scenarios button,
+.document-generation-list > button {
+  text-align: start;
+}
+
+.analytics-block-grid > div + div,
+.analytics-canvas-summary > div + div {
+  padding-left: var(--forma-row-inset-inline);
+  padding-inline-start: max(var(--forma-row-inset-inline), clamp(1rem, 3vi, 2rem));
+  border-left: 0;
+  border-inline-start: 1px solid var(--forma-color-border);
+}
+
+.library-block-browser:not(.collapsed) > header,
+.library-block-filing:not(.collapsed) > header,
+.library-block-browser-section > b,
+.library-block-browser-section > p,
+.library-block-filing:not(.collapsed) > p,
+.rail-project-card,
+.rail-note,
+.rail-stream,
+.collection-rail-filter {
+  padding-inline: var(--forma-row-inset-inline);
+}
+
+.tree-row {
+  min-block-size: var(--forma-hit-target);
+  padding-inline: var(--forma-focus-clearance);
+}
+
+.project-rail .collection-tree {
+  padding-inline: var(--forma-focus-clearance);
+}
+
+.workspace-settings-navigation > ul,
+.artifact-kind-picker {
+  padding-inline: var(--forma-focus-clearance);
+  scroll-padding-inline: var(--forma-focus-clearance);
+}
+
+.workspace-settings-navigation > ul {
+  padding-block-start: var(--forma-focus-clearance);
+}
+
+.workspace-settings-table :is(th, td):first-child {
+  padding-inline-start: var(--forma-row-inset-inline);
+}
+
+.workspace-settings-table :is(th, td):last-child {
+  padding-inline-end: var(--forma-row-inset-inline);
+}
+
+.workspace-project-review-permission {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.account-popover .account-nav {
+  padding: var(--forma-focus-clearance);
+}
+
+.ui-search-control > input {
+  padding-inline: var(--forma-focus-clearance);
+}
+
+.prompt-fan-review-trigger,
+.text-button,
+.icon-button.labeled,
+.gate-review .button,
+.reality-tools button,
+.editor-toolbar button,
+.creative-editor-item-main,
+.decision-spine button,
+.new-layer-button,
+.layer-inspector button,
+.output-actions > button,
+.document-insight > button,
+.compile-bridge > button,
+.creative-plan-section > header > button,
+.creative-editor-item-toggle,
+.creative-inspector-order > button,
+.creative-inspector-actions > button,
+.generation-fan-button,
+.generation-details-trigger,
+.generation-queue-trigger,
+.generation-failure-trigger,
+.document-artifact-failures .button,
+.filterbar input,
+.filterbar select,
+.builder-controls select,
+.timeline-control select,
+.analytics-controls select,
+.spatial-direct-tools button,
+.spatial-region-picker button,
+.spatial-reset,
+.why-button,
+.remove-block {
+  min-block-size: var(--forma-hit-target);
+  padding-inline: var(--forma-control-inset-inline);
+}
+
+.document-artifact-failures article > div:last-child > .button {
+  min-block-size: var(--forma-hit-target);
+  min-height: var(--forma-hit-target);
+}
+
+.document-artifact-failures {
+  container: document-artifact-failures / inline-size;
+  gap: var(--forma-cluster-gap);
+  background: transparent;
+  border: 0;
+}
+
+.document-artifact-failures > article.document-artifact-failure-card {
+  --document-artifact-failure-accent: var(--forma-color-warning);
+  --document-artifact-failure-foreground: var(--forma-color-warning-text);
+
+  display: grid;
+  min-inline-size: 0;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: var(--forma-row-inset-inline);
+  padding: var(--forma-card-inset);
+  background: var(--forma-color-surface);
+  border: 1px solid color-mix(in srgb, var(--document-artifact-failure-accent) 28%, var(--forma-color-border));
+  border-radius: var(--forma-radius-medium, .625rem);
+}
+
+.document-artifact-failures > article.document-artifact-failure-card--terminal {
+  --document-artifact-failure-accent: var(--forma-color-danger);
+  --document-artifact-failure-foreground: var(--forma-color-danger-text);
+}
+
+.document-artifact-failures article > div.document-artifact-failure-copy {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--forma-cluster-gap);
+}
+
+.document-artifact-failure-heading {
+  display: flex;
+  min-inline-size: 0;
+  align-items: start;
+  gap: var(--forma-cluster-gap);
+}
+
+.document-artifact-failure-heading > div {
+  display: grid;
+  min-inline-size: 0;
+  gap: .125rem;
+}
+
+.document-artifact-failure-icon {
+  display: grid;
+  inline-size: 2.125rem;
+  block-size: 2.125rem;
+  flex: 0 0 2.125rem;
+  place-items: center;
+  color: var(--document-artifact-failure-foreground);
+  background: color-mix(in srgb, var(--document-artifact-failure-accent) 12%, var(--forma-color-surface));
+  border-radius: var(--forma-radius-small, .375rem);
+}
+
+.document-artifact-failure-format {
+  color: var(--document-artifact-failure-foreground);
+  font-size: var(--forma-font-size-supporting, .8125rem);
+  font-weight: 600;
+}
+
+.document-artifact-failure-heading h3 {
+  margin: 0;
+  font-size: var(--forma-font-size-body, 1rem);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.document-artifact-failures article > div.document-artifact-failure-copy > p {
+  max-inline-size: 65ch;
+  margin: 0;
+  color: var(--forma-color-text-muted);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.document-artifact-failures article > div.document-artifact-failure-actions {
+  display: grid;
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  flex: 1 1 auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  justify-content: start;
+  gap: var(--forma-cluster-gap);
+}
+
+.document-artifact-failures article > div.document-artifact-failure-actions > .button {
+  display: flex;
+  min-inline-size: 0;
+  min-block-size: var(--forma-hit-target);
+  min-height: var(--forma-hit-target);
+  max-inline-size: 100%;
+  align-items: center;
+  justify-content: center;
+  padding-inline: max(.625rem, var(--forma-focus-clearance));
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.document-artifact-failures article > div.document-artifact-failure-actions > .button:first-child {
+  grid-column: 1 / -1;
+}
+
+.document-artifact-failures article > div.document-artifact-failure-actions > .button:nth-child(4) {
+  grid-column: 1 / -1;
+}
+
+.document-artifact-failures article > .document-artifact-failure-details {
+  min-inline-size: 0;
+  margin: 0;
+  padding-block-start: .25rem;
+  border-block-start: 1px solid var(--forma-color-border);
+}
+
+.document-artifact-failure-details > summary {
+  display: flex;
+  min-block-size: var(--forma-hit-target);
+  align-items: center;
+  padding-inline: var(--forma-focus-clearance);
+  cursor: pointer;
+}
+
+.document-artifact-failure-receipt {
+  display: grid;
+  min-inline-size: 0;
+  max-block-size: min(11rem, 32dvb);
+  gap: var(--forma-cluster-gap);
+  padding: var(--forma-focus-clearance);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.document-artifact-failure-receipt > code {
+  display: block;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  color: var(--forma-color-text-muted);
+  font-size: var(--forma-font-size-supporting, .8125rem);
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@container document-artifact-failures (min-width: 34rem) {
+  .document-artifact-failures article > div.document-artifact-failure-actions {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .document-artifact-failures article > div.document-artifact-failure-actions > .button {
+    flex: 0 1 auto;
+  }
+}
+
+@container document-artifact-failures (min-width: 50rem) {
+  .document-artifact-failures > article.document-artifact-failure-card {
+    grid-template-columns: minmax(18rem, 1fr) minmax(0, 27rem);
+  }
+
+  .document-artifact-failures article > div.document-artifact-failure-actions {
+    justify-content: flex-end;
+  }
+
+  .document-artifact-failures article > .document-artifact-failure-details {
+    grid-column: 1 / -1;
+  }
+}
+
+.output-critique .taste-axis-grid {
+  gap: var(--forma-cluster-gap);
+}
+
+.output-critique .taste-axis-grid button {
+  min-block-size: var(--forma-hit-target);
+  gap: var(--forma-cluster-gap);
+  padding-inline: var(--forma-focus-clearance);
+  overflow-wrap: anywhere;
+}
+
+.generation-fan-button,
+.generation-details-trigger,
+.generation-queue-trigger,
+.generation-failure-trigger,
+.output-actions > button,
+.document-insight > button,
+.compile-bridge > button,
+.creative-plan-section > header > button,
+.creative-editor-item-toggle,
+.creative-inspector-order > button,
+.creative-inspector-actions > button,
+.spatial-direct-tools button,
+.why-button,
+.remove-block {
+  min-inline-size: var(--forma-hit-target);
+}
+
+.output-info,
+.output-actions {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+}
+
+.tree-menu button,
+.creative-editor-item-main,
+.creative-inspector-actions button {
+  text-align: start;
+}
+
+.reference-finding-preferences label > span {
+  display: inline-flex;
+  min-block-size: var(--forma-hit-target);
+  align-items: center;
+  padding-inline: var(--forma-control-inset-inline);
+}
+
+.generation-details-comparison .prompt-fan-review-trigger,
+.generation-details-comparison .prompt-fan-review-trigger small {
+  text-align: start;
+}
+
+.block-rail {
+  padding-inline: 0;
+}
+
+.drag-handle {
+  inline-size: var(--forma-hit-target);
+  min-inline-size: var(--forma-hit-target);
+  min-block-size: var(--forma-hit-target);
+}
+
+.context-board .context-block {
+  grid-template-columns: 3rem minmax(0, 1fr);
+}
+
+.layers-panel > ol {
+  container: layers / inline-size;
+}
+
+.layers-panel li {
+  grid-template-columns: var(--forma-hit-target) minmax(0, 1fr) auto var(--forma-hit-target);
+}
+
+.layers-panel :is(.layer-visibility, .layer-name, .layer-remove),
+.layer-order > button {
+  min-block-size: var(--forma-hit-target);
+}
+
+.layers-panel :is(.layer-visibility, .layer-remove),
+.layer-order > button {
+  min-inline-size: var(--forma-hit-target);
+}
+
+.layer-order {
+  overflow: visible;
+}
+
+@container layers (max-width: 19rem) {
+  .layers-panel li {
+    grid-template-columns: var(--forma-hit-target) minmax(0, 1fr) var(--forma-hit-target);
+  }
+
+  .layers-panel li > .layer-order {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+  }
+
+  .layers-panel li > .layer-remove {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+
+@container studio (max-width: 720px) {
+  .layers-panel > ol {
+    grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr));
+  }
+}
+
+.source-evidence-inspector {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.source-evidence-inspector > summary {
+  display: flex;
+  min-block-size: var(--forma-hit-target);
+  align-items: center;
+  padding-inline: var(--forma-row-inset-inline);
+}
+
+.source-evidence-inspector :is(ol, blockquote) {
+  margin-inline: 0;
+  padding-inline-start: var(--forma-row-inset-inline);
+}
+
+.spatial-scope-actions {
+  padding-inline: var(--forma-row-inset-inline);
+  padding-block-end: var(--forma-focus-clearance);
+}
+
+.modal-close {
+  right: auto;
+  inset-inline-end: 1rem;
+}
+
+.context-set-picker-panel > header {
+  padding-right: 0;
+  padding-inline-end: calc(var(--forma-hit-target) + var(--forma-focus-clearance));
+}
+
+/* Explicitly styled independent review is as important as the result viewer. */
+.document-artifact-reader {
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-auto-rows: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.document-artifact-reader > .artifact-review-guidance,
+.document-artifact-reader > .artifact-review-actions {
+  min-inline-size: 0;
+  padding-block: var(--forma-row-inset-block);
+  padding-inline: var(--page-gutter);
+  border-block-start: 1px solid var(--forma-color-border);
+  background: var(--forma-color-surface);
+}
+
+.document-artifact-reader > .artifact-review-guidance {
+  display: grid;
+  gap: .25rem;
+}
+
+.document-artifact-reader > .artifact-review-guidance > p {
+  margin: 0;
+  color: var(--forma-color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.document-artifact-reader > .artifact-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--forma-row-inset-block) var(--forma-row-inset-inline);
+}
+
+.artifact-review-actions > label {
+  display: grid;
+  min-inline-size: min(100%, 12rem);
+  flex: 1 1 12rem;
+  gap: .25rem;
+}
+
+.artifact-review-actions > label > :is(select, textarea),
+.artifact-review-actions > .button {
+  min-block-size: var(--forma-hit-target);
+}
+
+.artifact-review-actions > label > :is(select, textarea) {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.artifact-review-actions > label > textarea {
+  max-block-size: 8rem;
+  resize: vertical;
+}
+
+.artifact-review-actions > small {
+  flex-basis: 100%;
+  color: var(--forma-color-text-muted);
+}
+
+.document-artifact-jobs > span {
+  display: flex;
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--forma-row-inset-block) var(--forma-row-inset-inline);
+  padding-inline: var(--forma-row-inset-inline);
+}
+
+.document-artifact-jobs > span > small {
+  min-inline-size: 0;
+  flex: 1 1 8rem;
+}
+
+/* Permission management and organization-wide publishing are real workflows. */
+.access-grant-form {
+  display: grid;
+  min-inline-size: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  align-items: end;
+  gap: var(--forma-row-inset-inline);
+  margin-block: var(--forma-surface-inset);
+  padding: var(--forma-surface-inset);
+  background: var(--forma-color-surface);
+  border: 1px solid var(--forma-color-border);
+  border-radius: var(--forma-radius-medium, .625rem);
+}
+
+.access-grant-form > label {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--forma-row-inset-block);
+}
+
+.access-grant-form > label > select,
+.access-grant-form > button {
+  min-block-size: var(--forma-hit-target);
+}
+
+.access-grant-form > label > select {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.access-grant-list {
+  display: grid;
+  gap: var(--forma-row-inset-block);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.access-grant-list > li {
+  display: flex;
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--forma-row-inset-inline);
+  padding: var(--forma-row-inset-block) var(--forma-row-inset-inline);
+  border-block-end: 1px solid var(--forma-color-border);
+}
+
+.access-grant-list > li > div {
+  display: grid;
+  min-inline-size: 0;
+  gap: .2rem;
+  overflow-wrap: anywhere;
+}
+
+.library-organization-context {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.library-context-version-review,
+.library-context-next-version {
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.library-context-version-review > summary,
+.library-context-next-version > summary {
+  display: flex;
+  min-block-size: var(--forma-hit-target);
+  align-items: center;
+  padding-inline: var(--forma-row-inset-inline);
+  cursor: pointer;
+}
+
+.library-context-version-review > :not(summary),
+.library-context-next-version > :not(summary) {
+  margin-inline: var(--forma-row-inset-inline);
+}
+
+.library-context-version-review > form,
+.library-context-next-version > form,
+.library-context-block-selection {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--forma-row-inset-inline);
+}
+
+.library-context-block-selection {
+  margin: 0;
+  padding: var(--forma-row-inset-inline);
+  border: 1px solid var(--forma-color-border);
+  border-radius: var(--forma-radius-small, .375rem);
+}
+
+.library-context-version-review > ul {
+  margin-block: var(--forma-row-inset-block);
+  padding-inline-start: var(--forma-row-inset-inline);
+}
+
+.library-context-version-review li,
+.library-context-block-selection > label > :is(span, small),
+.library-organization-context-card {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.library-context-block-selection > label {
+  display: flex;
+  min-inline-size: 0;
+  min-block-size: var(--forma-hit-target);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--forma-cluster-gap);
+}
+
+.library-assigned-reviews .workspace-settings-list > li {
+  flex-wrap: wrap;
+}
+
+.library-assigned-reviews .workspace-settings-list > li > div {
+  min-inline-size: 0;
+  flex: 1 1 min(100%, 16rem);
+  overflow-wrap: anywhere;
 }
 
 .topbar > .brand,
@@ -84,6 +929,13 @@
   line-height: 1;
 }
 
+.studio-mode-links {
+  margin-block: -8px;
+  padding-block: 8px;
+  padding-inline: var(--forma-focus-clearance);
+  scroll-padding-inline: var(--forma-focus-clearance);
+}
+
 .studio-mode-nav > .studio-mode-links > a,
 .studio-mode-nav > .studio-mode-families > a {
   display: inline-flex;
@@ -131,7 +983,9 @@
 .application-creative[data-nav-posture="compact"] > .application-task-navigation .ui-audience-navigation-list {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0;
+  gap: .125rem;
+  padding-inline-start: max(.25rem, var(--forma-safe-inline-start));
+  padding-inline-end: max(.25rem, var(--forma-safe-inline-end));
   overflow: visible;
 }
 
@@ -142,8 +996,8 @@
   min-block-size: var(--forma-dock-height);
   place-content: center;
   justify-items: center;
-  gap: .05rem;
-  padding-inline: .125rem;
+  gap: .2rem;
+  padding-inline: .25rem;
   font-size: clamp(.625rem, 2.3vi, .75rem);
 }
 
@@ -161,7 +1015,7 @@
   inset-inline-end: auto;
   inset-block-start: var(--forma-short-topbar-height);
   inset-block-end: 0;
-  inline-size: var(--forma-nav-rail-width);
+  inline-size: var(--forma-landscape-rail-width);
 }
 
 .application-creative[data-nav-posture="rail"][data-short-height="true"] > .application-task-navigation .ui-audience-navigation-list {
@@ -171,7 +1025,7 @@
 }
 
 .application-creative[data-nav-posture="rail"][data-short-height="true"] > #main-content {
-  padding-inline-start: var(--forma-nav-rail-width);
+  padding-inline-start: var(--forma-landscape-rail-width);
   padding-block-end: 0;
 }
 
@@ -241,7 +1095,7 @@
   grid-template-columns: 2.75rem minmax(0, 1fr) auto;
   align-items: center;
   gap: .875rem;
-  padding: clamp(.875rem, 1.5vi, 1.25rem);
+  padding: var(--forma-card-inset);
   background: var(--forma-color-surface);
   border: 1px solid var(--forma-color-border);
   border-radius: .75rem;
@@ -301,7 +1155,7 @@
 .forma-deliver-summary > div {
   display: grid;
   gap: .2rem;
-  padding: clamp(.875rem, 1.7vi, 1.5rem);
+  padding: var(--forma-card-inset);
   background: var(--forma-color-surface);
   border: 1px solid var(--forma-color-border);
   border-radius: .75rem;
@@ -334,7 +1188,7 @@
   min-inline-size: 0;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: .875rem;
-  padding: .875rem;
+  padding: var(--forma-card-inset);
   background: var(--forma-color-surface);
   border: 1px solid var(--forma-color-border);
   border-radius: .875rem;
@@ -527,13 +1381,92 @@
   gap: .5rem;
 }
 
-.document-inspector-toggle,
+.document-inspector-toggle {
+  display: inline-flex;
+  min-block-size: var(--forma-hit-target);
+}
+
 .document-workbench-inspector {
   display: none;
 }
 
 .document-workbench-inspector[hidden] {
   display: none !important;
+}
+
+@container studio (max-width: 69.99rem) {
+  .document-workbench-inspector:not([hidden]) {
+    position: fixed;
+    z-index: 44;
+    inset-block-start: var(--forma-topbar-height);
+    inset-block-end: 0;
+    inset-inline-end: max(var(--forma-row-inset-inline), var(--forma-safe-inline-end));
+    display: grid;
+    inline-size: min(var(--forma-inspector-width), calc(100dvi - 2 * var(--forma-pane-inset)));
+    max-block-size: calc(100dvb - var(--forma-topbar-height));
+    min-inline-size: 0;
+    align-content: start;
+    gap: 1rem;
+    overflow-y: auto;
+    padding: var(--forma-pane-inset);
+    overscroll-behavior: contain;
+    background: var(--forma-color-surface);
+    border: 1px solid var(--forma-color-border);
+    border-radius: var(--forma-radius-medium, .625rem);
+    box-shadow: var(--shadow);
+  }
+
+  .application-creative[data-nav-posture="compact"] .document-workbench-inspector:not([hidden]) {
+    inset-block-end: var(--forma-bottom-nav-size);
+  }
+
+  .application-creative[data-short-height="true"] .document-workbench-inspector:not([hidden]) {
+    inset-block-start: var(--forma-short-topbar-height);
+  }
+
+  html[data-document-focus] .document-workbench-inspector:not([hidden]) {
+    inset-block-start: 0;
+  }
+
+  .document-workbench-inspector > header,
+  .document-workbench-inspector > section {
+    display: grid;
+    gap: .35rem;
+  }
+
+  .document-workbench-inspector > header {
+    position: relative;
+    padding-inline-end: var(--forma-hit-target);
+  }
+
+  .document-workbench-inspector > header > .document-inspector-close {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-end: 0;
+  }
+
+  .document-workbench-inspector :is(h2, h3, p) {
+    margin: 0;
+  }
+
+  .document-workbench-inspector > section {
+    padding-block-start: .875rem;
+    border-block-start: 1px solid var(--forma-color-border);
+  }
+
+  .document-workbench-inspector ul {
+    display: grid;
+    gap: .4rem;
+    margin: .25rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .document-workbench-inspector li {
+    display: grid;
+    gap: .25rem;
+    overflow-wrap: anywhere;
+  }
 }
 
 @container studio (min-width: 70rem) {
@@ -594,6 +1527,12 @@
     display: grid;
     gap: .25rem;
     overflow-wrap: anywhere;
+  }
+}
+
+@container studio (min-width: 46rem) {
+  :root[dir="rtl"] .context-column {
+    border-inline-end: 1px solid var(--forma-color-border);
   }
 }
 
@@ -743,8 +1682,9 @@
   .application-creative > .application-task-navigation .ui-audience-navigation-list {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 0;
-    padding-inline: max(.25rem, env(safe-area-inset-left, 0px));
+    gap: .125rem;
+    padding-inline-start: max(.25rem, var(--forma-safe-inline-start));
+    padding-inline-end: max(.25rem, var(--forma-safe-inline-end));
     overflow: visible;
   }
 
@@ -759,8 +1699,8 @@
     min-block-size: var(--forma-dock-height);
     place-content: center;
     justify-items: center;
-    gap: .05rem;
-    padding-inline: .125rem;
+    gap: .2rem;
+    padding-inline: .25rem;
     font-size: clamp(.625rem, 2.3vi, .75rem);
     text-align: center;
   }
@@ -791,7 +1731,8 @@
 
   .topbar {
     gap: .375rem;
-    padding-inline: max(.5rem, env(safe-area-inset-left, 0px));
+    padding-inline-start: max(.5rem, var(--forma-safe-inline-start));
+    padding-inline-end: max(.5rem, var(--forma-safe-inline-end));
   }
 
   .topbar > .brand {
@@ -915,7 +1856,7 @@
   }
 
   .forma-deliver-summary > div {
-    padding: .75rem .5rem;
+    padding: var(--forma-card-inset);
   }
 
   .forma-deliver-summary > div > span {
@@ -928,7 +1869,8 @@
     grid-template-rows: repeat(2, var(--forma-hit-target));
     align-items: center;
     gap: .25rem;
-    padding-inline: max(.375rem, env(safe-area-inset-left, 0px));
+    padding-inline-start: max(.375rem, var(--forma-safe-inline-start));
+    padding-inline-end: max(.375rem, var(--forma-safe-inline-end));
   }
 
   .studio-mode-nav > .studio-mode-families {
@@ -989,6 +1931,8 @@
   .application-canvas > .topbar {
     block-size: var(--forma-short-topbar-height);
     min-block-size: var(--forma-short-topbar-height);
+    padding-inline-start: max(.5rem, var(--forma-safe-inline-start));
+    padding-inline-end: max(.5rem, var(--forma-safe-inline-end));
   }
 
   .application-creative > .application-task-navigation[data-primary-navigation="true"] {
@@ -998,7 +1942,7 @@
     inset-inline-end: auto;
     inset-block-start: var(--forma-short-topbar-height);
     inset-block-end: 0;
-    inline-size: var(--forma-nav-rail-width);
+    inline-size: var(--forma-landscape-rail-width);
     padding-block-end: env(safe-area-inset-bottom, 0px);
     background: var(--forma-color-surface);
     border-inline-end: 1px solid var(--forma-color-border);
@@ -1014,8 +1958,9 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: repeat(5, minmax(var(--forma-hit-target), 1fr));
-    gap: 0;
-    padding-inline: 0;
+    gap: .125rem;
+    padding-inline-start: max(.25rem, var(--forma-safe-inline-start));
+    padding-inline-end: .25rem;
     overflow-y: auto;
   }
 
@@ -1033,13 +1978,14 @@
   }
 
   .application-creative > #main-content {
-    padding-inline-start: var(--forma-nav-rail-width);
+    padding-inline-start: var(--forma-landscape-rail-width);
+    padding-inline-end: var(--forma-safe-inline-end);
     padding-block-end: 0;
   }
 
   .application-creative .composer-dock {
-    inset-inline-start: var(--forma-nav-rail-width);
-    inset-inline-end: 0;
+    inset-inline-start: var(--forma-landscape-rail-width);
+    inset-inline-end: var(--forma-safe-inline-end);
     inset-block-end: max(env(safe-area-inset-bottom, 0px), var(--forma-keyboard-offset));
   }
 
@@ -1133,8 +2079,8 @@
     z-index: 39;
     inset-block-start: calc(var(--forma-short-topbar-height) + var(--forma-hit-target) + .75rem);
     inset-block-end: calc(var(--forma-hit-target) * 2 + .75rem);
-    inset-inline-start: calc(var(--forma-nav-rail-width) + .5rem);
-    inset-inline-end: .5rem;
+    inset-inline-start: calc(var(--forma-landscape-rail-width) + .5rem);
+    inset-inline-end: max(.5rem, var(--forma-safe-inline-end));
     max-block-size: none;
     overflow-y: auto;
     background: var(--forma-color-surface);
@@ -1227,6 +2173,27 @@
   .studio-mode-nav > button {
     min-block-size: var(--forma-hit-target-coarse);
   }
+
+  :is(.asset-focus-trigger, .family-collage, .generated-output-trigger) > span {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
+@media (max-width: 680px) {
+  .analytics-block-grid > div + div,
+  .analytics-canvas-summary > div + div {
+    padding-inline-start: var(--forma-row-inset-inline);
+  }
+
+  .analytics-block-grid > div + div,
+  .analytics-canvas-summary > div + div {
+    border-inline-start: 0;
+  }
+
+  .workspace-settings-card > .workspace-settings-list > li {
+    flex-wrap: wrap;
+  }
 }
 
 @media (forced-colors: active) {
@@ -1234,7 +2201,17 @@
   .forma-activity-card--attention,
   .forma-activity-card--unread,
   .forma-deliver-card,
-  .forma-activity-card {
+  .forma-activity-card,
+  .document-artifact-failures > article.document-artifact-failure-card,
+  .document-artifact-reader > .artifact-review-guidance,
+  .document-artifact-reader > .artifact-review-actions,
+  .access-grant-form {
+    border: 1px solid CanvasText;
+  }
+
+  .document-artifact-failure-icon {
+    color: CanvasText;
+    background: Canvas;
     border: 1px solid CanvasText;
   }
 
