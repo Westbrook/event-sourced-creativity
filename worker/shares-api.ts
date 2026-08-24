@@ -3,8 +3,9 @@ import { parseDocumentArtifactContent } from "../src/model/document-artifacts";
 import { documentShareScope, sanitizeSharedValue, shareAllowsMedia, type DocumentShareScope } from "../src/model/share-scope";
 import { requireConsent, requireUser } from "./pilot-policy";
 import { applySafeMediaResponseHeaders } from "./media-api";
-import { appendAuditEvent, ensureSchema, readWorkspaceEvents, uuidV7, type WorkerEnv } from "./runtime";
+import { appendAuditEvent, ensureSchema, readWorkspaceEvents, streamHead, uuidV7, type WorkerEnv } from "./runtime";
 import { readProjectRequestContext, readProjectSourceEvents, recordOrganizationAudit } from "./project-access";
+import { artifactReviewState, artifactSourceVersions } from "../src/model/context-health.ts";
 
 const token = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(24));
@@ -12,7 +13,11 @@ const token = () => {
 };
 const hashToken = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
 const serializeShare = (row: Record<string, unknown>) => ({ shareId: String(row.share_id), resourceKind: String(row.resource_kind ?? ""), resourceId: String(row.resource_id ?? ""), projectId: String(row.project_id ?? ""), expiresAt: String(row.expires_at), revokedAt: row.revoked_at ? String(row.revoked_at) : null, createdAt: String(row.created_at), active: !row.revoked_at && String(row.expires_at) > new Date().toISOString() });
-const activeShare=async(env:WorkerEnv,rawToken:string)=>env.DB.prepare(`SELECT shares.*,scope.resource_kind,scope.resource_id,scope.project_id,scope.media_keys_json
+const activeShare=async(env:WorkerEnv,rawToken:string)=>env.DB.prepare(`SELECT shares.*,scope.resource_kind,scope.resource_id,scope.project_id,scope.media_keys_json,
+  EXISTS(SELECT 1 FROM project_resource_scopes project_share WHERE project_share.resource_kind='share' AND project_share.resource_id=shares.share_id AND project_share.owner_user_id=shares.owner_id) AS governed_project,
+  EXISTS(SELECT 1 FROM project_resource_scopes project_share JOIN pilot_cohorts cohort ON cohort.organization_id=project_share.organization_id
+    WHERE project_share.resource_kind='share' AND project_share.resource_id=shares.share_id AND project_share.owner_user_id=shares.owner_id
+      AND cohort.status IN ('active','paused','closed')) AS managed_pilot
   FROM shares JOIN share_scopes scope ON scope.share_id=shares.share_id AND scope.owner_id=shares.owner_id
   WHERE shares.token_hash=? AND shares.revoked_at IS NULL AND shares.expires_at>?
     AND((NOT EXISTS(SELECT 1 FROM project_resource_scopes tagged WHERE tagged.resource_kind='share' AND tagged.resource_id=shares.share_id)
@@ -21,11 +26,14 @@ const activeShare=async(env:WorkerEnv,rawToken:string)=>env.DB.prepare(`SELECT s
         JOIN organization_projects project ON project.project_access_id=tagged.project_access_id AND project.organization_id=tagged.organization_id
           AND project.project_id=tagged.project_id AND project.owner_user_id=tagged.owner_user_id AND project.status='active'
         JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
+        LEFT JOIN organization_security_policies security ON security.organization_id=project.organization_id
         JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=project.owner_user_id
           AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
         JOIN project_resource_scopes document ON document.project_access_id=tagged.project_access_id AND document.organization_id=tagged.organization_id
           AND document.project_id=tagged.project_id AND document.owner_user_id=tagged.owner_user_id AND document.resource_kind='document' AND document.resource_id=scope.resource_id
-        WHERE tagged.resource_kind='share' AND tagged.resource_id=shares.share_id AND tagged.owner_user_id=shares.owner_id AND tagged.project_id=scope.project_id))`)
+        WHERE tagged.resource_kind='share' AND tagged.resource_id=shares.share_id AND tagged.owner_user_id=shares.owner_id AND tagged.project_id=scope.project_id
+          AND(security.organization_id IS NULL OR(security.authentication_source='any' AND security.require_mfa=0
+            AND json_valid(security.allowed_domains_json) AND json_array_length(security.allowed_domains_json)=0))))`)
   .bind(await hashToken(rawToken),new Date().toISOString()).first<Record<string,unknown>>();
 const rowScope=(row:Record<string,unknown>):DocumentShareScope|null=>{try{const keys=JSON.parse(String(row.media_keys_json??"[]")) as unknown;if(row.resource_kind!=="document"||!Array.isArray(keys)||keys.some((key)=>typeof key!=="string"))return null;return{resourceKind:"document",resourceId:String(row.resource_id??""),projectId:String(row.project_id??""),ownerId:String(row.owner_id??""),mediaKeys:keys as string[]};}catch{return null;}};
 
@@ -49,9 +57,24 @@ export async function handleShares(request: Request, env: WorkerEnv, shareId = "
     const body = await request.json() as { expiresHours?: number; resourceKind?: string; documentId?: string; projectId?: string }; const expiresHours = Math.max(1, Math.min(168, Math.floor(Number(body.expiresHours ?? 24))));
     if(body.resourceKind!=="document"||!body.documentId?.trim()||!body.projectId?.trim())return Response.json({error:"share_resource_scope_required"},{status:400});
     if(project&&body.projectId!==project.projectId)return Response.json({error:"share_document_not_found"},{status:404});
+    if(project){
+      const restricted=await env.DB.prepare(`SELECT 1 AS present FROM organization_security_policies security
+        WHERE security.organization_id=? AND(security.authentication_source!='any' OR security.require_mfa!=0
+          OR NOT json_valid(security.allowed_domains_json)
+          OR json_valid(security.allowed_domains_json) AND json_array_length(security.allowed_domains_json)>0)`)
+        .bind(project.organizationId).first();
+      if(restricted)return Response.json({error:"organization_identity_policy_disallows_public_sharing"},{status:403});
+    }
     if(!project&&await env.DB.prepare("SELECT 1 AS present FROM organization_projects WHERE owner_user_id=? AND project_id=? LIMIT 1").bind(user.userId,body.projectId).first())return Response.json({error:"project_share_context_required"},{status:403,headers:{"cache-control":"private, no-store"}});
+    const releaseHead=project?await streamHead(env,ownerStream):null;
     const source=project?await readProjectSourceEvents(env,project):await readWorkspaceEvents(env,ownerStream);
     const projection=foldEvents(source,Number.POSITIVE_INFINITY,body.documentId,body.projectId);const scope=documentShareScope(projection,user.userId,body.documentId,body.projectId);if(!scope)return Response.json({error:"share_document_not_found"},{status:404});
+    if(project){
+      const managedPilot=await env.DB.prepare("SELECT 1 AS present FROM pilot_cohorts WHERE organization_id=? AND status IN ('active','paused','closed') LIMIT 1").bind(project.organizationId).first();
+      if(projection.artifacts.some((artifact)=>!artifactSourceVersions(artifact.id,source)?Boolean(managedPilot):artifactReviewState(artifact,projection.blocks,source).status!=="approved")){
+        return Response.json({error:"artifact_approval_required",message:"Independently approve every current governed output with verified source revisions before creating an external review link."},{status:409});
+      }
+    }
     const verifiedMedia=await Promise.all(scope.mediaKeys.map(async(key)=>({key,object:await env.MEDIA.get(key)})));
     scope.mediaKeys=verifiedMedia.filter(({object})=>object?.customMetadata?.ownerId===user.userId).map(({key})=>key);
     const shareToken = token(); const id = uuidV7(); const createdAt = new Date(); const expiresAt = new Date(createdAt.getTime() + expiresHours * 3_600_000);
@@ -62,8 +85,12 @@ export async function handleShares(request: Request, env: WorkerEnv, shareId = "
           JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
           JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=project.owner_user_id AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
           JOIN project_resource_scopes document ON document.project_access_id=project.project_access_id AND document.organization_id=project.organization_id AND document.owner_user_id=project.owner_user_id AND document.resource_kind='document' AND document.resource_id=?
-          WHERE project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND project.status='active')`)
-        .bind(id,hashed,user.userId,ownerStream,expiresAt.toISOString(),timestamp,scope.resourceId,project.projectAccessId,project.organizationId,project.projectId,user.userId),
+          WHERE project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND project.status='active'
+            AND NOT EXISTS(SELECT 1 FROM organization_security_policies security WHERE security.organization_id=project.organization_id
+              AND(security.authentication_source!='any' OR security.require_mfa!=0 OR NOT json_valid(security.allowed_domains_json)
+                OR json_valid(security.allowed_domains_json) AND json_array_length(security.allowed_domains_json)>0))
+            AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?)`)
+        .bind(id,hashed,user.userId,ownerStream,expiresAt.toISOString(),timestamp,scope.resourceId,project.projectAccessId,project.organizationId,project.projectId,user.userId,ownerStream,releaseHead),
       env.DB.prepare("INSERT INTO share_scopes(share_id,owner_id,resource_kind,resource_id,project_id,media_keys_json,created_at) SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM shares WHERE share_id=? AND owner_id=?)")
         .bind(id,user.userId,scope.resourceKind,scope.resourceId,scope.projectId,JSON.stringify(scope.mediaKeys),timestamp,id,user.userId),
       env.DB.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) SELECT ?,'share',?,?,?,?,'collaborative_output',NULL,?,? WHERE EXISTS(SELECT 1 FROM shares WHERE share_id=? AND owner_id=?)")
@@ -91,6 +118,7 @@ export async function handleSharedView(request: Request, env: WorkerEnv, rawToke
   if (!row) return Response.json({ error: "share_expired_or_revoked" }, { status: 404 });
   const scope=rowScope(row);if(!scope)return Response.json({error:"share_expired_or_revoked"},{status:404});
   const events = await readWorkspaceEvents(env, String(row.stream_id)); const projection = foldEvents(events,Number.POSITIVE_INFINITY,scope.resourceId,scope.projectId);if(!documentShareScope(projection,scope.ownerId,scope.resourceId,scope.projectId))return Response.json({error:"shared_document_unavailable"},{status:404});
+  if(Number(row.governed_project??0)&&projection.artifacts.some((artifact)=>!artifactSourceVersions(artifact.id,events)?Boolean(Number(row.managed_pilot??0)):artifactReviewState(artifact,projection.blocks,events).status!=="approved"))return Response.json({error:"shared_output_approval_expired"},{status:404});
   const contentIds=[...new Set(projection.artifacts.map((artifact)=>artifact.contentRef).filter((value):value is string=>Boolean(value)))];const contentStatements=[];const now=new Date().toISOString();for(let index=0;index<contentIds.length;index+=98){const ids=contentIds.slice(index,index+98);contentStatements.push(env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND kind='document-artifact' AND redacted_at IS NULL AND expires_at>? AND content_id IN (${ids.map(()=>"?").join(",")})`).bind(scope.ownerId,now,...ids));}const retainedContent=new Map(contentStatements.length?(await env.DB.batch<{content_id:string;content:string}>(contentStatements)).flatMap((result)=>result.results).map((result)=>[result.content_id,parseDocumentArtifactContent(result.content)]):[]);
   const blocks=projection.blocks.map(({id,type,handle,properties})=>({id,type,handle,properties:sanitizeSharedValue(properties,scope,rawToken)}));
   const outputs=projection.outputs.map(({ id, sequence, mediaUrl, mediaType, width, height, focalPoint, purpose, promptFanId, promptTechnique })=>({id,sequence,mediaUrl:sanitizeSharedValue(mediaUrl,scope,rawToken,true),mediaType,width,height,focalPoint,purpose,promptFanId,promptTechnique}));
@@ -104,5 +132,7 @@ export async function handleSharedView(request: Request, env: WorkerEnv, rawToke
 
 export async function handleSharedMedia(request:Request,env:WorkerEnv,rawToken:string,key:string){
   await ensureSchema(env);if(request.method!=="GET")return new Response("Method not allowed",{status:405});const row=await activeShare(env,rawToken);if(!row)return new Response("Not found",{status:404});
-  const scope=rowScope(row);if(!scope||!shareAllowsMedia(scope,key))return new Response("Forbidden",{status:403});const object=await env.MEDIA.get(key);if(!object)return new Response("Not found",{status:404});if(object.customMetadata?.ownerId!==scope.ownerId)return new Response("Forbidden",{status:403});const headers=new Headers();object.writeHttpMetadata(headers);headers.set("etag",object.httpEtag);applySafeMediaResponseHeaders(headers);return new Response(object.body,{headers});
+  const scope=rowScope(row);if(!scope||!shareAllowsMedia(scope,key))return new Response("Forbidden",{status:403});
+  if(Number(row.governed_project??0)){const events=await readWorkspaceEvents(env,String(row.stream_id));const projection=foldEvents(events,Number.POSITIVE_INFINITY,scope.resourceId,scope.projectId);if(projection.artifacts.some((artifact)=>!artifactSourceVersions(artifact.id,events)?Boolean(Number(row.managed_pilot??0)):artifactReviewState(artifact,projection.blocks,events).status!=="approved"))return new Response("Not found",{status:404});}
+  const object=await env.MEDIA.get(key);if(!object)return new Response("Not found",{status:404});if(object.customMetadata?.ownerId!==scope.ownerId)return new Response("Forbidden",{status:403});const headers=new Headers();object.writeHttpMetadata(headers);headers.set("etag",object.httpEtag);applySafeMediaResponseHeaders(headers);return new Response(object.body,{headers});
 }

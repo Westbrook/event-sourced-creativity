@@ -4,7 +4,7 @@ import test from "node:test";
 import { renderVideoReel } from "../src/components/video-reel.ts";
 import { creatorProductionSummary } from "../src/model/production-summary.ts";
 import { APPLICATIONS, applicationAccessible, navigationItemAccessible, resolveServerRoute, routeRequiredCapabilities } from "../src/platform/applications.ts";
-import { CanvasOfflineQueue, canvasBatchBelongsToScope } from "../src/sync/canvas-offline-queue.ts";
+import { CANVAS_OFFLINE_MAX_AGE_MS, CANVAS_OFFLINE_MAX_BYTES, CANVAS_OFFLINE_MAX_OPERATIONS, CanvasOfflineQueue, canvasBatchBelongsToScope } from "../src/sync/canvas-offline-queue.ts";
 
 const scopeA = { ownerId: "creator-a", projectId: "project-a" };
 const scopeB = { ownerId: "creator-b", projectId: "project-b" };
@@ -118,6 +118,43 @@ test("one device never lists, counts, removes, or replays a different account's 
     if (previous) Object.defineProperty(globalThis, "indexedDB", previous);
     else delete globalThis.indexedDB;
   }
+});
+
+test("Canvas custody expires only the active principal's board changes after fourteen days",async()=>{
+  const previous=Object.getOwnPropertyDescriptor(globalThis,"indexedDB"),fixture=indexedDbFixture();
+  Object.defineProperty(globalThis,"indexedDB",{configurable:true,writable:true,value:fixture.indexedDB});
+  try{
+    const expiredAt=new Date(Date.now()-CANVAS_OFFLINE_MAX_AGE_MS-1_000).toISOString();
+    fixture.values.set("expired-a",{id:"expired-a",...scopeA,events:[eventFor(scopeA,"expired-a")],createdAt:expiredAt,actionSequence:1,bytes:100});
+    fixture.values.set("expired-b",{id:"expired-b",...scopeB,events:[eventFor(scopeB,"expired-b")],createdAt:expiredAt,actionSequence:1,bytes:100});
+    const queue=new CanvasOfflineQueue();
+    assert.deepEqual(await queue.listBatches(scopeA),[]);
+    assert.equal(fixture.values.has("expired-a"),false);
+    assert.equal(fixture.values.has("expired-b"),true,"another principal's retained data cannot be inspected or deleted");
+  }finally{if(previous)Object.defineProperty(globalThis,"indexedDB",previous);else delete globalThis.indexedDB;}
+});
+
+test("Canvas custody rejects an eleventh-thousandth operation before writing",async()=>{
+  const previous=Object.getOwnPropertyDescriptor(globalThis,"indexedDB"),fixture=indexedDbFixture();
+  Object.defineProperty(globalThis,"indexedDB",{configurable:true,writable:true,value:fixture.indexedDB});
+  try{
+    fixture.values.set("full",{id:"full",...scopeA,events:Array.from({length:CANVAS_OFFLINE_MAX_OPERATIONS},(_,index)=>eventFor(scopeA,`existing-${index}`)),createdAt:new Date().toISOString(),actionSequence:1,bytes:1_000});
+    const queue=new CanvasOfflineQueue();
+    await assert.rejects(queue.enqueueBatch([eventFor(scopeA,"overflow")],scopeA),/10,000 pending board changes/);
+    assert.equal(fixture.values.has("overflow"),false);
+    assert.equal(fixture.values.size,1);
+  }finally{if(previous)Object.defineProperty(globalThis,"indexedDB",previous);else delete globalThis.indexedDB;}
+});
+
+test("Canvas custody rejects a write beyond fifty megabytes without changing stored work",async()=>{
+  const previous=Object.getOwnPropertyDescriptor(globalThis,"indexedDB"),fixture=indexedDbFixture();
+  Object.defineProperty(globalThis,"indexedDB",{configurable:true,writable:true,value:fixture.indexedDB});
+  try{
+    fixture.values.set("large",{id:"large",...scopeA,events:[eventFor(scopeA,"large")],createdAt:new Date().toISOString(),actionSequence:1,bytes:CANVAS_OFFLINE_MAX_BYTES});
+    const queue=new CanvasOfflineQueue();
+    await assert.rejects(queue.enqueueBatch([eventFor(scopeA,"overflow")],scopeA),/50 MB of pending board changes/);
+    assert.deepEqual([...fixture.values.keys()],["large"]);
+  }finally{if(previous)Object.defineProperty(globalThis,"indexedDB",previous);else delete globalThis.indexedDB;}
 });
 
 test("video-scene announcements use a Lit property binding that remains safe across later rerenders", () => {

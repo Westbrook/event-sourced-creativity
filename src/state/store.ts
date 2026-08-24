@@ -13,7 +13,7 @@ import { effectivePromptPreference, normalizePromptTechnique, type PromptPrefere
 import { canvasIdFromRoute } from "../canvas/routes";
 import { canvasProjectId, foldCanvasEvents, type CanvasContextSet, type CanvasProjection } from "../canvas/model";
 import type { GenerationReadiness, GenerationReadinessKind, PromptTechniqueSafetyComparison } from "../model/generation-readiness";
-import { parseDocumentArtifactContent, type DocumentArtifactKind, type SlidePresentation } from "../model/document-artifacts";
+import { parseDocumentArtifactContent, type DocumentArtifactKind, type SlidePresentation, type SlideStylePresetId } from "../model/document-artifacts";
 import { artifactContextEvents, imageOutputContextEvents } from "../model/output-context";
 import { outputBlockRemovalEvents as ownedOutputBlockRemovalEvents, outputBlockTextEditEvents, outputInputDraft, outputInputEditEvents, type OutputInputDraft } from "../model/output-authoring";
 import { combinedContextGroups, combinedContextMemberships, combinedContextRoleForBlockType } from "../model/combined-context";
@@ -21,9 +21,13 @@ import { eventProfileRank } from "../model/event-profiles";
 import type { VideoAudioMode, VideoDurationSeconds } from "../model/video-adapter";
 import { normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../model/video-adapter";
 import { estimatePlannerOperationMicrousd, formatGenerationUsd, generationBudgetGate, generationBudgetPreferenceKey, type GenerationCostBudgets } from "../model/generation-budget";
-import { buildManagedProductionPlan, type ProductionMode } from "../model/managed-production";
+import { currentFormaLocale, FORMA_DEFAULT_MESSAGES } from "../components/design-system/localization";
+import { localizedGenerationFailureGuidance } from "../components/design-system/localized-runtime-copy";
+import { formaSystemMessageId } from "../components/design-system/system-message-id";
+import { buildManagedProductionPlan, MAX_MANAGED_PRESENTATION_SLIDES, type ProductionMode } from "../model/managed-production";
 import { beginRoutePopulation, completeBackgroundHydration, recordEventPage, recordPopulationSource, recordPrivateContentState, recordRouteHistoryProfile, recordSessionReady } from "../performance";
-import { clearAnalyticsSnapshots, matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
+import { clearAccountSnapshots, clearAnalyticsSnapshots, matchingAccountSnapshot, readAccountSnapshots, writeAccountSnapshot, type AccountSnapshotIdentity, type AccountSnapshotProfile } from "./account-cache";
+import { canvasOfflineQueue } from "../sync/canvas-offline-queue";
 import { consumeSessionBootstrap, consumeSessionPrefetch } from "./session-bootstrap";
 import { routeCapabilities } from "./route-capabilities";
 import type { FormaCapability } from "../platform/capabilities";
@@ -36,7 +40,7 @@ export type CanvasSyncResult = { appended:CreativeEvent[]; rejected:Array<{index
 export type PilotSession = {
   user: { userId: string; email: string; displayName: string; role: "admin" | "creator" | "agent" | "viewer"; consentVersion: string | null; consentedAt: string | null };
   impersonation: { active:true; impersonationId:string; personaId:string; replaySessionId:string; actor:{userId:string;email:string;displayName:string;role:"admin"|"creator"|"agent"|"viewer"}; fictionalUser:{userId:string;email:string;displayName:string;role:"admin"|"creator"|"agent"|"viewer"}; startedAt:string; expiresAt:string } | null;
-  policy: { version: string; accepted: boolean; passiveCapture: false; attentionCapture?: { available: boolean; defaultOn: false; retentionDays: number; rawInputCapture: false }; externalAssetsRequireAssertion: true; retentionDays: number; sharing: string };
+  policy: { version: string; accepted: boolean; passiveCapture: false; attentionCapture?: { available: boolean; defaultOn: false; retentionDays: number; rawInputCapture: false }; externalAssetsRequireAssertion: true; retentionDays: number; evidenceRetentionDays?:number; sharing: string };
   canvas: { version:string; mode:"internal"|"pilot"; pilotAvailable:boolean; access:boolean; accessReason:"administrator-internal-review"|"pilot-approved"|"pilot-gate-incomplete"|"role-not-eligible"; blockedBy:Array<"trust_safety"|"counsel"|"second_image_adapter">; requirements:Array<{id:"trust_safety"|"counsel"|"second_image_adapter";label:string;summary:string;approved:boolean;approvedBy:string|null;approvedByUserId:string|null;approvedAt:string|null;evidenceRef:string|null;details:Record<string,unknown>}> };
   provider: { name: string; model: string; plannerModel?: string; configured: boolean; imageProvider?:string; imageProviders?:Array<{provider:string;model:string;previewModel?:string;editModel?:string;configured:boolean}>; videoProvider?:string; videoModel?:string; videoReferenceModel?:string; videoAdapterVersion?:string; videoConfigured?:boolean; videoApiSunset?:string|null };
   budgets: { period: string; user: { used: number; reserved: number; limit: number }; workspace: { used: number; reserved: number; limit: number } };
@@ -46,10 +50,17 @@ export type PilotSession = {
   permissionEpoch?: string;
   organizations?: Array<{ organizationId: string; name: string; role: string }>;
   projects?: Array<{organizationId:string;projectAccessId:string;projectId:string;projectName:string;role:string}>;
-  projectContext?:{organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string;role:string;permissions:FormaCapability[];expiresAt:string};
+  projectContext?:{organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string;role:string;permissions:FormaCapability[];expiresAt:string;managedPilot?:boolean};
 };
 export type ShareRecord = { shareId: string; token?: string; resourceKind?: string; resourceId?: string; projectId?: string; expiresAt: string; revokedAt?: string | null; createdAt?: string; active: boolean };
 export type CapturedAuthorizationScope = { key:string; shared:boolean };
+export type ProjectNotification={id:string;kind:string;artifactId:string|null;documentId:string|null;message:string;createdAt:string;readAt:string|null};
+export type OrganizationContextPackage={id:string;name:string;description:string;status:string;versionId:string|null;version:number|null;contentSha256:string|null;publishedAt:string|null;publishedByUserId:string|null;blockCount:number;bindingCount:number;createdAt:string;updatedAt:string};
+export type OrganizationContextBinding={id:string;organizationId:string;projectAccessId:string;documentId:string;packageId:string;versionId:string;pendingVersionId:string|null;updateMode:"pinned"|"follow-approved";status:string};
+export type OrganizationContextVersion={id:string;version:number;sourceProjectAccessId:string;sourceDocumentId:string;blocks:Array<{sourceBlockId:string;type:string;handle:string;contentSha256:string;locked:boolean;source?:{contentSha256:string;originalName:string}}>;relations:Array<{fromSourceBlockId:string;toSourceBlockId:string;kind:string;properties?:Record<string,unknown>}>};
+export type AssignedReviewTask={id:string;organizationId:string;organizationName:string;projectAccessId:string;projectId:string;projectName:string;documentId:string;documentTitle:string;artifactId:string;artifactTitle:string;artifactKind:string;revision:number;contentSha256:string;status:string;dueAt:string|null;createdAt:string;requestedByUserId:string;requestedByName:string};
+export type ArtifactRevisionSummary={revision:number;sha256:string;createdByUserId:string;createdAt:string;expiresAt:string;available:boolean;current:boolean};
+export type ArtifactRevisionDetail={revision:number;currentRevision:number;createdAt:string;content:{markdown:string;items:Array<{title:string;body:string;notes:string}>}};
 
 export class FormaStore {
   readonly events = new Signal.State<CreativeEvent[]>([]);
@@ -67,11 +78,16 @@ export class FormaStore {
   readonly session = new Signal.State<PilotSession | null>(null);
   readonly content = new Signal.State<Record<string, string>>({});
   readonly shares = new Signal.State<ShareRecord[]>([]);
+  readonly projectNotifications = new Signal.State<ProjectNotification[]>([]);
+  readonly organizationContextPackages = new Signal.State<OrganizationContextPackage[]>([]);
+  readonly organizationContextBindings=new Signal.State<OrganizationContextBinding[]>([]);
+  readonly organizationContextVersions=new Signal.State<Record<string,OrganizationContextVersion>>({});
+  readonly reviewInbox = new Signal.State<AssignedReviewTask[]>([]);
   readonly documentJobs = new Signal.State<DocumentJob[]>([]);
   readonly generationReadiness = new Signal.State<Record<string,GenerationReadiness>>({});
   readonly adaptiveStructures = new Signal.State<Record<string,AdaptiveStructure>>({});
   readonly adaptiveSuggestionSets = new Signal.State<Record<string,AdaptiveSuggestionSet[]>>({});
-  readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, projectRailCollapsed: false, instrumentation: true, attentionCapture: readAttentionPreference(), attentionPaused: false, impersonationConfirmOpen:false, impersonationAction:"", selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", libraryView: "all", libraryOutputScope: "recent", search: "", toast: "" });
+  readonly ui = new SignalObject({ inspectorOpen: false, commandOpen: false, accountOpen: false, shareOpen: false, compareOpen: false, projectRailCollapsed: window.matchMedia?.("(max-width: 75rem), (max-height: 37.5rem)")?.matches ?? false, instrumentation: true, attentionCapture: readAttentionPreference(), attentionPaused: false, impersonationConfirmOpen:false, impersonationAction:"", selectedEventId: "", selectedOutputId: "", comparisonOutputIds: "", focusBlockId: "", focusCollectionId: "", editingBlockId: "", libraryView: "all", libraryOutputScope: "recent", search: "", toast: "" });
   readonly projection = new Signal.Computed<CreativeProjection>(() => {
     const route = this.route.get();
     const canvasId=canvasIdFromRoute(route)??"";
@@ -92,6 +108,7 @@ export class FormaStore {
   #focalInFlight = new Set<string>();
   #focalAppendQueue: Promise<void> = Promise.resolve();
   #jobPollTimer = 0;
+  #collaborationPollTimer = 0;
   #jobsSyncing = false;
   #jobSyncScope = "";
   #jobResyncRequested = false;
@@ -115,13 +132,26 @@ export class FormaStore {
   #pendingPassiveJobPath="";
   #focalBackfillTimer = 0;
 
-  constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&this.session.get()&&this.events.get().length){this.#flushPendingJobNotices();this.#syncVisibleJobs();}});window.addEventListener("forma-performance",()=>{if(!this.#pendingPassiveJobPath||this.route.get()!==this.#pendingPassiveJobPath||document.documentElement.dataset.formaPhase!=="populated")return;this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);});}
+  constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState!=="visible"||!this.session.get()){window.clearTimeout(this.#collaborationPollTimer);return;}if(this.events.get().length){this.#flushPendingJobNotices();this.#syncVisibleJobs();}this.#scheduleCollaborationPoll(0);});document.addEventListener("forma-locale-change",(event)=>{if(event.target!==document)return;for(const job of this.documentJobs.get())if(job.kind==="structure_adaptive")this.#dismissedAdaptiveSuggestions.add(job.jobId);this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});this.notify();});window.addEventListener("forma-performance",()=>{if(!this.#pendingPassiveJobPath||this.route.get()!==this.#pendingPassiveJobPath||document.documentElement.dataset.formaPhase!=="populated")return;this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);});}
+
+  #scheduleCollaborationPoll(delay=30_000){
+    window.clearTimeout(this.#collaborationPollTimer);
+    if(!this.session.get()||document.visibilityState==="hidden")return;
+    this.#collaborationPollTimer=window.setTimeout(()=>{
+      const session=this.session.get();
+      if(!session||document.visibilityState==="hidden")return;
+      const authorization=this.#authorizationScope(session);
+      const refreshes=[this.syncReviewInbox(),...(session.projectContext?[this.refreshEvents(),this.syncProjectNotifications(),this.syncOrganizationContextPackages()]:[])];
+      void Promise.allSettled(refreshes).finally(()=>{if(this.#scopeStillActive(authorization))this.#scheduleCollaborationPoll();});
+    },delay);
+  }
 
   subscribe(listener: Listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   notify() { this.#listeners.forEach((listener) => listener()); }
   #publishAppended(events:CreativeEvent[]){
     if(!events.length)return;
     const session=this.session.get();if(session&&events.some((event)=>event.type==="AttentionSignalsForgotten"))void clearAnalyticsSnapshots(this.#snapshotIdentity(session),true);
+    if(session?.projectContext&&events.some((event)=>["ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested","DocumentArtifactEdited","DocumentRenderCompleted","BlockCreated","BlockPropertyEdited","BlockRemoved","BlockRestored","RightsAsserted"].includes(event.type))){void this.syncProjectNotifications();void this.syncReviewInbox();}
     window.dispatchEvent(new CustomEvent("forma-events-appended",{detail:{events}}));
     const needsImageMaintenance=events.some((event)=>["GenerationCompleted","IdeationPreviewCompleted","DocumentRenderCompleted","ReferenceIngested","BlockCreated"].includes(event.type));
     if(needsImageMaintenance&&!this.session.get()?.impersonation){
@@ -187,27 +217,83 @@ export class FormaStore {
   #adaptiveIntentForJob(job:DocumentJob){const result=job.result??{};const directRef=String(result.intentRef??"");if(directRef&&this.content.get()[directRef])return this.content.get()[directRef];const eventIds=new Set(Array.isArray(result.appendedEventIds)?result.appendedEventIds.map(String):[]);const reasoned=this.events.get().find((event)=>eventIds.has(event.eventId)&&event.type==="AssistantReasoned"&&event.payload.operation==="adaptive-structure");const eventRef=String(reasoned?.payload.intent_ref??"");return this.#pendingAdaptiveIntents.get(job.jobId)??this.content.get()[eventRef]??"";}
   #syncAdaptiveSuggestionSets(jobs:DocumentJob[]){const next:Record<string,AdaptiveSuggestionSet[]>={};for(const job of jobs){if(job.kind!=="structure_adaptive"||job.sourceSurface!=="canvas"||job.status!=="completed"||!job.result?.structure||this.#dismissedAdaptiveSuggestions.has(job.jobId))continue;const suggestion:AdaptiveSuggestionSet={id:job.jobId,documentId:job.documentId,intent:this.#adaptiveIntentForJob(job),structure:job.result.structure as AdaptiveStructure,requestedAt:job.requestedAt,completedAt:job.completedAt??job.updatedAt};(next[job.documentId]??=[]).push(suggestion);}for(const suggestions of Object.values(next))suggestions.sort((left,right)=>left.requestedAt.localeCompare(right.requestedAt)||left.id.localeCompare(right.id));this.adaptiveSuggestionSets.set(next);}
   #jobResultVisible(job:DocumentJob){if(document.visibilityState!=="visible")return false;if(job.sourceSurface==="canvas"&&this.route.get().startsWith("/canvas"))return true;if(!isDocumentViewRoute(this.route.get())||documentIdFromRoute(this.route.get())!==job.documentId)return false;const view=documentViewFromRoute(this.route.get());if(job.kind==="chat")return view==="chat";if(job.kind==="structure_adaptive")return view==="adaptive";return true;}
-  #jobNotice(job:DocumentJob){const title=this.projection.get().documents.find((document)=>document.id===job.documentId)?.title??"your document";const labels:Record<DocumentJobKind,string>={preview:"Draft generation",generate:"Full-quality generation",prompt_fan:"Fan generation",chat:"Creative chat",structure_adaptive:"Adaptive planning",extract_reference:"Reference analysis",render_document:"Document render"};if(job.status==="partial"&&job.kind==="prompt_fan"){const completed=Number(job.result?.completedCount??0),failed=Number(job.result?.failedCount??0);return`Fan generation finished partially for ${title}: ${completed} image${completed===1?"":"s"} ready and ${failed} failed. Open the comparison for details.`;}if(job.status==="failed"){const detail=documentJobFailure(job);const guidance=generationFailureGuidance(detail,job.error??"");return`${labels[job.kind]} could not finish for ${title}. ${guidance.title}. ${guidance.summary}${detail?.requestId?` Request ${detail.requestId}.`:""}`;}const ready:Record<DocumentJobKind,string>={preview:"A draft image is ready",generate:"A full-quality image is ready",prompt_fan:"A four-image fan is ready",chat:"A chat response is ready",structure_adaptive:"An adaptive plan is ready",extract_reference:"Reference analysis is ready",render_document:"A new document artifact is ready"};return`${ready[job.kind]} in ${title}.`;}
+  #jobNotice(job:DocumentJob){
+    const snapshot=currentFormaLocale();
+    const interpolate=(source:string,values:Record<string,string|number>={})=>source.replace(/\{(\w+)\}/g,(_,name:string)=>String(values[name]??""));
+    const t=(id:string,fallback="",values:Record<string,string|number>={})=>interpolate(snapshot.messages[id]??fallback,values);
+    const system=(source:string,values:Record<string,string|number>={})=>interpolate(snapshot.messages[formaSystemMessageId(source)]??source,values);
+    const number=(value:number)=>new Intl.NumberFormat(snapshot.formatLocale).format(value);
+    const title=this.projection.get().documents.find((document)=>document.id===job.documentId)?.title??system("your document");
+    if(job.status==="partial"&&job.kind==="prompt_fan")return t("job.notice.partial","",{title,completed:number(Number(job.result?.completedCount??0)),failed:number(Number(job.result?.failedCount??0))});
+    if(job.status==="failed"){
+      const detail=documentJobFailure(job),fallback=job.error??"";
+      const guidance=localizedGenerationFailureGuidance(generationFailureGuidance(detail,fallback),detail,fallback,{locale:snapshot.locale,messages:snapshot.messages,t,number,system});
+      const message=t("job.notice.failedDetail","",{kind:t(`job.kind.${job.kind}`),title,guidance:guidance.title,summary:guidance.summary});
+      return detail?.requestId?`${message} ${t("job.notice.request","",{request:detail.requestId})}`:message;
+    }
+    return t(`job.notice.ready.${job.kind}`,"",{title});
+  }
   async #ackJob(jobId:string){try{await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/ack`,{method:"POST"});}catch{/* A later poll can offer the notice again. */}}
+  async #hydrateDocumentJobGenerationReceipt(job:DocumentJob,authorization:string){
+    const receipt=job.result?.generationReceipt;this.#assertAuthorizationScope(authorization);
+    if(this.session.get()?.projectContext){if(receipt!==undefined&&receipt!==null)throw new Error("Actor-private generation receipts are unavailable in shared project views.");return;}
+    if(!receipt||typeof receipt!=="object"||Array.isArray(receipt))return;
+    const reference=(receipt as Record<string,unknown>).input_ref;if(typeof reference!=="string"||!reference.trim())return;
+    let rejected=false;
+    const retained=await this.ensurePrivateContent(reference,{validate:(value)=>{
+      try{const parsed=JSON.parse(value) as unknown;const valid=Boolean(parsed&&typeof parsed==="object"&&!Array.isArray(parsed)&&(parsed as Record<string,unknown>).job_id===job.jobId&&(parsed as Record<string,unknown>).document_id===job.documentId);if(!valid)rejected=true;return valid;}catch{rejected=true;return false;}
+    }});
+    this.#assertAuthorizationScope(authorization);
+    if(!retained){if(rejected)throw new Error("The private generation receipt does not belong to this authorized job.");return;}
+    let parsed:unknown;try{parsed=JSON.parse(retained);}catch{throw new Error("The private generation receipt could not be verified for this authorized job.");}
+    if(!parsed||typeof parsed!=="object"||Array.isArray(parsed)||(parsed as Record<string,unknown>).job_id!==job.jobId||(parsed as Record<string,unknown>).document_id!==job.documentId)throw new Error("The private generation receipt does not belong to this authorized job.");
+  }
   async loadDocumentJobDetail(jobId:string){
     const authorization=this.#activeAuthorizationScope();
     const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
     const cached=this.#jobDetails.get(jobId);
-    if(cached&&cached.updatedAt===current?.updatedAt)return cached;
+    if(cached&&cached.updatedAt===current?.updatedAt){if(cached.jobId!==jobId||cached.documentId!==current.documentId)throw new Error("The retained generation inputs do not belong to this authorized job.");await this.#hydrateDocumentJobGenerationReceipt(cached,authorization);return cached;}
     const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}`);
     const body=await response.json() as {job?:DocumentJob;error?:string};
     this.#assertAuthorizationScope(authorization);
     if(!response.ok||!body.job)throw new Error(body.error??"The retained generation inputs could not be loaded.");
+    if(body.job.jobId!==jobId||current&&body.job.documentId!==current.documentId)throw new Error("The retained generation inputs do not belong to this authorized job.");
+    await this.#hydrateDocumentJobGenerationReceipt(body.job,authorization);
     this.#jobDetails.set(jobId,body.job);
     if(this.#jobDetails.size>24)this.#jobDetails.delete(this.#jobDetails.keys().next().value!);
     this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));
     this.notify();
     return body.job;
   }
+  /** Explicit actor-only project receipts never enter shared job or content caches. */
+  async loadActorDocumentGenerationReceipt(jobId:string):Promise<{job:DocumentJob;content:Record<string,string>}>{
+    const authorization=this.#activeAuthorizationScope();
+    if(!this.session.get()?.projectContext)throw new Error("Actor-private project receipts require an active project context.");
+    const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
+    if(!current)throw new Error("The retained generation inputs do not belong to this authorized job.");
+    const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/private-receipt`);
+    const body=await response.json() as {job?:DocumentJob;content?:Record<string,unknown>;error?:string};
+    this.#assertAuthorizationScope(authorization);
+    if(!this.session.get()?.projectContext||!response.ok||!body.job)throw new Error(body.error??"The actor-private generation receipt could not be loaded.");
+    if(body.job.jobId!==jobId||body.job.documentId!==current.documentId)throw new Error("The retained generation inputs do not belong to this authorized job.");
+    const receipt=body.job.result?.generationReceipt;
+    const reference=receipt&&typeof receipt==="object"&&!Array.isArray(receipt)?(receipt as Record<string,unknown>).input_ref:null;
+    if(typeof reference!=="string"||!reference.trim()||!body.content||Object.keys(body.content).length!==1||typeof body.content[reference]!=="string")throw new Error("The actor-private generation receipt could not be verified.");
+    let retained:unknown;try{retained=JSON.parse(body.content[reference]);}catch{throw new Error("The actor-private generation receipt could not be verified.");}
+    if(!retained||typeof retained!=="object"||Array.isArray(retained)||(retained as Record<string,unknown>).job_id!==jobId||(retained as Record<string,unknown>).document_id!==current.documentId)throw new Error("The private generation receipt does not belong to this authorized job.");
+    this.#assertAuthorizationScope(authorization);
+    return{job:body.job,content:{[reference]:body.content[reference]}};
+  }
   async dismissDocumentJobFailure(jobId:string){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/dismiss`,{method:"POST"},"dismiss this generation issue");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job)throw new Error(body.error??"Generation issue could not be dismissed");this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast(this.session.get()?.projectContext?"Generation notice dismissed. Failure details remain available; generation inputs stay private to their author.":"Generation notice dismissed. Its retained inputs remain in this document’s failure history.");this.notify();return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Generation issue could not be dismissed");return false;}}
   async recoverDocumentRender(jobId:string){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/retry`,{method:"POST"},"recover this completed provider render");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job)throw new Error(body.error??"The saved provider render could not be recovered");this.documentJobs.set([body.job,...this.documentJobs.get().filter((job)=>job.jobId!==jobId)]);this.toast("Recovering the saved Fal video. No second paid video was submitted.");this.notify();this.#driveDocumentJobs(this.documentJobs.get());this.#scheduleJobPoll(800);return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}}
   async stopDocumentJob(jobId:string,force=false){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/${force?"force-fail":"cancel"}`,{method:"POST"},force?"force-fail this document operation":"stop this document operation");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job){const messages:Record<string,string>={job_finalizing:"This operation is already finalizing and can no longer be stopped.",admin_required:"Only an administrator can force-fail an operation."};throw new Error(messages[body.error??""]??body.error??"The operation could not be stopped");}this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast(force?"Operation force-failed. Its audit receipt and released budget remain available.":"Operation stopped. Any reserved application budget was released.");await Promise.all([this.syncDocumentJobs(),this.refreshSession()]);this.#assertAuthorizationScope(authorization);return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The operation could not be stopped");return false;}}
-  #flushPendingJobNotices(){if(document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;const jobs=this.#pendingJobNotices.splice(0);this.toast(jobs.length===1?this.#jobNotice(jobs[0]):`${jobs.length} background document operations finished.`);for(const job of jobs)void this.#ackJob(job.jobId);}
+  #flushPendingJobNotices(){
+    if(document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;
+    const jobs=this.#pendingJobNotices.splice(0),locale=currentFormaLocale(),source="{count} background document operations finished.";
+    const combined=(locale.messages[formaSystemMessageId(source)]??source).replace("{count}",new Intl.NumberFormat(locale.formatLocale).format(jobs.length));
+    this.toast(jobs.length===1?this.#jobNotice(jobs[0]):combined);
+    for(const job of jobs)void this.#ackJob(job.jobId);
+  }
   async #readEventPages(after=0){return this.#readEventStream(after,"full",after===0);}
   async replayAuthoritativeHistory(sequence:number){const authorization=this.#activeAuthorizationScope(),complete=await this.#readEventStream(0,"full",false);this.#assertAuthorizationScope(authorization);this.replayEvents.set(complete.events);this.setReplayAsOf(sequence);}
   async #readEventStream(after:number,profile:AccountSnapshotProfile,includeContent=false){
@@ -233,7 +319,7 @@ export class FormaStore {
       if(hasMore&&next<=cursor)throw new Error("Event stream pagination did not advance");
       cursor=next;first=false;
       if(!hasMore){
-        if(profile==="full"&&after>0&&events.some((event)=>Object.entries(event.payload).some(([key,value])=>/(?:^|_)(?:content|prompt|intent|input|response|message|statement|condition|note|output|direction)_ref$/.test(key)&&typeof value==="string"&&!this.content.get()[value]))){
+        if(profile==="full"&&after>0&&events.some((event)=>event.type==="DocumentArtifactEdited"||Object.entries(event.payload).some(([key,value])=>/(?:^|_)(?:content|prompt|intent|input|response|message|statement|condition|note|output|direction)_ref$/.test(key)&&typeof value==="string"&&!this.content.get()[value]))){
           const hydration=await fetch(`/api/events?after=${head}&limit=1&content=1`);
           this.#assertAuthorizationScope(authorization);
           if(hydration.ok){const hydrated=await hydration.json() as {content?:Record<string,string>};this.#assertAuthorizationScope(authorization);content={...content,...(hydrated.content??{})};}
@@ -322,12 +408,12 @@ export class FormaStore {
     try{await hydration;state="ready";}finally{if((this.route.get().split(/[?#]/)[0]?.replace(/\/+$/,"")||"/")===hydrationPath)recordPrivateContentState(state,required);if(this.#contentHydration===hydration)this.#contentHydration=undefined;}
   }
 
-  async ensurePrivateContent(reference:string){
+  async ensurePrivateContent(reference:string,options:{force?:boolean;validate?:(value:string)=>boolean}={}){
     if(!reference)return null;
     const initialSession=this.session.get(),owner=initialSession?.user.userId,authorization=initialSession?this.#authorizationScope(initialSession):"";if(!owner)return null;
-    const existing=this.content.get()[reference];if(typeof existing==="string")return existing;
-    if(this.#contentHydration){try{await this.#contentHydration;}catch{/* A targeted retry below preserves the exact missing-reference contract. */}const active=this.session.get();if(!active||this.#authorizationScope(active)!==authorization)return null;const hydrated=this.content.get()[reference];if(typeof hydrated==="string")return hydrated;}
-    try{const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1`);if(!response.ok)return null;const body=await response.json() as {content?:Record<string,string>};const active=this.session.get();if(!active||active.user.userId!==owner||this.#authorizationScope(active)!==authorization)return null;this.#privateContentScope="all";if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}return this.content.get()[reference]??null;}catch{return null;}
+    const existing=this.content.get()[reference];if(typeof existing==="string"&&!options.force&&(!options.validate||options.validate(existing)))return existing;
+    if(this.#contentHydration){try{await this.#contentHydration;}catch{/* A targeted retry below preserves the exact missing-reference contract. */}const active=this.session.get();if(!active||this.#authorizationScope(active)!==authorization)return null;const hydrated=this.content.get()[reference];if(typeof hydrated==="string"&&!options.force&&(!options.validate||options.validate(hydrated)))return hydrated;}
+    try{const response=await fetch(`/api/events?after=${this.head.get()}&limit=1&content=1`);if(!response.ok)return null;const body=await response.json() as {content?:Record<string,string>};const active=this.session.get();if(!active||active.user.userId!==owner||this.#authorizationScope(active)!==authorization)return null;const requested=body.content?.[reference];if(options.validate&&(typeof requested!=="string"||!options.validate(requested)))return null;this.#privateContentScope="all";if(Object.keys(body.content??{}).length){this.content.set({...this.content.get(),...body.content});this.notify();}return this.content.get()[reference]??null;}catch{return null;}
   }
   #clientEventIds(events:CreativeEvent[]){return new Set(events.map((event)=>String(event.payload.client_event_id??"")).filter(Boolean));}
   #principalEventActor(){const session=this.session.get();return session?.projectContext?`user:${session.user.userId}`:"user";}
@@ -367,7 +453,7 @@ export class FormaStore {
   async #driveDocumentJob(job:DocumentJob){const authorization=this.#activeAuthorizationScope();this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(this.#scopeStillActive(authorization)&&document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{if(this.#scopeStillActive(authorization)){this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}}
   async syncDocumentJobs(){if(!this.#canRequestProjectOutputs()){window.clearTimeout(this.#jobPollTimer);return;}const scope=this.#jobScope(),initialSession=this.session.get(),authorization=initialSession?this.#authorizationScope(initialSession):"";if(this.#jobsSyncing){if(scope!==this.#jobSyncScope)this.#jobResyncRequested=true;return;}this.#jobsSyncing=true;this.#jobSyncScope=scope;try{const response=await fetch(`/api/document-jobs${scope}`);if(!response.ok)throw new Error(`Job status returned ${response.status}`);const body=await response.json() as {jobs?:DocumentJob[]};const currentSession=this.session.get();if(this.#jobScope()!==scope||!currentSession||this.#authorizationScope(currentSession)!==authorization){this.#jobResyncRequested=true;return;}const previous=new Map(this.documentJobs.get().map((job)=>[job.jobId,job]));const jobs=(body.jobs??[]).map((job)=>{const detail=this.#jobDetails.get(job.jobId);if(detail&&detail.updatedAt===job.updatedAt)return{...job,result:detail.result};if(detail)this.#jobDetails.delete(job.jobId);return job;});this.documentJobs.set(jobs);this.#jobPollFailures=0;this.#jobPollIssueNotified=false;
       const terminalChanges=jobs.filter((job)=>documentJobTerminal(job)&&(previous.has(job.jobId)?previous.get(job.jobId)?.status!==job.status:!job.notifiedAt&&!job.parentJobId));const fanProgress=jobs.some((job)=>job.kind==="prompt_fan"&&previous.has(job.jobId)&&previous.get(job.jobId)?.updatedAt!==job.updatedAt);const disappearedActive=[...previous.values()].some((job)=>(job.status==="queued"||job.status==="running"||job.status==="committing")&&!jobs.some((current)=>current.jobId===job.jobId));const completed=terminalChanges.filter((job)=>!job.notifiedAt&&!job.parentJobId);if(terminalChanges.length||fanProgress||disappearedActive){this.#pendingJobEventRefresh=true;this.#pendingJobSessionRefresh=true;}if(this.#pendingJobEventRefresh){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);this.#pendingJobEventRefresh=false;}if(this.#pendingJobSessionRefresh){try{await this.refreshSession();this.#assertAuthorizationScope(authorization);this.#pendingJobSessionRefresh=false;}catch(error){if(!this.#scopeStillActive(authorization))throw error;/* Retry account totals independently; a temporary session failure must not hide completed creative work. */}}this.#assertAuthorizationScope(authorization);this.#syncAdaptiveSuggestionSets(jobs);
-      for(const job of completed){if(job.kind==="structure_adaptive"&&job.status==="completed"&&job.result?.structure)this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId);continue;}if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);}
+      for(const job of completed){if(job.kind==="structure_adaptive"&&job.status==="completed"&&job.result?.structure&&!this.#dismissedAdaptiveSuggestions.has(job.jobId))this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId);continue;}if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);}
       this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(jobs.some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")?1_500:this.#pendingJobSessionRefresh?5_000:60_000);
     }catch{if(this.#scopeStillActive(authorization)){this.#jobPollFailures+=1;if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}this.#scheduleJobPoll(5_000);}}finally{this.#jobsSyncing=false;if(this.#scopeStillActive(authorization)&&(this.#jobResyncRequested||this.#jobScope()!==scope)){this.#jobResyncRequested=false;queueMicrotask(()=>void this.syncDocumentJobs());}}}
   #budgetPreference(key:string){try{return localStorage.getItem(key)==="true";}catch{return false;}}
@@ -377,7 +463,7 @@ export class FormaStore {
     if(kind==="prompt_fan")return 4_000_000;
     if(kind!=="render_document")return 1_000_000;
     const artifactKind=String(payload.artifactKind??"");
-    if(payload.productionMode==="managed"&&["short_story","scene","slides","storyboard","video"].includes(artifactKind)){const production=buildManagedProductionPlan(artifactKind as DocumentArtifactKind,payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{},artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??0)});return production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:0);}
+    if(payload.productionMode==="managed"&&["short_story","scene","slides","storyboard","video"].includes(artifactKind)){const production=buildManagedProductionPlan(artifactKind as DocumentArtifactKind,payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{},artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??payload.requestedSlideCount??0),...(artifactKind==="slides"?{requestedSlideCount:Number(payload.requestedSlideCount??payload.itemCount??0)}:{})});return production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:0);}
     return artifactKind==="video"?normalizeVideoDurationSeconds(payload.videoSeconds)*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:artifactKind==="storyboard"?Math.max(1,Math.floor(Number(payload.itemCount??6)))*1_000_000+1_000_000:1_000_000;
   }
   async #authorizeGenerationBudget(kind:DocumentJobKind,payload:Record<string,unknown>){
@@ -390,24 +476,33 @@ export class FormaStore {
     const suppressed=this.#budgetPreference(suppressionKey);
     const acknowledged=this.#budgetPreference(noticeKey);
     const gate=generationBudgetGate(session.costBudgets,{projectedMicrousd:this.#generationEstimate(kind,payload),suppressedUntilCritical:suppressed,noticeAcknowledged:acknowledged});
-    if(gate.level==="blocked")throw new Error(`This generation exceeds the remaining ${gate.scope==="workspace"?"organization":"personal"} monthly budget.`);
+    const locale=currentFormaLocale();
+    const localize=(source:string,values:Record<string,string|number>={})=>(locale.messages[formaSystemMessageId(source)]??source).replace(/\{(\w+)\}/g,(_,name:string)=>String(values[name]??""));
+    const scope=localize(gate.scope==="workspace"?"organization":"personal");
+    if(gate.level==="blocked")throw new Error(localize("This generation exceeds the remaining {scope} monthly budget.",{scope}));
     if(!gate.requiresAcknowledgement){this.#assertAuthorizationScope(authorization);payload.budgetAcknowledged=acknowledged;payload.budgetWarningSuppressed=suppressed&&gate.level!=="critical";return;}
-    const dialog=document.createElement("dialog");dialog.className="modal generation-budget-approval";const dialogId=crypto.randomUUID();dialog.setAttribute("aria-labelledby",`generation-budget-title-${dialogId}`);dialog.setAttribute("aria-describedby",`generation-budget-description-${dialogId}`);
+    const dialog=document.createElement("dialog");dialog.className="modal generation-budget-approval";dialog.lang=locale.locale;dialog.dir=locale.direction;const dialogId=crypto.randomUUID();dialog.setAttribute("aria-labelledby",`generation-budget-title-${dialogId}`);dialog.setAttribute("aria-describedby",`generation-budget-description-${dialogId}`);
     const card=document.createElement("section");card.className="modal-card";
-    const heading=document.createElement("h2");heading.id=`generation-budget-title-${dialogId}`;heading.textContent=gate.level==="critical"?"Your monthly generation budget is almost exhausted":"Review your monthly generation budget";
-    const message=document.createElement("p");message.id=`generation-budget-description-${dialogId}`;message.textContent=`This ${gate.scope==="workspace"?"organization":"personal"} budget will be ${Math.round(gate.projectedUtilization*100)}% used. The generation reserves up to ${formatGenerationUsd(gate.projectedMicrousd)}; ${formatGenerationUsd(gate.remainingMicrousd)} remains before it starts.`;
+    const heading=document.createElement("h2");heading.id=`generation-budget-title-${dialogId}`;heading.textContent=localize(gate.level==="critical"?"Your monthly generation budget is almost exhausted":"Review your monthly generation budget");
+    const message=document.createElement("p");message.id=`generation-budget-description-${dialogId}`;message.textContent=localize("This {scope} budget will be {percent}% used. The generation reserves up to {reserved}; {remaining} remains before it starts.",{scope,percent:new Intl.NumberFormat(locale.formatLocale).format(Math.round(gate.projectedUtilization*100)),reserved:formatGenerationUsd(gate.projectedMicrousd),remaining:formatGenerationUsd(gate.remainingMicrousd)});
     card.append(heading,message);
     let suppression:HTMLInputElement|null=null;
-    if(gate.dismissible){const label=document.createElement("label");suppression=document.createElement("input");suppression.type="checkbox";label.append(suppression,document.createTextNode(" I no longer want to see this until 95% of the monthly budget is used."));card.append(label);}
-    const footer=document.createElement("footer"),cancel=document.createElement("button"),continueButton=document.createElement("button");cancel.type="button";cancel.className="button ghost";cancel.textContent="Cancel";continueButton.type="button";continueButton.className="button primary";continueButton.textContent="I understand, continue";footer.append(cancel,continueButton);card.append(footer);dialog.append(card);document.body.append(dialog);
+    if(gate.dismissible){const label=document.createElement("label");suppression=document.createElement("input");suppression.type="checkbox";label.append(suppression,document.createTextNode(` ${localize("I no longer want to see this until 95% of the monthly budget is used")}`));card.append(label);}
+    const footer=document.createElement("footer"),cancel=document.createElement("button"),continueButton=document.createElement("button");cancel.type="button";cancel.className="button ghost";cancel.textContent=locale.messages["action.cancel"]??"Cancel";continueButton.type="button";continueButton.className="button primary";continueButton.textContent=localize("I understand, continue");footer.append(cancel,continueButton);card.append(footer);dialog.append(card);document.body.append(dialog);
     const accepted=await new Promise<boolean>((resolve)=>{let settled=false;const finish=(requested:boolean)=>{if(settled)return;settled=true;window.removeEventListener("forma-authorization-changed",changed);const value=requested&&this.#scopeStillActive(authorization);if(value&&suppression?.checked)this.#setBudgetPreference(suppressionKey);if(value&&gate.level==="notice")this.#setBudgetPreference(noticeKey);if(dialog.open)dialog.close();dialog.remove();resolve(value);};const changed=()=>finish(false);window.addEventListener("forma-authorization-changed",changed,{once:true});cancel.addEventListener("click",()=>finish(false));continueButton.addEventListener("click",()=>finish(true));dialog.addEventListener("cancel",(event)=>{event.preventDefault();finish(false);});if(!this.#scopeStillActive(authorization)){finish(false);return;}dialog.showModal();});
     this.#assertAuthorizationScope(authorization);
-    if(!accepted)throw new Error("Generation canceled before any provider work was started.");
+    if(!accepted)throw new Error(localize("Generation canceled before any provider work was started."));
     payload.budgetAcknowledged=true;payload.budgetWarningSuppressed=this.#budgetPreference(suppressionKey)&&gate.level!=="critical";
   }
-  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string){const authorization=this.#activeAuthorizationScope();if(!this.#canRequestProjectOutputs())throw new Error("Your project role does not permit creating outputs.");const documentId=documentIdOverride??this.projection.get().documentId;const requestKey=String(payload.requestKey??"");if(requestKey&&this.#jobStarts.has(requestKey))throw new Error("This exact image request is already being queued.");if(requestKey){this.#jobStarts.add(requestKey);this.notify();}try{const navigation=this.#navigationCommit;await this.#appendPipeline;this.#assertAuthorizationScope(authorization);if(navigation&&!await navigation)throw new Error("The selected project could not be opened safely.");this.#assertAuthorizationScope(authorization);await this.#authorizeGenerationBudget(kind,payload);this.#assertAuthorizationScope(authorization);const action=kind==="preview"?"start a draft image":kind==="generate"?"start a full-quality image":kind==="prompt_fan"?"start a four-image prompt fan":`start ${kind.replaceAll("_"," ")}`;const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action);this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job)throw new Error(body.message??body.error??"Document operation could not be started");const activeSession=this.session.get();if(!activeSession||this.#authorizationScope(activeSession)!==authorization)throw new Error("The selected project changed before this request finished.");if(body.readiness&&requestKey)this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);if(requestKey)this.#readinessAcknowledgements.delete(requestKey);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);return{job:body.job,reused:Boolean(body.reused)};}finally{if(requestKey&&this.#scopeStillActive(authorization)){this.#jobStarts.delete(requestKey);this.notify();}}}
+  async #startDocumentJob(kind:DocumentJobKind,payload:Record<string,unknown>,sourceSurface:string,documentIdOverride?:string){if(!payload.locale&&["preview","generate","prompt_fan","render_document"].includes(kind))payload={...payload,locale:typeof document==="undefined"?"en":document.documentElement.lang||"en"};const authorization=this.#activeAuthorizationScope();if(!this.#canRequestProjectOutputs())throw new Error("Your project role does not permit creating outputs.");const documentId=documentIdOverride??this.projection.get().documentId;const requestKey=String(payload.requestKey??"");if(requestKey){const active=this.documentJobs.get().find((job)=>job.documentId===documentId&&job.kind===kind&&job.requestKey===requestKey&&(job.status==="queued"||job.status==="running"||job.status==="committing"));if(active)return{job:active,reused:true};}if(requestKey&&this.#jobStarts.has(requestKey))throw new Error(kind==="render_document"?"This exact output request is already being queued.":"This exact image request is already being queued.");if(requestKey){this.#jobStarts.add(requestKey);this.notify();}try{const navigation=this.#navigationCommit;await this.#appendPipeline;this.#assertAuthorizationScope(authorization);if(navigation&&!await navigation)throw new Error("The selected project could not be opened safely.");this.#assertAuthorizationScope(authorization);await this.#authorizeGenerationBudget(kind,payload);this.#assertAuthorizationScope(authorization);const action=kind==="preview"?"start a draft image":kind==="generate"?"start a full-quality image":kind==="prompt_fan"?"start a four-image prompt fan":`start ${kind.replaceAll("_"," ")}`;const response=await this.guardedFetch("/api/document-jobs",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({kind,documentId,sourceSurface,payload})},action);this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string;message?:string;reused?:boolean;readiness?:GenerationReadiness};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job)throw new Error(body.message??body.error??"Document operation could not be started");const activeSession=this.session.get();if(!activeSession||this.#authorizationScope(activeSession)!==authorization)throw new Error("The selected project changed before this request finished.");if(body.readiness&&requestKey)this.generationReadiness.set({...this.generationReadiness.get(),[requestKey]:body.readiness});const jobs=[body.job,...this.documentJobs.get().filter((job)=>job.jobId!==body.job!.jobId)];this.documentJobs.set(jobs);if(requestKey)this.#readinessAcknowledgements.delete(requestKey);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);return{job:body.job,reused:Boolean(body.reused)};}finally{if(requestKey&&this.#scopeStillActive(authorization)){this.#jobStarts.delete(requestKey);this.notify();}}}
   patchUi(patch: Partial<typeof this.ui>) { Object.assign(this.ui, patch); this.notify(); }
-  toast(message: string) { this.ui.toast = message; this.notify(); window.setTimeout(() => { if (this.ui.toast === message) { this.ui.toast = ""; this.notify(); } }, 2800); }
+  #systemNotice(source:string,values:Record<string,string|number>={}){const locale=currentFormaLocale();const automatic=formaSystemMessageId(source);const fallback=Object.entries(FORMA_DEFAULT_MESSAGES).find(([,value])=>value===source)?.[0];const message=locale.messages[automatic]??(fallback?locale.messages[fallback]:undefined)??source;return Object.keys(values).length?message.replace(/\{(\w+)\}/g,(_,key:string)=>{const value=values[key];return typeof value==="number"?new Intl.NumberFormat(locale.formatLocale).format(value):String(value??"");}):message;}
+  toast(message: string) {
+    const localized=this.#systemNotice(message);
+    this.ui.toast=localized;
+    this.notify();
+    window.setTimeout(()=>{if(this.ui.toast===localized){this.ui.toast="";this.notify();}},2800);
+  }
   async confirmImpersonatedInteraction(action="change this fictional account"){
     if(!this.session.get()?.impersonation)return true;if(this.#impersonationConfirmation)return false;this.patchUi({impersonationConfirmOpen:true,impersonationAction:action});return new Promise<boolean>((resolve)=>{this.#impersonationConfirmation=resolve;});
   }
@@ -504,6 +599,8 @@ export class FormaStore {
   setAttentionCapture(enabled:boolean){if(this.session.get()?.impersonation){this.patchUi({attentionCapture:false,attentionPaused:true});this.toast("Attention capture stays off while you experience a fictional account.");return;}writeAttentionPreference(enabled,this.session.get()?.user.userId??"anonymous");this.patchUi({attentionCapture:enabled,attentionPaused:false});this.toast(enabled?"Attention signals enabled for this account on this device.":"Attention signals disabled; the current episode was closed.");}
   setAttentionPaused(paused:boolean){this.patchUi({attentionPaused:paused});this.toast(paused?"Attention capture paused on this device.":"Attention capture resumed.");}
   async forgetAttentionSignals(){window.dispatchEvent(new Event("forma-attention-forget"));const session=this.session.get();let appended:CreativeEvent[]=[];if(session?.projectContext){const authorization=this.#authorizationScope(session),response=await fetch("/api/privacy/attention",{method:"POST"}),body=await response.json() as {appended?:CreativeEvent[];error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok){this.toast(body.error??"Your personal attention data could not be forgotten.");return[];}appended=body.appended??[];}else appended=await this.append({type:"AttentionSignalsForgotten",payload:{scope:"all-attention-episodes",before_sequence:this.head.get(),reason:"user-requested",device_ledger_cleared:true}});if(appended.length){const active=this.session.get();if(active)await clearAnalyticsSnapshots(this.#snapshotIdentity(active),true);this.toast("Your personal attention episodes were forgotten and excluded from Scout and Memory.");}return appended;}
+  async erasePersonalAuthoredContext(){const session=this.session.get();if(!session||session.projectContext||session.impersonation)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/privacy/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"erase-personal-authored-context",confirmation:"ERASE_MY_PERSONAL_AUTHORED_CONTEXT"})},"erase personal authored context");this.#assertAuthorizationScope(authorization);const result=await response.json() as {error?:string;message?:string;erasedAuthoredEventBodies?:number};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(result.message??result.error??"Personal authored context could not be erased.");await Promise.all([clearAccountSnapshots(this.#snapshotIdentity(session)),clearAnalyticsSnapshots(this.#snapshotIdentity(session)),canvasOfflineQueue.clearPersonalOwner(session.user.userId).catch(()=>0)]);this.#assertAuthorizationScope(authorization);this.events.set([]);this.optimisticEvents.set([]);this.content.set({});this.head.set(0);await this.#refreshEvents();this.#assertAuthorizationScope(authorization);this.toast(this.#systemNotice("{count} personal authored event bodies erased. Finished outputs, shared organization work, uploads, backups, and other devices are not removed.",{count:result.erasedAuthoredEventBodies??0}));this.notify();return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Personal authored context could not be erased.");return false;}}
+  async migrateHistoricalEventPrivacy(){const session=this.session.get();if(!session||session.user.role!=="admin"||session.projectContext||session.impersonation)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/privacy/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"migrate-historical-events",confirmation:"MIGRATE_HISTORICAL_EVENT_CONTENT"})},"migrate historical event privacy");this.#assertAuthorizationScope(authorization);const result=await response.json() as {error?:string;message?:string;migratedEvents?:number};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(result.message??result.error??"Historical event migration failed.");await Promise.all([clearAccountSnapshots(this.#snapshotIdentity(session)),clearAnalyticsSnapshots(this.#snapshotIdentity(session))]);this.toast(this.#systemNotice("{count} historical event bodies moved into erasable owner-scoped storage. Existing backups and other devices still require separate handling.",{count:result.migratedEvents??0}));return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Historical event migration failed.");return false;}}
 
   async load() {
     const loadRevision=++this.#loadRevision;let loadAuthorization="";
@@ -565,16 +662,19 @@ export class FormaStore {
     if(revision===undefined)this.#sessionRevision+=1;
     const previous=this.session.get(),previousUserId=previous?.user.userId;
     if(previous&&this.#authorizationScope(previous)!==this.#authorizationScope(body)){
-      this.events.set([]);this.head.set(0);this.content.set({});this.shares.set([]);this.optimisticEvents.set([]);
+      this.events.set([]);this.head.set(0);this.content.set({});this.shares.set([]);this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});this.reviewInbox.set([]);this.optimisticEvents.set([]);
       this.documentJobs.set([]);this.generationReadiness.set({});this.#jobDetails.clear();this.#privateContentScope="none";
       this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});this.replayEvents.set([]);this.replayAsOf.set(0);this.asOf.set(Number.POSITIVE_INFINITY);
       this.#pendingAdaptiveIntents.clear();this.#pendingJobNotices=[];this.#readinessAcknowledgements.clear();this.#dismissedAdaptiveSuggestions.clear();this.#readinessInFlight.clear();this.#jobStarts.clear();this.#jobsDriving.clear();this.#focalInFlight.clear();
       this.#pendingJobEventRefresh=false;this.#pendingJobSessionRefresh=false;this.#pendingPassiveJobPath="";this.#historyProfile="full";this.#historyUpgrade=undefined;this.#contentHydration=undefined;
       this.ui.shareOpen=false;this.ui.accountOpen=false;this.ui.compareOpen=false;
-      this.#undo=[];this.#redo=[];this.#rememberedClientEventIds.clear();window.clearTimeout(this.#jobPollTimer);window.clearTimeout(this.#focalBackfillTimer);
+      this.#undo=[];this.#redo=[];this.#rememberedClientEventIds.clear();window.clearTimeout(this.#jobPollTimer);window.clearTimeout(this.#collaborationPollTimer);window.clearTimeout(this.#focalBackfillTimer);
       window.dispatchEvent(new CustomEvent("forma-authorization-changed",{detail:{previous:this.#authorizationScope(previous),current:this.#authorizationScope(body)}}));
     }
     this.session.set(body);
+    if(body.projectContext){void this.syncProjectNotifications();void this.syncOrganizationContextPackages();}else{this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});}
+    void this.syncReviewInbox();
+    this.#scheduleCollaborationPoll();
     if(body.impersonation){this.ui.attentionCapture=false;this.ui.attentionPaused=true;}
     else if(previousUserId!==body.user.userId){this.ui.attentionCapture=readAttentionPreference(body.user.userId);this.ui.attentionPaused=false;}
     this.notify();return body;
@@ -587,6 +687,99 @@ export class FormaStore {
     if(revision!==this.#sessionRevision){const active=this.session.get();if(active)return active;throw new Error("A newer workspace session is already loading.");}
     if(!response.ok)throw new Error(body.error??"Authentication required");return this.#applySession(body,revision);
   }
+
+  async syncProjectNotifications(){const session=this.session.get();if(!session?.projectContext){this.projectNotifications.set([]);return;}const authorization=this.#authorizationScope(session);try{const response=await fetch("/api/project-notifications");this.#assertAuthorizationScope(authorization);const body=await response.json() as {notifications?:ProjectNotification[]};this.#assertAuthorizationScope(authorization);if(response.ok){this.projectNotifications.set(body.notifications??[]);this.notify();}}catch{/* Event polling retries project follow-up without blocking the actual work. */}}
+  async acknowledgeProjectNotification(id:string){const session=this.session.get();if(!session?.projectContext)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch("/api/project-notifications",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({notificationId:id})},"acknowledge this project update");this.#assertAuthorizationScope(authorization);const body=await response.json() as {readAt?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)return false;this.projectNotifications.set(this.projectNotifications.get().map((item)=>item.id===id?{...item,readAt:body.readAt??new Date().toISOString()}:item));this.notify();return true;}catch{return false;}}
+  async syncReviewInbox(){const session=this.session.get();if(!session){this.reviewInbox.set([]);return;}const authorization=this.#authorizationScope(session);try{const response=await fetch("/api/workspaces/reviews",{credentials:"same-origin"});this.#assertAuthorizationScope(authorization);const body=await response.json() as {tasks?:AssignedReviewTask[]};this.#assertAuthorizationScope(authorization);if(response.ok){this.reviewInbox.set(body.tasks??[]);this.notify();}}catch{/* Reviewer work is refreshed without exposing stale cross-tenant responses. */}}
+  async syncOrganizationContextPackages(){
+    const session=this.session.get(),context=session?.projectContext;
+    if(!session||!context){this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});return;}
+    const authorization=this.#authorizationScope(session);
+    try{
+      const response=await fetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages`,{credentials:"same-origin"});
+      this.#assertAuthorizationScope(authorization);
+      const body=await response.json() as {packages?:OrganizationContextPackage[]};
+      this.#assertAuthorizationScope(authorization);
+      if(!response.ok)return;
+      const packages=body.packages??[];
+      const versions:Record<string,OrganizationContextVersion>={};
+      const results=await Promise.all(packages.map(async(item)=>{
+        const scoped=await fetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(item.id)}/bindings`,{credentials:"same-origin"});
+        this.#assertAuthorizationScope(authorization);
+        const rows=await scoped.json() as {bindings?:Array<Record<string,unknown>>};
+        this.#assertAuthorizationScope(authorization);
+        const bindings=scoped.ok?(rows.bindings??[]):[];
+        const requested=new Set([item.versionId,...bindings.flatMap((binding)=>[binding.version_id,binding.pending_version_id])].filter((id):id is string=>typeof id==="string"&&Boolean(id)));
+        await Promise.all([...requested].map(async(versionId)=>{
+          const published=await fetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(item.id)}/versions/${encodeURIComponent(versionId)}`,{credentials:"same-origin"});
+          this.#assertAuthorizationScope(authorization);
+          const detail=await published.json().catch(()=>null) as {versionId?:string;version?:number;snapshot?:Omit<OrganizationContextVersion,"id"|"version">}|null;
+          this.#assertAuthorizationScope(authorization);
+          if(published.ok&&detail?.versionId&&detail.snapshot)versions[detail.versionId]={...detail.snapshot,id:detail.versionId,version:Number(detail.version??0)};
+        }));
+        return bindings;
+      }));
+      this.#assertAuthorizationScope(authorization);
+      this.organizationContextPackages.set(packages);
+      this.organizationContextBindings.set(results.flat().map((row)=>({id:String(row.binding_id),organizationId:String(row.organization_id),projectAccessId:String(row.project_access_id),documentId:String(row.document_id),packageId:String(row.package_id),versionId:String(row.version_id),pendingVersionId:row.pending_version_id?String(row.pending_version_id):null,updateMode:row.update_mode==="follow-approved"?"follow-approved":"pinned",status:String(row.status)})));
+      this.organizationContextVersions.set(versions);
+      this.notify();
+    }catch{/* Exact organization context remains unavailable until the authorized catalog refreshes. */}
+  }
+  async #publishOrganizationContext(name:string,description:string,packageId:string,blockIds?:string[],sourceRightsConfirmed=false,sourceNonSensitiveConfirmed=false){
+    const session=this.session.get(),context=session?.projectContext,projection=this.projection.get();
+    if(!session||!context||!projection.documentId||!packageId&&!name.trim())return false;
+    if(!Array.isArray(blockIds)){this.toast("Explicitly choose every context decision and original source before publishing.");return false;}
+    const selection=blockIds;
+    if(!selection.length||selection.length>20){this.toast("Select between 1 and 20 context decisions for this organization package.");return false;}
+    const authorization=this.#authorizationScope(session);
+    try{
+      const base=`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages`;
+      const destination=packageId?`${base}/${encodeURIComponent(packageId)}/versions`:base;
+      const response=await this.guardedFetch(destination,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...(packageId?{}:{name,description}),sourceProjectAccessId:context.projectAccessId,documentId:projection.documentId,blockIds:selection,expectedSourceHead:this.head.get(),sourceRightsConfirmed,sourceNonSensitiveConfirmed})},"save these exact organization-owned context decisions and explicitly confirmed sources");
+      this.#assertAuthorizationScope(authorization);
+      const body=await response.json() as {packageId?:string;versionId?:string;version?:number;error?:string;message?:string};
+      this.#assertAuthorizationScope(authorization);
+      const savedPackageId=body.packageId??packageId;
+      if(!response.ok||!savedPackageId||!body.versionId)throw new Error(body.message??body.error??"The organization context version could not be created.");
+      const published=await this.guardedFetch(`${base}/${encodeURIComponent(savedPackageId)}/versions/${encodeURIComponent(body.versionId)}/publish`,{method:"POST"},"publish this exact immutable organization context version");
+      this.#assertAuthorizationScope(authorization);
+      const result=await published.json() as {error?:string;version?:number};
+      if(!published.ok)throw new Error(result.error??"The organization context version could not be published.");
+      await this.syncOrganizationContextPackages();
+      this.toast(this.#systemNotice("Organization context version {version} was published. Following documents must explicitly accept the update.",{version:result.version??body.version??1}));
+      return true;
+    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Organization context could not be published.");return false;}
+  }
+  async createOrganizationContextPackage(name:string,description="",blockIds?:string[],sourceRightsConfirmed=false,sourceNonSensitiveConfirmed=false){return this.#publishOrganizationContext(name,description,"",blockIds,sourceRightsConfirmed,sourceNonSensitiveConfirmed);}
+  async publishOrganizationContextPackageVersion(packageId:string,blockIds?:string[],sourceRightsConfirmed=false,sourceNonSensitiveConfirmed=false){return this.#publishOrganizationContext("","",packageId,blockIds,sourceRightsConfirmed,sourceNonSensitiveConfirmed);}
+  async adoptOrganizationContextPackage(packageId:string,versionId:string,mode:"pinned"|"follow-approved"="pinned"){const session=this.session.get(),context=session?.projectContext,projection=this.projection.get();if(!session||!context||!projection.documentId)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(packageId)}/adopt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({projectAccessId:context.projectAccessId,documentId:projection.documentId,versionId,updateMode:mode,expectedProjectHead:this.head.get()})},"adopt this approved organization context into the current document");this.#assertAuthorizationScope(authorization);const body=await response.json() as {error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"Organization context could not be added.");await this.#refreshEvents();await this.syncOrganizationContextPackages();this.toast(mode==="pinned"?"The approved context version is pinned to this document.":"Approved context was added. Future changes always require your acceptance.");return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Organization context could not be added.");return false;}}
+  async acceptOrganizationContextPackageUpdate(packageId:string,bindingId:string,versionId:string){
+    const session=this.session.get(),context=session?.projectContext;
+    if(!session||!context||!packageId||!bindingId||!versionId)return false;
+    const authorization=this.#authorizationScope(session);
+    try{
+      const response=await this.guardedFetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(packageId)}/bindings/${encodeURIComponent(bindingId)}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({action:"accept",versionId,expectedProjectHead:this.head.get()})},"accept this exact published organization context update");
+      this.#assertAuthorizationScope(authorization);
+      const result=await response.json() as {error?:string;version?:number};
+      this.#assertAuthorizationScope(authorization);
+      if(!response.ok)throw new Error(result.error??"This organization context update could not be accepted.");
+      await this.#refreshEvents();await this.syncOrganizationContextPackages();
+      this.toast(this.#systemNotice("Published organization context version {version} was applied. Review any affected finished outputs again.",{version:result.version??""}));
+      return true;
+    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"This organization context update could not be accepted.");return false;}
+  }
+  async setOrganizationContextPackageUpdateMode(packageId:string,bindingId:string,mode:"pinned"|"follow-approved"){
+    const session=this.session.get(),context=session?.projectContext;if(!session||!context)return false;
+    const authorization=this.#authorizationScope(session);
+    try{
+      const response=await this.guardedFetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(packageId)}/bindings/${encodeURIComponent(bindingId)}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({action:"policy",updateMode:mode})},"change this document's context update policy");
+      this.#assertAuthorizationScope(authorization);
+      if(!response.ok)throw new Error("The context update policy could not be changed.");
+      await this.syncOrganizationContextPackages();this.toast(mode==="pinned"?"This document is pinned to its current context version.":"Published context updates will be offered before anything changes.");return true;
+    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The context update policy could not be changed.");return false;}
+  }
+  async openAssignedReview(task:AssignedReviewTask){const session=this.session.get();if(!session)return false;try{const response=await this.guardedFetch(`/api/workspaces/${encodeURIComponent(task.organizationId)}/projects/${encodeURIComponent(task.projectAccessId)}/context`,{method:"POST"},"open this assigned review in its exact authorized project");const body=await response.json() as {error?:string};if(!response.ok)throw new Error(body.error??"The assigned project is no longer available.");await this.refreshSession();this.setRoute(`/document/${encodeURIComponent(task.documentId)}/assigned-review`);await this.load();requestAnimationFrame(()=>{const artifacts=document.querySelector("forma-document-artifacts") as HTMLElement&{openArtifactById?:(id:string)=>Promise<unknown>};void artifacts?.openArtifactById?.(task.artifactId);});return true;}catch(error){this.toast(error instanceof Error?error.message:"The assigned review could not be opened.");return false;}}
 
   async leaveProjectContext(){
     if(!this.session.get()?.projectContext)return true;
@@ -616,17 +809,88 @@ export class FormaStore {
     return this.appendBatch([event], options);
   }
 
-  /** A selected-project download is permitted only after its exact actor/resource audit receipt commits. */
+  /** Correct the durable deliverable itself without invoking a generation provider. */
+  async reviseDocumentArtifact(artifactId:string,input:{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number}){
+    const authorization=this.#activeAuthorizationScope();
+    const edit=async()=>{
+      if(!this.#scopeStillActive(authorization))return false;
+      this.busy.set("DocumentArtifactEdited");this.notify();
+      try{
+        const response=await this.guardedFetch(`/api/artifacts/${encodeURIComponent(artifactId)}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify(input)},"save a correction to this finished output");
+        this.#assertAuthorizationScope(authorization);
+        const result=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string;message?:string};
+        this.#assertAuthorizationScope(authorization);
+        if(!response.ok){if(response.status===409&&result.error==="artifact_revision_conflict")throw new Error("Another collaborator changed this output. Your unsaved correction is preserved; reopen the latest version before saving again.");throw new Error(result.message??result.error??"The finished output could not be saved.");}
+        if(result.content)this.content.set({...this.content.get(),...result.content});
+        this.#mergeConfirmed(result.appended??[],result.head??this.head.get());
+        this.toast("Finished output updated. Request a fresh review before approval.");
+        return true;
+      }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The finished output could not be saved.");return false;}
+      finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    };
+    const pending=this.#appendPipeline.then(edit,edit);this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
+  }
+
+  /** Revision bodies stay off the general content hydration path and follow the exact current authorization scope. */
+  async artifactRevisions(artifactId:string,before?:number){
+    const authorization=this.#activeAuthorizationScope();
+    try{
+      const response=await this.guardedFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/revisions${before===undefined?"":`?before=${before}`}`,{},"inspect finished-output history");
+      this.#assertAuthorizationScope(authorization);
+      const result=await response.json() as {revisions?:ArtifactRevisionSummary[];currentRevision?:number;nextBefore?:number|null;error?:string};
+      this.#assertAuthorizationScope(authorization);
+      if(!response.ok)throw new Error(result.error??"The finished-output history could not be loaded.");
+      return{revisions:result.revisions??[],currentRevision:Number(result.currentRevision??0),nextBefore:result.nextBefore??null};
+    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The finished-output history could not be loaded.");return null;}
+  }
+
+  async artifactRevision(artifactId:string,revision:number){
+    const authorization=this.#activeAuthorizationScope();
+    try{
+      const response=await this.guardedFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/revisions/${revision}`,{},"inspect a finished-output revision");
+      this.#assertAuthorizationScope(authorization);
+      const result=await response.json() as ArtifactRevisionDetail&{error?:string};
+      this.#assertAuthorizationScope(authorization);
+      if(!response.ok)throw new Error(result.error??"This finished-output revision is unavailable.");
+      return result;
+    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"This finished-output revision is unavailable.");return null;}
+  }
+
+  /** Restoration creates a fresh output revision; previous approval must be independently renewed. */
+  async restoreDocumentArtifact(artifactId:string,revision:number,expectedRevision:number){
+    const authorization=this.#activeAuthorizationScope();
+    const restore=async()=>{
+      if(!this.#scopeStillActive(authorization))return false;
+      this.busy.set("DocumentArtifactEdited");this.notify();
+      try{
+        const response=await this.guardedFetch(`/api/artifacts/${encodeURIComponent(artifactId)}/revisions/${revision}/restore`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({expectedRevision})},"restore an earlier finished output");
+        this.#assertAuthorizationScope(authorization);
+        const result=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;error?:string;message?:string};
+        this.#assertAuthorizationScope(authorization);
+        if(!response.ok)throw new Error(result.error==="artifact_revision_conflict"?"Another collaborator changed this output. Reopen its latest history before restoring.":result.message??result.error??"The earlier finished output could not be restored.");
+        if(result.content)this.content.set({...this.content.get(),...result.content});
+        this.#mergeConfirmed(result.appended??[],result.head??this.head.get());
+        this.toast("Earlier finished output restored. Request a fresh independent review.");
+        return true;
+      }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The earlier finished output could not be restored.");return false;}
+      finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    };
+    const pending=this.#appendPipeline.then(restore,restore);this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
+  }
+
+  /** Every download is permitted only after its exact actor/resource release receipt commits. */
   async authorizeProjectExport(event:EventInput,expectedScope:CapturedAuthorizationScope|null=this.captureAuthorizationScope()){
     const session=this.session.get(),context=session?.projectContext;
     if(!session||!expectedScope||!this.authorizationScopeActive(expectedScope))return false;
-    if(!context)return !expectedScope.shared;
-    if(!expectedScope.shared)return false;
+    if(Boolean(context)!==expectedScope.shared)return false;
     const authorization=expectedScope.key,resource=String(event.payload.artifact_id??event.payload.object_id??"");
     if(!resource||!["DocumentArtifactExported","ObjectExported"].includes(event.type))return false;
     const receipts=await this.append(event,{remember:false,silent:true});
     if(!this.#scopeStillActive(authorization))return false;
-    const accepted=receipts.some((receipt)=>receipt.type===event.type&&receipt.actor===`user:${session.user.userId}`&&String(receipt.payload.project_id??"")===context.projectId&&String(receipt.payload.artifact_id??receipt.payload.object_id??"")===resource);
+    const accepted=receipts.some((receipt)=>receipt.type===event.type
+      &&receipt.actor===(context?`user:${session.user.userId}`:"user")
+      &&(!context||String(receipt.payload.project_id??"")===context.projectId)
+      &&String(receipt.payload.artifact_id??receipt.payload.object_id??"")===resource);
     if(!accepted)this.toast("The download was canceled because your project access could not be confirmed.");
     return accepted;
   }
@@ -647,7 +911,7 @@ export class FormaStore {
       this.events.set([...this.events.get(), ...appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(appended);
       this.#reflectDocumentInRoute();
       if (options.remember !== false) { const actor=this.session.get()?.projectContext?`user:${this.session.get()?.user.userId}`:"user";const remembered=appended.filter((e) => e.actor === actor && !e.compensatesEventId && inverseEvent(e));if(remembered.length)this.#undo.push(remembered);this.#redo = []; }
-      if (body.rejected?.length) {const reasons=[...new Set(body.rejected.map((item)=>`${item.type?`${item.type}: `:""}${item.reason}`))];this.appendFailure.set(reasons.join("; "));this.toast(documentViewFromRoute(this.route.get()) === "editor" ? `${body.rejected.length} change${body.rejected.length === 1 ? "" : "s"} could not be saved; the other changes are safe.` : `${body.rejected.length} event${body.rejected.length === 1 ? "" : "s"} rejected; valid events still appended.`);}
+      if (body.rejected?.length) {const reasons=[...new Set(body.rejected.map((item)=>`${item.type?`${item.type}: `:""}${item.reason}`))];this.appendFailure.set(reasons.join("; "));this.toast(documentViewFromRoute(this.route.get()) === "editor" ? body.rejected.length===1?this.#systemNotice("{count} change could not be saved; the other changes are safe.",{count:body.rejected.length}):this.#systemNotice("{count} changes could not be saved; the other changes are safe.",{count:body.rejected.length}) : body.rejected.length===1?this.#systemNotice("{count} event rejected; valid events still appended.",{count:body.rejected.length}):this.#systemNotice("{count} events rejected; valid events still appended.",{count:body.rejected.length}));}
       return appended;
     } catch (error) {const message=error instanceof Error?error.message:"Append failed";if(this.#scopeStillActive(authorization)){this.appendFailure.set(message);if(!options.silent)this.toast(message);}return[];}
     finally {if(this.#scopeStillActive(authorization)){if(!options.background)this.busy.set("");this.notify();}}
@@ -657,10 +921,11 @@ export class FormaStore {
     const projection=this.projection.get();const available=new Map(projection.libraryBlocks.filter((block)=>!block.removed&&block.projectId===projection.projectId).map((block)=>[block.id,block]));const root=available.get(rootBlockId);
     if(!root){this.toast("That reusable context is no longer available.");return null;}
     const connected=new Set([root.id]);let changed=true;while(changed){changed=false;for(const relation of projection.libraryBlockRelations){if(connected.has(relation.fromBlockId)&&available.has(relation.toBlockId)&&!connected.has(relation.toBlockId)){connected.add(relation.toBlockId);changed=true;}}}
+    if([...connected].some((id)=>Boolean(available.get(id)?.properties.organization_context_package_binding_id))){this.toast("Organization context must be adopted through its approved package.");return null;}
     const blocks=[...connected].map((id)=>available.get(id)!).sort((left,right)=>left.id===root.id?-1:right.id===root.id?1:left.position.localeCompare(right.position));const ids=new Map(blocks.map((block)=>[block.id,crypto.randomUUID()]));const contextSetId=crypto.randomUUID();const base=this.head.get()+1;
     const groupRole=combinedContextRoleForBlockType(root.type),groupName=String(root.properties.label??root.properties.text??root.handle),groupRelativity=Math.max(.5,Math.min(1,Number(root.properties.weight??.8)));const events:EventInput[]=blocks.map((block,index)=>{const authoredMemberships=combinedContextMemberships(block.properties);return{type:"BlockCreated",payload:{block_id:ids.get(block.id),document_id:destinationDocumentId,type:block.type,handle:`${block.handle}-copy-${String(base+index).padStart(3,"0")}`,position:`z${String(base+index).padStart(6,"0")}`,properties:{...block.properties,authority:"authored",copied_from_block_id:block.id,copied_as_context_set:blocks.length>1,context_set_id:contextSetId,context_set_root_id:ids.get(root.id),combined_context_memberships:authoredMemberships.length?authoredMemberships.map((membership)=>({...membership,contextSetId,memberOrder:index,sourceCanvasId:""})):blocks.length>1?[{contextSetId,name:groupName,role:groupRole,target:groupName,application:"isolate",relativity:groupRelativity,memberOrder:index,sourceCanvasId:""}]:[],semantic_isolation:blocks.length>1,created_from:sourceSurface}}};});
     for(const relation of projection.libraryBlockRelations){const from=ids.get(relation.fromBlockId);const to=ids.get(relation.toBlockId);if(!from||!to)continue;events.push({type:"BlockRelationAdded",payload:{relation_id:crypto.randomUUID(),project_id:projection.projectId,document_id:destinationDocumentId,from_block_id:from,to_block_id:to,kind:relation.kind,properties:{...relation.properties,copied_from_relation_id:relation.id,context_set_id:contextSetId},source_surface:sourceSurface}});}
-    const appended=await this.appendBatch(events);if(!appended.length)return null;const copiedRootId=ids.get(root.id)!;this.patchUi({focusBlockId:copiedRootId});this.toast(blocks.length===1?"Reusable block added to the open document.":`${blocks.length} connected blocks added as one context set.`);return{rootBlockId:copiedRootId,blockCount:blocks.length,relationCount:events.length-blocks.length};
+    const appended=await this.appendBatch(events);if(!appended.length)return null;const copiedRootId=ids.get(root.id)!;this.patchUi({focusBlockId:copiedRootId});this.toast(blocks.length===1?"Reusable block added to the open document.":this.#systemNotice("{count} connected blocks added as one context set.",{count:blocks.length}));return{rootBlockId:copiedRootId,blockCount:blocks.length,relationCount:events.length-blocks.length};
   }
 
   #relatedOutputBlocks(blockId:string){
@@ -729,7 +994,7 @@ export class FormaStore {
     const result=artifactContextEvents(artifact,{documentId:destinationDocumentId,projectId:document.projectId,sourceSurface,content,existingRootBlockId:existingRoot?.id,existingSourceItemIds,contextSetId,positionStart:this.head.get()+1});
     if(!result.blockIds.length){if(existingRoot&&options.reveal!==false)await this.revealOutputInput(existingRoot.id,destinationDocumentId);return{rootBlockId:existingRoot?.id??"",created:false,blockCount:0,availableMemberCount:result.availableMemberCount};}
     const appended=await this.appendBatch(result.events,{rebaseAttempts:6});const created=appended.filter((event)=>event.type==="BlockCreated").length;if(!created)return null;
-    const rootBlockId=existingRoot?.id??result.blockIds[0]??"";if(options.reveal!==false)await this.revealOutputInput(rootBlockId,destinationDocumentId);else this.patchUi({focusBlockId:rootBlockId});this.toast(`${artifact.title} is ready to customize${artifact.kind==="storyboard"?", with its finished frames kept in order":artifact.kind==="video"?", with its finished motion scenes kept in order":""}.`);return{rootBlockId,created:true,blockCount:created,availableMemberCount:result.availableMemberCount};
+    const rootBlockId=existingRoot?.id??result.blockIds[0]??"";if(options.reveal!==false)await this.revealOutputInput(rootBlockId,destinationDocumentId);else this.patchUi({focusBlockId:rootBlockId});this.toast(artifact.kind==="storyboard"?this.#systemNotice("{title} is ready to customize, with its finished frames kept in order.",{title:artifact.title}):artifact.kind==="video"?this.#systemNotice("{title} is ready to customize, with its finished motion scenes kept in order.",{title:artifact.title}):this.#systemNotice("{title} is ready to customize.",{title:artifact.title}));return{rootBlockId,created:true,blockCount:created,availableMemberCount:result.availableMemberCount};
   }
 
   async addStoryboardFramesAsContext(artifactId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="document-artifact-viewer"){return this.addArtifactAsContext(artifactId,destinationDocumentId,sourceSurface);}
@@ -774,19 +1039,19 @@ export class FormaStore {
 
   async preview(sourceSurface?: string,promptTechnique?:PromptTechnique,productionMode:ProductionMode="manual") {
     const technique=normalizePromptTechnique(promptTechnique??this.promptTechniquePreference().technique);
-    try{const context=this.#generationContext();const baseRequestKey=generationRequestKeyFor("preview",context.documentRevision,null,technique);const requestKey=productionMode==="managed"?`${baseRequestKey}:managed`:baseRequestKey;const {reused}=await this.#startDocumentJob("preview",{...context,requestKey,promptTechnique:technique,productionMode,preflightAcknowledged:this.generationRiskAcknowledged(requestKey)},sourceSurface??"studio");this.toast(reused?"This exact draft is already in the queue.":productionMode==="managed"?"Your image art-direction team is preparing a source-grounded draft.":`${technique==="prose"?"Draft":`${technique} draft`} queued. You can keep editing and queue the updated document too.`);}catch(error){this.toast(error instanceof Error?error.message:"Draft generation failed");}
+    try{const context=this.#generationContext();const baseRequestKey=generationRequestKeyFor("preview",context.documentRevision,null,technique);const requestKey=productionMode==="managed"?`${baseRequestKey}:managed`:baseRequestKey;const {reused}=await this.#startDocumentJob("preview",{...context,requestKey,promptTechnique:technique,productionMode,preflightAcknowledged:this.generationRiskAcknowledged(requestKey)},sourceSurface??"studio");this.toast(reused?"This exact draft is already in the queue.":productionMode==="managed"?"Your image art-direction team is preparing a source-grounded draft.":technique==="prose"?this.#systemNotice("Draft queued. You can keep editing and queue the updated document too."):this.#systemNotice("{technique} draft queued. You can keep editing and queue the updated document too.",{technique:this.#systemNotice(technique)}));}catch(error){this.toast(error instanceof Error?error.message:"Draft generation failed");}
   }
 
   async generate(options?: string | { sourceSurface?: string; sourcePreviewId?: string; promptTechnique?: PromptTechnique; productionMode?:ProductionMode }) {
     const sourceSurface=typeof options==="string"?options:options?.sourceSurface;const sourcePreviewId=typeof options==="string"?undefined:options?.sourcePreviewId;const technique=normalizePromptTechnique(typeof options==="string"?this.promptTechniquePreference().technique:options?.promptTechnique??this.promptTechniquePreference().technique);
     try {
-      const productionMode=typeof options==="string"?"manual":options?.productionMode??"manual";const context=this.#generationContext();const baseRequestKey=generationRequestKeyFor("generate",context.documentRevision,sourcePreviewId,technique);const requestKey=productionMode==="managed"?`${baseRequestKey}:managed`:baseRequestKey;const {reused}=await this.#startDocumentJob("generate",{sourcePreviewId,...context,requestKey,promptTechnique:technique,productionMode,preflightAcknowledged:this.generationRiskAcknowledged(requestKey)},sourceSurface??"studio");this.toast(reused?"This exact full-quality image is already in the queue.":productionMode==="managed"?"Your image art-direction team is preparing the finished image.":`${technique==="prose"?"Full-quality generation":`${technique} full-quality generation`} queued. You can keep editing and queue the updated document too.`);
+      const productionMode=typeof options==="string"?"manual":options?.productionMode??"manual";const context=this.#generationContext();const baseRequestKey=generationRequestKeyFor("generate",context.documentRevision,sourcePreviewId,technique);const requestKey=productionMode==="managed"?`${baseRequestKey}:managed`:baseRequestKey;const {reused}=await this.#startDocumentJob("generate",{sourcePreviewId,...context,requestKey,promptTechnique:technique,productionMode,preflightAcknowledged:this.generationRiskAcknowledged(requestKey)},sourceSurface??"studio");this.toast(reused?"This exact full-quality image is already in the queue.":productionMode==="managed"?"Your image art-direction team is preparing the finished image.":technique==="prose"?this.#systemNotice("Full-quality generation queued. You can keep editing and queue the updated document too."):this.#systemNotice("{technique} full-quality generation queued. You can keep editing and queue the updated document too.",{technique:this.#systemNotice(technique)}));
     } catch (error) { this.toast(error instanceof Error ? error.message : "Generation failed"); }
   }
 
   async generatePromptFan(kind:"preview"|"generate",options:{sourceSurface?:string;sourcePreviewId?:string;productionMode?:ProductionMode}={}){
     const context=this.#generationContext();const promptFanId=crypto.randomUUID();const productionMode=options.productionMode??"manual";const baseRequestKey=`prompt-fan:${kind}:${context.documentRevision}:${options.sourcePreviewId||"document"}`;const requestKey=productionMode==="managed"?`${baseRequestKey}:managed`:baseRequestKey;
-    try{const {reused}=await this.#startDocumentJob("prompt_fan",{...context,fanKind:kind,sourcePreviewId:options.sourcePreviewId,requestKey,promptFanId,productionMode,preflightAcknowledged:this.generationRiskAcknowledged(requestKey)},options.sourceSurface??"studio");this.toast(reused?"This exact fan is already in the queue.":productionMode==="managed"?`Your image art-direction team is preparing four ${kind==="preview"?"draft":"full-quality"} approaches.`:`${kind==="preview"?"Draft":"Full-quality"} fan accepted as one generation · four prompt processes.`);}catch(error){this.toast(error instanceof Error?error.message:"The fan generation could not be started.");}
+    try{const {reused}=await this.#startDocumentJob("prompt_fan",{...context,fanKind:kind,sourcePreviewId:options.sourcePreviewId,requestKey,promptFanId,productionMode,preflightAcknowledged:this.generationRiskAcknowledged(requestKey)},options.sourceSurface??"studio");this.toast(reused?"This exact fan is already in the queue.":productionMode==="managed"?this.#systemNotice("Your image art-direction team is preparing four {quality} approaches.",{quality:this.#systemNotice(kind==="preview"?"draft":"full-quality")}):this.#systemNotice("{quality} fan accepted as one generation · four prompt processes.",{quality:this.#systemNotice(kind==="preview"?"Draft":"Full-quality")}));}catch(error){this.toast(error instanceof Error?error.message:"The fan generation could not be started.");}
     return promptFanId;
   }
 
@@ -803,7 +1068,7 @@ export class FormaStore {
     const projection=this.projection.get();const collectionId=projection.membership[projection.documentId]?.collectionId;const scopeId=scope==="document"?projection.documentId:scope==="collection"?collectionId:scope==="project"?projection.projectId:this.session.get()?.user.userId;
     if(!scopeId){this.toast("File this document in a collection before setting a folder preference.");return false;}
     const appended=await this.append({type:"PromptTechniquePreferred",payload:{preference_id:crypto.randomUUID(),preference_kind:"prompt_technique",technique:normalizePromptTechnique(technique),scope,scope_id:scopeId,document_id:projection.documentId,project_id:projection.projectId,source_fan_id:source.fanId??null,source_output_id:source.outputId??null}});
-    if(appended.length)this.toast(`${normalizePromptTechnique(technique)} prompts preferred for this ${scope==="collection"?"folder":scope}.`);return Boolean(appended.length);
+    if(appended.length)this.toast(this.#systemNotice("{technique} prompts preferred for this {scope}.",{technique:this.#systemNotice(normalizePromptTechnique(technique)),scope:this.#systemNotice(scope==="collection"?"folder":scope)}));return Boolean(appended.length);
   }
 
   async adoptCanvasOutputItems(items:readonly{sourceKind:string;sourceId:string}[],documentId:string,sourceSurface="canvas-generation"){
@@ -813,7 +1078,7 @@ export class FormaStore {
       if(item.sourceKind==="output"){const output=projection.libraryOutputs.find((candidate)=>candidate.id===item.sourceId),existing=projection.libraryBlocks.find((block)=>block.documentId===documentId&&block.properties.source_output_id===item.sourceId);if(!output||!existing?.properties.media_url&&!output.mediaUrl){this.toast("A selected generated image is unavailable, so your document was left unchanged.");return null;}continue;}
       const artifact=projection.libraryArtifacts.find((candidate)=>candidate.id===item.sourceId);if(!artifact){this.toast("A selected output is unavailable, so your document was left unchanged.");return null;}
       const existingRoot=projection.libraryBlocks.find((block)=>block.documentId===documentId&&block.properties.source_artifact_id===artifact.id&&!block.properties.source_artifact_item_id);const ownedIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===existingRoot?.id).map((relation)=>relation.toBlockId));const finished=new Set(artifact.items.filter((entry)=>Boolean(entry.mediaUrl)&&(artifact.kind!=="video"||String(entry.mediaType??"").startsWith("video/"))).map((entry)=>entry.id));const available=new Set(projection.libraryBlocks.filter((block)=>ownedIds.has(block.id)&&finished.has(String(block.properties.source_artifact_item_id??""))).map((block)=>String(block.properties.source_artifact_item_id)));if(existingRoot&&((artifact.kind!=="storyboard"&&artifact.kind!=="video")||available.size===finished.size))continue;
-      if(artifact.contentRef&&!parseDocumentArtifactContent(await this.ensurePrivateContent(artifact.contentRef)??undefined)){this.toast(`${artifact.title} is unavailable, so your document was left unchanged.`);return null;}
+      if(artifact.contentRef&&!parseDocumentArtifactContent(await this.ensurePrivateContent(artifact.contentRef)??undefined)){this.toast(this.#systemNotice("{title} is unavailable, so your document was left unchanged.",{title:artifact.title}));return null;}
     }
     const rootIds:string[]=[];for(const item of unique.values()){const result=item.sourceKind==="output"?await this.addImageOutputAsContext(item.sourceId,documentId,`${sourceSurface}-output`,{reveal:false}):await this.addArtifactAsContext(item.sourceId,documentId,`${sourceSurface}-artifact`,{reveal:false});if(!result?.rootBlockId)return null;rootIds.push(result.rootBlockId);}
     return rootIds;
@@ -829,30 +1094,32 @@ export class FormaStore {
     const blocks=projection.libraryBlocks.filter((block)=>blockIds.has(block.id));const selectedBySource=new Map(selectedItems.map((item)=>[item.sourceId,item]));
     const facts=blocks.map((block)=>{const item=selectedBySource.get(block.id)??selectedBySource.get(String(block.properties.source_output_id??block.properties.source_artifact_id??""));return{block_id:block.id,canvas_id:contextSet.canvasId,context_set_id:contextSet.id,type:block.type,role:block.type,intent:blockIntentFor(block.type,block.properties),handle:block.handle,active:Number(block.properties.weight??.5)>0,effect:blockEffectFor(block.type,block.properties),properties:{...block.properties,spatial_scope:normalizeSpatialScope(block.properties.spatial_scope)},authority:block.properties.authority??"authored",source_event_refs:[...block.sourceEvents,...(item?.sourceEvents??[])]};});const snapshot={facts,relationships:projection.libraryBlockRelations.filter((relation)=>blockIds.has(relation.fromBlockId)&&blockIds.has(relation.toBlockId)).map((relation)=>({relation_id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties,source_event_refs:relation.sourceEvents})),context_groups:combinedContextGroups({facts}),pins:[...new Set([...contextSet.outputIds,...selectedItems.filter((item)=>item.sourceKind==="output").map((item)=>item.sourceId),...projection.libraryOutputs.filter((output)=>output.canvasId===contextSet.canvasId&&output.pinned).map((output)=>output.id)])],canvas:{canvas_id:contextSet.canvasId,context_set_id:contextSet.id,item_ids:contextSet.itemIds,formalized_as_of_sequence:contextSet.asOfSequence,spatial_arrangement_is_semantic:false,arrangement_is_context:false,provenance_frames:selectedItems.map((item)=>({item_id:item.id,source_kind:item.sourceKind,source_id:item.sourceId,frame:{x:item.x,y:item.y,w:item.w,h:item.h,rotation:item.rot,z:item.z}}))},tail:[]};
     const context={snapshot,sourceBlockVersions:blocks.map((block)=>({block_id:block.id,version:block.sourceEvents.length})),documentId:anchorDocumentId,canvasId:contextSet.canvasId,contextSetId:contextSet.id};const documentRevision=generationRevisionFor(context);const filed=projection.membership[anchorDocumentId];const technique=effectivePromptPreference(projection.preferences,{documentId:anchorDocumentId,collectionIds:filed?[filed.collectionId]:[],projectId:projection.projectId,accountId:this.session.get()?.user.userId}).technique;const fan=kind.endsWith("_fan");const fanKind=kind.startsWith("preview")?"preview":"generate";const jobKind:"preview"|"generate"|"prompt_fan"=fan?"prompt_fan":fanKind;const promptFanId=fan?crypto.randomUUID():undefined;const requestKey=fan?`canvas:prompt-fan:${fanKind}:${contextSet.id}:${documentRevision}:${sourcePreviewId??"context"}`:`canvas:${kind}:${contextSet.id}:${documentRevision}:${sourcePreviewId??"context"}`;
-    try{const {reused}=await this.#startDocumentJob(jobKind,{...context,documentRevision,requestKey,promptTechnique:technique,sourcePreviewId,...(fan?{fanKind,promptFanId}:{})},"canvas",anchorDocumentId);const quality=fanKind==="preview"?"Draft":"Full-quality";this.toast(reused?"This exact Canvas generation is already queued.":fan?`${quality} fan queued as one four-image comparison for ${contextSet.name}.`:`${quality} Canvas generation queued from ${contextSet.name}.`);return true;}catch(error){this.toast(error instanceof Error?error.message:"Canvas generation could not be started.");return false;}
+    try{const {reused}=await this.#startDocumentJob(jobKind,{...context,documentRevision,requestKey,promptTechnique:technique,sourcePreviewId,...(fan?{fanKind,promptFanId}:{})},"canvas",anchorDocumentId);const quality=fanKind==="preview"?"Draft":"Full-quality";this.toast(reused?"This exact Canvas generation is already queued.":fan?this.#systemNotice("{quality} fan queued as one four-image comparison for {name}.",{quality:this.#systemNotice(quality),name:contextSet.name}):this.#systemNotice("{quality} Canvas generation queued from {name}.",{quality:this.#systemNotice(quality),name:contextSet.name}));return true;}catch(error){this.toast(error instanceof Error?error.message:"Canvas generation could not be started.");return false;}
   }
 
   async promotePromptFanOutputs(promptFanId:string,outputIds:string[]){
     const projection=this.projection.get();const requested=new Set(outputIds);const outputs=projection.outputs.filter((output)=>output.promptFanId===promptFanId&&requested.has(output.id)&&!output.standalone);
     if(!outputs.length){this.toast("Those fan results already stand on their own.");return false;}
     const appended=await this.appendBatch(outputs.map((output)=>({type:"PromptFanOutputPromoted",payload:{object_id:output.id,prompt_fan_id:promptFanId,prompt_technique:output.promptTechnique,document_id:projection.documentId,project_id:projection.projectId,source_surface:"prompt-fan-comparison"}})));
-    if(appended.length)this.toast(`${appended.length} fan result${appended.length===1?" now stands":"s now stand"} alone in the generation history.`);return Boolean(appended.length);
+    if(appended.length)this.toast(appended.length===1?this.#systemNotice("{count} fan result now stands alone in the generation history.",{count:appended.length}):this.#systemNotice("{count} fan results now stand alone in the generation history.",{count:appended.length}));return Boolean(appended.length);
   }
 
-  async chat(message:string,livePreview=true) {
+  async chat(message:string,livePreview=true,locale=document.documentElement.lang||"en") {
     try{
-      const documentId=this.projection.get().documentId;await this.#startDocumentJob("chat",{message,livePreview,documentId,promptTechnique:this.promptTechniquePreference().technique},"chat");return true;
+      const documentId=this.projection.get().documentId;await this.#startDocumentJob("chat",{message,livePreview,documentId,locale,promptTechnique:this.promptTechniquePreference().technique},"chat");return true;
     }catch(error){this.toast(error instanceof Error?error.message:"Forma could not respond");return false;}
   }
 
-  async structureAdaptive(prompt:string,options:{documentId?:string;sourceSurface?:string;projectScope?:boolean}={}) {
+  async structureAdaptive(prompt:string,options:{documentId?:string;sourceSurface?:string;projectScope?:boolean;locale?:string}={}) {
     const documentId=options.documentId??this.projection.get().documentId;const sourceSurface=options.sourceSurface??"adaptive";
-    try{if(sourceSurface!=="canvas")this.dismissAdaptiveStructure(documentId);const {job}=await this.#startDocumentJob("structure_adaptive",{prompt,documentId,projectScope:options.projectScope===true},sourceSurface,documentId);this.#pendingAdaptiveIntents.set(job.jobId,prompt);this.toast(sourceSurface==="canvas"?"Forma is shaping a few useful next moves from the whole project.":"Adaptive planning started. You can continue working while it runs.");return true;}catch(error){this.toast(error instanceof Error?error.message:"Forma could not structure that intent");return false;}
+    try{if(sourceSurface!=="canvas")this.dismissAdaptiveStructure(documentId);const {job}=await this.#startDocumentJob("structure_adaptive",{prompt,documentId,projectScope:options.projectScope===true,locale:options.locale??document.documentElement.lang??"en"},sourceSurface,documentId);this.#pendingAdaptiveIntents.set(job.jobId,prompt);this.toast(sourceSurface==="canvas"?"Forma is shaping a few useful next moves from the whole project.":"Adaptive planning started. You can continue working while it runs.");return true;}catch(error){this.toast(error instanceof Error?error.message:"Forma could not structure that intent");return false;}
   }
 
-  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{documentId?:string;itemCount?:number;audience?:string;tone?:string;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string}={}){
-    const documentId=options.documentId??this.projection.get().documentId;const context=this.#generationContext(documentId);const audience=options.audience?.trim()||undefined,tone=options.tone?.trim()||undefined;const productionMode=options.productionMode??"manual";const requestKey=`render:${kind}:${productionMode}:${context.documentRevision}:${options.itemCount??"default"}:${options.videoSeconds??"none"}:${options.videoSize??"none"}:${options.videoAudioMode??"silent"}:${encodeURIComponent(audience?.toLowerCase()??"general")}:${encodeURIComponent(tone?.toLowerCase()??"document-derived")}`;
-    try{const {reused}=await this.#startDocumentJob("render_document",{...context,requestKey,artifactKind:kind,itemCount:options.itemCount,audience,tone,videoSeconds:options.videoSeconds,videoSize:options.videoSize,videoAudioMode:options.videoAudioMode,productionMode,paidMediaConfirmed:options.paidMediaConfirmed===true},options.sourceSurface??"document",documentId);this.toast(reused?`This exact ${kind.replaceAll("_"," ")} is already in progress.`:productionMode==="managed"?`Your ${kind==="video"?"film production":kind==="slides"?"presentation editorial":kind==="storyboard"?"previsualization":"writing"} team is working on the complete document.`:`${kind.replaceAll("_"," ")} queued. You can keep working while it is prepared.`);return true;}catch(error){this.toast(error instanceof Error?error.message:`The ${kind.replaceAll("_"," ")} could not be started.`);return false;}
+  async renderDocumentArtifact(kind:DocumentArtifactKind,options:{documentId?:string;itemCount?:number;audience?:string;tone?:string;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;authoredSlideCount?:number}={}){
+    const productionMode=options.productionMode??"manual";const requestedSlideCount=kind==="slides"?options.requestedSlideCount??options.itemCount:undefined;const itemCount=kind==="slides"?requestedSlideCount:options.itemCount;
+    if(kind==="slides"){if(options.itemCount!==undefined&&options.requestedSlideCount!==undefined&&options.itemCount!==options.requestedSlideCount){this.toast("The selected slide count does not match the requested presentation size.");return false;}const maximumSlideCount=productionMode==="managed"?MAX_MANAGED_PRESENTATION_SLIDES:12;if(requestedSlideCount!==undefined&&(!Number.isSafeInteger(requestedSlideCount)||requestedSlideCount<1||requestedSlideCount>maximumSlideCount)){this.toast(this.#systemNotice("{mode} presentations support between 1 and {maximum} slides. The request was not started.",{mode:this.#systemNotice(productionMode==="managed"?"Managed":"Manual"),maximum:maximumSlideCount}));return false;}}
+    const documentId=options.documentId??this.projection.get().documentId;const context=this.#generationContext(documentId);const locale=options.locale??(typeof document==="undefined"?"en":document.documentElement.lang||"en");const audience=options.audience?.trim()||undefined,tone=options.tone?.trim()||undefined;const slideSettings=kind==="slides"?{presentationStyle:options.presentationStyle,presentationFidelity:options.presentationFidelity,requestedSlideCount,authoredSlideCount:options.authoredSlideCount}:{};const presentationIdentity=kind==="slides"?`${options.presentationStyle===undefined?"":`:style:${encodeURIComponent(options.presentationStyle)}`}${options.presentationFidelity===undefined?"":`:fidelity:${encodeURIComponent(options.presentationFidelity)}`}${requestedSlideCount===undefined?"":`:slides:${requestedSlideCount}`}`:"";const requestKey=`render:${kind}:${productionMode}:${context.documentRevision}:${itemCount??"default"}:${options.videoSeconds??"none"}:${options.videoSize??"none"}:${options.videoAudioMode??"silent"}:${encodeURIComponent(audience?.toLowerCase()??"general")}:${encodeURIComponent(tone?.toLowerCase()??"document-derived")}:${encodeURIComponent(locale.toLowerCase())}${presentationIdentity}`;
+    try{const {reused}=await this.#startDocumentJob("render_document",{...context,requestKey,locale,artifactKind:kind,itemCount,audience,tone,videoSeconds:options.videoSeconds,videoSize:options.videoSize,videoAudioMode:options.videoAudioMode,productionMode,paidMediaConfirmed:options.paidMediaConfirmed===true,...slideSettings},options.sourceSurface??"document",documentId);this.toast(reused?this.#systemNotice("This exact {kind} is already in progress.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}):productionMode==="managed"?this.#systemNotice("Your {team} team is working on the complete document.",{team:this.#systemNotice(kind==="video"?"film production":kind==="slides"?"presentation editorial":kind==="storyboard"?"previsualization":"writing")}):this.#systemNotice("{kind} queued. You can keep working while it is prepared.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return true;}catch(error){this.toast(error instanceof Error?error.message:this.#systemNotice("The {kind} could not be started.",{kind:this.#systemNotice(kind.replaceAll("_"," "))}));return false;}
   }
 
   async openProject(projectId:string,destination="/") {
@@ -867,7 +1134,7 @@ export class FormaStore {
     const appended=await persisted;if(this.#navigationCommit===committed)this.#navigationCommit=null;
     this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>event.eventId!==optimistic.eventId));
     if(!appended.length){this.setRoute(previousRoute,{replace:true});this.toast("That project could not be opened. Your current workspace was restored.");return false;}
-    this.notify();this.toast(`${target.name} opened in ${canvasDestination?"Canvas":"Creator Workspace"}.`);return true;
+    this.notify();this.toast(this.#systemNotice("{name} opened in {workspace}.",{name:target.name,workspace:this.#systemNotice(canvasDestination?"Canvas":"Creator Workspace")}));return true;
   }
 
   async openDocument(documentId: string, destination="/", sourceSurface?: string) {
@@ -885,7 +1152,7 @@ export class FormaStore {
     const projection=this.projection.get();const target=projection.documents.find((document)=>document.id===documentId);if(!target){this.toast("That document is no longer available.");return[];}if(projection.documents.length<=1){this.toast("Create another document before removing the project’s final document.");return[];}
     const fallback=projection.documents.find((document)=>document.id!==documentId)!;const wasCurrent=documentId===projection.documentId;
     const appended=await this.append({type:"DocumentRemoved",payload:{document_id:documentId,title:target.title,was_current:wasCurrent,previous_document_id:projection.documentId,fallback_document_id:fallback.id,reason:"removed-by-user"}});
-    if(appended.length){this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});if(wasCurrent&&isDocumentViewRoute(this.route.get()))this.setRoute(withDocumentInRoute(this.route.get(),this.projection.get().documentId,this.projection.get().documentTitle),{replace:true});this.toast(wasCurrent?`${target.title} was removed. ${fallback.title} is now open.`:`${target.title} was removed. Undo can restore it.`);}return appended;
+    if(appended.length){this.patchUi({focusBlockId:"",selectedOutputId:"",compareOpen:false});if(wasCurrent&&isDocumentViewRoute(this.route.get()))this.setRoute(withDocumentInRoute(this.route.get(),this.projection.get().documentId,this.projection.get().documentTitle),{replace:true});this.toast(wasCurrent?this.#systemNotice("{title} was removed. {fallback} is now open.",{title:target.title,fallback:fallback.title}):this.#systemNotice("{title} was removed. Undo can restore it.",{title:target.title}));}return appended;
   }
 
   async evaluateExtractors() {
@@ -912,7 +1179,7 @@ export class FormaStore {
       this.#assertAuthorizationScope(authorization);
       if (!response.ok) throw new Error(body.error === "admin_required" ? "An admin must run the derived index." : body.error ?? "Index rebuild failed");
       this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get());
-      this.toast(body.appended?.length ? `Indexed ${body.report?.indexedItems ?? 0} objects, ${body.report?.exemplars ?? 0} exemplars, and ${body.report?.families ?? 0} families.` : "The Phase 7 index is already fresh.");
+      this.toast(body.appended?.length ? this.#systemNotice("Indexed {objects} objects, {exemplars} exemplars, and {families} families.",{objects:body.report?.indexedItems??0,exemplars:body.report?.exemplars??0,families:body.report?.families??0}) : "The Phase 7 index is already fresh.");
     } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Index rebuild failed");}
     finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
@@ -943,7 +1210,7 @@ export class FormaStore {
       const body = await response.json() as { appended?: CreativeEvent[]; head?: number; error?: string; eligibility?: { closedSessions?: number; requiredClosedSessions?: number } };
       this.#assertAuthorizationScope(authorization);
       if (!response.ok) throw new Error(body.error === "no_open_session" ? "Open a session before closing it." : body.error ?? "Session could not be closed");
-      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast(`Session closed with a state receipt · ${body.eligibility?.closedSessions ?? 0}/${body.eligibility?.requiredClosedSessions ?? 3} toward brief eligibility.`);
+      this.events.set([...this.events.get(), ...(body.appended ?? [])]); this.head.set(body.head ?? this.head.get()); this.toast(this.#systemNotice("Session closed with a state receipt · {closed}/{required} toward brief eligibility.",{closed:body.eligibility?.closedSessions??0,required:body.eligibility?.requiredClosedSessions??3}));
     } catch (error) {if(this.#scopeStillActive(authorization))this.toast(error instanceof Error ? error.message : "Session could not be closed");}
     finally {if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
@@ -1011,7 +1278,7 @@ export class FormaStore {
       const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"refresh_taste_model",expectedSequence:this.head.get(),clientId:"web:memory"})},"refresh the fictional account’s taste model");
       this.#assertAuthorizationScope(authorization);
       const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string;beliefs?:number};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error === "phase6_advance_required"?"Record the Phase 6 advance-with-monitoring decision first.":body.error??"Taste model refresh failed");
-      this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast(`Taste model versioned with ${body.beliefs??0} ranking-only belief${body.beliefs===1?"":"s"}.`);
+      this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast((body.beliefs??0)===1?this.#systemNotice("Taste model versioned with {count} ranking-only belief.",{count:body.beliefs??0}):this.#systemNotice("Taste model versioned with {count} ranking-only beliefs.",{count:body.beliefs??0}));
     } catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Taste model refresh failed");}
     finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
@@ -1025,7 +1292,7 @@ export class FormaStore {
   async checkConditions(){
     const authorization=this.#activeAuthorizationScope();
     this.busy.set("check-conditions");this.notify();
-    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"check_conditions",expectedSequence:this.head.get(),clientId:"web:memory"})},"check time conditions in the fictional account");this.#assertAuthorizationScope(authorization);const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"Policy check failed");this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast(body.appended?.length?`${Math.floor(body.appended.length/2)} condition${body.appended.length===2?"":"s"} resurfaced.`:"No time policies are due yet.");}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Policy check failed");}finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
+    try{const response=await this.guardedFetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"check_conditions",expectedSequence:this.head.get(),clientId:"web:memory"})},"check time conditions in the fictional account");this.#assertAuthorizationScope(authorization);const body=await response.json() as {appended?:CreativeEvent[];head?:number;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"Policy check failed");this.events.set([...this.events.get(),...(body.appended??[])]);this.head.set(body.head??this.head.get());this.toast(body.appended?.length?body.appended.length===2?this.#systemNotice("{count} condition resurfaced.",{count:Math.floor(body.appended.length/2)}):this.#systemNotice("{count} conditions resurfaced.",{count:Math.floor(body.appended.length/2)}):"No time policies are due yet.");}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Policy check failed");}finally{if(this.#scopeStillActive(authorization)){this.busy.set("");this.notify();}}
   }
 
   async critiqueObject(objectId:string,axis:string,polarity:"positive"|"negative",value:string,note:string){

@@ -1,5 +1,6 @@
-import { css, LitElement } from "lit";
+import { css, LitElement, type PropertyValues } from "lit";
 import { FormaLocaleController } from "./localization";
+import { localizeTemplateResult } from "./localized-template";
 
 /**
  * One adopted stylesheet is shared by every composition-oriented shadow root.
@@ -260,4 +261,11 @@ export abstract class FormaSlottedElement extends LitElement {
   static override styles = compositionStyles;
   #locale?: FormaLocaleController;
   protected get i18n() { return this.#locale ||= new FormaLocaleController(this); }
+
+  protected override update(changed: PropertyValues) {
+    const render = this.render;
+    this.render = () => localizeTemplateResult(render.call(this), this.i18n);
+    try { super.update(changed); }
+    finally { this.render = render; }
+  }
 }

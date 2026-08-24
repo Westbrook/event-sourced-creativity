@@ -31,8 +31,8 @@ export abstract class AlternativeStudio extends FormaElement {
           <header class="page-header page-header--document">
             <div class="page-header-copy">
               <span class="eyebrow">${projection.projectName} / ${projection.documentTitle} / Document view</span>
-              <h1>${title}</h1>
-              <p>${description}</p>
+              <h1>${this.i18n.system(title)}</h1>
+              <p>${this.i18n.system(description)}</p>
             </div>
           </header>
           <forma-studio-mode-nav active=${active}></forma-studio-mode-nav>
@@ -131,12 +131,12 @@ export class FormaContextBoard extends AlternativeStudio {
           <span>Foundations</span>
           <b>${resolvedCore} of ${coreLanes.length} clear</b>
           <i style=${`--progress:${resolvedCore / coreLanes.length}`}></i>
-          <small>${ready ? "Ready to refine with evidence and nuance." : `${nextLane?.label} is the clearest next gap.`}</small>
+          <small>${ready ? this.i18n.system("Ready to refine with evidence and nuance.") : this.i18n.system("{label} is the clearest next gap.", { label: this.i18n.system(String(nextLane?.label)) })}</small>
         </div>
         <aside class="next-best-action">
           <span>Next useful move</span>
-          <b>${nextLane ? `Clarify ${nextLane.label.toLowerCase()}` : "Test the plan as a whole"}</b>
-          <p>${nextLane?.success ?? "All five areas are represented. Look for contradictions, weak influence, or a missing reference."}</p>
+          <b>${nextLane ? this.i18n.system("Clarify {value}", { value: this.i18n.system(nextLane.label).toLocaleLowerCase(this.i18n.locale) }) : this.i18n.system("Test the plan as a whole")}</b>
+          <p>${(nextLane?this.i18n.system(nextLane.success):undefined) ?? this.i18n.system("All five areas are represented. Look for contradictions, weak influence, or a missing reference.")}</p>
           ${nextLane ? html`<button class="button secondary compact" @click=${() => this.#prepare(nextLane.starter)}>Prepare this decision ${icon("arrow")}</button>` : html`<button class="button secondary compact" @click=${() => this.store.setRoute("/studio/layers")}>Shape influence ${icon("arrow")}</button>`}
         </aside>
       </section>
@@ -150,16 +150,16 @@ export class FormaContextBoard extends AlternativeStudio {
         <form class="board-quick-add" @submit=${this.#add}>
           <label>Decision type
             <select .value=${this.#type} @change=${(event: Event) => { this.#type = (event.target as HTMLSelectElement).value as BlockKind; this.#subtype = suggestedSubtype(this.#type); this.#userSelectedType = true; this.requestUpdate(); }}>
-              ${BLOCK_TYPES.map((item) => html`<option value=${item.type}>${item.label}</option>`)}
+              ${BLOCK_TYPES.map((item) => html`<option value=${item.type}>${this.i18n.system(item.label)}</option>`)}
             </select>
           </label>
           <label>Starting point
             <select .value=${this.#subtype} @change=${(event: Event) => { this.#subtype = (event.target as HTMLSelectElement).value; }}>
-              ${definition.subtypes.map((subtype) => html`<option value=${subtype}>${subtype}</option>`)}
+              ${definition.subtypes.map((subtype) => html`<option value=${subtype}>${this.i18n.system(subtype)}</option>`)}
             </select>
           </label>
           <label>Your decision
-            <input id="board-decision" required placeholder=${definition.prompt} .value=${this.#text} @input=${(event: InputEvent) => { this.#text = (event.target as HTMLInputElement).value; this.requestUpdate(); }}>
+            <input id="board-decision" required placeholder=${this.i18n.system(definition.prompt)} .value=${this.#text} @input=${(event: InputEvent) => { this.#text = (event.target as HTMLInputElement).value; this.requestUpdate(); }}>
           </label>
           <button class="button primary" ?disabled=${!this.#text.trim()}>${icon("plus")} Add decision</button>
         </form>
@@ -171,13 +171,13 @@ export class FormaContextBoard extends AlternativeStudio {
           return html`<section class=${`board-lane board-lane--${lane.id}`}>
             <header>
               <span>${items.length}</span>
-              <h3>${lane.label}</h3>
-              <p>${lane.description}</p>
-              <small>${items.length ? lane.success : "This is still open."}</small>
+              <h3>${this.i18n.system(lane.label)}</h3>
+              <p>${this.i18n.system(lane.description)}</p>
+              <small>${items.length ? this.i18n.system(lane.success) : this.i18n.system("This is still open.")}</small>
             </header>
             <div class="board-lane-blocks">
               ${items.map((block) => html`<forma-context-block .block=${block} surface="board"></forma-context-block>`)}
-              ${!items.length ? html`<button class="board-empty" @click=${() => this.#prepare(lane.starter)}>Start with ${blockTypeDefinition(lane.starter)?.label ?? lane.starter} ${icon("arrow")}</button>` : nothing}
+              ${!items.length ? html`<button class="board-empty" @click=${() => this.#prepare(lane.starter)}>Start with ${this.i18n.system(blockTypeDefinition(lane.starter)?.label??lane.starter)} ${icon("arrow")}</button>` : nothing}
             </div>
           </section>`;
         })}
@@ -268,9 +268,9 @@ export class FormaGuidedBrief extends AlternativeStudio {
     if (events.length) {
       const appended = await this.store.appendBatch(events);
       if (!appended.length) return;
-      this.store.toast(`${section.label} saved to the document.`);
+      this.store.toast(this.i18n.system("{section} saved to the document.",{section:this.i18n.system(section.label)}));
     } else {
-      this.store.toast(`${section.label} already matches the document.`);
+      this.store.toast(this.i18n.system("{section} already matches the document.",{section:this.i18n.system(section.label)}));
     }
     if (this.#step < BRIEF_SECTIONS.length - 1) this.#goToStep(this.#step + 1);
     else this.requestUpdate();
@@ -294,11 +294,11 @@ export class FormaGuidedBrief extends AlternativeStudio {
           <span>Brief coverage</span>
           <b>${answered} of ${ALL_BRIEF_FIELDS.length} answered</b>
           <i style=${`--progress:${answered / ALL_BRIEF_FIELDS.length}`}></i>
-          <small>${answered === ALL_BRIEF_FIELDS.length ? "Ready for a final consistency check." : `${section.label} is open now.`}</small>
+          <small>${answered === ALL_BRIEF_FIELDS.length ? this.i18n.system("Ready for a final consistency check.") : this.i18n.system("{label} is open now.", { label: this.i18n.system(section.label) })}</small>
         </div>
         <aside class="next-best-action">
           <span>This section prepares</span>
-          <b>${section.outcome}</b>
+          <b>${this.i18n.system(section.outcome)}</b>
           <p>${activeAnswered}/${section.fields.length} answers are ready to save.</p>
         </aside>
       </section>
@@ -309,7 +309,7 @@ export class FormaGuidedBrief extends AlternativeStudio {
         ${BRIEF_SECTIONS.map((item, index) => {
           const complete = item.fields.every((field) => (this.#drafts[field.type] ?? "").trim());
           return html`<button class=${`${index === this.#step ? "active" : ""} ${complete ? "complete" : ""}`} aria-current=${index === this.#step ? "step" : nothing} @click=${() => this.#goToStep(index)}>
-            <i>${complete ? icon("check") : index + 1}</i><span><b>${item.label}</b><small>${complete ? "Ready" : item.title}</small></span>
+            <i>${complete ? icon("check") : index + 1}</i><span><b>${this.i18n.system(item.label)}</b><small>${complete ? this.i18n.system("Ready") : this.i18n.system(item.title)}</small></span>
           </button>`;
         })}
       </nav>
@@ -318,8 +318,8 @@ export class FormaGuidedBrief extends AlternativeStudio {
       <section class="guided-brief guided-brief--focused">
         <header class="guided-section-header">
           <span class="eyebrow">Step ${this.#step + 1} of ${BRIEF_SECTIONS.length}</span>
-          <h2>${section.title}</h2>
-          <p>${section.outcome}</p>
+          <h2>${this.i18n.system(section.title)}</h2>
+          <p>${this.i18n.system(section.outcome)}</p>
         </header>
         <div class="guided-question-grid">
           ${section.fields.map((field, index) => {
@@ -328,28 +328,28 @@ export class FormaGuidedBrief extends AlternativeStudio {
             return html`<section class="guided-question">
               <header>
                 <span>${String(index + 1).padStart(2, "0")}</span>
-                <div><small>${field.label}</small><h3>${field.question}</h3></div>
+                <div><small>${this.i18n.system(field.label)}</small><h3>${this.i18n.system(field.question)}</h3></div>
                 ${existing ? html`<b class="resolved-chip">In document</b>` : html`<b class="unresolved-chip">Open</b>`}
               </header>
-              <p>${field.help}</p>
+              <p>${this.i18n.system(field.help)}</p>
               <label class="guided-subtype">Use this answer as
                 <select form=${guidedFormId} .value=${this.#subtypes[field.type]} @change=${(event: Event) => { this.#subtypes[field.type] = (event.target as HTMLSelectElement).value; this.requestUpdate(); }}>
-                  ${definition.subtypes.map((subtype) => html`<option value=${subtype}>${subtype}</option>`)}
+                  ${definition.subtypes.map((subtype) => html`<option value=${subtype}>${this.i18n.system(subtype)}</option>`)}
                 </select>
               </label>
-              <label class="sr-only" for=${`brief-${field.type}`}>${field.question}</label>
-              <textarea id=${`brief-${field.type}`} form=${guidedFormId} rows="4" placeholder=${definition.prompt} .value=${this.#drafts[field.type] ?? ""} @input=${(event: InputEvent) => { this.#drafts[field.type] = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea>
-              <small class="guided-source">${existing ? "Saving will update this answer everywhere it appears." : "Saving will add this decision to the document."}</small>
+              <label class="sr-only" for=${`brief-${field.type}`}>${this.i18n.system(field.question)}</label>
+              <textarea id=${`brief-${field.type}`} form=${guidedFormId} rows="4" placeholder=${this.i18n.system(definition.prompt)} .value=${this.#drafts[field.type] ?? ""} @input=${(event: InputEvent) => { this.#drafts[field.type] = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea>
+              <small class="guided-source">${existing ? this.i18n.system("Saving will update this answer everywhere it appears.") : this.i18n.system("Saving will add this decision to the document.")}</small>
               ${existing ? html`<forma-spatial-scope-editor .block=${existing} surface="guided"></forma-spatial-scope-editor>` : html`<small class="guided-scope-pending">Save this answer, then choose whether it affects everything or one area.</small>`}
             </section>`;
           })}
         </div>
         <footer class="guided-actions">
-          <div><b>${activeAnswered === section.fields.length ? `${section.label} is ready.` : "You can leave uncertainty visible."}</b><small>${activeAnswered === section.fields.length ? "Save and move to the next part of the brief." : "Blank answers remain open; Forma will not invent them."}</small></div>
+          <div><b>${activeAnswered === section.fields.length ? this.i18n.system("{label} is ready.", { label: this.i18n.system(section.label) }) : this.i18n.system("You can leave uncertainty visible.")}</b><small>${activeAnswered === section.fields.length ? this.i18n.system("Save and move to the next part of the brief.") : this.i18n.system("Blank answers remain open; Forma will not invent them.")}</small></div>
           <span class="guided-action-buttons">
             ${this.#step > 0 ? html`<button type="button" class="button ghost" @click=${() => this.#goToStep(this.#step - 1)}>Back</button>` : nothing}
             ${this.#step < BRIEF_SECTIONS.length - 1 && activeAnswered < section.fields.length ? html`<button type="button" class="button ghost" @click=${() => this.#goToStep(this.#step + 1)}>Skip for now</button>` : nothing}
-            <button type="submit" form=${guidedFormId} class="button primary">${this.#step < BRIEF_SECTIONS.length - 1 ? `Save & continue` : `Save brief`} ${icon("arrow")}</button>
+            <button type="submit" form=${guidedFormId} class="button primary">${this.#step < BRIEF_SECTIONS.length - 1 ? this.i18n.system("Save & continue") : this.i18n.system("Save brief")} ${icon("arrow")}</button>
           </span>
         </footer>
       </section>
@@ -363,17 +363,17 @@ export class FormaGuidedBrief extends AlternativeStudio {
           ${BLOCK_GROUPS.map((group) => {
             const items = projection.blocks.filter((block) => blockTypeDefinition(block.type)?.group === group.id);
             return html`<section>
-              <header><h3>${group.label}</h3><span>${items.length}</span></header>
+              <header><h3>${this.i18n.system(group.label)}</h3><span>${items.length}</span></header>
               ${items.length ? html`<ul>${items.map((block) => {
                 const fieldSection = BRIEF_SECTIONS.findIndex((candidate) => candidate.fields.some((field) => field.type === block.type));
                 return html`<li>
                   <button @click=${() => fieldSection >= 0 ? this.#goToStep(fieldSection) : this.store.setRoute("/")}>
-                    <span><b>${blockTypeDefinition(block.type)?.label ?? block.type}</b><small>${String(block.properties.subtype ?? block.handle)}</small></span>
+                    <span><b>${this.i18n.system(blockTypeDefinition(block.type)?.label??block.type)}</b><small>${(typeof block.properties.subtype === "string" && blockTypeDefinition(block.type)?.subtypes.includes(block.properties.subtype) ? this.i18n.system(block.properties.subtype) : String(block.properties.subtype ?? block.handle))}</small></span>
                     <em>${String(block.properties.artifact_markdown ?? block.properties.text ?? block.properties.label ?? block.handle)}</em>
-                    <i>${fieldSection >= 0 ? "Review answer" : "Open baseline"} ${icon("arrow")}</i>
+                    <i>${fieldSection >= 0 ? this.i18n.system("Review answer") : this.i18n.system("Open baseline")} ${icon("arrow")}</i>
                   </button>
                 </li>`;
-              })}</ul>` : html`<p>No saved ${group.label.toLowerCase()} yet.</p>`}
+              })}</ul>` : html`<p>${this.i18n.system("No saved {group} yet.",{group:this.i18n.system(group.label).toLocaleLowerCase(this.i18n.locale)})}</p>`}
             </section>`;
           })}
         </div>

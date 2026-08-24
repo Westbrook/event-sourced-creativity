@@ -53,6 +53,10 @@ export const APPLICATIONS: readonly ApplicationDefinition[] = [
     entry: "src/apps/creative/entry.ts",
     navigation: [
       { id: "projects", href: "/projects", label: "Projects", description: "Choose a creative workspace" },
+      { id: "work", href: "/", label: "Work", description: "Continue shaping the current creative document" },
+      { id: "explore", href: "/library", label: "Explore", description: "Discover reusable context, results, and creative intelligence" },
+      { id: "activity", href: "/activity", label: "Activity", description: "Review project updates, assigned work, and your production activity" },
+      { id: "deliver", href: "/deliver", label: "Deliver", description: "Review, present, and release completed creative work" },
       { id: "create", href: "/", label: "Create", description: "Work in the current document" },
       { id: "library", href: "/library", label: "Library", description: "Reuse project context and outputs" },
       { id: "sessions", href: "/sessions", label: "Re-entry", description: "Resume witnessed work" },
@@ -241,7 +245,9 @@ export function navigationItemActive(applicationId: ApplicationId, itemId: strin
   const path = new URL(route, "https://forma.local").pathname.replace(/\/+$/, "") || "/";
   if (applicationId === "creative") {
     if (itemId === "projects") return path.startsWith("/projects") || path.startsWith("/studio/project") || path === "/creative";
-    if (itemId === "create") return path === "/" || path === "/document" || path.startsWith("/document/") || (path.startsWith("/studio/") && !path.startsWith("/studio/project")) || path.startsWith(CREATE_ROUTE_PREFIX);
+    if (itemId === "work" || itemId === "create") return path === "/" || path === "/document" || path.startsWith("/document/") || (path.startsWith("/studio/") && !path.startsWith("/studio/project")) || path.startsWith(CREATE_ROUTE_PREFIX);
+    if (itemId === "explore") return /^\/(?:library|scout|memory)(?:\/|$)/.test(path);
+    if (itemId === "activity") return /^\/(?:activity|sessions)(?:\/|$)/.test(path);
     return path === `/${itemId}` || path.startsWith(`/${itemId}/`);
   }
   if (applicationId === "operations") {
@@ -299,6 +305,8 @@ export const SITE_ROUTE_ENTRIES: readonly SiteRouteEntry[] = [
   route("/studio/editor", "creative", "Creative editor — Forma", "Shape a complete document through a focused editor."),
   route("/studio/chat", "creative", "Chat — Forma", "Shape a complete document through conversation and visual generation."),
   route("/library", "creative", "Project library — Forma", "Review reusable context, recent outputs, and aesthetic families."),
+  route("/activity", "creative", "Activity — Forma", "Track authorized creative work, project updates, and assigned reviews."),
+  route("/deliver", "creative", "Deliver — Forma", "Review and present completed outputs from the current project."),
   route("/sessions", "creative", "Re-entry — Forma", "Resume witnessed work through event-derived re-entry briefs."),
   route("/scout", "creative", "Scout — Forma", "Run bounded creative research and inspect its evidence."),
   route("/memory", "creative", "Taste & time — Forma", "Review reversible preferences, taste evidence, and time-based memory."),

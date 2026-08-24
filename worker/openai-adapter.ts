@@ -3,16 +3,17 @@ import { ApiError, createFalClient } from "@fal-ai/client";
 import { BLOCK_TYPES, sendsReferencePixels, type AdaptiveStructure, type BlockKind, type ReferencePixelMode } from "../src/model/block-types.ts";
 import type { LiveReplayPlan } from "../src/model/live-replay.ts";
 import { buildBoundedPromptRepresentation, buildReferencePromptDirectives, buildSpatialPromptDirectives, normalizePromptTechnique, type PromptReferenceDescriptor, type PromptTechnique } from "../src/model/prompt-structures.ts";
-import { classifyProviderFailure, ProviderRequestError, providerErrorFromResponse, type ProviderFailureDetail } from "./provider-errors.ts";
+import { classifyProviderFailure, ProviderRequestError, providerErrorFromResponse, type ProviderAttemptAccounting, type ProviderFailureDetail } from "./provider-errors.ts";
 import { normalizeImageFormat, validateProviderImageSize } from "../src/model/image-format.ts";
 import { buildReplayDevelopmentStages, type CreativeStudyKind, type ReplayDevelopmentStage } from "../src/model/replay-development.ts";
 import { moderateExactImagePrompt } from "./openai-moderation.ts";
-import { documentArtifactValidationIssues, parseDocumentArtifactContent, resolveDocumentArtifactContextGroups, SLIDE_LAYOUTS, SLIDE_STYLE_PRESET_IDS, SLIDE_VISUAL_KINDS, type DocumentArtifactContextGroupContract, type DocumentArtifactDraft, type DocumentArtifactKind, type DocumentArtifactValidationIssue, type SlidePresentation } from "../src/model/document-artifacts.ts";
+import { documentArtifactValidationIssues, parseDocumentArtifactContent, resolveDocumentArtifactContextGroups, SLIDE_LAYOUTS, SLIDE_STYLE_PRESET_IDS, SLIDE_VISUAL_KINDS, type DocumentArtifactContextGroupContract, type DocumentArtifactDraft, type DocumentArtifactKind, type DocumentArtifactValidationIssue, type SlidePresentation, type SlideStylePresetId } from "../src/model/document-artifacts.ts";
 import { combinedContextGroups, combinedContextPromptDirectives } from "../src/model/combined-context.ts";
 import { creativeEvaluationPromptGuardrails, creativePromptGuardrails, promptFactIsActive, providerFacingCreativeContext, providerFacingRenderingContext } from "../src/model/prompt-policy.ts";
 import { REPLAY_EXPERIENCE_PROFILES, replayExperienceDefinition, type ReplayExperienceId } from "../src/model/replay-experiences.ts";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, isVideoAudioMode, isVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT, type VideoAudioMode, type VideoDurationSeconds } from "../src/model/video-adapter.ts";
 import { productionTeamInstructions, providerFacingProductionContinuity, type ManagedProductionPlan, type ProductionMode, type ProductionScene } from "../src/model/managed-production.ts";
+import { buildPresentationSourceContract, providerFacingPresentationSourceContract, resolvePresentationSourceReferences, type PresentationSourceContract } from "../src/model/presentation-source.ts";
 import { adaptVideoPrompt, compactVideoCombinedContextPlan, resolveVideoAudioPolicy, videoPlannerCreativeContext, type VideoPromptAdaptation } from "./video-prompt-adapter.ts";
 
 type OpenAIError = { message?: string; type?: string; code?: string | null; param?: string | null };
@@ -68,7 +69,9 @@ export type ProductionPageContext = {
   lockedPresentation?: SlidePresentation | null;
   repairIssues?: string[];
 };
-export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; videoSeconds?:VideoDurationSeconds; videoSize?:"1280x720"|"720x1280"; videoAudioMode?:VideoAudioMode; productionMode?:ProductionMode; productionPlan?:ManagedProductionPlan; productionScenes?:ProductionScene[]; productionPage?:ProductionPageContext; signal?:AbortSignal };
+export type ProviderAttemptReceipt = { model:string; responseId:string; responseIds:string[]; usage:{inputTokens:number;outputTokens:number;totalTokens:number}; latencyMs:number };
+export type ProviderAttemptPreflight = {model:string;maximumInputTokens:number;maximumOutputTokens:number};
+export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; locale?:string; presentationStyle?:SlideStylePresetId; presentationFidelity?:"faithful"|"creative"; requestedSlideCount?:number; authoredSlideCount?:number; videoSeconds?:VideoDurationSeconds; videoSize?:"1280x720"|"720x1280"; videoAudioMode?:VideoAudioMode; productionMode?:ProductionMode; productionPlan?:ManagedProductionPlan; productionScenes?:ProductionScene[]; productionPage?:ProductionPageContext; signal?:AbortSignal; onProviderAttempt?:(receipt:ProviderAttemptReceipt)=>void|Promise<void>;onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void> };
 export type VideoReference = { bytes:Uint8Array; mimeType:string; blockId:string; referenceId:string; label:string; mode:ReferencePixelMode; sequence:number|null; shotDirection:string; cameraDirection:string; framePrompt:string; sourceArtifactId:string|null; sourceArtifactItemId:string|null; sourceArtifactKind:string|null; storyboardTitle:string; contextGroups?:Array<{id:string;name:string;target:string;role:string;application:string;relativity:number}>; provider?:string|null; providerModel?:string|null; providerRequestId?:string|null; providerMediaUrl?:string|null };
 export type CreativeVideoPreparedReceipt = { provider:string; model:string; submittedPrompt:string; parameters:Record<string,unknown>; referenceInputs:Array<Record<string,unknown>>; usedReferencePixels:boolean; adaptation?:VideoPromptAdaptation };
 export type CreativeVideoOptions = { seconds:VideoDurationSeconds; size:"1280x720"|"720x1280"; resolution?:"480p"|"720p"; audioMode?:VideoAudioMode; generateAudio?:boolean; endUserId?:string; referencePromptProfile?:"standard"|"positive-only"; providerJobId?:string; providerModel?:string; providerStatusUrl?:string; providerResponseUrl?:string; providerCancelUrl?:string; references?:VideoReference[]; snapshot?:Record<string,unknown>; plan?:Pick<DocumentArtifactDraft,"title"|"summary"|"items">; productionContinuity?:{prohibitions:string[];scopedTargets:Array<{target:string;role:string;prohibitions:string[]}>}; retainedReceipt?:CreativeVideoPreparedReceipt; signal?:AbortSignal; onStage?:(stage:string,message:string)=>void|Promise<void>; onPrepared?:(receipt:CreativeVideoPreparedReceipt)=>void|Promise<void>; onReceipt?:(receipt:{providerJobId:string;provider:string;model:string;providerStatusUrl:string;providerResponseUrl:string;providerCancelUrl:string})=>void|Promise<void> };
@@ -118,29 +121,37 @@ const slidePresentationSchema={
   },
 };
 const slideVisualSchema={
-  type:"object",additionalProperties:false,required:["layout","kicker","bullets","visual"],
+  type:"object",additionalProperties:false,required:["layout","kicker","bullets","quote","citations","source_ids","section","source_order","visual"],
   properties:{
     layout:{type:"string",enum:SLIDE_LAYOUTS},
     kicker:{type:"string",minLength:1,maxLength:80},
-    bullets:{type:"array",maxItems:5,items:{type:"string",minLength:1,maxLength:160}},
+    bullets:{type:"array",maxItems:24,items:{type:"string",minLength:1,maxLength:320}},
+    quote:{type:["object","null"],additionalProperties:false,required:["text","speaker","role","source_id","citation"],properties:{text:{type:"string",minLength:1,maxLength:4000},speaker:{type:"string",minLength:1,maxLength:160},role:{type:"string",minLength:1,maxLength:160},source_id:{type:["string","null"],maxLength:80},citation:{type:["string","null"],maxLength:500}}},
+    citations:{type:"array",maxItems:24,items:{type:"object",additionalProperties:false,required:["source_id","label","anchor","excerpt"],properties:{source_id:{type:["string","null"],maxLength:80},label:{type:"string",minLength:1,maxLength:200},anchor:{type:"string",maxLength:240},excerpt:{type:"string",maxLength:1200}}}},
+    source_ids:{type:"array",maxItems:48,items:{type:"string",minLength:1,maxLength:80}},
+    section:{type:["string","null"],maxLength:160},
+    source_order:{type:["integer","null"],minimum:1,maximum:100},
     visual:{
-      type:"object",additionalProperties:false,required:["kind","label","value","data"],
+      type:"object",additionalProperties:false,required:["kind","label","value","exact_value","display_value","unit","data"],
       properties:{
         kind:{type:"string",enum:SLIDE_VISUAL_KINDS},
-        label:{type:"string",minLength:1,maxLength:100},
-        value:{type:"string",minLength:1,maxLength:120},
+        label:{type:"string",minLength:1,maxLength:160},
+        value:{type:"string",maxLength:4000},
+        exact_value:{type:["string","null"],maxLength:120},
+        display_value:{type:["string","null"],maxLength:120},
+        unit:{type:["string","null"],maxLength:60},
         data:{
-          type:"array",minItems:1,maxItems:5,
+          type:"array",minItems:0,maxItems:48,
           items:{
-            type:"object",additionalProperties:false,required:["label","value","weight"],
-            properties:{label:{type:"string",minLength:1,maxLength:80},value:{type:"string",minLength:1,maxLength:100},weight:{type:"number",minimum:0,maximum:1}},
+            type:"object",additionalProperties:false,required:["label","value","weight","exact_value","display_value","source_ids"],
+            properties:{label:{type:"string",minLength:1,maxLength:160},value:{type:"string",minLength:1,maxLength:240},weight:{type:"number",minimum:0,maximum:1},exact_value:{type:["string","null"],maxLength:120},display_value:{type:["string","null"],maxLength:120},source_ids:{type:"array",maxItems:12,items:{type:"string",minLength:1,maxLength:80}}},
           },
         },
       },
     },
   },
 };
-const documentArtifactSchema=(kind:DocumentArtifactKind,lockedPresentation?:SlidePresentation|null)=>{
+const documentArtifactSchema=(kind:DocumentArtifactKind,lockedPresentation?:SlidePresentation|null,requestedStyle?:SlideStylePresetId)=>{
   const itemProperties:Record<string,unknown>={title:{type:"string"},body:{type:"string"},notes:{type:"string"},image_prompt:{type:"string"},context_group_ids:{type:"array",maxItems:24,items:{type:"string"}}};
   const itemRequired=["title","body","notes","image_prompt","context_group_ids"];
   if(kind==="slides"){itemProperties.slide=slideVisualSchema;itemRequired.push("slide");}
@@ -148,6 +159,10 @@ const documentArtifactSchema=(kind:DocumentArtifactKind,lockedPresentation?:Slid
   const required=["title","summary","content_markdown","items"];
   if(kind==="slides"){
     const presentation=structuredClone(slidePresentationSchema);
+    if(requestedStyle&&!lockedPresentation){
+      const presentationProperties=presentation.properties as Record<string,Record<string,unknown>>;
+      presentationProperties.style_preset={...presentationProperties.style_preset,enum:[requestedStyle]};
+    }
     if(lockedPresentation){
       const presentationProperties=presentation.properties as Record<string,Record<string,unknown>>;
       presentationProperties.theme={...presentationProperties.theme,enum:[lockedPresentation.theme]};
@@ -218,7 +233,8 @@ const wait = (delay: number, signal?: AbortSignal) => new Promise<void>((resolve
 });
 
 async function openAIRequest(input: string, init: RequestInit) {
-  const paidFalSubmission = (init.method ?? "GET").toUpperCase() === "POST" && new URL(input).hostname === "queue.fal.run";
+  const endpoint=new URL(input);
+  const paidProviderSubmission=(init.method??"GET").toUpperCase()==="POST"&&(endpoint.hostname==="queue.fal.run"||endpoint.hostname==="api.openai.com"&&endpoint.pathname==="/v1/responses");
   for (let attempt = 1; attempt <= OPENAI_REQUEST_MAX_ATTEMPTS; attempt += 1) {
     let response: Response;
     try {
@@ -233,7 +249,7 @@ async function openAIRequest(input: string, init: RequestInit) {
     let body: unknown = {};
     try { body = await response.clone().json(); } catch { /* Status and headers still classify the failure. */ }
     const detail = classifyProviderFailure(new Error("openai_request_failed"), response, body);
-    if (paidFalSubmission || !shouldAutomaticallyRetryProviderFailure(detail) || attempt === OPENAI_REQUEST_MAX_ATTEMPTS) return response;
+    if (paidProviderSubmission || !shouldAutomaticallyRetryProviderFailure(detail) || attempt === OPENAI_REQUEST_MAX_ATTEMPTS) return response;
     await wait(providerRetryDelay(detail, attempt), init.signal ?? undefined);
   }
   throw new Error("openai_request_failed");
@@ -293,10 +309,11 @@ export async function generateLiveReplayPlan(env:WorkerEnv,userId:string,seed:st
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output,raw,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
-export async function generateCreativeDirection(env: WorkerEnv, userId: string, snapshot: Record<string, unknown>, signal?: AbortSignal) {
+export async function generateCreativeDirection(env: WorkerEnv, userId: string, snapshot: Record<string, unknown>, signal?: AbortSignal, locale?: string) {
   if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
   const started = Date.now();
-  const instructions = `You are Forma's creative-direction adapter. Interpret every field of the supplied authored and cited context. Return a concrete visual direction, not hidden reasoning. Treat inferred material as suggestive and never claim it was authored. Each supplied fact is active and has an independent semantic role and intent. Every fact whose intent is avoid or prohibit, whose effect is must_not_include, or whose legacy type is exclusion is a negative constraint: apply the prohibition to its named role, and never let the named content become a positive focus in the title, scene, rationale, palette, or next moves. Prohibit is a hard boundary; avoid is a strong negative preference. Weight expresses the constraint's influence, not creative prominence. Prefer facts are positive preferences, while include facts are ordinary positive instructions. A fact's properties.spatial_scope limits where that fact applies. Preserve its named region, rectangle, subject relationship, or custom path in the scene and rationale; do not silently promote a local decision into a whole-image instruction. Combined-context plans are binding semantic isolation boundaries: their members jointly define only the named character, location, object, sequence, scene, message, slide chapter, or visual system. Respect group relativity and never spread a member's wardrobe, palette, material, behavior, or reference identity to an unrelated target. ${creativePromptGuardrails()}`;
+  const responseLocale=assistantResponseLocale(locale);
+  const instructions = `You are Forma's creative-direction adapter. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, palette values, or structured field names. Interpret every field of the supplied authored and cited context. Return a concrete visual direction, not hidden reasoning. Treat inferred material as suggestive and never claim it was authored. Each supplied fact is active and has an independent semantic role and intent. Every fact whose intent is avoid or prohibit, whose effect is must_not_include, or whose legacy type is exclusion is a negative constraint: apply the prohibition to its named role, and never let the named content become a positive focus in the title, scene, rationale, palette, or next moves. Prohibit is a hard boundary; avoid is a strong negative preference. Weight expresses the constraint's influence, not creative prominence. Prefer facts are positive preferences, while include facts are ordinary positive instructions. A fact's properties.spatial_scope limits where that fact applies. Preserve its named region, rectangle, subject relationship, or custom path in the scene and rationale; do not silently promote a local decision into a whole-image instruction. Combined-context plans are binding semantic isolation boundaries: their members jointly define only the named character, location, object, sequence, scene, message, slide chapter, or visual system. Respect group relativity and never spread a member's wardrobe, palette, material, behavior, or reference identity to an unrelated target. ${creativePromptGuardrails()}`;
   const {plan} = providerFacingCombinedContextPlan(snapshot);
   const plannerInput = JSON.stringify({...providerFacingRenderingContext(snapshot) as Record<string,unknown>,...(plan.length?{combined_context_plan:plan}:{})});
   const response = await openAIRequest("https://api.openai.com/v1/responses", {
@@ -384,12 +401,22 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
   return{model,prompt,promptTechnique,bytes,revisedPrompt,createdAt,latencyMs:Date.now()-started,usage:{inputTokens:Number(usage.input_tokens??0),outputTokens:Number(usage.output_tokens??0),totalTokens:Number(usage.total_tokens??0),textInputTokens:Number(usage.input_tokens_details?.text_tokens??0),imageInputTokens:Number(usage.input_tokens_details?.image_tokens??0)},width:Number.isFinite(width)?width:requestedWidth,height:Number.isFinite(height)?height:requestedHeight,mimeType:imageMimeType(completedFormat),quality,usedReference:references.length>0,referenceCount:references.length,referenceInputs:references.map((reference)=>({source:reference.source,blockId:reference.blockId??null,referenceId:reference.referenceId??null,label:reference.label??null,mode:reference.mode??null})),safetyProbeCount:moderation.probeCount,safetyCoverage:moderation.coverage,safetyRequestIds:moderation.requestIds,partialCount,outputFormat:completedFormat,outputCompression:completedFormat==="png"?null:outputCompression};
 }
 
-export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{documentTitle:string;blocks:Array<Record<string,unknown>>;history:Array<{role:"user"|"assistant";text:string}>;message:string;signal?:AbortSignal}) {
+function assistantResponseLocale(value?: string) {
+  try {
+    const locale = Intl.getCanonicalLocales(value || "en")[0] || "en";
+    return /^(?:en|fr|ar|ja)(?:-|$)/i.test(locale) ? locale : "en";
+  } catch {
+    return "en";
+  }
+}
+
+export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{documentTitle:string;blocks:Array<Record<string,unknown>>;history:Array<{role:"user"|"assistant";text:string}>;message:string;locale?:string;signal?:AbortSignal}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
+  const responseLocale=assistantResponseLocale(input.locale);
   const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),signal:input.signal,body:JSON.stringify({
     model:env.OPENAI_MODEL??"gpt-5.6-terra",
-    instructions:`You are Forma, a concise creative collaborator inside a chat-only document view. Speak about the user's creative plan and intended image, never about blocks, events, schemas, metadata, adapters, or hidden machinery. Interpret the newest message against the existing plan and recent conversation. Return a helpful reply plus the smallest accurate set of plan mutations. Create adds a new durable decision; edit changes one existing decision and must name its target_block_id; remove deletes one existing decision and must name its target_block_id. Never target a missing item. For create, target_block_id is null. Never create a reference item through chat because an actual uploaded image is required. The reference_pixel_mode field is unchanged for ordinary mutations. When the user says to use a named existing reference image, edit the matching reference and choose inspiration unless they explicitly ask to preserve its composition, subject, or visual style. Choose context_only when they say not to send or use its pixels. Never change reference_pixel_mode on a non-reference item. When the user asks for an image size, resolution, dimensions, orientation, or aspect ratio, create or edit a format item and provide image_format with coherent pixel dimensions and their reduced aspect ratio; otherwise image_format is null. For unused mutation fields return sensible empty strings, but type must always be a valid vocabulary value. If the creative image meaningfully changes, preview_worthy is true and preview_direction is a standalone visual instruction incorporating the whole current intention after your proposed changes. If the user is only asking a question or chatting without changing visual intent, do not mutate and set preview_worthy false. ${creativePromptGuardrails()}`,
+    instructions:`You are Forma, a concise creative collaborator inside a chat-only document view. Write every user-facing assistant reply in the user's selected language (${responseLocale}). Preserve user-authored titles, quoted text, names, and creative decisions verbatim; never translate machine identifiers, enum values, or structured field names. Speak about the user's creative plan and intended image, never about blocks, events, schemas, metadata, adapters, or hidden machinery. Interpret the newest message against the existing plan and recent conversation. Return a helpful reply plus the smallest accurate set of plan mutations. Create adds a new durable decision; edit changes one existing decision and must name its target_block_id; remove deletes one existing decision and must name its target_block_id. Never target a missing item. For create, target_block_id is null. Never create a reference item through chat because an actual uploaded image is required. The reference_pixel_mode field is unchanged for ordinary mutations. When the user says to use a named existing reference image, edit the matching reference and choose inspiration unless they explicitly ask to preserve its composition, subject, or visual style. Choose context_only when they say not to send or use its pixels. Never change reference_pixel_mode on a non-reference item. When the user asks for an image size, resolution, dimensions, orientation, or aspect ratio, create or edit a format item and provide image_format with coherent pixel dimensions and their reduced aspect ratio; otherwise image_format is null. For unused mutation fields return sensible empty strings, but type must always be a valid vocabulary value. If the creative image meaningfully changes, preview_worthy is true and preview_direction is a standalone visual instruction incorporating the whole current intention after your proposed changes. If the user is only asking a question or chatting without changing visual intent, do not mutate and set preview_worthy false. ${creativePromptGuardrails()}`,
     input:JSON.stringify({...providerFacingAssistantContext(input),block_vocabulary:BLOCK_TYPES.map((item)=>({type:item.type,subtypes:item.subtypes})),mutation_rules:{create:"target_block_id must be null",edit:"target_block_id must match an existing id",remove:"target_block_id must match an existing id"}}),
     text:{verbosity:"low",format:{type:"json_schema",name:"forma_creative_chat",strict:true,schema:creativeChatSchema}},reasoning:{effort:"low"},max_output_tokens:1600,store:false,safety_identifier:await safetyIdentifier(userId),
   })});
@@ -399,12 +426,13 @@ export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{d
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output:parsed,raw:text,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
-export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input:{intent:string;documentTitle:string;blocks:Array<Record<string,unknown>>;signal?:AbortSignal}) {
+export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input:{intent:string;documentTitle:string;blocks:Array<Record<string,unknown>>;locale?:string;signal?:AbortSignal}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
+  const responseLocale=assistantResponseLocale(input.locale);
   const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),signal:input.signal,body:JSON.stringify({
     model:env.OPENAI_MODEL??"gpt-5.6-terra",
-    instructions:`You structure an adaptive creative-context interface. Interpret the user's broad intent together with the currently authored blocks. Propose the next useful decision and 2–6 concise context blocks across intent, scene, craft, evidence, or constraints. Use only the supplied block type vocabulary. Subtypes should match the system suggestions when practical. Explain product-facing reasons, never hidden chain-of-thought. Do not claim proposals were authored and do not mutate anything. ${creativePromptGuardrails()}`,
+    instructions:`You structure an adaptive creative-context interface. Write every user-facing interpretation, decision label, decision prompt, explanation, suggestion label, instruction, relationship, and future suggestion in the user's selected language (${responseLocale}). Preserve user-authored titles, quoted text, names, and creative decisions verbatim; never translate machine identifiers, block type values, or structured field names. Interpret the user's broad intent together with the currently authored blocks. Propose the next useful decision and 2–6 concise context blocks across intent, scene, craft, evidence, or constraints. Use only the supplied block type vocabulary. Subtypes should match the system suggestions when practical. Explain product-facing reasons, never hidden chain-of-thought. Do not claim proposals were authored and do not mutate anything. ${creativePromptGuardrails()}`,
     input:JSON.stringify({...providerFacingAssistantContext(input),block_vocabulary:BLOCK_TYPES.map((item)=>({type:item.type,description:item.description,subtypes:item.subtypes}))}),
     text:{verbosity:"low",format:{type:"json_schema",name:"forma_adaptive_structure",strict:true,schema:adaptiveStructureSchema}},reasoning:{effort:"low"},max_output_tokens:1400,store:false,safety_identifier:await safetyIdentifier(userId),
   })});
@@ -417,20 +445,178 @@ export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input
 const artifactInstructions:Record<DocumentArtifactKind,string>={
   short_story:"Write a polished short story, not a treatment. Preserve the document's named subjects, setting, tone, constraints, and spatial relationships. content_markdown is the complete story. Items are titled narrative movements with their prose in body; notes briefly explain continuity, and image_prompt describes an optional illustration.",
   scene:"Write one production-readable scene for film or television. content_markdown must use clear screenplay conventions: scene heading, action, character names, dialogue, and parentheticals only when useful. Items are playable beats in order; body contains the beat's action/dialogue and image_prompt describes its strongest frame.",
-  slides:"Create an informative visual presentation, not an essay split at arbitrary points and not a request for raster slide images. presentation defines one accessible 16:9 CSS theme for the deck. Choose the style_preset that best represents the document: gallery for quiet, warm, image-led work; editorial for assertive narrative hierarchy; nocturne for cinematic or atmospheric work; field-notes for research, evidence, and plans. Make mode and palette coherent with that choice while deriving the specific colors from the document. presentation.theme is internal styling metadata; presentation.footer_label is optional-on-screen deck copy and must be a concise name derived from this document, its subject, or the deck title. Never put process language, model names, provider names, system status, or phrases such as Document-derived editorial in footer_label. Each item is one slide: title and body are concise on-slide copy, notes are speaker notes, and slide is reusable visual data. Choose a purposeful layout and semantic visual primitive for every slide. Use visual.data labels, values, and normalized weights to express the actual idea rather than decoration. Editorially review every slide before returning it: every visible field must add new information. Do not repeat or closely restate the same sentence, quotation, claim, or phrase across its title, body, kicker, bullets, visual label, visual value, or data points. Treat punctuation, quotation marks, line breaks, capitalization, contractions, and minor word-order changes as irrelevant when checking for repetition. Never split one quotation between body copy and a bullet, and never use a bullet as a shortened echo of the body. Then review every slide against every other slide: each slide must advance the deck with a distinct title and distinct visible claims. Do not reuse body copy, bullets, quotations, conclusions, hero statements, metric explanations, or visual values on later slides. Repeated structural axes or short section labels are acceptable only when they make a direct comparison easier to read. Never emit empty bullets or scaffolding such as Point 2, Item 3, TBD, placeholder, or lorem ipsum. Every visual group must be complete and specific: bars and timelines need at least two meaningful label/value pairs; diagrams and color fields need at least two meaningfully named points. If the content supports only one fact, use hero-type or metric instead of pretending it is a multi-point group. Vary layouts with a coherent opening, progression, and closing; keep all copy short enough to fit a 16:9 slide. image_prompt is a brief visual rationale only—the client renders the slide from structured data. content_markdown is a readable slide-by-slide textual version of the same deck.",
+  slides:"Create an informative visual presentation, not an essay split at arbitrary points and not a request for raster slide images. presentation defines one accessible 16:9 CSS theme for the deck. Choose the style_preset that best represents the document: gallery for quiet, warm, image-led work; editorial for assertive narrative hierarchy; nocturne for cinematic or atmospheric work; field-notes for research, evidence, and plans. Make mode and palette coherent with that choice while deriving the specific colors from the document. presentation.theme is internal styling metadata; presentation.footer_label is optional-on-screen deck copy and must be a concise name derived from this document, its subject, or the deck title. Never put process language, model names, provider names, system status, or phrases such as Document-derived editorial in footer_label. Each item is one slide: title and body are concise on-slide copy, notes are speaker notes, and slide is reusable visual data. Preserve explicitly numbered authored slides in their original order, section, source attribution, and narrative purpose; never collapse, combine, or invent required outline positions. Choose purposeful quote, scorecard, comparison, matrix, architecture, personas, roadmap, timeline, metric, or existing semantic layouts according to the source evidence, not superficial visual variety. Use visual.data labels, values, and normalized weights to express the actual idea rather than decoration. A scorecard, chart, table, matrix, or comparison MUST retain every required source category; never drop a sixth or subsequent data point, and keep captions, labels, values, summaries, notes, Markdown, and source attribution mutually consistent. Numeric exact_value is the exact unrounded quantity; display_value is its explicitly rounded presentation and must never replace, reverse, or relabel the exact quantity. Place the primary protected attributed quotation completely and verbatim in one slide.quote.text field with its original speaker, role, and authorized source_id; quote-card visual.value must contain the same complete quotation, never a fragment or a continuation hidden in visual.data. When an authored slide contains multiple protected quotations, preserve every additional complete quotation and its original attribution together in one fully visible body or bullet field and in speaker notes. Put citations and request-local source aliases in slide.citations, slide.source_ids, quote.source_id, and visual.data source_ids as appropriate. Preserve authored terminology, device/orientation comparisons, stakeholder representation, recommendations, roadmaps, dates, and section boundaries. Editorially review every slide before returning it: every visible field must add new information. Do not repeat or closely restate the same sentence, quotation, claim, or phrase across its title, body, kicker, bullets, visual label, visual value, or data points. Treat punctuation, quotation marks, line breaks, capitalization, contractions, and minor word-order changes as irrelevant when checking for repetition. Never split one quotation between body copy and a bullet, and never use a bullet as a shortened echo of the body. Then review every slide against every other slide: each slide must advance the deck with a distinct title and distinct visible claims. Do not reuse body copy, bullets, quotations, conclusions, hero statements, metric explanations, or visual values on later slides. Repeated structural axes or short section labels are acceptable only when they make a direct comparison easier to read. Never emit empty bullets or scaffolding such as Point 2, Item 3, TBD, placeholder, or lorem ipsum. Every visual group must be complete and specific: bars, scorecards, comparison matrices, timelines, and roadmaps need every meaningful required label/value pair; diagrams and color fields need at least two meaningfully named points; an attributed quotation needs its complete text, speaker, and role, not dummy chart rows. If the content supports only one fact, use quote, hero-type, or metric instead of pretending it is a multi-point group. Vary layouts with a coherent opening, progression, and closing; keep all copy readable without clipping on a 16:9 slide, preserving protected quotations and factual data rather than truncating them. image_prompt is a brief visual rationale only—the client renders the slide from structured data. content_markdown is a complete, faithful slide-by-slide textual version of the same deck, including visible complete quotations, score rows, exact/display precision labels, citations, and presentation conclusions.",
   storyboard:"Create a coherent previz storyboard that can be rendered frame by frame. Each item is one camera shot: title names the shot, body describes action and composition, notes specify camera/lens/movement/continuity, and image_prompt is a self-contained frame prompt that preserves recurring subjects and visual continuity. content_markdown is the ordered shot list.",
   video:"Create a concise, production-ready video prompt. content_markdown is the exact visual motion prompt: subject, action, environment, camera, timing, composition, visual style, emotional progression, and ordered authored shots. Communicate dramatic rhythm through visible action, camera movement, weather, and light. Never invent a score, song, soundtrack, dialogue, voice, musician, recording, or audio requirement. Use one item to summarize the visual sequence, with technical direction in notes and the same self-contained visual prompt in image_prompt.",
 };
 
+type PresentationSlideSourceResolutionReceipt={
+  rawAssignments:string[][];
+  canonicalAssignments:string[][];
+  unknownAssignments:string[];
+  deterministicallyAssigned:number[];
+};
+
+const uniquePresentationReferences=(values:readonly unknown[])=>[...new Set(values.flatMap((value)=>typeof value==="string"&&value.trim()?[value.trim()]:[]))];
+
+function resolveProviderPresentationSources(output:DocumentArtifactDraft|null,contract:PresentationSourceContract,scenes:readonly ProductionScene[],pageStart=0){
+  const rawAssignments:string[][]=[];
+  const canonicalAssignments:string[][]=[];
+  const unknownAssignments=new Set<string>();
+  const deterministicallyAssigned:number[]=[];
+  if(!output)return{output,receipt:{rawAssignments,canonicalAssignments,unknownAssignments:[],deterministicallyAssigned} satisfies PresentationSlideSourceResolutionReceipt};
+
+  // A provider can return only an alias we actually disclosed. Checking this
+  // before local resolution also prevents guessed durable IDs from becoming
+  // authenticated if another internal resolver supports canonical references.
+  const authorizedAliases=new Set(contract.sources.map((source)=>source.alias));
+  const authorizedBlockIds=new Set(contract.sources.filter((source)=>source.sourceKind==="block").map((source)=>source.sourceId));
+  const authorizedGroupIds=new Set(contract.sources.filter((source)=>source.sourceKind==="context-group").map((source)=>source.sourceId));
+  const safeResolution=(references:readonly unknown[])=>{
+    const normalized=uniquePresentationReferences(references);
+    const accepted=normalized.filter((reference)=>authorizedAliases.has(reference));
+    for(const reference of normalized)if(!authorizedAliases.has(reference))unknownAssignments.add(reference);
+    return resolvePresentationSourceReferences(accepted,contract);
+  };
+
+  const items=output.items.map((item,index)=>{
+    if(!item.slide){rawAssignments.push([]);canonicalAssignments.push([]);return item;}
+    const slide=item.slide;
+    const raw=uniquePresentationReferences([
+      ...(slide.sourceIds??[]),
+      slide.quote?.sourceId,
+      ...(slide.citations??[]).map((citation)=>citation.sourceId),
+      ...slide.visual.data.flatMap((datum)=>datum.sourceIds??[]),
+    ]);
+    rawAssignments.push(raw);
+    const initialUnknownCount=unknownAssignments.size;
+    const resolution=safeResolution(raw);
+    const scene=scenes[index];
+    const expectedNumber=scene?.sourceOutlineOrder??scene?.narrativeOrder??pageStart+index+1;
+    const authored=contract.numberedOutline.find((source)=>source.number===expectedNumber)
+      ??contract.numberedOutline[pageStart+index]
+      ??contract.numberedOutline[index];
+    const sceneSources=uniquePresentationReferences([...(scene?.sourceBlockIds??[]),authored?.sourceBlockId]).filter((sourceId)=>authorizedBlockIds.has(sourceId));
+    const soleSource=contract.sources.filter((source)=>source.sourceKind==="block");
+    const canonical=uniquePresentationReferences([...resolution.sourceIds,...resolution.blockIds]);
+    if(!canonical.length&&unknownAssignments.size===initialUnknownCount){
+      const deterministic=sceneSources.length?sceneSources:soleSource.length===1?[soleSource[0]!.sourceId]:[];
+      if(deterministic.length){canonical.push(...deterministic);deterministicallyAssigned.push(index);}
+    }
+
+    const canonicalReference=(reference?:string)=>{
+      if(!reference)return undefined;
+      if(!authorizedAliases.has(reference)){unknownAssignments.add(reference);return undefined;}
+      return resolvePresentationSourceReferences([reference],contract).sourceIds[0];
+    };
+    const quote=slide.quote?{
+      ...slide.quote,
+      ...(slide.quote.sourceId?{sourceId:canonicalReference(slide.quote.sourceId)}:{}),
+    }:undefined;
+    if(quote&&!quote.sourceId){
+      const protectedQuote=contract.protectedQuotes.find((entry)=>entry.text===quote.text&&entry.role===quote.role);
+      if(protectedQuote?.sourceBlockId&&authorizedBlockIds.has(protectedQuote.sourceBlockId))quote.sourceId=protectedQuote.sourceBlockId;
+    }
+    const citations=slide.citations?.map((citation)=>({
+      ...citation,
+      ...(citation.sourceId?{sourceId:canonicalReference(citation.sourceId)}:{}),
+    }));
+    const data=slide.visual.data.map((datum)=>{
+      if(!datum.sourceIds?.length)return datum;
+      const sources=safeResolution(datum.sourceIds);
+      return{...datum,sourceIds:uniquePresentationReferences([...sources.sourceIds,...sources.blockIds])};
+    });
+    const nestedSources=uniquePresentationReferences([
+      ...canonical,
+      quote?.sourceId,
+      ...(citations??[]).map((citation)=>citation.sourceId),
+      ...data.flatMap((datum)=>datum.sourceIds??[]),
+    ]);
+    canonicalAssignments.push(nestedSources);
+    const contextGroupIds=uniquePresentationReferences([
+      ...(item.context_group_ids??[]),
+      ...resolution.contextGroupIds.filter((groupId)=>authorizedGroupIds.has(groupId)),
+    ]);
+    return{
+      ...item,
+      context_group_ids:contextGroupIds,
+      slide:{
+        ...slide,
+        ...(nestedSources.length?{sourceIds:nestedSources}:{sourceIds:[]}),
+        ...(quote?{quote}:{}),
+        ...(citations?{citations}:{}),
+        ...(authored?.section&&!slide.section?{section:authored.section}:{}),
+        ...(!slide.sourceOrder&&(scene?.sourceOutlineOrder??authored?.number)?{sourceOrder:scene?.sourceOutlineOrder??authored!.number}:{}),
+        visual:{...slide.visual,data},
+      },
+    };
+  });
+  const authoredTypography=contract.style.typography??"";
+  const safeTypography=/^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,69}$/u.test(authoredTypography)?authoredTypography:"";
+  return{
+    output:{...output,...(safeTypography&&output.presentation?{presentation:{...output.presentation,fontFamily:safeTypography}}:{}),items},
+    receipt:{rawAssignments,canonicalAssignments,unknownAssignments:[...unknownAssignments],deterministicallyAssigned} satisfies PresentationSlideSourceResolutionReceipt,
+  };
+}
+
+function presentationSourceSupplementalIssues(output:DocumentArtifactDraft|null,contract:PresentationSourceContract,receipt:PresentationSlideSourceResolutionReceipt,options:{complete:boolean;requestedStyle?:SlideStylePresetId;pageStart:number}):DocumentArtifactValidationIssue[]{
+  const issues:DocumentArtifactValidationIssue[]=[];
+  if(receipt.unknownAssignments.length)issues.push({code:"unknown_source_reference",path:"items.slide.source_ids",message:"At least one slide references a source alias that was not authorized for this request."});
+  if(!output)return issues;
+  if(options.requestedStyle&&output.presentation?.stylePreset!==options.requestedStyle)issues.push({code:"presentation_style_mismatch",path:"presentation.style_preset",message:`The presentation must use the explicitly selected ${options.requestedStyle} style.`});
+  for(const [index,item] of output.items.entries()){
+    const expected=contract.numberedOutline.find((source)=>source.number===options.pageStart+index+1);
+    if(expected&&item.slide?.sourceOrder&&item.slide.sourceOrder!==expected.number)issues.push({code:"incorrect_slide_order",path:`items.${index}.slide.source_order`,message:`Slide ${options.pageStart+index+1} does not preserve its authored outline position.`});
+  }
+  if(!options.complete)return issues;
+  const markdown=output.content_markdown;
+  for(const quote of contract.protectedQuotes){
+    if(!markdown.includes(quote.text)||!markdown.includes(quote.role)||quote.speaker!==quote.role&&!markdown.includes(quote.speaker))issues.push({code:"missing_markdown_quote",path:"content_markdown",message:`The complete ${quote.role} stakeholder quotation, named speaker, and attribution must also appear in the readable presentation.`});
+    const item=output.items.find((candidate)=>candidate.slide?.quote?.text===quote.text
+      ||candidate.body.includes(quote.text)
+      ||candidate.slide?.bullets.some((bullet)=>bullet.includes(quote.text))
+      ||candidate.slide?.visual.value.includes(quote.text));
+    if(item&&(!item.notes.includes(quote.text)||quote.speaker!==quote.role&&!item.notes.includes(quote.speaker)))issues.push({code:"missing_speaker_note_quote",path:`items.${output.items.indexOf(item)}.notes`,message:`The complete ${quote.role} stakeholder quotation and named speaker must remain available in its speaker notes.`});
+  }
+  for(const fact of contract.protectedFacts)if(!new RegExp(`(?<![\\d.])${fact.value.replace(/[.*+?^${}()|[\]\\]/gu,"\\$&")}(?!\\d|\\.\\d)`,"u").test(markdown))issues.push({code:"missing_markdown_fact",path:"content_markdown",message:`The protected ${fact.label} value must also appear in the readable presentation.`});
+  return issues;
+}
+
+function redactPresentationRepairArtifact(raw:string,contract:PresentationSourceContract,groupContracts:readonly DocumentArtifactContextGroupContract[],unknownReferences:readonly string[]){
+  if(!raw)return null;
+  const replacements=uniquePresentationReferences([
+    ...contract.sources.flatMap((source)=>[source.sourceId,source.blockId,...source.contextGroupIds]),
+    ...groupContracts.map((group)=>group.id),
+    ...unknownReferences,
+  ]).sort((left,right)=>right.length-left.length);
+  return replacements.reduce((result,reference)=>result.replaceAll(reference,"unauthorized_reference"),raw);
+}
+
 export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions}) {
-  if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");const started=Date.now();const itemCount=Math.max(1,Math.min(12,Math.floor(Number(input.options?.itemCount??(kind==="slides"?7:kind==="storyboard"?6:kind==="short_story"?3:1)))));
+  if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
+  const started=Date.now();
+  const responseLocale=assistantResponseLocale(input.options?.locale);
+  const itemCount=Math.max(1,Math.min(12,Math.floor(Number(input.options?.itemCount??(kind==="slides"?7:kind==="storyboard"?6:kind==="short_story"?3:1)))));
   if(kind==="video")resolveVideoAudioPolicy({snapshot:input.snapshot,audioMode:input.options?.videoAudioMode??VIDEO_ADAPTER_CONTRACT.defaultAudioMode});
-  const {groups,plan:providerGroups}=providerFacingCombinedContextPlan(input.snapshot,kind);const groupContracts:DocumentArtifactContextGroupContract[]=groups.map((group,index)=>({id:group.id,alias:`context_group_${index+1}`}));
+  const {groups,plan:providerGroups}=providerFacingCombinedContextPlan(input.snapshot,kind);
+  const groupContracts:DocumentArtifactContextGroupContract[]=groups.map((group,index)=>({id:group.id,alias:`context_group_${index+1}`}));
   const audioMode=input.options?.videoAudioMode??VIDEO_ADAPTER_CONTRACT.defaultAudioMode;
   const managed=input.options?.productionMode==="managed"&&Boolean(input.options.productionPlan);
   const managedScenes=input.options?.productionScenes??[];
+  const managedPlan=input.options?.productionPlan;
   const page=input.options?.productionPage;
-  const managedDirection=managed&&input.options?.productionPlan?productionTeamInstructions(input.options.productionPlan,managedScenes):"";
+  const requestedStyle=SLIDE_STYLE_PRESET_IDS.includes(input.options?.presentationStyle as SlideStylePresetId)?input.options?.presentationStyle:undefined;
+  const sourceContract=kind==="slides"?buildPresentationSourceContract(input.snapshot,{
+    requestedSlideCount:page?.totalItems??input.options?.requestedSlideCount??itemCount,
+    itemCount,
+    contextGroups:groups,
+    presentationStyle:requestedStyle,
+    fidelity:input.options?.presentationFidelity,
+  }):null;
+  const sourceFacing=sourceContract?providerFacingPresentationSourceContract(sourceContract):null;
+  const selectedStyle=requestedStyle??sourceContract?.style.preset??undefined;
+  const sourceDirection=sourceContract?` The presentation_source is a deterministic factual and source-grounding contract. Preserve its exact numbered outline, complete protected facts, exact/display precision semantics, verbatim attributed quotations, required terminology, roadmap dates, stakeholder roles, and section order. Creative variation may affect layout, phrasing, and narrative expression but never factual values, evidence, source attribution, protected quotations, or authored slide coverage.${sourceContract.fidelity==="faithful"?" Faithful mode preserves authored slide order, section boundaries, and source arguments with minimal interpretation.":" Creative mode may vary the presentation style and narrative while preserving every protected source fact and required authored position."}${selectedStyle?` Use the requested ${selectedStyle} presentation style exactly.`:""} slide.source_ids, quote.source_id, citation source_id, and visual.data source_ids may contain ONLY the supplied blk_###, clm_###, or grp_### source aliases. context_group_ids is separate and may contain ONLY the supplied context_group_# aliases. Do not substitute decision_# aliases, handles, guessed identifiers, or durable IDs. Every authored slide must identify its authorized source evidence.`:"";
+  const managedDirection=managed&&managedPlan?productionTeamInstructions(managedPlan,managedScenes):"";
   const formatInstructions=managed&&kind==="video"
     ? "Write one production-ready, independently renderable motion prompt per assigned scene. Each item's body is its unique visual action, notes contain camera, identity, and transition continuity, and image_prompt is its standalone source-grounded clip prompt. content_markdown is the chronological scene script. Never compress multiple assigned scenes into one clip, repeat the complete plot in every item, or invent music, dialogue, voice, or soundtrack requirements."
     : artifactInstructions[kind];
@@ -438,22 +624,171 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     ? ` Each assigned scene is a separate ${VIDEO_ADAPTER_CONTRACT.supportedDurations[0]}–${VIDEO_ADAPTER_CONTRACT.supportedDurations.at(-1)} second provider generation in ${input.options?.videoSize==="720x1280"?"9:16 portrait":"16:9 landscape"}; the complete production may be much longer. Respect the assigned per-scene duration and chronological source beat. Do not compress the complete narrative into one clip. ${audioMode==="original_ambient"?"Only original nonmelodic environmental ambience is allowed.":"Every clip is silent; communicate rhythm through visible action and light."}`
     : ` The requested output is exactly ${input.options?.videoSeconds??4} seconds in ${input.options?.videoSize==="720x1280"?"9:16 portrait":"16:9 landscape"}. The motion prompt must fit that duration; do not claim or imply a different runtime. Preserve every ordered storyboard shot as chronology, including description-only frames, compressing their beats into the available runtime without dropping named subjects or continuity. ${audioMode==="original_ambient"?"Original nonmelodic, in-scene environmental ambience is explicitly allowed; describe it only as visible natural sources, never as music, dialogue, voices, or a recorded work.":"This is a picture-only silent render. Do not invent or request any soundtrack, score, music, voice, dialogue, or other audio. Translate their implied dramatic rhythm into visible motion and light."}`:"";
   const pageDirection=page?` This is ${page.phase} page ${page.pageIndex+1} of ${page.pageCount}, covering global items ${page.globalStartIndex+1}–${page.globalStartIndex+itemCount} of ${page.totalItems}. ${page.pageIndex>0?"Continue directly from the prior ending; never restart the story, reintroduce its characters, repeat the cover, or duplicate previously visible copy.":"Establish the opening exactly once."} ${page.pageIndex<page.pageCount-1?"Do not write a final resolution or closing slide yet.":"Deliver the one definitive resolution or closing."} ${kind==="scene"&&page.pageIndex>0?"Continue the same screenplay scene without repeating its slugline.":""}${page.lockedPresentation?" Preserve every locked presentation theme, footer, style, mode, and palette value exactly.":""}${page.repairIssues?.length?` Correct these whole-work issues without repeating earlier pages: ${page.repairIssues.join("; ")}.`:""}`:"";
-  const instructions=`You transform a durable creative document into a ${kind.replaceAll("_"," ")} for an end user. ${formatInstructions}${videoContract}${managedDirection?` ${managedDirection}`:""}${pageDirection} ${creativePromptGuardrails()} Treat include and prefer blocks as positive direction; treat avoid and prohibit blocks as negative constraints, never as subjects to feature. Respect every block's spatial scope and authority. Combined contexts are binding authorial units, not tags: keep their members isolated to the named target, co-located or ordered as requested, and weighted by group relativity. For stories and scenes, place a group's members at the same narrative moments or aspects. For slides, assign each group to one slide or contiguous chapter rather than applying it deck-wide. For storyboards and video, bind each group to the same subject, location, or shot range. Every item must return context_group_ids containing only the supplied context_key aliases that shaped that item; use an empty array when no group applies, never invent a key, cover every supplied key at least once, and keep repeated slide assignments contiguous. Context keys are request-local references, not end-user content. Do not mention blocks, events, schemas, context keys, or internal implementation in end-user copy. Return exactly ${itemCount} ordered item${itemCount===1?"":"s"}.`;
-  const managedPlan=input.options?.productionPlan;
+  const instructions=`You transform a durable creative document into a ${kind.replaceAll("_"," ")} for an end user. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. ${formatInstructions}${sourceDirection}${videoContract}${managedDirection?` ${managedDirection}`:""}${pageDirection} ${creativePromptGuardrails()} Treat include and prefer blocks as positive direction; treat avoid and prohibit blocks as negative constraints, never as subjects to feature. Respect every block's spatial scope and authority. Combined contexts are binding authorial units, not tags: keep their members isolated to the named target, co-located or ordered as requested, and weighted by group relativity. For stories and scenes, place a group's members at the same narrative moments or aspects. For slides, assign each group to one slide or contiguous chapter rather than applying it deck-wide. For storyboards and video, bind each group to the same subject, location, or shot range. Every item must return context_group_ids containing only the supplied context_key aliases that shaped that item; use an empty array when no group applies, never invent a key, cover every supplied key at least once, and keep repeated slide assignments contiguous. Context keys are request-local references, not end-user content. Do not mention blocks, events, schemas, context keys, or internal implementation in end-user copy. Return exactly ${itemCount} ordered item${itemCount===1?"":"s"}.`;
   const sharedContinuity=managedPlan?providerFacingProductionContinuity({claims:managedPlan.claims.filter((claim)=>!claim.contextGroupIds.length)}):null;
   const providerPage=page?{page_index:page.pageIndex,page_count:page.pageCount,global_start_index:page.globalStartIndex,total_items:page.totalItems,phase:page.phase,prior_summary:page.priorSummary,prior_ending:page.priorEnding,prior_visible_copy:page.priorVisibleCopy,...(page.lockedPresentation?{locked_presentation:{aspect_ratio:page.lockedPresentation.aspectRatio,theme:page.lockedPresentation.theme,footer_label:page.lockedPresentation.footerLabel,style_preset:page.lockedPresentation.stylePreset,mode:page.lockedPresentation.mode,palette:page.lockedPresentation.palette}}:{}),...(page.repairIssues?.length?{repair_issues:page.repairIssues}:{} )}:undefined;
-  const providerInput=JSON.stringify({document_title:input.documentTitle,creative_context:kind==="video"?videoPlannerCreativeContext(input.snapshot):providerFacingRenderingContext(input.snapshot),combined_context_plan:kind==="video"?compactVideoCombinedContextPlan(providerGroups):providerGroups,audience:input.options?.audience??"general",tone:input.options?.tone??"derived from the document",...(kind==="video"?{video:{duration_seconds:managed?null:input.options?.videoSeconds??4,maximum_scene_seconds:managed?15:undefined,frame:input.options?.videoSize??"1280x720",aspect_ratio:input.options?.videoSize==="720x1280"?"9:16":"16:9",audio_mode:audioMode,generate_audio:audioMode==="original_ambient"}}:{}),...(managed?{production:{team:managedPlan?.team.specialists.map((member)=>({role:member.label,deliverable:member.deliverable})),continuity_bible:sharedContinuity,assigned_scenes:managedScenes.map((scene)=>({narrative_order:scene.narrativeOrder,title:scene.title,action:scene.action,camera_direction:scene.cameraDirection,duration_seconds:scene.durationSeconds,transition_in:scene.transitionIn,transition_out:scene.transitionOut,narrative_purpose:scene.narrativePurpose,...(managedPlan?{continuity_bible:providerFacingProductionContinuity(managedPlan,scene)}:{})})),...(providerPage?{page:providerPage}:{})}}:{})});
-  const model=env.OPENAI_MODEL??"gpt-5.6-terra",identifier=await safetyIdentifier(userId),maxOutputTokens=managed?Math.max(kind==="slides"?6500:4000,Math.min(12000,itemCount*1200)):kind==="short_story"?6000:kind==="slides"?6500:kind==="storyboard"?4000:3000;
-  const run=async(requestInstructions:string,requestInput:string,name:string)=>{const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),signal:input.options?.signal,body:JSON.stringify({model,instructions:requestInstructions,input:requestInput,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:documentArtifactSchema(kind,page?.lockedPresentation)}},reasoning:{effort:"low"},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier})});const body=await response.json() as OpenAIResponse;if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`,`Document ${kind} instructions:\n${requestInstructions}\n\nCreative context:\n${requestInput}`);return{body,raw:responseText(body)};};
-  const groupIds=groups.map((group)=>group.id);const first=await run(instructions,providerInput,`document_${kind}`);let body=first.body,raw=first.raw??"",parsed=parseDocumentArtifactContent(raw) as DocumentArtifactDraft|null;let resolved=resolveDocumentArtifactContextGroups(parsed,groupContracts),output=resolved.output;const initialResolution=resolved.receipt;const initialIssues=documentArtifactValidationIssues(kind,output,{itemCount,contextGroupIds:groupIds});let repairIssues:DocumentArtifactValidationIssue[]=[],repairAttempted=false,repairResolution=null as typeof initialResolution|null;let repairBody:OpenAIResponse|null=null;
-  if(initialIssues.length&&kind==="slides"){
-    repairAttempted=true;const repairInstructions=`Repair a structured slide artifact without changing its creative intent. Return the complete ${itemCount}-slide artifact, not a patch. Correct every listed validation issue, preserve all supplied request-local context_key aliases and their contiguous assignments, retain distinct useful content, and do not add process language. A slide may intentionally omit body copy when its bullets or visual carry the claim. Never repeat a title, sentence, quotation, bullet, metric, or visual value within a slide or across the deck.${providerPage?` This page is the ${providerPage.phase} movement of a larger work; retain its locked presentation, prior ending, and all previous visible-copy exclusions.`:""}`;
-    const providerIssues=initialIssues.map((issue)=>({...issue,message:groupContracts.reduce((message,contract)=>message.replaceAll(contract.id,contract.alias),issue.message)}));
-    const repairInput=JSON.stringify({document_title:input.documentTitle,original_artifact:raw||null,validation_issues:providerIssues,required_context_groups:providerGroups,original_creative_context:providerFacingRenderingContext(input.snapshot),...(providerPage?{production:{page:providerPage}}:{})});const repaired=await run(repairInstructions,repairInput,"document_slides_repair");repairBody=repaired.body;body=repaired.body;raw=repaired.raw??"";parsed=parseDocumentArtifactContent(raw) as DocumentArtifactDraft|null;resolved=resolveDocumentArtifactContextGroups(parsed,groupContracts);output=resolved.output;repairResolution=resolved.receipt;repairIssues=documentArtifactValidationIssues(kind,output,{itemCount,contextGroupIds:groupIds});
+  const sourceAliasById=new Map(sourceContract?.sources.map((source)=>[`${source.sourceKind}:${source.sourceId}`,source.alias])??[]);
+  const groupAliasById=new Map(groupContracts.map((contract)=>[contract.id,contract.alias]));
+  const providerScenes=managedScenes.map((scene)=>({
+    narrative_order:scene.narrativeOrder,
+    title:scene.title,
+    action:scene.action,
+    camera_direction:scene.cameraDirection,
+    duration_seconds:scene.durationSeconds,
+    transition_in:scene.transitionIn,
+    transition_out:scene.transitionOut,
+    narrative_purpose:scene.narrativePurpose,
+    ...(sourceContract?{
+      source_keys:uniquePresentationReferences(scene.sourceBlockIds.map((sourceId)=>sourceAliasById.get(`block:${sourceId}`))),
+      source_claim_keys:uniquePresentationReferences(scene.sourceClaimIds.map((sourceId)=>sourceAliasById.get(`claim:${sourceId}`))),
+      source_group_keys:uniquePresentationReferences(scene.contextGroupIds.map((sourceId)=>sourceAliasById.get(`context-group:${sourceId}`))),
+      context_keys:uniquePresentationReferences(scene.contextGroupIds.map((sourceId)=>groupAliasById.get(sourceId))),
+      ...(scene.section?{section:scene.section}:{}),
+      ...(scene.sourceOutlineOrder?{source_outline_order:scene.sourceOutlineOrder}:{}),
+    }:{}),
+    ...(managedPlan?{continuity_bible:providerFacingProductionContinuity(managedPlan,scene)}:{}),
+  }));
+  const creativeContext=kind==="video"?videoPlannerCreativeContext(input.snapshot):sourceContract?providerFacingRenderingContext(input.snapshot,sourceContract.sources):providerFacingRenderingContext(input.snapshot);
+  const providerInput=JSON.stringify({
+    document_title:input.documentTitle,
+    creative_context:creativeContext,
+    combined_context_plan:kind==="video"?compactVideoCombinedContextPlan(providerGroups):providerGroups,
+    audience:input.options?.audience??"general",
+    tone:input.options?.tone??"derived from the document",
+    ...(sourceFacing?{presentation_source:sourceFacing}:{}),
+    ...(kind==="video"?{video:{duration_seconds:managed?null:input.options?.videoSeconds??4,maximum_scene_seconds:managed?15:undefined,frame:input.options?.videoSize??"1280x720",aspect_ratio:input.options?.videoSize==="720x1280"?"9:16":"16:9",audio_mode:audioMode,generate_audio:audioMode==="original_ambient"}}:{}),
+    ...(managed?{production:{team:managedPlan?.team.specialists.map((member)=>({role:member.label,deliverable:member.deliverable})),continuity_bible:sharedContinuity,assigned_scenes:providerScenes,...(providerPage?{page:providerPage}:{})}}:{}),
+  });
+  const model=env.OPENAI_MODEL??"gpt-5.6-terra";
+  const identifier=await safetyIdentifier(userId);
+  const maxOutputTokens=managed?Math.max(kind==="slides"?6500:4000,Math.min(12000,itemCount*1200)):kind==="short_story"?6000:kind==="slides"?Math.max(6500,Math.min(12000,itemCount*900)):kind==="storyboard"?4000:3000;
+  const paidResponses:OpenAIResponse[]=[];
+  const paidAccounting=():ProviderAttemptAccounting=>({
+    providerUsage:{
+      inputTokens:paidResponses.reduce((sum,response)=>sum+Number(response.usage?.input_tokens??0),0),
+      outputTokens:paidResponses.reduce((sum,response)=>sum+Number(response.usage?.output_tokens??0),0),
+      totalTokens:paidResponses.reduce((sum,response)=>sum+Number(response.usage?.total_tokens??0),0),
+    },
+    providerResponseIds:paidResponses.map((response)=>String(response.id??"")).filter(Boolean),
+    providerModel:String(paidResponses.at(-1)?.model??model),
+    providerCallCount:paidResponses.length,
+  });
+  const run=async(requestInstructions:string,requestInput:string,name:string)=>{
+    try{
+      const requestBody=JSON.stringify({model,instructions:requestInstructions,input:requestInput,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:documentArtifactSchema(kind,page?.lockedPresentation,selectedStyle)}},reasoning:{effort:"low"},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier});
+      await input.options?.onBeforeProviderAttempt?.({model,maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:maxOutputTokens});
+      const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),signal:input.options?.signal,body:requestBody});
+      const body=await response.json() as OpenAIResponse;
+      if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`,`Document ${kind} instructions:\n${requestInstructions}\n\nCreative context:\n${requestInput}`);
+      paidResponses.push(body);
+      const accounting=paidAccounting();
+      await input.options?.onProviderAttempt?.({model:accounting.providerModel,responseId:String(body.id??""),responseIds:accounting.providerResponseIds,usage:accounting.providerUsage,latencyMs:Date.now()-started});
+      return{body,raw:responseText(body)};
+    }catch(error){
+      if(!paidResponses.length)throw error;
+      throw new ProviderRequestError(classifyProviderFailure(error),error instanceof ProviderRequestError?error.preparedPrompt:`Document ${kind} instructions:\n${requestInstructions}\n\nCreative context:\n${requestInput}`,paidAccounting());
+    }
+  };
+  const groupIds=groups.map((group)=>group.id);
+  const completeSourceCoverage=Boolean(sourceContract&&!page&&(!sourceContract.authoredSlideCount||sourceContract.authoredSlideCount===itemCount));
+  const assess=(parsed:DocumentArtifactDraft|null)=>{
+    const groupResolution=resolveDocumentArtifactContextGroups(parsed,groupContracts);
+    const sourceResolution=sourceContract?resolveProviderPresentationSources(groupResolution.output,sourceContract,managedScenes,page?.globalStartIndex??0):null;
+    const output=sourceResolution?.output??groupResolution.output;
+    const issues=documentArtifactValidationIssues(kind,output,{
+      itemCount,
+      contextGroupIds:groupIds,
+      ...(sourceContract?{
+        unknownContextGroupAssignments:groupResolution.receipt.unknownAssignments,
+        sourceContract,
+        sourcePageStart:page?.globalStartIndex??0,
+        sourcePageSize:itemCount,
+        requireSourceGrounding:sourceContract.sources.some((source)=>source.sourceKind==="block"),
+        requireAllProtectedContent:completeSourceCoverage,
+      }:{}),
+    });
+    if(sourceContract&&sourceResolution)issues.push(...presentationSourceSupplementalIssues(output,sourceContract,sourceResolution.receipt,{complete:completeSourceCoverage,requestedStyle:selectedStyle,pageStart:page?.globalStartIndex??0}));
+    return{output,groupResolution:groupResolution.receipt,sourceResolution:sourceResolution?.receipt??null,issues};
+  };
+
+  const first=await run(instructions,providerInput,`document_${kind}`);
+  let body=first.body;
+  let raw=first.raw??"";
+  let assessment=assess(parseDocumentArtifactContent(raw));
+  let output=assessment.output;
+  const initialResolution=assessment.groupResolution;
+  const initialSourceResolution=assessment.sourceResolution;
+  const initialIssues=assessment.issues;
+  let repairIssues:DocumentArtifactValidationIssue[]=[];
+  let repairAttempted=false;
+  let repairResolution:null|typeof initialResolution=null;
+  let repairSourceResolution:null|PresentationSlideSourceResolutionReceipt=null;
+  let repairBody:OpenAIResponse|null=null;
+  if(initialIssues.length&&kind==="slides"&&sourceContract){
+    repairAttempted=true;
+    const repairInstructions=`Repair a structured slide artifact without changing its creative intent. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. Return the complete ${itemCount}-slide artifact, not a patch. Correct every listed validation issue, preserve every protected complete stakeholder quotation, speaker, numerical fact, exact/display precision meaning, scored category, authored slide position, and roadmap. Preserve all supplied request-local context_key aliases and source aliases with their authorized contiguous assignments; never invent a source or return a durable identifier. Keep visible slides, source citations, speaker notes, and content_markdown factually consistent. Retain distinct useful content, and do not add process language. A slide may intentionally omit body copy when its bullets, protected quotation, or visual carry the claim. Never repeat a title, sentence, quotation, bullet, metric, or visual value within a slide or across the deck.${selectedStyle?` Preserve the explicitly selected ${selectedStyle} presentation style exactly.`:""}${providerPage?` This page is the ${providerPage.phase} movement of a larger work; retain its locked presentation, prior ending, assigned source scenes, and all previous visible-copy exclusions.`:""}`;
+    const knownIdentifiers=[...groupContracts.map((contract)=>({id:contract.id,alias:contract.alias})),...sourceContract.sources.map((source)=>({id:source.sourceId,alias:source.alias}))];
+    const providerIssues=initialIssues.map((issue)=>({...issue,message:knownIdentifiers.reduce((message,contract)=>message.replaceAll(contract.id,contract.alias),issue.message)}));
+    const invalidReferences=uniquePresentationReferences([...(initialSourceResolution?.unknownAssignments??[]),...initialResolution.unknownAssignments]);
+    const repairInput=JSON.stringify({
+      document_title:input.documentTitle,
+      original_artifact:redactPresentationRepairArtifact(raw,sourceContract,groupContracts,invalidReferences),
+      validation_issues:providerIssues,
+      required_context_groups:providerGroups,
+      original_creative_context:providerFacingRenderingContext(input.snapshot,sourceContract.sources),
+      presentation_source:sourceFacing,
+      ...(providerPage?{production:{page:providerPage,assigned_scenes:providerScenes}}:{}),
+    });
+    const repaired=await run(repairInstructions,repairInput,"document_slides_repair");
+    repairBody=repaired.body;
+    body=repaired.body;
+    raw=repaired.raw??"";
+    assessment=assess(parseDocumentArtifactContent(raw));
+    output=assessment.output;
+    repairResolution=assessment.groupResolution;
+    repairSourceResolution=assessment.sourceResolution;
+    repairIssues=assessment.issues;
   }
-  const finalIssues=repairAttempted?repairIssues:initialIssues;if(finalIssues.length||!output){const diagnostic=finalIssues.map((issue)=>`${issue.code} at ${issue.path}: ${issue.message}`).join(" | ");throw new ProviderRequestError({code:"provider_returned_incomplete_document_artifact",category:"provider",scope:"request",action:"retry",message:`The provider returned ${kind==="slides"?"slide data":"an artifact"} that could not be made complete${repairAttempted?" after one bounded repair pass":""}. ${diagnostic}`,retryable:true,retryAfterMs:null,requestId:null,httpStatus:502},`Document ${kind} instructions:\n${instructions}\n\nCreative context:\n${providerInput}\n\nValidation:\n${diagnostic}`);}
-  const usageBodies=[first.body,...(repairBody?[repairBody]:[])];const usage={inputTokens:usageBodies.reduce((sum,item)=>sum+Number(item.usage?.input_tokens??0),0),outputTokens:usageBodies.reduce((sum,item)=>sum+Number(item.usage?.output_tokens??0),0),totalTokens:usageBodies.reduce((sum,item)=>sum+Number(item.usage?.total_tokens??0),0)};
-  return{responseId:body.id??"",model:body.model??model,output,raw,inputReceipt:{instructions,providerInput:JSON.parse(providerInput) as Record<string,unknown>,validation:{context_group_resolution:{initial:initialResolution,repair:repairResolution},initial_issues:initialIssues,repair_attempted:repairAttempted,repair_issues:repairIssues,repair_response_id:repairBody?.id??null}},latencyMs:Date.now()-started,usage};
+
+  const finalIssues=repairAttempted?repairIssues:initialIssues;
+  if(finalIssues.length||!output){
+    const knownIdentifiers=sourceContract?[...groupContracts.map((contract)=>({id:contract.id,alias:"[authorized context]"})),...sourceContract.sources.map((source)=>({id:source.sourceId,alias:"[authorized source]"}))]:[];
+    const diagnostic=finalIssues.map((issue)=>`${issue.code} at ${issue.path}: ${knownIdentifiers.reduce((message,contract)=>message.replaceAll(contract.id,contract.alias),issue.message)}`).join(" | ");
+    const sourceFailure=kind==="slides"&&finalIssues.some((issue)=>/source|context_group|precision|protected|scorecard|quote|exact|display|roadmap|terminology|markdown|style|slide_count|slide_order/iu.test(issue.code));
+    throw new ProviderRequestError({
+      code:sourceFailure?"source_fidelity_validation_failed":"provider_returned_incomplete_document_artifact",
+      category:"provider",
+      scope:"request",
+      action:sourceFailure?"edit_request":"retry",
+      message:`The provider returned ${kind==="slides"?"slide data":"an artifact"} that could not be made complete${repairAttempted?" after one bounded repair pass":""}. ${diagnostic}`,
+      retryable:!sourceFailure,
+      retryAfterMs:null,
+      requestId:null,
+      httpStatus:502,
+    },`Document ${kind} instructions:\n${instructions}\n\nCreative context:\n${providerInput}\n\nValidation:\n${diagnostic}`,paidAccounting());
+  }
+  const usageBodies=paidResponses;
+  const usage=paidAccounting().providerUsage;
+  return{
+    responseId:body.id??"",
+    model:body.model??model,
+    output,
+    raw,
+    inputReceipt:{
+      instructions,
+      providerInput:JSON.parse(providerInput) as Record<string,unknown>,
+      validation:{
+        context_group_resolution:{initial:initialResolution,repair:repairResolution},
+        ...(sourceContract?{source_resolution:{initial:initialSourceResolution,repair:repairSourceResolution},maximum_provider_calls:2,provider_call_count:usageBodies.length,provider_response_ids:paidAccounting().providerResponseIds,maximum_output_tokens_per_call:maxOutputTokens}:{}),
+        initial_issues:initialIssues,
+        repair_attempted:repairAttempted,
+        repair_issues:repairIssues,
+        repair_response_id:repairBody?.id??null,
+      },
+    },
+    latencyMs:Date.now()-started,
+    usage,
+  };
 }
 
 const falHeaders=(env:WorkerEnv)=>({authorization:`Key ${env.FAL_KEY}`,"content-type":"application/json"});

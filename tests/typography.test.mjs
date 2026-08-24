@@ -20,3 +20,11 @@ test("uses rem-backed type tokens with a ten pixel equivalent floor", () => {
   assert.ok(tokens.length >= 8);
   assert.ok(tokens.every((value) => value >= 0.625), "type tokens must resolve to at least 10px at the browser default");
 });
+
+test("Japanese typography uses readable native fonts, spacing, and line height", () => {
+  const rule = css.match(/:root:lang\(ja\),\s*forma-ui-locale:lang\(ja\)\s*\{[^}]*\}/)?.[0] ?? "";
+  assert.match(rule, /"Hiragino Sans"/);
+  assert.match(rule, /--forma-heading-letter-spacing:\s*0/);
+  assert.match(rule, /--forma-heading-line-height:\s*1\.35/);
+  assert.match(rule, /--forma-body-line-height:\s*1\.8/);
+});

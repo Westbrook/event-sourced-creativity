@@ -7,6 +7,36 @@ export const CANVAS_MIN_ZOOM=.15;
 export const CANVAS_MAX_ZOOM=2;
 const MAX_CAMERA_COORDINATE=1_000_000_000;
 
+export type CanvasTouchPoint = { x: number; y: number };
+export type CanvasTouchViewport = Pick<CanvasViewportState, "zoom" | "cameraX" | "cameraY">;
+
+/** Keep the same world coordinate under the moving midpoint of a two-finger gesture. */
+export function canvasPinchViewport(
+  initial: CanvasTouchViewport,
+  starting: readonly [CanvasTouchPoint, CanvasTouchPoint],
+  current: readonly [CanvasTouchPoint, CanvasTouchPoint],
+  origin: CanvasTouchPoint = { x: 0, y: 0 },
+): CanvasTouchViewport {
+  const values = [initial.zoom, initial.cameraX, initial.cameraY, origin.x, origin.y, ...starting.flatMap((point) => [point.x, point.y]), ...current.flatMap((point) => [point.x, point.y])];
+  if (!values.every(Number.isFinite) || initial.zoom <= 0) return { ...initial };
+
+  const initialDistance = Math.hypot(starting[1].x - starting[0].x, starting[1].y - starting[0].y);
+  const currentDistance = Math.hypot(current[1].x - current[0].x, current[1].y - current[0].y);
+  if (!initialDistance || !currentDistance) return { ...initial };
+
+  const previous = { x: (starting[0].x + starting[1].x) / 2, y: (starting[0].y + starting[1].y) / 2 };
+  const next = { x: (current[0].x + current[1].x) / 2, y: (current[0].y + current[1].y) / 2 };
+  const zoom = bounded(Math.round(initial.zoom * currentDistance / initialDistance * 1000) / 1000, CANVAS_MIN_ZOOM, CANVAS_MAX_ZOOM);
+  const worldX = initial.cameraX + (previous.x - origin.x) / initial.zoom;
+  const worldY = initial.cameraY + (previous.y - origin.y) / initial.zoom;
+
+  return {
+    zoom,
+    cameraX: worldX - (next.x - origin.x) / zoom,
+    cameraY: worldY - (next.y - origin.y) / zoom,
+  };
+}
+
 const bounded=(value:number,min:number,max:number)=>Math.max(min,Math.min(max,value));
 const storageKey=(userId:string,canvasId:string)=>`${STORAGE_PREFIX}:${encodeURIComponent(userId||"anonymous")}:${encodeURIComponent(canvasId)}`;
 

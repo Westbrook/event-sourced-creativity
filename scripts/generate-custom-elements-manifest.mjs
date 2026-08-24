@@ -544,7 +544,7 @@ const manifest = {
       schemaVersion: 1,
       sourceLocale: "en",
       defaultLocale: "en",
-      supportedLocales: ["en", "fr", "ar"],
+      supportedLocales: ["en", "fr", "ar", "ja"],
       fallback: "lookup",
       delivery: "bundled-runtime",
       scopeElement: "forma-ui-locale",

@@ -29,7 +29,7 @@ function routeSurfaceModule(path: string): string | null {
   if (["/studio/layers", "/studio/adaptive"].includes(path)) return "src/components/forma-studio-editor-alternatives.ts";
   if (path === "/studio/editor") return "src/components/forma-creative-editor.ts";
   if (path === "/studio/chat") return "src/components/forma-chat-studio.ts";
-  if (["/library", "/sessions", "/scout", "/memory"].includes(path)) return `src/components/forma-${path.slice(1)}.ts`;
+  if (["/library", "/sessions", "/scout", "/memory", "/activity", "/deliver"].includes(path)) return `src/components/forma-${path.slice(1)}.ts`;
   if (path === "/canvas/library") return "src/components/forma-library.ts";
   if (path === "/settings") return "src/components/forma-account-settings.ts";
   if (path === "/share") return "src/components/forma-shared-view.ts";

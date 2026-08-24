@@ -61,6 +61,103 @@ const approvedReferences = (sequences) => sequences.map((sequence) => ({
   label: `Approved storyboard image ${sequence}`,
 }));
 
+const EXECUTIVE_SLIDE_TITLES = [
+  "Executive opportunity",
+  "Six-goal assessment scorecard",
+  "Four device postures",
+  "One stable information architecture",
+  "Governed creative differentiation",
+  "Accessible phone and tablet priorities",
+  "An actionable global activity inbox",
+  "Responsive monitor relationships",
+  "Write, Shape, and Present continuity",
+  "Evidence-centered screen real estate",
+  "Dependency-aware implementation roadmap",
+  "Accessible, reviewable delivery",
+  "Phone portrait work queue",
+  "Phone landscape presenter continuity",
+  "Tablet portrait document writing",
+  "Tablet landscape paired review",
+  "Small-monitor evidence relationships",
+  "Large-monitor editorial governance",
+  "Independent review and source attribution",
+  "Private generation receipts",
+  "Near-term four-to-six-week foundation",
+  "Twelve-to-sixteen-week governed rollout",
+  "A reusable, trustworthy final presentation",
+];
+
+const EXECUTIVE_STAKEHOLDER_QUOTES = [
+  "The differentiator is not that one brief can make five artifacts; it is that every artifact remains traceable, editable, reviewable, and reusable across devices.",
+  "An asynchronous job without a global, actionable inbox is just work the customer has to remember to check.",
+  "Every extra inch of screen should reveal a useful relationship, not another column of product chrome.",
+  "A smaller screen is not a smaller product; it is a stricter argument about what deserves the next square inch.",
+];
+
+const executiveSlideCopy = (number) => ({
+  1: "Forma should make every approved presentation faithful, coherent, accessible, and editable.",
+  2: "Phone: 39.75; Tablet: 53.00; Small monitor: 67.25; Large monitor: 68.50; Adaptive/accessibility: 58.75; Governed creative loop: 79.50. Exact equal-weight average: 61.125. Rounded display value: 61.13.",
+  3: "Protect phone portrait, phone landscape, tablet portrait, and tablet landscape device postures.",
+  4: "Keep Projects / Work / Explore / Activity / Deliver as the stable product destinations.",
+  5: `“${EXECUTIVE_STAKEHOLDER_QUOTES[0]}” — Product Owner`,
+  6: "Touch targets remain at least 44px and no critical visual evidence disappears on narrower screens.",
+  7: `“${EXECUTIVE_STAKEHOLDER_QUOTES[1]}” — Market Researcher`,
+  8: "Expose useful relationships between source context, active document, and generated presentation.",
+  9: "Keep Write / Shape / Present available while preserving the same document and review state.",
+  10: `“${EXECUTIVE_STAKEHOLDER_QUOTES[2]}” — Product Owner`,
+  11: "Deliver the foundation in 4–6 weeks and the governed cross-device rollout in 12–16 weeks.",
+  12: `“${EXECUTIVE_STAKEHOLDER_QUOTES[3]}” — Lead Designer`,
+  13: "Phone portrait reveals the inbox, current work, and an explicit accessible next action.",
+  14: "Phone landscape retains slide position, the source-backed notes, and keyboard navigation.",
+  15: "Tablet portrait preserves document identity and an uninterrupted editorial writing flow.",
+  16: "Tablet landscape pairs the approved presentation with its evidence and reviewer feedback.",
+  17: "Small monitors prioritize contextual evidence without manufacturing extra navigation chrome.",
+  18: "Large monitors expose useful document relationships and independently reviewed decisions.",
+  19: "Every final slide binds to an authorized section and the exact source-authored claims.",
+  20: "Generation receipts retain actor-private provider usage, reservations, and settlement.",
+  21: "Weeks 4–6 establish responsive accessibility, stable routes, and actionable project activity.",
+  22: "Weeks 12–16 complete independent review, governed evidence, and reliable delivery.",
+  23: "Release one coherent, source-grounded, accessible, and independently editable deck.",
+}[number]);
+
+function executivePresentationSnapshot(count = 12) {
+  const sectionSize = Math.ceil(count / 3);
+  const sections = [
+    { name: "Executive foundation", type: "direction", key: "FOUNDATION" },
+    { name: "Responsive experience", type: "audience", key: "EXPERIENCE" },
+    { name: "Governed delivery", type: "message", key: "DELIVERY" },
+  ];
+  return {
+    facts: sections.map((section, sectionIndex) => {
+      const start = sectionIndex * sectionSize + 1;
+      const end = Math.min(count, start + sectionSize - 1);
+      const authoredSlides = Array.from({ length: Math.max(0, end - start + 1) }, (_, offset) => {
+        const number = start + offset;
+        return `Slide ${number} — ${EXECUTIVE_SLIDE_TITLES[number - 1]}\n${executiveSlideCopy(number)}`;
+      });
+      return {
+        block_id: `PRIVATE_SOURCE_BLOCK_${section.key}_8731`,
+        type: section.type,
+        locked: true,
+        properties: {
+          label: section.name,
+          text: [`## ${section.name}`, ...authoredSlides].join("\n\n"),
+          combined_context_memberships: [{
+            context_set_id: `PRIVATE_SOURCE_SECTION_${section.key}_8731`,
+            name: section.name,
+            target: section.name,
+            role: "slide_chapter",
+            application: "ordered",
+            relativity: .97,
+            member_order: sectionIndex,
+            source_canvas_id: "PRIVATE_SOURCE_CANVAS_8731",
+          }],
+        },
+      };
+    }),
+  };
+}
+
 test("registers truthful, reusable specialist teams for every supported output format", () => {
   const expected = {
     video: ["Director", "Script writer", "Cinematographer", "Story boarder"],
@@ -76,6 +173,204 @@ test("registers truthful, reusable specialist teams for every supported output f
     assert.equal(team.version, "1.0.0");
     assert.deepEqual(team.specialists.map((role) => role.label), labels);
   }
+});
+
+test("managed slides preserve the twelve authored numbered outline positions, sections, and authorized source blocks", () => {
+  const snapshot = executivePresentationSnapshot();
+  const plan = buildManagedProductionPlan("slides", snapshot);
+
+  assert.equal(plan.authoredSlideCount, 12);
+  assert.equal(plan.requestedSlideCount, null);
+  assert.equal(plan.predictedSlideCount, 12);
+  assert.equal(plan.slideCountMismatch, false);
+  assert.equal(plan.slideCountMismatchReason, null);
+  assert.equal(plan.scenes.length, 12, "three authored prose blocks must produce twelve slide scenes, not two or three context-led scenes");
+  assert.deepEqual(plan.scenes.map((scene) => scene.title), EXECUTIVE_SLIDE_TITLES.slice(0, 12));
+  assert.deepEqual(plan.scenes.map((scene) => scene.narrativeOrder), Array.from({ length: 12 }, (_, index) => index + 1));
+  assert.deepEqual(plan.scenes.map((scene) => scene.sourceBlockIds), Array.from({ length: 12 }, (_, index) => [snapshot.facts[Math.floor(index / 4)].block_id]));
+  assert.deepEqual(plan.scenes.map((scene) => scene.contextGroupIds), Array.from({ length: 12 }, (_, index) => [snapshot.facts[Math.floor(index / 4)].properties.combined_context_memberships[0].context_set_id]));
+  assert.ok(plan.scenes.every((scene) => scene.sourceClaimIds.length > 0), "every authored slide needs a real, reviewable source claim");
+  assert.match(plan.scenes[1].action, /Phone: 39\.75[\s\S]*Tablet: 53\.00[\s\S]*Governed creative loop: 79\.50/);
+  assert.match(plan.scenes[1].action, /Exact equal-weight average: 61\.125[\s\S]*Rounded display value: 61\.13/);
+  for (const quotation of EXECUTIVE_STAKEHOLDER_QUOTES) assert.ok(plan.scenes.some((scene) => scene.action.includes(quotation)), `protected stakeholder quotation is absent: ${quotation}`);
+  assert.match(plan.scenes[3].action, /Projects \/ Work \/ Explore \/ Activity \/ Deliver/);
+  assert.match(plan.scenes[8].action, /Write \/ Shape \/ Present/);
+  assert.match(plan.scenes[10].action, /4–6 weeks[\s\S]*12–16 weeks/);
+  assert.equal(plan.providerBatchSize, 8);
+  assert.equal(plan.providerBatchCount, 2);
+  assert.equal(plan.providerCallCount, 2);
+  assert.deepEqual(plan.providerBatches.map((batch) => [batch.index, batch.startSlide, batch.endSlide, batch.slideCount]), [[0, 1, 8, 8], [1, 9, 12, 4]]);
+  assert.deepEqual(plan.providerBatches.map((batch) => batch.reservationMicrousd), [1_000_000, 1_000_000]);
+  assert.equal(plan.estimatedPlanningCostMicrousd, 2_000_000);
+  assert.equal(plan.estimatedTotalCostMicrousd, 2_000_000);
+});
+
+test("managed slides recognize the real executive document's twelve inline slide headings across three authored prose blocks", () => {
+  const snapshot = executivePresentationSnapshot();
+  snapshot.facts = snapshot.facts.map((fact, sectionIndex) => {
+    const start = sectionIndex * 4 + 1;
+    const end = start + 3;
+    const authoredSlides = Array.from({ length: 4 }, (_, offset) => {
+      const number = start + offset;
+      return `Slide ${number} — ${EXECUTIVE_SLIDE_TITLES[number - 1]}. ${executiveSlideCopy(number)}`;
+    }).join(" ");
+    return {
+      ...fact,
+      properties: {
+        ...fact.properties,
+        text: `SLIDESHOW ${String.fromCharCode(65 + sectionIndex)} — ${fact.properties.label}. SLIDES ${start}–${end}. ${authoredSlides}`,
+      },
+    };
+  });
+
+  const plan = buildManagedProductionPlan("slides", snapshot);
+
+  assert.equal(plan.authoredSlideCount, 12);
+  assert.equal(plan.predictedSlideCount, 12);
+  assert.equal(plan.scenes.length, 12, "same-line authored headings must not collapse into three context-led slides");
+  assert.deepEqual(plan.scenes.map((scene) => scene.title), EXECUTIVE_SLIDE_TITLES.slice(0, 12));
+  assert.deepEqual(plan.scenes.map((scene) => scene.sourceBlockIds), Array.from({ length: 12 }, (_, index) => [snapshot.facts[Math.floor(index / 4)].block_id]));
+  assert.match(plan.scenes[1].action, /Phone: 39\.75[\s\S]*Governed creative loop: 79\.50[\s\S]*61\.125[\s\S]*61\.13/);
+  assert.match(plan.scenes[10].action, /4–6 weeks[\s\S]*12–16 weeks/);
+  assert.equal(plan.providerBatchCount, 2);
+  assert.equal(plan.estimatedPlanningCostMicrousd, 2_000_000);
+});
+
+test("managed slides allow an explicit twenty-three-slide presentation while retaining authorized attribution and a truthful three-batch reservation", () => {
+  const snapshot = executivePresentationSnapshot();
+  const plan = buildManagedProductionPlan("slides", snapshot, { requestedSlideCount: 23 });
+  const authorizedBlocks = new Set(snapshot.facts.map((fact) => fact.block_id));
+  const authorizedGroups = new Set(snapshot.facts.map((fact) => fact.properties.combined_context_memberships[0].context_set_id));
+
+  assert.equal(plan.authoredSlideCount, 12);
+  assert.equal(plan.requestedSlideCount, 23);
+  assert.equal(plan.predictedSlideCount, 23);
+  assert.equal(plan.slideCountMismatch, true, "intentional expansion still needs a visible authored-versus-planned count disclosure");
+  assert.equal(plan.slideCountMismatchReason, "requested_more_than_authored");
+  assert.equal(plan.scenes.length, 23);
+  assert.deepEqual(plan.scenes.slice(0, 12).map((scene) => scene.title), EXECUTIVE_SLIDE_TITLES.slice(0, 12));
+  assert.ok(plan.scenes.every((scene) => scene.sourceBlockIds.length > 0 && scene.sourceBlockIds.every((id) => authorizedBlocks.has(id))), "requested expansion must reuse authorized authored material, never invent or omit source blocks");
+  assert.ok(plan.scenes.every((scene) => scene.sourceClaimIds.length > 0), "expanded slides must retain meaningful claim-level evidence");
+  assert.ok(plan.scenes.every((scene) => scene.contextGroupIds.length > 0 && scene.contextGroupIds.every((id) => authorizedGroups.has(id))), "expanded slides must remain attributable to real authored sections");
+  for (const groupId of authorizedGroups) {
+    const positions = plan.scenes.flatMap((scene, index) => scene.contextGroupIds.includes(groupId) ? [index] : []);
+    assert.ok(positions.length > 0, `authorized section ${groupId} must survive expansion`);
+    assert.ok(positions.every((position, index) => index === 0 || position === positions[index - 1] + 1), `authorized section ${groupId} must occupy one contiguous chapter`);
+  }
+  assert.ok(plan.scenes.slice(12).every((scene) => scene.contextGroupIds.includes(snapshot.facts[2].properties.combined_context_memberships[0].context_set_id)), "additional supporting slides must extend the final authored chapter without reopening an earlier source section");
+  assert.equal(plan.providerBatchSize, 8);
+  assert.equal(plan.providerBatchCount, 3);
+  assert.equal(plan.providerCallCount, 3);
+  assert.ok(plan.maxRepairCallCount >= 0 && plan.maximumProviderCallCount >= plan.providerCallCount, "bounded additional paid provider work must be visible before generation");
+  assert.deepEqual(plan.providerBatches.map((batch) => [batch.index, batch.startSlide, batch.endSlide, batch.slideCount]), [[0, 1, 8, 8], [1, 9, 16, 8], [2, 17, 23, 7]]);
+  assert.deepEqual(plan.providerBatches.map((batch) => batch.reservationMicrousd), [1_000_000, 1_000_000, 1_000_000]);
+  assert.equal(plan.estimatedPlanningCostMicrousd, 3_000_000);
+  assert.equal(plan.estimatedTotalCostMicrousd, 3_000_000);
+});
+
+test("managed slide counts cannot silently compress a twelve-position authored outline", () => {
+  const snapshot = executivePresentationSnapshot();
+  const plan = buildManagedProductionPlan("slides", snapshot, { requestedSlideCount: 4 });
+
+  assert.equal(plan.authoredSlideCount, 12);
+  assert.equal(plan.requestedSlideCount, 4);
+  assert.equal(plan.predictedSlideCount, 12);
+  assert.equal(plan.scenes.length, 12);
+  assert.equal(plan.slideCountMismatch, true);
+  assert.equal(plan.slideCountMismatchReason, "requested_less_than_authored");
+  assert.deepEqual(plan.scenes.map((scene) => scene.title), EXECUTIVE_SLIDE_TITLES.slice(0, 12));
+  assert.equal(plan.providerBatchCount, 2);
+  assert.equal(plan.estimatedPlanningCostMicrousd, 2_000_000);
+});
+
+test("managed slide requests enforce the supported one-to-one-hundred-slide contract without changing legacy formats", () => {
+  const snapshot = executivePresentationSnapshot();
+  const invalid = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1, 0, 2.5];
+  for (const requestedSlideCount of invalid) {
+    assert.throws(
+      () => buildManagedProductionPlan("slides", snapshot, { requestedSlideCount }),
+      (error) => error instanceof RangeError && /invalid_managed_presentation_slide_count/.test(error.message),
+      `invalid requested slide count ${String(requestedSlideCount)} must fail before provider calls or cost reservations`,
+    );
+  }
+  assert.throws(
+    () => buildManagedProductionPlan("slides", snapshot, { requestedSlideCount: 101 }),
+    (error) => error instanceof RangeError && /managed_presentation_slide_count_exceeds_supported_maximum:100/.test(error.message),
+  );
+
+  const maximum = buildManagedProductionPlan("slides", snapshot, { requestedSlideCount: 100 });
+  assert.equal(maximum.requestedSlideCount, 100);
+  assert.equal(maximum.predictedSlideCount, 100);
+  assert.equal(maximum.scenes.length, 100);
+  assert.equal(maximum.providerBatchCount, 13);
+  assert.equal(maximum.providerBatches.at(-1).slideCount, 4);
+  assert.equal(maximum.estimatedPlanningCostMicrousd, 13_000_000);
+
+  const video = buildManagedProductionPlan("video", productionFixture(2), { requestedItemCount: 3 });
+  assert.equal(video.format, "video");
+  assert.equal(video.scenes.length, 3, "existing non-presentation production requests must retain their prior behavior");
+});
+
+test("managed planning rejects an authored one-hundred-and-first slide before truncation, reservation, or provider execution", () => {
+  const snapshot = {
+    facts: [{
+      block_id: "PRIVATE_OVERSIZED_SOURCE_BLOCK_8731",
+      type: "direction",
+      properties: {
+        text: Array.from({ length: 101 }, (_, index) => `Slide ${index + 1} — Authored position ${index + 1}\nPreserve the complete authorized source position ${index + 1}.`).join("\n\n"),
+      },
+    }],
+  };
+  assert.throws(
+    () => buildManagedProductionPlan("slides", snapshot),
+    (error) => error instanceof RangeError && /managed_presentation_slide_count_exceeds_supported_maximum:100/.test(error.message),
+    "an oversized authored outline must fail visibly instead of dropping its one-hundred-and-first source slide",
+  );
+});
+
+test("managed presentations also reject an oversized inferred storyboard baseline before any provider reservation", () => {
+  const snapshot = productionFixture(101);
+  assert.throws(
+    () => buildManagedProductionPlan("slides", snapshot),
+    (error) => error instanceof RangeError && /managed_presentation_slide_count_exceeds_supported_maximum:100/.test(error.message),
+    "an inferred one-hundred-and-one-scene presentation must not bypass the authored/requested slide ceiling",
+  );
+});
+
+test("managed outline planning preserves substantive colons inside authored slide titles", () => {
+  const snapshot = {
+    facts: [{
+      block_id: "PRIVATE_COLON_SOURCE_BLOCK_8731",
+      type: "direction",
+      properties: {
+        text: "Slide 1 — Opportunity: trustworthy creative production\nProtect authored intent and reviewer confidence.\n\nSlide 2 — Navigation: Projects / Work / Explore / Activity / Deliver\nPreserve the stable five-destination information architecture.",
+      },
+    }],
+  };
+  const plan = buildManagedProductionPlan("slides", snapshot);
+  assert.equal(plan.authoredSlideCount, 2);
+  assert.deepEqual(plan.scenes.map((scene) => scene.title), ["Opportunity: trustworthy creative production", "Navigation: Projects / Work / Explore / Activity / Deliver"]);
+  assert.ok(plan.scenes.every((scene) => scene.sourceBlockIds.includes("PRIVATE_COLON_SOURCE_BLOCK_8731")));
+});
+
+test("requested managed slide expansion without a numbered outline grounds every generated position in active authorized source claims", () => {
+  const snapshot = {
+    facts: [
+      { block_id: "PRIVATE_ACTIVE_SOURCE_BLOCK_8731", type: "direction", properties: { text: "Explain the approved product strategy with accessible, reviewable, source-grounded decisions." } },
+      { block_id: "PRIVATE_INACTIVE_SOURCE_BLOCK_8731", type: "direction", active: false, properties: { text: "Unauthorized disabled customer evidence must never appear." } },
+    ],
+  };
+  const plan = buildManagedProductionPlan("slides", snapshot, { requestedSlideCount: 6 });
+
+  assert.equal(plan.authoredSlideCount, 0);
+  assert.equal(plan.requestedSlideCount, 6);
+  assert.equal(plan.predictedSlideCount, 6);
+  assert.equal(plan.scenes.length, 6);
+  assert.ok(plan.scenes.every((scene) => scene.sourceBlockIds.length > 0 && scene.sourceClaimIds.length > 0), "every requested slide position must retain real source evidence");
+  assert.deepEqual(plan.scenes.map((scene) => scene.sourceBlockIds), Array.from({ length: 6 }, () => ["PRIVATE_ACTIVE_SOURCE_BLOCK_8731"]));
+  assert.ok(plan.claims.every((claim) => claim.blockId !== "PRIVATE_INACTIVE_SOURCE_BLOCK_8731"));
+  assert.equal(plan.providerBatchCount, 1);
+  assert.equal(plan.estimatedPlanningCostMicrousd, 1_000_000);
 });
 
 test("decomposes arbitrarily long authored context into legal, non-repeating anchor-first scenes", () => {
@@ -391,6 +686,9 @@ test("multi-page decks retain one cover, correct repeated content, and lock the 
   try {
     const planned = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-test" }, "owner", "slides", { documentTitle: "Alpha deck", snapshot, production });
     assert.equal(requests.length, 3);
+    assert.equal(planned.inputReceipt.planned_provider_request_count, 2);
+    assert.equal(planned.inputReceipt.provider_request_count, 3, "the receipt must include the additional bounded whole-work repair call");
+    assert.equal(planned.inputReceipt.maximum_provider_request_count, production.maximumProviderCallCount);
     assert.equal(planned.inputReceipt.whole_work_validation.repaired_pages, 1);
     assert.equal(planned.output.items.length, 10);
     assert.equal(planned.output.items.filter((item) => item.slide.layout === "cover").length, 1);
@@ -400,6 +698,593 @@ test("multi-page decks retain one cover, correct repeated content, and lock the 
     assert.deepEqual(requests[1].request.text.format.schema.properties.presentation.properties.theme.enum, ["Theme Alpha"]);
     assert.equal(planned.usage.totalTokens, 450);
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test("a realistic twenty-three-slide managed presentation keeps source-authorized chapters, one theme, all stakeholder evidence, and exact three-page usage", async () => {
+  const snapshot = executivePresentationSnapshot(23);
+  const production = buildManagedProductionPlan("slides", snapshot, { requestedSlideCount: 23 });
+  const requests = [];
+  const attempts = [];
+  const progress = [];
+  const originalFetch = globalThis.fetch;
+  const presentation = {
+    aspect_ratio: "16:9",
+    theme: "Forma evidence-led executive system",
+    footer_label: "Forma responsive product strategy",
+    style_preset: "field-notes",
+    mode: "light",
+    palette: { background: "#edf1ef", foreground: "#14211d", accent: "#287260", muted: "#586b64", surface: "#d9e3df" },
+  };
+  globalThis.fetch = async (_url, init = {}) => {
+    const request = JSON.parse(String(init.body));
+    const provider = JSON.parse(request.input);
+    requests.push({ request, provider });
+    const page = provider.production.page;
+    const section = provider.combined_context_plan[0];
+    assert.ok(section?.context_key, "the provider must receive a request-local section alias");
+    const items = provider.production.assigned_scenes.map((scene) => {
+      const position = scene.narrative_order;
+      return {
+        title: scene.title,
+        body: executiveSlideCopy(position),
+        notes: `[Sources] ${section.target}; ${scene.title}\n${executiveSlideCopy(position)}`,
+        image_prompt: `Responsive presentation evidence for authored position ${position}.`,
+        context_group_ids: [section.context_key],
+        slide: {
+          layout: position === 1 ? "cover" : position === 23 ? "closing" : "split",
+          kicker: `Decision ${position}`,
+          bullets: [],
+          visual: {
+            kind: "hero-type",
+            label: `Evidence axis ${position}`,
+            value: `Distinctive finding ${position}`,
+            data: [{ label: `Assessment ${position}`, value: `Outcome ${position}`, weight: .85 }],
+          },
+        },
+      };
+    });
+    const usage = { input_tokens: 120 + page.page_index * 10, output_tokens: 80 + page.page_index * 10 };
+    return Response.json({
+      id: `executive-page-${page.page_index + 1}`,
+      model: "gpt-executive-test",
+      output_text: JSON.stringify({
+        title: "Forma responsive product strategy",
+        summary: "One coherent, source-grounded executive presentation.",
+        content_markdown: `# Forma responsive product strategy\n\n${items.map((item) => `## ${item.title}\n${item.body}`).join("\n\n")}`,
+        presentation,
+        items,
+      }),
+      usage: { ...usage, total_tokens: usage.input_tokens + usage.output_tokens },
+    });
+  };
+
+  try {
+    const planned = await generateManagedArtifactDraft(
+      { OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-executive-test" },
+      "authorized-actor",
+      "slides",
+      {
+        documentTitle: "10 — Executive Opportunity — Slide-by-Slide Presentation Narrative",
+        snapshot,
+        production,
+        audience: "Product, design, engineering, accessibility, and enterprise decision-makers",
+        tone: "Evidence-backed; preserve exact scores, source facts, stakeholder quotes, and authored slide order.",
+        presentationStyle: "field-notes",
+        presentationFidelity: "faithful",
+        requestedSlideCount: 23,
+        authoredSlideCount: 23,
+        progress: (stage, message) => progress.push({ stage, message }),
+        plannerAttempt: (attempt) => attempts.push(structuredClone(attempt)),
+      },
+    );
+
+    assert.equal(production.authoredSlideCount, 23);
+    assert.equal(production.predictedSlideCount, 23);
+    assert.equal(production.estimatedPlanningCostMicrousd, 3_000_000);
+    assert.equal(requests.length, 3, "a valid twenty-three-slide deck needs exactly three paid provider calls");
+    assert.deepEqual(requests.map(({ provider }) => provider.production.assigned_scenes.length), [8, 8, 7]);
+    assert.deepEqual(requests.map(({ provider }) => provider.production.page.global_start_index), [0, 8, 16]);
+    assert.deepEqual(requests.map(({ provider }) => provider.production.page.phase), ["opening", "continuation", "final"]);
+    assert.ok(requests.every(({ provider }) => provider.production.page.page_count === 3 && provider.production.page.total_items === 23));
+    assert.ok(requests.every(({ request }) => !/PRIVATE_SOURCE_(?:BLOCK|SECTION|CANVAS)_/.test(JSON.stringify(request))), "provider requests must not reveal durable block, section, or Canvas identifiers");
+    assert.ok(requests.every(({ provider }) => provider.combined_context_plan.length === 1 && provider.combined_context_plan[0].context_key === "context_group_1"), "private provenance aliases must be local to the authorized provider page");
+    assert.equal(requests[0].provider.production.page.locked_presentation, undefined);
+    for (const { request, provider } of requests.slice(1)) {
+      assert.equal(provider.production.page.locked_presentation.theme, presentation.theme);
+      assert.deepEqual(request.text.format.schema.properties.presentation.properties.theme.enum, [presentation.theme]);
+      assert.deepEqual(provider.production.page.locked_presentation.palette, presentation.palette);
+    }
+
+    assert.equal(planned.output.items.length, 23);
+    assert.deepEqual(planned.output.items.map((item) => item.title), EXECUTIVE_SLIDE_TITLES);
+    assert.equal(planned.output.items.filter((item) => item.slide.layout === "cover").length, 1);
+    assert.equal(planned.output.items.at(-1).slide.layout, "closing");
+    assert.equal(planned.output.presentation.theme, presentation.theme);
+    assert.equal(planned.output.presentation.stylePreset, "field-notes");
+    assert.ok(planned.output.items.every((item) => item.notes.startsWith("[Sources] ")));
+    assert.deepEqual(planned.output.items.map((item) => item.context_group_ids), Array.from({ length: 23 }, (_, index) => [snapshot.facts[Math.floor(index / 8)].properties.combined_context_memberships[0].context_set_id]));
+    assert.deepEqual(planned.output.items.map((item) => item.slide.sourceIds), Array.from({ length: 23 }, (_, index) => [snapshot.facts[Math.floor(index / 8)].block_id]), "every slide must retain its exact authorized source even though durable IDs never reach the provider");
+    assert.match(planned.output.items[1].body, /Phone: 39\.75[\s\S]*Tablet: 53\.00[\s\S]*Small monitor: 67\.25[\s\S]*Large monitor: 68\.50[\s\S]*Adaptive\/accessibility: 58\.75[\s\S]*Governed creative loop: 79\.50/);
+    assert.match(planned.output.items[1].body, /Exact equal-weight average: 61\.125[\s\S]*Rounded display value: 61\.13/);
+    for (const quotation of EXECUTIVE_STAKEHOLDER_QUOTES) {
+      assert.ok(planned.output.items.some((item) => item.body.includes(quotation)), `stakeholder quotation must remain visibly complete: ${quotation}`);
+      assert.ok(planned.output.items.some((item) => item.notes.includes(quotation)), `stakeholder quotation must remain in source-attributed speaker notes: ${quotation}`);
+      assert.ok(planned.output.content_markdown.includes(quotation), `stakeholder quotation must remain in readable generated Markdown: ${quotation}`);
+    }
+    assert.match(planned.output.content_markdown, /Projects \/ Work \/ Explore \/ Activity \/ Deliver/);
+    assert.match(planned.output.content_markdown, /Write \/ Shape \/ Present/);
+    assert.match(planned.output.content_markdown, /4–6 weeks[\s\S]*12–16 weeks/);
+
+    assert.deepEqual(planned.responseIds, ["executive-page-1", "executive-page-2", "executive-page-3"]);
+    assert.deepEqual(planned.usage, { inputTokens: 390, outputTokens: 270, totalTokens: 660 });
+    assert.deepEqual(attempts.map((attempt) => attempt.usage.totalTokens), [200, 420, 660]);
+    assert.deepEqual(attempts.at(-1).responseIds, planned.responseIds);
+    assert.equal(planned.inputReceipt.production_mode, "managed");
+    assert.equal(planned.inputReceipt.page_count, 3);
+    assert.equal(planned.inputReceipt.planned_page_count, 3);
+    assert.equal(planned.inputReceipt.planned_item_count, 23);
+    assert.equal(planned.inputReceipt.provider_page_size, 8);
+    assert.equal(planned.inputReceipt.planned_provider_request_count, 3);
+    assert.equal(planned.inputReceipt.provider_request_count, 3);
+    assert.equal(planned.inputReceipt.maximum_provider_request_count, production.maximumProviderCallCount);
+    assert.equal(planned.inputReceipt.requested_slide_count, 23);
+    assert.equal(planned.inputReceipt.authored_slide_count, 23);
+    assert.equal(planned.inputReceipt.presentation_style, "field-notes");
+    assert.equal(planned.inputReceipt.presentation_fidelity, "faithful");
+    assert.equal(planned.inputReceipt.whole_work_validation.repaired_pages, 0);
+    assert.equal(planned.inputReceipt.whole_work_validation.source_coverage_validated, true);
+    assert.deepEqual(planned.inputReceipt.whole_work_validation.issues, []);
+    assert.deepEqual(planned.inputReceipt.pages.map((page) => [page.page, page.item_count, page.response_id]), [[1, 8, "executive-page-1"], [2, 8, "executive-page-2"], [3, 7, "executive-page-3"]]);
+    assert.ok(planned.inputReceipt.pages.every((page) => page.validation.context_group_resolution.initial.unknownAssignments.length === 0));
+    assert.equal(progress.length, 3);
+    assert.match(progress.at(-1).message, /17–23 of 23/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("twelve authored executive slides deliberately expand into twenty-three grounded, contiguous, complete managed presentation slides", async () => {
+  const snapshot = executivePresentationSnapshot();
+  const production = buildManagedProductionPlan("slides", snapshot, { requestedSlideCount: 23 });
+  const scoreRows = [
+    ["Phone", "39.75"],
+    ["Tablet", "53.00"],
+    ["Small monitor", "67.25"],
+    ["Large monitor", "68.50"],
+    ["Adaptive/accessibility", "58.75"],
+    ["Governed creative loop", "79.50"],
+  ];
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  const presentation = {
+    aspect_ratio: "16:9",
+    theme: "Expanded governed editorial presentation",
+    footer_label: "Governed executive opportunity",
+    style_preset: "field-notes",
+    mode: "light",
+    palette: { background: "#edf1ef", foreground: "#14211d", accent: "#287260", muted: "#586b64", surface: "#d9e3df" },
+  };
+  globalThis.fetch = async (_url, init = {}) => {
+    const request = JSON.parse(String(init.body));
+    const provider = JSON.parse(request.input);
+    requests.push({ request, provider });
+    assert.ok(provider.production?.assigned_scenes, `unexpected internal provider repair: ${JSON.stringify(provider.validation_issues ?? [])}`);
+    const items = provider.production.assigned_scenes.map((scene) => {
+      const position = scene.narrative_order;
+      const sourceSection = snapshot.facts[position <= 4 ? 0 : position <= 8 ? 1 : 2];
+      const providerSection = provider.combined_context_plan.find((section) => section.target === sourceSection.properties.label);
+      assert.ok(providerSection, `authored position ${position} needs an authorized request-local source section`);
+      const scorecard = position === 2;
+      return {
+        title: EXECUTIVE_SLIDE_TITLES[position - 1],
+        body: scorecard ? "Exact equal-weight average: 61.125. Rounded display value: 61.13." : executiveSlideCopy(position),
+        notes: `[Sources] ${sourceSection.properties.label}; ${executiveSlideCopy(position)}`,
+        image_prompt: `Source-grounded presentation position ${position}.`,
+        context_group_ids: [providerSection.context_key],
+        slide: {
+          layout: position === 1 ? "cover" : scorecard ? "scorecard" : position === 23 ? "closing" : "split",
+          kicker: `Argument ${position}`,
+          bullets: [],
+          visual: scorecard
+            ? {
+              kind: "scorecard",
+              label: "Equal-weight assessment",
+              value: "61.13",
+              exact_value: "61.125",
+              display_value: "61.13",
+              unit: "/100",
+              data: scoreRows.map(([label, value]) => ({ label, value, weight: Number(value) / 100 })),
+            }
+            : {
+              kind: "hero-type",
+              label: `Evidence category ${position}`,
+              value: `Decision emphasis ${position}`,
+              data: [{ label: `Measure ${position}`, value: `Reading ${position}`, weight: .8 }],
+            },
+        },
+      };
+    });
+    return Response.json({
+      id: `expanded-executive-page-${requests.length}`,
+      model: "gpt-expansion-test",
+      output_text: JSON.stringify({ title: "Governed executive opportunity", summary: "Twenty-three coherent source-grounded decisions.", content_markdown: items.map((item) => item.body).join("\n"), presentation, items }),
+      usage: { input_tokens: 200, output_tokens: 100, total_tokens: 300 },
+    });
+  };
+
+  try {
+    const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-expansion-test" }, "authorized-actor", "slides", {
+      documentTitle: "10 — Executive Opportunity — Slide-by-Slide Presentation Narrative",
+      snapshot,
+      production,
+      presentationStyle: "field-notes",
+      presentationFidelity: "faithful",
+      requestedSlideCount: 23,
+      authoredSlideCount: 12,
+    });
+
+    assert.equal(requests.length, 3);
+    assert.deepEqual(requests.map(({ provider }) => provider.production.assigned_scenes.length), [8, 8, 7]);
+    assert.ok(requests.every(({ request }) => !/PRIVATE_SOURCE_(?:BLOCK|SECTION|CANVAS)_/.test(JSON.stringify(request))));
+    assert.equal(result.output.items.length, 23);
+    assert.deepEqual(result.output.items.slice(0, 12).map((item) => item.title), EXECUTIVE_SLIDE_TITLES.slice(0, 12));
+    assert.deepEqual(result.output.items.map((item) => item.slide.sourceOrder), Array.from({ length: 23 }, (_, index) => index + 1));
+    assert.deepEqual(result.output.items.map((item) => item.slide.sourceIds), Array.from({ length: 23 }, (_, index) => [snapshot.facts[index < 4 ? 0 : index < 8 ? 1 : 2].block_id]));
+    assert.deepEqual(result.output.items.map((item) => item.context_group_ids), Array.from({ length: 23 }, (_, index) => [snapshot.facts[index < 4 ? 0 : index < 8 ? 1 : 2].properties.combined_context_memberships[0].context_set_id]));
+    const scorecard = result.output.items[1].slide.visual;
+    assert.equal(scorecard.kind, "scorecard");
+    assert.equal(scorecard.exactValue, "61.125");
+    assert.equal(scorecard.displayValue, "61.13");
+    assert.deepEqual(scorecard.data.map((datum) => [datum.label, datum.value]), scoreRows);
+    for (const [label, value] of scoreRows) assert.match(result.output.content_markdown, new RegExp(`${label.replace("/", "\\/")}: ${value.replace(".", "\\.")}`));
+    assert.match(result.output.content_markdown, /\*\*Exact value:\*\* 61\.125/);
+    assert.match(result.output.content_markdown, /\*\*Displayed value:\*\* 61\.13/);
+    for (const quotation of EXECUTIVE_STAKEHOLDER_QUOTES) assert.ok(result.output.content_markdown.includes(quotation));
+    assert.equal(result.inputReceipt.authored_slide_count, 12);
+    assert.equal(result.inputReceipt.requested_slide_count, 23);
+    assert.equal(result.inputReceipt.planned_item_count, 23);
+    assert.equal(result.inputReceipt.provider_request_count, 3);
+    assert.equal(result.inputReceipt.whole_work_validation.repaired_pages, 0);
+    assert.deepEqual(result.inputReceipt.whole_work_validation.issues, []);
+    assert.equal(result.usage.totalTokens, 900);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("managed presentation slides retain exact authorized source blocks when the document has no Combined Context groups", async () => {
+  const snapshot = executivePresentationSnapshot();
+  snapshot.facts = snapshot.facts.map((fact) => {
+    const { combined_context_memberships, ...properties } = fact.properties;
+    assert.ok(combined_context_memberships.length > 0);
+    return { ...fact, properties };
+  });
+  const production = buildManagedProductionPlan("slides", snapshot);
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  const presentation = {
+    aspect_ratio: "16:9",
+    theme: "Authorized executive source evidence",
+    footer_label: "Executive source evidence",
+    style_preset: "editorial",
+    mode: "light",
+    palette: { background: "#f2efe8", foreground: "#171714", accent: "#b8422f", muted: "#625e56", surface: "#ded8ca" },
+  };
+  globalThis.fetch = async (_url, init = {}) => {
+    const request = JSON.parse(String(init.body));
+    const provider = JSON.parse(request.input);
+    requests.push({ request, provider });
+    assert.deepEqual(provider.combined_context_plan, []);
+    const items = provider.production.assigned_scenes.map((scene) => {
+      const position = scene.narrative_order;
+      return {
+        title: scene.title,
+        body: executiveSlideCopy(position),
+        notes: `[Sources] Authorized authored outline ${position}; ${executiveSlideCopy(position)}`,
+        image_prompt: `Authorized outline direction ${position}.`,
+        context_group_ids: [],
+        slide: {
+          layout: position === 1 ? "cover" : position === 12 ? "closing" : "split",
+          kicker: `Position ${position}`,
+          bullets: [],
+          visual: {
+            kind: "hero-type",
+            label: `Source evidence ${position}`,
+            value: `Decision signal ${position}`,
+            data: [{ label: `Dimension ${position}`, value: `Assessment ${position}`, weight: .8 }],
+          },
+        },
+      };
+    });
+    return Response.json({
+      id: `ungrouped-page-${requests.length}`,
+      model: "gpt-source-test",
+      output_text: JSON.stringify({ title: "Authorized executive source evidence", summary: "Every slide has authorized evidence.", content_markdown: items.map((item) => item.body).join("\n"), presentation, items }),
+      usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
+    });
+  };
+
+  try {
+    const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-source-test" }, "authorized-actor", "slides", {
+      documentTitle: "Executive opportunity",
+      snapshot,
+      production,
+      presentationStyle: "editorial",
+      presentationFidelity: "faithful",
+    });
+    assert.equal(requests.length, 2);
+    assert.deepEqual(requests.map(({ provider }) => provider.production.assigned_scenes.length), [8, 4]);
+    assert.ok(requests.every(({ request }) => !/PRIVATE_SOURCE_(?:BLOCK|SECTION|CANVAS)_/.test(JSON.stringify(request))), "even ungrouped source IDs must remain server-side");
+    assert.equal(result.output.items.length, 12);
+    assert.ok(result.output.items.every((item) => item.context_group_ids.length === 0), "an authored block attribution must not manufacture a Combined Context assignment");
+    assert.deepEqual(result.output.items.map((item) => item.slide.sourceIds), Array.from({ length: 12 }, (_, index) => [snapshot.facts[Math.floor(index / 4)].block_id]));
+    assert.ok(result.output.items.every((item) => item.notes.startsWith("[Sources] ")));
+    assert.equal(result.inputReceipt.provider_request_count, 2);
+    assert.equal(result.inputReceipt.whole_work_validation.source_coverage_validated, true);
+    assert.deepEqual(result.inputReceipt.whole_work_validation.issues, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("managed presentation receipts count bounded adapter repairs nested inside whole-work page repairs", async () => {
+  const movements = [
+    "Open the observatory before sunrise.",
+    "Map the coastline around the harbor.",
+    "Compare mountain geology with river deposits.",
+    "Document migrating birds above the wetland.",
+    "Record rainfall beneath the forest canopy.",
+    "Trace ancestral pathways across the desert.",
+    "Inspect coral restoration beyond the reef.",
+    "Chart glacier retreat through the valley.",
+    "Present the completed fieldwork to the community.",
+  ];
+  const snapshot = {
+    facts: Array.from({ length: 9 }, (_, index) => ({
+      block_id: `PRIVATE_REPAIR_SOURCE_BLOCK_${index + 1}_8731`,
+      type: "reference",
+      properties: {
+        text: movements[index],
+        storyboard_frame_index: index + 1,
+        source_artifact_id: "PRIVATE_REPAIR_ARTIFACT_8731",
+        storyboard_shot_title: `Repair-safe heading ${index + 1}`,
+        storyboard_shot_direction: movements[index],
+      },
+    })),
+  };
+  const production = buildManagedProductionPlan("slides", snapshot);
+  const requests = [];
+  const attempts = [];
+  const originalFetch = globalThis.fetch;
+  const presentation = {
+    aspect_ratio: "16:9",
+    theme: "Repair-safe editorial system",
+    footer_label: "Repair-safe production",
+    style_preset: "editorial",
+    mode: "light",
+    palette: { background: "#f2efe8", foreground: "#171714", accent: "#b8422f", muted: "#625e56", surface: "#ded8ca" },
+  };
+  globalThis.fetch = async (_url, init = {}) => {
+    const request = JSON.parse(String(init.body));
+    const provider = JSON.parse(request.input);
+    const page = provider.production.page;
+    const internalRepair = request.text.format.name === "document_slides_repair";
+    const wholeWorkRepair = Boolean(page.repair_issues?.length);
+    requests.push({ request, provider, internalRepair, wholeWorkRepair });
+    const initialItems = internalRepair
+      ? JSON.parse(provider.original_artifact).items
+      : provider.production.assigned_scenes.map((scene) => ({ narrative_order: scene.narrative_order, title: scene.title }));
+    const items = initialItems.map((source, index) => {
+      const position = internalRepair ? page.global_start_index + index + 1 : source.narrative_order;
+      const invalidVisual = !internalRepair && (page.page_index === 0 && position === 1 || wholeWorkRepair && page.page_index === 1);
+      return {
+        title: `Repair-safe heading ${position}`,
+        body: movements[position - 1],
+        notes: `[Sources] Authored movement ${position}.`,
+        image_prompt: `Movement ${position}.`,
+        context_group_ids: [],
+        slide: {
+          layout: position === 1 || page.page_index === 1 && !wholeWorkRepair && !internalRepair ? "cover" : "split",
+          kicker: `Chapter ${position}`,
+          bullets: [],
+          visual: {
+            kind: invalidVisual ? "scorecard" : "hero-type",
+            label: `Measure ${position}`,
+            value: `Signal ${position}`,
+            data: [{ label: `Axis ${position}`, value: `Reading ${position}`, weight: .75 }],
+          },
+        },
+      };
+    });
+    return Response.json({
+      id: `nested-repair-provider-request-${requests.length}`,
+      model: "gpt-repair-test",
+      output_text: JSON.stringify({ title: "Repair-safe production", summary: "One bounded provider repair chain.", content_markdown: items.map((item) => item.body).join("\n"), presentation, items }),
+      usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
+    });
+  };
+
+  try {
+    const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-repair-test" }, "authorized-actor", "slides", {
+      documentTitle: "Repair-safe production",
+      snapshot,
+      production,
+      presentationStyle: "editorial",
+      presentationFidelity: "faithful",
+      plannerAttempt: (attempt) => attempts.push(structuredClone(attempt)),
+    });
+
+    assert.equal(requests.length, 5, "two initial page calls, two bounded adapter repairs, and one bounded whole-work retry must all be counted");
+    assert.deepEqual(requests.map(({ internalRepair, wholeWorkRepair }) => [internalRepair, wholeWorkRepair]), [[false, false], [true, false], [false, false], [false, true], [true, true]]);
+    assert.ok(requests.every(({ request }) => !/PRIVATE_REPAIR_(?:SOURCE_BLOCK|ARTIFACT)_/.test(JSON.stringify(request))), "private block and artifact identifiers must never enter either initial or repair provider requests");
+    assert.equal(result.output.items.length, 9);
+    assert.equal(result.output.items.filter((item) => item.slide.layout === "cover").length, 1);
+    assert.deepEqual(result.output.items.map((item) => item.slide.sourceIds), snapshot.facts.map((fact) => [fact.block_id]));
+    assert.equal(result.inputReceipt.planned_provider_request_count, 2);
+    assert.equal(result.inputReceipt.provider_request_count, 5);
+    assert.ok(result.inputReceipt.maximum_provider_request_count >= result.inputReceipt.provider_request_count);
+    assert.equal(result.inputReceipt.whole_work_validation.repaired_pages, 1);
+    assert.equal(result.usage.totalTokens, 750);
+    assert.deepEqual(attempts.map((attempt) => attempt.usage.totalTokens), [150, 300, 450, 600, 750], "every successful paid provider response, including bounded repairs, is checkpointed immediately");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("visible protected body quotations missing from provider speaker notes are restored locally without another paid provider call", async () => {
+  const snapshot = executivePresentationSnapshot(9);
+  const production = buildManagedProductionPlan("slides", snapshot);
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  const presentation = {
+    aspect_ratio: "16:9",
+    theme: "Source-grounded stakeholder evidence",
+    footer_label: "Stakeholder evidence",
+    style_preset: "field-notes",
+    mode: "light",
+    palette: { background: "#edf1ef", foreground: "#14211d", accent: "#287260", muted: "#586b64", surface: "#d9e3df" },
+  };
+  globalThis.fetch = async (_url, init = {}) => {
+    const request = JSON.parse(String(init.body));
+    const provider = JSON.parse(request.input);
+    requests.push({ request, provider });
+    const items = provider.production.assigned_scenes.map((scene) => {
+      const position = scene.narrative_order;
+      const sourceSection = snapshot.facts[Math.floor((position - 1) / 3)];
+      const providerSection = provider.combined_context_plan.find((section) => section.target === sourceSection.properties.label);
+      return {
+        title: scene.title,
+        body: executiveSlideCopy(position),
+        notes: position === 7
+          ? `[Sources] ${sourceSection.properties.label}; Discuss the pending-work notification opportunity.`
+          : `[Sources] ${sourceSection.properties.label}; ${executiveSlideCopy(position)}`,
+        image_prompt: `Stakeholder perspective ${position}.`,
+        context_group_ids: [providerSection.context_key],
+        slide: {
+          layout: position === 1 ? "cover" : position === 9 ? "closing" : "split",
+          kicker: `Perspective ${position}`,
+          bullets: [],
+          visual: {
+            kind: "hero-type",
+            label: `Decision evidence ${position}`,
+            value: `Research insight ${position}`,
+            data: [{ label: `Dimension ${position}`, value: `Finding ${position}`, weight: .85 }],
+          },
+        },
+      };
+    });
+    return Response.json({
+      id: `stakeholder-notes-page-${requests.length}`,
+      model: "gpt-stakeholder-test",
+      output_text: JSON.stringify({ title: "Stakeholder evidence", summary: "Protected body quotations retain complete speaker notes.", content_markdown: items.map((item) => item.body).join("\n"), presentation, items }),
+      usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
+    });
+  };
+
+  try {
+    const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-stakeholder-test" }, "authorized-actor", "slides", {
+      documentTitle: "Stakeholder source evidence",
+      snapshot,
+      production,
+      presentationStyle: "field-notes",
+      presentationFidelity: "faithful",
+    });
+    const stakeholderSlide = result.output.items[6];
+
+    assert.equal(requests.length, 2, "a deterministic local speaker-note repair must not create an additional paid provider request");
+    assert.equal(stakeholderSlide.slide.quote, undefined, "the provider supplied its protected quotation only in visible body copy");
+    assert.ok(stakeholderSlide.body.includes(EXECUTIVE_STAKEHOLDER_QUOTES[1]), "the protected quote remains complete in visible slide copy");
+    assert.ok(stakeholderSlide.notes.includes(EXECUTIVE_STAKEHOLDER_QUOTES[1]), "the exact quote is restored to its own source-attributed speaker notes");
+    assert.match(stakeholderSlide.notes, /— Market Researcher/);
+    assert.deepEqual(stakeholderSlide.slide.sourceIds, [snapshot.facts[2].block_id]);
+    assert.match(result.output.content_markdown, /\*\*Speaker notes:\*\* \[Sources\]/);
+    assert.ok(result.output.content_markdown.includes(EXECUTIVE_STAKEHOLDER_QUOTES[1]));
+    assert.match(result.output.content_markdown, /— Market Researcher/);
+    assert.equal(result.inputReceipt.provider_request_count, 2);
+    assert.equal(result.inputReceipt.whole_work_validation.repaired_pages, 0);
+    assert.equal(result.usage.totalTokens, 300);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("an unrepaired protected stakeholder quotation fails terminally after one bounded managed page retry", async () => {
+  const snapshot = executivePresentationSnapshot(9);
+  const production = buildManagedProductionPlan("slides", snapshot);
+  const requests = [];
+  const attempts = [];
+  const originalFetch = globalThis.fetch;
+  const presentation = {
+    aspect_ratio: "16:9",
+    theme: "Governed source fidelity",
+    footer_label: "Governed source fidelity",
+    style_preset: "field-notes",
+    mode: "light",
+    palette: { background: "#edf1ef", foreground: "#14211d", accent: "#287260", muted: "#586b64", surface: "#d9e3df" },
+  };
+  globalThis.fetch = async (_url, init = {}) => {
+    const request = JSON.parse(String(init.body));
+    const provider = JSON.parse(request.input);
+    requests.push({ request, provider });
+    const items = provider.production.assigned_scenes.map((scene) => {
+      const position = scene.narrative_order;
+      const sourceSection = snapshot.facts[Math.floor((position - 1) / 3)];
+      const providerSection = provider.combined_context_plan.find((section) => section.target === sourceSection.properties.label);
+      const body = position === 7 ? "Make every pending review immediately actionable throughout the product." : executiveSlideCopy(position);
+      return {
+        title: scene.title,
+        body,
+        notes: `[Sources] ${sourceSection.properties.label}; ${body}`,
+        image_prompt: `Protected source position ${position}.`,
+        context_group_ids: [providerSection.context_key],
+        slide: {
+          layout: position === 1 ? "cover" : position === 9 ? "closing" : "split",
+          kicker: `Decision ${position}`,
+          bullets: [],
+          visual: {
+            kind: "hero-type",
+            label: `Source dimension ${position}`,
+            value: `Editorial finding ${position}`,
+            data: [{ label: `Evidence ${position}`, value: `Reading ${position}`, weight: .8 }],
+          },
+        },
+      };
+    });
+    return Response.json({
+      id: `protected-source-attempt-${requests.length}`,
+      model: "gpt-fidelity-test",
+      output_text: JSON.stringify({ title: "Governed source fidelity", summary: "A protected quote is persistently absent.", content_markdown: items.map((item) => item.body).join("\n"), presentation, items }),
+      usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
+    });
+  };
+
+  try {
+    await assert.rejects(
+      generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-fidelity-test" }, "authorized-actor", "slides", {
+        documentTitle: "Executive source fidelity",
+        snapshot,
+        production,
+        presentationStyle: "field-notes",
+        presentationFidelity: "faithful",
+        plannerAttempt: (attempt) => attempts.push(structuredClone(attempt)),
+      }),
+      (error) => {
+        assert.equal(error.detail.code, "source_fidelity_validation_failed");
+        assert.equal(error.detail.action, "edit_request");
+        assert.equal(error.detail.retryable, false, "a repeatedly missing protected quotation must never receive safe-to-retry guidance");
+        assert.match(error.detail.message, /missing_protected_quote/);
+        assert.doesNotMatch(error.detail.message, /PRIVATE_SOURCE_(?:BLOCK|SECTION|CANVAS)_/);
+        assert.ok(!error.detail.message.includes(EXECUTIVE_STAKEHOLDER_QUOTES[1]), "a public failure diagnostic must not echo customer-authored protected source text");
+        return true;
+      },
+    );
+    assert.equal(requests.length, 3, "two initial provider pages permit exactly one bounded whole-work page repair");
+    assert.equal(requests.filter(({ provider }) => provider.production.page.repair_issues?.length).length, 1);
+    assert.ok(requests.every(({ request }) => !/PRIVATE_SOURCE_(?:BLOCK|SECTION|CANVAS)_/.test(JSON.stringify(request))), "neither original nor repair provider prompts may receive durable source identifiers");
+    assert.deepEqual(attempts.map((attempt) => attempt.usage.totalTokens), [150, 300, 450], "all accepted paid attempts remain accounted for after a terminal fidelity failure");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("completed planning pages report billable usage even when a later provider page fails", async () => {

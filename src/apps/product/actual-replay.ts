@@ -7,7 +7,7 @@ type ReplayPersona={personaId:string;displayName:string;status:string;route:stri
 type ReplaySession={sessionId:string;status:string;title:string;summary:string;eventCount:number;imageCount:number;createdAt:string;error:string|null;persona:ReplayPersona|null;usage:Record<string,unknown>};
 type ReplayEstimate={authorizationMicrousd:number;estimatedMicrousd:number;operations:number;profile?:{targetEventCount:number;imageCount:number;milestoneCount:number}};
 type ReplayConfiguration={enabled:boolean;configured:boolean;approvalPhrase:string;confirmationVersion:string;cost?:{estimate:ReplayEstimate;fitsReplayStructure:boolean;fitsWorkspace:boolean;requiresUserOverride:boolean}};
-const dollars=(microusd:number)=>new Intl.NumberFormat(undefined,{style:"currency",currency:"USD"}).format(microusd/1_000_000);
+const dollars=(microusd:number)=>new Intl.NumberFormat(document.documentElement.lang||"en",{style:"currency",currency:"USD"}).format(microusd/1_000_000);
 const PERSONA_CONFIRMATION_PHRASE="I understand, continue";
 
 /** Owner-isolated administrator tooling for previously approved fixtures and explicitly approved paid rehearsals. */

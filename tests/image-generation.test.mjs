@@ -155,9 +155,9 @@ test("all creative assistants exclude muted decisions while preserving editable 
   ];
   globalThis.fetch=async(_url,init)=>{requests.push(JSON.parse(String(init.body)));return Response.json({id:`response-${requests.length}`,model:"gpt-test",output_text:JSON.stringify(results[requests.length-1]),usage:{input_tokens:20,output_tokens:10,total_tokens:30}});};
   try{
-    await generateCreativeDirection({OPENAI_API_KEY:"test-only"},"user-1",{document:{title:"Field study"},facts:blocks,context_groups:[{id:"private-group"}]});
-    await respondToCreativeChat({OPENAI_API_KEY:"test-only"},"user-1",{documentTitle:"Field study",blocks,history:[],message:"Keep Mara's rain shell."});
-    await structureAdaptiveContext({OPENAI_API_KEY:"test-only"},"user-1",{documentTitle:"Field study",blocks,intent:"Strengthen Mara's portrait."});
+    await generateCreativeDirection({OPENAI_API_KEY:"test-only"},"user-1",{document:{title:"Field study"},facts:blocks,context_groups:[{id:"private-group"}]},undefined,"ja-JP");
+    await respondToCreativeChat({OPENAI_API_KEY:"test-only"},"user-1",{documentTitle:"Field study",blocks,history:[],message:"Keep Mara's rain shell.",locale:"ja-JP"});
+    await structureAdaptiveContext({OPENAI_API_KEY:"test-only"},"user-1",{documentTitle:"Field study",blocks,intent:"Strengthen Mara's portrait.",locale:"ja-JP"});
   }finally{globalThis.fetch=originalFetch;}
   assert.equal(requests.length,3);
   for(const request of requests){
@@ -173,6 +173,12 @@ test("all creative assistants exclude muted decisions while preserving editable 
   assert.equal(JSON.parse(requests[0].input).facts[0].decision_key,"decision_1");
   assert.equal(JSON.parse(requests[1].input).blocks[0].id,"active-block");
   assert.equal(JSON.parse(requests[2].input).blocks.length,1);
+  assert.match(requests[0].instructions,/selected language \(ja-JP\)/);
+  assert.match(requests[0].instructions,/Preserve the original language and exact text of user-authored document titles/);
+  assert.match(requests[1].instructions,/selected language \(ja-JP\)/);
+  assert.match(requests[2].instructions,/selected language \(ja-JP\)/);
+  assert.match(requests[1].instructions,/Preserve user-authored titles, quoted text, names, and creative decisions verbatim/);
+  assert.match(requests[2].instructions,/never translate machine identifiers, block type values, or structured field names/);
 });
 
 test("documents project attribution for every direct OpenAI request",async()=>{

@@ -106,7 +106,7 @@ and inherited theme contract stay synchronized with the application.
 
 ### Internationalized component infrastructure
 
-The application and component library include English, French, and Arabic.
+The application and component library include English, French, Arabic, and Japanese.
 Language selection follows the browser preference initially, remains local to
 the current device, and stays available before privacy consent and on shared
 documents. Translations load only when their language is selected. Writing

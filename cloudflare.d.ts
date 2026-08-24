@@ -40,6 +40,7 @@ interface R2Bucket {
     },
   ): Promise<unknown>;
   get(key: string): Promise<R2ObjectBody | null>;
+  head(key: string): Promise<Pick<R2ObjectBody, "customMetadata" | "httpEtag"> | null>;
   list(options?: { prefix?: string; cursor?: string }): Promise<R2Objects>;
   delete(keys: string | string[]): Promise<void>;
 }

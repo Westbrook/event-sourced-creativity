@@ -208,9 +208,22 @@ test("keeps actual-data mocks in fictional accounts with guarded impersonated wr
 
 test("archiving a failed replay removes all paginated partial image artifacts",async()=>{
   const listCalls=[];const deleted=[];const env={MEDIA:{
-    async list(options){listCalls.push(options);return options.cursor?{objects:[{key:"user-1/generated/replay-session-1-fan.png"}],truncated:false}:{objects:[{key:"user-1/generated/replay-session-1-reference.jpg"},{key:"user-1/generated/replay-session-1-preview.jpg"}],truncated:true,cursor:"next"};},
+    async list(options){listCalls.push(options);if(options.prefix.startsWith("u-"))return{objects:[],truncated:false};return options.cursor?{objects:[{key:"user-1/generated/replay-session-1-fan.png"}],truncated:false}:{objects:[{key:"user-1/generated/replay-session-1-reference.jpg"},{key:"user-1/generated/replay-session-1-preview.jpg"}],truncated:true,cursor:"next"};},
+    async head(){return{customMetadata:{ownerId:"user/1"}};},
     async delete(keys){deleted.push(...(Array.isArray(keys)?keys:[keys]));},
   }};
   const count=await deleteGeneratedImagesByGenerationPrefix(env.MEDIA,"user/1","replay-session-1-");
-  assert.equal(count,3);assert.equal(listCalls.length,2);assert.equal(listCalls[0].prefix,"user-1/generated/replay-session-1-");assert.equal(listCalls[1].cursor,"next");assert.deepEqual(deleted,["user-1/generated/replay-session-1-reference.jpg","user-1/generated/replay-session-1-preview.jpg","user-1/generated/replay-session-1-fan.png"]);
+  assert.equal(count,3);assert.equal(listCalls.length,3);assert.match(listCalls[0].prefix,/^u-[0-9a-f]+\/generated\/replay-session-1-/);assert.equal(listCalls[1].prefix,"user-1/generated/replay-session-1-");assert.equal(listCalls[2].cursor,"next");assert.deepEqual(deleted,["user-1/generated/replay-session-1-reference.jpg","user-1/generated/replay-session-1-preview.jpg","user-1/generated/replay-session-1-fan.png"]);
+});
+
+test("legacy replay cleanup never deletes another account's colliding media",async()=>{
+  const deleted=[];
+  const shared="team-a/generated/replay-collision-image.png";
+  const media={
+    async list({prefix}){return{objects:prefix.startsWith("team-a/")?[{key:shared}]:[],truncated:false};},
+    async head(){return{customMetadata:{ownerId:"team/a"}};},
+    async delete(keys){deleted.push(...(Array.isArray(keys)?keys:[keys]));},
+  };
+  assert.equal(await deleteGeneratedImagesByGenerationPrefix(media,"team:a","replay-collision-"),0);
+  assert.deepEqual(deleted,[]);
 });

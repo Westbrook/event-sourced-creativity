@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
@@ -19,7 +20,8 @@ import { matchingAccountSnapshot, matchingAnalyticsSnapshot } from "../src/state
 import { routeCapabilities } from "../src/state/route-capabilities.ts";
 import { consumeRoutePrefetch, consumeSessionBootstrap, consumeSessionPrefetch } from "../src/state/session-bootstrap.ts";
 import { IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE } from "../worker/image-adapter-evaluation-evidence.ts";
-import { reserveBudget, reserveCostBudget, settleBudget, settleCostBudget } from "../worker/pilot-policy.ts";
+import { claimCostBudgetReservation, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, storePrivateContent } from "../worker/pilot-policy.ts";
+import { ensureSchema, sweepExpiredPrivateContent } from "../worker/runtime.ts";
 import { EXTRACTOR_EVAL_FIXTURES } from "../src/model/extractors.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 
@@ -100,6 +102,37 @@ async function specialistIdentity(database,request,userId,capabilities=[]){
   for(const capability of capabilities)insert.run(crypto.randomUUID(),userId,capability,capability.startsWith("evaluation.synthetic.")||capability.startsWith("design.")?"synthetic":"platform","dev-local-creative",now,now);
   database.reset();
   return headers;
+}
+
+async function enterpriseWorkspaceFixture({ artifact = false } = {}) {
+  const fixture = await productionWorker();
+  const { database, environment, request } = fixture;
+  const owner = await specialistIdentity(database, request, "enterprise-owner");
+  const json = (headers, body, method = "POST") => ({ method, headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(body) });
+  const seeded = await (await request("/api/events?after=0&limit=2000&content=0", { headers: owner })).json();
+  const projection = foldEvents(seeded.events, Number.POSITIVE_INFINITY, "doc-atmosphere", "project-atmosphere");
+  if (artifact) {
+    const now = new Date().toISOString();
+    const stream = "creative:enterprise-owner";
+    const content = JSON.stringify({ title: "Enterprise output", summary: "Approved work", content_markdown: "# Enterprise output\n\nCustomer-ready narrative.", presentation: null, items: [{ title: "Opening", body: "Customer-ready narrative.", notes: "Speaker note", image_prompt: "", context_group_ids: [], slide: null }] });
+    database.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,'9999-12-31T23:59:59.999Z',NULL)")
+      .run("enterprise-output-content", "enterprise-owner", "document-artifact", content, now);
+    const sequence = Number(database.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head) + 1;
+    database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run("enterprise-output-event", stream, sequence, now, now, "worker:renderer", "enterprise-test", crypto.randomUUID(), null, null, 1, "DocumentRenderCompleted", JSON.stringify({ project_id: "project-atmosphere", document_id: "doc-atmosphere", artifact_id: "enterprise-output", artifact_kind: "short_story", title: "Enterprise output", summary: "Approved work", item_count: 1, items: [{ id: "opening", title: "Opening", body: "Receipt" }], content_ref: "enterprise-output-content", source_block_versions: projection.blocks.map((block) => ({ block_id: block.id, version: block.sourceEvents.length })), requested_by_user_id: "enterprise-owner" }));
+  }
+  const organization = await request("/api/workspaces", json(owner, { name: "Enterprise organization" }));
+  assert.equal(organization.status, 201);
+  const organizationId = (await organization.json()).organizationId;
+  const project = await request(`/api/workspaces/${organizationId}/projects`, json(owner, { projectId: "project-atmosphere" }));
+  assert.equal(project.status, 201, JSON.stringify(await project.clone().json()));
+  const projectAccessId = (await project.json()).projectAccessId;
+  const open = async (headers, access = projectAccessId) => {
+    const response = await request(`/api/workspaces/${organizationId}/projects/${access}/context`, { method: "POST", headers });
+    assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+    return { ...headers, cookie: response.headers.get("set-cookie")?.split(";")[0] ?? "" };
+  };
+  return { ...fixture, environment, owner, organizationId, projectAccessId, projection, json, open };
 }
 
 function htmlAssets(environment) {
@@ -900,6 +933,7 @@ test("analytics reuses immutable account evidence while every fresh report inclu
   assert.equal(initial.status, 200);
   assert.equal(initial.headers.get("x-forma-analytics-cache"), "miss");
   const initialBody = await initial.json();
+  assert.equal(initialBody.report.dimensions.user.some((item)=>item.id===collaborator||item.label==="Original collaborator"),false,"an unrelated creator never enters another principal's analytics");
   const full = database.calls.find((call) => call.kind === "batch")?.statements[2];
   assert.ok(full);
   const coldBytes = JSON.stringify(database.sqlite.prepare(full.sql).all(...full.values)).length;
@@ -921,7 +955,7 @@ test("analytics reuses immutable account evidence while every fresh report inclu
   assert.match(database.sqlite.prepare(`EXPLAIN QUERY PLAN ${delta.sql}`).all(...delta.values).map((step) => step.detail).join(" "), /INTEGER PRIMARY KEY \(rowid>\?\)/);
   const deltaBytes = JSON.stringify(database.sqlite.prepare(delta.sql).all(...delta.values)).length;
   assert.ok(deltaBytes < coldBytes / 20, `expected meaningful transfer reduction: ${coldBytes} -> ${deltaBytes}`);
-  assert.ok(database.calls.length <= 2);
+  assert.ok(database.calls.length <= 2,`cold analytics should use at most two D1 round trips; observed ${JSON.stringify(database.calls.map((call)=>({kind:call.kind,sql:call.sql.slice(0,160)})))}`);
   assert.equal(database.writeCount(), 0);
 
   addCorrelatedTerminal(database.sqlite, "creative:dev-local-creative", "analytics-new-event");
@@ -932,7 +966,7 @@ test("analytics reuses immutable account evidence while every fresh report inclu
   assert.equal(changed.headers.get("x-forma-analytics-cache"), "delta");
   assert.equal(changed.headers.get("x-forma-analytics-source-rows"), "1");
   assert.equal(changedBody.report.source.eventCount, initialBody.report.source.eventCount + 1);
-  assert.ok(changedBody.report.dimensions.user.some((item) => item.label === "Renamed collaborator"));
+  assert.equal(changedBody.report.dimensions.user.some((item) => item.label === "Renamed collaborator"),false,"renaming an unrelated principal cannot make their activity visible");
   assert.equal(database.writeCount(), 0);
 
   database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("dev-local-creative");
@@ -964,6 +998,7 @@ test("analytics restores exact owner-bound evidence across cold worker instances
   const coldEnvironment = { ...environment, DB: binding };
   const coldRequest = (path) => worker.fetch(new Request(`http://localhost${path}`), coldEnvironment, context);
   assert.equal((await coldRequest("/api/session")).status, 200);
+  await drainBackground();
   database.reset();
   const cold = await coldRequest("/api/analytics?days=all");
   const current = (await cold.json()).report;
@@ -977,7 +1012,7 @@ test("analytics restores exact owner-bound evidence across cold worker instances
   const plan = database.sqlite.prepare(`EXPLAIN QUERY PLAN ${batch.statements[2].sql}`).all(...batch.statements[2].values);
   assert.match(plan.map((step) => step.detail).join(" "), /INTEGER PRIMARY KEY \(rowid>\?\)/);
   assert.match(plan.map((step) => step.detail).join(" "), /idx_events_nonphantom_stream_sequence/);
-  assert.ok(database.calls.length <= 2);
+  assert.ok(database.calls.length <= 2,`cold analytics should use at most two D1 round trips; observed ${JSON.stringify(database.calls.map((call)=>({kind:call.kind,sql:call.sql.slice(0,160)})))}`);
   assert.equal(database.writeCount(), 0);
 
   database.reset();
@@ -1033,7 +1068,7 @@ test("durable analytics evidence is rebuilt when a fictional stream changes visi
   database.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,created_at,updated_at) VALUES (?,?,?,?,?,?)").run(fictional, "durable@example.test", "Durable persona", "creator", now, now);
   addCorrelatedTerminal(database.sqlite, `creative:${fictional}`, "durable-fictional-evidence", now);
   const initial = await request("/api/analytics?days=all");
-  assert.ok((await initial.json()).report.dimensions.user.some((item) => item.id === fictional));
+  assert.ok(!(await initial.json()).report.dimensions.user.some((item) => item.id === fictional),"an unrelated account is never visible before it becomes this principal's explicitly owned fictional persona");
   await drainBackground();
   database.sqlite.prepare("INSERT INTO replay_personas(persona_id,session_id,owner_id,fictional_user_id,fictional_stream_id,display_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run("durable-persona", "durable-replay", "dev-local-creative", fictional, `creative:${fictional}`, "Durable persona", "ready", now, now);
 
@@ -1080,7 +1115,7 @@ test("analytics invalidates cached source when a fictional account becomes hidde
 
   const initial = await request("/api/analytics?days=all");
   const initialReport = (await initial.json()).report;
-  assert.ok(initialReport.dimensions.user.some((item) => item.id === fictional));
+  assert.ok(!initialReport.dimensions.user.some((item) => item.id === fictional),"an unrelated account cannot appear merely because it has an event stream");
   database.sqlite.prepare("INSERT INTO replay_personas(persona_id,session_id,owner_id,fictional_user_id,fictional_stream_id,display_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run("analytics-persona", "analytics-replay", "dev-local-creative", fictional, `creative:${fictional}`, "Fictional account", "ready", now, now);
 
   database.reset();
@@ -1092,7 +1127,7 @@ test("analytics invalidates cached source when a fictional account becomes hidde
   database.reset();
   const visible = await request("/api/analytics?days=all");
   assert.equal(visible.headers.get("x-forma-analytics-cache"), "miss");
-  assert.ok((await visible.json()).report.dimensions.user.some((item) => item.id === fictional));
+  assert.ok(!(await visible.json()).report.dimensions.user.some((item) => item.id === fictional),"an inactive fictional persona never reclassifies as an authorized real account");
 
   database.sqlite.prepare("UPDATE replay_personas SET status='ready' WHERE persona_id=?").run("analytics-persona");
   database.reset();
@@ -1275,6 +1310,36 @@ test("public shares disclose complete authored output only from the selected own
   for(const [artifactId,contentRef] of [["shared-story","shared-story-content"],["expired-story","expired-story-content"]])insertEvent.run(crypto.randomUUID(),stream,++sequence,now,now,"worker:renderer","share-test",crypto.randomUUID(),null,null,1,"DocumentRenderCompleted",JSON.stringify({artifact_id:artifactId,artifact_kind:"short_story",document_id:"doc-atmosphere",project_id:"project-atmosphere",title:artifactId,summary:"An authored narrative",content_ref:contentRef,item_count:1,items:[{id:`${artifactId}-item`,title:"Receipt heading only"}]}));
   const draft=(text)=>JSON.stringify({title:"A complete authored story",summary:"A real summary",content_markdown:text,presentation:null,items:[{title:"The actual opening",body:"The exact story section.",notes:"A private-to-this-document author note.",image_prompt:"A quiet dawn.",slide:null}]});const insertContent=database.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES (?,?,?,?,?,?,NULL)");insertContent.run("shared-story-content",owner,"document-artifact",draft("# The complete story\n\nEvery intentionally written word."),now,future);insertContent.run("expired-story-content",owner,"document-artifact",draft("EXPIRED PRIVATE MANUSCRIPT"),now,past);insertContent.run("unrelated-private-content",owner,"document-artifact",draft("UNRELATED PRIVATE MANUSCRIPT"),now,future);insertContent.run("private-input-receipt",owner,"document-artifact-input","PRIVATE PROVIDER RECEIPT",now,future);
   const creation=await request("/api/shares",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere",expiresHours:1})});assert.equal(creation.status,200);const {share}=await creation.json();database.reset();const response=await request(`/api/shared/${encodeURIComponent(share.token)}`);assert.equal(response.status,200);const body=await response.json(),story=body.projection.artifacts.find((artifact)=>artifact.id==="shared-story"),expired=body.projection.artifacts.find((artifact)=>artifact.id==="expired-story");assert.equal(story.contentMarkdown,"# The complete story\n\nEvery intentionally written word.");assert.equal(story.items[0].title,"The actual opening");assert.equal(story.items[0].body,"The exact story section.");assert.equal(story.items[0].notes,"A private-to-this-document author note.");assert.equal("imagePrompt" in story.items[0],false);assert.equal("contextGroupIds" in story.items[0],false);assert.equal("provider" in story,false);assert.equal("modelId" in story,false);assert.equal(expired.contentMarkdown,null);assert.equal(expired.contentAvailable,false);assert.doesNotMatch(JSON.stringify(body),/A quiet dawn\.|EXPIRED PRIVATE MANUSCRIPT|UNRELATED PRIVATE MANUSCRIPT|PRIVATE PROVIDER RECEIPT|content_ref|contentRef|input_ref|inputRef|imagePrompt|image_prompt|contextGroupIds/);assert.ok(database.calls.length<=3,`owner-scoped artifact hydration must use one bounded additional batch; received ${database.calls.length}`);const hydration=database.calls.find((call)=>call.kind==="batch"&&call.statements.some((statement)=>/FROM private_content/.test(statement.sql)));assert.ok(hydration);assert.equal(hydration.statements.length,1);assert.match(hydration.statements[0].sql,/owner_id=\? AND kind='document-artifact' AND redacted_at IS NULL AND expires_at>\? AND content_id IN/);assert.equal(database.writeCount(),0);
+});
+
+test("anonymous shared presentation endpoints preserve visible citations without exposing durable source or claim identifiers",async()=>{
+  const {database,request}=await productionWorker();
+  const owner="dev-local-creative",stream=`creative:${owner}`,now=new Date().toISOString(),future=new Date(Date.now()+3_600_000).toISOString();
+  const sourceId="PRIVATE_AUTHORIZED_PRESENTATION_SOURCE_7249",claimId="PRIVATE_AUTHORIZED_PRESENTATION_CLAIM_7249",groupId="PRIVATE_AUTHORIZED_PRESENTATION_GROUP_7249";
+  const slide={layout:"scorecard",kicker:"Protected source evidence",bullets:[],sourceIds:[sourceId,claimId,groupId],quote:{text:"Customers need complete attributable evidence.",speaker:"Product Owner",role:"Product Owner",sourceId:claimId,source_key:claimId},citations:[{label:"Approved authored decision",anchor:"Slide 1",excerpt:"A customer-visible source citation.",sourceId:groupId,sourceKey:groupId,claimId}],visual:{kind:"scorecard",label:"Assessment",value:"39.75",data:[{label:"Phone",value:"39.75",sourceIds:[sourceId],sourceAliasMap:{blk_001:sourceId},blockId:sourceId,groupId}]}};
+  const content={title:"Shareable executive evidence",summary:"A safe public review view.",content_markdown:"# Shareable executive evidence\n\nPhone: 39.75",presentation:null,items:[{title:"Visible customer evidence",body:"Phone: 39.75",notes:"Reviewer notes",image_prompt:"",context_group_ids:[groupId],slide}]};
+  database.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)").run("presentation-anonymous-content",owner,"document-artifact",JSON.stringify(content),now,future);
+  const sequence=Number(database.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head)+1;
+  const insertEvent=database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  insertEvent.run(crypto.randomUUID(),stream,sequence,now,now,"user","anonymous-presentation-test",crypto.randomUUID(),null,null,1,"BlockCreated",JSON.stringify({block_id:"public-imported-block",document_id:"doc-atmosphere",project_id:"project-atmosphere",type:"direction",handle:"direction/public-imported-evidence",position:"z7249",properties:{text:"Visible imported customer decision",organization_context_source_block_id:"PRIVATE_IMPORTED_SOURCE_BLOCK_7249",organization_context_package_id:"PRIVATE_IMPORTED_PACKAGE_7249",organization_context_package_version_id:"PRIVATE_IMPORTED_VERSION_7249",organization_context_package_binding_id:"PRIVATE_IMPORTED_BINDING_7249",source_claim_ref:"PRIVATE_IMPORTED_CLAIM_7249",source_event_refs:["PRIVATE_IMPORTED_EVENT_7249"],source_block_versions:[{block_id:"PRIVATE_IMPORTED_VERSION_BLOCK_7249",version:7}],context_fingerprint:"PRIVATE_IMPORTED_FINGERPRINT_7249",combined_context_memberships:[{context_set_id:"PRIVATE_IMPORTED_CONTEXT_GROUP_7249",name:"Visible authored source chapter",role:"slide_chapter"}]}}));
+  insertEvent.run(crypto.randomUUID(),stream,sequence+1,now,now,"worker:renderer","anonymous-presentation-test",crypto.randomUUID(),null,null,1,"DocumentRenderCompleted",JSON.stringify({artifact_id:"anonymous-presentation",artifact_kind:"slides",document_id:"doc-atmosphere",project_id:"project-atmosphere",title:content.title,summary:content.summary,content_ref:"presentation-anonymous-content",item_count:1,items:[{id:"anonymous-presentation-slide-1",title:"Visible customer evidence",slide}]}));
+  const created=await request("/api/shares",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere",expiresHours:1})});
+  assert.equal(created.status,200,JSON.stringify(await created.clone().json()));
+  const {share}=await created.json();
+  const shared=await request(`/api/shared/${encodeURIComponent(share.token)}`);
+  assert.equal(shared.status,200,JSON.stringify(await shared.clone().json()));
+  const body=await shared.json();
+  const presentation=body.projection.artifacts.find((artifact)=>artifact.id==="anonymous-presentation");
+  assert.ok(presentation);
+  assert.equal(presentation.items[0].slide.visual.data[0].label,"Phone");
+  assert.equal(presentation.items[0].slide.visual.data[0].value,"39.75");
+  assert.equal(presentation.items[0].slide.quote.role,"Product Owner");
+  assert.equal(presentation.items[0].slide.citations[0].label,"Approved authored decision");
+  const imported=body.projection.blocks.find((block)=>block.id==="public-imported-block");
+  assert.equal(imported.properties.text,"Visible imported customer decision");
+  assert.equal(imported.properties.combined_context_memberships[0].name,"Visible authored source chapter");
+  assert.equal(imported.properties.combined_context_memberships[0].role,"slide_chapter");
+  assert.doesNotMatch(JSON.stringify(body),/PRIVATE_AUTHORIZED_PRESENTATION_|PRIVATE_IMPORTED_|sourceIds|source_ids|sourceId|source_id|sourceKey|source_key|sourceAliasMap|blockId|claimId|groupId|contextGroupIds|context_group_ids|context_set_id|organization_context_(?:package|source)|source_claim_ref|source_event_refs|source_block_versions|context_fingerprint/);
 });
 
 test("full event pages and their heads share one consistent D1 round trip", async () => {
@@ -1663,6 +1728,7 @@ test("cached generation readiness avoids replaying the entire creative stream", 
     promptTechnique: "prose",
     status: "ready",
     expiresAt: expires,
+    sourceContextHead:Number(database.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=? AND type IN('ProjectCreated','ProjectRenamed','ProjectStateChanged','DocumentCreated','DocumentForked','DocumentRenamed','DocumentRemoved','DocumentRestored','BlockCreated','BlockRenamed','BlockPropertyEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored','BlockRelationAdded','BlockRelationRemoved','ReferenceIngested','RightsAsserted','ChipEdited','ObjectPinned','ObjectUnpinned','CanvasCreated','CanvasRenamed','CanvasRemoved','CanvasRestored','CanvasItemPlaced','CanvasReferenceCreated','CanvasItemRemoved','CanvasItemRestored','CanvasTextApplied','CanvasRegisterSet','ContextSetFormalized')").get(`creative:${owner}`).head),
   };
   database.sqlite.prepare("INSERT INTO generation_preflights(preflight_id,owner_id,stream_id,document_id,request_key,status,result_json,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?)")
     .run("ready-1", owner, `creative:${owner}`, cached.documentId, `generation-readiness-v1:${cached.requestKey}`, "ready", JSON.stringify(cached), now, expires);
@@ -1811,7 +1877,8 @@ test("customer workspace administration enforces verified invitations, exact pro
     database.reset();assert.equal((await request(path,options)).status,403,"an active project-A cookie cannot be used as a confused deputy for separately granted project B");assert.equal(database.writeCount(),0);
   }
   const edit=await request("/api/events",json(scoped,{action:"append",event:{type:"BlockPropertyEdited",payload:{block_id:"block-direction",property_path:"text",new_value:"AUTHORIZED COLLABORATIVE EDIT"}}}));assert.equal(edit.status,200);const receipt=await edit.json();assert.equal(receipt.appended[0].actor,"user:workspace-collaborator");
-  assert.equal(database.sqlite.prepare("SELECT actor FROM events WHERE json_extract(payload,'$.new_value')=?").get("AUTHORIZED COLLABORATIVE EDIT").actor,"user:workspace-collaborator");
+  assert.equal(database.sqlite.prepare("SELECT event.actor FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.owner_id=? WHERE json_extract(secret.private_json,'$.new_value')=?").get("workspace-owner-a","AUTHORIZED COLLABORATIVE EDIT").actor,"user:workspace-collaborator");
+  assert.equal(database.sqlite.prepare("SELECT 1 FROM events WHERE instr(payload,?)>0").get("AUTHORIZED COLLABORATIVE EDIT"),undefined,"authored collaborative prose never appears in immutable event payloads");
   database.reset();assert.equal((await request("/api/events",json(scoped,{action:"append",event:{type:"BlockPropertyEdited",payload:{block_id:"foreign-block",property_path:"text",new_value:"forbidden"}}}))).status,403);assert.equal(database.writeCount(),0);
   for(const event of [
     {type:"EmptyCanvasChosen",payload:{}},
@@ -1841,7 +1908,7 @@ test("customer workspace administration enforces verified invitations, exact pro
   const uploadForm=new FormData();uploadForm.set("file",new File(["reference"],"collaborative-reference.png",{type:"image/png"}));uploadForm.set("rightsConfirmed","true");
   const upload=await request("/api/media",{method:"POST",headers:scoped,body:uploadForm});assert.equal(upload.status,200);const uploaded=await upload.json();
   const referenceEvents=[
-    {type:"ReferenceIngested",payload:{reference_id:"reference-collaborative",source_type:"upload",source_ref:uploaded.url,content_hash:uploaded.key,rights_class:"asserted"}},
+    {type:"ReferenceIngested",payload:{reference_id:"reference-collaborative",source_type:"upload",source_ref:uploaded.url,content_hash:uploaded.contentHash,rights_class:"asserted"}},
     {type:"RightsAsserted",payload:{reference_id:"reference-collaborative",rights_class:"owned_or_licensed",assertion_method:"explicit-confirmation"}},
     {type:"BlockCreated",payload:{block_id:"block-reference-collaborative",scope:"library",type:"reference",handle:"reference/collaborative",properties:{reference_id:"reference-collaborative",media_url:uploaded.url}}},
   ];
@@ -1869,6 +1936,95 @@ test("customer workspace administration enforces verified invitations, exact pro
   assert.equal((await request(`/api/workspaces/${organizationA}/invitations/${invitation.invitationId}/accept`,{method:"POST",headers:collaborator})).status,403);
   assert.equal((await request(`/api/workspaces/${organizationA}/invitations/${fresh.invitationId}/accept`,{method:"POST",headers:collaborator})).status,200);
   assert.deepEqual((await(await request("/api/workspaces",{headers:collaborator})).json()).projects,[],"reinvitation never resurrects prior project access");
+});
+
+test("viewer-only independent review, governed release, source attestation, artifact revision, and revocation work through real worker endpoints",async()=>{
+  const {database,environment,request}=await productionWorker();
+  const media=new Map();
+  environment.MEDIA={
+    async put(key,value,options={}){const bytes=value instanceof ArrayBuffer?value:await new Response(value).arrayBuffer();media.set(key,{bytes,metadata:options.customMetadata??{},mime:options.httpMetadata?.contentType??"application/octet-stream"});},
+    async get(key){const item=media.get(key);return item?{body:new Response(item.bytes).body,httpEtag:"test-etag",customMetadata:item.metadata,writeHttpMetadata(headers){headers.set("content-type",item.mime);}}:null;},
+    async head(key){const item=media.get(key);return item?{httpEtag:"test-etag",customMetadata:item.metadata}:null;},
+    async delete(key){media.delete(key);},
+    async list(){return{objects:[],truncated:false};},
+  };
+  const owner=await specialistIdentity(database,request,"governed-review-owner");
+  const reviewer=await specialistIdentity(database,request,"governed-review-viewer");
+  const json=(headers,body,method="POST")=>({method,headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
+  const seeded=await(await request("/api/events?after=0&limit=1000&content=0",{headers:owner})).json();
+  const projection=foldEvents(seeded.events,Number.POSITIVE_INFINITY,"doc-atmosphere","project-atmosphere");
+  const versions=projection.blocks.map((block)=>({block_id:block.id,version:block.sourceEvents.length}));
+  assert.ok(versions.length,"the finished output must bind every actual source decision");
+  const timestamp=new Date().toISOString(),expires="9999-12-31T23:59:59.999Z",stream="creative:governed-review-owner";
+  const manuscript={title:"Governed deliverable",summary:"A verified customer-ready narrative.",content_markdown:"# Governed deliverable\n\nInitial approved manuscript.",presentation:null,items:[{title:"Opening",body:"Initial approved manuscript.",notes:"Original note",image_prompt:"",context_group_ids:[],slide:null}]};
+  database.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)").run("governed-output-content","governed-review-owner","document-artifact",JSON.stringify(manuscript),timestamp,expires);
+  const head=Number(database.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head);
+  database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run("governed-output-event",stream,head+1,timestamp,timestamp,"worker:renderer","test",crypto.randomUUID(),null,null,1,"DocumentRenderCompleted",JSON.stringify({project_id:"project-atmosphere",document_id:"doc-atmosphere",artifact_id:"governed-output",artifact_kind:"short_story",title:manuscript.title,summary:manuscript.summary,item_count:1,items:[{id:"governed-opening",title:"Opening",body:"Receipt-only summary"}],content_ref:"governed-output-content",source_block_versions:versions,requested_by_user_id:"governed-review-owner"}));
+  const organization=await request("/api/workspaces",json(owner,{name:"Governed review organization"}));assert.equal(organization.status,201);const organizationId=(await organization.json()).organizationId;
+  const registered=await request(`/api/workspaces/${organizationId}/projects`,json(owner,{projectId:"project-atmosphere"}));assert.equal(registered.status,201,JSON.stringify(await registered.clone().json()));const projectId=(await registered.json()).projectAccessId;
+  const invitation=await(await request(`/api/workspaces/${organizationId}/members`,json(owner,{email:"governed-review-viewer@example.test",role:"member"}))).json();
+  assert.equal((await request(`/api/workspaces/${organizationId}/invitations/${invitation.invitationId}/accept`,json(reviewer,{token:new URL(invitation.invitationUrl).searchParams.get("token")}))).status,200);
+  assert.equal((await request(`/api/workspaces/${organizationId}/projects/${projectId}/members`,json(owner,{userId:"governed-review-viewer",role:"viewer"}))).status,201);
+  const membershipId=database.sqlite.prepare("SELECT membership_id FROM project_memberships WHERE project_access_id=? AND user_id=?").get(projectId,"governed-review-viewer").membership_id;
+  const memberPath=`/api/workspaces/${organizationId}/projects/${projectId}/members/${membershipId}`;
+  const open=async(identity)=>{const opened=await request(`/api/workspaces/${organizationId}/projects/${projectId}/context`,{method:"POST",headers:identity});assert.equal(opened.status,200);return{...identity,cookie:opened.headers.get("set-cookie")?.split(";")[0]??""};};
+  let reviewerScope=await open(reviewer);const ownerScope=await open(owner);
+  const binding=()=>({artifact_revision:Number(database.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE stream_id=? AND type='DocumentArtifactEdited' AND json_extract(payload,'$.artifact_id')='governed-output'").get(stream).count),content_sha256:createHash("sha256").update(database.sqlite.prepare("SELECT content FROM private_content WHERE content_id='governed-output-content'").get().content).digest("hex")});
+  const action=(type)=>({type,payload:{artifact_id:"governed-output",artifact_kind:"short_story",document_id:"doc-atmosphere",...binding(),source_block_versions:versions}});
+  const append=(identity,event)=>request("/api/events",json(identity,{action:"append",event}));
+  const revise=(identity,markdown,expectedRevision)=>request("/api/artifacts/governed-output",json(identity,{markdown,expectedRevision},"PATCH"));
+  assert.equal((await append(reviewerScope,action("ArtifactApproved"))).status,403,"viewer has no ambient approval authority");
+  assert.equal((await revise(reviewerScope,"Forbidden viewer edit",0)).status,403,"read-only reviewer cannot alter the retained output");
+  assert.equal((await request("/api/document-jobs",{headers:reviewerScope})).status,403,"review access does not imply provider job access");
+  const unapprovedShare=await request("/api/shares",json(ownerScope,{resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere"}));assert.equal(unapprovedShare.status,409,JSON.stringify(await unapprovedShare.json()));
+  const unapprovedExport=await append(reviewerScope,{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere",format:"markdown"}});assert.equal(unapprovedExport.status,409);
+  assert.equal((await request(memberPath,json(owner,{reviewAccess:true},"PATCH"))).status,200,"customer owner can delegate approval directly to a viewer");
+  assert.equal((await request(memberPath,json(owner,{reviewAccess:true},"PATCH"))).status,409,"duplicate reviewer grants cannot accumulate");
+  const members=await(await request(`/api/workspaces/${organizationId}/projects/${projectId}/members`,{headers:owner})).json();assert.equal(members.members.find((member)=>member.user_id==="governed-review-viewer").review_access,1);assert.equal(members.members.find((member)=>member.user_id==="governed-review-owner").role,"owner");assert.equal(members.members.find((member)=>member.user_id==="governed-review-owner").review_access,1,"an eligible non-contributing project owner remains discoverable for independent teammate review");
+  const session=await(await request("/api/session",{headers:reviewerScope})).json();assert.equal(session.projectContext.permissions.includes("project.review.approve"),true);assert.equal(session.projectContext.permissions.includes("project.author"),false);assert.equal(session.projectContext.permissions.includes("project.output.request"),false);
+  const submitted=await append(ownerScope,action("ArtifactReviewRequested"));assert.equal(submitted.status,200,JSON.stringify(await submitted.clone().json()));
+  assert.equal((await append(ownerScope,action("ArtifactApproved"))).status,403,"creator/requester cannot approve their own deliverable");
+  const mixed=await request("/api/events",json(ownerScope,{action:"batch",events:[{type:"BlockPropertyEdited",payload:{block_id:versions[0].block_id,property_path:"text",new_value:"Race attempt"}},action("ArtifactApproved")]}));assert.equal(mixed.status,409,"context mutations cannot hide in an approval batch");
+  const approved=await append(reviewerScope,action("ArtifactApproved"));assert.equal(approved.status,200,JSON.stringify(await approved.clone().json()));
+  const ownerNotifications=await(await request("/api/project-notifications",{headers:ownerScope})).json();assert.ok(ownerNotifications.notifications.some((notification)=>notification.kind==="output_approved"));
+  const released=await append(reviewerScope,{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere",format:"markdown",...binding()}});assert.equal(released.status,200,JSON.stringify(await released.clone().json()));
+  const createdShare=await request("/api/shares",json(ownerScope,{resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere"}));assert.equal(createdShare.status,200,JSON.stringify(await createdShare.clone().json()));const share=(await createdShare.json()).share;
+  assert.equal((await request(`/api/shared/${encodeURIComponent(share.token)}`)).status,200,"only independently approved governed work reaches an external link");
+  const edit=await revise(owner,"# Governed deliverable\n\nOwner-corrected final manuscript.",0);assert.equal(edit.status,200,JSON.stringify(await edit.clone().json()));const revised=await edit.json();assert.equal(revised.revision,1);assert.equal(revised.appended[0].streamId,stream,"an implicit project-owner correction returns the owner's real account event stream");assert.equal(revised.head,Number(database.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head),"an owner working outside project mode receives the actual account-stream cursor");assert.match(JSON.parse(database.sqlite.prepare("SELECT content FROM private_content WHERE content_id='governed-output-content'").get().content).content_markdown,/Owner-corrected/);
+  const revisionHistory=await request("/api/artifacts/governed-output/revisions",{headers:reviewerScope});assert.equal(revisionHistory.status,200);const retainedHistory=await revisionHistory.json();assert.deepEqual(retainedHistory.revisions.map((entry)=>entry.revision),[1,0]);assert.equal(retainedHistory.revisions[0].current,true,"the current corrected body and actual original are independently recoverable");
+  assert.equal(retainedHistory.revisions[0].createdByUserId,"governed-review-owner");assert.equal(retainedHistory.revisions[1].createdByUserId,"governed-review-owner","the original revision credits the actual generating user");
+  const earlier=await request("/api/artifacts/governed-output/revisions?before=1",{headers:reviewerScope});assert.equal(earlier.status,200);assert.deepEqual((await earlier.json()).revisions.map((entry)=>entry.revision),[0]);assert.equal((await request("/api/artifacts/governed-output/revisions?before=-1",{headers:reviewerScope})).status,400,"history cursors cannot escape their numeric revision boundary");
+  database.sqlite.prepare("UPDATE users SET consent_version=NULL WHERE user_id=?").run("governed-review-viewer");database.reset();assert.equal((await request("/api/artifacts/governed-output/revisions",{headers:reviewerScope})).status,428);assert.equal(database.writeCount(),0,"historical finished work cannot be read without current consent");database.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id=?").run("pilot-2026-08-10","governed-review-viewer");
+  const originalRevision=await request("/api/artifacts/governed-output/revisions/0",{headers:reviewerScope});assert.equal(originalRevision.status,200);assert.match((await originalRevision.json()).content.markdown,/Initial approved manuscript/);
+  const historical=database.sqlite.prepare("SELECT content_json FROM artifact_revisions WHERE artifact_id='governed-output' AND revision=0").get().content_json;database.sqlite.prepare("UPDATE artifact_revisions SET content_json='CORRUPTED REVISION' WHERE artifact_id='governed-output' AND revision=0").run();database.reset();assert.equal((await request("/api/artifacts/governed-output/revisions/0",{headers:reviewerScope})).status,409);assert.equal((await request("/api/artifacts/governed-output/revisions/0/restore",json(ownerScope,{expectedRevision:1}))).status,409);assert.equal(database.writeCount(),0,"digest-invalid historical work can neither be disclosed nor restored");database.sqlite.prepare("UPDATE artifact_revisions SET content_json=? WHERE artifact_id='governed-output' AND revision=0").run(historical);
+  assert.equal((await request("/api/artifacts/governed-output/revisions/0/restore",json(reviewerScope,{expectedRevision:1}))).status,403,"a viewer can inspect prior work without gaining restoration rights");
+  assert.equal((await request("/api/artifacts/governed-output/revisions",{headers:reviewer})).status,404,"a personal session cannot read another account's shared-project revision body");
+  assert.equal((await revise(ownerScope,"A conflicting stale change",0)).status,409,"a stale output revision never overwrites a collaborator correction");
+  assert.equal((await append(reviewerScope,{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere",format:"markdown"}})).status,409,"editing immediately closes the distribution gate");
+  assert.equal((await request(`/api/shared/${encodeURIComponent(share.token)}`)).status,404,"existing external links stop revealing newly unapproved work");
+  const mixedExport=await request("/api/events",json(ownerScope,{action:"batch",events:[{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere"}},{type:"BlockWeightSet",payload:{block_id:versions[0].block_id,weight:.4}}]}));assert.equal(mixedExport.status,400,"mixed export-and-mutation batches cannot bypass review policy");
+  const restored=await request("/api/artifacts/governed-output/revisions/0/restore",json(ownerScope,{expectedRevision:1}));assert.equal(restored.status,200,JSON.stringify(await restored.clone().json()));const restoredBody=await restored.json();assert.equal(restoredBody.revision,2);assert.match(JSON.parse(database.sqlite.prepare("SELECT content FROM private_content WHERE content_id='governed-output-content'").get().content).content_markdown,/Initial approved manuscript/);assert.equal(restoredBody.appended[0].payload.restored_from_revision,0,"restoration creates a fresh auditable edit rather than overwriting history");
+  assert.deepEqual(database.sqlite.prepare("SELECT revision FROM artifact_revisions WHERE artifact_id='governed-output' ORDER BY revision").all().map((entry)=>entry.revision),[0,1,2]);
+  assert.equal((await append(reviewerScope,{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere",format:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"}})).status,409,"restoration closes every professional-export release gate until independent approval");
+  assert.equal((await append(ownerScope,action("ArtifactReviewRequested"))).status,200);
+  const staleApproval=action("ArtifactApproved"),staleReviewRequest=action("ArtifactReviewRequested");
+  const updatedAgain=await revise(ownerScope,"# Governed deliverable\n\nFinal independently reviewable manuscript.",2);assert.equal(updatedAgain.status,200);assert.equal((await updatedAgain.json()).revision,3);
+  database.reset();const outdatedReviewRequest=await append(ownerScope,staleReviewRequest);assert.equal(outdatedReviewRequest.status,409);assert.equal((await outdatedReviewRequest.json()).error,"stale_review_context");assert.equal(database.writeCount(),0,"an earlier output body cannot be resubmitted after a collaborator changes the deliverable");
+  assert.equal((await append(ownerScope,action("ArtifactReviewRequested"))).status,200);
+  database.reset();const outdatedApproval=await append(reviewerScope,staleApproval);assert.equal(outdatedApproval.status,409);assert.equal((await outdatedApproval.json()).error,"stale_review_context");assert.equal(database.writeCount(),0,"an approval captured for an unseen earlier revision can never approve a later correction");
+  assert.equal((await append(reviewerScope,action("ArtifactApproved"))).status,200,"independent viewer can re-approve the exact current corrected revision");
+  const staleRevision=database.sqlite.prepare("SELECT content_sha256 FROM artifact_revisions WHERE artifact_id='governed-output' AND revision=1").get().content_sha256;database.reset();const outdatedRelease=await append(reviewerScope,{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere",artifact_revision:1,content_sha256:staleRevision,format:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"}});assert.equal(outdatedRelease.status,409);assert.equal((await outdatedRelease.json()).error,"stale_release_context");assert.equal(database.writeCount(),0,"stale approved bytes cannot create a misleading professional-export receipt");
+  const staleRestored=database.sqlite.prepare("SELECT content_sha256 FROM artifact_revisions WHERE artifact_id='governed-output' AND revision=2").get().content_sha256;for(const format of ["markdown","application/pdf","application/zip"]){database.reset();const stale=await append(reviewerScope,{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere",artifact_revision:2,content_sha256:staleRestored,format}});assert.equal(stale.status,409,format);assert.equal(database.writeCount(),0,`${format} cannot release previously prepared bytes after approval moves to a later revision`);}
+  database.reset();const missingBinding=await append(reviewerScope,{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere",format:"markdown"}});assert.equal(missingBinding.status,409);assert.equal(database.writeCount(),0,"governed content exports cannot omit exact body custody");
+  const approvedRevision=database.sqlite.prepare("SELECT content_sha256 FROM artifact_revisions WHERE artifact_id='governed-output' AND revision=3").get().content_sha256;assert.equal((await append(reviewerScope,{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere",artifact_revision:3,content_sha256:approvedRevision,format:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"}})).status,200,"the exact independently approved output revision is eligible for professional distribution");assert.equal((await append(reviewerScope,{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere",artifact_revision:3,content_sha256:approvedRevision,format:"application/zip"}})).status,200,"complete media archives use the identical independently approved revision and content-custody gate");
+  assert.equal((await request(memberPath,json(owner,{reviewAccess:false},"PATCH"))).status,200,"owner can immediately revoke reviewer authority");
+  assert.equal((await request("/api/session",{headers:reviewerScope})).status,403,"revocation invalidates the existing project session");
+  reviewerScope=await open(reviewer);
+  assert.equal((await append(reviewerScope,action("ArtifactChangesRequested"))).status,403,"revoked viewer cannot request changes");
+  assert.equal((await append(reviewerScope,action("ArtifactApproved"))).status,403,"revoked viewer cannot issue a new approval");
+  assert.equal((await revise(reviewerScope,"Revoked reviewer edit",1)).status,403,"revocation never exposes author permissions");
+  const audit=database.sqlite.prepare("SELECT action FROM organization_audit_events WHERE organization_id=? AND action IN('ProjectReviewAccessGranted','ProjectReviewAccessRevoked') ORDER BY occurred_at").all(organizationId);assert.deepEqual(audit.map((row)=>row.action).sort(),["ProjectReviewAccessGranted","ProjectReviewAccessRevoked"]);
 });
 
 test("shared Canvas permissions, actor-isolated outputs, removal, restoration, and long-history receipts stay tenant-safe",async()=>{
@@ -1968,8 +2124,8 @@ test("shared Canvas permissions, actor-isolated outputs, removal, restoration, a
   const queued=await request("/api/document-jobs",json(scoped,extraction));const queuedBody=await queued.json();assert.equal(queued.status,202,JSON.stringify(queuedBody));
   assert.equal(database.sqlite.prepare("SELECT owner_id,stream_id FROM document_jobs WHERE job_id=?").get(queuedBody.job.jobId).owner_id,"canvas-project-editor");
   assert.deepEqual({...database.sqlite.prepare("SELECT owner_user_id,actor_user_id,visibility FROM project_resource_scopes WHERE resource_kind='job' AND resource_id=?").get(queuedBody.job.jobId)},{owner_user_id:"canvas-project-owner",actor_user_id:"canvas-project-editor",visibility:"actor_private"});
-  const provenance=database.sqlite.prepare("SELECT event.actor,event.type,event.payload FROM project_resource_scopes resource JOIN events event ON event.event_id=resource.source_event_id WHERE resource.resource_kind='job' AND resource.resource_id=?").get(queuedBody.job.jobId);
-  assert.equal(provenance.actor,"user:canvas-project-editor");assert.equal(provenance.type,"ProjectDocumentJobQueued");assert.deepEqual(JSON.parse(provenance.payload),{job_id:queuedBody.job.jobId,document_id:"doc-atmosphere",kind:"extract_reference",organization_id:organizationId,project_access_id:projectAccessId,project_id:"project-atmosphere",history_owner_user_id:"canvas-project-owner",actor_user_id:"canvas-project-editor"});
+  const provenance=database.sqlite.prepare("SELECT event.event_id,event.actor,event.type,event.payload FROM project_resource_scopes resource JOIN events event ON event.event_id=resource.source_event_id WHERE resource.resource_kind='job' AND resource.resource_id=?").get(queuedBody.job.jobId);
+  assert.equal(provenance.actor,"user:canvas-project-editor");assert.equal(provenance.type,"ProjectDocumentJobQueued");const{_private_ref:privateReference,...operationalProvenance}=JSON.parse(provenance.payload);assert.equal(privateReference,provenance.event_id);assert.deepEqual(operationalProvenance,{job_id:queuedBody.job.jobId,document_id:"doc-atmosphere",kind:"extract_reference",organization_id:organizationId,project_access_id:projectAccessId,project_id:"project-atmosphere",history_owner_user_id:"canvas-project-owner",actor_user_id:"canvas-project-editor"});
   await drainBackground();
   database.reset();assert.equal((await request(`/api/document-jobs/${queuedBody.job.jobId}`,{headers:collaborator})).status,404);assert.equal(database.writeCount(),0,"removing project context cannot expose an actor's tenant-owned job");
   database.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run("canvas-project-editor");
@@ -2022,8 +2178,7 @@ test("shared Canvas permissions, actor-isolated outputs, removal, restoration, a
     environment.MEDIA={get:async(key)=>{if(key!==privateMediaKey)return null;privatePixelReads+=1;return{customMetadata:{ownerId:"canvas-project-owner"},writeHttpMetadata(headers){headers.set("content-type","image/png");},body:new Blob(["PRIVATE OTHER PROJECT PIXELS"]).stream()};}};
     try{
       const callsBeforeForgery=providerCalls,snapshot={facts:[{block_id:"block-reference",document_id:"doc-atmosphere",type:"reference",active:true,position:"a",properties:{reference_id:"ref-window-light",label:"Forged private reference",weight:1,pixel_reference_mode:"preserve_composition",media_url:privateMediaUrl}}]};
-      const forged=await request("/api/document-jobs",json(scoped,{kind:"render_document",documentId:"doc-atmosphere",sourceSurface:"document",payload:{artifactKind:"storyboard",productionMode:"managed",itemCount:1,paidMediaConfirmed:true,budgetAcknowledged:true,snapshot}}));const admitted=await forged.json();assert.equal(forged.status,202,JSON.stringify(admitted));await drainBackground();
-      const rejected=database.sqlite.prepare("SELECT status,error_message FROM document_jobs WHERE job_id=?").get(admitted.job.jobId);assert.equal(rejected.status,"failed",JSON.stringify(rejected));assert.match(String(rejected.error_message),/not authorized for the selected project/);assert.equal(privatePixelReads,0,"forged owner-owned media is rejected before its private pixels are read");assert.equal(providerCalls,callsBeforeForgery,"cross-project snapshot media never reaches a provider");
+      const forged=await request("/api/document-jobs",json(scoped,{kind:"render_document",documentId:"doc-atmosphere",sourceSurface:"document",payload:{artifactKind:"storyboard",productionMode:"managed",itemCount:1,paidMediaConfirmed:true,budgetAcknowledged:true,snapshot}}));const rejected=await forged.json();assert.equal(forged.status,409,JSON.stringify(rejected));assert.equal(rejected.error,"context_source_not_authorized");assert.match(String(rejected.message),/not authorized for the selected project/);assert.equal(privatePixelReads,0,"forged owner-owned media is rejected before its private pixels are read");assert.equal(providerCalls,callsBeforeForgery,"cross-project snapshot media never reaches a provider or creates an execution job");
     }finally{environment.MEDIA=previousMedia;}
   }finally{globalThis.fetch=previousFetch;delete environment.OPENAI_API_KEY;}
   assert.equal((await request(`/api/shares/${encodeURIComponent(shared.share.shareId)}`,{method:"DELETE",headers:ownerScope})).status,200);
@@ -2097,6 +2252,214 @@ test("revoking a project-owning organization administrator quarantines their pro
   const audit=await(await request(`/api/workspaces/${organizationId}/audit`,{headers:owner})).json();assert.ok(audit.audit.some((entry)=>entry.action==="OrganizationMembershipRevoked"));
 });
 
+test("managed pilots enforce named participants, whole-pilot spending, prospective tenant retention, scheduled receipts, and safe owner removal",async()=>{
+  const {database,environment,request}=await productionWorker();
+  const owner=await specialistIdentity(database,request,"managed-pilot-owner"),author=await specialistIdentity(database,request,"managed-pilot-author"),reviewer=await specialistIdentity(database,request,"managed-pilot-reviewer"),stranger=await specialistIdentity(database,request,"managed-pilot-stranger");
+  const json=(headers,body,method="POST")=>({method,headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
+  for(const identity of [owner,author])assert.equal((await request("/api/events?after=0&content=0",{headers:identity})).status,200);
+  const organization=await request("/api/workspaces",json(owner,{name:"Controlled product pilot"}));assert.equal(organization.status,201);const organizationId=(await organization.json()).organizationId;
+  const invite=async(identity,userId,role="member")=>{const response=await request(`/api/workspaces/${organizationId}/members`,json(owner,{email:`${userId}@example.test`,role}));assert.equal(response.status,201);const invitation=await response.json();const accepted=await request(`/api/workspaces/${organizationId}/invitations/${invitation.invitationId}/accept`,json(identity,{token:new URL(invitation.invitationUrl).searchParams.get("token")}));assert.equal(accepted.status,200);};
+  await invite(author,"managed-pilot-author","administrator");await invite(reviewer,"managed-pilot-reviewer");
+  const register=async(identity)=>{const response=await request(`/api/workspaces/${organizationId}/projects`,json(identity,{projectId:"project-atmosphere"}));assert.equal(response.status,201,JSON.stringify(await response.clone().json()));return(await response.json()).projectAccessId;};
+  const ownerProject=await register(owner),authorProject=await register(author);
+  assert.equal((await request(`/api/workspaces/${organizationId}/pilot`,json(author,{maxParticipants:3}))).status,403,"an administrator cannot quietly impose a managed pilot on the organization owner");
+  assert.equal((await request(`/api/workspaces/${organizationId}/pilot`,json(owner,{maxParticipants:1}))).status,400,"every cohort preserves enough seats for an independent reviewer");
+  for(const [description,schedule] of [["remote decades-long end date",{startsAt:new Date().toISOString(),endsAt:"2099-01-01T00:00:00.000Z"}],["backdated start",{startsAt:new Date(Date.now()-86_400_000).toISOString()}],["future start",{startsAt:new Date(Date.now()+86_400_000).toISOString()}],["custom shorter end",{endsAt:new Date(Date.now()+86_400_000).toISOString()}]]){
+    database.reset();const changed=await request(`/api/workspaces/${organizationId}/pilot`,json(owner,{maxParticipants:3,...schedule}));assert.equal(changed.status,400,description);assert.equal((await changed.json()).error,"valid_pilot_configuration_required");assert.equal(database.writeCount(),0,`${description} must not create a controlled cohort`);
+  }
+  const configured=await request(`/api/workspaces/${organizationId}/pilot`,json(owner,{maxParticipants:3,participantCapMicrousd:2_000_000,organizationCapMicrousd:2_700_000,evidenceDays:40}));assert.equal(configured.status,201,JSON.stringify(await configured.clone().json()));const configuration=await configured.json(),cohortId=configuration.cohortId;assert.equal(new Date(configuration.endsAt).getTime()-new Date(configuration.startsAt).getTime(),30*86_400_000,"the production endpoint fixes every cohort at exactly thirty days");assert.ok(Math.abs(Date.now()-new Date(configuration.startsAt).getTime())<30_000,"a controlled pilot starts immediately");
+  assert.equal((await request(`/api/workspaces/${organizationId}/pilot`,{headers:stranger})).status,403,"another tenant never learns cohort membership or spending");
+  const authorEnrollment=await request(`/api/workspaces/${organizationId}/pilot/participants`,json(owner,{email:"managed-pilot-author@example.test",role:"member"}));assert.equal(authorEnrollment.status,201);const authorParticipant=(await authorEnrollment.json()).participantId;
+  const reviewerEnrollment=await request(`/api/workspaces/${organizationId}/pilot/participants`,json(owner,{email:"managed-pilot-reviewer@example.test",role:"reviewer"}));assert.equal(reviewerEnrollment.status,201);const reviewerParticipant=(await reviewerEnrollment.json()).participantId;
+  assert.equal((await request(`/api/workspaces/${organizationId}/pilot/participants`,json(owner,{email:"another-person@example.test"}))).status,409,"the fixed cohort seat count is enforced atomically");
+  assert.equal((await request(`/api/workspaces/${organizationId}/projects/${ownerProject}/members`,json(owner,{userId:"managed-pilot-reviewer",role:"viewer"}))).status,201);
+  const opened=await request(`/api/workspaces/${organizationId}/projects/${ownerProject}/context`,{method:"POST",headers:reviewer});assert.equal(opened.status,200);const reviewerScope={...reviewer,cookie:opened.headers.get("set-cookie")?.split(";")[0]??""};
+  assert.equal((await request("/api/session",{headers:reviewerScope})).status,200,"an enrolled named reviewer can read their exact shared project");
+  const ownerContext=await request(`/api/workspaces/${organizationId}/projects/${ownerProject}/context`,{method:"POST",headers:owner});assert.equal(ownerContext.status,200);const ownerUploadScope={...owner,cookie:ownerContext.headers.get("set-cookie")?.split(";")[0]??""};
+  let uploadedMetadata=null;const uploadedObjects=new Map();environment.MEDIA={async put(key,value,options){uploadedMetadata=options.customMetadata;uploadedObjects.set(key,{value,metadata:options.customMetadata,contentType:options.httpMetadata.contentType});},async get(key){const object=uploadedObjects.get(key);return object?{customMetadata:object.metadata,httpEtag:"managed-source",writeHttpMetadata(headers){headers.set("content-type",object.contentType);},body:new Blob([object.value]).stream()}:null;},async delete(key){uploadedObjects.delete(key);}};
+  const source=()=>{const form=new FormData();form.append("file",new File(["ordinary licensed customer material"],"pilot-reference.png",{type:"image/png"}));form.append("rightsConfirmed","true");return form;};
+  database.reset();const unclassified=await request("/api/media",{method:"POST",headers:ownerUploadScope,body:source()});assert.equal(unclassified.status,428);assert.equal((await unclassified.json()).error,"pilot_non_sensitive_source_confirmation_required");assert.equal(database.writeCount(),0,"a controlled source without a non-sensitive attestation creates no customer state");
+  const classified=source();classified.append("nonSensitiveConfirmed","true");const acceptedSource=await request("/api/media",{method:"POST",headers:ownerUploadScope,body:classified});assert.equal(acceptedSource.status,200,JSON.stringify(await acceptedSource.clone().json()));const uploadedSource=await acceptedSource.json();assert.equal(uploadedSource.sourceClassification,"non-sensitive-licensed");assert.equal(uploadedMetadata.sourceClassification,"non-sensitive-licensed");assert.equal(uploadedMetadata.pilotCohortId,cohortId);assert.equal((await request(uploadedSource.url,{headers:reviewer})).status,200,"an actively enrolled project reviewer can read its explicitly shared licensed source");
+  const appendSource=async(event)=>{const response=await request("/api/events",json(ownerUploadScope,{action:"append",event}));assert.equal(response.status,200,JSON.stringify(await response.clone().json()));};
+  await appendSource({type:"ReferenceIngested",payload:{reference_id:"licensed-predecessor-source",document_id:"doc-atmosphere",source_type:"upload",source_ref:uploadedSource.url,content_hash:uploadedSource.contentHash,rights_class:"asserted"}});
+  await appendSource({type:"RightsAsserted",payload:{reference_id:"licensed-predecessor-source",rights_class:"owned_or_licensed",assertion_method:"controlled-cohort-upload"}});
+  await appendSource({type:"BlockCreated",payload:{block_id:"licensed-predecessor-reference",project_id:"project-atmosphere",document_id:"doc-atmosphere",type:"reference",handle:"reference/licensed-predecessor",position:"z0899",properties:{reference_id:"licensed-predecessor-source",label:"Continuing licensed source",media_url:uploadedSource.url,authority:"authored",weight:.8}}});
+
+  const authorMembership=database.sqlite.prepare("SELECT membership_id FROM organization_memberships WHERE organization_id=? AND user_id=?").get(organizationId,"managed-pilot-author").membership_id;
+  database.reset();const forbiddenRemoval=await request(`/api/workspaces/${organizationId}/members/${authorMembership}`,{method:"DELETE",headers:owner});assert.equal(forbiddenRemoval.status,409);assert.equal((await forbiddenRemoval.json()).error,"project_owner_transfer_required");assert.equal(database.writeCount(),0,"owner-removal rejection cannot partially revoke or quarantine active pilot work");
+  assert.throws(()=>database.sqlite.prepare("UPDATE organization_memberships SET status='revoked' WHERE membership_id=?").run(authorMembership),/project_owner_transfer_required/,"a database guard also blocks racing owner revocation inside the same transaction");
+  assert.throws(()=>database.sqlite.prepare("DELETE FROM organization_memberships WHERE membership_id=?").run(authorMembership),/project_owner_transfer_required/,"hard-deleting a membership cannot strand its active pilot project");
+  assert.throws(()=>database.sqlite.prepare("DELETE FROM pilot_participants WHERE participant_id=?").run(authorParticipant),/project_owner_transfer_required/,"hard-deleting an owner participant cannot bypass transfer safeguards");
+  assert.throws(()=>database.sqlite.prepare("DELETE FROM pilot_cohorts WHERE cohort_id=?").run(cohortId),/active_pilot_cannot_be_deleted/,"the active control boundary cannot disappear through direct deletion");
+  assert.equal((await request(`/api/workspaces/${organizationId}/pilot/participants/${authorParticipant}`,{method:"DELETE",headers:owner})).status,409,"pilot enrollment cannot be revoked while its participant owns an active project");
+  assert.equal(database.sqlite.prepare("SELECT status FROM organization_projects WHERE project_access_id=?").get(authorProject).status,"active");
+
+  const ownerScope={organizationId,projectAccessId:ownerProject,actorUserId:"managed-pilot-owner"},authorScope={organizationId,projectAccessId:authorProject,actorUserId:"managed-pilot-author"};
+  const options=(userId,reservationId,projectScope,extra={})=>({maximumMicrousd:2_000_000,allowUserOverage:false,reservationId,streamId:`creative:${userId}`,correlationId:reservationId,operation:"synthetic-pilot-verification",projectScope,...extra});
+  const reviewerBillingScope={organizationId,projectAccessId:ownerProject,actorUserId:"managed-pilot-reviewer"};assert.deepEqual(await reserveCostBudget(environment,"managed-pilot-reviewer",1,options("managed-pilot-reviewer","reviewer-paid-generation",reviewerBillingScope)),{ok:false,scope:"authorization"},"a named reviewer never gains paid generation merely through cohort membership");
+  const roleRace=await reserveCostBudget(environment,"managed-pilot-author",25,options("managed-pilot-author","author-role-race",authorScope));assert.equal(roleRace.ok,true);database.sqlite.prepare("UPDATE pilot_participants SET role='reviewer' WHERE participant_id=?").run(authorParticipant);assert.equal(await claimCostBudgetReservation(environment,"managed-pilot-author",roleRace.reservationId),false,"a newly downgraded reviewer cannot claim an earlier author's provider reservation");assert.equal(database.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=?").get("managed-pilot-author",`pilot:${cohortId}`).reserved_microusd,0,"failed execution claims release every fixed pilot counter");database.sqlite.prepare("UPDATE pilot_participants SET role='member' WHERE participant_id=?").run(authorParticipant);
+  assert.deepEqual(await reserveCostBudget(environment,"managed-pilot-owner",1_000,options("managed-pilot-owner","personal-bypass",undefined)),{ok:false,scope:"authorization"},"a named participant cannot move paid work into an unscoped personal account");
+  const first=await reserveCostBudget(environment,"managed-pilot-owner",1_000_000,options("managed-pilot-owner","pilot-owner-first",ownerScope));assert.equal(first.ok,true);assert.equal((await settleCostBudget(environment,"managed-pilot-owner",first.reservationId,1_000_000)).settled,true);
+  const authorReservation=await reserveCostBudget(environment,"managed-pilot-author",1_000_000,options("managed-pilot-author","pilot-author-first",authorScope));assert.equal(authorReservation.ok,true);
+  const rollover=await reserveCostBudget(environment,"managed-pilot-owner",500_000,options("managed-pilot-owner","pilot-owner-next-month",ownerScope,{period:"2099-12"}));assert.equal(rollover.ok,true,"monthly receipts can rotate without resetting the fixed cohort envelope");
+  const fixedPeriod=`pilot:${cohortId}`;assert.equal(database.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=?").get("managed-pilot-owner",fixedPeriod).reserved_microusd,500_000);
+  const orgOverage=await reserveCostBudget(environment,"managed-pilot-author",400_000,options("managed-pilot-author","pilot-org-over",authorScope));assert.deepEqual(orgOverage,{ok:false,scope:"workspace"},"the whole-pilot organization cap remains tighter than the participant's remaining allowance");
+  const participantOverage=await reserveCostBudget(environment,"managed-pilot-owner",1_100_000,options("managed-pilot-owner","pilot-user-over",ownerScope,{allowUserOverage:true}));assert.deepEqual(participantOverage,{ok:false,scope:"user"},"an overage override can never bypass a fixed participant cap");
+  assert.equal((await settleCostBudget(environment,"managed-pilot-author",authorReservation.reservationId,1_000_000)).settled,true);
+  assert.equal((await settleCostBudget(environment,"managed-pilot-owner",rollover.reservationId,900_000)).settled,true,"unexpected provider overage preserves its real accounted charge");
+  assert.equal(database.sqlite.prepare("SELECT status FROM pilot_cohorts WHERE cohort_id=?").get(cohortId).status,"paused","a fixed-envelope overrun immediately pauses further paid work");
+  assert.equal(database.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope='pilot_org' AND scope_id=? AND period=?").get(cohortId,fixedPeriod).used_microusd,2_900_000,"actual usage is never concealed to make the cap appear satisfied");
+  assert.deepEqual(await reserveCostBudget(environment,"managed-pilot-owner",1,options("managed-pilot-owner","paused-operation",ownerScope)),{ok:false,scope:"authorization"});
+  assert.equal((await request("/api/session",{headers:reviewerScope})).status,200,"pausing paid work must not prevent participants from reviewing their existing project");
+  environment.OPENAI_API_KEY="synthetic-pilot-provider-must-not-be-called";
+  for(const [path,body] of [["/api/events",{action:"generate",documentId:"doc-atmosphere",budgetAcknowledged:true}],["/api/document-jobs",{kind:"generate",documentId:"doc-atmosphere",payload:{budgetAcknowledged:true}}]]){
+    database.reset();const blocked=await request(path,json(owner,body));assert.equal(blocked.status,403,`${path} refuses paused managed-pilot work before provider execution`);assert.equal(database.writeCount(),0,`${path} refuses paused work before reserving or creating a job`);
+  }
+
+  const exactScope={organizationId,projectAccessId:ownerProject,projectId:"project-atmosphere",ownerUserId:"managed-pilot-owner",actorUserId:"managed-pilot-owner"};
+  const previous=await storePrivateContent(environment,"managed-pilot-owner","document-artifact-input","EXACT ORIGINAL CUSTOMER EVIDENCE",exactScope);
+  const originalExpiry=database.sqlite.prepare("SELECT expires_at FROM private_content WHERE content_id=?").get(previous.contentId).expires_at;
+  assert.ok(Date.parse(originalExpiry)-Date.now()>39*86_400_000);
+  const retention=await request(`/api/workspaces/${organizationId}/retention`,json(owner,{transientDays:5,evidenceDays:7,revisionDays:14},"PATCH"));assert.equal(retention.status,200);assert.equal((await retention.json()).policy.version,2);
+  assert.equal(database.sqlite.prepare("SELECT expires_at FROM private_content WHERE content_id=?").get(previous.contentId).expires_at,originalExpiry,"retention-policy changes never retroactively rewrite existing evidence");
+  const next=await storePrivateContent(environment,"managed-pilot-owner","document-artifact-input","EXACT FUTURE CUSTOMER EVIDENCE",exactScope);
+  const nextExpiry=Date.parse(database.sqlite.prepare("SELECT expires_at FROM private_content WHERE content_id=?").get(next.contentId).expires_at);assert.ok(nextExpiry-Date.now()<8*86_400_000&&nextExpiry-Date.now()>6*86_400_000);
+  const retentionScope=database.sqlite.prepare("SELECT organization_id,project_access_id,classification,policy_version FROM private_content_retention_scopes WHERE content_id=?").get(next.contentId);assert.equal(retentionScope.organization_id,organizationId);assert.equal(retentionScope.project_access_id,ownerProject);assert.equal(retentionScope.classification,"governed-evidence");assert.equal(retentionScope.policy_version,2);
+  const expired=new Date(Date.now()-60_000).toISOString();database.sqlite.prepare("UPDATE private_content SET expires_at=? WHERE content_id IN(?,?)").run(expired,previous.contentId,next.contentId);
+  const held=await request(`/api/workspaces/${organizationId}/retention`,json(owner,{legalHold:true},"PATCH"));assert.equal(held.status,200);assert.equal((await held.json()).policy.legal_hold,1);
+  await storePrivateContent(environment,"managed-pilot-owner","prompt","A separate personal note");
+  assert.equal(database.sqlite.prepare("SELECT content,redacted_at FROM private_content WHERE content_id=?").get(previous.contentId).redacted_at,null,"personal account maintenance never erases another organization's held scoped evidence");
+  const revisionInsert=database.sqlite.prepare("INSERT INTO artifact_revisions(revision_id,owner_id,organization_id,project_access_id,project_id,document_id,artifact_id,revision,content_json,content_sha256,created_by_user_id,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)");
+  revisionInsert.run("held-project-revision","managed-pilot-owner",organizationId,ownerProject,"project-atmosphere","doc-atmosphere","held-output",0,"HELD ORIGINAL OUTPUT","held-digest","managed-pilot-owner",expired,expired);
+  revisionInsert.run("expired-personal-revision","managed-pilot-owner",null,null,"project-atmosphere","doc-atmosphere","personal-output",0,"EXPIRED PERSONAL OUTPUT","personal-digest","managed-pilot-owner",expired,expired);
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM retention_sweep_runs").get().count,0,"ordinary application traffic never invents scheduled execution receipts");
+  assert.equal(await sweepExpiredPrivateContent(environment),1,"traffic-triggered cleanup processes expired recoverable history without impersonating a scheduled run");
+  assert.equal(database.sqlite.prepare("SELECT content_json,redacted_at FROM artifact_revisions WHERE revision_id='expired-personal-revision'").get().content_json,"");
+  assert.equal(database.sqlite.prepare("SELECT redacted_at FROM artifact_revisions WHERE revision_id='held-project-revision'").get().redacted_at,null,"an organizational legal hold protects existing historical output");
+  assert.equal(database.sqlite.prepare("SELECT redacted_at FROM private_content WHERE content_id=?").get(next.contentId).redacted_at,null,"an organizational legal hold protects existing governed evidence");
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM retention_sweep_runs").get().count,0,"traffic cleanup never fabricates scheduled maintenance receipts");
+  const releasedHold=await request(`/api/workspaces/${organizationId}/retention`,json(owner,{legalHold:false},"PATCH"));assert.equal(releasedHold.status,200);
+  await worker.scheduled({},environment);const cleaned=database.sqlite.prepare("SELECT content,redacted_at FROM private_content WHERE content_id=?").get(next.contentId);assert.equal(cleaned.content,"");assert.ok(cleaned.redacted_at);assert.equal(database.sqlite.prepare("SELECT content_json FROM artifact_revisions WHERE revision_id='held-project-revision'").get().content_json,"");const maintenance=database.sqlite.prepare("SELECT trigger_kind,status,processed_count FROM retention_sweep_runs ORDER BY started_at DESC LIMIT 1").get();assert.equal(maintenance.trigger_kind,"scheduled");assert.equal(maintenance.status,"completed");assert.ok(maintenance.processed_count>=3);
+  const dashboard=await(await request(`/api/workspaces/${organizationId}/pilot`,{headers:owner})).json();assert.equal(dashboard.maintenance.status,"completed");assert.equal(dashboard.maintenance.scope,"installation");assert.equal("processed_count" in dashboard.maintenance,false,"global retention telemetry never exposes other organizations' record counts");
+
+  assert.equal((await request(`/api/workspaces/${organizationId}/pilot/participants/${reviewerParticipant}`,{method:"DELETE",headers:owner})).status,200);
+  database.reset();assert.equal((await request("/api/session",{headers:reviewerScope})).status,403);assert.equal(database.writeCount(),0,"revoked participants cannot recreate a stale project session");
+  database.reset();const unscopedSession=await request("/api/session",{headers:reviewer});assert.equal(unscopedSession.status,200);const unscopedIdentity=await unscopedSession.json();assert.ok(!unscopedIdentity.organizations.some((organization)=>organization.organizationId===organizationId),"revoked participants never retain organization names in an unscoped account session");assert.ok(!unscopedIdentity.projects.some((project)=>project.organizationId===organizationId),"revoked participants never retain shared project identifiers without a context cookie");assert.equal(database.writeCount(),0,"hiding withdrawn organization access never rewrites customer data");
+  database.reset();assert.equal((await request(uploadedSource.url,{headers:reviewer})).status,403,"removing a project cookie cannot restore withdrawn access to shared source bytes");assert.equal(database.writeCount(),0,"revoked direct source reads cannot create customer data");
+  database.sqlite.prepare("UPDATE cost_budget_counters SET used_microusd=123456 WHERE scope='pilot_user' AND scope_id=? AND period=?").run("managed-pilot-reviewer",fixedPeriod);
+  const reenrolled=await request(`/api/workspaces/${organizationId}/pilot/participants`,json(owner,{email:"managed-pilot-reviewer@example.test",role:"reviewer"}));assert.equal(reenrolled.status,201,JSON.stringify(await reenrolled.clone().json()));const returned=await reenrolled.json();assert.equal(returned.participantId,reviewerParticipant);assert.equal(returned.reenrolled,true);assert.equal(database.sqlite.prepare("SELECT used_microusd FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=?").get("managed-pilot-reviewer",fixedPeriod).used_microusd,123456,"returning to the same cohort never resets the participant's fixed spending history");
+  const reopened=await request(`/api/workspaces/${organizationId}/projects/${ownerProject}/context`,{method:"POST",headers:reviewer});assert.equal(reopened.status,200);assert.equal((await request(`/api/workspaces/${organizationId}/pilot/participants/${reviewerParticipant}`,{method:"DELETE",headers:owner})).status,200);
+  environment.FORMA_PILOT_COHORT_ID=cohortId;database.sqlite.prepare("UPDATE pilot_cohorts SET ends_at=? WHERE cohort_id=?").run(new Date(Date.now()-60_000).toISOString(),cohortId);
+  assert.equal((await request("/api/session",{headers:owner})).status,200,"the exact existing organization owner can recover an expired dedicated installation");
+  assert.equal((await request("/api/session",{headers:author})).status,403,"ordinary participants cannot enter a dedicated installation after its cohort expires");
+  assert.equal((await request(`/api/workspaces/${organizationId}/pilot`,json(author,{status:"closed"},"PATCH"))).status,403,"only the organization owner can permanently close a controlled cohort");
+  const closed=await request(`/api/workspaces/${organizationId}/pilot`,json(owner,{status:"closed"},"PATCH"));assert.equal(closed.status,200);assert.equal((await closed.json()).status,"closed");assert.deepEqual(await reserveCostBudget(environment,"managed-pilot-owner",1,options("managed-pilot-owner","closed-operation",ownerScope)),{ok:false,scope:"authorization"},"closing the cohort never silently restores unrestricted paid access");
+  assert.equal((await request("/api/session",{headers:owner})).status,200,"closed dedicated installations retain narrowly scoped owner recovery");
+  assert.equal((await(await request(`/api/workspaces/${organizationId}/pilot`,{headers:owner})).json()).cohort.status,"closed","administrators can see a closed cohort and intentionally replace it");
+  const predecessorEvidence=await storePrivateContent(environment,"managed-pilot-owner","document-artifact-input","PREVIOUS COHORT EVIDENCE",exactScope);const predecessorExpiry=database.sqlite.prepare("SELECT expires_at FROM private_content WHERE content_id=?").get(predecessorEvidence.contentId).expires_at;const precedingPolicy=database.sqlite.prepare("SELECT version,transient_days,evidence_days,revision_days,legal_hold FROM organization_retention_policies WHERE organization_id=?").get(organizationId);assert.equal(precedingPolicy.evidence_days,7);
+  const replacement=await request(`/api/workspaces/${organizationId}/pilot`,json(owner,{maxParticipants:3,participantCapMicrousd:2_000_000,organizationCapMicrousd:6_000_000,evidenceDays:21}));assert.equal(replacement.status,201,JSON.stringify(await replacement.clone().json()));const replacementId=(await replacement.json()).cohortId;assert.notEqual(replacementId,cohortId);const successorPolicy=database.sqlite.prepare("SELECT version,transient_days,evidence_days,revision_days,legal_hold FROM organization_retention_policies WHERE organization_id=?").get(organizationId);assert.equal(successorPolicy.evidence_days,21,"the replacement's selected evidence-retention interval becomes the actual future tenant policy");assert.equal(successorPolicy.version,precedingPolicy.version+1,"replacement policy changes keep auditable policy versions");assert.equal(successorPolicy.transient_days,precedingPolicy.transient_days);assert.equal(successorPolicy.revision_days,precedingPolicy.revision_days);assert.equal(successorPolicy.legal_hold,precedingPolicy.legal_hold);assert.equal(database.sqlite.prepare("SELECT expires_at FROM private_content WHERE content_id=?").get(predecessorEvidence.contentId).expires_at,predecessorExpiry,"successor policy never rewrites prior evidence expiry");
+  const successorCounter=database.sqlite.prepare("SELECT hard_limit_microusd FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=?").get("managed-pilot-owner",`pilot:${replacementId}`);database.sqlite.prepare("UPDATE cost_budget_counters SET used_microusd=? WHERE scope='pilot_user' AND scope_id=? AND period=?").run(successorCounter.hard_limit_microusd,"managed-pilot-owner",`pilot:${replacementId}`);for(const [path,body] of [["/api/events",{action:"generate",documentId:"doc-atmosphere",budgetAcknowledged:true}],["/api/document-jobs",{kind:"generate",documentId:"doc-atmosphere",payload:{budgetAcknowledged:true}}]]){const resumed=await request(path,json(owner,body));assert.equal(resumed.status,429,`${path} accepts the exact predecessor's licensed project source before enforcing the successor spending envelope`);assert.equal((await resumed.json()).error,"pilot_budget_hard_cap_reached");}database.sqlite.prepare("UPDATE cost_budget_counters SET used_microusd=0 WHERE scope='pilot_user' AND scope_id=? AND period=?").run("managed-pilot-owner",`pilot:${replacementId}`);
+  assert.equal((await request(`/api/workspaces/${organizationId}/pilot/participants`,json(owner,{email:"managed-pilot-author@example.test",role:"member"}))).status,201,"existing project owners must be explicitly enrolled in the successor cohort");
+  assert.equal((await request(`/api/workspaces/${organizationId}/pilot/participants`,json(owner,{email:"managed-pilot-stranger@example.test",role:"reviewer"}))).status,201,"the successor can intentionally admit a different named reviewer");
+  await invite(stranger,"managed-pilot-stranger");
+  assert.equal((await request(`/api/workspaces/${organizationId}/projects/${ownerProject}/members`,json(owner,{userId:"managed-pilot-stranger",role:"viewer"}))).status,201);
+  assert.equal((await request(`/api/workspaces/${organizationId}/projects/${ownerProject}/context`,{method:"POST",headers:stranger})).status,200,"a valid successor supersedes closed predecessor admission without inheriting revoked users");
+  assert.equal((await request(`/api/workspaces/${organizationId}/projects/${ownerProject}/context`,{method:"POST",headers:reviewer})).status,403,"a revoked predecessor reviewer never inherits successor admission");
+  assert.equal(environment.FORMA_PILOT_COHORT_ID,cohortId,"a dedicated installation follows its authorized successor without mutating deployment configuration");
+  database.reset();const rejectedHeaders={"oai-authenticated-user-id":"uninvited-pilot-user","oai-authenticated-user-email":"uninvited-pilot-user@example.test"};assert.equal((await request("/api/session",{headers:rejectedHeaders})).status,403);assert.equal(database.writeCount(),0);assert.equal(database.sqlite.prepare("SELECT user_id FROM users WHERE user_id='uninvited-pilot-user'").get(),undefined,"a dedicated restricted installation rejects unknown identities before creating an account");
+});
+
+test("controlled pilot authorization remains atomic when enrollment changes during spending, project edits, or uploads",async()=>{
+  const {database,environment,request}=await productionWorker();
+  const owner=await specialistIdentity(database,request,"pilot-boundary-owner"),author=await specialistIdentity(database,request,"pilot-boundary-author");
+  const json=(headers,body)=>({method:"POST",headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
+  for(const identity of [owner,author])assert.equal((await request("/api/events?after=0&content=0",{headers:identity})).status,200);
+  const created=await request("/api/workspaces",json(owner,{name:"Transactional pilot boundary"}));assert.equal(created.status,201);const organizationId=(await created.json()).organizationId;
+  const invited=await request(`/api/workspaces/${organizationId}/members`,json(owner,{email:"pilot-boundary-author@example.test",role:"member"}));assert.equal(invited.status,201);const invitation=await invited.json();assert.equal((await request(`/api/workspaces/${organizationId}/invitations/${invitation.invitationId}/accept`,json(author,{token:new URL(invitation.invitationUrl).searchParams.get("token")}))).status,200);
+  const registered=await request(`/api/workspaces/${organizationId}/projects`,json(owner,{projectId:"project-atmosphere"}));assert.equal(registered.status,201);const projectAccessId=(await registered.json()).projectAccessId;
+  assert.equal((await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/members`,json(owner,{userId:"pilot-boundary-author",role:"editor"}))).status,201);
+  const scope={organizationId,projectAccessId,actorUserId:"pilot-boundary-author"};
+  const stalePersonal=await reserveCostBudget(environment,"pilot-boundary-author",100,{maximumMicrousd:100,allowUserOverage:false,reservationId:"pre-pilot-personal",streamId:"creative:pilot-boundary-author",correlationId:"pre-pilot-personal",operation:"pre-pilot-personal"});assert.equal(stalePersonal.ok,true);
+  const staleOrganization=await reserveCostBudget(environment,"pilot-boundary-author",100,{maximumMicrousd:100,allowUserOverage:false,reservationId:"pre-pilot-organization",streamId:"creative:pilot-boundary-author",correlationId:"pre-pilot-organization",operation:"pre-pilot-organization",projectScope:scope});assert.equal(staleOrganization.ok,true);
+  const configured=await request(`/api/workspaces/${organizationId}/pilot`,json(owner,{maxParticipants:2}));assert.equal(configured.status,201);const cohort=await configured.json();
+  const enrolled=await request(`/api/workspaces/${organizationId}/pilot/participants`,json(owner,{email:"pilot-boundary-author@example.test",role:"member"}));assert.equal(enrolled.status,201);const participantId=(await enrolled.json()).participantId;
+  for(const reservation of [stalePersonal,staleOrganization]){assert.equal(await claimCostBudgetReservation(environment,"pilot-boundary-author",reservation.reservationId),false,"a reservation created before pilot activation cannot avoid the controlled cohort envelope");assert.equal(database.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(reservation.reservationId).status,"released");}
+  const unrelatedCreated=await request("/api/workspaces",json(author,{name:"Unmanaged separate organization"}));assert.equal(unrelatedCreated.status,201);const unrelatedOrganization=(await unrelatedCreated.json()).organizationId;const unrelatedProject=await request(`/api/workspaces/${unrelatedOrganization}/projects`,json(author,{projectId:"project-atmosphere"}));assert.equal(unrelatedProject.status,201);const unrelatedAccess=(await unrelatedProject.json()).projectAccessId;const unrelated=await reserveCostBudget(environment,"pilot-boundary-author",100,{maximumMicrousd:100,allowUserOverage:false,reservationId:"unmanaged-separate-organization",streamId:"creative:pilot-boundary-author",correlationId:"unmanaged-separate-organization",operation:"unmanaged-separate-organization",projectScope:{organizationId:unrelatedOrganization,projectAccessId:unrelatedAccess,actorUserId:"pilot-boundary-author"}});assert.equal(unrelated.ok,true);assert.equal(await claimCostBudgetReservation(environment,"pilot-boundary-author",unrelated.reservationId),true,"joining one managed organization never blocks legitimate work for an unrelated unmanaged organization");assert.equal((await settleCostBudget(environment,"pilot-boundary-author",unrelated.reservationId,0)).settled,true);
+  const raceConditions=[
+    {name:"reviewer downgrade",apply:()=>database.sqlite.prepare("UPDATE pilot_participants SET role='reviewer' WHERE participant_id=?").run(participantId),restore:()=>database.sqlite.prepare("UPDATE pilot_participants SET role='member' WHERE participant_id=?").run(participantId)},
+    {name:"participant revocation",apply:()=>database.sqlite.prepare("UPDATE pilot_participants SET status='revoked',revoked_at=? WHERE participant_id=?").run(new Date().toISOString(),participantId),restore:()=>database.sqlite.prepare("UPDATE pilot_participants SET status='active',revoked_at=NULL WHERE participant_id=?").run(participantId)},
+    {name:"project role downgrade",apply:()=>database.sqlite.prepare("UPDATE project_memberships SET role='viewer' WHERE project_access_id=? AND user_id=?").run(projectAccessId,"pilot-boundary-author"),restore:()=>database.sqlite.prepare("UPDATE project_memberships SET role='editor' WHERE project_access_id=? AND user_id=?").run(projectAccessId,"pilot-boundary-author")},
+    {name:"project membership revocation",apply:()=>database.sqlite.prepare("UPDATE project_memberships SET status='revoked',revoked_at=? WHERE project_access_id=? AND user_id=?").run(new Date().toISOString(),projectAccessId,"pilot-boundary-author"),restore:()=>database.sqlite.prepare("UPDATE project_memberships SET status='active',revoked_at=NULL WHERE project_access_id=? AND user_id=?").run(projectAccessId,"pilot-boundary-author")},
+    {name:"project migration shutdown",apply:()=>database.sqlite.prepare("UPDATE project_migration_states SET status='quarantine' WHERE project_access_id=?").run(projectAccessId),restore:()=>database.sqlite.prepare("UPDATE project_migration_states SET status='active' WHERE project_access_id=?").run(projectAccessId)},
+    {name:"consent withdrawal",apply:()=>database.sqlite.prepare("UPDATE users SET consent_version=NULL WHERE user_id=?").run("pilot-boundary-author"),restore:()=>database.sqlite.prepare("UPDATE users SET consent_version='pilot-2026-08-10' WHERE user_id=?").run("pilot-boundary-author")},
+    {name:"cohort pause",apply:()=>database.sqlite.prepare("UPDATE pilot_cohorts SET status='paused' WHERE cohort_id=?").run(cohort.cohortId),restore:()=>database.sqlite.prepare("UPDATE pilot_cohorts SET status='active' WHERE cohort_id=?").run(cohort.cohortId)},
+    {name:"cohort expiration",apply:()=>database.sqlite.prepare("UPDATE pilot_cohorts SET ends_at=? WHERE cohort_id=?").run(new Date(Date.now()-1_000).toISOString(),cohort.cohortId),restore:()=>database.sqlite.prepare("UPDATE pilot_cohorts SET ends_at=? WHERE cohort_id=?").run(cohort.endsAt,cohort.cohortId)},
+  ];
+  for(const [index,condition] of raceConditions.entries()){
+    const reservation=await reserveCostBudget(environment,"pilot-boundary-author",100,{maximumMicrousd:100,allowUserOverage:false,reservationId:`interleaved-pilot-claim-${index}`,streamId:"creative:pilot-boundary-author",correlationId:`interleaved-pilot-claim-${index}`,operation:"bounded-pilot-interleaving",projectScope:scope});assert.equal(reservation.ok,true,condition.name);
+    const previousPrepare=environment.DB.prepare;let interleaved=false;
+    environment.DB.prepare=function(sql){const prepared=previousPrepare.call(this,sql);if(sql.startsWith("UPDATE cost_budget_reservations SET status='executing'")){const previousBind=prepared.bind.bind(prepared);prepared.bind=(...values)=>{const bound=previousBind(...values),previousRun=bound.run.bind(bound);bound.run=async()=>{condition.apply();interleaved=true;return previousRun();};return bound;};}return prepared;};
+    try{assert.equal(await claimCostBudgetReservation(environment,"pilot-boundary-author",reservation.reservationId),false,`${condition.name} between scope inspection and execution never reaches the provider`);assert.equal(interleaved,true,condition.name);assert.equal(database.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(reservation.reservationId).status,"released",`${condition.name} releases the abandoned claim`);assert.equal(database.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=?").get("pilot-boundary-author",`pilot:${cohort.cohortId}`).reserved_microusd,0,`${condition.name} never strands fixed pilot spending`);}finally{environment.DB.prepare=previousPrepare;condition.restore();}
+  }
+  environment.OPENAI_API_KEY="synthetic-pilot-no-provider-calls";const originalFetch=globalThis.fetch;let providerCalls=0;globalThis.fetch=async()=>{providerCalls+=1;return Response.json({error:{message:"provider must not receive withdrawn pilot work"}},{status:500});};
+  try{for(const [action,body] of [["chat",{action:"chat",documentId:"doc-atmosphere",message:"Can you clarify this direction?",livePreview:false,budgetAcknowledged:true}],["structure_adaptive",{action:"structure_adaptive",documentId:"doc-atmosphere",prompt:"Clarify the current project decisions.",budgetAcknowledged:true}],["preview",{action:"preview",documentId:"doc-atmosphere",budgetAcknowledged:true}],["generate",{action:"generate",documentId:"doc-atmosphere",budgetAcknowledged:true}]]){const previousPrepare=environment.DB.prepare;let deniedAtExecution=false;environment.DB.prepare=function(sql){const prepared=previousPrepare.call(this,sql);if(sql.startsWith("UPDATE cost_budget_reservations SET status='executing'")){const previousBind=prepared.bind.bind(prepared);prepared.bind=(...values)=>{const bound=previousBind(...values),previousRun=bound.run.bind(bound);bound.run=async()=>{database.sqlite.prepare("UPDATE pilot_cohorts SET status='paused' WHERE cohort_id=?").run(cohort.cohortId);deniedAtExecution=true;return previousRun();};return bound;};}return prepared;};try{const response=await request("/api/events",json(owner,body));assert.equal(deniedAtExecution,true,`${action} attempts a real guarded provider claim`);assert.equal(response.status,403,`${action} stops when its cohort pauses immediately before provider execution`);assert.equal((await response.json()).error,"active_pilot_participation_required");assert.equal(providerCalls,0,`${action} never invokes an external provider after its authorization changes`);assert.equal(database.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=?").get("pilot-boundary-owner",`pilot:${cohort.cohortId}`).reserved_microusd,0,`${action} releases pilot spending`);assert.equal(database.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("pilot-boundary-owner").reserved_tokens,0,`${action} releases token spending`);}finally{environment.DB.prepare=previousPrepare;database.sqlite.prepare("UPDATE pilot_cohorts SET status='active' WHERE cohort_id=?").run(cohort.cohortId);}}}finally{globalThis.fetch=originalFetch;}
+  const membershipId=database.sqlite.prepare("SELECT membership_id FROM project_memberships WHERE project_access_id=? AND user_id=?").get(projectAccessId,"pilot-boundary-author").membership_id;
+  const reviewPermission=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/members/${membershipId}`,{method:"PATCH",headers:{...owner,"content-type":"application/json"},body:JSON.stringify({reviewAccess:true})});assert.equal(reviewPermission.status,200);
+  database.sqlite.prepare("UPDATE pilot_participants SET role='reviewer' WHERE participant_id=?").run(participantId);
+  const reviewerContext=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST",headers:author});assert.equal(reviewerContext.status,200);const reviewerScoped={...author,cookie:reviewerContext.headers.get("set-cookie")?.split(";")[0]??""};const reviewerSession=await(await request("/api/session",{headers:reviewerScoped})).json();assert.equal(reviewerSession.projectContext.role,"viewer","a named reviewer cannot inherit an older editor project assignment");assert.equal(reviewerSession.projectContext.permissions.includes("project.review.approve"),true,"independent approval remains available to a designated reviewer");for(const permission of ["project.author","project.library.manage","project.output.request","project.canvas.use"])assert.equal(reviewerSession.projectContext.permissions.includes(permission),false,permission);
+  const deniedReviewerEdit=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/events`,json(author,{action:"append",event:{type:"BlockPropertyEdited",payload:{block_id:"block-direction",property_path:"text",new_value:"REVIEWER MAY NOT EDIT"}}}));assert.equal(deniedReviewerEdit.status,403);database.sqlite.prepare("UPDATE pilot_participants SET role='member' WHERE participant_id=?").run(participantId);
+  for(const condition of ["participant","reviewer"]){
+    const originalBatch=environment.DB.batch;let interruptedEvent=false;const prohibitedCopy=`WITHDRAWN ${condition.toUpperCase()} INTERLEAVING`;
+    environment.DB.batch=async function(statements){if(!interruptedEvent&&statements.some((statement)=>statement.sql.includes("INSERT INTO event_write_stage")&&statement.values.some((value)=>typeof value==="string"&&value.includes(prohibitedCopy)))){if(condition==="participant")database.sqlite.prepare("UPDATE pilot_participants SET status='revoked',revoked_at=? WHERE participant_id=?").run(new Date().toISOString(),participantId);else database.sqlite.prepare("UPDATE pilot_participants SET role='reviewer' WHERE participant_id=?").run(participantId);interruptedEvent=true;}return originalBatch.call(this,statements);};
+    try{const response=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/events`,json(author,{action:"append",event:{type:"BlockPropertyEdited",payload:{block_id:"block-direction",property_path:"text",new_value:prohibitedCopy}}}));assert.equal(interruptedEvent,true,`${condition} changes after the cookieless project endpoint has admitted its actor`);assert.equal(response.status,403);assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE json_extract(payload,'$.new_value')=?").get(prohibitedCopy).count,0,`${condition} changes never append one final project event`);}finally{environment.DB.batch=originalBatch;database.sqlite.prepare("UPDATE pilot_participants SET status='active',revoked_at=NULL,role='member' WHERE participant_id=?").run(participantId);}
+  }
+  for(const condition of ["participant","reviewer","session"]){
+    const opened=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST",headers:author});assert.equal(opened.status,200);const scoped={...author,cookie:opened.headers.get("set-cookie")?.split(";")[0]??""};
+    let storedKey="",removedKey="";environment.MEDIA={async put(key){storedKey=key;if(condition==="participant")database.sqlite.prepare("UPDATE pilot_participants SET status='revoked',revoked_at=? WHERE participant_id=?").run(new Date().toISOString(),participantId);else if(condition==="reviewer")database.sqlite.prepare("UPDATE pilot_participants SET role='reviewer' WHERE participant_id=?").run(participantId);else database.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE organization_id=? AND principal_user_id=? AND revoked_at IS NULL").run(new Date().toISOString(),organizationId,"pilot-boundary-author");},async delete(key){removedKey=key;}};
+    const form=new FormData();form.append("file",new File(["approved non-sensitive example"],"controlled-reference.txt",{type:"text/plain"}));form.append("rightsConfirmed","true");form.append("nonSensitiveConfirmed","true");
+    try{const response=await request("/api/media",{method:"POST",headers:scoped,body:form});assert.equal(response.status,403,`${condition} withdrawn during upload never becomes shared project content`);assert.ok(storedKey);assert.equal(removedKey,storedKey,`${condition} withdrawn during upload immediately removes staged object bytes`);assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_resource_scopes WHERE resource_kind='media' AND resource_id=?").get(storedKey).count,0);}finally{if(condition==="participant"||condition==="reviewer")database.sqlite.prepare("UPDATE pilot_participants SET status='active',revoked_at=NULL,role='member' WHERE participant_id=?").run(participantId);}
+  }
+});
+
+test("activating a controlled pilot closes existing legacy shares and excludes previously unattested source material",async()=>{
+  const {database,environment,request}=await productionWorker();const owner=await specialistIdentity(database,request,"pilot-transition-owner");
+  assert.equal((await request("/api/events?after=0&content=0",{headers:owner})).status,200);
+  const json=(headers,body)=>({method:"POST",headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
+  const organization=await request("/api/workspaces",json(owner,{name:"Existing customer project"}));assert.equal(organization.status,201);const organizationId=(await organization.json()).organizationId;
+  const project=await request(`/api/workspaces/${organizationId}/projects`,json(owner,{projectId:"project-atmosphere"}));assert.equal(project.status,201);const projectAccessId=(await project.json()).projectAccessId;
+  const selected=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST",headers:owner});assert.equal(selected.status,200);const scoped={...owner,cookie:selected.headers.get("set-cookie")?.split(";")[0]??""};
+  const objects=new Map();environment.MEDIA={
+    async put(key,value,options={}){const bytes=value instanceof ArrayBuffer?value:await new Response(value).arrayBuffer();objects.set(key,{bytes,metadata:options.customMetadata??{},mime:options.httpMetadata?.contentType??"application/octet-stream"});},
+    async get(key){const item=objects.get(key);return item?{body:new Response(item.bytes).body,httpEtag:"legacy-source-etag",customMetadata:item.metadata,writeHttpMetadata(headers){headers.set("content-type",item.mime);}}:null;},
+    async head(key){const item=objects.get(key);return item?{customMetadata:item.metadata,httpEtag:"legacy-source-etag"}:null;},
+    async delete(key){objects.delete(key);},
+  };
+  const upload=async(name)=>{const form=new FormData();form.append("file",new File(["existing customer visual source"],name,{type:"image/png"}));form.append("rightsConfirmed","true");const response=await request("/api/media",{method:"POST",headers:scoped,body:form});assert.equal(response.status,200,JSON.stringify(await response.clone().json()));return await response.json();};
+  const existing=await upload("existing-source.png"),unattached=await upload("other-existing-source.png"),librarySource=await upload("existing-library-source.png");assert.equal(objects.get(existing.key).metadata.sourceClassification,undefined,"pre-pilot assets truthfully have no pilot material attestation");
+  assert.ok(database.sqlite.prepare("SELECT resource_id FROM project_resource_scopes WHERE project_access_id=? AND resource_kind='media' AND resource_id=?").get(projectAccessId,existing.key),"the old uploaded file remains owned by this exact project before reference attachment");assert.equal(objects.get(existing.key).metadata.sha256,existing.contentHash);
+  const append=async(event)=>request("/api/events",json(scoped,{action:"append",event}));
+  const attachedReference=await append({type:"ReferenceIngested",payload:{reference_id:"existing-pilot-source",document_id:"doc-atmosphere",source_type:"upload",source_ref:existing.url,content_hash:existing.contentHash,rights_class:"asserted"}});assert.equal(attachedReference.status,200,JSON.stringify({body:await attachedReference.clone().json(),scope:database.sqlite.prepare("SELECT project_access_id,organization_id,owner_user_id,source_event_id FROM project_resource_scopes WHERE resource_kind='media' AND resource_id=?").get(existing.key),metadata:objects.get(existing.key).metadata,hash:existing.contentHash}));
+  assert.equal((await append({type:"RightsAsserted",payload:{reference_id:"existing-pilot-source",rights_class:"owned_or_licensed",assertion_method:"pre-pilot-upload"}})).status,200);
+  assert.equal((await append({type:"BlockCreated",payload:{block_id:"existing-pilot-source-block",project_id:"project-atmosphere",document_id:"doc-atmosphere",type:"reference",handle:"reference/existing-pilot-source",position:"z0001",properties:{reference_id:"existing-pilot-source",label:"Existing customer source",media_url:existing.url,authority:"authored",weight:.8}}})).status,200);
+  for(const event of [{type:"ReferenceIngested",payload:{reference_id:"legacy-library-reference",document_id:"doc-atmosphere",source_type:"upload",source_ref:librarySource.url,content_hash:librarySource.contentHash,rights_class:"asserted"}},{type:"RightsAsserted",payload:{reference_id:"legacy-library-reference",rights_class:"owned_or_licensed",assertion_method:"pre-pilot-library"}},{type:"BlockCreated",payload:{block_id:"legacy-library-reference-block",project_id:"project-atmosphere",scope:"library",type:"reference",handle:"reference/legacy-library",position:"z0002",properties:{reference_id:"legacy-library-reference",label:"Existing reusable library source",media_url:librarySource.url,authority:"authored",weight:.8}}}]){const recorded=await append(event);assert.equal(recorded.status,200,JSON.stringify(await recorded.clone().json()));}
+  database.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id=?").run("pilot-transition-owner");
+  for(const event of [{type:"CanvasCreated",payload:{project_id:"project-atmosphere",canvas_id:"legacy-library-board",name:"Legacy context board"}},{type:"CanvasItemPlaced",payload:{project_id:"project-atmosphere",canvas_id:"legacy-library-board",item_id:"legacy-library-item",source_kind:"block",source_id:"legacy-library-reference-block",title:"Reusable source",frame:{x:0,y:0,w:200,h:150}}},{type:"ContextSetFormalized",payload:{project_id:"project-atmosphere",canvas_id:"legacy-library-board",context_set_id:"legacy-library-context",item_ids:["legacy-library-item"],name:"Existing visual context"}}]){const recorded=await append(event);assert.equal(recorded.status,200,JSON.stringify(await recorded.clone().json()));}
+  const now=new Date().toISOString(),stream="creative:pilot-transition-owner",legacy={title:"Earlier output",summary:"Legacy customer work",content_markdown:"Earlier customer output.",presentation:null,items:[{title:"Earlier",body:"Earlier customer output.",notes:"",image_prompt:"",slide:null}]};
+  database.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)").run("pre-pilot-output-content","pilot-transition-owner","document-artifact",JSON.stringify(legacy),now,"9999-12-31T23:59:59.999Z");
+  const head=Number(database.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head);database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run("pre-pilot-output-event",stream,head+1,now,now,"worker:renderer","test",crypto.randomUUID(),null,null,1,"DocumentRenderCompleted",JSON.stringify({project_id:"project-atmosphere",document_id:"doc-atmosphere",artifact_id:"pre-pilot-output",artifact_kind:"short_story",title:legacy.title,summary:legacy.summary,item_count:1,items:[{id:"legacy-opening",title:"Earlier"}],content_ref:"pre-pilot-output-content",requested_by_user_id:"pilot-transition-owner"}));
+  const issued=await request("/api/shares",json(scoped,{resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere"}));assert.equal(issued.status,200,JSON.stringify(await issued.clone().json()));const share=(await issued.json()).share;
+  const sharedPath=`/api/shared/${encodeURIComponent(share.token)}`,mediaPath=`${sharedPath}/media/${encodeURIComponent(existing.key)}`;assert.equal((await request(sharedPath)).status,200);assert.equal((await request(mediaPath)).status,200,"legacy images share under the old unmanaged project policy");
+  const activated=await request(`/api/workspaces/${organizationId}/pilot`,json(owner,{maxParticipants:2}));assert.equal(activated.status,201);const cohortId=(await activated.json()).cohortId;
+  assert.equal((await request(sharedPath)).status,404,"an existing external link closes immediately when its legacy unapproved output enters a controlled pilot");assert.equal((await request(mediaPath)).status,404,"existing public media links obey the same upgraded pilot boundary");
+  assert.equal((await request("/api/events?after=0&content=0",{headers:scoped})).status,200);
+  database.reset();const reused=await append({type:"ReferenceIngested",payload:{reference_id:"another-legacy-source",document_id:"doc-atmosphere",source_type:"upload",source_ref:unattached.url,content_hash:unattached.contentHash,rights_class:"asserted"}});assert.equal(reused.status,403);assert.equal((await reused.json()).error,"pilot_non_sensitive_source_confirmation_required");assert.equal(database.writeCount(),0,"a legacy stored file cannot be newly attached without a cohort-bound source confirmation");
+  environment.OPENAI_API_KEY="synthetic-pilot-provider-never-called";for(const [endpoint,body] of [["/api/events",{action:"generate",documentId:"doc-atmosphere",budgetAcknowledged:true}],["/api/document-jobs",{kind:"generate",documentId:"doc-atmosphere",payload:{budgetAcknowledged:true}}]]){const generated=await request(endpoint,json(endpoint==="/api/events"?owner:scoped,body));assert.equal(generated.status,428,`${endpoint} excludes already-attached pre-pilot source material from paid context`);assert.equal((await generated.json()).error,"pilot_non_sensitive_source_confirmation_required");}
+  const removedDocumentSource=await append({type:"BlockRemoved",payload:{block_id:"existing-pilot-source-block",document_id:"doc-atmosphere",reason:"remove unapproved legacy document source"}});assert.equal(removedDocumentSource.status,200,JSON.stringify(await removedDocumentSource.clone().json()));const visible=await(await request("/api/events?after=0&limit=5000&content=0",{headers:scoped})).json();const isolated=foldEvents(visible.events,Number.POSITIVE_INFINITY,"doc-atmosphere","project-atmosphere");assert.ok(!isolated.blocks.some((block)=>block.id==="legacy-library-reference-block"),"the unclassified reusable reference does not exist in the document-only provider context");assert.ok(isolated.libraryBlocks.some((block)=>block.id==="legacy-library-reference-block"),"the selected reusable context remains available in the project library");
+  for(const [label,endpoint,identity,body] of [["direct approved board context","/api/events",owner,{action:"generate",documentId:"doc-atmosphere",canvasId:"legacy-library-board",contextSetId:"legacy-library-context",budgetAcknowledged:true}],["queued approved board context","/api/document-jobs",scoped,{kind:"generate",documentId:"doc-atmosphere",payload:{canvasId:"legacy-library-board",contextSetId:"legacy-library-context",budgetAcknowledged:true}}],["direct project-wide adaptation","/api/events",owner,{action:"structure_adaptive",documentId:"doc-atmosphere",projectScope:true,prompt:"Structure this complete project.",budgetAcknowledged:true}],["queued project-wide adaptation","/api/document-jobs",scoped,{kind:"structure_adaptive",documentId:"doc-atmosphere",payload:{projectScope:true,prompt:"Structure this complete project.",budgetAcknowledged:true}}]]){const generated=await request(endpoint,json(identity,body));assert.equal(generated.status,428,`${label} validates its actual provider-facing reusable source blocks`);assert.equal((await generated.json()).error,"pilot_non_sensitive_source_confirmation_required");}
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE operation!=''").get().count,0,"unclassified legacy context never reserves provider spending");assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count,0,"unclassified legacy context never creates a background provider job");assert.ok(cohortId);
+});
+
 test("workspace settings HTML and usage policies require exact organization-scoped server capability",async()=>{
   const {database,environment,request}=await productionWorker();const owner=await specialistIdentity(database,request,"tenant-owner");const stranger=await specialistIdentity(database,request,"tenant-stranger");htmlAssets(environment);
   const created=await request("/api/workspaces",{method:"POST",headers:{...owner,"content-type":"application/json"},body:JSON.stringify({name:"Bounded organization"})});assert.equal(created.status,201);const organizationId=(await created.json()).organizationId;
@@ -2165,6 +2528,8 @@ test("organization budgets enforce exact tenant, actor, personal, and global cap
   for(const [path,body] of [["/api/events",{action:"generate",documentId:freshDocument,budgetAcknowledged:true}],["/api/document-jobs",{kind:"generate",documentId:freshDocument,payload:{budgetAcknowledged:true}}]]){
     database.reset();const response=await request(path,json(ownerA,body));assert.equal(response.status,429,`${path} derives the tenant from the authoritative owner document instead of a stale sharing manifest`);assert.equal((await response.json()).scope,"workspace");assert.equal(database.writeCount(),0);
   }
+  const presentationSource=await request("/api/events",json(ownerA,{action:"append",event:{type:"BlockCreated",payload:{project_id:"project-atmosphere",document_id:freshDocument,block_id:"budget-authorized-direction",scope:"document",type:"direction",handle:"direction/budget-source",properties:{text:"Authorized presentation source",weight:1,authority:"authored"}}}}));
+  assert.equal(presentationSource.status,200,"managed delivery is admitted for budgeting only after its document has an authorized authored source");
   for(const [artifactKind,tokenLimit,itemCount] of [["video",55_000,undefined],["slides",63_000,12],["storyboard",70_000,3]]){
     const configured=await request(`/api/workspaces/${tenantA.organizationId}/policy`,json(ownerA,{tokenLimit,microusdLimit:100_000_000},"PATCH"));assert.equal(configured.status,200);
     const payload={artifactKind,productionMode:"managed",paidMediaConfirmed:true,budgetAcknowledged:true,...(itemCount?{itemCount}:{}),snapshot:{}};
@@ -2340,15 +2705,606 @@ test("anonymous route telemetry rejects forged audiences and reports genuine bou
 
 test("overview and health projections never scan global events; event and synchronization projections do",async()=>{
   const {database,request}=await productionWorker();
-  for(const path of ["/api/portfolio/operations/overview","/api/portfolio/engineering/health","/api/portfolio/engineering/jobs"]){database.reset();assert.equal((await request(path)).status,200,path);const batch=database.calls.find((call)=>call.kind==="batch");assert.ok(batch);assert.equal(batch.statements.length,path.endsWith("/health")?3:2,path);assert.equal(batch.statements.some((statement)=>/FROM events/i.test(statement.sql)),false,path);}
+  for(const path of ["/api/portfolio/operations/overview","/api/portfolio/engineering/health","/api/portfolio/engineering/jobs"]){database.reset();assert.equal((await request(path)).status,200,path);const batch=database.calls.find((call)=>call.kind==="batch");assert.ok(batch);assert.equal(batch.statements.length,path.endsWith("/health")||path.endsWith("/overview")?3:2,path);assert.equal(batch.statements.some((statement)=>/FROM events/i.test(statement.sql)),false,path);}
   for(const path of ["/api/portfolio/engineering/events","/api/portfolio/engineering/sync"]){database.reset();assert.equal((await request(path)).status,200,path);const batch=database.calls.find((call)=>call.kind==="batch");assert.ok(batch);assert.equal(batch.statements.length,3,path);assert.equal(batch.statements.some((statement)=>/FROM events/i.test(statement.sql)),true,path);}
 });
 
+test("organization-owned context publishes immutable versions, isolates tenants, and updates only explicitly following documents",async()=>{
+  const {database,request,owner,organizationId,projectAccessId,projection,json,open}=await enterpriseWorkspaceFixture();
+  const outsider=await specialistIdentity(database,request,"enterprise-package-outsider");
+  const selected=projection.blocks.filter((block)=>block.type!=="reference"&&!block.locked).slice(0,2);
+  assert.ok(selected.length>=1,"seeded project provides portable organization decisions");
+  const secondaryEvents=[
+    {type:"ProjectCreated",payload:{project_id:"enterprise-secondary",name:"Second organizational project",state:"active"}},
+    {type:"DocumentCreated",payload:{project_id:"enterprise-secondary",document_id:"enterprise-pinned",title:"Pinned document"}},
+    {type:"DocumentCreated",payload:{project_id:"enterprise-secondary",document_id:"enterprise-follow",title:"Following document"}},
+  ];
+  const authored=await request("/api/events",json(owner,{action:"batch",events:secondaryEvents}));assert.equal(authored.status,200,JSON.stringify(await authored.clone().json()));
+  const registration=await request(`/api/workspaces/${organizationId}/projects`,json(owner,{projectId:"enterprise-secondary"}));assert.equal(registration.status,201,JSON.stringify(await registration.clone().json()));
+  const destination=(await registration.json()).projectAccessId;
+  const draft=await request(`/api/workspaces/${organizationId}/context-packages`,json(owner,{name:"Approved messaging foundation",description:"Audience and direction",sourceProjectAccessId:projectAccessId,documentId:"doc-atmosphere",blockIds:selected.map((block)=>block.id)}));
+  assert.equal(draft.status,201,JSON.stringify(await draft.clone().json()));const first=await draft.json();
+  database.reset();assert.equal((await request(`/api/workspaces/${organizationId}/context-packages/${first.packageId}`,{headers:outsider})).status,403);assert.equal(database.writeCount(),0);
+  assert.equal((await request(`/api/workspaces/${organizationId}/context-packages/${first.packageId}/versions/${first.versionId}/publish`,{method:"POST",headers:owner})).status,200);
+  assert.throws(()=>database.sqlite.prepare("UPDATE organization_context_package_versions SET content_sha256='forged' WHERE version_id=?").run(first.versionId),/immutable/);
+  assert.throws(()=>database.sqlite.prepare("UPDATE organization_context_package_versions SET status='draft' WHERE version_id=?").run(first.versionId),/immutable/,"a published version cannot be demoted to bypass immutable content guards");
+  assert.throws(()=>database.sqlite.prepare("UPDATE organization_context_package_contents SET content_json='forged' WHERE version_id=?").run(first.versionId),/immutable/);
+  assert.throws(()=>database.sqlite.prepare("UPDATE organization_context_package_sources SET content_sha256='forged' WHERE version_id=?").run(first.versionId),/immutable/,"published source provenance is independently immutable");
+  const pinned=await request(`/api/workspaces/${organizationId}/context-packages/${first.packageId}/adopt`,json(owner,{projectAccessId:destination,documentId:"enterprise-pinned",versionId:first.versionId,updateMode:"pinned"}));
+  assert.equal(pinned.status,201,JSON.stringify(await pinned.clone().json()));const pinnedBinding=await pinned.json();
+  const following=await request(`/api/workspaces/${organizationId}/context-packages/${first.packageId}/adopt`,json(owner,{projectAccessId:destination,documentId:"enterprise-follow",versionId:first.versionId,updateMode:"follow-approved"}));
+  assert.equal(following.status,201,JSON.stringify(await following.clone().json()));const followingBinding=await following.json();
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_context_package_members WHERE binding_id=?").get(pinnedBinding.bindingId).count,selected.length);
+  const sourceScope=await open(owner);
+  const oldText=String(selected[0].properties.text??selected[0].properties.label??"");
+  const update=await request("/api/events",json(sourceScope,{action:"append",event:{type:"BlockPropertyEdited",payload:{block_id:selected[0].id,property_path:"text",old_value:oldText,new_value:"A materially improved approved organization decision"}}}));
+  assert.equal(update.status,200,JSON.stringify(await update.clone().json()));
+  const revised=await request(`/api/workspaces/${organizationId}/context-packages/${first.packageId}/versions`,json(owner,{sourceProjectAccessId:projectAccessId,documentId:"doc-atmosphere",blockIds:selected.map((block)=>block.id)}));
+  assert.equal(revised.status,201,JSON.stringify(await revised.clone().json()));const second=await revised.json();
+  assert.equal((await request(`/api/workspaces/${organizationId}/context-packages/${first.packageId}/versions/${second.versionId}/publish`,{method:"POST",headers:owner})).status,200);
+  const pinnedBefore=database.sqlite.prepare("SELECT version_id,pending_version_id FROM project_context_package_bindings WHERE binding_id=?").get(pinnedBinding.bindingId);
+  const followBefore=database.sqlite.prepare("SELECT version_id,pending_version_id FROM project_context_package_bindings WHERE binding_id=?").get(followingBinding.bindingId);
+  assert.equal(pinnedBefore.version_id,first.versionId);assert.equal(pinnedBefore.pending_version_id,null,"pinned work never sees an automatic version change");
+  assert.equal(followBefore.version_id,first.versionId);assert.equal(followBefore.pending_version_id,second.versionId,"following documents require explicit acceptance");
+  assert.ok(database.sqlite.prepare("SELECT 1 FROM project_notifications WHERE project_access_id=? AND kind='context_update_available' AND document_id='enterprise-follow'").get(destination),"following editors receive a scoped pending-version notice");
+  const accepted=await request(`/api/workspaces/${organizationId}/context-packages/${first.packageId}/bindings/${followingBinding.bindingId}`,json(owner,{action:"accept",versionId:second.versionId},"PATCH"));
+  assert.equal(accepted.status,200,JSON.stringify(await accepted.clone().json()));
+  assert.equal(database.sqlite.prepare("SELECT version_id FROM project_context_package_bindings WHERE binding_id=?").get(followingBinding.bindingId).version_id,second.versionId);
+  assert.equal(database.sqlite.prepare("SELECT version_id FROM project_context_package_bindings WHERE binding_id=?").get(pinnedBinding.bindingId).version_id,first.versionId);
+  const affected=database.sqlite.prepare("SELECT target_block_id FROM project_context_package_members WHERE binding_id=? AND source_block_id=?").get(followingBinding.bindingId,selected[0].id).target_block_id;
+  assert.ok(database.sqlite.prepare("SELECT 1 FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id WHERE scope.project_access_id=? AND event.type='BlockPropertyEdited' AND json_extract(event.payload,'$.block_id')=?").get(destination,affected));
+  if(selected.length===2){
+    const relationId="organization-semantic-relation";
+    const semantics=[
+      {type:"BlockPropertyEdited",payload:{block_id:selected[0].id,property_path:"type",old_value:selected[0].type,new_value:"constraint"}},
+      {type:"BlockRenamed",payload:{block_id:selected[0].id,old_handle:selected[0].handle,new_handle:"constraint/organization-governed"}},
+      {type:"BlockPropertyEdited",payload:{block_id:selected[0].id,property_path:"position",old_value:selected[0].position,new_value:"z9010"}},
+      {type:"BlockLocked",payload:{block_id:selected[0].id}},
+      {type:"BlockRelationAdded",payload:{document_id:"doc-atmosphere",relation_id:relationId,from_block_id:selected[0].id,to_block_id:selected[1].id,kind:"depends_on",properties:{required:true}}},
+    ];
+    for(const event of semantics){const changed=await request("/api/events",json(sourceScope,{action:"append",event}));assert.equal(changed.status,200,JSON.stringify(await changed.clone().json()));}
+    const next=await request(`/api/workspaces/${organizationId}/context-packages/${first.packageId}/versions`,json(owner,{sourceProjectAccessId:projectAccessId,documentId:"doc-atmosphere",blockIds:selected.map((block)=>block.id)}));assert.equal(next.status,201);const third=await next.json();
+    assert.equal((await request(`/api/workspaces/${organizationId}/context-packages/${first.packageId}/versions/${third.versionId}/publish`,{method:"POST",headers:owner})).status,200);
+    const adopted=await request(`/api/workspaces/${organizationId}/context-packages/${first.packageId}/bindings/${followingBinding.bindingId}`,json(owner,{action:"accept",versionId:third.versionId},"PATCH"));assert.equal(adopted.status,200,JSON.stringify(await adopted.clone().json()));
+    const scoped=await open(owner,destination);const receipt=await(await request("/api/events?after=0&limit=5000&content=1",{headers:scoped})).json();
+    const current=foldEvents(receipt.events,Number.POSITIVE_INFINITY,"enterprise-follow","enterprise-secondary");const governed=current.blocks.find((block)=>block.id===affected);
+    assert.equal(governed.type,"constraint");assert.equal(governed.handle,"constraint/organization-governed");assert.equal(governed.position,"z9010");assert.equal(governed.locked,true,"approved package boundaries preserve mandatory lock transitions");
+    const adjacent=database.sqlite.prepare("SELECT target_block_id FROM project_context_package_members WHERE binding_id=? AND source_block_id=?").get(followingBinding.bindingId,selected[1].id).target_block_id;
+    assert.ok(current.blockRelations.some((relation)=>!relation.removed&&relation.fromBlockId===affected&&relation.toBlockId===adjacent&&relation.kind==="depends_on"),"relation-only semantic context changes are actually applied to the target document");
+  }
+  assert.equal(database.sqlite.prepare("SELECT 1 FROM organization_audit_events WHERE organization_id=? AND instr(detail_json,'materially improved')>0").get(organizationId),undefined,"audit metadata never leaks package prose");
+});
+
+test("revoking project access at package adoption never commits bindings without their exact guarded project events",async()=>{
+  const {database,environment,request,owner,organizationId,projectAccessId,projection,json}=await enterpriseWorkspaceFixture();
+  const editor=await specialistIdentity(database,request,"enterprise-package-editor");
+  const invitation=await request(`/api/workspaces/${organizationId}/members`,json(owner,{email:"enterprise-package-editor@example.test",role:"member"}));assert.equal(invitation.status,201);const invited=await invitation.json();
+  assert.equal((await request(`/api/workspaces/${organizationId}/invitations/${invited.invitationId}/accept`,{method:"POST",headers:editor})).status,200);
+  const granted=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/members`,json(owner,{userId:"enterprise-package-editor",role:"editor"}));assert.equal(granted.status,201);
+  const selected=projection.blocks.find((block)=>block.type!=="reference"&&!block.locked);assert.ok(selected);
+  const prepared=await request(`/api/workspaces/${organizationId}/context-packages`,json(owner,{name:"Atomic adoption boundary",sourceProjectAccessId:projectAccessId,documentId:"doc-atmosphere",blockIds:[selected.id]}));assert.equal(prepared.status,201);const version=await prepared.json();
+  assert.equal((await request(`/api/workspaces/${organizationId}/context-packages/${version.packageId}/versions/${version.versionId}/publish`,{method:"POST",headers:owner})).status,200);
+  const baseline=database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_event_scopes WHERE project_access_id=?").get(projectAccessId).count;
+  const original=environment.DB.batch.bind(environment.DB);let intercepted=false;
+  environment.DB.batch=async(statements)=>{
+    if(!intercepted&&statements.some((statement)=>statement.sql.includes("INSERT INTO project_context_package_bindings"))){
+      intercepted=true;database.sqlite.prepare("UPDATE project_memberships SET status='revoked',revoked_at=?,updated_at=? WHERE project_access_id=? AND user_id=?").run(new Date().toISOString(),new Date().toISOString(),projectAccessId,"enterprise-package-editor");
+    }
+    return original(statements);
+  };
+  const denied=await request(`/api/workspaces/${organizationId}/context-packages/${version.packageId}/adopt`,json(editor,{projectAccessId,documentId:"doc-atmosphere",versionId:version.versionId}));
+  assert.equal(intercepted,true);assert.equal(denied.status,403);
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_context_package_bindings WHERE package_id=?").get(version.packageId).count,0);
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_context_package_members WHERE organization_id=?").get(organizationId).count,0);
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_event_scopes WHERE project_access_id=?").get(projectAccessId).count,baseline,"revoked adoption commits neither authored history nor unguarded binding sidecars");
+  environment.DB.batch=original;
+});
+
+test("organization-owned packages preserve independently licensed source bytes, verified citations, and cross-custodian evidence",async()=>{
+  const {database,environment,request,owner,organizationId,projectAccessId,projection,json,open}=await enterpriseWorkspaceFixture();
+  const objects=new Map();
+  environment.MEDIA={
+    async put(key,value,options){objects.set(key,{bytes:new Uint8Array(value),metadata:{...options.customMetadata},contentType:options.httpMetadata.contentType});},
+    async get(key){const stored=objects.get(key);return stored?{body:new Blob([stored.bytes]).stream(),customMetadata:stored.metadata,httpEtag:"verified",writeHttpMetadata(headers){headers.set("content-type",stored.contentType);}}:null;},
+    async head(key){const stored=objects.get(key);return stored?{customMetadata:stored.metadata,writeHttpMetadata(headers){headers.set("content-type",stored.contentType);}}:null;},
+    async delete(key){objects.delete(key);},
+  };
+  const colleague=await specialistIdentity(database,request,"enterprise-source-custodian");
+  assert.equal((await request("/api/events?after=0&content=0",{headers:colleague})).status,200);
+  const invitation=await request(`/api/workspaces/${organizationId}/members`,json(owner,{email:"enterprise-source-custodian@example.test",role:"administrator"}));assert.equal(invitation.status,201);const invited=await invitation.json();
+  assert.equal((await request(`/api/workspaces/${organizationId}/invitations/${invited.invitationId}/accept`,{method:"POST",headers:colleague})).status,200);
+  const registered=await request(`/api/workspaces/${organizationId}/projects`,json(colleague,{projectId:"project-atmosphere"}));assert.equal(registered.status,201);const destination=(await registered.json()).projectAccessId;
+  const sourceScope=await open(owner);
+  const file=new FormData();file.set("file",new File(["Licensed customer briefing.\nUse deliberate, exact context in every deliverable."],"trusted-brief.txt",{type:"text/plain"}));file.set("rightsConfirmed","true");
+  const uploadedResponse=await request("/api/media",{method:"POST",headers:sourceScope,body:file});assert.equal(uploadedResponse.status,200,JSON.stringify(await uploadedResponse.clone().json()));const uploaded=await uploadedResponse.json();
+  const referenceId="organization-verified-reference",blockId="organization-verified-source";
+  const evidence={reference_id:referenceId,label:"Licensed product briefing",media_url:uploaded.url,authority:"authored",weight:.8,source_evidence_hash:uploaded.sourceEvidenceHash,source_content_hash:uploaded.contentHash,source_mime_type:uploaded.mimeType,source_kind:uploaded.extraction.sourceKind,extraction_status:uploaded.extraction.status,text:uploaded.extraction.text,source_citations:uploaded.extraction.segments.map((segment)=>({anchor:segment.anchor,excerpt:segment.text})),source_segment_count:uploaded.extraction.segments.length,source_excerpt_truncated:uploaded.extraction.truncated};
+  for(const event of [
+    {type:"ReferenceIngested",payload:{reference_id:referenceId,document_id:"doc-atmosphere",source_type:"upload",source_ref:uploaded.url,content_hash:uploaded.contentHash,rights_class:"asserted"}},
+    {type:"RightsAsserted",payload:{reference_id:referenceId,rights_class:"owned_or_licensed",assertion_method:"explicit-confirmation"}},
+    {type:"BlockCreated",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:blockId,type:"reference",handle:"reference/verified-brief",position:"z9020",properties:evidence}},
+  ]){const appended=await request("/api/events",json(sourceScope,{action:"append",event}));assert.equal(appended.status,200,JSON.stringify(await appended.clone().json()));}
+  const definition={name:"Evidence-backed organization kit",sourceProjectAccessId:projectAccessId,documentId:"doc-atmosphere",blockIds:[blockId]};
+  database.reset();const unconfirmed=await request(`/api/workspaces/${organizationId}/context-packages`,json(owner,definition));assert.equal(unconfirmed.status,428);assert.equal(database.writeCount(),0,"original source custody requires a deliberate organization-wide rights assertion");
+  const created=await request(`/api/workspaces/${organizationId}/context-packages`,json(owner,{...definition,sourceRightsConfirmed:true,sourceNonSensitiveConfirmed:true}));assert.equal(created.status,201,JSON.stringify(await created.clone().json()));const draft=await created.json();
+  const snapshot=JSON.parse(database.sqlite.prepare("SELECT content_json FROM organization_context_package_contents WHERE version_id=?").get(draft.versionId).content_json);const governed=snapshot.blocks[0].source;
+  assert.ok(governed.objectKey.startsWith(`organization-context/${organizationId}/`));assert.equal(objects.get(governed.objectKey).metadata.organizationId,organizationId);assert.equal(objects.get(governed.objectKey).metadata.ownerId,undefined,"organization custody does not depend on the publishing user's private object namespace");assert.equal(governed.contentSha256,uploaded.contentHash);
+  assert.equal((await request(`/api/workspaces/${organizationId}/context-packages/${draft.packageId}/versions/${draft.versionId}/publish`,{method:"POST",headers:owner})).status,200);
+  objects.delete(uploaded.key);
+  const adopted=await request(`/api/workspaces/${organizationId}/context-packages/${draft.packageId}/adopt`,json(colleague,{projectAccessId:destination,documentId:"doc-atmosphere",versionId:draft.versionId,updateMode:"follow-approved"}));assert.equal(adopted.status,201,JSON.stringify(await adopted.clone().json()));const firstBinding=await adopted.json();
+  const targetScope=await open(colleague,destination);const targetEvents=await(await request("/api/events?after=0&limit=5000&content=1",{headers:targetScope})).json();
+  const target=foldEvents(targetEvents.events,Number.POSITIVE_INFINITY,"doc-atmosphere","project-atmosphere").blocks.find((block)=>block.properties.organization_context_package_id===draft.packageId);
+  assert.ok(target);assert.equal(target.type,"reference");assert.equal(target.properties.source_content_hash,uploaded.contentHash);assert.deepEqual(target.properties.source_citations,evidence.source_citations);assert.notEqual(target.properties.reference_id,referenceId);assert.notEqual(target.properties.media_url,uploaded.url);
+  const restored=await request(target.properties.media_url,{headers:targetScope});assert.equal(restored.status,200);assert.match(await restored.text(),/Licensed customer briefing/);
+  assert.ok(database.sqlite.prepare("SELECT 1 FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND resource_kind='reference' AND resource_id=?").get(destination,organizationId,target.properties.reference_id));
+
+  const replacementFile=new FormData();replacementFile.set("file",new File(["Updated licensed evidence.\nThis new approved source supersedes the original briefing."],"updated-brief.txt",{type:"text/plain"}));replacementFile.set("rightsConfirmed","true");
+  const replacementUpload=await request("/api/media",{method:"POST",headers:sourceScope,body:replacementFile});assert.equal(replacementUpload.status,200);const replacement=await replacementUpload.json();
+  const replacementReference="organization-replacement-reference",replacementBlock="organization-replacement-source";
+  const replacementEvidence={reference_id:replacementReference,label:"Updated licensed briefing",media_url:replacement.url,authority:"authored",weight:.8,source_evidence_hash:replacement.sourceEvidenceHash,source_content_hash:replacement.contentHash,source_mime_type:replacement.mimeType,source_kind:replacement.extraction.sourceKind,extraction_status:replacement.extraction.status,text:replacement.extraction.text,source_citations:replacement.extraction.segments.map((segment)=>({anchor:segment.anchor,excerpt:segment.text})),source_segment_count:replacement.extraction.segments.length,source_excerpt_truncated:replacement.extraction.truncated};
+  for(const event of [
+    {type:"ReferenceIngested",payload:{reference_id:replacementReference,document_id:"doc-atmosphere",source_type:"upload",source_ref:replacement.url,content_hash:replacement.contentHash,rights_class:"asserted"}},
+    {type:"RightsAsserted",payload:{reference_id:replacementReference,rights_class:"owned_or_licensed",assertion_method:"explicit-confirmation"}},
+    {type:"BlockCreated",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:replacementBlock,type:"reference",handle:"reference/updated-brief",position:"z9021",properties:replacementEvidence}},
+  ]){const appended=await request("/api/events",json(sourceScope,{action:"append",event}));assert.equal(appended.status,200,JSON.stringify(await appended.clone().json()));}
+  const nextDraft=await request(`/api/workspaces/${organizationId}/context-packages/${draft.packageId}/versions`,json(owner,{sourceProjectAccessId:projectAccessId,documentId:"doc-atmosphere",blockIds:[replacementBlock],sourceRightsConfirmed:true,sourceNonSensitiveConfirmed:true}));assert.equal(nextDraft.status,201,JSON.stringify(await nextDraft.clone().json()));const secondVersion=await nextDraft.json();
+  assert.equal((await request(`/api/workspaces/${organizationId}/context-packages/${draft.packageId}/versions/${secondVersion.versionId}/publish`,{method:"POST",headers:owner})).status,200);
+  const accepted=await request(`/api/workspaces/${organizationId}/context-packages/${draft.packageId}/bindings/${firstBinding.bindingId}`,json(colleague,{action:"accept",versionId:secondVersion.versionId},"PATCH"));assert.equal(accepted.status,200,JSON.stringify(await accepted.clone().json()));
+  const updatedEvents=await(await request("/api/events?after=0&limit=5000&content=1",{headers:targetScope})).json();
+  const updatedProjection=foldEvents(updatedEvents.events,Number.POSITIVE_INFINITY,"doc-atmosphere","project-atmosphere");
+  const replacementTarget=updatedProjection.blocks.find((block)=>block.properties.organization_context_package_id===draft.packageId&&!block.removed);
+  assert.ok(replacementTarget);assert.equal(replacementTarget.properties.source_content_hash,replacement.contentHash);assert.notEqual(replacementTarget.properties.reference_id,target.properties.reference_id);assert.deepEqual(replacementTarget.properties.source_citations,replacementEvidence.source_citations);
+  const replacementContent=await request(replacementTarget.properties.media_url,{headers:targetScope});assert.equal(replacementContent.status,200);assert.match(await replacementContent.text(),/Updated licensed evidence/);
+
+  const governedDecision=projection.blocks.find((block)=>block.type!=="reference");assert.ok(governedDecision);
+  const plainDraftResponse=await request(`/api/workspaces/${organizationId}/context-packages`,json(owner,{name:"Decision before source",sourceProjectAccessId:projectAccessId,documentId:"doc-atmosphere",blockIds:[governedDecision.id]}));assert.equal(plainDraftResponse.status,201);const plainDraft=await plainDraftResponse.json();
+  assert.equal((await request(`/api/workspaces/${organizationId}/context-packages/${plainDraft.packageId}/versions/${plainDraft.versionId}/publish`,{method:"POST",headers:owner})).status,200);
+  const plainAdoption=await request(`/api/workspaces/${organizationId}/context-packages/${plainDraft.packageId}/adopt`,json(colleague,{projectAccessId:destination,documentId:"doc-atmosphere",versionId:plainDraft.versionId,updateMode:"follow-approved"}));assert.equal(plainAdoption.status,201,JSON.stringify(await plainAdoption.clone().json()));const plainBinding=await plainAdoption.json();
+  const nextPlain=await request(`/api/workspaces/${organizationId}/context-packages/${plainDraft.packageId}/versions`,json(owner,{sourceProjectAccessId:projectAccessId,documentId:"doc-atmosphere",blockIds:[governedDecision.id,replacementBlock],sourceRightsConfirmed:true,sourceNonSensitiveConfirmed:true}));assert.equal(nextPlain.status,201,JSON.stringify(await nextPlain.clone().json()));const addedSourceVersion=await nextPlain.json();
+  assert.equal((await request(`/api/workspaces/${organizationId}/context-packages/${plainDraft.packageId}/versions/${addedSourceVersion.versionId}/publish`,{method:"POST",headers:owner})).status,200);
+  const sourceAdded=await request(`/api/workspaces/${organizationId}/context-packages/${plainDraft.packageId}/bindings/${plainBinding.bindingId}`,json(colleague,{action:"accept",versionId:addedSourceVersion.versionId},"PATCH"));assert.equal(sourceAdded.status,200,JSON.stringify(await sourceAdded.clone().json()));
+  const addedEvents=await(await request("/api/events?after=0&limit=5000&content=1",{headers:targetScope})).json();
+  const addedProjection=foldEvents(addedEvents.events,Number.POSITIVE_INFINITY,"doc-atmosphere","project-atmosphere");
+  const addedSource=addedProjection.blocks.find((block)=>block.properties.organization_context_package_id===plainDraft.packageId&&block.type==="reference");assert.ok(addedSource);assert.equal(addedSource.properties.source_content_hash,replacement.contentHash);assert.equal((await request(addedSource.properties.media_url,{headers:targetScope})).status,200);
+  const protectedDecision=addedProjection.blocks.find((block)=>block.properties.organization_context_package_id===plainDraft.packageId&&block.type!=="reference");assert.ok(protectedDecision);
+  database.reset();const weaken=await request("/api/events",json(targetScope,{action:"append",event:{type:"BlockPropertyEdited",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:protectedDecision.id,property_path:"text",old_value:protectedDecision.properties.text??null,new_value:"Weaken approved organization policy"}}}));assert.equal(weaken.status,403,JSON.stringify({body:await weaken.clone().json(),block:protectedDecision.id,destination,checks:database.calls.filter((call)=>call.sql.includes("member.target_block_id")),membership:database.sqlite.prepare("SELECT member.binding_id,member.target_block_id,binding.project_access_id,binding.organization_id,binding.status FROM project_context_package_members member JOIN project_context_package_bindings binding ON binding.binding_id=member.binding_id WHERE member.target_block_id=?").get(protectedDecision.id)}));assert.equal((await weaken.json()).error,"organization_context_package_decision_immutable");assert.equal(database.writeCount(),0,"approved organizational decisions cannot be weakened through ordinary author edits");
+  database.reset();const personalBypass=await request("/api/events",json(colleague,{action:"append",event:{type:"BlockPropertyEdited",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:protectedDecision.id,property_path:"text",old_value:protectedDecision.properties.text??null,new_value:"Personal-session governance bypass"}}}));assert.equal(personalBypass.status,403,JSON.stringify(await personalBypass.clone().json()));assert.equal((await personalBypass.json()).error,"organization_context_package_decision_immutable");assert.equal(database.writeCount(),0,"removing the shared-project cookie cannot weaken organization-governed decisions through the owner's personal stream");
+  database.reset();const extractionBypass=await request("/api/events",json(colleague,{action:"extract_reference",documentId:"doc-atmosphere",blockId:addedSource.id,referenceId:addedSource.properties.reference_id,sample:{gridWidth:1,gridHeight:1,pixels:[255,255,255,255]}}));assert.equal(extractionBypass.status,403);assert.equal((await extractionBypass.json()).error,"organization_context_package_decision_immutable");assert.equal(database.writeCount(),0,"background extraction cannot mutate approved package source evidence from a personal session");
+});
+
+test("assigned reviewers receive exact revision-bound inbox tasks, scoped delivery, deterministic reminders, and immediate revocation",async()=>{
+  const {database,environment,request,owner,organizationId,projectAccessId,projection,json,open}=await enterpriseWorkspaceFixture({artifact:true});
+  const first=await specialistIdentity(database,request,"enterprise-reviewer-first");
+  const second=await specialistIdentity(database,request,"enterprise-reviewer-second");
+  const enroll=async(headers,userId)=>{
+    const invited=await request(`/api/workspaces/${organizationId}/members`,json(owner,{email:`${userId}@example.test`,role:"member"}));assert.equal(invited.status,201);const invitation=await invited.json();
+    assert.equal((await request(`/api/workspaces/${organizationId}/invitations/${invitation.invitationId}/accept`,{method:"POST",headers})).status,200);
+    assert.equal((await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/members`,json(owner,{userId,role:"viewer"}))).status,201);
+    const membership=database.sqlite.prepare("SELECT membership_id FROM project_memberships WHERE project_access_id=? AND user_id=?").get(projectAccessId,userId).membership_id;
+    assert.equal((await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/members/${membership}`,json(owner,{reviewAccess:true},"PATCH"))).status,200);
+    return membership;
+  };
+  const firstMembership=await enroll(first,"enterprise-reviewer-first");await enroll(second,"enterprise-reviewer-second");
+  const ownerScope=await open(owner),firstScope=await open(first),secondScope=await open(second);
+  const versions=projection.blocks.map((block)=>({block_id:block.id,version:block.sourceEvents.length}));
+  const binding=()=>({artifact_revision:Number(database.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE stream_id='creative:enterprise-owner' AND type='DocumentArtifactEdited' AND json_extract(payload,'$.artifact_id')='enterprise-output'").get().count),content_sha256:createHash("sha256").update(database.sqlite.prepare("SELECT content FROM private_content WHERE content_id='enterprise-output-content'").get().content).digest("hex")});
+  const event=(type,assigned)=>({type,payload:{artifact_id:"enterprise-output",document_id:"doc-atmosphere",source_block_versions:versions,...binding(),...(assigned?{assigned_reviewer_user_id:assigned}:{})}});
+  const submit=await request("/api/events",json(ownerScope,{action:"append",event:event("ArtifactReviewRequested","enterprise-reviewer-first")}));assert.equal(submit.status,200,JSON.stringify(await submit.clone().json()));
+  const inboxFirst=await(await request("/api/workspaces/reviews",{headers:first})).json();const inboxSecond=await(await request("/api/workspaces/reviews",{headers:second})).json();
+  assert.equal(inboxFirst.tasks.length,1);assert.equal(inboxFirst.tasks[0].artifactId,"enterprise-output");assert.equal(inboxFirst.tasks[0].revision,0);assert.equal(inboxSecond.tasks.length,0,"another entitled reviewer does not inherit a designated task");
+  const noticesFirst=await(await request("/api/project-notifications",{headers:firstScope})).json();const noticesSecond=await(await request("/api/project-notifications",{headers:secondScope})).json();
+  assert.equal(noticesFirst.notifications.filter((notice)=>notice.kind==="review_requested").length,1);assert.equal(noticesSecond.notifications.filter((notice)=>notice.kind==="review_requested").length,0);
+  database.reset();const wrong=await request("/api/events",json(secondScope,{action:"append",event:event("ArtifactApproved")}));assert.equal(wrong.status,403);assert.equal((await wrong.json()).error,"assigned_artifact_reviewer_required");assert.equal(database.writeCount(),0);
+  const taskId=inboxFirst.tasks[0].id;database.sqlite.prepare("UPDATE project_review_tasks SET due_at=? WHERE task_id=?").run(new Date(Date.now()-60_000).toISOString(),taskId);
+  await worker.scheduled({},environment);await worker.scheduled({},environment);
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_automation_outbox WHERE task_id=?").get(taskId).count,1,"replayed scheduler execution is idempotent");
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_notifications WHERE recipient_user_id=? AND kind='review_due'").get("enterprise-reviewer-first").count,1);
+  assert.equal((await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/members/${firstMembership}`,json(owner,{reviewAccess:false},"PATCH"))).status,200);
+  assert.equal((await(await request("/api/workspaces/reviews",{headers:first})).json()).tasks.length,0);
+  assert.equal(database.sqlite.prepare("SELECT status FROM project_review_tasks WHERE task_id=?").get(taskId).status,"canceled");
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_notifications WHERE organization_id=? AND recipient_user_id=? AND kind IN('review_requested','review_due')").get(organizationId,"enterprise-reviewer-first").count,0);
+  database.reset();const bypass=await request("/api/events",json(secondScope,{action:"append",event:event("ArtifactApproved")}));assert.equal(bypass.status,403);assert.equal(database.writeCount(),0,"revoking the assigned reviewer cannot silently delegate their exact approval to another reviewer");
+  const reassigned=await request("/api/events",json(ownerScope,{action:"append",event:event("ArtifactReviewRequested","enterprise-reviewer-second")}));assert.equal(reassigned.status,200,JSON.stringify(await reassigned.clone().json()));
+  assert.equal((await(await request("/api/workspaces/reviews",{headers:second})).json()).tasks.length,1);
+  const approved=await request("/api/events",json(secondScope,{action:"append",event:event("ArtifactApproved")}));assert.equal(approved.status,200,JSON.stringify(await approved.clone().json()));
+  assert.equal((await(await request("/api/workspaces/reviews",{headers:second})).json()).tasks.length,0,"an exact reviewer decision closes every sibling assignment");
+});
+
+test("tenant identity policy enforces honest domain/source restrictions, closes public links, and never claims verified federation",async()=>{
+  const {database,request,owner,organizationId,projectAccessId,json,open}=await enterpriseWorkspaceFixture();
+  const outsider=await specialistIdentity(database,request,"enterprise-security-outsider");
+  const baseline=await(await request(`/api/workspaces/${organizationId}/security`,{headers:owner})).json();
+  assert.equal(baseline.domainOwnershipVerified,false);assert.equal(baseline.enterpriseFederationVerified,false);assert.equal(baseline.mfaAttestationAvailable,false);assert.equal(baseline.encryption.externalCustomerManagedKeys,false);
+  database.reset();assert.equal((await request(`/api/workspaces/${organizationId}/security`,{headers:outsider})).status,403);assert.equal(database.writeCount(),0);
+  database.reset();assert.equal((await request(`/api/workspaces/${organizationId}/security`,json(owner,{allowedEmailDomains:["outside.test"]},"PATCH"))).status,409);assert.equal(database.writeCount(),0,"owner lockout is rejected before writes");
+  database.reset();assert.equal((await request(`/api/workspaces/${organizationId}/security`,json(owner,{requireMfa:true},"PATCH"))).status,409);assert.equal(database.writeCount(),0,"unverified MFA cannot be enabled cosmetically");
+  database.reset();assert.equal((await request(`/api/workspaces/${organizationId}/security`,json(owner,{encryptionMode:"customer-managed"},"PATCH"))).status,409);assert.equal(database.writeCount(),0,"unsupported customer-managed storage encryption fails closed");
+  const selected=await open(owner);
+  const saved=await request(`/api/workspaces/${organizationId}/security`,json(owner,{allowedEmailDomains:["example.test"],authenticationSource:"openai-workspace",maxSessionMinutes:120,expectedVersion:0},"PATCH"));
+  assert.equal(saved.status,200,JSON.stringify(await saved.clone().json()));assert.match(saved.headers.get("set-cookie")??"",/Max-Age=0/);
+  assert.equal((await request("/api/session",{headers:selected})).status,403,"old project context is invalidated immediately");
+  const limited=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST",headers:owner});
+  assert.equal(limited.status,200);assert.match(limited.headers.get("set-cookie")??"",/Max-Age=7200/,"new sessions and cookies honor the exact configured 120-minute policy");
+  const protectedScope={...owner,cookie:limited.headers.get("set-cookie")?.split(";")[0]??""};
+  database.reset();const publicBypass=await request("/api/shares",json(protectedScope,{resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere"}));assert.equal(publicBypass.status,403);assert.equal((await publicBypass.json()).error,"organization_identity_policy_disallows_public_sharing");assert.equal(database.writeCount(),0,"a restricted tenant cannot re-open an unauthenticated public perimeter");
+  const forbidden={"oai-authenticated-user-id":"enterprise-owner","oai-authenticated-user-email":"enterprise-owner@outside.test"};database.reset();
+  assert.equal((await request("/api/events?after=0&content=1",{headers:forbidden})).status,403);assert.equal(database.writeCount(),0,"identity mismatch cannot update stored identity or expose personally owned organizational history");
+  database.reset();assert.equal((await request(`/api/workspaces/${organizationId}/members`,json(owner,{email:"person@outside.test"}))).status,403);assert.equal(database.writeCount(),0);
+  const report=await(await request(`/api/workspaces/${organizationId}/assurance`,{headers:owner})).json();assert.equal(report.scheduler.hostingScheduleVerified,false);assert.equal(report.enterpriseReady,false);assert.ok(report.enterpriseBlockers.includes("enterprise-federation"));
+  const exported=await(await request(`/api/workspaces/${organizationId}/assurance/export`,{headers:owner})).json();assert.equal(exported.organizationId,organizationId);assert.doesNotMatch(JSON.stringify(exported.audit),/token_hash|allowed_domains_json|private_json|content_markdown/);
+  assert.throws(()=>database.sqlite.prepare("UPDATE organization_audit_events SET action='forged' WHERE organization_id=?").run(organizationId),/append-only/);
+});
+
+test("encrypted tenant recovery snapshots reject absent keys, tampering, wrong tenants, and preserve integrity across key rotation",async()=>{
+  const {database,environment,request,owner,organizationId,json}=await enterpriseWorkspaceFixture({artifact:true});
+  const create=()=>request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"create",confirmation:"CREATE_ENCRYPTED_ORGANIZATION_RECOVERY_SNAPSHOT"}));
+  database.reset();assert.equal((await create()).status,409);assert.equal(database.writeCount(),0,"no plaintext snapshot is emitted when the environment root is absent");
+  environment.FORMA_ENCRYPTION_ROOT_KEY="invalid-nonempty-root";
+  const invalidPosture=await(await request(`/api/workspaces/${organizationId}/security`,{headers:owner})).json();assert.equal(invalidPosture.encryption.recoverySnapshots,"not-configured","nonempty malformed key material never appears operational");
+  database.reset();assert.equal((await create()).status,409);assert.equal(database.writeCount(),0,"invalid root material cannot create a key or optimistic recovery evidence");
+  environment.FORMA_ENCRYPTION_ROOT_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const snapshot=await create();assert.equal(snapshot.status,201,JSON.stringify(await snapshot.clone().json()));const saved=await snapshot.json();
+  const stored=database.sqlite.prepare("SELECT encrypted_payload,manifest_json,key_id FROM organization_recovery_snapshots WHERE snapshot_id=?").get(saved.snapshotId);
+  assert.throws(()=>database.sqlite.prepare("INSERT INTO organization_key_versions(key_id,organization_id,version,algorithm,wrapped_key,status,created_at,retired_at) VALUES(?,?,999,'AES-GCM-256','forged','active',?,NULL)")
+    .run("forged-second-active-key",organizationId,new Date().toISOString()),/UNIQUE/,"database uniqueness prevents simultaneous active organization encryption keys");
+  assert.doesNotMatch(stored.encrypted_payload,/Customer-ready narrative|Enterprise output|private_json/);
+  assert.doesNotMatch(database.sqlite.prepare("SELECT wrapped_key FROM organization_key_versions WHERE key_id=?").get(stored.key_id).wrapped_key,/0123456789abcdef/);
+  const verify=()=>request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"drill",snapshotId:saved.snapshotId,confirmation:"VERIFY_ENCRYPTED_ORGANIZATION_RECOVERY_SNAPSHOT"}));
+  const first=await verify();assert.equal(first.status,200,JSON.stringify(await first.clone().json()));assert.equal((await first.json()).isolatedRestorePerformed,false,"a verification drill is never misrepresented as a restored production tenant");
+  database.reset();const unconfirmed=await request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"restore",snapshotId:saved.snapshotId}));assert.equal(unconfirmed.status,400);assert.equal(database.writeCount(),0,"an isolated staging exercise requires deliberate exact-tenant confirmation");
+  const beforeEvents=database.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count,beforeContent=database.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count;
+  const restore=()=>request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"restore",snapshotId:saved.snapshotId,organizationId,confirmation:"RESTORE_ORGANIZATION_SNAPSHOT_TO_ISOLATED_ROLLBACK_STAGE"}));
+  const staged=await restore();assert.equal(staged.status,200,JSON.stringify(await staged.clone().json()));const exercised=await staged.json();
+  assert.equal(exercised.status,"isolated-rollback-verified");assert.equal(exercised.isolatedRestorePerformed,false);assert.equal(exercised.isolatedRollbackRestorePerformed,true);assert.equal(exercised.rollbackVerified,true);assert.equal(exercised.productionTenantMutated,false);assert.equal(exercised.objectStorageRestorePerformed,false);
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count,beforeEvents+1,"the only committed history is the truthful isolated-drill audit receipt");
+  assert.equal(database.sqlite.prepare("SELECT type FROM events ORDER BY rowid DESC LIMIT 1").get().type,"OrganizationRecoveryIsolatedRollbackRestoreVerified");
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count,beforeContent);
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE name IN('forma_recovery_rollback_stage','forma_recovery_rollback_guard','forma_recovery_rollback_trigger')").get().count,0,"all staged recovery records and schema disappear in the same automatic rollback");
+  assert.ok(database.sqlite.prepare("SELECT 1 FROM organization_audit_events WHERE organization_id=? AND action='OrganizationRecoveryIsolatedRollbackRestoreVerified'").get(organizationId));
+  const posture=await(await request(`/api/workspaces/${organizationId}/assurance`,{headers:owner})).json();assert.equal(posture.recovery.isolatedRollbackRestoreVerified,true);assert.equal(posture.recovery.isolatedRestoreVerified,false);assert.equal(posture.recovery.productionTenantRestoreAvailable,false);
+  const originalManifest=stored.manifest_json;database.sqlite.prepare("UPDATE organization_recovery_snapshots SET manifest_json=? WHERE snapshot_id=?").run(JSON.stringify({schema:1,organizationId,projectCount:0,counts:{},media:[]}),saved.snapshotId);
+  database.reset();assert.equal((await verify()).status,409);assert.equal(database.writeCount(),0,"unauthenticated manifest substitutions cannot produce a successful recovery drill");
+  database.reset();assert.equal((await restore()).status,409);assert.equal(database.writeCount(),0,"tampered recovery evidence cannot produce a misleading isolated rollback receipt");
+  database.sqlite.prepare("UPDATE organization_recovery_snapshots SET manifest_json=? WHERE snapshot_id=?").run(originalManifest,saved.snapshotId);
+  const rotated=await request(`/api/workspaces/${organizationId}/security/keys/rotate`,{method:"POST",headers:owner});assert.equal(rotated.status,200);assert.equal((await verify()).status,200,"retired wrapped keys still decrypt authorized older snapshots");
+  const envelope=JSON.parse(stored.encrypted_payload);envelope.ciphertext=envelope.ciphertext.slice(0,-4)+"AAAA";database.sqlite.prepare("UPDATE organization_recovery_snapshots SET encrypted_payload=? WHERE snapshot_id=?").run(JSON.stringify(envelope),saved.snapshotId);
+  database.reset();const tampered=await verify();assert.equal(tampered.status,409);assert.equal(database.writeCount(),0,"integrity failure creates no misleading successful restore receipt");
+  database.reset();assert.equal((await restore()).status,409);assert.equal(database.writeCount(),0,"tampered ciphertext cannot enter rollback staging or create a success receipt");
+});
+
+test("versioned encryption roots preserve historical recovery and refuse rotations that would strand existing snapshots",async()=>{
+  const {database,environment,request,owner,organizationId,json}=await enterpriseWorkspaceFixture({artifact:true});
+  const previous="0123456789abcdef".repeat(4),current="fedcba9876543210".repeat(4);
+  environment.FORMA_ENCRYPTION_ROOT_KEY=previous;
+  const create=()=>request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"create",confirmation:"CREATE_ENCRYPTED_ORGANIZATION_RECOVERY_SNAPSHOT"}));
+  const drill=(snapshotId)=>request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"drill",snapshotId,confirmation:"VERIFY_ENCRYPTED_ORGANIZATION_RECOVERY_SNAPSHOT"}));
+  const first=await create();assert.equal(first.status,201);const legacy=await first.json();
+  environment.FORMA_ENCRYPTION_ROOT_KEYS=JSON.stringify({current});environment.FORMA_ENCRYPTION_ROOT_KEY_VERSION="current";
+  assert.equal((await drill(legacy.snapshotId)).status,200,"the still-configured legacy root remains usable during keyring migration");
+  assert.equal((await request(`/api/workspaces/${organizationId}/security/keys/rotate`,{method:"POST",headers:owner})).status,200);
+  const created=await create();assert.equal(created.status,201);const fresh=await created.json();
+  const wrappers=database.sqlite.prepare("SELECT key_id,wrapped_key FROM organization_key_versions WHERE organization_id=?").all(organizationId);
+  assert.equal(JSON.parse(wrappers.find((entry)=>entry.key_id===legacy.keyId).wrapped_key).wrapping_root_version,undefined);
+  assert.equal(JSON.parse(wrappers.find((entry)=>entry.key_id===fresh.keyId).wrapped_key).wrapping_root_version,"current");
+  assert.doesNotMatch(JSON.stringify(wrappers),new RegExp(`${previous}|${current}`));
+  assert.equal((await drill(fresh.snapshotId)).status,200);
+  delete environment.FORMA_ENCRYPTION_ROOT_KEY;
+  database.reset();assert.equal((await drill(legacy.snapshotId)).status,409);assert.equal(database.writeCount(),0);
+  assert.equal((await drill(fresh.snapshotId)).status,200);
+  database.reset();const unsafe=await request(`/api/workspaces/${organizationId}/security/keys/rotate`,{method:"POST",headers:owner});assert.equal(unsafe.status,409);assert.equal(database.writeCount(),0,"key rotation cannot retire the active tenant key while historical snapshots are undecryptable");
+  environment.FORMA_ENCRYPTION_ROOT_KEYS="{";environment.FORMA_ENCRYPTION_ROOT_KEY=previous;
+  database.reset();assert.equal((await create()).status,409);assert.equal(database.writeCount(),0,"a malformed versioned keyring never falls back to a legacy root");
+});
+
+test("historical organization recovery exercises remain usable after a valid owner succession",async()=>{
+  const {database,environment,request}=await productionWorker();
+  const former=await specialistIdentity(database,request,"recovery-former-owner"),successor=await specialistIdentity(database,request,"recovery-successor");
+  const json=(headers,body)=>({method:"POST",headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
+  const established=await request("/api/workspaces",json(former,{name:"Owner succession recovery"}));assert.equal(established.status,201);const organizationId=(await established.json()).organizationId;
+  const invited=await request(`/api/workspaces/${organizationId}/members`,json(former,{email:"recovery-successor@example.test",role:"administrator"}));assert.equal(invited.status,201);const invitation=await invited.json();
+  const accepted=await request(`/api/workspaces/${organizationId}/invitations/${invitation.invitationId}/accept`,json(successor,{token:new URL(invitation.invitationUrl).searchParams.get("token")}));assert.equal(accepted.status,200,JSON.stringify(await accepted.clone().json()));
+  environment.FORMA_ENCRYPTION_ROOT_KEY="0123456789abcdef".repeat(4);
+  const created=await request(`/api/workspaces/${organizationId}/recovery`,json(former,{action:"create",confirmation:"CREATE_ENCRYPTED_ORGANIZATION_RECOVERY_SNAPSHOT"}));assert.equal(created.status,201,JSON.stringify(await created.clone().json()));const snapshot=await created.json();
+  const transferred=await request(`/api/workspaces/${organizationId}/ownership`,json(former,{targetUserId:"recovery-successor",confirmation:"TRANSFER_ORGANIZATION_OWNERSHIP"}));assert.equal(transferred.status,200,JSON.stringify(await transferred.clone().json()));
+  const body={action:"restore",snapshotId:snapshot.snapshotId,organizationId,confirmation:"RESTORE_ORGANIZATION_SNAPSHOT_TO_ISOLATED_ROLLBACK_STAGE"};
+  database.reset();assert.equal((await request(`/api/workspaces/${organizationId}/recovery`,json(former,body))).status,403);assert.equal(database.writeCount(),0,"a former owner cannot recover organization evidence after custody transfers");
+  const recovered=await request(`/api/workspaces/${organizationId}/recovery`,json(successor,body));assert.equal(recovered.status,200,JSON.stringify(await recovered.clone().json()));assert.equal((await recovered.json()).isolatedRollbackRestorePerformed,true,"the current owner may verify an authentic snapshot created under a valid earlier owner");
+});
+
+test("large encrypted tenant recovery snapshots preserve held expired evidence, detect object tampering, and erase every scoped recovery object",async()=>{
+  const {database,environment,request,owner,organizationId,projectAccessId,json}=await enterpriseWorkspaceFixture({artifact:true});
+  environment.FORMA_ENCRYPTION_ROOT_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const objects=new Map();
+  environment.MEDIA={
+    async put(key,value,options={}){const bytes=value instanceof ArrayBuffer?new Uint8Array(value):new Uint8Array(await new Response(value).arrayBuffer());objects.set(key,{bytes,metadata:{...options.customMetadata},contentType:options.httpMetadata?.contentType??"application/octet-stream"});},
+    async get(key){const item=objects.get(key);return item?{body:new Blob([item.bytes]).stream(),size:item.bytes.byteLength,customMetadata:item.metadata,writeHttpMetadata(headers){headers.set("content-type",item.contentType);}}:null;},
+    async head(key){const item=objects.get(key);return item?{size:item.bytes.byteLength,customMetadata:item.metadata}:null;},
+    async delete(key){objects.delete(key);},
+  };
+  const bytes=new Uint8Array(1_250_000).fill(65),contentHash=createHash("sha256").update(bytes).digest("hex");
+  const mediaKey="u-656e74657270726973652d6f776e6572/uploads/recoverable-source.pdf";
+  await environment.MEDIA.put(mediaKey,bytes.buffer,{httpMetadata:{contentType:"application/pdf"},customMetadata:{ownerId:"enterprise-owner",organizationId,sha256:contentHash}});
+  const now=new Date().toISOString(),expired=new Date(Date.now()-60_000).toISOString();
+  database.sqlite.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) VALUES(?,'media',?,?,?,'enterprise-owner','collaborative_output',NULL,'enterprise-owner',?)")
+    .run(projectAccessId,mediaKey,organizationId,"project-atmosphere",now);
+  database.sqlite.prepare("UPDATE private_content SET expires_at=? WHERE content_id='enterprise-output-content'").run(expired);
+  database.sqlite.prepare("INSERT INTO private_content_retention_scopes(content_id,organization_id,project_access_id,project_id,actor_user_id,classification,policy_version,assigned_expires_at,created_at) VALUES('enterprise-output-content',?,?,?,'enterprise-owner','governed-evidence',0,?,?)")
+    .run(organizationId,projectAccessId,"project-atmosphere",expired,now);
+  const revisionContent=JSON.stringify({markdown:"Legally held output",items:[]});
+  database.sqlite.prepare("INSERT INTO artifact_revisions(revision_id,owner_id,organization_id,project_access_id,project_id,document_id,artifact_id,revision,content_json,content_sha256,created_by_user_id,created_at,expires_at,redacted_at) VALUES(?,'enterprise-owner',?,?,?,'doc-atmosphere','enterprise-output',0,?,?,'enterprise-owner',?,?,NULL)")
+    .run("held-output-revision",organizationId,projectAccessId,"project-atmosphere",revisionContent,createHash("sha256").update(revisionContent).digest("hex"),now,expired);
+  const heldArtifact=await request(`/api/workspaces/${organizationId}/holds`,json(owner,{scope:"artifact",resourceId:"enterprise-output",reason:"Preserve finished-output revision"}));assert.equal(heldArtifact.status,201,JSON.stringify(await heldArtifact.clone().json()));const artifactHold=(await heldArtifact.json()).holdId;
+  const create=await request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"create",confirmation:"CREATE_ENCRYPTED_ORGANIZATION_RECOVERY_SNAPSHOT"}));assert.equal(create.status,201,JSON.stringify(await create.clone().json()));const snapshot=await create.json();
+  assert.equal(snapshot.snapshotStorage,"tenant-encrypted-object");assert.equal(snapshot.manifest.counts.content,1,"expired customer output protected by a legal hold remains recoverable");assert.equal(snapshot.manifest.counts.revisions,1,"expired held output revisions remain recoverable");assert.equal(snapshot.manifest.counts.retentionScopes,1);
+  const pointer=JSON.parse(database.sqlite.prepare("SELECT encrypted_payload FROM organization_recovery_snapshots WHERE snapshot_id=?").get(snapshot.snapshotId).encrypted_payload);
+  assert.equal(pointer.storage,"organization-r2");assert.ok(pointer.objectKey.startsWith(`organization-recovery/${organizationId}/`));assert.ok(objects.has(pointer.objectKey));assert.doesNotMatch(new TextDecoder().decode(objects.get(pointer.objectKey).bytes),/Customer-ready narrative|Legally held output/);
+  const drill=()=>request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"drill",snapshotId:snapshot.snapshotId,confirmation:"VERIFY_ENCRYPTED_ORGANIZATION_RECOVERY_SNAPSHOT"}));
+  const pristine=objects.get(pointer.objectKey).bytes.slice();objects.get(pointer.objectKey).bytes[30]^=1;database.reset();assert.equal((await drill()).status,409);assert.equal(database.writeCount(),0,"tampered encrypted object storage cannot create a misleading recovery receipt");objects.get(pointer.objectKey).bytes=pristine;assert.equal((await drill()).status,200);
+  const restored=await request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"restore",snapshotId:snapshot.snapshotId,organizationId,confirmation:"RESTORE_ORGANIZATION_SNAPSHOT_TO_ISOLATED_ROLLBACK_STAGE"}));assert.equal(restored.status,200,JSON.stringify(await restored.clone().json()));assert.equal((await restored.json()).isolatedRollbackRestorePerformed,true);
+  assert.equal((await request(`/api/workspaces/${organizationId}/holds/${artifactHold}`,{method:"DELETE",headers:owner})).status,200);
+  const migrated=await request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"migrate-privacy",organizationId,confirmation:"MIGRATE_ORGANIZATION_HISTORICAL_EVENT_CONTENT"}));assert.equal(migrated.status,200,JSON.stringify(await migrated.clone().json()));
+  const erased=await request(`/api/workspaces/${organizationId}/deletion`,json(owner,{organizationId,confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA"}));assert.equal(erased.status,200,JSON.stringify(await erased.clone().json()));assert.equal(objects.has(pointer.objectKey),false,"organization erasure includes encrypted large-recovery objects");assert.equal(objects.has(mediaKey),false);
+});
+
+test("ambiguous encrypted-object writes remain tracked and support owner-only verified cleanup without an encryption root",async()=>{
+  const {database,environment,request,owner,organizationId,projectAccessId,json}=await enterpriseWorkspaceFixture({artifact:true});
+  environment.FORMA_ENCRYPTION_ROOT_KEY="0123456789abcdef".repeat(4);
+  const objects=new Map();let rejectRecoveryWrite=true,rejectDeletion=true;
+  environment.MEDIA={
+    async put(key,value,options={}){const bytes=value instanceof ArrayBuffer?new Uint8Array(value):new Uint8Array(await new Response(value).arrayBuffer());objects.set(key,{bytes,metadata:{...options.customMetadata},contentType:options.httpMetadata?.contentType??"application/octet-stream"});if(key.startsWith("organization-recovery/")&&rejectRecoveryWrite)throw new Error("ambiguous object write");},
+    async get(key){const object=objects.get(key);return object?{body:new Blob([object.bytes]).stream(),size:object.bytes.byteLength,customMetadata:object.metadata,writeHttpMetadata(headers){headers.set("content-type",object.contentType);}}:null;},
+    async head(key){const object=objects.get(key);return object?{size:object.bytes.byteLength,customMetadata:object.metadata}:null;},
+    async delete(key){if(rejectDeletion)throw new Error("temporary object storage failure");objects.delete(key);},
+  };
+  const bytes=new Uint8Array(1_250_000).fill(65),digest=createHash("sha256").update(bytes).digest("hex"),mediaKey="u-656e74657270726973652d6f776e6572/uploads/cleanup-source.pdf",now=new Date().toISOString();
+  await environment.MEDIA.put(mediaKey,bytes.buffer,{httpMetadata:{contentType:"application/pdf"},customMetadata:{ownerId:"enterprise-owner",organizationId,sha256:digest}});
+  database.sqlite.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) VALUES(?,'media',?,?,?,'enterprise-owner','collaborative_output',NULL,'enterprise-owner',?)")
+    .run(projectAccessId,mediaKey,organizationId,"project-atmosphere",now);
+  const failed=await request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"create",confirmation:"CREATE_ENCRYPTED_ORGANIZATION_RECOVERY_SNAPSHOT"}));assert.equal(failed.status,503,JSON.stringify(await failed.clone().json()));const pending=await failed.json();
+  assert.equal(pending.error,"organization_recovery_object_cleanup_pending");assert.equal(pending.retryable,true);
+  const tracked=database.sqlite.prepare("SELECT status,encrypted_payload,key_id FROM organization_recovery_snapshots WHERE snapshot_id=?").get(pending.snapshotId);assert.equal(tracked.status,"cleanup-pending");
+  const pointer=JSON.parse(tracked.encrypted_payload);assert.ok(objects.has(pointer.objectKey),"an ambiguously uploaded encrypted object always retains a durable tenant-scoped cleanup pointer");
+  delete environment.FORMA_ENCRYPTION_ROOT_KEY;
+  const cleanup=(overrides={})=>request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"cleanup",snapshotId:pending.snapshotId,organizationId,confirmation:"RETRY_ORGANIZATION_RECOVERY_OBJECT_CLEANUP",...overrides}));
+  database.reset();assert.equal((await cleanup({confirmation:"wrong"})).status,400);assert.equal(database.writeCount(),0);
+  database.reset();assert.equal((await cleanup({organizationId:"foreign-tenant"})).status,400);assert.equal(database.writeCount(),0);
+  const legitimate=objects.get(pointer.objectKey).metadata;objects.get(pointer.objectKey).metadata={...legitimate,organizationId:"foreign-tenant"};
+  database.reset();assert.equal((await cleanup()).status,409);assert.equal(database.writeCount(),0,"foreign object metadata cannot be erased through a legitimate recovery pointer");objects.get(pointer.objectKey).metadata=legitimate;
+  database.reset();const retry=await cleanup();assert.equal(retry.status,503);assert.equal(database.writeCount(),0);assert.equal(database.sqlite.prepare("SELECT status FROM organization_recovery_snapshots WHERE snapshot_id=?").get(pending.snapshotId).status,"cleanup-pending");
+  database.sqlite.prepare("UPDATE organization_recovery_snapshots SET status='staging' WHERE snapshot_id=?").run(pending.snapshotId);
+  database.reset();assert.equal((await cleanup()).status,404);assert.equal(database.writeCount(),0,"an active object upload cannot be unsafely fenced or orphaned by manual cleanup");
+  database.sqlite.prepare("UPDATE organization_recovery_snapshots SET status='cleanup-pending' WHERE snapshot_id=?").run(pending.snapshotId);
+  rejectRecoveryWrite=false;rejectDeletion=false;
+  const removed=await cleanup();assert.equal(removed.status,200,JSON.stringify(await removed.clone().json()));assert.equal((await removed.json()).objectDeletionVerified,true);
+  assert.equal(objects.has(pointer.objectKey),false);assert.equal(database.sqlite.prepare("SELECT 1 FROM organization_recovery_snapshots WHERE snapshot_id=?").get(pending.snapshotId),undefined);
+  assert.ok(database.sqlite.prepare("SELECT 1 FROM organization_audit_events WHERE organization_id=? AND action='OrganizationRecoveryObjectCleanupCompleted'").get(organizationId));
+  const migrated=await request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"migrate-privacy",organizationId,confirmation:"MIGRATE_ORGANIZATION_HISTORICAL_EVENT_CONTENT"}));assert.equal(migrated.status,200);
+  const erased=await request(`/api/workspaces/${organizationId}/deletion`,json(owner,{organizationId,confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA"}));assert.equal(erased.status,200,JSON.stringify(await erased.clone().json()));assert.equal(objects.size,0);
+});
+
+test("failed organization deletion remains isolated, owner-inspectable, and safely resumable",async()=>{
+  const {database,environment,request,owner,organizationId,projectAccessId,json}=await enterpriseWorkspaceFixture({artifact:true});
+  const objectKey="u-656e74657270726973652d6f776e6572/uploads/deletion-retry.pdf",now=new Date().toISOString();let exists=true,unavailable=true;
+  environment.MEDIA={async head(key){return exists&&key===objectKey?{customMetadata:{ownerId:"enterprise-owner",organizationId}}:null;},async delete(key){if(unavailable)throw new Error("temporary storage failure");if(key===objectKey)exists=false;}};
+  database.sqlite.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) VALUES(?,'media',?,?,?,'enterprise-owner','collaborative_output',NULL,'enterprise-owner',?)")
+    .run(projectAccessId,objectKey,organizationId,"project-atmosphere",now);
+  const migration=await request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"migrate-privacy",organizationId,confirmation:"MIGRATE_ORGANIZATION_HISTORICAL_EVENT_CONTENT"}));assert.equal(migration.status,200);
+  const remove=()=>request(`/api/workspaces/${organizationId}/deletion`,json(owner,{organizationId,confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA"}));
+  const interrupted=await remove();assert.equal(interrupted.status,503,JSON.stringify(await interrupted.clone().json()));assert.equal((await interrupted.json()).status,"partial");
+  database.reset();assert.equal((await request(`/api/workspaces/${organizationId}`,{headers:owner})).status,409);assert.equal(database.writeCount(),0,"ordinary workspace capabilities remain frozen during a partial irreversible deletion");
+  const status=await request(`/api/workspaces/${organizationId}/deletion`,{headers:owner});assert.equal(status.status,200);assert.equal((await status.json()).job.status,"partial","the exact owner retains a narrow, read-only recovery route");
+  const source=await readFile(new URL("../src/components/forma-workspace-settings.ts",import.meta.url),"utf8");
+  assert.match(source,/const deletion=await this\.#request[^\n]*\/deletion/);assert.match(source,/#deletionRecoveryControls\(\)/);assert.match(source,/if\(organizationId&&this\.#deletionJob&&\["pending","partial","processing"\]\.includes/);
+  assert.match(source,/retryable:body\.retryable===true\|\|body\.status==="partial"/);assert.match(source,/\.retryable\)await this\.#load\(\)/,"a retryable initial failure immediately discovers its exact recovery action without requiring manual navigation");
+  unavailable=false;const completed=await remove();assert.equal(completed.status,200,JSON.stringify(await completed.clone().json()));assert.equal(exists,false);assert.equal((await completed.json()).status,"completed");
+});
+
+test("scoped content legal holds protect expired evidence from ordinary request-triggered cleanup",async()=>{
+  const {database,environment,request,owner,organizationId,projectAccessId,json}=await enterpriseWorkspaceFixture();
+  const now=new Date().toISOString(),expired=new Date(Date.now()-120_000).toISOString(),contentId="held-request-cleanup-content";
+  database.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)")
+    .run(contentId,"enterprise-owner","chat-user","Legally protected customer evidence",now,expired);
+  database.sqlite.prepare("INSERT INTO private_content_retention_scopes(content_id,organization_id,project_access_id,project_id,actor_user_id,classification,policy_version,assigned_expires_at,created_at) VALUES(?,?,?,?,?,'governed-evidence',0,?,?)")
+    .run(contentId,organizationId,projectAccessId,"project-atmosphere","enterprise-owner",expired,now);
+  const held=await request(`/api/workspaces/${organizationId}/holds`,json(owner,{scope:"content",resourceId:contentId,reason:"Preserve exact evidence during review"}));assert.equal(held.status,201,JSON.stringify(await held.clone().json()));
+  environment.FORMA_ENCRYPTION_ROOT_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  database.reset();const withheld=await request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"create",confirmation:"CREATE_ENCRYPTED_ORGANIZATION_RECOVERY_SNAPSHOT"}));assert.equal(withheld.status,409);assert.equal((await withheld.json()).error,"organization_recovery_private_held_evidence_unavailable");assert.equal(database.writeCount(),0,"held actor-private conversations are never exposed to an organization owner or silently omitted from a successful backup");
+  const scope={organizationId,projectAccessId,projectId:"project-atmosphere",ownerUserId:"enterprise-owner",actorUserId:"enterprise-owner"};
+  await storePrivateContent(environment,"enterprise-owner","chat-user","New ordinary project conversation",scope);
+  const preserved=database.sqlite.prepare("SELECT content,redacted_at FROM private_content WHERE content_id=?").get(contentId);assert.equal(preserved.content,"Legally protected customer evidence");assert.equal(preserved.redacted_at,null,"opportunistic per-request cleanup honors the same scoped hold enforced by scheduled cleanup");
+  database.reset();const foreign=await request(`/api/workspaces/${organizationId}/holds`,json(owner,{scope:"artifact",resourceId:"missing-foreign-artifact",reason:"Misleading scope"}));assert.equal(foreign.status,403);assert.equal(database.writeCount(),0,"nonexistent resources cannot produce reassuring but ineffective legal holds");
+});
+
+test("legally held expired artifact revisions remain inspectable and restore durable finished work",async()=>{
+  const {database,request,owner,organizationId,json,open}=await enterpriseWorkspaceFixture({artifact:true});
+  const scoped=await open(owner);
+  const changed=await request("/api/artifacts/enterprise-output",json(scoped,{markdown:"# Corrected enterprise output\n\nA revised customer-ready narrative.",expectedRevision:0},"PATCH"));assert.equal(changed.status,200,JSON.stringify(await changed.clone().json()));
+  const protectedArtifact=await request(`/api/workspaces/${organizationId}/holds`,json(owner,{scope:"artifact",resourceId:"enterprise-output",reason:"Preserve customer deliverable history"}));assert.equal(protectedArtifact.status,201);const hold=(await protectedArtifact.json()).holdId;
+  const expired=new Date(Date.now()-120_000).toISOString();
+  database.sqlite.prepare("UPDATE private_content SET expires_at=? WHERE content_id='enterprise-output-content'").run(expired);
+  database.sqlite.prepare("UPDATE artifact_revisions SET expires_at=? WHERE organization_id=? AND artifact_id='enterprise-output' AND revision=0").run(expired,organizationId);
+  const revisions=await request("/api/artifacts/enterprise-output/revisions",{headers:scoped});assert.equal(revisions.status,200,JSON.stringify(await revisions.clone().json()));assert.equal((await revisions.json()).revisions.find((entry)=>entry.revision===0).available,true);
+  const earlier=await request("/api/artifacts/enterprise-output/revisions/0",{headers:scoped});assert.equal(earlier.status,200);assert.match((await earlier.json()).content.markdown,/Customer-ready narrative/);
+  const restored=await request("/api/artifacts/enterprise-output/revisions/0/restore",json(scoped,{expectedRevision:1}));assert.equal(restored.status,200,JSON.stringify(await restored.clone().json()));assert.equal((await restored.json()).revision,2);
+  const current=database.sqlite.prepare("SELECT content,expires_at FROM private_content WHERE content_id='enterprise-output-content'").get();assert.match(current.content,/Customer-ready narrative/);assert.equal(current.expires_at,"9999-12-31T23:59:59.999Z","an explicitly restored customer deliverable regains prospective durable-work retention");
+  assert.equal((await request(`/api/workspaces/${organizationId}/holds/${hold}`,{method:"DELETE",headers:owner})).status,200);
+  database.reset();const released=await request("/api/artifacts/enterprise-output/revisions/0",{headers:scoped});assert.equal(released.status,404,"expired historical evidence becomes unavailable immediately after its hold is released");
+  const expiredHistory=database.sqlite.prepare("SELECT expires_at FROM artifact_revisions WHERE artifact_id='enterprise-output' AND revision=0").get();assert.equal(expiredHistory.expires_at,expired,"releasing the legal hold never silently extends an expired historical revision");
+});
+
+test("tenant deletion and first-time retention holds remain mutually exclusive at the database boundary",async()=>{
+  const {database,organizationId}=await enterpriseWorkspaceFixture();
+  const now=new Date().toISOString();
+  database.sqlite.prepare("INSERT INTO organization_deletion_jobs(job_id,organization_id,initiated_by_user_id,status,inventory_json,receipt_json,created_at,updated_at,completed_at) VALUES(? ,?,'enterprise-owner','processing','{}',NULL,?,?,NULL)")
+    .run("hold-insert-guard",organizationId,now,now);
+  assert.throws(()=>database.sqlite.prepare("INSERT INTO organization_retention_policies(organization_id,transient_days,evidence_days,revision_days,legal_hold,version,updated_by_user_id,updated_at) VALUES(?,30,365,365,1,1,'enterprise-owner',?)")
+    .run(organizationId,now),/organization_deletion_in_progress/,"creating the first retention policy cannot bypass the active-deletion legal-hold lease");
+});
+
+test("scoped legal holds block tenant erasure and completed deletion preserves unrelated organizations and truthful receipts",async()=>{
+  const {database,environment,request,owner,organizationId,projectAccessId,json}=await enterpriseWorkspaceFixture({artifact:true});
+  const stranger=await specialistIdentity(database,request,"enterprise-other-owner");
+  assert.equal((await request("/api/events?after=0&content=0",{headers:stranger})).status,200);
+  const another=await request("/api/workspaces",json(stranger,{name:"Unaffected organization"}));assert.equal(another.status,201);const anotherId=(await another.json()).organizationId;
+  const media=new Map();environment.MEDIA={async get(key){const value=media.get(key);return value?{body:new Response(value.bytes).body,httpEtag:"x",customMetadata:value.metadata,writeHttpMetadata(headers){headers.set("content-type","image/png");}}:null;},async head(key){const value=media.get(key);return value?{customMetadata:value.metadata}:null;},async delete(key){media.delete(key);}};
+  const key="u-656e74657270726973652d6f776e6572/generated/enterprise.png";media.set(key,{bytes:new Uint8Array([1,2,3]),metadata:{ownerId:"enterprise-owner"}});
+  database.sqlite.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) VALUES(?,'media',?,?,?,'enterprise-owner','collaborative_output',NULL,'enterprise-owner',?)")
+    .run(projectAccessId,key,organizationId,"project-atmosphere",new Date().toISOString());
+  const hold=await request(`/api/workspaces/${organizationId}/holds`,json(owner,{scope:"project",resourceId:projectAccessId,reason:"Preserve exact customer evidence"}));assert.equal(hold.status,201);const holdId=(await hold.json()).holdId;
+  const erase=()=>request(`/api/workspaces/${organizationId}/deletion`,json(owner,{confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA",organizationId}));
+  database.reset();assert.equal((await erase()).status,409);assert.equal(database.writeCount(),0);assert.equal(media.has(key),true);
+  assert.equal((await request(`/api/workspaces/${organizationId}/holds/${holdId}`,{method:"DELETE",headers:owner})).status,200);
+  database.reset();const legacy=await erase();assert.equal(legacy.status,409);assert.equal((await legacy.json()).error,"historical_privacy_migration_required");assert.equal(database.writeCount(),0,"tenant deletion never strands plaintext legacy customer prose in immutable event history");
+  const unrelatedBefore=database.sqlite.prepare("SELECT payload FROM events WHERE stream_id=? ORDER BY sequence LIMIT 1").get("creative:enterprise-other-owner")?.payload;
+  const migrated=await request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"migrate-privacy",organizationId,confirmation:"MIGRATE_ORGANIZATION_HISTORICAL_EVENT_CONTENT"}));assert.equal(migrated.status,200,JSON.stringify(await migrated.clone().json()));assert.ok((await migrated.json()).migratedEvents>0,"the tenant owner can safely prepare their own historical customer content without a global platform administrator");
+  assert.equal(database.sqlite.prepare("SELECT payload FROM events WHERE stream_id=? ORDER BY sequence LIMIT 1").get("creative:enterprise-other-owner")?.payload,unrelatedBefore,"a tenant-scoped privacy migration leaves other owners and organizations byte-for-byte unchanged");
+  const deleted=await erase();assert.equal(deleted.status,200,JSON.stringify(await deleted.clone().json()));const receipt=(await deleted.json()).receipt;
+  assert.equal(receipt.immutableOperationalMetadataRetained,true);assert.equal(receipt.externalBackupsPurged,false);assert.equal(receipt.otherDevicesPurged,false);assert.equal(media.has(key),false);
+  assert.equal(database.sqlite.prepare("SELECT status FROM organizations WHERE organization_id=?").get(organizationId).status,"deleted");
+  assert.equal(database.sqlite.prepare("SELECT status FROM organizations WHERE organization_id=?").get(anotherId).status,"active");
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_resource_scopes WHERE organization_id=?").get(organizationId).count,0);
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM organization_audit_events WHERE organization_id=?").get(organizationId).count>0,true,"content-free immutable audit receipts remain transparently disclosed");
+  const receipts=await(await request("/api/workspaces/deletions",{headers:owner})).json();assert.equal(receipts.deletions[0].status,"completed");
+});
+
+test("tenant deletion inspects every historical event page and tenant owners can migrate private evidence without touching another account",async()=>{
+  const {database,request,owner,organizationId,json}=await enterpriseWorkspaceFixture();
+  const migrate=()=>request(`/api/workspaces/${organizationId}/recovery`,json(owner,{action:"migrate-privacy",organizationId,confirmation:"MIGRATE_ORGANIZATION_HISTORICAL_EVENT_CONTENT"}));
+  const first=await migrate();assert.equal(first.status,200,JSON.stringify(await first.clone().json()));
+  const now=new Date().toISOString(),stream="creative:enterprise-owner";
+  let sequence=Number(database.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(stream).head);
+  const insert=database.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  for(let index=0;index<1001;index+=1)insert.run(`legacy-public-${String(index).padStart(4,"0")}`,stream,++sequence,now,now,"user:enterprise-owner","pagination-test",crypto.randomUUID(),null,null,1,"BlockLocked",JSON.stringify({project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:`public-${index}`}));
+  insert.run("zzzz-legacy-private-event",stream,++sequence,now,now,"user:enterprise-owner","pagination-test",crypto.randomUUID(),null,null,1,"BlockPropertyEdited",JSON.stringify({project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"secret",property_path:"CUSTOMER!SECRET\tVALUE",object_ids:["safe:identifier","LEAK!SECRET"],source_block_versions:[{block_id:"verified-block",version:2},{block_id:"safe-block",version:"CONFIDENTIAL customer acquisition price $42m"},{block_id:"safe-object",version:{hidden:"NESTED SECRET"}}],text:"Sensitive customer requirements beyond the first thousand historical events"}));
+  insert.run("zzzz-legacy-spoofed-event",stream,++sequence,now,now,"user:enterprise-owner","pagination-test",crypto.randomUUID(),null,null,1,"BlockPropertyEdited",JSON.stringify({_private_ref:"forged-operational-marker",project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"spoofed",text:"CUSTOMER SPOOFED SECRET"}));
+  const erase=()=>request(`/api/workspaces/${organizationId}/deletion`,json(owner,{organizationId,confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA"}));
+  database.reset();const blocked=await erase();assert.equal(blocked.status,409);assert.equal((await blocked.json()).error,"historical_privacy_migration_required");assert.equal(database.writeCount(),0,"customer text on a later historical page is detected before any irreversible write");
+  const completed=await migrate();assert.equal(completed.status,200,JSON.stringify(await completed.clone().json()));assert.equal((await completed.json()).migratedEvents,1003);
+  const publicEnvelope=database.sqlite.prepare("SELECT payload FROM events WHERE event_id='zzzz-legacy-private-event'").get().payload;
+  assert.doesNotMatch(publicEnvelope,/CUSTOMER|SECRET|CONFIDENTIAL|Sensitive customer/,"historical migration never strands punctuation, control characters, or nested customer prose in immutable metadata");
+  assert.deepEqual(JSON.parse(publicEnvelope).source_block_versions,[{block_id:"verified-block",version:2}]);
+  const spoofedEnvelope=database.sqlite.prepare("SELECT payload FROM events WHERE event_id='zzzz-legacy-spoofed-event'").get().payload;
+  assert.doesNotMatch(spoofedEnvelope,/SPOOFED SECRET|forged-operational-marker/,"a forged privacy marker never prevents historical authored content from being migrated");
+  assert.equal(JSON.parse(spoofedEnvelope)._private_ref,"zzzz-legacy-spoofed-event");
+  assert.match(database.sqlite.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id='zzzz-legacy-private-event'").get().private_json,/CUSTOMER!SECRET/);
+  const erased=await erase();assert.equal(erased.status,200,JSON.stringify(await erased.clone().json()));
+  assert.equal(database.sqlite.prepare("SELECT 1 FROM event_private_payloads WHERE private_event_id='zzzz-legacy-private-event'").get(),undefined);
+  assert.equal(database.sqlite.prepare("SELECT 1 FROM event_private_payloads WHERE private_event_id='zzzz-legacy-spoofed-event'").get(),undefined);
+});
+
+test("hashed tenant provisioning credentials create bounded local identities and immediately withdraw scoped review authority",async()=>{
+  const {database,request,owner,organizationId,json}=await enterpriseWorkspaceFixture();
+  const issued=await request(`/api/workspaces/${organizationId}/security/provisioning-credentials`,{method:"POST",headers:owner});assert.equal(issued.status,201);const credential=await issued.json();
+  assert.ok(credential.token.startsWith("forma_provision_"));assert.equal(database.sqlite.prepare("SELECT 1 FROM organization_provisioning_credentials WHERE token_hash=?").get(credential.token),undefined,"raw provisioning token never enters durable storage");
+  const headers={authorization:`Bearer ${credential.token}`,"content-type":"application/json"};
+  database.reset();const ownerAttack=await request(`/api/provisioning/${organizationId}/users`,{method:"POST",headers,body:JSON.stringify({userId:"enterprise-owner",email:"enterprise-owner@example.test",authenticationSource:"local-development"})});assert.equal(ownerAttack.status,409);assert.equal(database.writeCount(),0,"delegated provisioning cannot change or lock out the organization owner");
+  const provision=()=>request(`/api/provisioning/${organizationId}/users`,{method:"POST",headers,body:JSON.stringify({userId:"enterprise-provisioned",email:"enterprise-provisioned@example.test",displayName:"Provisioned colleague",authenticationSource:"openai-workspace"})});
+  assert.equal((await provision()).status,201);database.reset();assert.equal((await provision()).status,200,"provisioning the same stable subject is idempotent");assert.equal(database.writeCount(),0,"replaying a stable identity performs no writes or duplicate audit events");
+  const identity={"oai-authenticated-user-id":"enterprise-provisioned","oai-authenticated-user-email":"enterprise-provisioned@example.test"};
+  const session=await(await request("/api/session",{headers:identity})).json();assert.ok(session.organizations.some((organization)=>organization.organizationId===organizationId));
+  const foreign=await request(`/api/provisioning/foreign-organization/users`,{method:"POST",headers,body:JSON.stringify({userId:"foreign",email:"foreign@example.test"})});assert.equal(foreign.status,401);
+  assert.equal((await request(`/api/provisioning/${organizationId}/users/enterprise-provisioned`,{method:"DELETE",headers})).status,200);
+  const departed=await(await request("/api/session",{headers:identity})).json();assert.equal(departed.organizations.some((organization)=>organization.organizationId===organizationId),false);
+  const listed=await(await request(`/api/workspaces/${organizationId}/security/provisioning-credentials`,{headers:owner})).json();assert.equal(listed.credentials[0].id,credential.credentialId);assert.doesNotMatch(JSON.stringify(listed),/forma_provision_/);
+  assert.equal((await request(`/api/workspaces/${organizationId}/security/provisioning-credentials/${credential.credentialId}`,{method:"DELETE",headers:owner})).status,200);
+  database.reset();assert.equal((await provision()).status,401);assert.equal(database.writeCount(),0,"a revoked provisioning bearer loses authority immediately");
+  database.reset();const forbidden=await request(`/api/provisioning/${organizationId}/users`,json(owner,{userId:"bad",email:"bad@example.test"}));assert.equal(forbidden.status,401);assert.equal(database.writeCount(),0);
+});
+
+test("provisioned group privileges reconcile overlapping memberships, forbid pilot reviewer escalation, and invalidate stale delegated credentials",async()=>{
+  const {database,request,owner,organizationId,json}=await enterpriseWorkspaceFixture();
+  const issue=async()=>{const response=await request(`/api/workspaces/${organizationId}/security/provisioning-credentials`,{method:"POST",headers:owner});assert.equal(response.status,201,JSON.stringify(await response.clone().json()));return response.json();};
+  const originalCredential=await issue();
+  const headers={authorization:`Bearer ${originalCredential.token}`,"content-type":"application/json"};
+  const createUser=(userId,source="openai-workspace")=>request(`/api/provisioning/${organizationId}/users`,{method:"POST",headers,body:JSON.stringify({userId,email:`${userId}@example.test`,displayName:userId,authenticationSource:source})});
+  assert.equal((await createUser("enterprise-group-member")).status,201);
+  const group=(externalId,mappedRole,memberUserIds)=>request(`/api/provisioning/${organizationId}/groups`,{method:"POST",headers,body:JSON.stringify({externalId,name:externalId,mappedRole,...(memberUserIds===undefined?{}:{memberUserIds})})});
+  assert.equal((await group("group-a","administrator",["enterprise-group-member"])).status,200);
+  assert.equal(database.sqlite.prepare("SELECT role FROM organization_memberships WHERE organization_id=? AND user_id=?").get(organizationId,"enterprise-group-member").role,"administrator");
+  assert.equal((await group("group-a","member")).status,200,"group mapping changes reconcile existing members even when no membership list is supplied");
+  assert.equal(database.sqlite.prepare("SELECT role FROM organization_memberships WHERE organization_id=? AND user_id=?").get(organizationId,"enterprise-group-member").role,"member");
+  assert.equal((await group("group-a","administrator",["enterprise-group-member"])).status,200);
+  assert.equal((await group("group-b","administrator",["enterprise-group-member"])).status,200);
+  assert.equal((await group("group-a","administrator",[])).status,200);
+  assert.equal(database.sqlite.prepare("SELECT role FROM organization_memberships WHERE organization_id=? AND user_id=?").get(organizationId,"enterprise-group-member").role,"administrator","an overlapping active administrator mapping still grants the effective role");
+  assert.equal((await group("group-b","administrator",[])).status,200);
+  assert.equal(database.sqlite.prepare("SELECT role FROM organization_memberships WHERE organization_id=? AND user_id=?").get(organizationId,"enterprise-group-member").role,"member","removing the final privileged group immediately withdraws administrator status");
+
+  const policy=await(await request(`/api/workspaces/${organizationId}/security`,{headers:owner})).json();
+  const updated=await request(`/api/workspaces/${organizationId}/security`,json(owner,{authenticationSource:"openai-workspace",allowedEmailDomains:["example.test"],expectedVersion:policy.policy.version},"PATCH"));assert.equal(updated.status,200,JSON.stringify(await updated.clone().json()));
+  database.reset();assert.equal((await createUser("enterprise-invalid-after-policy")).status,401);assert.equal(database.writeCount(),0,"security policy changes invalidate every earlier delegated provisioning token");
+  const currentCredential=await issue();const freshHeaders={authorization:`Bearer ${currentCredential.token}`,"content-type":"application/json"};
+  database.reset();const mismatched=await request(`/api/provisioning/${organizationId}/users`,{method:"POST",headers:freshHeaders,body:JSON.stringify({userId:"enterprise-group-member",email:"enterprise-group-member@example.test",displayName:"enterprise-group-member",authenticationSource:"cloudflare-access"})});assert.equal(mismatched.status,403);assert.equal(database.writeCount(),0,"a delegated identity cannot rewrite a valid member to a forbidden sign-in source");
+
+  const now=new Date().toISOString();
+  database.sqlite.prepare("INSERT INTO pilot_cohorts(cohort_id,organization_id,status,starts_at,ends_at,created_by_user_id,created_at,updated_at) VALUES(?,?,'active',?,?,'enterprise-owner',?,?)")
+    .run("group-pilot",organizationId,now,"9999-12-31T23:59:59.999Z",now,now);
+  for(const [userId,role] of [["enterprise-owner","owner"],["enterprise-group-member","reviewer"]])database.sqlite.prepare("INSERT INTO pilot_participants(participant_id,cohort_id,organization_id,email_normalized,user_id,role,status,invited_by_user_id,created_at,revoked_at) VALUES(?,'group-pilot',?,?,?,?, 'active','enterprise-owner',?,NULL)")
+    .run(`pilot-${userId}`,organizationId,`${userId}@example.test`,userId,role,now);
+  database.reset();const escalate=await request(`/api/provisioning/${organizationId}/groups`,{method:"POST",headers:freshHeaders,body:JSON.stringify({externalId:"reviewer-admin",name:"Reviewer escalation",mappedRole:"administrator",memberUserIds:["enterprise-group-member"]})});assert.equal(escalate.status,403);assert.equal(database.writeCount(),0);assert.equal(database.sqlite.prepare("SELECT role FROM organization_memberships WHERE organization_id=? AND user_id=?").get(organizationId,"enterprise-group-member").role,"member");
+  database.sqlite.prepare("UPDATE pilot_cohorts SET status='closed' WHERE cohort_id='group-pilot'").run();
+  database.reset();const closedEscalation=await request(`/api/provisioning/${organizationId}/groups`,{method:"POST",headers:freshHeaders,body:JSON.stringify({externalId:"closed-reviewer-admin",name:"Closed reviewer escalation",mappedRole:"administrator",memberUserIds:["enterprise-group-member"]})});assert.equal(closedEscalation.status,403);assert.equal(database.writeCount(),0,"closing a pilot without an authorized successor never turns its independent reviewer into an administrator");
+  const member=database.sqlite.prepare("SELECT membership_id FROM organization_memberships WHERE organization_id=? AND user_id=?").get(organizationId,"enterprise-group-member").membership_id;
+  database.reset();const directEscalation=await request(`/api/workspaces/${organizationId}/members/${member}`,json(owner,{role:"administrator"},"PATCH"));assert.equal(directEscalation.status,403);assert.equal(database.writeCount(),0,"direct member editing cannot bypass the same closed-cohort reviewer boundary");
+  database.sqlite.prepare("UPDATE organization_provisioning_credentials SET created_at=? WHERE credential_id=?").run(new Date(Date.now()-31*24*60*60*1000).toISOString(),currentCredential.credentialId);
+  database.reset();assert.equal((await request(`/api/provisioning/${organizationId}/groups`,{method:"POST",headers:freshHeaders,body:JSON.stringify({externalId:"expired",name:"Expired",mappedRole:"member"})})).status,401);assert.equal(database.writeCount(),0,"delegated provisioning credentials automatically expire after thirty days");
+});
+
+test("delegated provisioning checks exact credential liveness inside its authoritative transaction",async()=>{
+  const {database,environment,request,owner,organizationId}=await enterpriseWorkspaceFixture();
+  const issued=await request(`/api/workspaces/${organizationId}/security/provisioning-credentials`,{method:"POST",headers:owner});assert.equal(issued.status,201);const credential=await issued.json();
+  const headers={authorization:`Bearer ${credential.token}`,"content-type":"application/json"};
+  const original=environment.DB.batch.bind(environment.DB);
+  environment.DB.batch=async(statements)=>{
+    if(statements.some((statement)=>statement.sql.includes("INSERT INTO users(user_id,email,display_name"))){
+      database.sqlite.prepare("UPDATE organization_provisioning_credentials SET status='revoked',revoked_at=? WHERE credential_id=?")
+        .run(new Date().toISOString(),credential.credentialId);
+    }
+    return original(statements);
+  };
+  const raced=await request(`/api/provisioning/${organizationId}/users`,{method:"POST",headers,body:JSON.stringify({userId:"enterprise-race-user",email:"enterprise-race-user@example.test",authenticationSource:"openai-workspace"})});assert.equal(raced.status,401,JSON.stringify(await raced.clone().json()));
+  assert.equal(database.sqlite.prepare("SELECT 1 FROM users WHERE user_id=?").get("enterprise-race-user"),undefined);
+  assert.equal(database.sqlite.prepare("SELECT 1 FROM organization_memberships WHERE organization_id=? AND user_id=?").get(organizationId,"enterprise-race-user"),undefined,"revoking a delegated credential before its transaction cannot leave an orphan user or active membership");
+  environment.DB.batch=original;
+});
+
+test("delegated provisioning cannot create an orphan identity after named pilot enrollment is revoked",async()=>{
+  const {database,environment,request,owner,organizationId}=await enterpriseWorkspaceFixture();
+  const issued=await request(`/api/workspaces/${organizationId}/security/provisioning-credentials`,{method:"POST",headers:owner});assert.equal(issued.status,201);const credential=await issued.json();
+  const now=new Date().toISOString();
+  database.sqlite.prepare("INSERT INTO pilot_cohorts(cohort_id,organization_id,status,starts_at,ends_at,created_by_user_id,created_at,updated_at) VALUES(?,?,'active',?,?,'enterprise-owner',?,?)")
+    .run("enrollment-race-pilot",organizationId,now,"9999-12-31T23:59:59.999Z",now,now);
+  const participants=database.sqlite.prepare("INSERT INTO pilot_participants(participant_id,cohort_id,organization_id,email_normalized,user_id,role,status,invited_by_user_id,created_at,revoked_at) VALUES(?,'enrollment-race-pilot',?,?,?,?,'active','enterprise-owner',?,NULL)");
+  participants.run("enrollment-owner",organizationId,"enterprise-owner@example.test","enterprise-owner","owner",now);
+  participants.run("enrollment-target",organizationId,"enterprise-enrollment-race@example.test",null,"member",now);
+  const original=environment.DB.batch.bind(environment.DB);let revoked=false;
+  environment.DB.batch=async(statements)=>{
+    if(!revoked&&statements.some((statement)=>statement.sql.includes("INSERT INTO users(user_id,email,display_name"))){
+      revoked=true;database.sqlite.prepare("UPDATE pilot_participants SET status='revoked',revoked_at=? WHERE participant_id='enrollment-target'").run(new Date().toISOString());
+    }
+    return original(statements);
+  };
+  const raced=await request(`/api/provisioning/${organizationId}/users`,{method:"POST",headers:{authorization:`Bearer ${credential.token}`,"content-type":"application/json"},body:JSON.stringify({userId:"enterprise-enrollment-race",email:"enterprise-enrollment-race@example.test",authenticationSource:"openai-workspace"})});
+  assert.equal(revoked,true);assert.equal(raced.status,403,JSON.stringify(await raced.clone().json()));
+  assert.equal(database.sqlite.prepare("SELECT 1 FROM users WHERE user_id='enterprise-enrollment-race'").get(),undefined);
+  assert.equal(database.sqlite.prepare("SELECT 1 FROM organization_memberships WHERE organization_id=? AND user_id='enterprise-enrollment-race'").get(organizationId),undefined);
+  environment.DB.batch=original;
+});
+
+test("cold schema initialization preserves every account's existing finished-output retention deadline",async()=>{
+  const {database,environment}=await enterpriseWorkspaceFixture({artifact:true});
+  const deadline="2031-04-02T03:04:05.000Z";
+  database.sqlite.prepare("UPDATE private_content SET expires_at=? WHERE content_id='enterprise-output-content'").run(deadline);
+  const isolated={...environment,DB:{prepare:(statement)=>environment.DB.prepare(statement),batch:(statements)=>environment.DB.batch(statements)}};
+  await ensureSchema(isolated);
+  assert.equal(database.sqlite.prepare("SELECT expires_at FROM private_content WHERE content_id='enterprise-output-content'").get().expires_at,deadline,"a new worker isolate never silently changes another actor's established retention period");
+});
+
 test("capability and delivery migrations safely replay after runtime initialization without altering the schema",async()=>{
-  const {database}=await productionWorker();const migrations=await Promise.all(["0011_swift_redwing.sql","0012_green_james_howlett.sql","0013_long_midnight.sql","0014_perfect_robbie_robertson.sql"].map((name)=>readFile(new URL(`../drizzle/${name}`,import.meta.url),"utf8")));
+  const {database}=await productionWorker();const migrations=await Promise.all(["0011_swift_redwing.sql","0012_green_james_howlett.sql","0013_long_midnight.sql","0014_perfect_robbie_robertson.sql","0015_true_lila_cheney.sql","0016_living_tarantula.sql","0017_previous_pixie.sql"].map((name)=>readFile(new URL(`../drizzle/${name}`,import.meta.url),"utf8")));
   const snapshot=()=>database.sqlite.prepare("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index') ORDER BY type,name").all();const initial=snapshot();
   for(let attempt=0;attempt<2;attempt+=1)for(const migration of migrations)database.sqlite.exec(migration);
-  assert.deepEqual(snapshot(),initial);assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table'").get().count,42);assert.ok(initial.some((item)=>item.name==="capability_grants"));assert.ok(initial.some((item)=>item.name==="delivery_decisions"));assert.ok(initial.some((item)=>item.name==="project_event_scopes"));assert.ok(initial.some((item)=>item.name==="organization_invitations"));assert.ok(initial.some((item)=>item.name==="route_performance_samples"));
+  assert.deepEqual(snapshot(),initial);assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table'").get().count,74);assert.ok(initial.some((item)=>item.name==="capability_grants"));assert.ok(initial.some((item)=>item.name==="delivery_decisions"));assert.ok(initial.some((item)=>item.name==="project_event_scopes"));assert.ok(initial.some((item)=>item.name==="event_private_payloads"));assert.ok(initial.some((item)=>item.name==="event_write_stage"));assert.ok(initial.some((item)=>item.name==="project_notifications"));assert.ok(initial.some((item)=>item.name==="organization_invitations"));assert.ok(initial.some((item)=>item.name==="route_performance_samples"));assert.ok(initial.some((item)=>item.name==="pilot_cohorts"));assert.ok(initial.some((item)=>item.name==="artifact_revisions"));assert.ok(initial.some((item)=>item.name==="organization_context_packages"));assert.ok(initial.some((item)=>item.name==="project_review_tasks"));assert.ok(initial.some((item)=>item.name==="organization_recovery_snapshots"));
 });
 
 test("creator provenance defaults to human-readable history and exposes Engineering handoffs only to exact event specialists",async()=>{

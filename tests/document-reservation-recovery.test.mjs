@@ -628,6 +628,9 @@ test("the bundled worker resumes a submitted scene without a duplicate provider 
   const agedAt=new Date(Date.now()-10*60_000).toISOString();
   const expiresAt=new Date(Date.now()+86_400_000).toISOString();
   const action="A quiet harbor wakes beneath warm morning light.";
+  await appendAuditEvent(environment,stream,"user","ReferenceIngested",{project_id:"project-atmosphere",document_id:"doc-atmosphere",reference_id:"recovery-shot-reference",source_type:"licensed-fixture",rights_class:"owned"});
+  await appendAuditEvent(environment,stream,"user","RightsAsserted",{project_id:"project-atmosphere",reference_id:"recovery-shot-reference",rights_class:"owned_or_licensed"});
+  await appendAuditEvent(environment,stream,"user","BlockCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"shot-one",type:"reference",handle:"reference/recovery-shot",position:"z-recovery",properties:{reference_id:"recovery-shot-reference",text:action,storyboard_frame_index:1,source_artifact_id:"board-one",storyboard_shot_title:"Opening",storyboard_shot_direction:action,weight:1,authority:"authored"}});
   const snapshot={facts:[{block_id:"shot-one",type:"reference",properties:{text:action,storyboard_frame_index:1,source_artifact_id:"board-one",storyboard_shot_title:"Opening",storyboard_shot_direction:action}}]};
   const productionPlan=buildManagedProductionPlan("video",snapshot,{preferredSceneSeconds:15});
   const scene=productionPlan.scenes[0];

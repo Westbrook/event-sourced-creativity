@@ -20,6 +20,9 @@ function budgetDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("CREATE TABLE cost_budget_counters (scope TEXT NOT NULL, scope_id TEXT NOT NULL, period TEXT NOT NULL, used_microusd INTEGER NOT NULL DEFAULT 0, reserved_microusd INTEGER NOT NULL DEFAULT 0, hard_limit_microusd INTEGER NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(scope,scope_id,period))");
   sqlite.exec("CREATE TABLE cost_budget_reservations (reservation_id TEXT PRIMARY KEY NOT NULL, owner_id TEXT NOT NULL, workspace_id TEXT NOT NULL DEFAULT 'forma', stream_id TEXT NOT NULL DEFAULT '', correlation_id TEXT NOT NULL DEFAULT '', operation TEXT NOT NULL, period TEXT NOT NULL, reserved_microusd INTEGER NOT NULL, used_microusd INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL, allow_user_overage INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, settled_at TEXT, updated_at TEXT NOT NULL)");
+  sqlite.exec("CREATE TABLE pilot_cohorts (cohort_id TEXT PRIMARY KEY NOT NULL,organization_id TEXT NOT NULL,status TEXT NOT NULL,starts_at TEXT NOT NULL,ends_at TEXT NOT NULL,participant_cap_microusd INTEGER NOT NULL,organization_cap_microusd INTEGER NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)");
+  sqlite.exec("CREATE TABLE pilot_participants (participant_id TEXT PRIMARY KEY NOT NULL,cohort_id TEXT NOT NULL,organization_id TEXT NOT NULL,user_id TEXT,role TEXT NOT NULL DEFAULT 'member',status TEXT NOT NULL,revoked_at TEXT)");
+  sqlite.exec("CREATE TABLE pilot_cost_reservation_scopes (reservation_id TEXT PRIMARY KEY NOT NULL,cohort_id TEXT NOT NULL,organization_id TEXT NOT NULL,actor_user_id TEXT NOT NULL,created_at TEXT NOT NULL)");
 
   class PreparedStatement {
     constructor(sql, values = []) { this.sql = sql; this.values = values; }

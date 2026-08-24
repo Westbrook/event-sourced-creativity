@@ -18,14 +18,31 @@ export type ProviderFailureDetail = {
   probe?: string;
 };
 
+export type ProviderAttemptAccounting = {
+  providerUsage: { inputTokens: number; outputTokens: number; totalTokens: number };
+  providerResponseIds: string[];
+  providerModel: string;
+  providerCallCount: number;
+};
+
 export class ProviderRequestError extends Error {
   readonly detail: ProviderFailureDetail;
   readonly preparedPrompt: string | null;
-  constructor(detail: ProviderFailureDetail, preparedPrompt: string | null = null) {
+  readonly providerUsage?: ProviderAttemptAccounting["providerUsage"];
+  readonly providerResponseIds?: string[];
+  readonly providerModel?: string;
+  readonly providerCallCount?: number;
+  constructor(detail: ProviderFailureDetail, preparedPrompt: string | null = null, accounting?: ProviderAttemptAccounting) {
     super(detail.message);
     this.name = "ProviderRequestError";
     this.detail = detail;
     this.preparedPrompt = preparedPrompt;
+    if (accounting) {
+      this.providerUsage = accounting.providerUsage;
+      this.providerResponseIds = accounting.providerResponseIds;
+      this.providerModel = accounting.providerModel;
+      this.providerCallCount = accounting.providerCallCount;
+    }
   }
 }
 

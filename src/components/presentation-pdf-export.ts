@@ -5,7 +5,8 @@ import {
   type PresentationPdfOptions,
   type PresentationPdfRenderedPage,
   type PresentationPdfResult,
-} from "../model/presentation-pdf";
+  type PresentationPdfSemanticNode,
+} from "../model/presentation-pdf.ts";
 import type { DocumentArtifactDraftItem, SlidePresentation } from "../model/document-artifacts";
 import type { PresentationSlide } from "./presentation-slide";
 
@@ -14,6 +15,185 @@ const HTML_NAMESPACE="http://www.w3.org/1999/xhtml";
 const EXPORT_SCALE=2;
 const fontStylesheetCache=new Map<string,Promise<string>>();
 const fontResourceCache=new Map<string,Promise<string>>();
+const PRESENTATION_PDF_HIDDEN_SELECTOR="script,style,template,[hidden],[inert],[aria-hidden=\"true\"],[data-speaker-notes],[data-presentation-speaker-notes],.presentation-speaker-notes,.presentation-slide-speaker-notes";
+const PRESENTATION_PDF_HEADING_SELECTOR="h1,h2,h3,h4,h5,h6";
+const PRESENTATION_PDF_CHART_ROW_SELECTOR=".presentation-slide__chart-row,[data-presentation-chart-row]";
+
+const semanticText=(element:Element)=>String((element as HTMLElement).innerText??element.textContent??"").replace(/\s+/gu," ").trim();
+
+const semanticElementVisible=(element:Element)=>{
+  if(element.matches(PRESENTATION_PDF_HIDDEN_SELECTOR))return false;
+  const style=getComputedStyle(element);
+  return style.display!=="none"&&style.visibility!=="hidden"&&style.visibility!=="collapse"&&style.contentVisibility!=="hidden";
+};
+
+const visibleWithin=(element:Element,root:Element)=>{
+  for(let current:Element|null=element;current;current=current.parentElement){
+    if(!semanticElementVisible(current))return false;
+    if(current===root)return true;
+  }
+  return false;
+};
+
+const semanticLeaf=(role:PresentationPdfSemanticNode["role"],element:Element):PresentationPdfSemanticNode[]=>{
+  const text=semanticText(element);
+  return text?[{role,text}]:[];
+};
+
+const semanticCells=(row:Element):PresentationPdfSemanticNode[]=>Array.from(row.children)
+  .filter((cell)=>semanticElementVisible(cell)&&cell.matches("th,td"))
+  .flatMap((cell)=>semanticLeaf(cell.matches("th")?"TH":"TD",cell));
+
+const semanticTable=(table:Element):PresentationPdfSemanticNode[]=>{
+  const children:PresentationPdfSemanticNode[]=[];
+  for(const child of Array.from(table.children)){
+    if(!semanticElementVisible(child))continue;
+    if(child.matches("caption")){children.push(...semanticLeaf("Caption",child));continue;}
+    if(child.matches("thead,tbody,tfoot")){
+      const rows=Array.from(child.children)
+        .filter((row)=>semanticElementVisible(row)&&row.matches("tr"))
+        .map((row)=>({role:"TR" as const,children:semanticCells(row)}))
+        .filter((row)=>row.children.length);
+      if(rows.length)children.push({role:child.matches("thead")?"THead":"TBody",children:rows});
+      continue;
+    }
+    if(child.matches("tr")){
+      const cells=semanticCells(child);
+      if(cells.length)children.push({role:"TR",children:cells});
+    }
+  }
+  return children.length?[{role:"Table",children}]:semanticLeaf("P",table);
+};
+
+const semanticDefinitions=(list:Element):PresentationPdfSemanticNode[]=>{
+  const rows:PresentationPdfSemanticNode[]=[];
+  let term="";
+  for(const child of Array.from(list.children)){
+    if(!semanticElementVisible(child))continue;
+    if(child.matches("dt")){term=semanticText(child);continue;}
+    if(!child.matches("dd"))continue;
+    const value=semanticText(child);
+    if(!term&&!value)continue;
+    rows.push({role:"TR",children:[...(term?[{role:"TH" as const,text:term}]:[]),...(value?[{role:"TD" as const,text:value}]:[])]});
+  }
+  return rows.length?[{role:"Table",children:[{role:"TBody",children:rows}]}]:semanticLeaf("P",list);
+};
+
+const semanticChartRows=(figure:Element):Element[]=>{
+  const explicit=Array.from(figure.querySelectorAll(PRESENTATION_PDF_CHART_ROW_SELECTOR)).filter(semanticElementVisible);
+  if(explicit.length)return explicit;
+  if(!figure.matches(".presentation-visual-bars,.presentation-slide__scorecard,[data-presentation-chart]"))return[];
+  return Array.from(figure.children).filter((child)=>semanticElementVisible(child)&&child.matches("div,li")&&!child.matches("figcaption,dl"));
+};
+
+const semanticChartTable=(rows:Element[]):PresentationPdfSemanticNode|null=>{
+  const records=rows.map((row)=>{
+    const label=row.querySelector<HTMLElement>(".presentation-slide__chart-label,[data-presentation-chart-label],span,th");
+    const value=row.querySelector<HTMLElement>(".presentation-slide__chart-value,[data-presentation-chart-value],data,small,td");
+    const labelText=label&&semanticElementVisible(label)?semanticText(label):"";
+    const valueText=value&&semanticElementVisible(value)?semanticText(value):"";
+    const children:PresentationPdfSemanticNode[]=[];
+    if(labelText)children.push({role:"TH",text:labelText});
+    if(valueText)children.push({role:"TD",text:valueText});
+    if(!children.length){
+      const fallback=semanticText(row);
+      if(fallback)children.push({role:"TD",text:fallback});
+    }
+    return{role:"TR" as const,children};
+  }).filter((row)=>row.children.length);
+  return records.length?{role:"Table",children:[{role:"TBody",children:records}]}:null;
+};
+
+type PresentationPdfExtractionState={heading:Element|null};
+
+const semanticList=(list:Element,state:PresentationPdfExtractionState):PresentationPdfSemanticNode[]=>{
+  const items:PresentationPdfSemanticNode[]=[];
+  for(const item of Array.from(list.children)){
+    if(!semanticElementVisible(item)||!item.matches("li"))continue;
+    if(item.matches(".presentation-slide__citation,[data-presentation-citation]")){
+      const citation=semanticLeaf("Note",item);
+      if(citation.length)items.push({role:"LI",children:citation});
+      continue;
+    }
+    const nested=Array.from(item.children).filter((child)=>semanticElementVisible(child)&&child.matches("ul,ol,table,dl,figure,blockquote"));
+    if(!nested.length){
+      const body=semanticLeaf("LBody",item);
+      if(body.length)items.push({role:"LI",children:body});
+      continue;
+    }
+    const children:PresentationPdfSemanticNode[]=[];
+    for(const child of Array.from(item.children)){
+      if(!semanticElementVisible(child))continue;
+      if(nested.includes(child))children.push(...semanticElement(child,state));
+      else children.push(...semanticLeaf("LBody",child));
+    }
+    if(children.length)items.push({role:"LI",children});
+  }
+  return items.length?[{role:"L",children:items}]:semanticLeaf("P",list);
+};
+
+const semanticFigure=(figure:Element,state:PresentationPdfExtractionState):PresentationPdfSemanticNode[]=>{
+  const rows=semanticChartRows(figure);
+  const children:PresentationPdfSemanticNode[]=[];
+  let chartEmitted=false;
+  for(const child of Array.from(figure.children)){
+    if(!semanticElementVisible(child))continue;
+    const containsChart=rows.includes(child)||rows.some((row)=>child.contains(row));
+    if(containsChart){
+      if(!chartEmitted){
+        const chart=semanticChartTable(rows);
+        if(chart)children.push(chart);
+        chartEmitted=true;
+      }
+      continue;
+    }
+    children.push(...semanticElement(child,state));
+  }
+  if(rows.length&&!chartEmitted){
+    const chart=semanticChartTable(rows);
+    if(chart)children.push(chart);
+  }
+  if(!children.length){
+    const text=semanticText(figure);
+    if(text)children.push({role:"P",text});
+  }
+  return children.length?[{role:"Figure",children}]:[];
+};
+
+const semanticElement=(element:Element,state:PresentationPdfExtractionState):PresentationPdfSemanticNode[]=>{
+  if(!semanticElementVisible(element))return[];
+  if(element===state.heading)return[];
+  if(element.matches(PRESENTATION_PDF_HEADING_SELECTOR))return semanticLeaf("H2",element);
+  if(element.matches("blockquote"))return semanticLeaf("BlockQuote",element);
+  if(element.matches("figcaption,caption"))return semanticLeaf("Caption",element);
+  if(element.matches("table"))return semanticTable(element);
+  if(element.matches("dl"))return semanticDefinitions(element);
+  if(element.matches("ul,ol"))return semanticList(element,state);
+  if(element.matches("figure,.presentation-visual-bars,.presentation-slide__scorecard,[data-presentation-chart]"))return semanticFigure(element,state);
+  if(element.matches(".presentation-slide__citation,[data-presentation-citation]"))return semanticLeaf("Note",element);
+  if(element.matches("p,span,strong,small,cite,data,a,th,td,dt,dd"))return semanticLeaf("P",element);
+  if(element.matches("img")){
+    const alternative=element.getAttribute("alt")?.trim();
+    return alternative?[{role:"Figure",children:[{role:"Caption",text:alternative}]}]:[];
+  }
+  const children:PresentationPdfSemanticNode[]=[];
+  for(const child of Array.from(element.childNodes)){
+    if(child.nodeType===1)children.push(...semanticElement(child as Element,state));
+    else if(child.nodeType===3){
+      const text=String(child.textContent??"").replace(/\s+/gu," ").trim();
+      if(text)children.push({role:"P",text});
+    }
+  }
+  return children;
+};
+
+/** Derive tagged-PDF reading order from the visible, authorized slide DOM. */
+export function presentationPdfSemanticStructure(root:HTMLElement,fallbackHeading="Slide"):PresentationPdfSemanticNode[]{
+  const heading=Array.from(root.querySelectorAll<HTMLElement>(PRESENTATION_PDF_HEADING_SELECTOR)).find((candidate)=>visibleWithin(candidate,root))??null;
+  const title=heading?semanticText(heading):fallbackHeading.trim();
+  const state:PresentationPdfExtractionState={heading};
+  return[...(title?[{role:"H1" as const,text:title}]:[]),...semanticElement(root,state)];
+}
 
 const styleRules=(sheet:CSSStyleSheet,seen:Set<CSSStyleSheet>,imports:Set<string>):string[]=>{
   if(seen.has(sheet))return[];
@@ -143,7 +323,7 @@ const svgImage=async(host:PresentationSlide,css:string)=>{
 
   const wrapper=document.createElementNS(HTML_NAMESPACE,"div");
   wrapper.setAttribute("xmlns",HTML_NAMESPACE);
-  wrapper.setAttribute("lang",document.documentElement.lang||"en");
+  wrapper.setAttribute("lang",host.closest("forma-ui-locale")?.getAttribute("lang")||document.documentElement.lang||"en");
   wrapper.style.width=`${PRESENTATION_PDF_PAGE_WIDTH}px`;
   wrapper.style.height=`${PRESENTATION_PDF_PAGE_HEIGHT}px`;
   wrapper.style.overflow="hidden";
@@ -206,7 +386,9 @@ export async function renderPresentationPdf(items:DocumentArtifactDraftItem[],pr
   if(!items.length)throw new TypeError("At least one presentation slide is required.");
   if(typeof CompressionStream==="undefined")throw new Error("This browser does not support lossless slide capture.");
 
-  const stage=document.createElement("div");
+  const stage=document.createElement("forma-ui-locale");
+  stage.lang=options.language||document.documentElement.lang||"en";
+  stage.dir=options.direction||document.documentElement.dir||"ltr";
   stage.setAttribute("aria-hidden","true");
   stage.style.cssText=`position:fixed;left:-${PRESENTATION_PDF_PAGE_WIDTH*4}px;top:0;width:${PRESENTATION_PDF_PAGE_WIDTH}px;height:${PRESENTATION_PDF_PAGE_HEIGHT}px;overflow:hidden;pointer-events:none;z-index:-1;`;
   document.body.append(stage);
@@ -252,6 +434,7 @@ export async function renderPresentationPdf(items:DocumentArtifactDraftItem[],pr
         text:host.innerText,
         heading:host.querySelector<HTMLElement>("h1,h2,h3,h4,h5,h6")?.innerText||items[index]!.title,
         bullets:Array.from(host.querySelectorAll<HTMLElement>("section > ul > li,section > ol > li")).map((item)=>item.innerText.trim()).filter(Boolean),
+        structure:presentationPdfSemanticStructure(host,items[index]!.title),
         language:options.language||document.documentElement.lang||"en",
         direction:options.direction||(getComputedStyle(host).direction==="rtl"?"rtl":"ltr"),
       });

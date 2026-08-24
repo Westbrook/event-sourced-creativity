@@ -21,6 +21,9 @@ type StoredCanvasBatch = QueuedCanvasBatch | LegacyQueuedCanvasBatch | LegacyQue
 
 const DATABASE="canvas-offline-queue-v1";
 const STORE="events";
+export const CANVAS_OFFLINE_MAX_AGE_MS=14*24*60*60*1_000;
+export const CANVAS_OFFLINE_MAX_OPERATIONS=10_000;
+export const CANVAS_OFFLINE_MAX_BYTES=50*1024*1024;
 let nextActionSequence=Date.now()*1_000;
 
 const actionSequence=()=>{nextActionSequence=Math.max(nextActionSequence+1,Date.now()*1_000);return nextActionSequence;};
@@ -47,6 +50,11 @@ const normalizeBatch=(value:StoredCanvasBatch,scope:CanvasQueueScope,index=0):Qu
   return{id:`legacy:${value.id}`,ownerId:scope.ownerId,projectId:scope.projectId,events:[value.event],createdAt,actionSequence:(Date.parse(createdAt)||0)*1_000+index,bytes:value.bytes||new Blob([JSON.stringify(value.event)]).size};
 };
 
+const batchExpired=(value:StoredCanvasBatch,now=Date.now())=>{
+  const createdAt=Date.parse(value.createdAt);
+  return !Number.isFinite(createdAt)||now-createdAt>=CANVAS_OFFLINE_MAX_AGE_MS;
+};
+
 /** A device-local write-ahead log. Every operation is bound to one effective account and project. */
 export class CanvasOfflineQueue {
   async enqueueBatch(events:EventInput[],scope:CanvasQueueScope){
@@ -56,14 +64,29 @@ export class CanvasOfflineQueue {
     const id=scope.projectAccessId?`${scope.organizationId}:${scope.projectAccessId}:${scope.ownerId}:${scope.permissionEpoch}:${rawId}`:rawId;
     const prepared=events.map((event,index)=>({...event,payload:{...event.payload,client_event_id:String(event.payload.client_event_id??crypto.randomUUID()),client_action_sequence:sequence,client_batch_index:index}}));
     const value:QueuedCanvasBatch={id,...scope,events:prepared,createdAt:new Date().toISOString(),actionSequence:sequence,bytes:new Blob([JSON.stringify(prepared)]).size};
-    await transact<void>("readwrite",(store,resolve,reject)=>{const request=store.put(value);request.onsuccess=()=>resolve();request.onerror=()=>reject(request.error);});return value;
+    await transact<void>("readwrite",(store,resolve,reject)=>{
+      const existing=store.getAll();
+      existing.onsuccess=()=>{
+        const scoped=(existing.result as StoredCanvasBatch[]).filter((item)=>canvasBatchBelongsToScope(item,scope));
+        const current=scoped.filter((item)=>!batchExpired(item));
+        const count=current.reduce((total,item)=>total+("events" in item?item.events.length:1),0);
+        const bytes=current.reduce((total,item)=>total+Number(item.bytes??0),0);
+        if(count+prepared.length>CANVAS_OFFLINE_MAX_OPERATIONS){reject(new Error("The device queue is limited to 10,000 pending board changes. Reconnect before adding more."));return;}
+        if(bytes+value.bytes>CANVAS_OFFLINE_MAX_BYTES){reject(new Error("The device queue is limited to 50 MB of pending board changes. Reconnect before adding more."));return;}
+        for(const expired of scoped.filter((item)=>batchExpired(item))){const removal=store.delete(expired.id);removal.onerror=()=>reject(removal.error);}
+        const request=store.put(value);request.onsuccess=()=>resolve();request.onerror=()=>reject(request.error);
+      };
+      existing.onerror=()=>reject(existing.error);
+    });return value;
   }
   async enqueue(event:EventInput,scope:CanvasQueueScope){return this.enqueueBatch([event],scope);}
-  async listBatches(scope:CanvasQueueScope){if(!validScope(scope))return[];return transact<QueuedCanvasBatch[]>("readonly",(store,resolve,reject)=>{const request=store.getAll();request.onsuccess=()=>resolve((request.result as StoredCanvasBatch[]).filter((value)=>canvasBatchBelongsToScope(value,scope)).map((value,index)=>normalizeBatch(value,scope,index)).sort((a,b)=>a.actionSequence-b.actionSequence||a.createdAt.localeCompare(b.createdAt)||a.id.localeCompare(b.id)));request.onerror=()=>reject(request.error);});}
+  async listBatches(scope:CanvasQueueScope){if(!validScope(scope))return[];return transact<QueuedCanvasBatch[]>("readwrite",(store,resolve,reject)=>{const request=store.getAll();request.onsuccess=()=>{const scoped=(request.result as StoredCanvasBatch[]).filter((value)=>canvasBatchBelongsToScope(value,scope));for(const expired of scoped.filter((value)=>batchExpired(value))){const removal=store.delete(expired.id);removal.onerror=()=>reject(removal.error);}resolve(scoped.filter((value)=>!batchExpired(value)).map((value,index)=>normalizeBatch(value,scope,index)).sort((a,b)=>a.actionSequence-b.actionSequence||a.createdAt.localeCompare(b.createdAt)||a.id.localeCompare(b.id)));};request.onerror=()=>reject(request.error);});}
   async list(scope:CanvasQueueScope){return this.listBatches(scope);}
   async removeBatch(id:string,scope:CanvasQueueScope){if(!validScope(scope))return;return transact<void>("readwrite",(store,resolve,reject)=>{const key=id.replace(/^legacy:/,"");const lookup=store.get(key);lookup.onsuccess=()=>{const value=lookup.result as StoredCanvasBatch|undefined;if(!value||!canvasBatchBelongsToScope(value,scope)){resolve();return;}const request=store.delete(key);request.onsuccess=()=>resolve();request.onerror=()=>reject(request.error);};lookup.onerror=()=>reject(lookup.error);});}
   async remove(id:string,scope:CanvasQueueScope){return this.removeBatch(id,scope);}
-  async summary(scope:CanvasQueueScope){const batches=await this.listBatches(scope);const count=batches.reduce((total,batch)=>total+batch.events.length,0),bytes=batches.reduce((total,batch)=>total+batch.bytes,0);return{count,batches:batches.length,bytes,warning:count>=8_000||bytes>=40*1024*1024,full:count>=10_000||bytes>=50*1024*1024};}
+  /** Personal erasure cannot remove another principal's or an organization's device-local work. */
+  async clearPersonalOwner(ownerId:string){if(!ownerId.trim())return 0;return transact<number>("readwrite",(store,resolve,reject)=>{const lookup=store.getAll();lookup.onsuccess=()=>{let removed=0;for(const value of lookup.result as StoredCanvasBatch[]){const owned="ownerId" in value?value.ownerId===ownerId&&!value.projectAccessId:(("events" in value?value.events:[value.event]).every((event)=>String(event.payload.history_owner_id??"")===ownerId));if(!owned)continue;const deletion=store.delete(value.id);deletion.onerror=()=>reject(deletion.error);removed+=1;}resolve(removed);};lookup.onerror=()=>reject(lookup.error);});}
+  async summary(scope:CanvasQueueScope){const batches=await this.listBatches(scope);const count=batches.reduce((total,batch)=>total+batch.events.length,0),bytes=batches.reduce((total,batch)=>total+batch.bytes,0);return{count,batches:batches.length,bytes,warning:count>=CANVAS_OFFLINE_MAX_OPERATIONS*.8||bytes>=CANVAS_OFFLINE_MAX_BYTES*.8,full:count>=CANVAS_OFFLINE_MAX_OPERATIONS||bytes>=CANVAS_OFFLINE_MAX_BYTES};}
 }
 
 export const canvasOfflineQueue=new CanvasOfflineQueue();

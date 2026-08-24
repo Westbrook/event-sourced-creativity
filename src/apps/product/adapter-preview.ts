@@ -21,7 +21,7 @@ export class FormaProductAdapterPreview extends FormaProductEvaluation {
       const body=await response.json() as AdapterPreview&{error?:string};
       if(!response.ok||!body.dryRun||body.providerCall||body.pixelsTransmitted)throw new Error(body.error??"adapter_preview_unavailable");
       this.#simulation=body;
-    }catch(error){this.#simulationIssue=error instanceof Error?error.message:"adapter_preview_unavailable";}finally{this.#simulating=false;this.requestUpdate();}
+    }catch(error){const reason=error instanceof Error?error.message:"adapter_preview_unavailable";this.#simulationIssue=reason==="adapter_preview_unavailable"?this.i18n.system("Adapter preview is unavailable."):reason;}finally{this.#simulating=false;this.requestUpdate();}
   }
 
   override render(){

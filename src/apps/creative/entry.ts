@@ -12,6 +12,8 @@ export function loadCreativeRoute(path: string): Promise<unknown> {
   if (documentView === "layers" || documentView === "adaptive") return import("../../components/forma-studio-editor-alternatives");
   if (documentView === "editor") return import("../../components/forma-creative-editor");
   if (documentView === "chat") return import("../../components/forma-chat-studio");
+  if (pathname === "/activity" || pathname.startsWith("/activity/")) return import("../../components/forma-activity");
+  if (pathname === "/deliver" || pathname.startsWith("/deliver/")) return import("../../components/forma-deliver");
   if (pathname.startsWith("/library")) return import("../../components/forma-library");
   if (pathname.startsWith("/sessions")) return import("../../components/forma-sessions");
   if (pathname.startsWith("/scout")) return import("../../components/forma-scout");
@@ -32,6 +34,8 @@ export class FormaCreativeApplication extends FormaElement {
     if(documentView==="adaptive")return html`<forma-adaptive-path></forma-adaptive-path>`;
     if(documentView==="editor")return html`<forma-creative-editor></forma-creative-editor>`;
     if(documentView==="chat")return html`<forma-chat-studio></forma-chat-studio>`;
+    if(pathname==="/activity"||pathname.startsWith("/activity/"))return html`<forma-activity></forma-activity>`;
+    if(pathname==="/deliver"||pathname.startsWith("/deliver/"))return html`<forma-deliver></forma-deliver>`;
     if(pathname.startsWith("/library"))return html`<forma-library></forma-library>`;
     if(pathname.startsWith("/sessions"))return html`<forma-sessions></forma-sessions>`;
     if(pathname.startsWith("/scout"))return html`<forma-scout></forma-scout>`;

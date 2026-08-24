@@ -292,6 +292,7 @@ export async function handlePortfolio(request: Request, env: WorkerEnv, area: st
     env.DB.prepare(approvedReleaseRequirementsSql),
   ];
   if(includeEvents)statements.push(env.DB.prepare("SELECT COUNT(*) AS event_count,SUM(CASE WHEN type LIKE 'Canvas%' THEN 1 ELSE 0 END) AS canvas_events FROM events WHERE occurred_at>=strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 days')"));
+  if(area==="operations"&&view==="overview")statements.push(env.DB.prepare("SELECT status,started_at,finished_at,error_code FROM retention_sweep_runs WHERE trigger_kind='scheduled' ORDER BY started_at DESC LIMIT 1"));
   if(area==="engineering"&&view==="health")statements.push(env.DB.prepare(`SELECT route_latency_ms,lcp_ms,inp_ms,cls_microunits FROM route_performance_samples
     WHERE audience IN('creative','canvas','product','operations','engineering')
       AND route_family IN('projects','creative-workspace','document','project-contents','studio','library','sessions','scout','memory','canvas-home','canvas-workspace','canvas-projects','canvas-library','canvas-proposals','product','operations','engineering')
@@ -303,6 +304,7 @@ export async function handlePortfolio(request: Request, env: WorkerEnv, area: st
   const open = Math.max(0, CANVAS_GOVERNANCE_REQUIREMENTS.length - Number(results[1]?.results[0]?.approved_count ?? 0));
   const eventCount = Number(events.event_count ?? 0), canvasEvents = Number(events.canvas_events ?? 0);
   const measurements=area==="engineering"&&view==="health"?results[2]?.results??[]:[];
+  const maintenance=area==="operations"&&view==="overview"?results[2]?.results[0]??null:null;
   const percentile=(key:string)=>{const values=measurements.map((row)=>row[key]).filter((value):value is number=>typeof value==="number"&&Number.isFinite(value)).sort((a,b)=>a-b);return values.length>=3?values[Math.max(0,Math.ceil(values.length*.75)-1)]??null:null;};
   const scopeId = area === "operations" ? "overview" : `engineering${view[0].toUpperCase()}${view.slice(1)}`;
   const metrics: Metric[] = view === "events" ? [
@@ -330,5 +332,12 @@ export async function handlePortfolio(request: Request, env: WorkerEnv, area: st
     { id: "customerPrivacy", label: "Customer data minimization", status: "passed", detail: "Identity, creator material, event payloads, and private media never leave this projection." },
     { id: "paidExecution", label: "Paid execution authority", status: "blocked", detail: "Reporting never starts provider jobs, changes budgets, or authorizes a release." },
     { id:"fleetLatency",label:"Fleet latency percentiles",status:measurements.length>=3?"passed":"pending",detail:measurements.length>=3?"Measured from coarse anonymous route samples; no account, organization, project, URL, or user agent is stored.":"Latency measurement remains pending until at least three eligible anonymous route samples exist." },
+    ...(area==="operations"&&view==="overview"?[
+      {id:"scheduledRetention",label:"Scheduled retention execution",status:maintenance?.status==="failed"?"blocked" as const:"pending" as const,detail:maintenance?`Last observed local scheduled cleanup: ${String(maintenance.status)} at ${String(maintenance.started_at)}. Hosted cron delivery remains unconfigured.`:"No scheduled cleanup has been observed; hosted cron delivery remains unconfigured."},
+      {id:"enterpriseIdentity",label:"Enterprise identity assurance",status:"pending" as const,detail:"Observed platform identities and organization allowlists are enforced; verified customer SSO, MFA, and external SCIM remain unavailable."},
+      {id:"customerManagedKeys",label:"Customer-managed primary-storage keys",status:"pending" as const,detail:"Optional tenant-wrapped AES-GCM protects recovery snapshots only; primary D1/R2 encryption and external KMS ownership are not attested."},
+      {id:"backupRecovery",label:"Verified isolated disaster recovery",status:"pending" as const,detail:"Encrypted local snapshots support integrity drills; external replication, isolated tenant restore, and contractual RPO/RTO remain unverified."},
+      {id:"independentCompliance",label:"Independent compliance assurance",status:"pending" as const,detail:"Third-party SOC 2, ISO, penetration-testing, privacy-contract, and accessibility evidence has not been independently supplied."},
+    ]:[]),
   ]);
 }

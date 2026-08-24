@@ -4,6 +4,7 @@ import test from "node:test";
 import { componentCatalog } from "../src/components/design-system/catalog.ts";
 import frenchMessages from "../src/components/design-system/locales/fr.ts";
 import arabicMessages from "../src/components/design-system/locales/ar.ts";
+import japaneseMessages from "../src/components/design-system/locales/ja.ts";
 
 const read = (relative) => readFile(new URL(relative, import.meta.url), "utf8");
 const [packageSource, manifestSource, publicManifestSource, shippedManifestSource, globalStyles, familyStyles, laboratoryStyles, catalogSource, applicationPreviewSource, labSource, librarySource, analyticsSource, collectionSource, baseSource, slottedBaseSource, layoutSource, feedbackSource, generatorSource] = await Promise.all([
@@ -165,7 +166,7 @@ test("scoped locale contracts separate translated authored content from invarian
   const localeSource = await read("../src/components/design-system/localization.ts");
   const locale = declarationByTag.get("forma-ui-locale");
   assert.equal(locale["x-forma"].category, "foundation");
-  assert.deepEqual(manifest["x-forma"].i18n.supportedLocales, ["en", "fr", "ar"]);
+  assert.deepEqual(manifest["x-forma"].i18n.supportedLocales, ["en", "fr", "ar", "ja"]);
   assert.equal(manifest["x-forma"].i18n.scopeElement, "forma-ui-locale");
   for (const [attributeName, propertyName] of [["format-locale", "formatLocale"], ["time-zone", "timeZone"]]) {
     const attribute = locale.attributes.find((candidate) => candidate.name === attributeName);
@@ -186,17 +187,29 @@ test("scoped locale contracts separate translated authored content from invarian
   assert.deepEqual(declarationByTag.get("forma-ui-segmented-control")["x-forma"].i18n.internalMessages, ["field.choose"]);
   assert.match(localeSource, /import\("\.\/locales\/fr"\)/);
   assert.match(localeSource, /import\("\.\/locales\/ar"\)/);
+  assert.match(localeSource, /import\("\.\/locales\/ja"\)/);
+  assert.match(localeSource, /\{ locale: "ja", label: "日本語", direction: "ltr" \}/);
   assert.match(localeSource, /context-request/);
   assert.match(localeSource, /Intl\.PluralRules/);
   assert.match(localeSource, /Intl\.Segmenter/);
   for (const entry of componentCatalog) {
-    for (const messages of [frenchMessages, arabicMessages]) {
+    for (const messages of [frenchMessages, arabicMessages, japaneseMessages]) {
       assert.ok(messages[`component.${entry.tag}.title`], `${entry.tag} has a translated title`);
       assert.ok(messages[`component.${entry.tag}.summary`], `${entry.tag} has a translated summary`);
     }
   }
   for (const category of ["zero", "one", "two", "few", "many", "other"]) assert.ok(arabicMessages[`catalog.results.${category}`]);
+  assert.equal(new Intl.PluralRules("ja").select(1), "other");
+  assert.ok(japaneseMessages["catalog.results.other"]);
+  for (const [key, source] of Object.entries(frenchMessages)) {
+    assert.ok(japaneseMessages[key], `Japanese translation missing for ${key}`);
+    const placeholders = (message) => [...message.matchAll(/\{([^{}]+)\}/g)]
+      .map((match) => match[1])
+      .sort();
+    assert.deepEqual(placeholders(japaneseMessages[key]), placeholders(source), `${key} preserves interpolation placeholders`);
+  }
   assert.match(globalStyles, /:root:lang\(ar\)/);
+  assert.match(globalStyles, /:root:lang\(ja\)/);
   assert.match(globalStyles, /--forma-script-letter-spacing:\s*0/);
   assert.match(catalogSource, /<pre lang="en" dir="ltr">/);
   assert.match(catalogSource, /catalog\.canonicalExample/);
@@ -271,10 +284,10 @@ test("every application pattern has an isolated, truthful, accessible production
 
   assert.equal(componentCatalog.find((entry) => entry.tag === "forma-ui-spinner").preview, false);
   assert.equal(componentCatalog.find((entry) => entry.tag === "forma-ui-spinner").previewKind, "component");
-  for (const tag of ["forma-artifact-summary", "forma-presentation-slide", "forma-platform-shell", "forma-ui-workspace-switcher", "forma-ui-audience-navigation"]) {
+  for (const tag of ["forma-artifact-summary", "forma-presentation-slide", "forma-platform-shell", "forma-shared-view", "forma-ui-workspace-switcher", "forma-ui-audience-navigation"]) {
     assert.equal(declarationByTag.get(tag)["x-forma"].stateful, false, `${tag} truthfully reports its presentational base`);
   }
-  for (const tag of ["forma-collection-tree", "forma-generation-actions", "forma-shared-view"]) {
+  for (const tag of ["forma-collection-tree", "forma-generation-actions"]) {
     assert.equal(declarationByTag.get(tag)["x-forma"].stateful, true, `${tag} preserves its real stateful application boundary`);
   }
 });
@@ -448,7 +461,7 @@ test("the component library is actually adopted by Library and Operations surfac
   assert.match(analyticsSource, /<div><forma-ui-metric \.label=\$\{label\}/);
   assert.match(familyStyles, /\.analytics-readiness-outcomes/);
   assert.doesNotMatch(collectionSource, /role="tree"|role="treeitem"|role="menu"|role="menuitem"/);
-  assert.match(collectionSource, /role="group" aria-label=\$\{`\$\{collection\.handle\} actions`\}/);
+  assert.match(collectionSource, /role="group" aria-label=\$\{this\.i18n\.system\("\{handle\} actions", \{ handle: collection\.handle \}\)\}/);
 });
 
 test("the Design System documents workspace-owned shared capabilities and explicit localized Creator handoffs",async()=>{

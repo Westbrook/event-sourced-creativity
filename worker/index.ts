@@ -5,7 +5,7 @@ import { handleShares, handleSharedMedia, handleSharedView } from "./shares-api"
 import { applicationDefinition, authorizedApplicationHome, resolveServerRoute, routeRequiredCapabilities, type ApplicationId } from "../src/platform/applications";
 import { handleReplayApproval, handleReplayEstimate, handleReplaySessions } from "./replay-sessions-api";
 import { handleDocumentJobs } from "./document-jobs-api";
-import { streamHead, type WorkerExecutionContext } from "./runtime";
+import { observeScheduledRetention, schedulePrivateContentRetention, streamHead, type WorkerExecutionContext } from "./runtime";
 import { handleAnalytics } from "./analytics-api";
 import { handleGenerationReadiness } from "./generation-readiness";
 import { handleCanvasGovernance } from "./canvas-governance-api";
@@ -17,6 +17,11 @@ import { handleCapabilityGrants } from "./access-api";
 import { handleWorkspaces } from "./workspaces-api";
 import { readProjectRequestContext } from "./project-access";
 import { handlePerformanceSample } from "./performance-api";
+import { handleArtifactEdit } from "./artifact-api";
+import { handleEventPrivacy } from "./privacy-api";
+import { handleProjectNotifications } from "./project-notifications-api";
+import { processReviewReminders } from "./review-automation-api";
+import { handleProvisioning } from "./provisioning-api";
 
 async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string) {
     if(application==="creative"){
@@ -73,12 +78,15 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(portfolioMatch)return handlePortfolio(request,env,portfolioMatch[1],portfolioMatch[2]);
     if(url.pathname==="/api/platform/access")return handleCapabilityGrants(request,env);
     if(url.pathname.startsWith("/api/platform/access/")&&request.method==="DELETE")return handleCapabilityGrants(request,env,decodeURIComponent(url.pathname.slice("/api/platform/access/".length)));
+    if(url.pathname.startsWith("/api/provisioning/"))return handleProvisioning(request,env,url.pathname.slice("/api/provisioning/".length).split("/").filter(Boolean).map((part)=>decodeURIComponent(part)));
     if(url.pathname==="/api/workspaces"||url.pathname.startsWith("/api/workspaces/")){
       const response=await handleWorkspaces(request,env,url.pathname.slice("/api/workspaces".length).split("/").filter(Boolean).map((part)=>decodeURIComponent(part)));
       const headers=new Headers(response.headers);headers.set("cache-control","private, no-store");headers.append("vary","Cookie, oai-authenticated-user-id, oai-authenticated-user-email, cf-access-authenticated-user-email");
       return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
     }
     if(url.pathname==="/api/session")return handleSession(request,env,context);
+    if(url.pathname==="/api/project-notifications")return handleProjectNotifications(request,env);
+    if(url.pathname==="/api/privacy/events")return handleEventPrivacy(request,env);
     if(url.pathname==="/api/privacy/attention"&&request.method==="POST"){
       const authorization=await requireUser(request,env,"viewer",{account:"principal"});
       if(authorization.response||!authorization.user)return authorization.response??Response.json({error:"authentication_required"},{status:401});
@@ -103,6 +111,10 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname.startsWith("/api/replay-sessions/"))return handleReplaySessions(request,env,decodeURIComponent(url.pathname.slice("/api/replay-sessions/".length)));
     if(url.pathname==="/api/document-jobs")return handleDocumentJobs(request,env,"",context);
     if(url.pathname.startsWith("/api/document-jobs/"))return handleDocumentJobs(request,env,url.pathname.slice("/api/document-jobs/".length),context);
+    if(url.pathname.startsWith("/api/artifacts/")){
+      const segments=url.pathname.slice("/api/artifacts/".length).split("/").map((segment)=>decodeURIComponent(segment));
+      return handleArtifactEdit(request,env,segments[0]??"",segments.slice(1));
+    }
     if(url.pathname==="/api/events"||url.pathname==="/api/events/hot"){
       const response=await handleEvents(request,env,url.pathname.endsWith("/hot"));
       if(!scopedCookie)return response;
@@ -205,9 +217,19 @@ export default {
   async fetch(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const started=performance.now();
     const response=await routeRequest(request,env,context);
+    if(new URL(request.url).pathname.startsWith("/api/"))schedulePrivateContentRetention(env,context);
     const headers=new Headers(response.headers);
     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
     if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");
+    headers.set("x-content-type-options","nosniff");
+    headers.set("referrer-policy","no-referrer");
+    headers.set("permissions-policy","camera=(), microphone=(), geolocation=()");
+    if(!headers.has("content-security-policy"))headers.set("content-security-policy","frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
+    if(new URL(request.url).protocol==="https:")headers.set("strict-transport-security","max-age=31536000; includeSubDomains");
     return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
+  },
+  async scheduled(_controller: unknown, env: WorkerEnv): Promise<void> {
+    await observeScheduledRetention(env,1_000);
+    await processReviewReminders(env,100);
   },
 };

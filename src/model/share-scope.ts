@@ -1,4 +1,5 @@
 import type { CreativeProjection } from "./events.ts";
+import { mediaKeyMatchesOwnerNamespace } from "./media-ownership.ts";
 
 export type DocumentShareScope = {
   resourceKind: "document";
@@ -8,14 +9,12 @@ export type DocumentShareScope = {
   mediaKeys: string[];
 };
 
-const ownerNamespace = (ownerId: string) => ownerId.replace(/[^a-zA-Z0-9._-]/g, "-");
-
 /** Only canonical, owner-scoped local objects may become shareable media. */
 export function ownedMediaKey(value: unknown, ownerId: string): string | null {
   if (typeof value !== "string" || !value.startsWith("/api/media/")) return null;
   try {
     const key = decodeURIComponent(value.slice("/api/media/".length));
-    return key.startsWith(`${ownerNamespace(ownerId)}/`) ? key : null;
+    return mediaKeyMatchesOwnerNamespace(key, ownerId) ? key : null;
   } catch {
     return null;
   }
@@ -42,7 +41,7 @@ export function documentShareScope(projection: CreativeProjection, ownerId: stri
 }
 
 export function shareAllowsMedia(scope: Pick<DocumentShareScope, "ownerId" | "mediaKeys">, key: string) {
-  return key.startsWith(`${ownerNamespace(scope.ownerId)}/`) && scope.mediaKeys.includes(key);
+  return mediaKeyMatchesOwnerNamespace(key, scope.ownerId) && scope.mediaKeys.includes(key);
 }
 
 /** Remove private references and rewrite only explicitly authorized object URLs. */
@@ -55,12 +54,17 @@ export function sanitizeSharedValue(value: unknown, scope: Pick<DocumentShareSco
   if (Array.isArray(value)) return value.map((item) => sanitizeSharedValue(item, scope, token, mediaReference));
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).filter(([key]) => {
-      const normalized=key.replace(/[A-Z]/g,(character)=>`_${character.toLowerCase()}`);
+      const normalized=key.replace(/([a-z\d])([A-Z])/g,"$1_$2").replace(/([A-Z]+)([A-Z][a-z])/g,"$1_$2").toLowerCase().replace(/_i_ds$/,"_ids");
       return !/(?:^|_)(?:content|prompt|intent|input)_?ref$/i.test(normalized)
         && !/(?:^|_)prompt(?:_|$)/.test(normalized)
         && !/(?:^|_)(?:model|adapter)(?:_id|_version)?$/.test(normalized)
         && !/(?:^|_)provider(?:$|_(?:id|name|model|request|receipt|job|status|response|cancel|url))/.test(normalized)
-        && !/^(?:request_id|client_id|correlation_id|causation_id|scene_id|source_artifact_item_id|context_group_ids)$/.test(normalized);
+        && !/^(?:request_id|client_id|correlation_id|causation_id|scene_id|source_artifact_item_id)$/.test(normalized)
+        && !/^(?:(?:source(?:_[a-z]+)*|context_(?:group|set)|block|claim|group)_ids?|source_(?:keys?|alias(?:es|_map)?))$/.test(normalized)
+        && !/^organization_context_(?:source_block|package(?:_version|_binding)?)_ids?$/.test(normalized)
+        && !/^(?:source|evidence)(?:_[a-z]+)*_refs?$/.test(normalized)
+        && !/^source_block_versions?$/.test(normalized)
+        && !/^(?:source|context)(?:_[a-z]+)*_fingerprints?$/.test(normalized);
     }).map(([key, item]) => [key, sanitizeSharedValue(item, scope, token, /^(?:media|image|thumbnail|preview|poster)_?url$/i.test(key))]));
   }
   return value;

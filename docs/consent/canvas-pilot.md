@@ -15,17 +15,13 @@ This can help the app learn which parts of your canvases matter to you so it can
 - What power it has: it may gently reorder suggestions. It can never create, change, hide, or delete work. A direct action always carries at least four times its authority.
 - Your controls: decline, pause, review all retained detail, or delete it.
 
-Declining does not disable live collaboration. Teammates still see your name, cursor, and current selection while you share a canvas; that presence evaporates and is never recorded.
+Declining does not disable authorized project collaboration. Accepted teammates can review and edit the same project through authenticated synchronization. Remote cursors, live selections, and cross-account presence are not currently available; device-local presence is never recorded.
 
 Actions: **Not now** · **Turn on**
 
 ## Team-wide suggestions
 
-Team-level learning requires both workspace enablement and each person’s individual opt-in. A contribution joins only an access-scoped daily aggregate of at least five people. Below five, nothing is computed. Administrators can see who opted in but cannot see individual signals.
-
-Leaving deletes retained personal detail and stops future contribution. Past aggregate totals cannot be separated after daily blending; that limit must remain visible at the moment of consent.
-
-Actions: **Not now** · **Count me in**
+Team-wide suggestion learning and blended group aggregates are not available. Personal attention signals are never pooled across teammates, and no administrator can enable a team-learning pipeline that does not exist. A future team feature must receive separate, explicit consent before any contribution or aggregation begins.
 
 ## Project membership
 
@@ -37,7 +33,7 @@ Before outside pixels enter a generation, the person invoking generation must co
 
 ## Offline custody
 
-Offline changes remain readable on the unlocked device until reconnection, for at most 14 days and within 10,000 operations or 50 MB. Generation and other spending work does not run offline.
+Offline changes remain readable only within the active account, project, permission epoch, and board on the unlocked device until reconnection. The client expires changes after 14 days and refuses writes beyond 10,000 operations or 50 MB; changes that expire before synchronization cannot be recovered. Generation and other spending work does not run offline.
 
 ## Blocking approvals
 

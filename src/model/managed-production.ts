@@ -2,6 +2,7 @@ import { combinedContextGroups, combinedContextMemberships } from "./combined-co
 import { requiredContextAdaptationFacts } from "./context-adaptation.ts";
 import type { DocumentArtifactKind } from "./document-artifacts.ts";
 import { promptFactIsActive } from "./prompt-policy.ts";
+import { inferPresentationSourceOutline } from "./presentation-source.ts";
 import { VIDEO_ADAPTER_CONTRACT, type VideoDurationSeconds } from "./video-adapter.ts";
 
 export type ProductionMode = "manual" | "managed";
@@ -99,7 +100,7 @@ export type ProductionClaim = {
   artifactId?: string;
   artifactItemId?: string;
   ordinal?: number;
-  sourceKind?: "fact" | "artifact-item" | "standing-constraint";
+  sourceKind?: "fact" | "artifact-item" | "standing-constraint" | "authored-slide";
 };
 
 export type ProductionReference = {
@@ -136,6 +137,8 @@ export type ProductionScene = {
   sourceBlockIds: string[];
   sourceArtifactItemIds?: string[];
   contextGroupIds: string[];
+  section?: string;
+  sourceOutlineOrder?: number;
   referenceIds: string[];
   dependsOn: string[];
   startBoundaryId: string | null;
@@ -155,6 +158,25 @@ export type ManagedProductionPlan = {
   contextGroups: ReturnType<typeof combinedContextGroups>;
   continuityBible: ProductionContinuityBible;
   scenes: ProductionScene[];
+  authoredSlideCount: number;
+  requestedSlideCount: number | null;
+  predictedSlideCount: number;
+  slideCountMismatch: boolean;
+  slideCountMismatchCode: "requested_less_than_authored" | "requested_more_than_authored" | null;
+  slideCountMismatchReason: "requested_less_than_authored" | "requested_more_than_authored" | null;
+  slideCountMismatchMessage: string | null;
+  providerBatchSize: number;
+  providerBatchCount: number;
+  providerCallCount: number;
+  maxRepairCallCount: number;
+  maximumProviderCallCount: number;
+  providerBatches: Array<{
+    index: number;
+    startSlide: number;
+    endSlide: number;
+    slideCount: number;
+    reservationMicrousd: number;
+  }>;
   narrativeOrder: string[];
   executionOrder: string[];
   parallelWaves: string[][];
@@ -179,9 +201,15 @@ export type ProductionPlanOptions = {
   references?: ProductionReference[];
   preferredSceneSeconds?: number;
   requestedItemCount?: number;
+  requestedSlideCount?: number;
   resolution?: "480p" | "720p";
   maximumParallelScenes?: number;
 };
+
+export const MANAGED_PRODUCTION_BATCH_SIZE = 8;
+export const MANAGED_PRODUCTION_BATCH_RESERVATION_MICROUSD = 1_000_000;
+/** The editable PowerPoint adapter supports at most one hundred slides. */
+export const MAX_MANAGED_PRESENTATION_SLIDES = 100;
 
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const clean = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
@@ -435,21 +463,84 @@ function buildWaves(scenes: ProductionScene[], anchorId: string, maximumParallel
 
 /** Compile the full source context without inheriting the legacy twelve-item schema cap. */
 export function buildManagedProductionPlan(format: ProductionFormat, snapshot: Record<string, unknown>, options: ProductionPlanOptions = {}): ManagedProductionPlan {
-  const claims = productionClaims(snapshot);
+  const sourceClaims = productionClaims(snapshot);
+  const sourceOutline = format === "slides" ? inferPresentationSourceOutline(snapshot) : null;
+  const authoredSlides = sourceOutline?.slides ?? [];
+  const authoredClaims = authoredSlides.map((slide, index): ProductionClaim => {
+    const source = sourceClaims.find((claim) => claim.blockId === slide.sourceBlockId && !claim.negative)
+      ?? sourceClaims.find((claim) => !claim.negative && !claim.continuity);
+    const blockId = clean(slide.sourceBlockId) || source?.blockId || "";
+    return {
+      id: `${source?.id ?? `claim:${blockId}`}:slide:${slide.number}:${index + 1}`,
+      blockId,
+      type: source?.type ?? "direction",
+      text: clean(slide.content) || clean(slide.title),
+      required: source?.required ?? false,
+      continuity: false,
+      negative: false,
+      contextGroupIds: unique([...(source?.contextGroupIds ?? []), ...(slide.contextGroupIds ?? [])]),
+      storyboardSequence: null,
+      ordinal: (source?.ordinal ?? index * 1_000_000) + index + 1,
+      sourceKind: "authored-slide",
+    };
+  });
+  const outlineSourceBlockIds = new Set(authoredClaims.map((claim) => claim.blockId).filter(Boolean));
+  const claims = authoredSlides.length
+    ? [
+      ...sourceClaims.filter((claim) => !outlineSourceBlockIds.has(claim.blockId) || claim.negative || claim.continuity),
+      ...authoredClaims,
+    ]
+    : [...sourceClaims];
   const references = options.references ?? [];
   const groups = combinedContextGroups(snapshot);
-  const beats = storyboardFacts(snapshot, claims);
-  const plotClaims = claims.filter((claim) => !claim.continuity && !claim.negative && claim.storyboardSequence === null);
-  const baselineCount = beats.length || Math.max(1, Math.ceil(plotClaims.length / 2), groups.filter((group) => group.role === "sequence" || group.role === "scene" || group.role === "message").length);
-  const count = format === "image" ? 1 : Math.max(baselineCount, Math.max(0, Math.floor(Number(options.requestedItemCount) || 0)));
-  const buckets: ProductionClaim[][] = Array.from({ length: count }, () => []);
-
-  for (let index = 0; index < beats.length; index += 1) {
-    const beat = beats[index]!;
-    const claim = beat.claim;
-    if (claim) buckets[index % count]!.push(claim);
+  const beats = storyboardFacts(snapshot, sourceClaims);
+  const plotClaims = sourceClaims.filter((claim) => !claim.continuity && !claim.negative && claim.storyboardSequence === null);
+  const baselineCount = authoredSlides.length || beats.length || Math.max(1, Math.ceil(plotClaims.length / 2), groups.filter((group) => group.role === "sequence" || group.role === "scene" || group.role === "message").length);
+  const rawRequestedCount = format === "slides" ? options.requestedSlideCount ?? options.requestedItemCount : options.requestedItemCount;
+  if (format === "slides" && rawRequestedCount !== undefined && rawRequestedCount !== null
+    && (!Number.isFinite(Number(rawRequestedCount)) || !Number.isInteger(Number(rawRequestedCount))
+      || Number(rawRequestedCount) < 0 || options.requestedSlideCount !== undefined && Number(rawRequestedCount) === 0)) {
+    throw new RangeError("invalid_managed_presentation_slide_count");
   }
-  plotClaims.forEach((claim, index) => buckets[index % count]!.push(claim));
+  const requestedCount = Number.isFinite(Number(rawRequestedCount)) ? Math.max(0, Math.floor(Number(rawRequestedCount))) : 0;
+  const requestedSlideCount = format === "slides" && requestedCount > 0 ? requestedCount : null;
+  if (format === "slides" && Math.max(baselineCount, requestedCount) > MAX_MANAGED_PRESENTATION_SLIDES) {
+    throw new RangeError(`managed_presentation_slide_count_exceeds_supported_maximum:${MAX_MANAGED_PRESENTATION_SLIDES}`);
+  }
+  const count = format === "image" ? 1 : Math.max(baselineCount, requestedCount);
+  const buckets: ProductionClaim[][] = Array.from({ length: count }, () => []);
+  const finalOutlineSourceBlockId = authoredClaims.at(-1)?.blockId;
+  const expansionSourceIndexes = authoredClaims
+    .map((claim, index) => ({ claim, index }))
+    .filter(({ claim }) => !finalOutlineSourceBlockId || claim.blockId === finalOutlineSourceBlockId)
+    .map(({ index }) => index);
+
+  if (authoredSlides.length) {
+    for (const [index, claim] of authoredClaims.entries()) buckets[index]!.push(claim);
+    const supportingClaims = plotClaims.filter((claim) => !outlineSourceBlockIds.has(claim.blockId));
+    supportingClaims.forEach((claim, index) => buckets[index % authoredSlides.length]!.push(claim));
+    for (let index = authoredSlides.length; index < count; index += 1) {
+      // Append extra evidence within the final authored chapter; reopening an earlier isolated
+      // chapter would split its source group and fail the completed-deck grounding contract.
+      const originalIndex = expansionSourceIndexes[(index - authoredSlides.length) % expansionSourceIndexes.length]!;
+      const source = authoredClaims[originalIndex]!;
+      const extension: ProductionClaim = {
+        ...source,
+        id: `${source.id}:expansion:${index + 1}`,
+        required: false,
+        ordinal: (source.ordinal ?? 0) + count + index,
+      };
+      claims.push(extension);
+      buckets[index]!.push(extension);
+    }
+  } else {
+    for (let index = 0; index < beats.length; index += 1) {
+      const beat = beats[index]!;
+      const claim = beat.claim;
+      if (claim) buckets[index % count]!.push(claim);
+    }
+    plotClaims.forEach((claim, index) => buckets[index % count]!.push(claim));
+  }
   for (const group of groups) {
     const assigned = buckets.findIndex((bucket) => bucket.some((claim) => claim.contextGroupIds.includes(group.id)));
     if (assigned >= 0) continue;
@@ -458,14 +549,55 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
   }
   const unassignedMandatory = claims.filter((claim) => claim.required && !claim.continuity && !claim.negative && !buckets.some((bucket) => bucket.some((item) => item.id === claim.id)));
   unassignedMandatory.forEach((claim, index) => buckets[index % count]!.push(claim));
+  if (format === "slides" && !authoredSlides.length) {
+    const authorizedBlockIds = new Set((Array.isArray(snapshot.facts) ? snapshot.facts : [])
+      .filter(promptFactIsActive)
+      .map(asRecord)
+      .map((fact) => clean(fact.block_id))
+      .filter(Boolean));
+    const groundingClaims = claims.filter((claim) => !claim.negative && authorizedBlockIds.has(claim.blockId));
+    let previous = groundingClaims[0];
+    for (const [index, bucket] of buckets.entries()) {
+      const assigned = bucket.find((claim) => authorizedBlockIds.has(claim.blockId));
+      if (assigned) {
+        previous = assigned;
+        continue;
+      }
+      const source = previous ?? groundingClaims[0];
+      if (!source) continue;
+      const extension: ProductionClaim = {
+        ...source,
+        id: `${source.id}:supporting-slide:${index + 1}`,
+        text: `${source.text} · Develop a distinct source-grounded supporting perspective for presentation position ${index + 1}.`,
+        required: false,
+        continuity: false,
+        ordinal: (source.ordinal ?? 0) + count + index,
+        sourceKind: "authored-slide",
+      };
+      claims.push(extension);
+      bucket.push(extension);
+    }
+  }
 
   const sceneIds = Array.from({ length: count }, (_, index) => `scene-${String(index + 1).padStart(3, "0")}`);
   const scenes = sceneIds.map((id, index): ProductionScene => {
-    const beat = beats[index];
+    const authoredSlide = authoredSlides[index];
+    const expandedSource = authoredSlides.length && index >= authoredSlides.length
+      ? authoredSlides[expansionSourceIndexes[(index - authoredSlides.length) % expansionSourceIndexes.length]!]
+      : undefined;
+    const beat = authoredSlides.length ? undefined : beats[index];
     const facts = unique(buckets[index]!.map((claim) => claim.id)).map((claimId) => claims.find((claim) => claim.id === claimId)!).filter(Boolean);
     const properties = beat?.properties ?? {};
-    const action = clean(properties.storyboard_shot_direction ?? properties.video_scene_direction ?? properties.text ?? facts.map((claim) => claim.text).join("; ")) || `Advance ${purposeFor(index, count)} without repeating another scene.`;
-    const title = clean(properties.storyboard_shot_title ?? properties.video_scene_title ?? properties.label) || `${purposeFor(index, count).replaceAll("-", " ")} · ${index + 1}`;
+    const action = authoredSlide
+      ? clean(authoredSlide.content) || clean(authoredSlide.title)
+      : expandedSource
+        ? `Develop a distinct supporting analysis of the authored slide “${clean(expandedSource.title)}”: ${clean(expandedSource.content)} Preserve its exact source facts, verbatim quotations, attributed evidence, and terminology without repeating another slide.`
+        : clean(properties.storyboard_shot_direction ?? properties.video_scene_direction ?? properties.text ?? facts.map((claim) => claim.text).join("; ")) || `Advance ${purposeFor(index, count)} without repeating another scene.`;
+    const title = authoredSlide
+      ? clean(authoredSlide.title) || `Slide ${authoredSlide.number}`
+      : expandedSource
+        ? `${clean(expandedSource.title) || `Slide ${expandedSource.number}`} · supporting evidence ${index - authoredSlides.length + 1}`
+        : clean(properties.storyboard_shot_title ?? properties.video_scene_title ?? properties.label) || `${purposeFor(index, count).replaceAll("-", " ")} · ${index + 1}`;
     const contextGroupIds = unique(facts.flatMap((claim) => claim.contextGroupIds));
     const scene: ProductionScene = {
       id,
@@ -480,6 +612,8 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
       sourceBlockIds: unique(facts.map((claim) => claim.blockId)),
       ...(facts.some((claim) => claim.artifactItemId) ? { sourceArtifactItemIds: unique(facts.flatMap((claim) => claim.artifactItemId ? [claim.artifactItemId] : [])) } : {}),
       contextGroupIds,
+      ...((authoredSlide ?? expandedSource)?.section ? { section: clean((authoredSlide ?? expandedSource)!.section) } : {}),
+      ...(authoredSlide ? { sourceOutlineOrder: authoredSlide.number } : expandedSource ? { sourceOutlineOrder: index + 1 } : {}),
       referenceIds: [],
       dependsOn: [],
       startBoundaryId: index > 0 ? `boundary-${String(index).padStart(3, "0")}` : null,
@@ -509,7 +643,21 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
   const videoRate = VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[options.resolution ?? VIDEO_ADAPTER_CONTRACT.defaultResolution];
   const estimatedVideoCostMicrousd = format === "video" ? totalDurationSeconds * videoRate : 0;
   const estimatedReferenceCostMicrousd = format === "video" && scenes.some((scene) => !scene.referenceIds.length) ? 500_000 : 0;
-  const estimatedPlanningCostMicrousd = Math.ceil(count / 8) * 1_000_000;
+  const providerBatchCount = Math.ceil(count / MANAGED_PRODUCTION_BATCH_SIZE);
+  const providerBatches = Array.from({ length: providerBatchCount }, (_, index) => {
+    const startSlide = index * MANAGED_PRODUCTION_BATCH_SIZE + 1;
+    const endSlide = Math.min(count, startSlide + MANAGED_PRODUCTION_BATCH_SIZE - 1);
+    return {
+      index,
+      startSlide,
+      endSlide,
+      slideCount: endSlide - startSlide + 1,
+      reservationMicrousd: MANAGED_PRODUCTION_BATCH_RESERVATION_MICROUSD,
+    };
+  });
+  const authoredSlideCount = format === "slides" ? authoredSlides.length : 0;
+  const slideCountMismatch = authoredSlideCount > 0 && requestedSlideCount !== null && requestedSlideCount !== authoredSlideCount;
+  const estimatedPlanningCostMicrousd = providerBatchCount * MANAGED_PRODUCTION_BATCH_RESERVATION_MICROUSD;
   return {
     schemaVersion: 1,
     mode: "managed",
@@ -519,6 +667,28 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
     contextGroups: groups,
     continuityBible: continuityBible(claims),
     scenes,
+    authoredSlideCount,
+    requestedSlideCount,
+    predictedSlideCount: count,
+    slideCountMismatch,
+    slideCountMismatchCode: slideCountMismatch
+      ? requestedSlideCount! < authoredSlideCount ? "requested_less_than_authored" : "requested_more_than_authored"
+      : null,
+    slideCountMismatchReason: slideCountMismatch
+      ? requestedSlideCount! < authoredSlideCount ? "requested_less_than_authored" : "requested_more_than_authored"
+      : null,
+    slideCountMismatchMessage: slideCountMismatch
+      ? requestedSlideCount! < authoredSlideCount
+        ? `The source contains ${authoredSlideCount} authored slides, so the requested ${requestedSlideCount} slides would omit required material; all ${authoredSlideCount} authored slides will be preserved.`
+        : `The source contains ${authoredSlideCount} authored slides; the requested ${requestedSlideCount} slides expand that outline with additional source-grounded supporting material.`
+      : null,
+    providerBatchSize: MANAGED_PRODUCTION_BATCH_SIZE,
+    providerBatchCount,
+    providerCallCount: providerBatchCount,
+    maxRepairCallCount: providerBatchCount * 3,
+    // Each page and its bounded whole-production retry can each require one provider-side schema repair.
+    maximumProviderCallCount: providerBatchCount * 4,
+    providerBatches,
     narrativeOrder: scenes.map((scene) => scene.id),
     executionOrder: parallelWaves.flat(),
     parallelWaves,

@@ -99,6 +99,9 @@ const TEXT_RATES: Record<string, TokenRates> = {
   "gpt-5.6-luna": { input: 0.2, output: 1.2 },
 };
 
+/** Fail closed when an application spending ceiling cannot price the configured model. */
+export const hasKnownTextModelPricing=(model:string)=>Object.hasOwn(TEXT_RATES,model);
+
 const IMAGE_RATES: Record<string, ImageRates> = {
   "gpt-image-2": { textInput: 5, imageInput: 8, output: 30 },
 };

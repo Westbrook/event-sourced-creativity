@@ -11,7 +11,7 @@ export function ensureModalDialog(dialog: HTMLDialogElement | null | undefined) 
       if (heading) {
         if (!heading.id) heading.id = `dialog-title-${crypto.randomUUID()}`;
         dialog.setAttribute("aria-labelledby", heading.id);
-      } else dialog.setAttribute("aria-label", "Dialog");
+      } else dialog.setAttribute("aria-label", currentFormaLocale().messages["dialog.heading"] ?? "Dialog");
     }
     if (dialog.matches(":modal")) return true;
     if (dialog.open) dialog.removeAttribute("open");
@@ -28,14 +28,18 @@ export type TextDialogOptions = {
   label: string;
   value?: string;
   confirmLabel?: string;
+  cancelLabel?: string;
   maxLength?: number;
 };
 
 /** Accessible, themed replacement for native prompt(), without exposing private input globally. */
 export function requestDialogText(options: TextDialogOptions): Promise<string | null> {
   return new Promise((resolve) => {
+    const locale = currentFormaLocale();
     const dialog = document.createElement("dialog");
     dialog.className = "modal shared-text-dialog";
+    dialog.lang = locale.locale;
+    dialog.dir = locale.direction;
     dialog.setAttribute("closedby", "any");
 
     const form = document.createElement("form");
@@ -60,12 +64,12 @@ export function requestDialogText(options: TextDialogOptions): Promise<string | 
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "button ghost";
-    cancel.textContent = "Cancel";
+    cancel.textContent = options.cancelLabel ?? locale.messages["action.cancel"] ?? "Cancel";
     cancel.addEventListener("click", () => dialog.close("cancel"));
     const confirm = document.createElement("button");
     confirm.className = "button primary";
     confirm.value = "confirm";
-    confirm.textContent = options.confirmLabel ?? "Save";
+    confirm.textContent = options.confirmLabel ?? locale.messages["action.save"] ?? "Save";
     footer.append(cancel, confirm);
     form.append(heading, label, footer);
     dialog.append(form);
@@ -84,3 +88,4 @@ export function requestDialogText(options: TextDialogOptions): Promise<string | 
     input.select();
   });
 }
+import { currentFormaLocale } from "./design-system/localization";

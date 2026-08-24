@@ -39,7 +39,7 @@ export class ImageFormatEditor extends FormaElement {
         const projection = this.store.projection.get();
         await this.store.append({ type:"BlockCreated", payload:{ block_id:crypto.randomUUID(), document_id:projection.documentId, project_id:projection.projectId, type:"format", handle:`format/${imageAspectRatioLabel(next).replace(":","x")}`, position:`p${String(projection.blocks.length).padStart(4,"0")}`, properties:{ text:`Create for a ${imageAspectRatioLabel(next)} frame at ${next.dimensions.width} × ${next.dimensions.height} pixels.`, subtype:"Resolution", weight:1, intent:"include", authority:"authored", image_format:next, created_from:this.surface } } });
       }
-      this.store.toast(`Output frame set to ${imageFormatLabel(next)}.`);
+      this.store.toast(this.i18n.system("Output frame set to {format}.",{format:imageFormatLabel(next)}));
     } finally { this.#saving = false; this.requestUpdate(); }
   }
 
@@ -48,14 +48,14 @@ export class ImageFormatEditor extends FormaElement {
     const ratio = imageAspectRatioLabel(format); const preset = IMAGE_FORMAT_PRESETS.find((item) => item.id === ratio && item.dimensions.width === format.dimensions.width && item.dimensions.height === format.dimensions.height)?.id ?? "custom";
     const disabled = Boolean(target?.locked) || this.#saving;
     const fields = html`<form class="image-format-form" @submit=${this.#apply}>
-      <label><span>Aspect ratio</span><select name="preset" .value=${preset} ?disabled=${disabled} @change=${this.#selectPreset}>${IMAGE_FORMAT_PRESETS.map((item) => html`<option value=${item.id} ?selected=${item.id===preset}>${item.id} · ${item.label}</option>`)}<option value="custom" ?selected=${preset==="custom"}>Custom dimensions</option></select></label>
+      <label><span>Aspect ratio</span><select name="preset" .value=${preset} ?disabled=${disabled} @change=${this.#selectPreset}>${IMAGE_FORMAT_PRESETS.map((item) => html`<option value=${item.id} ?selected=${item.id===preset}>${item.id} · ${this.i18n.system(item.label)}</option>`)}<option value="custom" ?selected=${preset==="custom"}>Custom dimensions</option></select></label>
       <div class="image-format-dimensions" aria-label="Target image dimensions">
         <label><span>Width</span><input name="width" type="number" min="64" max="8192" step="1" .value=${String(format.dimensions.width)} ?disabled=${disabled}></label>
         <span aria-hidden="true">×</span>
         <label><span>Height</span><input name="height" type="number" min="64" max="8192" step="1" .value=${String(format.dimensions.height)} ?disabled=${disabled}></label>
         <span>px</span>
       </div>
-      <button class="button secondary compact" type="submit" ?disabled=${disabled}>${this.#saving ? "Saving…" : target ? "Apply frame" : "Add format block"}</button>
+      <button class="button secondary compact" type="submit" ?disabled=${disabled}>${this.#saving ? this.i18n.system("Saving…") : target ? this.i18n.system("Apply frame") : this.i18n.system("Add format block")}</button>
       ${target?.locked ? html`<small>Unlock the active Format block to change its frame.</small>` : html`<small>Drafts and full images preserve this ratio while using an appropriate render size.</small>`}
     </form>`;
     return this.compact ? html`<details class="image-format-control compact"><summary><span>Output frame</span><b>${imageFormatLabel(format)}</b></summary>${fields}</details>` : html`<section class="image-format-control"><header><span>Image frame</span><b>${imageFormatLabel(format)}</b></header>${fields}</section>`;

@@ -1,5 +1,6 @@
 import "./styles.css";
 import "./design-system.css";
+import "./responsive-foundation.css";
 import "./components/design-system/locale-bootstrap";
 import { applicationIdFromRoute } from "./platform/applications";
 

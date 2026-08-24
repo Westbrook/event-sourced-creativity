@@ -1,12 +1,14 @@
 import type { ImageFocalPoint } from "./focal-point.ts";
+import { protectedPresentationScoreContradictions, validatePresentationSourceCoverage, type PresentationSourceContract } from "./presentation-source.ts";
 
 export const DOCUMENT_ARTIFACT_KINDS = ["short_story", "scene", "slides", "storyboard", "video"] as const;
 export type DocumentArtifactKind = typeof DOCUMENT_ARTIFACT_KINDS[number];
 
-export const SLIDE_LAYOUTS = ["cover", "statement", "split", "columns", "metric", "timeline", "closing"] as const;
+export const SLIDE_LAYOUTS = ["cover", "statement", "split", "columns", "metric", "timeline", "closing", "quote", "scorecard", "comparison", "matrix", "architecture", "personas", "roadmap"] as const;
 export type SlideLayout = typeof SLIDE_LAYOUTS[number];
-export const SLIDE_VISUAL_KINDS = ["hero-type", "metric", "bars", "timeline", "diagram", "color-field"] as const;
+export const SLIDE_VISUAL_KINDS = ["hero-type", "metric", "bars", "timeline", "diagram", "color-field", "quote", "scorecard", "comparison", "matrix", "architecture", "personas", "roadmap"] as const;
 export type SlideVisualKind = typeof SLIDE_VISUAL_KINDS[number];
+export const MAX_SLIDE_VISUAL_DATA_POINTS = 48;
 
 export const SLIDE_STYLE_PRESET_IDS = ["gallery", "editorial", "nocturne", "field-notes"] as const;
 export type SlideStylePresetId = typeof SLIDE_STYLE_PRESET_IDS[number];
@@ -33,20 +35,53 @@ export type SlidePresentation = {
   aspectRatio: "16:9";
   theme: string;
   footerLabel: string;
+  fontFamily?: string;
   stylePreset: SlideStylePresetId;
   mode: "light" | "dark";
   palette: SlidePalette;
+};
+
+export type SlideCitation = {
+  sourceId?: string;
+  label: string;
+  anchor: string;
+  excerpt: string;
+};
+
+export type SlideQuote = {
+  text: string;
+  speaker: string;
+  role: string;
+  sourceId?: string;
+  citation?: string;
+};
+
+export type SlideVisualDatum = {
+  label: string;
+  value: string;
+  weight: number;
+  exactValue?: string;
+  displayValue?: string;
+  sourceIds?: string[];
 };
 
 export type SlideVisualData = {
   layout: SlideLayout;
   kicker: string;
   bullets: string[];
+  quote?: SlideQuote;
+  citations?: SlideCitation[];
+  sourceIds?: string[];
+  section?: string;
+  sourceOrder?: number;
   visual: {
     kind: SlideVisualKind;
     label: string;
     value: string;
-    data: Array<{ label: string; value: string; weight: number }>;
+    exactValue?: string;
+    displayValue?: string;
+    unit?: string;
+    data: SlideVisualDatum[];
   };
 };
 
@@ -130,17 +165,19 @@ export const slideCopyIsNearDuplicate = (left: unknown, right: unknown) => {
 };
 const repeatedText = (value: unknown, used: string[]) => used.some((candidate)=>slideCopyIsNearDuplicate(value,candidate));
 const distinctText = (value: unknown, used: string[]) => { const result=text(value);if(!result||placeholderText(result)||repeatedText(result,used))return "";used.push(result);return result; };
+const uniqueText = (value: unknown): string[] => Array.isArray(value) ? [...new Set(value.map(text).filter(Boolean))] : [];
 const color = (value: unknown, fallback: string) => /^#[0-9a-f]{6}$/i.test(text(value)) ? text(value).toLowerCase() : fallback;
 const slideLayout = (value: unknown, index = 0): SlideLayout => SLIDE_LAYOUTS.includes(value as SlideLayout) ? value as SlideLayout : index === 0 ? "cover" : "split";
 const slideVisualKind = (value: unknown, index = 0): SlideVisualKind => SLIDE_VISUAL_KINDS.includes(value as SlideVisualKind) ? value as SlideVisualKind : SLIDE_VISUAL_KINDS[index % SLIDE_VISUAL_KINDS.length];
 const processDerivedSlideLabel = (value: unknown) => /^(?:document[- ]derived editorial|editorial(?: theme)?|generated (?:deck|presentation)|presentation(?: theme)?|slide deck)$/i.test(contentKey(value));
 
 export function normalizeSlidePresentation(value: unknown): SlidePresentation | null {
-  const input = record(value); if (!Object.keys(input).length) return null;const requestedPreset=input.stylePreset??input.style_preset;const inferredPreset=input.mode==="dark"?"nocturne":"gallery";const stylePreset=isSlideStylePresetId(requestedPreset)?requestedPreset:inferredPreset;const preset=slideStylePresetDefinition(stylePreset);const palette = record(input.palette);const theme=text(input.theme)||"Document-derived editorial";const requestedFooter=text(input.footerLabel??input.footer_label);const footerCandidate=requestedFooter||theme;const mode=input.mode==="dark"||input.mode==="light"?input.mode:preset.mode;
+  const input = record(value); if (!Object.keys(input).length) return null;const requestedPreset=input.stylePreset??input.style_preset;const inferredPreset=input.mode==="dark"?"nocturne":"gallery";const stylePreset=isSlideStylePresetId(requestedPreset)?requestedPreset:inferredPreset;const preset=slideStylePresetDefinition(stylePreset);const palette = record(input.palette);const theme=text(input.theme)||"Document-derived editorial";const requestedFooter=text(input.footerLabel??input.footer_label);const footerCandidate=requestedFooter||theme;const mode=input.mode==="dark"||input.mode==="light"?input.mode:preset.mode;const requestedFont=text(input.fontFamily??input.font_family);const fontFamily=/^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,69}$/u.test(requestedFont)?requestedFont:"";
   return {
     aspectRatio: "16:9",
     theme,
     footerLabel: processDerivedSlideLabel(footerCandidate)?"":footerCandidate,
+    ...(fontFamily?{fontFamily}:{}),
     stylePreset,
     mode,
     palette: {
@@ -158,27 +195,56 @@ export function applySlideStylePreset(value: unknown, stylePreset: SlideStylePre
   return {...current,stylePreset,mode:preset.mode,palette:stylePreset===current.stylePreset?current.palette:{...preset.palette}};
 }
 
+const normalizeSlideQuote = (value: unknown): SlideQuote | undefined => {
+  const input=record(value),quoteText=text(input.text??input.quote),speaker=text(input.speaker??input.attribution),role=text(input.role??input.speaker_role),sourceId=text(input.sourceId??input.source_id??input.source_key),citation=text(input.citation);
+  if(!quoteText)return undefined;
+  return{text:quoteText,speaker,role,...(sourceId?{sourceId}:{}),...(citation?{citation}:{})};
+};
+
+const normalizeSlideCitation = (value: unknown): SlideCitation | undefined => {
+  const input=record(value),sourceId=text(input.sourceId??input.source_id??input.source_key),anchor=text(input.anchor??input.reference),excerpt=text(input.excerpt??input.quote),label=text(input.label??input.source_label??input.title);
+  if(!sourceId&&!label&&!anchor&&!excerpt)return undefined;
+  return{...(sourceId?{sourceId}:{}),label,anchor,excerpt};
+};
+
+const quoteContinuation=(initial:string,continuations:string[])=>continuations.reduce((result,continuation)=>{
+  if(!result)return continuation;if(!continuation)return result;
+  if(/^[,.;:!?\])}”]/u.test(continuation))return`${result}${continuation}`;
+  if(/[,;:—–-]\s*$/u.test(result))return`${result} ${continuation}`;
+  const listContinuation=/,\s+(?:and|or)\b/iu.test(continuation)&&/,\s*\p{L}/u.test(result);
+  return`${result}${listContinuation?", ":" "}${continuation}`;
+},initial).trim();
+
 export function normalizeSlideVisual(value: unknown, item: { title?: unknown; body?: unknown } = {}, index = 0): SlideVisualData {
-  const input = record(value); const visual = record(input.visual); const rawData = Array.isArray(visual.data) ? visual.data : [];
-  const title=text(item.title);const body=text(item.body);const used=[title,body].filter(Boolean);const bulletSource=Array.isArray(input.bullets)?input.bullets:[];const bullets:string[]=[];
-  for(const candidate of bulletSource){const bullet=listText(candidate),accepted=distinctText(bullet,used);if(!accepted)continue;bullets.push(accepted);if(bullets.length===5)break;}
-  const requestedKicker=text(input.kicker);const acceptedKicker=distinctText(requestedKicker,used);const kicker=acceptedKicker||(index===0?"Overview":`Chapter ${String(index+1).padStart(2,"0")}`);if(!acceptedKicker)used.push(kicker);
-  let kind=slideVisualKind(visual.kind,index);const valueIsVisible=kind==="hero-type"||kind==="metric"||kind==="diagram";let visualValue=valueIsVisible?distinctText(visual.value,used):placeholderText(visual.value)?"":text(visual.value);let visualLabel=distinctText(visual.label,used);const data:Array<{label:string;value:string;weight:number}>=[];
-  for(const datum of rawData){const entry=record(datum);let label=text(entry.label),datumValue=text(entry.value);if(placeholderText(label))label="";if(placeholderText(datumValue))datumValue="";if(!label&&datumValue){label=datumValue;datumValue="";}label=distinctText(label,used);if(!label)continue;if(datumValue&&repeatedText(datumValue,used))datumValue="";else if(datumValue&&isProseCopy(datumValue))used.push(datumValue);const weight=Number(entry.weight);data.push({label,value:datumValue,weight:Number.isFinite(weight)?Math.max(0,Math.min(1,weight)):1});if(data.length===5)break;}
-  if((kind==="bars"||kind==="timeline")){const complete=data.filter((datum)=>Boolean(contentKey(datum.value)));data.splice(0,data.length,...complete);}
+  const input=record(value),visual=record(input.visual);let rawData=Array.isArray(visual.data)?visual.data:[];
+  const title=text(item.title),body=text(item.body),used=[title,body].filter(Boolean),bulletSource=Array.isArray(input.bullets)?input.bullets:[],bullets:string[]=[];
+  for(const candidate of bulletSource){const bullet=listText(candidate),accepted=distinctText(bullet,used);if(!accepted)continue;bullets.push(accepted);if(bullets.length===24)break;}
+  const requestedKicker=text(input.kicker),acceptedKicker=distinctText(requestedKicker,used),kicker=acceptedKicker||(index===0?"Overview":`Chapter ${String(index+1).padStart(2,"0")}`);if(!acceptedKicker)used.push(kicker);
+  let quote=normalizeSlideQuote(input.quote);
+  const continuations=rawData.filter((datum)=>/^continu(?:ation|ed)$/iu.test(text(record(datum).label)));
+  if(!quote&&continuations.length&&text(visual.value)){
+    const complete=quoteContinuation(text(visual.value),continuations.map((datum)=>text(record(datum).value)).filter(Boolean));
+    const unwrapped=complete.replace(/^[“"]([\s\S]*)[”"]$/u,"$1"),attribution=text(visual.label);
+    if(unwrapped&&attribution)quote={text:unwrapped,speaker:attribution,role:attribution};
+    if(quote)rawData=rawData.filter((datum)=>!continuations.includes(datum));
+  }
+  const citations=(Array.isArray(input.citations)?input.citations:[]).flatMap((entry)=>{const citation=normalizeSlideCitation(entry);return citation?[citation]:[];}),section=text(input.section),requestedSourceOrder=Number(input.sourceOrder??input.source_order),sourceOrder=Number.isSafeInteger(requestedSourceOrder)&&requestedSourceOrder>0?requestedSourceOrder:undefined;
+  let kind=quote&&continuations.length?"quote" as SlideVisualKind:slideVisualKind(visual.kind,index);const valueIsVisible=kind==="hero-type"||kind==="metric"||kind==="diagram"||kind==="quote";let visualValue=kind==="quote"&&quote?quote.text:valueIsVisible?distinctText(visual.value,used):placeholderText(visual.value)?"":text(visual.value);let visualLabel=distinctText(visual.label,used);const exactValue=text(visual.exactValue??visual.exact_value),displayValue=text(visual.displayValue??visual.display_value),unit=text(visual.unit),data:SlideVisualDatum[]=[];
+  for(const datum of rawData){
+    const entry=record(datum);let label=text(entry.label),datumValue=text(entry.value);if(placeholderText(label))label="";if(placeholderText(datumValue))datumValue="";if(!label&&datumValue){label=datumValue;datumValue="";}if(!label)continue;
+    const weight=Number(entry.weight),datumExact=text(entry.exactValue??entry.exact_value),datumDisplay=text(entry.displayValue??entry.display_value),sourceIds=uniqueText(entry.sourceIds??entry.source_ids);
+    const candidate={label,value:datumValue,weight:Number.isFinite(weight)?Math.max(0,Math.min(1,weight)):1,...(datumExact?{exactValue:datumExact}:{}),...(datumDisplay?{displayValue:datumDisplay}:{}),...(sourceIds.length?{sourceIds}:{})};
+    candidate.weight=authoritativeSlideDatumWeight({kind,unit,value:visualValue},candidate);
+    data.push(candidate);
+  }
+  if(kind==="bars"||kind==="timeline"){const complete=data.filter((datum)=>Boolean(contentKey(datum.value)));data.splice(0,data.length,...complete);}
   if((kind==="bars"||kind==="timeline"||kind==="diagram"||kind==="color-field")&&data.length<2){const singular=valueIsVisible?visualValue:distinctText(visualValue,used)||data[0]?.label||"";kind="hero-type";visualValue=singular;data.splice(0,data.length);}
   if((kind==="hero-type"||kind==="metric")&&!visualValue){visualValue=data[0]?.label??"";data.splice(0,data.length);}
-  if(!visualLabel&&visualValue)visualLabel="Visual emphasis";
-  return {
-    layout: slideLayout(input.layout, index),
-    kicker,
-    bullets,
-    visual: {
-      kind,
-      label: visualLabel,
-      value: visualValue,
-      data,
-    },
+  if(!visualLabel&&visualValue)visualLabel=kind==="quote"?"Stakeholder perspective":"Visual emphasis";
+  const sourceIds=[...new Set([...uniqueText(input.sourceIds??input.source_ids),...(quote?.sourceId?[quote.sourceId]:[]),...citations.flatMap((citation)=>citation.sourceId?[citation.sourceId]:[]),...data.flatMap((datum)=>datum.sourceIds??[])])];
+  return{
+    layout:slideLayout(input.layout,index),kicker,bullets,...(quote?{quote}:{}),...(citations.length?{citations}:{}),...(sourceIds.length?{sourceIds}:{}),...(section?{section}:{}),...(sourceOrder===undefined?{}:{sourceOrder}),
+    visual:{kind,label:visualLabel,value:visualValue,...(exactValue?{exactValue}:{}),...(displayValue?{displayValue}:{}),...(unit?{unit}:{}),data},
   };
 }
 
@@ -189,14 +255,14 @@ export function normalizeSlideItem(value: unknown,index=0):DocumentArtifactDraft
 }
 
 export type SlideCopyIssue={first:string;second:string;firstPath:string;secondPath:string};
-const slideCopyFields=(value:unknown)=>{const item=record(value),slide=record(item.slide),visual=record(slide.visual),kind=text(visual.kind);const fields:Array<{path:string;value:string}>=[];const add=(path:string,value:unknown)=>{const copy=text(value);if(copy)fields.push({path,value:copy});};add("title",item.title);add("body",item.body);add("slide.kicker",slide.kicker);if(Array.isArray(slide.bullets))slide.bullets.forEach((bullet,index)=>add(`slide.bullets.${index}`,bullet));add("slide.visual.label",visual.label);if(["hero-type","metric","diagram"].includes(kind))add("slide.visual.value",visual.value);if(Array.isArray(visual.data))visual.data.forEach((datum,index)=>{const entry=record(datum);add(`slide.visual.data.${index}.label`,entry.label);if(["bars","timeline"].includes(kind))add(`slide.visual.data.${index}.value`,entry.value);});return fields;};
+const slideCopyFields=(value:unknown)=>{const item=record(value),slide=record(item.slide),visual=record(slide.visual),quote=record(slide.quote),kind=text(visual.kind);const fields:Array<{path:string;value:string}>=[];const add=(path:string,value:unknown)=>{const copy=text(value);if(copy)fields.push({path,value:copy});};add("title",item.title);add("body",item.body);add("slide.kicker",slide.kicker);if(Array.isArray(slide.bullets))slide.bullets.forEach((bullet,index)=>add(`slide.bullets.${index}`,bullet));add("slide.visual.label",visual.label);if(["hero-type","metric","diagram"].includes(kind))add("slide.visual.value",visual.value);if(quote.text)add("slide.quote.text",quote.text);if(Array.isArray(visual.data))visual.data.forEach((datum,index)=>{const entry=record(datum);add(`slide.visual.data.${index}.label`,entry.label);if(["bars","timeline","scorecard","comparison","matrix","roadmap"].includes(kind))add(`slide.visual.data.${index}.value`,entry.value);});return fields;};
 export function slideCopyIssues(value:unknown):SlideCopyIssue[]{
   const fields=slideCopyFields(value),issues:SlideCopyIssue[]=[];for(let left=0;left<fields.length;left+=1)for(let right=left+1;right<fields.length;right+=1){const first=fields[left],second=fields[right];if(first&&second&&slideCopyIsNearDuplicate(first.value,second.value))issues.push({first:first.value,second:second.value,firstPath:first.path,secondPath:second.path});}return issues;
 }
 export const slideCopyIsDistinct=(value:unknown)=>slideCopyIssues(value).length===0;
 
 export type SlideDeckCopyIssue=SlideCopyIssue&{firstSlide:number;secondSlide:number};
-const slideNarrativeFields=(value:unknown)=>slideCopyFields(value).filter((field)=>field.path==="title"||field.path==="body"||field.path.startsWith("slide.bullets.")||field.path==="slide.visual.value"||field.path.endsWith(".value"));
+const slideNarrativeFields=(value:unknown)=>slideCopyFields(value).filter((field)=>field.path==="title"||field.path==="body"||field.path.startsWith("slide.bullets.")||field.path==="slide.visual.value"||field.path==="slide.quote.text"||field.path.endsWith(".value"));
 const crossSlideDuplicate=(left:{path:string;value:string},right:{path:string;value:string})=>{const leftKey=contentKey(left.value),rightKey=contentKey(right.value),exact=leftKey===rightKey;if(exact&&left.path==="title"&&right.path==="title")return true;const shorter=Math.min(leftKey.length,rightKey.length),tokens=Math.min(copyTokens(left.value).length,copyTokens(right.value).length);return exact&&shorter>=12&&tokens>=2||slideCopyIsNearDuplicate(left.value,right.value)&&tokens>=4;};
 export function slideDeckCopyIssues(values:unknown[]):SlideDeckCopyIssue[]{
   const slides=values.map(slideNarrativeFields),issues:SlideDeckCopyIssue[]=[];for(let firstSlide=0;firstSlide<slides.length;firstSlide+=1)for(let secondSlide=firstSlide+1;secondSlide<slides.length;secondSlide+=1)for(const first of slides[firstSlide]??[])for(const second of slides[secondSlide]??[])if(crossSlideDuplicate(first,second))issues.push({first:first.value,second:second.value,firstPath:first.path,secondPath:second.path,firstSlide,secondSlide});return issues;
@@ -209,12 +275,64 @@ export function normalizeSlideDeckItems(values:unknown[]):DocumentArtifactDraftI
 }
 
 export function slideVisualIsComplete(slide:SlideVisualData){
+  if(slide.visual.kind==="quote")return Boolean(slide.quote?.text.trim())&&Boolean(slide.quote?.speaker.trim())&&Boolean(slide.quote?.role.trim())&&(!slide.visual.value||slide.visual.value===slide.quote?.text);
   if(slide.visual.kind==="hero-type"||slide.visual.kind==="metric")return Boolean(contentKey(slide.visual.value));
-  if(slide.visual.kind==="bars"||slide.visual.kind==="timeline")return slide.visual.data.length>=2&&slide.visual.data.every((datum)=>Boolean(contentKey(datum.label))&&Boolean(contentKey(datum.value)));
+  if(slide.visual.kind==="bars"||slide.visual.kind==="timeline"||slide.visual.kind==="scorecard"||slide.visual.kind==="comparison"||slide.visual.kind==="matrix"||slide.visual.kind==="roadmap")return slide.visual.data.length>=2&&slide.visual.data.every((datum)=>Boolean(contentKey(datum.label))&&Boolean(contentKey(datum.value)));
   return slide.visual.data.length>=2&&slide.visual.data.every((datum)=>Boolean(contentKey(datum.label)));
 }
 
 export type DocumentArtifactValidationIssue={code:string;path:string;message:string};
+
+const preciseNumber=(value:unknown):number|null=>{
+  const normalized=text(value).replace(/^[£$€]/u,"").replace(/,/g,"").replace(/%$/,"");
+  if(!/^[+-]?(?:\d+\.?\d*|\.\d+)$/u.test(normalized))return null;
+  const parsed=Number(normalized);return Number.isFinite(parsed)?parsed:null;
+};
+
+/** Percentage-scaled assessment bars derive geometry from the displayed evidence. */
+export function authoritativeSlideDatumWeight(visual:Pick<SlideVisualData["visual"],"kind"|"value"|"unit">,datum:SlideVisualDatum){
+  const fallback=Number.isFinite(datum.weight)?Math.max(0,Math.min(1,datum.weight)):1;
+  if(visual.kind!=="scorecard"&&visual.kind!=="bars")return fallback;
+  const raw=datum.exactValue??datum.value??datum.displayValue??"";
+  const hundredScale=/^\/\s*100$/u.test(String(visual.unit??"").trim())||/%\s*$/u.test(String(raw))||/\/\s*100\b/u.test(String(visual.value??""));
+  if(!hundredScale)return fallback;
+  const value=preciseNumber(raw);
+  return value!==null&&value>=0&&value<=100?value/100:fallback;
+}
+const decimalPlaces=(value:unknown)=>{const matched=text(value).replace(/%$/,"").match(/\.(\d+)$/u);return matched?.[1]?.length??0;};
+const roundedNumber=(value:number,places:number)=>{const factor=10**places;return Math.sign(value)*Math.round((Math.abs(value)+Number.EPSILON)*factor)/factor;};
+
+/** Preserve provider/source precision instead of trusting a rounded display label. */
+export function slidePrecisionIssues(slide:SlideVisualData,path="slide"):DocumentArtifactValidationIssue[]{
+  const issues:DocumentArtifactValidationIssue[]=[];
+  const checkPair=(exactValue:string|undefined,displayValue:string|undefined,pairPath:string)=>{
+    if(!exactValue||!displayValue)return;
+    const exact=preciseNumber(exactValue),display=preciseNumber(displayValue);if(exact===null||display===null)return;
+    const exactPlaces=decimalPlaces(exactValue),displayPlaces=decimalPlaces(displayValue);
+    if(displayPlaces>exactPlaces&&display!==exact){issues.push({code:"reversed_precision_labels",path:pairPath,message:"The exact value must retain source precision; the displayed value cannot contain more precision than its exact source."});return;}
+    if(Math.abs(roundedNumber(exact,displayPlaces)-display)>Math.max(Number.EPSILON*8,10**-(displayPlaces+6)))issues.push({code:"inconsistent_display_precision",path:pairPath,message:"The displayed value does not equal the exact value rounded to its displayed precision."});
+  };
+  checkPair(slide.visual.exactValue,slide.visual.displayValue,`${path}.visual`);
+  slide.visual.data.forEach((datum,index)=>{
+    checkPair(datum.exactValue,datum.displayValue,`${path}.visual.data.${index}`);
+    const expected=authoritativeSlideDatumWeight(slide.visual,datum);
+    if(Math.abs(datum.weight-expected)>1e-6)issues.push({code:"inconsistent_scorecard_weight",path:`${path}.visual.data.${index}.weight`,message:"The assessment bar geometry must match its exact protected value on the authored 100-point scale."});
+  });
+  if((slide.visual.kind==="scorecard"||slide.visual.kind==="bars")&&slide.visual.exactValue&&slide.visual.data.length>=2){
+    const exact=preciseNumber(slide.visual.exactValue),values=slide.visual.data.map((datum)=>preciseNumber(datum.exactValue??datum.value));
+    if(exact!==null&&values.every((value):value is number=>value!==null)){
+      const average=values.reduce((sum,value)=>sum+value,0)/values.length;
+      if(Math.abs(average-exact)>Math.max(Number.EPSILON*16,10**-(decimalPlaces(slide.visual.exactValue)+3)))issues.push({code:"inconsistent_scorecard_average",path:`${path}.visual.data`,message:"The exact scorecard average does not equal the equal-weight mean of every visible data point."});
+    }
+  }
+  return issues;
+}
+
+/** Every source claim contributing to visible semantics, including nested evidence. */
+export function slideSourceIds(value:unknown):string[]{
+  const input=record(value),slide=record(input.slide??value),quote=record(slide.quote),citations=Array.isArray(slide.citations)?slide.citations:[],visual=record(slide.visual),data=Array.isArray(visual.data)?visual.data:[];
+  return[...new Set([...uniqueText(slide.sourceIds??slide.source_ids),text(quote.sourceId??quote.source_id??quote.source_key),...citations.map((citation)=>{const entry=record(citation);return text(entry.sourceId??entry.source_id??entry.source_key);}),...data.flatMap((datum)=>{const entry=record(datum);return uniqueText(entry.sourceIds??entry.source_ids);})].filter(Boolean))];
+}
 
 export type DocumentArtifactContextGroupContract={id:string;alias:string};
 export type DocumentArtifactContextGroupResolution={
@@ -234,7 +352,7 @@ export function resolveDocumentArtifactContextGroups(output:DocumentArtifactDraf
   const rawAssignments=output?.items.map((item)=>[...new Set(item.context_group_ids??[])])??[];
   if(!output)return{output,receipt:{rawAssignments,canonicalAssignments:[],unknownAssignments:[],deterministicallyAssigned:false} satisfies DocumentArtifactContextGroupResolution};
   const durableByReference=new Map<string,string>();
-  for(const contract of contracts){durableByReference.set(contract.alias,contract.id);durableByReference.set(contract.id,contract.id);}
+  for(const contract of contracts)durableByReference.set(contract.alias,contract.id);
   const unknown=new Set<string>();
   const singleItem=output.items.length===1;
   const items=output.items.map((item,index)=>{
@@ -248,25 +366,67 @@ export function resolveDocumentArtifactContextGroups(output:DocumentArtifactDraf
   return{output:{...output,items},receipt:{rawAssignments,canonicalAssignments,unknownAssignments:[...unknown],deterministicallyAssigned:singleItem&&contracts.length>0} satisfies DocumentArtifactContextGroupResolution};
 }
 
-export function documentArtifactValidationIssues(kind:DocumentArtifactKind,output:DocumentArtifactDraft|null,options:{itemCount:number;contextGroupIds?:string[]}):DocumentArtifactValidationIssue[]{
+export type DocumentArtifactValidationOptions={
+  itemCount:number;
+  contextGroupIds?:string[];
+  unknownContextGroupAssignments?:string[];
+  requireSourceGrounding?:boolean;
+  sourceContract?:PresentationSourceContract;
+  sourcePageStart?:number;
+  sourcePageSize?:number;
+  requireAllProtectedContent?:boolean;
+};
+
+export function documentArtifactValidationIssues(kind:DocumentArtifactKind,output:DocumentArtifactDraft|null,options:DocumentArtifactValidationOptions):DocumentArtifactValidationIssue[]{
   if(!output)return[{code:"invalid_json",path:"$",message:"The provider response was not a valid artifact object."}];
   const issues:DocumentArtifactValidationIssue[]=[];const add=(code:string,path:string,message:string)=>issues.push({code,path,message});const expectedGroups=options.contextGroupIds??[];const knownGroups=new Set(expectedGroups);const assignedGroups=output.items.flatMap((item)=>item.context_group_ids??[]);
   if(!output.content_markdown.trim())add("missing_content","content_markdown","The durable readable output is empty.");
   if(output.items.length!==options.itemCount)add("wrong_item_count","items",`Expected ${options.itemCount} items but received ${output.items.length}.`);
+  if(options.unknownContextGroupAssignments?.length)add("unknown_context_group_reference","items.context_group_ids","At least one slide references a context alias that was not authorized for this request.");
   for(const groupId of expectedGroups)if(!assignedGroups.includes(groupId))add("missing_context_group","items.context_group_ids",`Combined Context ${groupId} was not assigned to any item.`);
   for(const groupId of assignedGroups)if(!knownGroups.has(groupId))add("unknown_context_group","items.context_group_ids",`Unknown Combined Context ${groupId} was assigned.`);
   if(kind!=="slides")return issues;
   if(!output.presentation?.footerLabel?.trim())add("missing_footer_label","presentation.footer_label","The deck needs a document-derived footer label.");
   for(const groupId of expectedGroups){const positions=output.items.flatMap((item,index)=>(item.context_group_ids??[]).includes(groupId)?[index]:[]);if(!positions.every((position,index)=>index===0||position===positions[index-1]!+1))add("split_context_group","items.context_group_ids",`Combined Context ${groupId} must occupy one slide or a contiguous chapter.`);}
+  let previousSourceOrder=0;let previousSection="";const completedSections=new Set<string>();
   output.items.forEach((item,index)=>{
     const path=`items.${index}`;
     if(!item.title.trim())add("missing_title",`${path}.title`,"Every slide needs a title.");
     if(!item.slide){add("missing_slide",`${path}.slide`,"Every slide needs structured visual data.");return;}
     if(!slideVisualIsComplete(item.slide))add("incomplete_visual",`${path}.slide.visual`,"The slide visual group is incomplete or still contains scaffolding.");
-    if(!item.body.trim()&&!item.slide.bullets.length&&!item.slide.visual.value.trim()&&!item.slide.visual.data.length)add("missing_visible_claim",path,"The slide has no body, bullets, metric, or visual claim.");
+    if(item.slide.visual.kind==="quote"&&!item.slide.quote?.text)add("missing_quote",`${path}.slide.quote`,"A quotation slide must retain its complete verbatim stakeholder quotation.");
+    if(item.slide.quote&&(!item.slide.quote.speaker.trim()||!item.slide.quote.role.trim()))add("missing_quote_attribution",`${path}.slide.quote`,"Every protected stakeholder quotation must preserve its speaker and role attribution.");
+    if(options.requireSourceGrounding&&!slideSourceIds(item.slide).length&&!(item.context_group_ids??[]).length)add("missing_source_grounding",`${path}.slide.source_ids`,"Every generated slide must identify at least one authorized source claim, block, or context group.");
+    if(item.slide.sourceOrder!==undefined){if(item.slide.sourceOrder<=previousSourceOrder)add("source_order_mismatch",`${path}.slide.source_order`,"Slides must preserve the increasing order of their authored source outline.");previousSourceOrder=item.slide.sourceOrder;}
+    if(item.slide.section&&item.slide.section!==previousSection){if(completedSections.has(item.slide.section))add("split_source_section",`${path}.slide.section`,"An authored source section must remain a contiguous slide chapter.");if(previousSection)completedSections.add(previousSection);previousSection=item.slide.section;}
+    issues.push(...slidePrecisionIssues(item.slide,`${path}.slide`));
+    if(!item.body.trim()&&!item.slide.bullets.length&&!item.slide.quote?.text&&!item.slide.visual.value.trim()&&!item.slide.visual.data.length)add("missing_visible_claim",path,"The slide has no body, bullets, metric, quotation, or visual claim.");
     for(const duplicate of slideCopyIssues(item))add("duplicate_slide_copy",`${path}.${duplicate.secondPath}`,`This repeats ${path}.${duplicate.firstPath}: “${duplicate.second}”.`);
   });
   for(const duplicate of slideDeckCopyIssues(output.items))add("duplicate_deck_copy",`items.${duplicate.secondSlide}.${duplicate.secondPath}`,`This repeats items.${duplicate.firstSlide}.${duplicate.firstPath}: “${duplicate.second}”.`);
+  if(options.sourceContract)issues.push(...validatePresentationSourceCoverage(output.items,options.sourceContract,{
+    pageStart:options.sourcePageStart,
+    pageSize:options.sourcePageSize,
+    requireEverySlideSource:options.requireSourceGrounding??options.sourceContract.sources.some((source)=>source.sourceKind==="block"),
+    ...(options.requireAllProtectedContent===undefined?{}:{requireAllProtectedContent:options.requireAllProtectedContent}),
+  }));
+  if(options.sourceContract&&options.requireAllProtectedContent===true){
+    for(const quote of options.sourceContract.protectedQuotes){
+      const namedSpeaker=quote.speaker!==quote.role;
+      if(!output.content_markdown.includes(quote.text)||!output.content_markdown.includes(quote.role)||namedSpeaker&&!output.content_markdown.includes(quote.speaker))add("missing_markdown_quote","content_markdown",`The readable Markdown must retain the complete ${quote.role} quotation, named speaker, and attribution.`);
+      const index=output.items.findIndex((item)=>item.slide?.quote?.text===quote.text||item.body.includes(quote.text)||(item.slide?.bullets??[]).some((bullet)=>bullet.includes(quote.text))||item.slide?.visual.value.includes(quote.text));
+      if(index>=0){const notes=output.items[index]?.notes??"";if(!notes.includes(quote.text)||!notes.includes(quote.role)||namedSpeaker&&!notes.includes(quote.speaker))add("missing_quote_speaker_notes",`items.${index}.notes`,`The complete ${quote.role} quotation, named speaker, and attribution must also remain in speaker notes.`);}
+    }
+    const checkProtectedScores=(value:string,path:string)=>{for(const mismatch of protectedPresentationScoreContradictions(value,options.sourceContract!))add("mislabeled_narrative_fact",path,`The protected ${mismatch.label} assessment must remain ${mismatch.expected}, not ${mismatch.observed}, in every readable output.`);};
+    checkProtectedScores(output.content_markdown,"content_markdown");output.items.forEach((item,index)=>checkProtectedScores(item.notes,`items.${index}.notes`));
+    const exactFact=options.sourceContract.protectedFacts.find((fact)=>fact.precision==="exact");
+    if(exactFact?.exactValue&&exactFact.displayValue&&exactFact.exactValue!==exactFact.displayValue){
+      const escaped=(value:string)=>value.replace(/[.*+?^${}()|[\]\\]/gu,"\\$&");
+      const reversedExact=new RegExp(`\\b(?:exact|unrounded|precise)\\b[^\\n;.,]{0,64}\\b${escaped(exactFact.displayValue)}(?!\\d|\\.\\d)`,"iu"),reversedDisplay=new RegExp(`\\b(?:display(?:ed)?|rounded)\\b[^\\n;.,]{0,64}\\b${escaped(exactFact.exactValue)}(?!\\d|\\.\\d)`,"iu");
+      const checkNarrative=(value:string,path:string)=>{if(reversedExact.test(value)||reversedDisplay.test(value))add("reversed_narrative_precision",path,"The exact source value and rounded displayed value must retain their correct meanings in every readable output.");};
+      checkNarrative(output.content_markdown,"content_markdown");output.items.forEach((item,index)=>checkNarrative(item.notes,`items.${index}.notes`));
+    }
+  }
   return issues;
 }
 
@@ -285,7 +445,7 @@ export function parseDocumentArtifactContent(value: string | undefined): Documen
       summary: String(parsed.summary ?? ""),
       content_markdown: parsed.content_markdown,
       presentation,
-      items: presentation?normalizeSlideDeckItems(parsed.items):parsed.items.map((item,index)=>normalizeSlideItem(item,index)),
+      items:parsed.items.map((item,index)=>normalizeSlideItem(item,index)),
     };
   } catch { return null; }
 }

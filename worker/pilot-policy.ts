@@ -29,9 +29,9 @@ function identityFromRequest(request: Request) {
   const oaiId = request.headers.get("oai-authenticated-user-id");
   const oaiEmail = request.headers.get("oai-authenticated-user-email");
   const accessEmail = request.headers.get("cf-access-authenticated-user-email");
-  if (oaiId && oaiEmail) return { userId: oaiId, email: oaiEmail.toLowerCase(), displayName: decodeName(request) || oaiEmail.split("@")[0] };
-  if (accessEmail) return { userId: `access:${accessEmail.toLowerCase()}`, email: accessEmail.toLowerCase(), displayName: accessEmail.split("@")[0] };
-  if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return { userId: "dev-local-creative", email: "creative@local.forma", displayName: "Local creative" };
+  if (oaiId && oaiEmail) return { userId: oaiId, email: oaiEmail.toLowerCase(), displayName: decodeName(request) || oaiEmail.split("@")[0], source: "openai-workspace" };
+  if (accessEmail) return { userId: `access:${accessEmail.toLowerCase()}`, email: accessEmail.toLowerCase(), displayName: accessEmail.split("@")[0], source: "cloudflare-access" };
+  if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return { userId: "dev-local-creative", email: "creative@local.forma", displayName: "Local creative", source: "local-development" };
   return null;
 }
 
@@ -52,6 +52,33 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
   await ensureSchema(env);
   const identity = identityFromRequest(request);
   if (!identity) return { response: Response.json({ error: "authentication_required" }, { status: 401 }), user: null };
+  const restrictedCohort=env.FORMA_PILOT_COHORT_ID?.trim()??"";
+  type AdmittedPilotParticipant={participant_id:string;user_id:string|null;cohort_id:string;participant_cap_microusd:number};
+  let admittedParticipant:AdmittedPilotParticipant|null=null;
+  if(restrictedCohort){
+    const now=new Date().toISOString();
+    admittedParticipant=await env.DB.prepare(`SELECT participant.participant_id,participant.user_id,cohort.cohort_id,cohort.participant_cap_microusd
+      FROM pilot_cohorts cohort JOIN organizations organization ON organization.organization_id=cohort.organization_id AND organization.status='active'
+      JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
+      WHERE cohort.organization_id=(SELECT selected.organization_id FROM pilot_cohorts selected WHERE selected.cohort_id=?)
+        AND cohort.status IN ('active','paused') AND cohort.starts_at<=? AND cohort.ends_at>?
+        AND participant.email_normalized=? AND participant.status='active' AND participant.revoked_at IS NULL
+        AND (participant.user_id IS NULL OR participant.user_id=?) ORDER BY cohort.created_at DESC LIMIT 1`)
+      .bind(restrictedCohort,now,now,identity.email,identity.userId).first<AdmittedPilotParticipant>();
+    const breakglass=new Set((env.FORMA_ADMIN_EMAILS??"").split(",").map((value)=>value.trim().toLowerCase()).filter(Boolean));
+    if(!admittedParticipant&&!breakglass.has(identity.email)){
+      const ownerRecovery=await env.DB.prepare(`SELECT 1 AS authorized FROM pilot_cohorts cohort
+        JOIN organizations organization ON organization.organization_id=cohort.organization_id AND organization.status='active'
+        JOIN organization_memberships member ON member.organization_id=cohort.organization_id AND member.user_id=? AND member.role='owner'
+          AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
+        JOIN users principal ON principal.user_id=member.user_id AND principal.email=?
+        WHERE cohort.cohort_id=? AND (cohort.status='closed' OR cohort.ends_at<=? OR cohort.starts_at>?)
+          AND NOT EXISTS(SELECT 1 FROM pilot_cohorts successor WHERE successor.organization_id=cohort.organization_id
+            AND successor.status IN ('active','paused') AND successor.starts_at<=? AND successor.ends_at>?)`)
+        .bind(identity.userId,identity.email,restrictedCohort,now,now,now,now).first();
+      if(!ownerRecovery)return{response:Response.json({error:"pilot_participant_required"},{status:403}),user:null};
+    }
+  }
   let row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
   if (!row) {
     const now = new Date().toISOString();
@@ -60,15 +87,48 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
     const hostname=new URL(request.url).hostname;
     const localBootstrap=(hostname==="localhost"||hostname==="127.0.0.1")&&adminEmails.size===0&&Number(count?.count??0)===0;
     const initialRole: PilotRole = adminEmails.has(identity.email)||localBootstrap ? "admin" : "creator";
-    await env.DB.prepare("INSERT OR IGNORE INTO users (user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,?,?)").bind(identity.userId, identity.email, identity.displayName, initialRole, now, now).run();
+    if(admittedParticipant){
+      const pilotPeriod=`pilot:${admittedParticipant.cohort_id}`;
+      const results=await env.DB.batch([
+        env.DB.prepare("UPDATE pilot_participants SET user_id=? WHERE participant_id=? AND cohort_id=? AND email_normalized=? AND status='active' AND revoked_at IS NULL AND (user_id IS NULL OR user_id=?)")
+          .bind(identity.userId,admittedParticipant.participant_id,admittedParticipant.cohort_id,identity.email,identity.userId),
+        env.DB.prepare(`INSERT OR IGNORE INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at)
+          SELECT ?,?,?,?,NULL,NULL,?,? WHERE EXISTS(SELECT 1 FROM pilot_participants WHERE participant_id=? AND user_id=? AND status='active' AND revoked_at IS NULL)`)
+          .bind(identity.userId,identity.email,identity.displayName,initialRole,now,now,admittedParticipant.participant_id,identity.userId),
+        env.DB.prepare(`INSERT OR IGNORE INTO cost_budget_counters(scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at)
+          SELECT 'pilot_user',?,?,0,0,?,? WHERE EXISTS(SELECT 1 FROM pilot_participants WHERE participant_id=? AND user_id=? AND status='active')`)
+          .bind(identity.userId,pilotPeriod,admittedParticipant.participant_cap_microusd,now,admittedParticipant.participant_id,identity.userId),
+      ]);
+      if(Number(results[1]?.meta.changes??0)!==1)return{response:Response.json({error:"pilot_participant_required"},{status:403}),user:null};
+    }else{
+      await env.DB.prepare("INSERT OR IGNORE INTO users (user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,?,?)").bind(identity.userId, identity.email, identity.displayName, initialRole, now, now).run();
+    }
     row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
-  } else if (row.email !== identity.email || row.display_name !== identity.displayName) {
-    await env.DB.prepare("UPDATE users SET email=?, display_name=?, updated_at=? WHERE user_id=?").bind(identity.email, identity.displayName, new Date().toISOString(), identity.userId).run();
-    row = { ...row, email: identity.email, display_name: identity.displayName };
+  } else {
+    const observed = { email: identity.email, source: identity.source, subject: identity.userId };
+    const access = await principalAccessFromRow(row, String(row.role), observed);
+    if (access.identityPolicyDeniedCustody || row.email !== identity.email && access.deniedOrganizationIds?.length) {
+      return { response: Response.json({ error: "organization_identity_policy_required" }, { status: 403 }), user: null, principal: null, impersonation: null };
+    }
+    if (row.email !== identity.email || row.display_name !== identity.displayName) {
+      await env.DB.prepare("UPDATE users SET email=?, display_name=?, updated_at=? WHERE user_id=?").bind(identity.email, identity.displayName, new Date().toISOString(), identity.userId).run();
+      row = { ...row, email: identity.email, display_name: identity.displayName };
+    }
+  }
+  if(admittedParticipant&&!admittedParticipant.user_id){
+    const now=new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE pilot_participants SET user_id=? WHERE participant_id=? AND cohort_id=? AND status='active' AND revoked_at IS NULL AND (user_id IS NULL OR user_id=?)")
+        .bind(identity.userId,admittedParticipant.participant_id,admittedParticipant.cohort_id,identity.userId),
+      env.DB.prepare("INSERT OR IGNORE INTO cost_budget_counters(scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd,updated_at) VALUES('pilot_user',?,?,0,0,?,?)")
+        .bind(identity.userId,`pilot:${admittedParticipant.cohort_id}`,admittedParticipant.participant_cap_microusd,now),
+    ]);
   }
   const role=String(row?.role) as PilotRole;
   if(!Object.hasOwn(roleRank,role)||!Object.hasOwn(roleRank,minimum))return{response:Response.json({error:"invalid_account_role"},{status:403}),user:null,principal:null,impersonation:null};
-  const principal: PilotUser = { userId: String(row?.user_id), email: String(row?.email), displayName: String(row?.display_name), role, consentVersion: row?.consent_version ? String(row.consent_version) : null, consentedAt: row?.consented_at ? String(row.consented_at) : null, streamId: `creative:${identity.userId}`, access: await principalAccessFromRow(row??{},role) };
+  const access=await principalAccessFromRow(row??{},role,{email:identity.email,source:identity.source,subject:identity.userId});
+  if(access.identityPolicyDeniedCustody)return{response:Response.json({error:"organization_identity_policy_required"},{status:403}),user:null,principal:null,impersonation:null};
+  const principal: PilotUser = { userId: String(row?.user_id), email: String(row?.email), displayName: String(row?.display_name), role, consentVersion: row?.consent_version ? String(row?.consent_version) : null, consentedAt: row?.consented_at ? String(row.consented_at) : null, streamId: `creative:${identity.userId}`, access };
   if (roleRank[principal.role] < roleRank[minimum]) return { response: Response.json({ error: "insufficient_role", required: minimum, role: principal.role }, { status: 403 }), user: null, principal, impersonation:null };
   const principalOnly=options.account==="principal";
   const checkPrincipalImpersonation=principalOnly&&new URL(request.url).pathname!=="/api/impersonation"&&Boolean(decodedCookieValue(request,"forma_impersonation"));
@@ -545,6 +605,42 @@ type CostReservationOptions = {
   projectScope?:ProjectBudgetScope;
 };
 
+type ManagedPilotBudget={
+  cohort_id:string;
+  organization_id:string;
+  status:string;
+  starts_at:string;
+  ends_at:string;
+  participant_cap_microusd:number;
+  organization_cap_microusd:number;
+  participant_user_id:string|null;
+  participant_status:string|null;
+  participant_revoked_at:string|null;
+  participant_role:string|null;
+};
+
+/** A managed participant can spend only inside their exact live cohort and project. */
+export async function pilotExecutionAllowance(env:WorkerEnv,userId:string,projectScope?:ProjectBudgetScope){
+  const pilot=projectScope?await env.DB.prepare(`SELECT cohort.cohort_id,cohort.organization_id,cohort.status,cohort.starts_at,cohort.ends_at,
+      cohort.participant_cap_microusd,cohort.organization_cap_microusd,participant.user_id AS participant_user_id,
+      participant.status AS participant_status,participant.revoked_at AS participant_revoked_at,participant.role AS participant_role
+    FROM pilot_cohorts cohort LEFT JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id
+      AND participant.organization_id=cohort.organization_id AND participant.user_id=?
+    WHERE cohort.organization_id=? AND cohort.status IN ('active','paused','closed') ORDER BY CASE WHEN cohort.status='closed' THEN 1 ELSE 0 END,cohort.created_at DESC LIMIT 1`)
+    .bind(userId,projectScope.organizationId).first<ManagedPilotBudget>():await env.DB.prepare(`SELECT cohort.cohort_id,cohort.organization_id,cohort.status,cohort.starts_at,cohort.ends_at,
+      cohort.participant_cap_microusd,cohort.organization_cap_microusd,participant.user_id AS participant_user_id,
+      participant.status AS participant_status,participant.revoked_at AS participant_revoked_at,participant.role AS participant_role
+    FROM pilot_cohorts cohort JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id
+      AND participant.organization_id=cohort.organization_id AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL
+    WHERE cohort.status IN ('active','paused','closed') ORDER BY CASE WHEN cohort.status='closed' THEN 1 ELSE 0 END,cohort.created_at DESC LIMIT 1`)
+    .bind(userId).first<ManagedPilotBudget>();
+  if(!pilot)return{allowed:true as const,pilot:null};
+  const now=new Date().toISOString();
+  if(!projectScope||pilot.status!=="active"||pilot.starts_at>now||pilot.ends_at<=now||pilot.participant_user_id!==userId||pilot.participant_status!=="active"||pilot.participant_revoked_at||pilot.participant_role==="reviewer")
+    return{allowed:false as const,pilot};
+  return{allowed:true as const,pilot};
+}
+
 export async function costBudgetReservation(env: WorkerEnv, userId: string, reservationId: string) {
   if (!reservationId) return null;
   return env.DB.prepare("SELECT * FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=?").bind(reservationId, userId).first<CostBudgetReservationRow>();
@@ -558,6 +654,10 @@ export async function reserveCostBudget(env: WorkerEnv, userId: string, requeste
   const reservationPeriod = options.period ?? period();
   const reservationId = options.reservationId ?? uuidV7();
   const scope=options.projectScope;
+  const allowance=await pilotExecutionAllowance(env,userId,scope);
+  if(!allowance.allowed)return{ok:false as const,scope:"authorization" as const};
+  const pilot=allowance.pilot;
+  const userOverageAllowed=options.allowUserOverage&&!pilot;
   const policy=scope?await projectBudgetPolicy(env,userId,scope):null;
   if(scope&&!policy)return{ok:false as const,scope:"workspace" as const};
   const workspaceId=scope?.organizationId??"forma";
@@ -568,13 +668,20 @@ export async function reserveCostBudget(env: WorkerEnv, userId: string, requeste
   const authorizing = "EXISTS (SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status='authorizing')";
   const scopedPredicates=scope&&policy?` AND EXISTS(SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id=? AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)
     AND EXISTS(SELECT 1 FROM budget_scope_policies WHERE scope='workspace' AND scope_id=? AND organization_id=? AND microusd_limit=?) AND ${activeProjectBillingSql}`:"";
+  const pilotPeriod=pilot?`pilot:${pilot.cohort_id}`:"";
+  const pilotPredicates=pilot?` AND EXISTS(SELECT 1 FROM pilot_cohorts cohort JOIN pilot_participants participant
+      ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
+      WHERE cohort.cohort_id=? AND cohort.organization_id=? AND cohort.status='active' AND cohort.starts_at<=? AND cohort.ends_at>?
+        AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL AND participant.role!='reviewer')
+    AND EXISTS(SELECT 1 FROM cost_budget_counters WHERE scope='pilot_org' AND scope_id=? AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)
+    AND EXISTS(SELECT 1 FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)`:"";
   const statements=[
     env.DB.prepare(`INSERT OR IGNORE INTO cost_budget_reservations (reservation_id,owner_id,workspace_id,stream_id,correlation_id,operation,period,reserved_microusd,used_microusd,status,allow_user_overage,created_at,settled_at,updated_at)
       SELECT ?,?,?,?,?,?,?,?,0,'authorizing',?,?,NULL,?
       WHERE ?>0
       AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=? AND (?=1 OR used_microusd+reserved_microusd+?<=hard_limit_microusd))
-      AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)${scopedPredicates}`)
-      .bind(reservationId,userId,workspaceId,options.streamId??"",options.correlationId??"",options.operation??"provider-operation",reservationPeriod,amount,options.allowUserOverage?1:0,now,now,amount,userId,reservationPeriod,options.allowUserOverage?1:0,amount,reservationPeriod,amount,...(scope&&policy?[scope.organizationId,reservationPeriod,amount,scope.organizationId,scope.organizationId,Number(policy.microusd_limit),userId,userId,scope.projectAccessId,scope.organizationId,userId]:[])),
+      AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)${scopedPredicates}${pilotPredicates}`)
+      .bind(reservationId,userId,workspaceId,options.streamId??"",options.correlationId??"",options.operation??"provider-operation",reservationPeriod,amount,userOverageAllowed?1:0,now,now,amount,userId,reservationPeriod,userOverageAllowed?1:0,amount,reservationPeriod,amount,...(scope&&policy?[scope.organizationId,reservationPeriod,amount,scope.organizationId,scope.organizationId,Number(policy.microusd_limit),userId,userId,scope.projectAccessId,scope.organizationId,userId]:[]),...(pilot?[pilot.cohort_id,pilot.organization_id,now,now,userId,pilot.cohort_id,pilotPeriod,amount,userId,pilotPeriod,amount]:[])),
     env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=? AND ${authorizing}`).bind(amount, now, userId, reservationPeriod, reservationId, userId),
     env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=? AND ${authorizing}`).bind(amount, now, reservationPeriod, reservationId, userId),
   ];
@@ -583,6 +690,14 @@ export async function reserveCostBudget(env: WorkerEnv, userId: string, requeste
     statements.push(env.DB.prepare("INSERT OR IGNORE INTO project_budget_reservation_scopes(reservation_kind,reservation_id,organization_id,project_access_id,actor_user_id,workspace_scope_id,created_at) SELECT 'usd',?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status='authorizing')")
       .bind(reservationId,scope.organizationId,scope.projectAccessId,userId,scope.organizationId,now,reservationId,userId));
   }
+  if(pilot){
+    statements.push(env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='pilot_org' AND scope_id=? AND period=? AND ${authorizing}`)
+      .bind(amount,now,pilot.cohort_id,pilotPeriod,reservationId,userId));
+    statements.push(env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='pilot_user' AND scope_id=? AND period=? AND ${authorizing}`)
+      .bind(amount,now,userId,pilotPeriod,reservationId,userId));
+    statements.push(env.DB.prepare(`INSERT OR IGNORE INTO pilot_cost_reservation_scopes(reservation_id,cohort_id,organization_id,actor_user_id,created_at)
+      SELECT ?,?,?,?,? WHERE ${authorizing}`).bind(reservationId,pilot.cohort_id,pilot.organization_id,userId,now,reservationId,userId));
+  }
   statements.push(env.DB.prepare("UPDATE cost_budget_reservations SET status='active',updated_at=? WHERE reservation_id=? AND owner_id=? AND status='authorizing'").bind(now,reservationId,userId));
   const results=await env.DB.batch(statements);
   if (Number(results[0]?.meta.changes ?? 0) !== 1) {
@@ -590,10 +705,19 @@ export async function reserveCostBudget(env: WorkerEnv, userId: string, requeste
     if(existing?.status==="active"&&Number(existing.reserved_microusd)===amount&&existing.period===reservationPeriod&&existing.workspace_id===workspaceId&&existing.stream_id===(options.streamId??"")&&existing.correlation_id===(options.correlationId??"")&&existing.operation===(options.operation??"provider-operation")){
       if(!scope)return{ok:true as const,reservationId,reservedMicrousd:amount,period:reservationPeriod,userOverageMicrousd:0,reused:true as const};
       const bound=await env.DB.prepare("SELECT organization_id,project_access_id,actor_user_id FROM project_budget_reservation_scopes WHERE reservation_kind='usd' AND reservation_id=?").bind(reservationId).first<Record<string,unknown>>();
-      if(bound?.organization_id===scope.organizationId&&bound.project_access_id===scope.projectAccessId&&bound.actor_user_id===userId)return{ok:true as const,reservationId,reservedMicrousd:amount,period:reservationPeriod,userOverageMicrousd:0,reused:true as const};
+      if(bound?.organization_id===scope.organizationId&&bound.project_access_id===scope.projectAccessId&&bound.actor_user_id===userId){
+        if(pilot){const fixed=await env.DB.prepare("SELECT 1 AS valid FROM pilot_cost_reservation_scopes WHERE reservation_id=? AND cohort_id=? AND organization_id=? AND actor_user_id=?")
+          .bind(reservationId,pilot.cohort_id,pilot.organization_id,userId).first();if(!fixed)return{ok:false as const,scope:"authorization" as const};}
+        return{ok:true as const,reservationId,reservedMicrousd:amount,period:reservationPeriod,userOverageMicrousd:0,reused:true as const};
+      }
+    }
+    if(pilot){
+      const fixed=await env.DB.prepare("SELECT used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=?")
+        .bind(userId,pilotPeriod).first<{used_microusd:number;reserved_microusd:number;hard_limit_microusd:number}>();
+      if(fixed&&Number(fixed.used_microusd)+Number(fixed.reserved_microusd)+amount>Number(fixed.hard_limit_microusd))return{ok:false as const,scope:"user" as const};
     }
     const projectedUser = Number(userBefore?.used_microusd ?? 0) + Number(userBefore?.reserved_microusd ?? 0) + amount;
-    return { ok: false as const, scope: !options.allowUserOverage && projectedUser > Number(userBefore?.hard_limit_microusd ?? limits.user) ? "user" as const : "workspace" as const };
+    return { ok: false as const, scope: !userOverageAllowed && projectedUser > Number(userBefore?.hard_limit_microusd ?? limits.user) ? "user" as const : "workspace" as const };
   }
   const projectedUser = Number(userBefore?.used_microusd ?? 0) + Number(userBefore?.reserved_microusd ?? 0) + amount;
   return { ok: true as const, reservationId, reservedMicrousd: amount, period: reservationPeriod, userOverageMicrousd: Math.max(0, projectedUser - Number(userBefore?.hard_limit_microusd ?? limits.user)), reused: false as const };
@@ -609,29 +733,98 @@ async function resolveCostReservation(env: WorkerEnv, userId: string, reservatio
 
 /** Single-consumer provider execution prevents two requests from spending the same active reservation. */
 export async function claimCostBudgetReservation(env: WorkerEnv, userId: string, reservationId: string) {
-  const claimed = await env.DB.prepare("UPDATE cost_budget_reservations SET status='executing',updated_at=? WHERE reservation_id=? AND owner_id=? AND status='active'")
-    .bind(new Date().toISOString(), reservationId, userId).run();
-  return Number(claimed.meta.changes ?? 0) === 1;
+  const fixed=await env.DB.prepare("SELECT cohort_id,organization_id FROM pilot_cost_reservation_scopes WHERE reservation_id=? AND actor_user_id=?")
+    .bind(reservationId,userId).first<{cohort_id:string;organization_id:string}>();
+  const now=new Date().toISOString();
+  const restriction=fixed?` AND EXISTS(
+    SELECT 1 FROM pilot_cost_reservation_scopes fixed_scope
+      JOIN pilot_cohorts cohort ON cohort.cohort_id=fixed_scope.cohort_id AND cohort.organization_id=fixed_scope.organization_id
+      JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
+    WHERE fixed_scope.reservation_id=cost_budget_reservations.reservation_id
+      AND fixed_scope.actor_user_id=cost_budget_reservations.owner_id
+      AND fixed_scope.cohort_id=? AND fixed_scope.organization_id=?
+      AND cohort.status='active' AND cohort.starts_at<=? AND cohort.ends_at>?
+      AND participant.user_id=cost_budget_reservations.owner_id
+      AND participant.status='active' AND participant.revoked_at IS NULL AND participant.role!='reviewer'
+  ) AND EXISTS(
+    SELECT 1 FROM project_budget_reservation_scopes billing_scope
+      JOIN organization_projects billed_project ON billed_project.project_access_id=billing_scope.project_access_id
+        AND billed_project.organization_id=billing_scope.organization_id AND billed_project.status='active'
+      JOIN project_migration_states billed_migration ON billed_migration.project_access_id=billed_project.project_access_id
+        AND billed_migration.organization_id=billed_project.organization_id AND billed_migration.status='active'
+      JOIN organizations billed_organization ON billed_organization.organization_id=billed_project.organization_id AND billed_organization.status='active'
+      JOIN users billed_identity ON billed_identity.user_id=cost_budget_reservations.owner_id AND billed_identity.consent_version=?
+      JOIN organization_memberships billed_actor ON billed_actor.organization_id=billed_project.organization_id
+        AND billed_actor.user_id=cost_budget_reservations.owner_id AND billed_actor.status='active'
+        AND billed_actor.accepted_at IS NOT NULL AND billed_actor.revoked_at IS NULL
+      JOIN organization_memberships billed_owner ON billed_owner.organization_id=billed_project.organization_id
+        AND billed_owner.user_id=billed_project.owner_user_id AND billed_owner.status='active'
+        AND billed_owner.accepted_at IS NOT NULL AND billed_owner.revoked_at IS NULL
+      LEFT JOIN project_memberships billed_member ON billed_member.project_access_id=billed_project.project_access_id
+        AND billed_member.organization_id=billed_project.organization_id AND billed_member.project_id=billed_project.project_id
+        AND billed_member.user_id=cost_budget_reservations.owner_id AND billed_member.status='active' AND billed_member.revoked_at IS NULL
+    WHERE billing_scope.reservation_kind='usd' AND billing_scope.reservation_id=cost_budget_reservations.reservation_id
+      AND billing_scope.organization_id=cost_budget_reservations.workspace_id
+      AND billing_scope.workspace_scope_id=cost_budget_reservations.workspace_id
+      AND billing_scope.actor_user_id=cost_budget_reservations.owner_id
+      AND (billed_project.owner_user_id=cost_budget_reservations.owner_id OR billed_member.role IN ('owner','editor'))
+  )`:` AND NOT EXISTS(SELECT 1 FROM pilot_cost_reservation_scopes fixed_scope WHERE fixed_scope.reservation_id=cost_budget_reservations.reservation_id)
+    AND NOT EXISTS(
+      SELECT 1 FROM pilot_cohorts unmanaged_cohort
+      WHERE unmanaged_cohort.status IN ('active','paused','closed')
+        AND (unmanaged_cohort.status!='closed' OR NOT EXISTS(
+          SELECT 1 FROM pilot_cohorts unmanaged_successor
+          WHERE unmanaged_successor.organization_id=unmanaged_cohort.organization_id AND unmanaged_successor.status IN ('active','paused')
+        ))
+        AND (
+          unmanaged_cohort.organization_id=cost_budget_reservations.workspace_id
+          OR (cost_budget_reservations.workspace_id='forma' AND EXISTS(SELECT 1 FROM pilot_participants unmanaged_participant
+            WHERE unmanaged_participant.cohort_id=unmanaged_cohort.cohort_id
+              AND unmanaged_participant.organization_id=unmanaged_cohort.organization_id
+              AND unmanaged_participant.user_id=cost_budget_reservations.owner_id
+              AND unmanaged_participant.status='active' AND unmanaged_participant.revoked_at IS NULL))
+        )
+    )`;
+  const claimed=await env.DB.prepare(`UPDATE cost_budget_reservations SET status='executing',updated_at=?
+    WHERE reservation_id=? AND owner_id=? AND status='active'${restriction}`)
+    .bind(now,reservationId,userId,...(fixed?[fixed.cohort_id,fixed.organization_id,now,now,POLICY_VERSION]:[])).run();
+  if(Number(claimed.meta.changes??0)===1)return true;
+  await settleCostBudget(env,userId,reservationId,0,{activeOnly:true});
+  return false;
 }
 
-export async function settleCostBudget(env: WorkerEnv, userId: string, reservation: string | number, usedMicrousd: number) {
+export async function settleCostBudget(env: WorkerEnv, userId: string, reservation: string | number, usedMicrousd: number, options:{activeOnly?:boolean}={}) {
   const row = await resolveCostReservation(env, userId, reservation);
   if (!row) return { settled: false as const, reservedMicrousd: 0, usedMicrousd: 0, status: "missing" as const };
+  if(options.activeOnly&&row.status!=="active")return{settled:false as const,reservedMicrousd:row.reserved_microusd,usedMicrousd:row.used_microusd,status:row.status};
+  let fixed:{cohort_id:string;organization_id:string;actor_user_id:string}|null=null;
   if(row.workspace_id!=="forma"){
     const scoped=await env.DB.prepare("SELECT 1 AS valid FROM project_budget_reservation_scopes WHERE reservation_kind='usd' AND reservation_id=? AND organization_id=? AND workspace_scope_id=? AND actor_user_id=?")
       .bind(row.reservation_id,row.workspace_id,row.workspace_id,userId).first();
     if(!scoped)return{settled:false as const,reservedMicrousd:0,usedMicrousd:0,status:"missing" as const};
+    fixed=await env.DB.prepare("SELECT cohort_id,organization_id,actor_user_id FROM pilot_cost_reservation_scopes WHERE reservation_id=? AND organization_id=? AND actor_user_id=?")
+      .bind(row.reservation_id,row.workspace_id,userId).first<{cohort_id:string;organization_id:string;actor_user_id:string}>();
   }
   const now = new Date().toISOString();
   const used = Math.max(0, Math.floor(usedMicrousd));
   const status = used > 0 ? "settled" : "released";
-  const active = "EXISTS (SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status IN ('active','executing'))";
+  const allowedStatus=options.activeOnly?"status='active'":"status IN ('active','executing')";
+  const active = `EXISTS (SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND ${allowedStatus})`;
   const statements=[
     env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=MAX(0,reserved_microusd-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_microusd=used_microusd+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='user' AND scope_id=? AND period=?`).bind(row.reservation_id, userId, row.reserved_microusd, row.reservation_id, userId, used, now, userId, row.period),
     env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=MAX(0,reserved_microusd-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_microusd=used_microusd+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='workspace' AND scope_id=? AND period=?`).bind(row.reservation_id, userId, row.reserved_microusd, row.reservation_id, userId, used, now, row.workspace_id, row.period),
   ];
   if(row.workspace_id!=="forma")statements.push(env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=MAX(0,reserved_microusd-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_microusd=used_microusd+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=?`).bind(row.reservation_id,userId,row.reserved_microusd,row.reservation_id,userId,used,now,row.period));
-  statements.push(env.DB.prepare("UPDATE cost_budget_reservations SET used_microusd=?,status=?,settled_at=?,updated_at=? WHERE reservation_id=? AND owner_id=? AND status IN ('active','executing')").bind(used,status,now,now,row.reservation_id,userId));
+  if(fixed){
+    const fixedPeriod=`pilot:${fixed.cohort_id}`;
+    statements.push(env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=MAX(0,reserved_microusd-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_microusd=used_microusd+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='pilot_org' AND scope_id=? AND period=?`)
+      .bind(row.reservation_id,userId,row.reserved_microusd,row.reservation_id,userId,used,now,fixed.cohort_id,fixedPeriod));
+    statements.push(env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=MAX(0,reserved_microusd-(CASE WHEN ${active} THEN ? ELSE 0 END)),used_microusd=used_microusd+(CASE WHEN ${active} THEN ? ELSE 0 END),updated_at=? WHERE scope='pilot_user' AND scope_id=? AND period=?`)
+      .bind(row.reservation_id,userId,row.reserved_microusd,row.reservation_id,userId,used,now,userId,fixedPeriod));
+    if(used>Number(row.reserved_microusd))statements.push(env.DB.prepare(`UPDATE pilot_cohorts SET status='paused',updated_at=? WHERE cohort_id=? AND organization_id=? AND status='active' AND ${active}`)
+      .bind(now,fixed.cohort_id,fixed.organization_id,row.reservation_id,userId));
+  }
+  statements.push(env.DB.prepare(`UPDATE cost_budget_reservations SET used_microusd=?,status=?,settled_at=?,updated_at=? WHERE reservation_id=? AND owner_id=? AND ${allowedStatus}`).bind(used,status,now,now,row.reservation_id,userId));
   const results=await env.DB.batch(statements);
   const settled=Number(results.at(-1)?.meta.changes??0)===1;
   return { settled, reservationId: row.reservation_id, reservedMicrousd: row.reserved_microusd, usedMicrousd: settled ? used : row.used_microusd, period: row.period, status: settled ? status : row.status };
@@ -661,22 +854,54 @@ export async function releaseCostReservationsForCorrelation(env: WorkerEnv, user
   return active.results.length;
 }
 
-export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: "prompt" | "provider-output" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input", content: string, projectScope?: ProjectExecutionScope) {
-  const contentId = uuidV7(); const createdAt = new Date(); const days = intEnv(env.FORMA_RETENTION_DAYS, 30); const expiresAt = new Date(createdAt.getTime() + days * 86_400_000);
-  const now=createdAt.toISOString();
+export const DURABLE_WORK_RETENTION_END = "9999-12-31T23:59:59.999Z";
+export const DEFAULT_EVIDENCE_RETENTION_DAYS = 365;
+
+type PrivateContentKind = "prompt" | "provider-output" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input";
+
+export function privateContentRetentionClass(kind: PrivateContentKind): "durable-work" | "governed-evidence" | "transient-private" {
+  return kind === "document-artifact" ? "durable-work" : kind === "document-artifact-input" ? "governed-evidence" : "transient-private";
+}
+
+export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope) {
   if(projectScope&&projectScope.actorUserId!==ownerId)throw new Error("project_private_content_actor_mismatch");
+  const policy=projectScope?await env.DB.prepare("SELECT transient_days,evidence_days,version FROM organization_retention_policies WHERE organization_id=?")
+    .bind(projectScope.organizationId).first<{transient_days:number;evidence_days:number;version:number}>():null;
+  const contentId = uuidV7(); const createdAt = new Date(); const category=privateContentRetentionClass(kind);
+  const days=category==="governed-evidence"?Number(policy?.evidence_days??Math.max(1,Math.min(3650,intEnv(env.FORMA_EVIDENCE_RETENTION_DAYS,DEFAULT_EVIDENCE_RETENTION_DAYS)))):Number(policy?.transient_days??intEnv(env.FORMA_RETENTION_DAYS,30));
+  const expiresAt=category==="durable-work"?new Date(DURABLE_WORK_RETENTION_END):new Date(createdAt.getTime()+days*86_400_000);
+  const now=createdAt.toISOString();
   const statements=projectScope?[
     env.DB.prepare(`INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at)
       SELECT ?,?,?,?,?,?,NULL WHERE ${activeProjectBillingSql}
-        AND EXISTS(SELECT 1 FROM organization_projects WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND status='active')`)
-      .bind(contentId,ownerId,kind,content,now,expiresAt.toISOString(),ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId),
+        AND EXISTS(SELECT 1 FROM organization_projects WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND status='active')
+        AND ((?=0 AND NOT EXISTS(SELECT 1 FROM organization_retention_policies current_policy WHERE current_policy.organization_id=?))
+          OR EXISTS(SELECT 1 FROM organization_retention_policies current_policy WHERE current_policy.organization_id=? AND current_policy.version=?))`)
+      .bind(contentId,ownerId,kind,content,now,expiresAt.toISOString(),ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,Number(policy?.version??0),projectScope.organizationId,projectScope.organizationId,Number(policy?.version??0)),
     env.DB.prepare(`INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at)
       SELECT ?,'content',?,?,?,?,'actor_private',NULL,?,? WHERE EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)`)
       .bind(projectScope.projectAccessId,contentId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,ownerId,now,contentId,ownerId),
+    env.DB.prepare(`INSERT INTO private_content_retention_scopes(content_id,organization_id,project_access_id,project_id,actor_user_id,classification,policy_version,assigned_expires_at,created_at)
+      SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.project_access_id=? AND resource.organization_id=?
+        AND resource.project_id=? AND resource.resource_kind='content' AND resource.resource_id=? AND resource.actor_user_id=?)`)
+      .bind(contentId,projectScope.organizationId,projectScope.projectAccessId,projectScope.projectId,ownerId,category,Number(policy?.version??0),expiresAt.toISOString(),now,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,contentId,ownerId),
   ]:[env.DB.prepare("INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES (?,?,?,?,?,?,NULL)").bind(contentId,ownerId,kind,content,now,expiresAt.toISOString())];
-  statements.push(env.DB.prepare("UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND expires_at<=?").bind(now,ownerId,now));
+  statements.push(projectScope?env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind!='document-artifact' AND expires_at<=?
+    AND EXISTS(SELECT 1 FROM private_content_retention_scopes governed WHERE governed.content_id=private_content.content_id AND governed.organization_id=?)
+    AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes governed JOIN organization_retention_policies policy ON policy.organization_id=governed.organization_id AND policy.legal_hold=1
+      WHERE governed.content_id=private_content.content_id AND governed.classification='governed-evidence')
+    AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes governed JOIN organization_legal_holds hold
+      ON hold.organization_id=governed.organization_id AND hold.status='active'
+      WHERE governed.content_id=private_content.content_id
+        AND(hold.scope_kind='organization'
+          OR hold.scope_kind='project' AND hold.resource_id=governed.project_access_id
+          OR hold.scope_kind='content' AND hold.resource_id=governed.content_id))
+    AND EXISTS(SELECT 1 FROM private_content inserted WHERE inserted.content_id=? AND inserted.owner_id=?)`)
+    .bind(now,ownerId,now,projectScope.organizationId,contentId,ownerId):env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind!='document-artifact' AND expires_at<=?
+      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id)`)
+    .bind(now,ownerId,now));
   const results=await env.DB.batch(statements);
-  if(Number(results[0]?.meta.changes??0)!==1||projectScope&&Number(results[1]?.meta.changes??0)!==1)throw new Error("project_private_content_access_revoked");
+  if(Number(results[0]?.meta.changes??0)!==1||projectScope&&(Number(results[1]?.meta.changes??0)!==1||Number(results[2]?.meta.changes??0)!==1))throw new Error("project_private_content_access_revoked");
   return { contentId, expiresAt: expiresAt.toISOString() };
 }
 
@@ -728,6 +953,11 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
   if(request.method==="POST")await reconcileFailedBudgetReservations(env,budgetUser);
   const canReadTenantUsage=Boolean(selected.context&&hasCapability(principal,"workspace.usage.read",{organizationId:selected.context.organizationId}));
   const [canvas,accountBudgets]=await Promise.all([readCanvasGovernance(env,user.role),readAccountBudgets(env,budgetUser.userId,canReadTenantUsage?selected.context?.organizationId:undefined)]);
+  const scopedRetention=selected.context?await env.DB.prepare(`SELECT policy.transient_days,policy.evidence_days,
+    (SELECT status FROM pilot_cohorts cohort WHERE cohort.organization_id=organization.organization_id AND cohort.status IN ('active','paused','closed')
+      ORDER BY CASE WHEN cohort.status='closed' THEN 1 ELSE 0 END,cohort.created_at DESC LIMIT 1) AS pilot_status
+    FROM organizations organization LEFT JOIN organization_retention_policies policy ON policy.organization_id=organization.organization_id WHERE organization.organization_id=?`)
+    .bind(selected.context.organizationId).first<{transient_days:number|null;evidence_days:number|null;pilot_status:string|null}>():null;
   const privileged=audience==="operations"&&(hasCapability(principal,"platform.provider.configure")||hasCapability(principal,"platform.policy.manage"));
   const selectedImageProvider=env.FORMA_IMAGE_PROVIDER??"openai";
   const provider={name:"Approved creative generation",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",plannerModel:env.OPENAI_MODEL??"gpt-5.6-terra",configured:Boolean(env.OPENAI_API_KEY&&(!["fal","fal-ideogram","ideogram"].includes(selectedImageProvider)||env.FAL_KEY)),videoModel:env.FAL_VIDEO_MODEL??DEFAULT_VIDEO_MODEL,videoReferenceModel:env.FAL_REFERENCE_VIDEO_MODEL??DEFAULT_REFERENCE_VIDEO_MODEL,videoConfigured:Boolean(env.OPENAI_API_KEY&&env.FAL_KEY),...(privileged?{name:"OpenAI Responses · OpenAI + Fal image adapters · Fal video",imageProvider:selectedImageProvider,imageProviders:[{provider:"openai",model:env.OPENAI_IMAGE_MODEL??"gpt-image-2",configured:Boolean(env.OPENAI_API_KEY)},{provider:"fal",model:env.FAL_IMAGE_MODEL??"ideogram/v4",previewModel:env.FAL_IMAGE_PREVIEW_MODEL??"ideogram/v4/fast",editModel:env.FAL_IMAGE_EDIT_MODEL??"ideogram/v4/image-to-image",configured:Boolean(env.FAL_KEY)}],videoProvider:env.FORMA_VIDEO_PROVIDER??"fal",videoAdapterVersion:VIDEO_ADAPTER_CONTRACT.adapterVersion,videoApiSunset:null}:{})};
@@ -741,8 +971,8 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
   ]:personalCapabilities;
   const visibleBudgets=privileged||canReadTenantUsage?accountBudgets:{budgets:{...accountBudgets.budgets,workspace:{...accountBudgets.budgets.user}},costBudgets:{...accountBudgets.costBudgets,workspace:{...accountBudgets.costBudgets.user}}};
   return Response.json({user:safeUser,audience,capabilities,permissionEpoch:effectiveAccess.permissionEpoch,organizations:auth.impersonation?[]:principal.access.organizations,projects:auth.impersonation?[]:principal.access.projects,
-    ...(selected.context?{projectContext:{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId,projectId:selected.context.projectId,ownerUserId:selected.context.ownerUserId,role:selected.context.role,permissions:selected.context.permissions.filter((capability)=>capability!=="project.canvas.use"||selectedCanvasAccess),expiresAt:selected.context.expiresAt}}:{}),
-    impersonation:safeImpersonation,policy:{version:POLICY_VERSION,accepted:user.consentVersion===POLICY_VERSION,passiveCapture:false,attentionCapture:{available:true,defaultOn:false,retentionDays:14,rawInputCapture:false},externalAssetsRequireAssertion:true,retentionDays:intEnv(env.FORMA_RETENTION_DAYS,30),sharing:"private-expiring-revocable"},canvas:safeCanvas,provider,...visibleBudgets});
+    ...(selected.context?{projectContext:{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId,projectId:selected.context.projectId,ownerUserId:selected.context.ownerUserId,role:selected.context.role,permissions:selected.context.permissions.filter((capability)=>capability!=="project.canvas.use"||selectedCanvasAccess),expiresAt:selected.context.expiresAt,managedPilot:Boolean(scopedRetention?.pilot_status)}}:{}),
+    impersonation:safeImpersonation,policy:{version:POLICY_VERSION,accepted:user.consentVersion===POLICY_VERSION,passiveCapture:false,attentionCapture:{available:true,defaultOn:false,retentionDays:14,rawInputCapture:false},externalAssetsRequireAssertion:true,retentionDays:Number(scopedRetention?.transient_days??intEnv(env.FORMA_RETENTION_DAYS,30)),evidenceRetentionDays:Number(scopedRetention?.evidence_days??Math.max(1,Math.min(3650,intEnv(env.FORMA_EVIDENCE_RETENTION_DAYS,DEFAULT_EVIDENCE_RETENTION_DAYS)))),sharing:"private-expiring-revocable"},canvas:safeCanvas,provider,...visibleBudgets});
 }
 
 export async function handleImpersonation(request:Request,env:WorkerEnv){

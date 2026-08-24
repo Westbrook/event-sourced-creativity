@@ -22,6 +22,12 @@ export function routeCapabilities(path: string): RouteCapabilities {
   if (pathname === "/sessions" || pathname.startsWith("/sessions/")) {
     return { profile: "sessions", privateContent: false, jobHistory: false };
   }
+  if (pathname === "/activity" || pathname.startsWith("/activity/")) {
+    return { profile: "workspace", privateContent: false, jobHistory: true };
+  }
+  if (pathname === "/deliver" || pathname.startsWith("/deliver/")) {
+    return { profile: "workspace", privateContent: false, jobHistory: false };
+  }
   if (pathname === "/settings") {
     return { profile: "sessions", privateContent: false, jobHistory: false };
   }

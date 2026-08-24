@@ -163,7 +163,7 @@ server-issued capabilities actually permit.
 
 | Surface | Primary audience | Canonical destination | Primary decisions |
 | --- | --- | --- | --- |
-| Creator Workspace | Creators and personal account owners | `/projects`, `/library` | Projects, Create, Library, Re-entry, Settings |
+| Creator Workspace | Creators and personal account owners | `/projects`, `/library`, `/activity`, `/deliver` | Projects, Work, Explore, Activity, Deliver; settings remain in the account menu |
 | Canvas | Creators with spatial-workspace access | `/canvas`, `/canvas/projects`, `/canvas/library` | Project boards, the same projects, and the same project Library |
 | Platform Operations | Authorized platform operators | `/operations` | Providers, releases, platform access, service policy |
 | Product & Quality | Product owners, delivery leads, authorized evaluators | `/product` | Aggregate insights, delivery evidence, separately granted evaluation |
@@ -259,7 +259,7 @@ server-issued capabilities actually permit.
   organization's Usage settings; contributors without access receive a clear
   instruction to contact their project administrator instead of a broken link.
   The same truthful labels, announcements, viewer controls, failure states, and
-  help text are available in English, French, and Arabic.
+  help text are available in English, French, Arabic, and Japanese.
 - Shared-document review links belong solely to the active exact project owner.
   Present the same owner-only Review action consistently in the top bar,
   account popover, and command dialog; never show it to project editors or
@@ -272,7 +272,7 @@ server-issued capabilities actually permit.
   actor/project/resource export acknowledgment. A rejected or stale
   authorization cancels the download before any browser file action. Preserve
   the existing frictionless personal-project behavior outside shared contexts.
-- Labels, announcements, and focus work in English, French, and Arabic.
+- Labels, announcements, and focus work in English, French, Arabic, and Japanese.
   Preserve RTL layouts, 44px targets, visible focus, skip links, reduced motion,
   forced colors, and a predictable primary heading.
 - Design-system examples use synthetic data only. They never hydrate a creative

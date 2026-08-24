@@ -221,8 +221,8 @@ export class FormaComponentCatalog extends FormaPresentationalElement {
   }
 
   #documentation(id: string, fallback: string) {
-    const translated = Boolean(this.i18n.messages[id]);
-    return html`<span lang=${translated ? nothing : "en"} dir=${translated ? nothing : "ltr"}>${this.i18n.t(id, fallback)}</span>`;
+    const copy = this.i18n.messages[id] || this.i18n.system(fallback);
+    return html`<span>${copy}</span>`;
   }
 
   #api(entry: ComponentCatalogEntry) {

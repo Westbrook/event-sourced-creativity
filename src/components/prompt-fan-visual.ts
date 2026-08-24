@@ -17,7 +17,7 @@ export class PromptFanVisual extends FormaElement {
         const output = byTechnique.get(definition.id);
         return html`<figure class=${output ? "ready" : "pending"}>
           <div>${output ? html`<forma-output-visual .output=${output} .fanOutputs=${this.outputs} .compact=${this.compact} .interactive=${!this.compact}></forma-output-visual>` : html`<span>${icon("clock")}</span>`}</div>
-          <figcaption><b>${definition.shortLabel}</b>${output?.standalone ? html`<small>${icon("check")} Standalone</small>` : html`<small>${output ? "In fan" : "Pending"}</small>`}</figcaption>
+          <figcaption><b>${definition.shortLabel}</b>${output?.standalone ? html`<small>${icon("check")} Standalone</small>` : html`<small>${output ? this.i18n.system("In fan") : this.i18n.system("Pending")}</small>`}</figcaption>
         </figure>`;
       })}
     </div>`;

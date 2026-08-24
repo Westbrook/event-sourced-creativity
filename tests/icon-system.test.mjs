@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import typescript from "typescript";
 import frenchMessages from "../src/components/design-system/locales/fr.ts";
 import arabicMessages from "../src/components/design-system/locales/ar.ts";
+import japaneseMessages from "../src/components/design-system/locales/ja.ts";
 
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const read = (relative) => readFile(resolve(projectRoot, relative), "utf8");
@@ -227,7 +228,7 @@ test("the complete living icon gallery remains translated, accessible, and RTL-a
     "bullets", "link", "image", "story", "slides", "video", "select", "marquee", "scope",
     "focal-point", "check", "warning", "lock", "unlock", "clock", "replay", "branch", "flask",
   ];
-  for (const [locale, messages] of [["French", frenchMessages], ["Arabic", arabicMessages]]) {
+  for (const [locale, messages] of [["French", frenchMessages], ["Arabic", arabicMessages], ["Japanese", japaneseMessages]]) {
     for (const key of [
       "lab.iconHeading", "lab.iconDescription", "lab.iconSizes",
       ...families.map((family) => `lab.iconFamily.${family}`),

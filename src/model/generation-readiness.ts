@@ -32,6 +32,9 @@ export type GenerationReadiness = {
   requestKey: string;
   documentId: string;
   documentRevision: string;
+  sourceContextHead?: number;
+  canvasId?: string;
+  contextSetId?: string;
   kind: GenerationReadinessKind;
   productionMode?: "manual" | "managed";
   promptTechnique: PromptTechnique;

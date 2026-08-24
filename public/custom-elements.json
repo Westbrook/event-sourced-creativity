@@ -9,7 +9,8 @@
       "supportedLocales": [
         "en",
         "fr",
-        "ar"
+        "ar",
+        "ja"
       ],
       "fallback": "lookup",
       "delivery": "bundled-runtime",
@@ -9495,6 +9496,47 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-activity.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaActivity",
+          "tagName": "forma-activity",
+          "customElement": true,
+          "summary": "Activity application interface.",
+          "description": "Application-connected activity interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-activity",
+          "declaration": {
+            "name": "FormaActivity",
+            "module": "src/components/forma-activity.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaActivity",
+          "declaration": {
+            "name": "FormaActivity",
+            "module": "src/components/forma-activity.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-admin-events.ts",
       "declarations": [
         {
@@ -9703,6 +9745,47 @@
           "declaration": {
             "name": "FormaCreativeEditor",
             "module": "src/components/forma-creative-editor.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/forma-deliver.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaDeliver",
+          "tagName": "forma-deliver",
+          "customElement": true,
+          "summary": "Deliver application interface.",
+          "description": "Application-connected deliver interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-deliver",
+          "declaration": {
+            "name": "FormaDeliver",
+            "module": "src/components/forma-deliver.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaDeliver",
+          "declaration": {
+            "name": "FormaDeliver",
+            "module": "src/components/forma-deliver.ts"
           }
         }
       ]
@@ -10275,10 +10358,10 @@
           "tagName": "forma-shared-view",
           "customElement": true,
           "summary": "Shared view application interface.",
-          "description": "Application-connected shared view interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "description": "Store-independent shared view interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
           "superclass": {
-            "name": "LitElement",
-            "package": "lit"
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
           },
           "members": [
             {
@@ -10304,7 +10387,7 @@
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
-            "stateful": true
+            "stateful": false
           }
         }
       ],
@@ -11392,6 +11475,14 @@
             },
             {
               "kind": "field",
+              "name": "releaseAllowed",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true"
+            },
+            {
+              "kind": "field",
               "name": "sourceSurface",
               "type": {
                 "text": "string"
@@ -11528,7 +11619,7 @@
               "type": {
                 "text": "DocumentArtifactDraftItem"
               },
-              "default": "{title:\"\",body:\"\",notes:\"\",image_prompt:\"\",slide:null}"
+              "default": "{ title: \"\", body: \"\", notes: \"\", image_prompt: \"\", slide: null }"
             },
             {
               "kind": "field",

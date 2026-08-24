@@ -36,15 +36,15 @@ export class ReferencePixelPolicy extends FormaElement {
     return html`${inheritedForm ? nothing : html`<form id=${policyFormId} hidden @submit=${(event:SubmitEvent)=>event.preventDefault()}></form>`}<section class=${`reference-pixel-policy ${this.compact ? "compact" : ""}`} aria-label="Generation reference policy">
       <div class="reference-pixel-policy-heading">
         <span>${icon("image")}</span>
-        <div><b>Use in generation</b><small>${selected === "context_only" ? "Original pixels stay private from image and video models" : "Original pixels can be attached to compatible image and video generations"}</small>${storyboardFrame ? html`<small>Storyboard shot ${Number.isFinite(storyboardIndex) ? storyboardIndex : "—"}${Number.isFinite(storyboardCount) ? ` of ${storyboardCount}` : ""} · retained in source order</small>` : nothing}</div>
+        <div><b>Use in generation</b><small>${selected === "context_only" ? this.i18n.system("Original pixels stay private from image and video models") : this.i18n.system("Original pixels can be attached to compatible image and video generations")}</small>${storyboardFrame ? html`<small>Storyboard shot ${Number.isFinite(storyboardIndex) ? storyboardIndex : "—"}${Number.isFinite(storyboardCount) ? " " + this.i18n.system("of {storyboardCount}", { storyboardCount: this.i18n.number(storyboardCount) }) : ""} · retained in source order</small>` : nothing}</div>
       </div>
       <label>
         <span class="sr-only">How should generation models use this reference?</span>
         <select form=${inheritedForm ? nothing : policyFormId} .value=${selected} ?disabled=${block.locked} @change=${(event:Event)=>this.#change((event.target as HTMLSelectElement).value as ReferencePixelMode)}>
-          ${REFERENCE_PIXEL_MODES.map((option)=>html`<option value=${option.id} ?selected=${option.id===selected}>${option.label}</option>`)}
+          ${REFERENCE_PIXEL_MODES.map((option)=>html`<option value=${option.id} ?selected=${option.id===selected}>${this.i18n.system(option.label)}</option>`)}
         </select>
       </label>
-      <p>${definition.description}</p>
+      <p>${this.i18n.system(definition.description)}</p>
       ${selected !== "context_only" ? html`<small class="reference-pixel-receipt">Rights receipt required · saved with this block · passed as a high-fidelity input to compatible providers</small>` : nothing}
     </section>`;
   }

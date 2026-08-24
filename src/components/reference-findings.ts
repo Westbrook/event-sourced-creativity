@@ -71,7 +71,7 @@ export class ReferenceFindings extends FormaElement {
     });
     if (appended.length) {
       this.store.patchUi({ focusBlockId: id });
-      this.store.toast(`${finding.label} added as an editable document decision.`);
+      this.store.toast(this.i18n.system("{label} added as an editable document decision.",{label:finding.label}));
     }
   }
 
@@ -86,9 +86,9 @@ export class ReferenceFindings extends FormaElement {
       <form id=${analysisFormId} @submit=${(event:SubmitEvent)=>{event.preventDefault();if(!this.#analyzing&&!jobActive)void this.#analyze();}}></form>
       <header>
         <div><span class="eyebrow">Image findings · optional</span><h3 id=${`reference-findings-${this.block.id}`}>Use what this image teaches</h3><p>Choose what to prepare, then add only the findings that should guide this document.</p></div>
-        <button type="submit" form=${analysisFormId} class="button secondary compact" ?disabled=${this.#analyzing||jobActive}>${icon("spark")} ${this.#analyzing||jobActive ? "Analyzing safely…" : findings.length ? "Analyze again" : "Analyze image"}</button>
+        <button type="submit" form=${analysisFormId} class="button secondary compact" ?disabled=${this.#analyzing||jobActive}>${icon("spark")} ${this.#analyzing||jobActive ? this.i18n.system("Analyzing safely…") : findings.length ? this.i18n.system("Analyze again") : this.i18n.system("Analyze image")}</button>
       </header>
-      <fieldset class="reference-finding-preferences"><legend>Prepare from this reference</legend>${REFERENCE_FINDING_OPTIONS.map((option) => html`<label><input form=${analysisFormId} type="checkbox" .checked=${preferences.has(option.kind)} @change=${(event: Event) => void this.#setPreference(option.kind, (event.target as HTMLInputElement).checked)}><span><b>${option.label}</b><small>${option.description}</small></span></label>`)}</fieldset>
+      <fieldset class="reference-finding-preferences"><legend>Prepare from this reference</legend>${REFERENCE_FINDING_OPTIONS.map((option) => html`<label><input form=${analysisFormId} type="checkbox" .checked=${preferences.has(option.kind)} @change=${(event: Event) => void this.#setPreference(option.kind, (event.target as HTMLInputElement).checked)}><span><b>${this.i18n.system(option.label)}</b><small>${this.i18n.system(option.description)}</small></span></label>`)}</fieldset>
       ${findings.length ? html`<div class="reference-finding-grid">${findings.filter((finding) => preferences.has(finding.kind)).map((finding) => {
         const adopted = finding.kind !== "palette" && adoptedKinds.has(finding.kind);
         return html`<article>

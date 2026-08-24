@@ -54,6 +54,7 @@ const baseTypes: Record<ScenarioKey, Array<[string, string]>> = {
   "document-artifacts": [
     ["user","ProjectCreated"],["user","DocumentCreated"],["user","EmptyCanvasChosen"],
     ...DOCUMENT_ARTIFACT_KINDS.flatMap(()=>[["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderCompleted"],["user","DocumentArtifactViewed"],["user","BlockCreated"]] as Array<[string,string]>),
+    ["user","DocumentArtifactEdited"],["user","ArtifactReviewRequested"],["user","ArtifactApproved"],["user","ArtifactChangesRequested"],
     ["user","DocumentArtifactExported"],["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderFailed"],
   ],
   "output-workbench": [
@@ -205,6 +206,10 @@ const EVENT_STORIES: Record<string,ReplayEventStory> = {
   GenerationCompleted:{action:"GPT Image returned an addressable image and the application stored it as a private asset.",value:"The real image can be viewed, compared, shared, critiqued, and exported while its planner model, image model, timings, and exact compile receipt remain durable."},
   DocumentRenderRequested:{action:"The user chose a new deliverable form for the current document and confirmed paid media work when required.",value:"The request pins the source document state, intended format, options, and originating surface before a planner or media provider begins."},
   DocumentRenderCompleted:{action:"The renderer completed a document-derived story, scene, slide deck, storyboard, or video and attached it to the source document.",value:"Every document view and project-level surface can find the same saved result, while provider identity, timings, item receipts, and private content remain inspectable."},
+  DocumentArtifactEdited:{action:"An authorized contributor corrected the finished deliverable without paying for another generation.",value:"The actual retained work changes atomically with an attributable, metadata-only audit receipt, and any earlier approval immediately requires a fresh review."},
+  ArtifactReviewRequested:{action:"A contributor submitted a finished deliverable for an explicitly recorded review.",value:"The team can distinguish work that is awaiting approval from a draft without exposing the deliverable body in its audit history."},
+  ArtifactApproved:{action:"An authorized reviewer approved the exact recorded versions of the deliverable's source context.",value:"Approval is attributable, independently permissioned, and becomes invalid when an applicable source decision changes."},
+  ArtifactChangesRequested:{action:"A reviewer sent a deliverable back for further changes.",value:"The creator receives an explicit, durable review decision instead of mistaking stakeholder feedback for final approval."},
   DocumentRenderFailed:{action:"A document render ended without a usable artifact and retained its provider and budget receipts.",value:"The failure can be diagnosed or retried without implying that the document changed, losing completed storyboard frames, or silently charging again for finished work."},
   DocumentArtifactViewed:{action:"The user opened a generated document artifact in its focused reader or media viewer.",value:"The application can distinguish an available result from one that was actually reviewed, improving re-entry and next-step assistance without inferring success from page presence."},
   DocumentArtifactExported:{action:"The user downloaded a document-derived artifact for use outside the application.",value:"Export is a high-intent success signal tied to both the durable document and the specific output form, rather than a generic download count."},
@@ -359,6 +364,10 @@ const EVENT_TRIGGERS: Record<string,string> = {
   GenerationCompleted:"This happens when the provider returns a successful result for the compiled generation request.",
   DocumentRenderRequested:"This happens when the user selects short story, scene, slides, storyboard, or video from a document or Canvas render menu; storyboard and video additionally require an explicit paid-work confirmation.",
   DocumentRenderCompleted:"This happens after the structured planner succeeds and, when applicable, every required image frame or provider video has been saved to private media storage.",
+  DocumentArtifactEdited:"This happens only after an authorized contributor saves a bounded correction to the actual durable output through the guarded artifact-editing endpoint.",
+  ArtifactReviewRequested:"This happens when a creator explicitly submits an existing deliverable, or a manual correction requires a new review of its current source decisions.",
+  ArtifactApproved:"This happens only after an independently authorized reviewer approves a requested review against the current governed source-block versions.",
+  ArtifactChangesRequested:"This happens when a reviewer records that an existing deliverable needs further work before it can be approved.",
   DocumentRenderFailed:"This happens when planning, rendering, provider polling, or durable storage reaches a terminal failure; completed checkpoints remain available to a bounded retry.",
   DocumentArtifactViewed:"This happens when the user opens an artifact card in its focused reader, storyboard, presentation, or media dialog.",
   DocumentArtifactExported:"This happens when the user explicitly downloads the artifact’s retained Markdown or provider media.",
@@ -649,6 +658,7 @@ function payloadFor(type: string, i: number, key: ScenarioKey, cycle: number): R
     if(type==="DocumentArtifactViewed"){
       const kind=kindFor(viewedOrdinal);return{artifact_id:artifactId(kind),artifact_kind:kind,document_id:documentId,source_surface:kind==="video"?"canvas-artifact-gallery":"document-artifact-gallery",viewer_kind:kind==="video"?"media":kind==="storyboard"?"storyboard":"reader"};
     }
+    if(type==="DocumentArtifactEdited"||type==="ArtifactReviewRequested"||type==="ArtifactApproved"||type==="ArtifactChangesRequested")return{artifact_id:artifactId("video"),document_id:documentId,project_id:"project-long-horizon",source_block_versions:[],reviewer_user_id:"reviewer-replay",...(type==="DocumentArtifactEdited"?{revision:1,changed_fields:["content_markdown"]}:{})};
     if(type==="DocumentArtifactExported"){const exportOrdinal=Math.max(0,patternPrefix.filter(([,eventType])=>eventType==="DocumentArtifactExported").length-1);const kind=key==="output-workbench"?kindFor(exportOrdinal):"video";return{artifact_id:artifactId(kind),artifact_kind:kind,document_id:documentId,project_id:"project-long-horizon",format:kind==="video"?"video/mp4":kind==="slides"?"application/pdf":"markdown",source_surface:kind==="slides"?"presentation-deck":"document-artifact-viewer"};}
     if(type==="DocumentRenderFailed")return{artifact_id:`${artifactId("video")}-retry`,artifact_kind:"video",document_id:documentId,provider_job_id:`video-${cycle}-replacement`,reason:"provider_timeout",retryable:true,source_surface:"canvas",output_brief:replayOutputBrief("video")};
   }

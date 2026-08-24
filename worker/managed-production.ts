@@ -1,7 +1,8 @@
 import { combinedContextGroups } from "../src/model/combined-context.ts";
-import { documentArtifactValidationIssues, normalizeSlideDeckItems, slideCopyIsNearDuplicate, type DocumentArtifactDraft, type DocumentArtifactKind, type DocumentArtifactValidationIssue } from "../src/model/document-artifacts.ts";
+import { documentArtifactValidationIssues, normalizeSlideDeckItems, slideCopyIsNearDuplicate, type DocumentArtifactDraft, type DocumentArtifactDraftItem, type DocumentArtifactKind, type DocumentArtifactValidationIssue, type SlideStylePresetId } from "../src/model/document-artifacts.ts";
 import { documentImageFormat, imageFormatForPreset, providerRenderFormat } from "../src/model/image-format.ts";
 import {
+  MANAGED_PRODUCTION_BATCH_SIZE,
   providerFacingProductionContinuity,
   providerFacingProductionTargets,
   productionSceneSnapshot,
@@ -9,6 +10,7 @@ import {
   type ManagedProductionPlan,
   type ProductionScene,
 } from "../src/model/managed-production.ts";
+import { buildPresentationSourceContract, validatePresentationSourceCoverage } from "../src/model/presentation-source.ts";
 import { VIDEO_ADAPTER_CONTRACT, type VideoAudioMode } from "../src/model/video-adapter.ts";
 import { generateCreativeImage } from "./image-adapter.ts";
 import { readGeneratedImageReference, storeGeneratedImage, storeGeneratedMedia } from "./media-api.ts";
@@ -17,6 +19,8 @@ import {
   generateDocumentArtifact,
   type CreativeVideoPreparedReceipt,
   type ImageReference,
+  type ProviderAttemptPreflight,
+  type ProviderAttemptReceipt,
   type VideoReference,
 } from "./openai-adapter.ts";
 import type { ProviderCostBreakdown } from "./replay-cost.ts";
@@ -72,6 +76,7 @@ type ManagedProductionCallbacks = {
   progress?: (stage: string, message: string, checkpoint?: ProductionCheckpoint) => void | Promise<void>;
   checkpoint?: (state: ProductionCheckpoint) => void;
   plannerAttempt?: (state: { model: string; responseId: string; responseIds: string[]; usage: ProviderUsage; latencyMs: number }) => void | Promise<void>;
+  plannerPreflight?: (attempt: ProviderAttemptPreflight) => void | Promise<void>;
 };
 
 const addUsage = (left: ProviderUsage, right: ProviderUsage): ProviderUsage => ({
@@ -139,6 +144,90 @@ function combinedSceneSnapshot(snapshot: Record<string, unknown>, scenes: Produc
   return { ...snapshot, facts: selected, relationships: [...relationships.values()], context_groups: combinedContextGroups({ facts: selected }) };
 }
 
+function attributedSlideQuote(item: DocumentArtifactDraftItem): string {
+  const quote = item.slide?.quote;
+  if (!quote?.text.trim()) return "";
+  const attribution = [...new Set([quote.speaker, quote.role].map((value) => value?.trim()).filter(Boolean))].join(", ");
+  return `“${quote.text.trim()}”${attribution ? ` — ${attribution}` : ""}`;
+}
+
+const managedSlideLabels=(locale?:string)=>({
+  en:{section:"Section",exactValue:"Exact value",displayedValue:"Displayed value",exact:"exact",sources:"Sources",speakerNotes:"Speaker notes"},
+  fr:{section:"Section",exactValue:"Valeur exacte",displayedValue:"Valeur affichée",exact:"exact",sources:"Sources",speakerNotes:"Notes de présentation"},
+  ar:{section:"القسم",exactValue:"القيمة الدقيقة",displayedValue:"القيمة المعروضة",exact:"دقيق",sources:"المصادر",speakerNotes:"ملاحظات المتحدث"},
+  ja:{section:"セクション",exactValue:"正確な値",displayedValue:"表示値",exact:"正確な値",sources:"出典",speakerNotes:"発表者ノート"},
+}[locale?.split("-")[0]?.toLowerCase()??"en"]??{section:"Section",exactValue:"Exact value",displayedValue:"Displayed value",exact:"exact",sources:"Sources",speakerNotes:"Speaker notes"});
+
+function managedSlideMarkdown(title: string, items: DocumentArtifactDraftItem[],locale="en"): string {
+  const labels=managedSlideLabels(locale);
+  const sections = items.map((item, index) => {
+    const slide = item.slide;
+    const quote = attributedSlideQuote(item);
+    const visual = slide?.visual;
+    const lines = [
+      `## ${index + 1}. ${item.title}`,
+      ...(slide?.section ? [`**${labels.section}:** ${slide.section}`] : []),
+      ...(item.body.trim() ? [item.body.trim()] : []),
+      ...(quote ? [`> ${quote}`] : []),
+      ...(slide?.bullets ?? []).map((bullet) => `- ${bullet}`),
+    ];
+    if (visual?.value.trim() && !quote?.includes(visual.value.trim())) {
+      lines.push(visual.label.trim() ? `**${visual.label.trim()}:** ${visual.value.trim()}` : visual.value.trim());
+    }
+    if (visual?.exactValue?.trim()) lines.push(`**${labels.exactValue}:** ${visual.exactValue.trim()}${visual.unit ? ` ${visual.unit}` : ""}`);
+    if (visual?.displayValue?.trim()) lines.push(`**${labels.displayedValue}:** ${visual.displayValue.trim()}${visual.unit ? ` ${visual.unit}` : ""}`);
+    for (const datum of visual?.data ?? []) {
+      const value = datum.displayValue?.trim() || datum.value.trim();
+      const exact = datum.exactValue?.trim();
+      lines.push(`- ${datum.label}${value ? `: ${value}` : ""}${exact && exact !== value ? ` (${labels.exact}: ${exact})` : ""}`);
+    }
+    const citations = (slide?.citations ?? []).flatMap((citation) => {
+      const label = citation.label.trim();
+      if (!label) return [];
+      return [`${label}${citation.excerpt?.trim() ? ` — ${citation.excerpt.trim()}` : ""}`];
+    });
+    if (citations.length) lines.push(`**${labels.sources}:** ${citations.join("; ")}`);
+    if (item.notes.trim()) lines.push(`**${labels.speakerNotes}:** ${item.notes.trim()}`);
+    return lines.join("\n");
+  });
+  return [`# ${title}`, ...sections].join("\n\n");
+}
+
+function managedSlideVisibleCopy(item: DocumentArtifactDraftItem): string[] {
+  const visual = item.slide?.visual;
+  return [
+    item.title,
+    item.body,
+    attributedSlideQuote(item),
+    ...(item.slide?.bullets ?? []),
+    visual?.label ?? "",
+    visual?.value ?? "",
+    visual?.exactValue ?? "",
+    visual?.displayValue ?? "",
+    ...(visual?.data ?? []).flatMap((datum) => [datum.label, datum.value, datum.exactValue ?? "", datum.displayValue ?? ""]),
+  ].filter((value): value is string => Boolean(value.trim()));
+}
+
+function managedProductionValidationFailure(kind: DocumentArtifactKind, issues: DocumentArtifactValidationIssue[], phase: "review" | "assembly") {
+  const sourceFidelityFailure = kind === "slides" && issues.some((issue) =>
+    /(?:source|protected|precision|scorecard|numeric|quote|roadmap|outline|context_group|exact_value|display_value|slide_count_mismatch)/u.test(issue.code));
+  const diagnostic = issues.map((issue) => `${issue.code} ${issue.path}`).join(", ");
+  const stage = phase === "review" ? "its bounded production review" : "final assembly";
+  return new ProviderRequestError({
+    code: sourceFidelityFailure ? "source_fidelity_validation_failed" : "provider_returned_incomplete_document_artifact",
+    category: "provider",
+    scope: "request",
+    action: sourceFidelityFailure ? "edit_request" : "retry",
+    message: sourceFidelityFailure
+      ? `The managed presentation did not preserve its required authorized source evidence after ${stage}: ${diagnostic}. Review the source document and presentation requirements before starting a new request.`
+      : `The managed ${kind.replaceAll("_", " ")} could not be completed after ${stage}: ${diagnostic}.`,
+    retryable: !sourceFidelityFailure,
+    retryAfterMs: null,
+    requestId: null,
+    httpStatus: 502,
+  });
+}
+
 /** Page provider planning so a long production never inherits the legacy 12-item ceiling. */
 export async function generateManagedArtifactDraft(
   env: WorkerEnv,
@@ -150,17 +239,49 @@ export async function generateManagedArtifactDraft(
     production: ManagedProductionPlan;
     audience?: string;
     tone?: string;
+    locale?: string;
+    presentationStyle?: SlideStylePresetId;
+    presentationFidelity?: "faithful" | "creative";
+    requestedSlideCount?: number;
+    authoredSlideCount?: number;
     videoSize?: "1280x720" | "720x1280";
     videoAudioMode?: VideoAudioMode;
   } & ManagedProductionCallbacks,
 ) {
   const pages: Array<Awaited<ReturnType<typeof generateDocumentArtifact>>> = [];
   const attempts: Array<Awaited<ReturnType<typeof generateDocumentArtifact>>> = [];
-  const pageCount = Math.ceil(input.production.scenes.length / 8);
+  const responseIdsFor=(attempt:Awaited<ReturnType<typeof generateDocumentArtifact>>)=>{
+    const validation=attempt.inputReceipt.validation;
+    return Array.isArray(validation.provider_response_ids)?validation.provider_response_ids.map(String).filter(Boolean):[attempt.responseId].filter(Boolean);
+  };
+  const recordPaidAttempt=async(receipt:ProviderAttemptReceipt)=>{
+    const previousUsage=attempts.reduce((total,attempt)=>addUsage(total,attempt.usage),{inputTokens:0,outputTokens:0,totalTokens:0});
+    const previousIds=attempts.flatMap(responseIdsFor);
+    await input.plannerAttempt?.({model:receipt.model,responseId:attempts[0]?.responseId??receipt.responseId,responseIds:[...new Set([...previousIds,...receipt.responseIds])],usage:addUsage(previousUsage,receipt.usage),latencyMs:attempts.reduce((total,attempt)=>total+attempt.latencyMs,0)+receipt.latencyMs});
+  };
+  const pageSize = MANAGED_PRODUCTION_BATCH_SIZE;
+  const pageCount = Math.ceil(input.production.scenes.length / pageSize);
+  const presentationSources = kind === "slides"
+    ? buildPresentationSourceContract(input.snapshot, {
+      itemCount: input.production.scenes.length,
+      requestedSlideCount: input.requestedSlideCount ?? input.production.requestedSlideCount ?? input.production.scenes.length,
+      presentationStyle: input.presentationStyle,
+      fidelity: input.presentationFidelity,
+    })
+    : null;
+  const privateSourceIdentifiers = [...new Set([
+    ...input.production.claims.flatMap((claim) => [claim.id, claim.blockId, ...claim.contextGroupIds]),
+    ...input.production.scenes.flatMap((scene) => [...scene.sourceBlockIds, ...scene.sourceClaimIds, ...scene.contextGroupIds]),
+  ].filter(Boolean))].sort((left, right) => right.length - left.length);
+  const redactRepairIssue = (message: string) => privateSourceIdentifiers
+    .reduce((redacted, identifier) => redacted.replaceAll(identifier, "its authored source"), message)
+    .replace(/\b[a-f\d]{8}-[a-f\d-]{27}\b/gi, "its authored target");
   const pageOptions = (index: number, repairIssues: string[] = []) => {
-    const previous = pages.slice(0, Math.floor(index / 8));
+    const previous = pages.slice(0, Math.floor(index / pageSize));
     const priorItems = previous.flatMap((page) => page.output.items);
-    const pageIndex = Math.floor(index / 8);
+    const pageIndex = Math.floor(index / pageSize);
+    const lockedPresentation = previous[0]?.output.presentation
+      ?? (repairIssues.length && pageIndex === 0 ? pages[0]?.output.presentation : null);
     return {
       pageIndex,
       pageCount,
@@ -169,14 +290,15 @@ export async function generateManagedArtifactDraft(
       phase: (pageCount === 1 ? "complete" : pageIndex === 0 ? "opening" : pageIndex === pageCount - 1 ? "final" : "continuation") as "complete" | "opening" | "continuation" | "final",
       priorSummary: previous.at(-1)?.output.summary ?? "",
       priorEnding: previous.at(-1)?.output.content_markdown.slice(-700) ?? priorItems.at(-1)?.body.slice(-700) ?? "",
-      priorVisibleCopy: priorItems.flatMap((item) => [item.title, item.body, ...(item.slide?.bullets ?? []), item.slide?.visual.value ?? ""]).filter(Boolean).slice(-48),
-      ...(kind === "slides" && previous[0]?.output.presentation ? { lockedPresentation: previous[0].output.presentation } : {}),
+      priorVisibleCopy: priorItems.flatMap(managedSlideVisibleCopy).slice(-96),
+      ...(kind === "slides" && lockedPresentation ? { lockedPresentation } : {}),
       ...(repairIssues.length ? { repairIssues } : {}),
     };
   };
-  for (let index = 0; index < input.production.scenes.length; index += 8) {
-    const scenes = input.production.scenes.slice(index, index + 8);
-    await input.progress?.("planning", `${input.production.team.label}: planning scenes ${index + 1}–${index + scenes.length} of ${input.production.scenes.length}.`);
+  for (let index = 0; index < input.production.scenes.length; index += pageSize) {
+    const scenes = input.production.scenes.slice(index, index + pageSize);
+    const pageIndex = Math.floor(index / pageSize);
+    await input.progress?.("planning", `${input.production.team.label}: planning ${kind === "slides" ? "slides" : "scenes"} ${index + 1}–${index + scenes.length} of ${input.production.scenes.length} (provider request ${pageIndex + 1} of ${pageCount}).`);
     const result = await generateDocumentArtifact(env, ownerId, kind, {
       documentTitle: input.documentTitle,
       snapshot: combinedSceneSnapshot(input.snapshot, scenes),
@@ -184,6 +306,11 @@ export async function generateManagedArtifactDraft(
         itemCount: scenes.length,
         audience: input.audience,
         tone: input.tone,
+        locale: input.locale,
+        presentationStyle: input.presentationStyle,
+        presentationFidelity: input.presentationFidelity,
+        requestedSlideCount: input.requestedSlideCount,
+        authoredSlideCount: input.authoredSlideCount,
         videoSize: input.videoSize,
         videoAudioMode: input.videoAudioMode,
         productionMode: "managed",
@@ -191,31 +318,63 @@ export async function generateManagedArtifactDraft(
         productionScenes: scenes,
         productionPage: pageOptions(index),
         signal: input.signal,
+        onProviderAttempt:recordPaidAttempt,
+        onBeforeProviderAttempt:input.plannerPreflight,
       },
     });
     pages.push(result);
     attempts.push(result);
-    await input.plannerAttempt?.({ model: result.model, responseId: attempts[0]!.responseId, responseIds: attempts.map((attempt) => attempt.responseId), usage: attempts.reduce((sum, attempt) => addUsage(sum, attempt.usage), { inputTokens: 0, outputTokens: 0, totalTokens: 0 }), latencyMs: attempts.reduce((sum, attempt) => sum + attempt.latencyMs, 0) });
   }
   const assemble = (normalizeSlides = false): DocumentArtifactDraft => {
     const first = pages[0]!;
     let items = pages.flatMap((page) => page.output.items);
     if (kind === "slides") {
-      // A chapter is represented once; later narrative mentions retain their scoped prose without reopening its chapter.
-      const closed = new Set<string>();
-      let previousGroups = new Set<string>();
-      items = items.map((item) => {
-        const current = new Set(item.context_group_ids ?? []);
-        for (const group of previousGroups) if (!current.has(group)) closed.add(group);
-        const retained = [...current].filter((group) => !closed.has(group));
-        previousGroups = new Set(retained);
-        return { ...item, context_group_ids: retained };
+      const authorizedBlocks = new Set((Array.isArray(input.snapshot.facts) ? input.snapshot.facts : []).flatMap((fact) => {
+        if (!fact || typeof fact !== "object" || Array.isArray(fact)) return [];
+        const blockId = String((fact as Record<string, unknown>).block_id ?? "").trim();
+        return blockId ? [blockId] : [];
+      }));
+      items = items.map((item, index) => {
+        const scene = input.production.scenes[index];
+        if (!item.slide || !scene) return item;
+        const scopedSourceIds = scene.sourceBlockIds.filter((sourceId) => authorizedBlocks.has(sourceId));
+        const sourceIds = item.slide.sourceIds?.length ? item.slide.sourceIds : scopedSourceIds;
+        const contextGroupIds = item.context_group_ids?.length ? item.context_group_ids : scene.contextGroupIds;
+        const visibleCopy = managedSlideVisibleCopy(item).join("\n");
+        const protectedQuotes = (presentationSources?.protectedQuotes ?? []).filter((quote) =>
+          visibleCopy.includes(quote.text)
+          && (!quote.sourceBlockId || sourceIds.includes(quote.sourceBlockId)));
+        const quotes = [...(item.slide.quote ? [item.slide.quote] : []), ...protectedQuotes]
+          .filter((quote, quoteIndex, candidates) => candidates.findIndex((candidate) =>
+            candidate.text === quote.text && candidate.role === quote.role) === quoteIndex);
+        let notes = item.notes;
+        for (const quote of quotes) {
+          const attribution = [...new Set([quote.speaker, quote.role].filter((name): name is string => Boolean(name?.trim())))];
+          if (notes.includes(quote.text) && attribution.every((name) => notes.includes(name))) continue;
+          const attributed = `“${quote.text}”${attribution.length ? ` — ${attribution.join(", ")}` : ""}`;
+          notes = [notes.trim(), attributed].filter(Boolean).join("\n\n");
+        }
+        const missingCitationLabels = [...new Set((item.slide.citations ?? [])
+          .map((citation) => citation.label.trim())
+          .filter((label) => label && !notes.includes(label)))];
+        if (missingCitationLabels.length) notes = [notes.trim(), `[${managedSlideLabels(input.locale).sources}] ${missingCitationLabels.join("; ")}`].filter(Boolean).join("\n\n");
+        return {
+          ...item,
+          notes,
+          context_group_ids: [...new Set(contextGroupIds)],
+          slide: {
+            ...item.slide,
+            ...(sourceIds.length ? { sourceIds: [...new Set(sourceIds)] } : {}),
+            ...(scene.section && !item.slide.section ? { section: scene.section } : {}),
+            ...(scene.sourceOutlineOrder && !item.slide.sourceOrder ? { sourceOrder: scene.sourceOutlineOrder } : {}),
+          },
+        };
       });
       if (normalizeSlides) items = normalizeSlideDeckItems(items);
     }
-    const content = pages.length === 1 ? first.output.content_markdown
-      : kind === "slides"
-        ? [`# ${first.output.title}`, ...items.map((item, index) => [`## ${index + 1}. ${item.title}`, item.body, ...(item.slide?.bullets ?? []).map((bullet) => `- ${bullet}`)].filter(Boolean).join("\n"))].join("\n\n")
+    const content = kind === "slides"
+      ? managedSlideMarkdown(first.output.title, items,input.locale)
+      : pages.length === 1 ? first.output.content_markdown
         : pages.map((page, index) => {
           const markdown = page.output.content_markdown.trim();
           if (!index) return markdown;
@@ -230,8 +389,30 @@ export async function generateManagedArtifactDraft(
     const expectedGroups = combinedContextGroups(input.snapshot).map((group) => group.id);
     const issues = documentArtifactValidationIssues(kind, output, { itemCount: input.production.scenes.length, contextGroupIds: expectedGroups });
     if (kind === "slides") {
+      if (presentationSources) issues.push(...validatePresentationSourceCoverage(output.items, presentationSources, {
+        requireEverySlideSource: true,
+        requireAllProtectedContent: true,
+      }));
+      for (const [index, item] of output.items.entries()) {
+        const assignedSources = input.production.scenes[index]?.sourceBlockIds ?? [];
+        const attributedSources = item.slide?.sourceIds ?? [];
+        if (assignedSources.length && attributedSources.length && !attributedSources.some((sourceId) => assignedSources.includes(sourceId))) {
+          issues.push({ code: "incorrect_slide_source", path: `items.${index}.slide.sourceIds`, message: "This slide is not attributed to its assigned authorized source scene." });
+        }
+      }
       for (const [index, item] of output.items.entries()) if (index > 0 && item.slide?.layout === "cover") issues.push({ code: "duplicate_opening_slide", path: `items.${index}.slide.layout`, message: "Only the global opening slide can use the cover layout." });
-      for (const [index, page] of pages.entries()) if (index > 0 && firstPresentation && JSON.stringify(page.output.presentation) !== JSON.stringify(firstPresentation)) issues.push({ code: "presentation_continuity_drift", path: `items.${index * 8}.presentation`, message: "Every provider page must retain the locked first-page presentation system." });
+      for (const [index, page] of pages.entries()) if (index > 0 && firstPresentation && JSON.stringify(page.output.presentation) !== JSON.stringify(firstPresentation)) issues.push({ code: "presentation_continuity_drift", path: `items.${index * pageSize}.presentation`, message: "Every provider page must retain the locked first-page presentation system." });
+      for (const groupId of expectedGroups) {
+        const positions = output.items.flatMap((item, index) => (item.context_group_ids ?? []).includes(groupId) ? [index] : []);
+        for (let position = 1; position < positions.length; position += 1) {
+          if (positions[position] === positions[position - 1]! + 1) continue;
+          issues.push({
+            code: "split_context_group",
+            path: `items.${positions[position]}.context_group_ids`,
+            message: "An authored source chapter was reopened after another chapter interrupted it; preserve its evidence and repair the assignment.",
+          });
+        }
+      }
     } else if (kind === "short_story" || kind === "scene") {
       for (const [index, item] of output.items.entries()) {
         const earlier = output.items.slice(0, index);
@@ -248,44 +429,56 @@ export async function generateManagedArtifactDraft(
   if (finalIssues.length && (kind === "slides" || kind === "short_story" || kind === "scene")) {
     const affected = [...new Set(finalIssues.flatMap((issue) => {
       const index = /^items\.(\d+)/.exec(issue.path)?.[1];
-      return index === undefined ? [] : [Math.floor(Number(index) / 8)];
+      return index === undefined ? [] : [Math.floor(Number(index) / pageSize)];
     }))];
     for (const pageIndex of affected) {
-      const index = pageIndex * 8;
-      const scenes = input.production.scenes.slice(index, index + 8);
+      const index = pageIndex * pageSize;
+      const scenes = input.production.scenes.slice(index, index + pageSize);
       const issues = finalIssues.filter((issue) => {
         const position = /^items\.(\d+)/.exec(issue.path)?.[1];
-        return position !== undefined && Math.floor(Number(position) / 8) === pageIndex;
-      }).map((issue) => issue.message.replace(/\b[a-f\d]{8}-[a-f\d-]{27}\b/gi, "its authored target"));
+        return position !== undefined && Math.floor(Number(position) / pageSize) === pageIndex;
+      }).map((issue) => redactRepairIssue(issue.message));
       const repaired = await generateDocumentArtifact(env, ownerId, kind, {
         documentTitle: input.documentTitle,
         snapshot: combinedSceneSnapshot(input.snapshot, scenes),
-        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal },
+        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal, onProviderAttempt:recordPaidAttempt,onBeforeProviderAttempt:input.plannerPreflight },
       });
       pages[pageIndex] = repaired;
       attempts.push(repaired);
-      await input.plannerAttempt?.({ model: repaired.model, responseId: attempts[0]!.responseId, responseIds: attempts.map((attempt) => attempt.responseId), usage: attempts.reduce((sum, attempt) => addUsage(sum, attempt.usage), { inputTokens: 0, outputTokens: 0, totalTokens: 0 }), latencyMs: attempts.reduce((sum, attempt) => sum + attempt.latencyMs, 0) });
       repairedPages += 1;
     }
     output = assemble();
     finalIssues = wholeWorkIssues(output);
   }
-  if (finalIssues.length) throw new ProviderRequestError({ code: "provider_returned_incomplete_document_artifact", category: "provider", scope: "request", action: "retry", message: `The managed ${kind.replaceAll("_", " ")} could not be completed after its bounded production review: ${finalIssues.map((issue) => `${issue.code} ${issue.path}`).join(", ")}.`, retryable: true, retryAfterMs: null, requestId: null, httpStatus: 502 });
+  if (finalIssues.length) throw managedProductionValidationFailure(kind, finalIssues, "review");
   if (kind === "slides") output = assemble(true);
-  finalIssues = documentArtifactValidationIssues(kind, output, { itemCount: input.production.scenes.length, contextGroupIds: expectedGroups });
+  finalIssues = kind === "slides"
+    ? wholeWorkIssues(output)
+    : documentArtifactValidationIssues(kind, output, { itemCount: input.production.scenes.length, contextGroupIds: expectedGroups });
+  if (finalIssues.length) throw managedProductionValidationFailure(kind, finalIssues, "assembly");
   const first = pages[0]!;
   return {
     output,
     model: first.model,
     responseId: first.responseId,
-    responseIds: attempts.map((page) => page.responseId),
+    responseIds: attempts.flatMap(responseIdsFor),
     latencyMs: attempts.reduce((sum, page) => sum + page.latencyMs, 0),
     usage: attempts.reduce((sum, page) => addUsage(sum, page.usage), { inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
     inputReceipt: {
       production_mode: "managed",
       team: input.production.team,
       page_count: pages.length,
-      whole_work_validation: { issues: finalIssues, repaired_pages: repairedPages },
+      planned_page_count: pageCount,
+      planned_item_count: input.production.scenes.length,
+      provider_page_size: pageSize,
+      planned_provider_request_count: input.production.providerCallCount ?? pageCount,
+      maximum_provider_request_count: input.production.maximumProviderCallCount ?? pageCount * 4,
+      provider_request_count: attempts.reduce((count, attempt) => count + 1 + (attempt.inputReceipt.validation.repair_attempted ? 1 : 0), 0),
+      ...(input.requestedSlideCount ? { requested_slide_count: input.requestedSlideCount } : {}),
+      ...(input.authoredSlideCount ? { authored_slide_count: input.authoredSlideCount } : {}),
+      ...(input.presentationStyle ? { presentation_style: input.presentationStyle } : {}),
+      ...(input.presentationFidelity ? { presentation_fidelity: input.presentationFidelity } : {}),
+      whole_work_validation: { issues: finalIssues, repaired_pages: repairedPages, source_coverage_validated: Boolean(presentationSources) },
       pages: pages.map((page, index) => ({ page: index + 1, response_id: page.responseId, item_count: page.output.items.length, ...page.inputReceipt })),
     },
   };

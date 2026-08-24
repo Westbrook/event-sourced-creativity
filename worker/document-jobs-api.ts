@@ -1,5 +1,5 @@
 import { handleEvents } from "./events-api";
-import { POLICY_VERSION, adoptLegacyCostReservation, costBudgetReservation, hasCapability, loadPrivateContent, readAccountBudgets, readCostBudgets, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, releaseCostReservationsForCorrelation, requireConsent, requireUser, settleInterruptedDocumentJobReservations, storePrivateContent, type PilotUser, type ProjectExecutionScope } from "./pilot-policy";
+import { POLICY_VERSION, adoptLegacyCostReservation, costBudgetReservation, hasCapability, loadPrivateContent, pilotExecutionAllowance, readAccountBudgets, readCostBudgets, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, releaseCostReservationsForCorrelation, requireConsent, requireUser, settleInterruptedDocumentJobReservations, storePrivateContent, type PilotUser, type ProjectExecutionScope } from "./pilot-policy";
 import { ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents, synchronizeProjectScope } from "./project-access";
 import { appendAuditEvent, ensureSchema, readCorrelatedEvents, readWorkspaceEvents, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { foldEvents } from "../src/model/events";
@@ -23,9 +23,12 @@ import { documentJobCompletionBindings } from "./document-job-sql";
 import { preflightGeneration } from "./generation-readiness";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter";
 import { estimatePlannerOperationMicrousd, generationBudgetGate } from "../src/model/generation-budget";
-import { buildManagedProductionPlan } from "../src/model/managed-production";
+import { buildManagedProductionPlan, MAX_MANAGED_PRESENTATION_SLIDES, type ManagedProductionPlan } from "../src/model/managed-production";
+import { buildPresentationSourceContract, inferPresentationSourceOutline } from "../src/model/presentation-source";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./document-job-reservations";
 import { PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow } from "./access-policy";
+import { authoritativeCreativeContext, ContextIntegrityError } from "./context-authority";
+import { managedPilotSourceClassificationValid } from "./media-api";
 
 type DocumentJobRow = {
   job_id: string; owner_id: string; stream_id: string; document_id: string; kind: DocumentJobKind; status: DocumentJobStatus;
@@ -59,10 +62,11 @@ function projectExecutionBindings(scope:ProjectExecutionScope,documentId:string)
 }
 
 const DOCUMENT_JOB_COLUMNS="job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at";
-function documentJobInsert(env:WorkerEnv,user:PilotUser,documentId:string,values:string,bindings:Array<string|number|null>){
+function documentJobInsert(env:WorkerEnv,user:PilotUser,documentId:string,values:string,bindings:Array<string|number|null>,idempotency?:{kind:DocumentJobKind;key:string}){
   const scope=user.projectExecution;
-  return env.DB.prepare(`INSERT INTO document_jobs (${DOCUMENT_JOB_COLUMNS}) ${scope?`SELECT ${values} WHERE ${activeProjectExecutionSql}`:`VALUES (${values})`}`)
-    .bind(...bindings,...(scope?projectExecutionBindings(scope,documentId):[]));
+  const conditions=[...(scope?[activeProjectExecutionSql]:[]),...(idempotency?[`NOT EXISTS(SELECT 1 FROM document_jobs existing WHERE existing.owner_id=? AND existing.stream_id=? AND existing.document_id=? AND existing.kind=? AND existing.status IN('queued','running','committing') AND COALESCE(json_extract(existing.request_json,'$.idempotencyKey'),'')=?)`]:[])];
+  return env.DB.prepare(`INSERT INTO document_jobs (${DOCUMENT_JOB_COLUMNS}) ${conditions.length?`SELECT ${values} WHERE ${conditions.join(" AND ")}`:`VALUES (${values})`}`)
+    .bind(...bindings,...(scope?projectExecutionBindings(scope,documentId):[]),...(idempotency?[user.userId,user.streamId,documentId,idempotency.kind,idempotency.key]:[]));
 }
 
 async function activeProjectExecution(env:WorkerEnv,user:PilotUser,documentId:string,jobId="",requireAnchor=true){
@@ -108,7 +112,7 @@ async function anchorProjectJobs(env:WorkerEnv,user:PilotUser,jobs:Array<{jobId:
 
 function safeScopedJob(row:DocumentJobRow,recoveryBlocker:DocumentJobRow|null=null){
   const job=serializeJob(row,recoveryBlocker,false);
-  const sensitive=new Set(["plannerInput","videoInputReceipt","artifactPlan","productionPlan","productionSceneReceipts","productionFrameReceipts","productionAnchor","providerStatusUrl","providerResponseUrl","providerCancelUrl","moderationPromptRef","intentRef","providerJobId"]);
+  const sensitive=new Set(["plannerInput","providerInput","provider_input","videoInputReceipt","artifactPlan","productionPlan","productionSceneReceipts","productionFrameReceipts","productionAnchor","providerStatusUrl","providerResponseUrl","providerCancelUrl","moderationPromptRef","intentRef","providerJobId","generationReceipt","generation_receipt","input_ref","inputRef","input_expires_at","source_snapshot_sha256","snapshot","document_snapshot","sourceAliasMap","sourceAliases","source_alias_map","source_aliases","settings","audience","tone"]);
   const redact=(value:unknown):unknown=>Array.isArray(value)?value.map(redact):value&&typeof value==="object"?Object.fromEntries(Object.entries(value).filter(([key])=>!sensitive.has(key)).map(([key,item])=>[key,redact(item)])):value;
   return{...job,result:job.result?redact(job.result):null,members:job.members.map((member)=>redact(member)),moderationPromptRef:null};
 }
@@ -129,8 +133,97 @@ function generationRequestIdentity(kind: DocumentJobKind, request: Record<string
   const documentRevision = generationRevisionFromRequest(request, documentId);
   const sourcePreviewId = typeof request.sourcePreviewId === "string" && request.sourcePreviewId ? request.sourcePreviewId : null;
   const promptTechnique = normalizePromptTechnique(request.promptTechnique); const promptFanId = typeof request.promptFanId === "string" && request.promptFanId ? request.promptFanId : null;
-  const requestKey = kind === "preview" || kind === "generate" ? String(request.requestKey || documentGenerationRequestKey(kind, documentRevision, sourcePreviewId, promptTechnique, promptFanId)) : kind === "prompt_fan" ? String(request.requestKey ?? "") : "";
+  const requestKey = kind === "preview" || kind === "generate" ? String(request.requestKey || documentGenerationRequestKey(kind, documentRevision, sourcePreviewId, promptTechnique, promptFanId)) : kind === "prompt_fan" || kind === "render_document" ? String(request.requestKey ?? "") : "";
   return { documentRevision, requestKey, sourcePreviewId, promptTechnique, promptFanId };
+}
+
+const LOCAL_PERSISTENCE_FAILURE=/\b(?:D1_ERROR|SQLITE_(?:CONSTRAINT|ERROR|BUSY|LOCKED|IOERR|CORRUPT|FULL)|SQLITE_CONSTRAINT_[A-Z_]+|UNIQUE constraint failed|FOREIGN KEY constraint failed|NOT NULL constraint failed|CHECK constraint failed|database is locked|Wrong number of parameter bindings|events\.event_id|event[_ -]store(?:\s+|[_ -])(?:write|persistence|collision|failure))/i;
+const SOURCE_FIDELITY_FAILURE=/\b(?:SOURCE_FIDELITY_VALIDATION_FAILED|source[_ -]fidelity[_ -]validation[_ -]failed|protected[_ -](?:quote|fact|claim|source)|(?:required|protected).{0,40}(?:quote|quotation|numerical fact|source attribution).{0,40}(?:missing|truncated|invalid|unresolved))/i;
+
+function classifyDocumentJobFailure(input:unknown,existing:ProviderFailureDetail|null=null,status:number|null=null):ProviderFailureDetail{
+  const raw=input instanceof Error?input.message:typeof input==="string"?input:"";
+  const evidence=[raw,existing?.code??"",existing?.message??""].filter(Boolean).join(" ");
+  if(LOCAL_PERSISTENCE_FAILURE.test(evidence))return{
+    code:"local_persistence_failed",category:"server",scope:"unknown",action:"contact_support",
+    message:`Forma could not save this generation because a local event or database write failed. No provider outage was reported.${raw?` Technical detail: ${raw}`:""}`,
+    retryable:false,retryAfterMs:null,requestId:null,httpStatus:null,
+  };
+  if(SOURCE_FIDELITY_FAILURE.test(evidence))return{
+    code:"source_fidelity_validation_failed",category:"provider",scope:"request",action:"edit_request",
+    message:`The generated presentation failed source-fidelity validation. Protected facts, quotations, slide coverage, or authorized source attribution must be corrected before another paid generation.${raw?` Technical detail: ${raw}`:""}`,
+    retryable:false,retryAfterMs:null,requestId:existing?.requestId??null,httpStatus:null,
+  };
+  return existing??classifyProviderFailure(input,status!==null?new Response(null,{status}):undefined);
+}
+
+function renderRequestIdempotencyKey(request:Record<string,unknown>,documentId:string){
+  const settings={
+    documentId,documentRevision:generationRevisionFromRequest(request,documentId),artifactKind:String(request.artifactKind??""),
+    productionMode:request.productionMode==="managed"?"managed":"manual",itemCount:request.itemCount??null,
+    requestedSlideCount:request.requestedSlideCount??null,audience:String(request.audience??"").trim(),tone:String(request.tone??"").trim(),locale:String(request.locale??"en"),
+    presentationStyle:request.presentationStyle??null,presentationFidelity:request.presentationFidelity??null,
+    videoSeconds:request.videoSeconds??null,videoSize:request.videoSize??null,videoAudioMode:request.videoAudioMode??null,
+  };
+  return `${String(request.requestKey??"").trim()||`render:${settings.artifactKind}:${settings.documentRevision}`}:${documentGenerationRevision(settings)}`;
+}
+
+async function sourceSnapshotSha256(snapshot:Record<string,unknown>){
+  const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(snapshot)));
+  return Array.from(new Uint8Array(digest),value=>value.toString(16).padStart(2,"0")).join("");
+}
+
+type GenerationReceipt=Record<string,unknown>&{
+  provider:string;model:string;reservation_microusd:number;settled_cost_microusd:number;
+  reservation_status:string;source_transmission_status:string;provider_request_status:string;
+};
+
+async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Record<string,unknown>,documentId:string,jobId:string,estimatedCostMicrousd:number,production:ManagedProductionPlan|null,contentScope:ProjectExecutionScope|undefined):Promise<GenerationReceipt>{
+  const snapshot=payload.snapshot&&typeof payload.snapshot==="object"&&!Array.isArray(payload.snapshot)?payload.snapshot as Record<string,unknown>:{};
+  const artifactKind=String(payload.artifactKind??"");
+  const isSlides=artifactKind==="slides";
+  const sourceOutline=isSlides?inferPresentationSourceOutline(snapshot):null;
+  const rawRequestedCount=payload.requestedSlideCount??payload.itemCount;
+  const requestedSlideCount=isSlides&&Number.isSafeInteger(Number(rawRequestedCount))&&Number(rawRequestedCount)>0?Number(rawRequestedCount):null;
+  const authoredSlideCount=isSlides?production?.authoredSlideCount??sourceOutline?.authoredSlideCount??null:null;
+  const predictedSlideCount=isSlides?production?.predictedSlideCount??requestedSlideCount??7:null;
+  const batchCount=production?.providerBatchCount??1;
+  const plannedProviderCallCount=production?.providerCallCount??1;
+  const maxRepairCallCount=production?.maxRepairCallCount??1;
+  const maximumProviderCallCount=production?.maximumProviderCallCount??2;
+  const capturedAt=new Date().toISOString();
+  const provider="openai";
+  const model=String(env.OPENAI_MODEL??"gpt-5.6-terra");
+  const sourceHash=await sourceSnapshotSha256(snapshot);
+  const requestSettings={
+    item_count:predictedSlideCount??(payload.itemCount===undefined?null:Number(payload.itemCount)),
+    requested_slide_count:requestedSlideCount,authored_slide_count:authoredSlideCount,predicted_slide_count:predictedSlideCount,
+    audience:String(payload.audience??"").trim()||"general",tone:String(payload.tone??"").trim()||"document-derived",
+    production_mode:payload.productionMode==="managed"?"managed":"manual",
+    presentation_style:typeof payload.presentationStyle==="string"?payload.presentationStyle:null,
+    presentation_fidelity:typeof payload.presentationFidelity==="string"?payload.presentationFidelity:null,
+    batch_count:batchCount,planned_provider_call_count:plannedProviderCallCount,max_repair_call_count:maxRepairCallCount,maximum_provider_call_count:maximumProviderCallCount,
+    reservation_microusd:estimatedCostMicrousd,
+  };
+  const privateReceipt={
+    schema_version:1,job_id:jobId,artifact_kind:artifactKind,document_id:documentId,captured_at:capturedAt,
+    request:requestSettings,document_snapshot:snapshot,
+    source_block_versions:Array.isArray(payload.sourceBlockVersions)?payload.sourceBlockVersions:[],
+    planner:{provider,model,request_status:"not_submitted"},
+    source:{scope:"authorized_document_context",status:"not_transmitted",snapshot_sha256:sourceHash},
+    accounting:{reservation_microusd:estimatedCostMicrousd,settled_cost_microusd:0,reservation_is_provider_hard_cap:false,reservation_is_application_hard_cap:isSlides,...(isSlides?{maximum_authorized_cost_microusd:estimatedCostMicrousd}:{})},
+  };
+  const stored=await storePrivateContent(env,user.userId,"document-artifact-input",JSON.stringify(privateReceipt),contentScope);
+  return{
+    schema_version:1,captured_at:capturedAt,artifact_kind:artifactKind,production_mode:requestSettings.production_mode,
+    provider,model,requested_slide_count:requestedSlideCount,authored_slide_count:authoredSlideCount,predicted_slide_count:predictedSlideCount,
+    slide_count_mismatch:isSlides&&authoredSlideCount!==null&&requestedSlideCount!==null&&authoredSlideCount!==requestedSlideCount,
+    batch_count:batchCount,minimum_provider_call_count:plannedProviderCallCount,planned_provider_call_count:plannedProviderCallCount,actual_provider_call_count:null,max_repair_call_count:maxRepairCallCount,maximum_provider_call_count:maximumProviderCallCount,
+    reservation_microusd:estimatedCostMicrousd,settled_cost_microusd:0,reservation_status:"estimated",
+    reservation_is_provider_hard_cap:false,reservation_is_application_hard_cap:isSlides,...(isSlides?{maximum_authorized_cost_microusd:estimatedCostMicrousd}:{}),repair_calls_may_incur_additional_usage:maxRepairCallCount>0,
+    source_transmission_scope:"authorized_document_context",source_transmission_status:"not_transmitted",provider_request_status:"not_submitted",
+    source_fact_count:Array.isArray(snapshot.facts)?snapshot.facts.length:0,source_snapshot_sha256:sourceHash,
+    input_ref:stored.contentId,input_expires_at:stored.expiresAt,settings:requestSettings,
+  };
 }
 
 function parentJobIdFromRequest(request: Record<string, unknown>) {
@@ -145,17 +238,20 @@ function errorDetailFromResult(result: Record<string, unknown>): DocumentJobErro
   const value = result.errorDetail;
   if (!value || typeof value !== "object") return null;
   const detail = value as Record<string, unknown>;
-  return {
+  const parsed={
     code: String(detail.code ?? "operation_failed"), category: String(detail.category ?? "unknown") as DocumentJobError["category"],
     scope: String(detail.scope ?? "unknown") as DocumentJobError["scope"], action: String(detail.action ?? "none") as DocumentJobError["action"],
     message: String(detail.message ?? "The operation failed."), retryable: Boolean(detail.retryable), retryAfterMs: detail.retryAfterMs === null || detail.retryAfterMs === undefined || !Number.isFinite(Number(detail.retryAfterMs)) ? null : Number(detail.retryAfterMs),
     requestId: detail.requestId ? String(detail.requestId) : null, httpStatus: detail.httpStatus === null || detail.httpStatus === undefined || !Number.isFinite(Number(detail.httpStatus)) ? null : Number(detail.httpStatus),
     riskCategories: Array.isArray(detail.riskCategories) ? detail.riskCategories.map(String) : [], contributingBlockIds: Array.isArray(detail.contributingBlockIds) ? detail.contributingBlockIds.map(String) : [], contributingReferenceIds: Array.isArray(detail.contributingReferenceIds) ? detail.contributingReferenceIds.map(String) : [], probe: detail.probe ? String(detail.probe) : null,
   };
+  return publicFailureDetail(classifyDocumentJobFailure(parsed.message,{...parsed,probe:parsed.probe??undefined}));
 }
 
 function failureProgressMessage(detail: ProviderFailureDetail | DocumentJobError | null) {
   if (!detail) return "The operation failed.";
+  if(detail.code==="local_persistence_failed")return "Forma could not save the generation because a local database or event-store write failed. This is not a provider interruption.";
+  if(detail.code==="source_fidelity_validation_failed")return "The generated presentation did not preserve its required source facts, quotations, or authorized slide evidence.";
   if (detail.category === "safety") return detail.riskCategories?.includes("audio-copyright") || /\baudio\b.*\bcopyright\b/i.test(detail.message)
     ? "The provider rejected generated audio. Start a silent video instead of recovering the rejected render."
     : "Safety checks stopped this generation. Change the request or reference before retrying.";
@@ -194,6 +290,7 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   const parsed = parseResult(row); const result = row.result_json ? parsed : null; const request = parseRequest(row); const identity = generationRequestIdentity(row.kind, request, row.document_id);
   const members = Array.isArray(parsed.members) ? parsed.members : [];
   const recovery = queueRecoveryPresentation(row, recoveryBlocker);
+  const errorDetail=errorDetailFromResult(parsed);
   const visibleResult = row.kind === "render_document" && request.artifactKind
     ? { ...(result ?? {}), artifactKind: String(parsed.artifactKind ?? request.artifactKind) }
     : result;
@@ -202,10 +299,10 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   return {
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
     requestedSequence: Number(row.requested_sequence), documentRevision: identity.documentRevision, requestKey: identity.requestKey, sourcePreviewId: identity.sourcePreviewId, productionMode:request.productionMode==="managed"?"managed" as const:"manual" as const, promptTechnique: identity.promptTechnique, promptFanId: identity.promptFanId,
-    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result: summarizedResult, error: row.error_message, errorDetail: errorDetailFromResult(parsed), moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
+    parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result: summarizedResult, error: row.error_message, errorDetail, moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
     requestedAt: row.requested_at, startedAt: row.started_at, completedAt: row.completed_at, notifiedAt: row.notified_at,
     leaseExpiresAt: row.lease_expires_at, updatedAt: row.updated_at,
-    stage: recovery?.stage ?? String(parsed.stage ?? row.status), progressMessage: recovery?.progressMessage ?? String(parsed.progressMessage ?? ""),
+    stage: recovery?.stage ?? String(parsed.stage ?? row.status), progressMessage: recovery?.progressMessage ?? (errorDetail?.code==="local_persistence_failed"||errorDetail?.code==="source_fidelity_validation_failed"?failureProgressMessage(errorDetail):String(parsed.progressMessage ?? "")),
   };
 }
 
@@ -238,6 +335,48 @@ async function reconcileParentForChild(env: WorkerEnv, row: DocumentJobRow) {
 
 async function readJob(env: WorkerEnv, ownerId: string, jobId: string) {
   return env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=?").bind(jobId, ownerId).first<DocumentJobRow>();
+}
+
+async function refreshGenerationReceipt(env:WorkerEnv,user:PilotUser,row:DocumentJobRow,body:Record<string,unknown>={},failure:ProviderFailureDetail|null=null){
+  if(row.kind!=="render_document")return row;
+  const latest=await readJob(env,user.userId,row.job_id);if(!latest)return row;
+  const checkpoint=parseResult(latest);
+  const previous=checkpoint.generationReceipt&&typeof checkpoint.generationReceipt==="object"&&!Array.isArray(checkpoint.generationReceipt)?checkpoint.generationReceipt as GenerationReceipt:null;
+  if(!previous)return latest;
+  const appended=Array.isArray(body.appended)?body.appended.filter((event):event is Record<string,unknown>=>Boolean(event&&typeof event==="object"&&!Array.isArray(event))):[];
+  const correlated=appended.length?appended:await readCorrelatedEvents(env,user.streamId,[latest.correlation_id]);
+  const payloads=correlated.map((event)=>({type:String(event.type??""),payload:event.payload&&typeof event.payload==="object"&&!Array.isArray(event.payload)?event.payload as Record<string,unknown>:{}}));
+  const completed=payloads.find((event)=>event.type==="DocumentRenderCompleted")?.payload;
+  const budget=payloads.find((event)=>event.type==="BudgetReserved")?.payload;
+  const usage=payloads.filter((event)=>event.type==="GenerationUsageRecorded").map((event)=>event.payload);
+  const reservationId=String(checkpoint.costReservationId??budget?.cost_reservation_id??usage[0]?.cost_reservation_id??"");
+  const reservation=reservationId?await costBudgetReservation(env,user.billingUserId??user.userId,reservationId):null;
+  const plannerResponses=Array.isArray(checkpoint.plannerResponseIds)?checkpoint.plannerResponseIds.filter(Boolean):[];
+  const plannerUsage=checkpoint.plannerUsage&&typeof checkpoint.plannerUsage==="object"?checkpoint.plannerUsage as Record<string,unknown>:{};
+  const plannerInput=checkpoint.plannerInput&&typeof checkpoint.plannerInput==="object"?checkpoint.plannerInput as Record<string,unknown>:{};
+  const plannerValidation=plannerInput.validation&&typeof plannerInput.validation==="object"?plannerInput.validation as Record<string,unknown>:{};
+  const recordedPlannerCalls=Math.max(plannerResponses.length,Math.max(0,Number(plannerInput.provider_request_count??plannerValidation.provider_call_count??0)));
+  const confirmedProviderRequest=Boolean(completed||checkpoint.plannerResponseId||plannerResponses.length||Number(plannerUsage.totalTokens??0)>0||checkpoint.providerJobId||usage.some((event)=>Boolean(event.planner_response_id)||Number(event.total_tokens??0)>0)||failure?.requestId);
+  const uncertainProviderRequest=!confirmedProviderRequest&&Boolean(failure&&(failure.category==="network"||failure.category==="rate_limit"||failure.category==="server"&&failure.scope==="provider"));
+  const provider=String(completed?.provider??body.provider??checkpoint.provider??previous.provider??"openai");
+  const model=String(completed?.model_id??checkpoint.providerModel??checkpoint.plannerModel??previous.model??env.OPENAI_MODEL??"gpt-5.6-terra");
+  const settledFromEvents=usage.reduce((total,event)=>total+Math.max(0,Number(event.cost_microusd??0)),0);
+  const receipt={
+    ...previous,provider,model,
+    ...(previous.artifact_kind==="slides"&&completed&&Number.isSafeInteger(Number(completed.item_count))?{actual_slide_count:Number(completed.item_count)}:{}),
+    actual_provider_call_count:recordedPlannerCalls||previous.actual_provider_call_count||null,
+    reservation_microusd:Number(reservation?.reserved_microusd??checkpoint.costReservationMicrousd??budget?.reserved_microusd??previous.reservation_microusd),
+    settled_cost_microusd:reservation?Number(reservation.used_microusd??0):settledFromEvents,
+    reservation_status:reservation?String(reservation.status):latest.status==="failed"&&settledFromEvents===0?"released":String(previous.reservation_status??"unknown"),
+    source_transmission_status:confirmedProviderRequest?"transmitted":uncertainProviderRequest?"unknown":"not_transmitted",
+    provider_request_status:completed?"completed":confirmedProviderRequest?"submitted":uncertainProviderRequest?"submission_unknown":"not_submitted",
+    ...(failure?{failure_code:failure.code,failure_category:failure.category,failure_stage:failure.code==="local_persistence_failed"?"local_persistence":failure.code==="source_fidelity_validation_failed"?"source_fidelity_validation":failure.scope==="provider"||failure.category==="network"||failure.category==="rate_limit"?"provider":"application"}:{}),
+  };
+  const updatedAt=new Date().toISOString();
+  const result={...checkpoint,generationReceipt:receipt};
+  const updated=await env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status=?")
+    .bind(JSON.stringify(result),updatedAt,latest.job_id,user.userId,user.streamId,latest.correlation_id,latest.status).run();
+  return Number(updated.meta.changes??0)===1?{...latest,result_json:JSON.stringify(result),updated_at:updatedAt}:await readJob(env,user.userId,row.job_id)??latest;
 }
 
 function rowIsStale(row: DocumentJobRow, now = Date.now()) {
@@ -349,7 +488,7 @@ function correlatedFailureDetail(events: Awaited<ReturnType<typeof readWorkspace
   const failureEvent = [...events].reverse().find((event) => event.type === "GenerationFailed" || event.type === "ExtractionFailed" || event.type === "DocumentRenderFailed");
   if (!failureEvent) return null;
   const payload = failureEvent.payload;
-  return {
+  const detail={
     code: String(payload.error_code ?? payload.error_class ?? "operation_failed"), category: String(payload.error_category ?? "unknown") as DocumentJobError["category"],
     scope: String(payload.error_scope ?? "unknown") as DocumentJobError["scope"], action: String(payload.error_action ?? "none") as DocumentJobError["action"],
     message: String(payload.error_message ?? "The operation failed."), retryable: Boolean(payload.retryable),
@@ -358,6 +497,7 @@ function correlatedFailureDetail(events: Awaited<ReturnType<typeof readWorkspace
     httpStatus: payload.http_status === null || payload.http_status === undefined || !Number.isFinite(Number(payload.http_status)) ? null : Number(payload.http_status),
     riskCategories: Array.isArray(payload.risk_categories) ? payload.risk_categories.map(String) : [], contributingBlockIds: Array.isArray(payload.contributing_block_ids) ? payload.contributing_block_ids.map(String) : [], contributingReferenceIds: Array.isArray(payload.contributing_reference_ids) ? payload.contributing_reference_ids.map(String) : [], probe: payload.preflight_probe ? String(payload.preflight_probe) : null,
   } satisfies DocumentJobError;
+  return publicFailureDetail(classifyDocumentJobFailure(detail.message,{...detail,probe:detail.probe??undefined}));
 }
 
 function correlatedModerationPromptRef(events: Awaited<ReturnType<typeof readWorkspaceEvents>>) {
@@ -395,7 +535,8 @@ function safeResult(body: Record<string, unknown>, correlatedEventIds: string[] 
 async function queueFollowupPreview(env:WorkerEnv,user:PilotUser,parent:DocumentJobRow,spec:Record<string,unknown>){
   if(spec.kind!=="preview"||String(spec.documentId??"")!==parent.document_id)return null;const payload=spec.payload&&typeof spec.payload==="object"?{...(spec.payload as Record<string,unknown>)}:{};if(!payload.directionRef||JSON.stringify(payload).length>MAX_PAYLOAD_BYTES)return null;
   if(!await activeProjectExecution(env,user,parent.document_id,parent.job_id))return null;
-  const requestedAt=new Date();const now=requestedAt.toISOString();const configuredRetention=Number(env.FORMA_RETENTION_DAYS??30);const retentionDays=Number.isFinite(configuredRetention)&&configuredRetention>0?configuredRetention:30;const expiresAt=new Date(requestedAt.getTime()+retentionDays*86_400_000).toISOString();const jobId=uuidV7();const sourceSurface=String(spec.sourceSurface??"chat").slice(0,80)||"chat";const requestedSequence=await streamHead(env,user.streamId);
+  const organizationRetention=user.projectExecution?await env.DB.prepare("SELECT transient_days FROM organization_retention_policies WHERE organization_id=?").bind(user.projectExecution.organizationId).first<{transient_days:number}>():null;
+  const requestedAt=new Date();const now=requestedAt.toISOString();const configuredRetention=Number(organizationRetention?.transient_days??env.FORMA_RETENTION_DAYS??30);const retentionDays=Number.isFinite(configuredRetention)&&configuredRetention>0?configuredRetention:30;const expiresAt=new Date(requestedAt.getTime()+retentionDays*86_400_000).toISOString();const jobId=uuidV7();const sourceSurface=String(spec.sourceSurface??"chat").slice(0,80)||"chat";const requestedSequence=await streamHead(env,user.streamId);
   payload.documentRevision=`chat-${parent.job_id}`;payload.promptTechnique=normalizePromptTechnique(payload.promptTechnique);payload.requestKey=documentGenerationRequestKey("preview",String(payload.documentRevision),null,String(payload.promptTechnique));
   const statements=[env.DB.prepare("UPDATE document_jobs SET status='failed',error_message='superseded_by_newer_chat_preview',completed_at=?,notified_at=?,updated_at=? WHERE owner_id=? AND stream_id=? AND document_id=? AND kind='preview' AND source_surface='chat' AND status='queued'").bind(now,now,now,user.userId,user.streamId,parent.document_id),
     documentJobInsert(env,user,parent.document_id,"?,?,?,?,?,'queued',?,?,?,?,NULL,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[jobId,user.userId,user.streamId,parent.document_id,"preview",sourceSurface,jobId,requestedSequence,JSON.stringify(payload),now,expiresAt,now])];
@@ -420,10 +561,12 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   const finished = operationFinished(existingEvents, row);
   if (finished) {
     const now = new Date().toISOString(); const status: DocumentJobStatus = finished.failed ? "failed" : "completed";let followup:DocumentJobRow|null=null;
-    if(!finished.failed&&row.kind==="chat"){const reasoned=finished.correlated.find((event)=>event.type==="AssistantReasoned"&&event.payload.preview_queued&&event.payload.preview_direction_ref);if(reasoned)followup=await queueFollowupPreview(env,user,row,{kind:"preview",documentId:row.document_id,sourceSurface:"chat",payload:{directionRef:reasoned.payload.preview_direction_ref,directionModel:reasoned.payload.model_id,sourceChatTurnId:reasoned.payload.turn_id}});}
+    if(!finished.failed&&row.kind==="chat"){const reasoned=finished.correlated.find((event)=>event.type==="AssistantReasoned"&&event.payload.preview_queued&&event.payload.preview_direction_ref);if(reasoned)followup=await queueFollowupPreview(env,user,row,{kind:"preview",documentId:row.document_id,sourceSurface:"chat",payload:{directionRef:reasoned.payload.preview_direction_ref,directionModel:reasoned.payload.model_id,sourceChatTurnId:reasoned.payload.turn_id,locale:parseRequest(row).locale??"en"}});}
     const failureDetail = finished.failed ? correlatedFailureDetail(finished.correlated) : null;const moderationPromptRef=finished.failed?correlatedModerationPromptRef(finished.correlated):null;
-    const result = { ...(finished.failed ? parseResult(row) : {}), ...safeResult({ head: await streamHead(env,user.streamId),previewQueued:Boolean(followup),followupJobId:followup?.job_id,moderationPromptRef }, finished.correlated.map((event) => event.eventId)), ...(failureDetail ? { errorDetail: failureDetail } : {}), stage: status, progressMessage: finished.failed ? failureProgressMessage(failureDetail) : "The operation finished." };
+    const checkpoint=parseResult(row);
+    const result = { ...(finished.failed ? checkpoint : {}), ...(checkpoint.generationReceipt?{generationReceipt:checkpoint.generationReceipt}:{}), ...safeResult({ head: await streamHead(env,user.streamId),previewQueued:Boolean(followup),followupJobId:followup?.job_id,moderationPromptRef }, finished.correlated.map((event) => event.eventId)), ...(failureDetail ? { errorDetail: failureDetail } : {}), stage: status, progressMessage: finished.failed ? failureProgressMessage(failureDetail) : "The operation finished." };
     await finishDocumentJob(env, row, status, result, failureDetail?.message ?? (finished.failed ? "operation_failed" : null), now, false);
+    await refreshGenerationReceipt(env,user,row,{appended:finished.correlated},failureDetail?{...failureDetail,probe:failureDetail.probe??undefined}:null);
     await reconcileParentForChild(env, row);
     return readJob(env, user.userId, jobId);
   }
@@ -501,31 +644,44 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     await updateJobProgress(env, row, "compiling", row.kind === "preview" || row.kind === "generate" ? "Compiling the checked document state for generation." : row.kind==="render_document"?"Compiling the document into the requested artifact.":"Processing the requested document change.");
     const response = await runWithHeartbeat(env, row,user, (control) => handleEvents(new Request("http://document-job.local/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: control.signal }), env, false, user, control));
     const body = await response.json() as Record<string, unknown>;let followup:DocumentJobRow|null=null;if(response.ok&&body.followupJob&&typeof body.followupJob==="object")followup=await queueFollowupPreview(env,user,row,body.followupJob as Record<string,unknown>);const completedAt = new Date().toISOString();
-    const detail = !response.ok
-      ? body.errorDetail && typeof body.errorDetail === "object" ? body.errorDetail as ProviderFailureDetail : applicationFailureDetail(String(body.error ?? "document_job_failed"), body.scope, response.status)
-      : null;
-    const durableCheckpoint = response.ok?{}:parseResult(row);
-    if (!response.ok) Object.assign(durableCheckpoint, parseResult(await readJob(env, user.userId, row.job_id) ?? row));
-    const terminalResult = { ...durableCheckpoint, ...safeResult({...body,followupJobId:followup?.job_id}), ...(detail ? { errorDetail: publicFailureDetail(detail) } : {}), stage: response.ok ? "completed" : "failed", progressMessage: response.ok ? "The operation finished." : failureProgressMessage(detail) };
+    const suppliedFailure=!response.ok?(body.errorDetail&&typeof body.errorDetail==="object"?body.errorDetail as ProviderFailureDetail:applicationFailureDetail(String(body.error??"document_job_failed"),body.scope,response.status)):null;
+    const detail=!response.ok?classifyDocumentJobFailure(String(body.error??suppliedFailure?.message??"document_job_failed"),suppliedFailure,response.status):null;
+    const latestCheckpoint=parseResult(await readJob(env,user.userId,row.job_id)??row);
+    const durableCheckpoint = {...(response.ok?{}:parseResult(row)),...(response.ok?{}:latestCheckpoint)};
+    const liveCheckpoint=latestCheckpoint;
+    const rawReceipt=liveCheckpoint.generationReceipt;
+    const livePlannerInput=liveCheckpoint.plannerInput&&typeof liveCheckpoint.plannerInput==="object"?liveCheckpoint.plannerInput as Record<string,unknown>:{};
+    const livePlannerValidation=livePlannerInput.validation&&typeof livePlannerInput.validation==="object"?livePlannerInput.validation as Record<string,unknown>:{};
+    const observedPlannerCalls=Math.max(Array.isArray(liveCheckpoint.plannerResponseIds)?new Set(liveCheckpoint.plannerResponseIds.map(String).filter(Boolean)).size:0,Math.max(0,Number(livePlannerInput.provider_request_count??livePlannerValidation.provider_call_count??0)));
+    const acceptedReceipt=rawReceipt&&typeof rawReceipt==="object"?{...rawReceipt as Record<string,unknown>,...(observedPlannerCalls?{actual_provider_call_count:observedPlannerCalls}:{})}:null;
+    const terminalResult = { ...durableCheckpoint, ...(acceptedReceipt?{generationReceipt:acceptedReceipt}:{}), ...safeResult({...body,followupJobId:followup?.job_id}), ...(detail ? { errorDetail: publicFailureDetail(detail) } : {}), stage: response.ok ? "completed" : "failed", progressMessage: response.ok ? "The operation finished." : failureProgressMessage(detail) };
     await finishDocumentJob(env, row, response.ok ? "completed" : "failed", terminalResult, response.ok ? null : detail?.message ?? String(body.error ?? "document_job_failed"), completedAt);
     if(!response.ok&&row.kind==="render_document"){
       const failed=await readJob(env,user.userId,row.job_id);
-      if(failed?.status==="failed")await settleInterruptedDocumentJobReservations(env,user,failed,{reason:"document_render_terminal_failure"});
+      if(failed?.status==="failed"){
+        if(detail?.code==="local_persistence_failed")await releaseInterruptedAttempt(env,user,failed,"document_render_local_persistence_failure");
+        else await settleInterruptedDocumentJobReservations(env,user,failed,{reason:"document_render_terminal_failure"});
+      }
     }else if(!response.ok&&user.projectExecution&&row.kind!=="extract_reference"){
       const failed=await readJob(env,user.userId,row.job_id);
       if(failed?.status==="failed")await releaseInterruptedAttempt(env,user,failed,"project_document_job_terminal_failure");
     }
+    await refreshGenerationReceipt(env,user,row,body,detail);
   } catch (error) {
-    const completedAt = new Date().toISOString(); const detail = classifyProviderFailure(error);
+    const completedAt = new Date().toISOString(); const detail = classifyDocumentJobFailure(error);
     const durableCheckpoint = parseResult(await readJob(env, user.userId, row.job_id) ?? row);
     await finishDocumentJob(env, row, "failed", { ...durableCheckpoint, errorDetail: publicFailureDetail(detail), stage: "failed", progressMessage: failureProgressMessage(detail) }, detail.message, completedAt);
     if(row.kind==="render_document"){
       const failed=await readJob(env,user.userId,row.job_id);
-      if(failed?.status==="failed")await settleInterruptedDocumentJobReservations(env,user,failed,{reason:"document_render_execution_interrupted"});
+      if(failed?.status==="failed"){
+        if(detail.code==="local_persistence_failed")await releaseInterruptedAttempt(env,user,failed,"document_render_local_persistence_failure");
+        else await settleInterruptedDocumentJobReservations(env,user,failed,{reason:"document_render_execution_interrupted"});
+      }
     }else if(user.projectExecution&&row.kind!=="extract_reference"){
       const failed=await readJob(env,user.userId,row.job_id);
       if(failed?.status==="failed")await releaseInterruptedAttempt(env,user,failed,"project_document_job_execution_interrupted");
     }
+    await refreshGenerationReceipt(env,user,row,{},detail);
   }
   const finishedRow = await readJob(env, user.userId, jobId);
   if(finishedRow){
@@ -667,6 +823,46 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     if(!personal)return Response.json({error:"job_not_found"},{status:404,headers:{"cache-control":"private, no-store"}});
   }
   if(project&&request.method!=="GET"){const consent=requireConsent(principal);if(consent)return consent;}
+  const privateReceiptPath=project&&request.method==="GET"?path.match(/^([^/]+)\/private-receipt$/):null;
+  if(project&&privateReceiptPath){
+    const jobId=decodeURIComponent(privateReceiptPath[1]!);
+    const row=await readJob(env,principal.userId,jobId);
+    const now=new Date().toISOString();
+    const notFound=()=>Response.json({error:"job_not_found"},{status:404,headers:{"cache-control":"private, no-store"}});
+    if(!row||row.kind!=="render_document"||row.owner_id!==principal.userId||row.stream_id!==user.streamId||(!["queued","running","committing"].includes(row.status)&&row.expires_at<=now))return notFound();
+    const receipt=parseResult(row).generationReceipt;
+    if(!receipt||typeof receipt!=="object"||Array.isArray(receipt))return notFound();
+    const reference=(receipt as Record<string,unknown>).input_ref;
+    if(typeof reference!=="string"||!reference.trim())return notFound();
+    const retained=await env.DB.prepare(`SELECT content.content_id,content.content FROM private_content content
+      JOIN project_resource_scopes receipt ON receipt.resource_kind='content' AND receipt.resource_id=content.content_id
+        AND receipt.visibility='actor_private' AND receipt.project_access_id=? AND receipt.organization_id=? AND receipt.project_id=?
+        AND receipt.owner_user_id=? AND receipt.actor_user_id=?
+      JOIN private_content_retention_scopes retention ON retention.content_id=content.content_id
+        AND retention.organization_id=receipt.organization_id AND retention.project_access_id=receipt.project_access_id
+        AND retention.project_id=receipt.project_id AND retention.actor_user_id=receipt.actor_user_id AND retention.classification='governed-evidence'
+      JOIN project_resource_scopes resource ON resource.resource_kind='job' AND resource.resource_id=?
+        AND resource.project_access_id=receipt.project_access_id AND resource.organization_id=receipt.organization_id
+        AND resource.project_id=receipt.project_id AND resource.owner_user_id=receipt.owner_user_id AND resource.actor_user_id=receipt.actor_user_id
+      JOIN events anchor ON anchor.event_id=resource.source_event_id AND anchor.stream_id=? AND anchor.actor='user:'||resource.actor_user_id
+        AND anchor.type='ProjectDocumentJobQueued' AND json_extract(anchor.payload,'$.job_id')=resource.resource_id
+        AND json_extract(anchor.payload,'$.organization_id')=resource.organization_id
+        AND json_extract(anchor.payload,'$.project_access_id')=resource.project_access_id
+        AND json_extract(anchor.payload,'$.actor_user_id')=resource.actor_user_id
+      JOIN project_context_sessions selection ON selection.context_id=? AND selection.principal_user_id=?
+        AND selection.organization_id=receipt.organization_id AND selection.project_access_id=receipt.project_access_id
+        AND selection.revoked_at IS NULL AND selection.expires_at>?
+      WHERE content.content_id=? AND content.owner_id=? AND content.kind='document-artifact-input'
+        AND content.redacted_at IS NULL AND content.expires_at>? AND json_valid(content.content)=1
+        AND json_extract(content.content,'$.job_id')=? AND json_extract(content.content,'$.document_id')=?
+        AND ${activeProjectExecutionSql}`)
+      .bind(project.projectAccessId,project.organizationId,project.projectId,project.ownerUserId,principal.userId,
+        jobId,user.streamId,project.contextId,principal.userId,now,reference,principal.userId,now,jobId,row.document_id,
+        ...projectExecutionBindings(user.projectExecution!,row.document_id)).first<{content_id:string;content:string}>();
+    if(!retained||retained.content_id!==reference)return notFound();
+    const safe=safeScopedJob(row);
+    return Response.json({job:{...safe,result:{...(safe.result??{}),generationReceipt:receipt}},content:{[reference]:retained.content}},{headers:{"cache-control":"private, no-store"}});
+  }
   if(project&&request.method==="GET"){
     const now=new Date().toISOString(),query=new URL(request.url).searchParams,activeOnly=query.get("scope")==="active",document=query.get("document")?.trim().slice(0,160)??"";
     const requestedId=path?decodeURIComponent(path):"";
@@ -675,7 +871,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         'sourcePreviewId',json_extract(job.request_json,'$.sourcePreviewId'),'promptTechnique',json_extract(job.request_json,'$.promptTechnique'),
         'promptFanId',json_extract(job.request_json,'$.promptFanId'),'parentJobId',json_extract(job.request_json,'$.parentJobId'),
         'fanKind',json_extract(job.request_json,'$.fanKind'),'artifactKind',json_extract(job.request_json,'$.artifactKind'),'productionMode',json_extract(job.request_json,'$.productionMode')) AS request_json,
-      json_remove(job.result_json,'$.plannerInput','$.videoInputReceipt','$.artifactPlan','$.productionPlan','$.productionSceneReceipts','$.productionFrameReceipts','$.productionAnchor','$.providerStatusUrl','$.providerResponseUrl','$.providerCancelUrl','$.moderationPromptRef','$.intentRef','$.providerJobId') AS result_json,
+      json_remove(job.result_json,'$.plannerInput','$.videoInputReceipt','$.artifactPlan','$.productionPlan','$.productionSceneReceipts','$.productionFrameReceipts','$.productionAnchor','$.providerStatusUrl','$.providerResponseUrl','$.providerCancelUrl','$.moderationPromptRef','$.intentRef','$.providerJobId','$.generationReceipt','$.generation_receipt','$.input_ref','$.inputRef','$.source_snapshot_sha256') AS result_json,
       job.error_message,job.attempt_count,job.requested_at,job.started_at,job.completed_at,job.lease_expires_at,job.notified_at,job.expires_at,job.updated_at
       FROM document_jobs job JOIN project_resource_scopes resource ON resource.resource_kind='job'
       AND resource.resource_id=job.job_id AND resource.actor_user_id=job.owner_id AND resource.owner_user_id=?
@@ -704,7 +900,10 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   // rewrite account history. Maintenance starts only after financial admission.
   if(request.method!=="GET"&&path.endsWith("/retry")&&!project){
     await reconcileFailedBudgetReservations(env,user);
-    await env.DB.prepare("UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND stream_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)").bind(now,user.userId,user.streamId,now).run();
+    await env.DB.prepare(`UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND stream_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)
+      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource JOIN organization_retention_policies policy ON policy.organization_id=resource.organization_id AND policy.legal_hold=1
+        WHERE (resource.resource_kind='job' AND resource.resource_id=document_jobs.job_id)
+          OR (resource.resource_kind='document' AND resource.resource_id=document_jobs.document_id AND resource.owner_user_id=document_jobs.owner_id))`).bind(now,user.userId,user.streamId,now).run();
   }
 
   if ((path.endsWith("/cancel") || path.endsWith("/force-fail")) && request.method === "POST") {
@@ -896,26 +1095,88 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   if(kind==="render_document"&&(payload.artifactKind==="storyboard"||payload.artifactKind==="video")&&payload.paidMediaConfirmed!==true)return Response.json({error:"paid_media_confirmation_required",message:"Confirm paid media generation before starting this render."},{status:428});
   if (kind !== "extract_reference" && !env.OPENAI_API_KEY) return Response.json({ error: "provider_not_configured" }, { status: 503 });
   if (JSON.stringify(payload).length > MAX_PAYLOAD_BYTES) return Response.json({ error: "document_job_payload_too_large" }, { status: 413 });
+  if(kind==="render_document"&&payload.artifactKind==="slides"){
+    const maximum=payload.productionMode==="managed"?MAX_MANAGED_PRESENTATION_SLIDES:12;
+    const supplied=[payload.itemCount,payload.requestedSlideCount].filter((value)=>value!==undefined);
+    if(supplied.some((value)=>typeof value!=="number"||!Number.isSafeInteger(value)||value<1||value>maximum))return Response.json({error:"presentation_slide_count_invalid",message:`${payload.productionMode==="managed"?"Managed":"Manual"} presentations support between 1 and ${maximum} slides.`,supported:{minimum:1,maximum}},{status:400});
+    if(supplied.length===2&&supplied[0]!==supplied[1])return Response.json({error:"presentation_slide_count_conflict",message:"The requested slide count must match the presentation item count."},{status:409});
+    if(payload.itemCount===undefined&&payload.requestedSlideCount!==undefined)payload.itemCount=payload.requestedSlideCount;
+  }
   if(project&&(!input.documentId||!await activeProjectExecution(env,user,String(input.documentId))))return Response.json({error:"document_not_found"},{status:404});
   const events=project?await readProjectSourceEvents(env,project):await readWorkspaceEvents(env,user.streamId);
   const projection=foldEvents(events,Number.POSITIVE_INFINITY,input.documentId,project?.projectId??"");
   const documentId = String(input.documentId ?? projection.documentId); const documentRecord = projection.documents.find((document) => document.id === documentId);
   if (!documentRecord) return Response.json({ error: "document_not_found" }, { status: 404 });
   if(project&&documentRecord.projectId!==project.projectId)return Response.json({error:"document_not_found"},{status:404});
+  if(kind==="preview"||kind==="generate"||kind==="prompt_fan"||kind==="render_document"){
+    try{
+      const trusted=authoritativeCreativeContext(events,{
+        documentId,
+        projectId:project?.projectId??documentRecord.projectId,
+        canvasId:typeof payload.canvasId==="string"?payload.canvasId:undefined,
+        contextSetId:typeof payload.contextSetId==="string"?payload.contextSetId:undefined,
+        snapshot:payload.snapshot&&typeof payload.snapshot==="object"&&!Array.isArray(payload.snapshot)?payload.snapshot as Record<string,unknown>:undefined,
+        sourceBlockVersions:Array.isArray(payload.sourceBlockVersions)?payload.sourceBlockVersions as Array<Record<string,unknown>>:undefined,
+      });
+      payload.snapshot=trusted.snapshot;
+      payload.sourceBlockVersions=trusted.sourceBlockVersions;
+      payload.documentRevision=trusted.documentRevision;
+      if(kind==="render_document"&&payload.artifactKind==="slides"){
+        const outline=inferPresentationSourceOutline(trusted.snapshot);
+        if(payload.productionMode==="managed"&&Number(outline.authoredSlideCount??0)>MAX_MANAGED_PRESENTATION_SLIDES)return Response.json({error:"presentation_slide_count_invalid",message:`The authored outline contains more than the ${MAX_MANAGED_PRESENTATION_SLIDES}-slide managed presentation limit.`,supported:{minimum:1,maximum:MAX_MANAGED_PRESENTATION_SLIDES}},{status:400});
+        payload.authoredSlideCount=outline.authoredSlideCount;
+      }
+    }catch(error){
+      if(error instanceof ContextIntegrityError)return Response.json({error:error.code,message:error.message},{status:error.code==="document_not_found"?404:409});
+      throw error;
+    }
+  }
   if(project&&kind==="extract_reference"){
     const blockId=String(payload.blockId??""),referenceId=String(payload.referenceId??"");
+    const governed=await env.DB.prepare(`SELECT 1 AS protected FROM project_context_package_members member
+      JOIN project_context_package_bindings binding ON binding.binding_id=member.binding_id
+        AND binding.organization_id=member.organization_id AND binding.status='active'
+      WHERE binding.project_access_id=? AND binding.organization_id=? AND member.target_block_id=? LIMIT 1`)
+      .bind(project.projectAccessId,project.organizationId,blockId).first();
+    if(governed)return Response.json({error:"organization_context_package_decision_immutable"},{status:403});
     const block=projection.libraryBlocks.find((candidate)=>candidate.id===blockId&&candidate.documentId===documentId&&candidate.type==="reference"&&String(candidate.properties.reference_id??"")===referenceId);
     const resources=block?await env.DB.prepare("SELECT COUNT(*) AS count FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND ((resource_kind='document' AND resource_id=?) OR (resource_kind='block' AND resource_id=?) OR (resource_kind='reference' AND resource_id=?))")
       .bind(project.projectAccessId,project.organizationId,project.ownerUserId,documentId,blockId,referenceId).first<{count:number}>():null;
     if(Number(resources?.count??0)!==3)return Response.json({error:"project_reference_not_authorized"},{status:403});
   }
+  let projectRetentionDays:number|null=null;
+  let projectContentScope=user.projectExecution;
+  let productionPlan:ManagedProductionPlan|null=null;
+  let estimatedGenerationCostMicrousd=0;
   if(kind==="preview"||kind==="generate"||kind==="prompt_fan"||kind==="render_document"||kind==="chat"||kind==="structure_adaptive"){
     const billingUserId=user.billingUserId??user.userId;
     const scopes=user.projectExecution?[{organizationId:user.projectExecution.organizationId,projectAccessId:user.projectExecution.projectAccessId,actorUserId:user.projectExecution.actorUserId}]:!user.fictional&&billingUserId===user.userId?await ownerDocumentBudgetScopes(env,user.userId,documentId,documentRecord.projectId):[];
     if(scopes.length>1)return Response.json({error:"ambiguous_project_budget_scope"},{status:409});
+    if(scopes[0]){
+      projectRetentionDays=(await env.DB.prepare("SELECT transient_days FROM organization_retention_policies WHERE organization_id=?").bind(scopes[0].organizationId).first<{transient_days:number}>())?.transient_days??null;
+      projectContentScope??={organizationId:scopes[0].organizationId,projectAccessId:scopes[0].projectAccessId,projectId:documentRecord.projectId,ownerUserId:user.userId,actorUserId:user.userId};
+    }
+    const pilotAllowance=await pilotExecutionAllowance(env,billingUserId,scopes[0]);
+    if(!pilotAllowance.allowed)return Response.json({error:"active_pilot_participation_required"},{status:403});
+    const trustedSnapshot=payload.snapshot&&typeof payload.snapshot==="object"&&!Array.isArray(payload.snapshot)?payload.snapshot as Record<string,unknown>:null;
+    const trustedFacts=Array.isArray(trustedSnapshot?.facts)?trustedSnapshot.facts.filter((fact):fact is Record<string,unknown>=>Boolean(fact&&typeof fact==="object"&&!Array.isArray(fact))).map((fact)=>({type:String(fact.type??""),properties:fact.properties&&typeof fact.properties==="object"&&!Array.isArray(fact.properties)?fact.properties as Record<string,unknown>:{}})):null;
+    const providerBlocks=kind==="structure_adaptive"&&payload.projectScope===true?projection.libraryBlocks:["preview","generate","prompt_fan","render_document"].includes(kind)&&trustedFacts?trustedFacts:projection.blocks;
+    if(pilotAllowance.pilot&&!await managedPilotSourceClassificationValid(env,project?.ownerUserId??user.userId,pilotAllowance.pilot.cohort_id,providerBlocks,projectContentScope?.projectAccessId)){
+      return Response.json({error:"pilot_non_sensitive_source_confirmation_required",message:"Every existing source in a controlled pilot must be re-uploaded with an explicit non-sensitive, licensed-material confirmation."},{status:428});
+    }
     const account=scopes[0]?await readAccountBudgets(env,billingUserId,scopes[0].organizationId):null;
-    const artifactKind=String(payload.artifactKind??"");const production=kind==="render_document"&&payload.productionMode==="managed"&&["short_story","scene","slides","storyboard","video"].includes(artifactKind)?buildManagedProductionPlan(artifactKind as "short_story"|"scene"|"slides"|"storyboard"|"video",payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{},artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??0)}):null;
+    const artifactKind=String(payload.artifactKind??"");const production=kind==="render_document"&&payload.productionMode==="managed"&&["short_story","scene","slides","storyboard","video"].includes(artifactKind)?buildManagedProductionPlan(artifactKind as "short_story"|"scene"|"slides"|"storyboard"|"video",payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{},artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??0),...(artifactKind==="slides"&&payload.requestedSlideCount!==undefined?{requestedSlideCount:Number(payload.requestedSlideCount)}:{})}):null;
     const estimatedCostMicrousd=production?production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:0):kind==="chat"||kind==="structure_adaptive"?estimatePlannerOperationMicrousd(env.OPENAI_MODEL??"gpt-5.6-terra",kind):kind==="prompt_fan"?4_000_000:kind==="render_document"&&artifactKind==="video"?normalizeVideoDurationSeconds(payload.videoSeconds)*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:kind==="render_document"&&artifactKind==="storyboard"?Math.max(1,Math.floor(Number(payload.itemCount??6)))*1_000_000+1_000_000:1_000_000;
+    productionPlan=production;estimatedGenerationCostMicrousd=estimatedCostMicrousd;
+    if(pilotAllowance.pilot){
+      const fixed=await env.DB.prepare(`SELECT scope,used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters
+        WHERE period=? AND ((scope='pilot_org' AND scope_id=?) OR (scope='pilot_user' AND scope_id=?))`)
+        .bind(`pilot:${pilotAllowance.pilot.cohort_id}`,pilotAllowance.pilot.cohort_id,billingUserId)
+        .all<{scope:string;used_microusd:number;reserved_microusd:number;hard_limit_microusd:number}>();
+      if(fixed.results.length!==2)return Response.json({error:"active_pilot_participation_required"},{status:403});
+      const exhausted=fixed.results.find((counter)=>Number(counter.used_microusd)+Number(counter.reserved_microusd)+estimatedCostMicrousd>Number(counter.hard_limit_microusd));
+      if(exhausted)return Response.json({error:"pilot_budget_hard_cap_reached",scope:exhausted.scope==="pilot_user"?"user":"workspace"},{status:429});
+    }
     const gate=generationBudgetGate(account?.costBudgets??await readCostBudgets(env,billingUserId),{projectedMicrousd:estimatedCostMicrousd,suppressedUntilCritical:payload.budgetWarningSuppressed===true,noticeAcknowledged:payload.budgetAcknowledged===true});
     if(gate.level==="blocked")return Response.json({error:"budget_hard_cap_reached",message:`This generation exceeds the remaining ${gate.scope==="workspace"?"organization":"personal"} monthly budget.`,scope:gate.scope,gate},{status:429});
     if(account){
@@ -925,10 +1186,18 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       if(tokenScope)return Response.json({error:"budget_hard_cap_reached",message:`This generation exceeds the remaining ${tokenScope==="workspace"?"organization":"personal"} monthly token budget.`,scope:tokenScope},{status:429});
     }
     if(gate.requiresAcknowledgement&&payload.budgetAcknowledged!==true)return Response.json({error:"generation_budget_acknowledgement_required",message:`Review your ${Math.round(gate.projectedUtilization*100)}% monthly budget usage before starting this generation.`,gate},{status:428});
+    if(kind==="render_document"&&artifactKind==="slides"){
+      const authorizedSources=new Set(buildPresentationSourceContract(payload.snapshot as Record<string,unknown>).sources.filter((source)=>source.sourceKind==="block").map((source)=>source.sourceId));
+      if(!authorizedSources.size)return Response.json({error:"presentation_authorized_source_required",message:"Add at least one active, authorized source decision before generating a presentation. Exclusions and disabled decisions cannot become slide content."},{status:422});
+      if(production&&production.scenes.some((scene)=>!scene.sourceBlockIds.some((sourceId)=>authorizedSources.has(sourceId))))return Response.json({error:"presentation_authorized_source_required",message:"Every planned slide requires an active, authorized positive source before any budget is reserved or a model is contacted."},{status:422});
+    }
   }
   if(!project){
     await reconcileFailedBudgetReservations(env,user);
-    await env.DB.prepare("UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND stream_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)").bind(now,user.userId,user.streamId,now).run();
+    await env.DB.prepare(`UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND stream_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)
+      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource JOIN organization_retention_policies policy ON policy.organization_id=resource.organization_id AND policy.legal_hold=1
+        WHERE (resource.resource_kind='job' AND resource.resource_id=document_jobs.job_id)
+          OR (resource.resource_kind='document' AND resource.resource_id=document_jobs.document_id AND resource.owner_user_id=document_jobs.owner_id))`).bind(now,user.userId,user.streamId,now).run();
   }
 
   if(kind==="preview"||kind==="generate"||kind==="prompt_fan"){
@@ -949,7 +1218,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       .bind(...(project?[project.projectAccessId,project.organizationId]:[]),user.userId,user.streamId,documentId).all<DocumentJobRow>()).results;
     const duplicate = activeParents.find((candidate) => String(parseRequest(candidate).requestKey ?? "") === parentRequestKey);
     if(duplicate){const retained=await reconcilePromptFanParent(env,user.userId,duplicate.job_id)??duplicate;return Response.json({job:project?safeScopedJob(retained):serializeJob(retained),reused:true},{status:202});}
-    const requestedAt = new Date(); const requestedAtIso = requestedAt.toISOString(); const configuredRetention = Number(env.FORMA_RETENTION_DAYS ?? 30); const retentionDays = Number.isFinite(configuredRetention) && configuredRetention > 0 ? configuredRetention : 30; const expiresAt = new Date(requestedAt.getTime() + retentionDays * 86_400_000).toISOString();
+    const requestedAt = new Date(); const requestedAtIso = requestedAt.toISOString(); const configuredRetention = Number(projectRetentionDays ?? env.FORMA_RETENTION_DAYS ?? 30); const retentionDays = Number.isFinite(configuredRetention) && configuredRetention > 0 ? configuredRetention : 30; const expiresAt = new Date(requestedAt.getTime() + retentionDays * 86_400_000).toISOString();
     const sourceSurface = String(input.sourceSurface ?? payload.sourceSurface ?? "studio").slice(0, 80) || "studio"; const requestedSequence = await streamHead(env, user.streamId); const parentId = uuidV7(); const childIds = PROMPT_TECHNIQUES.map(() => uuidV7());
     const productionMode=payload.productionMode==="managed"?"managed":"manual";
     const shared = { ...payload, productionMode, fanKind: undefined, requestKey: undefined, promptTechnique: undefined, promptFanId, documentRevision, sourcePreviewId };
@@ -973,7 +1242,12 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     if(kind==="preview"||kind==="generate"){
       const identity=generationRequestIdentity(kind,payload,documentId);payload.documentRevision=identity.documentRevision;payload.requestKey=identity.requestKey;
       active=candidates.find((candidate)=>generationRequestIdentity(kind,parseRequest(candidate),documentId).requestKey===identity.requestKey)??null;
-    }else if(kind==="render_document")active=candidates.find((candidate)=>String(parseRequest(candidate).requestKey??"")===String(payload.requestKey??""))??null;
+    }else if(kind==="render_document"){
+      const providedRequestKey=String(payload.requestKey??"").trim();
+      payload.requestKey=providedRequestKey||`render:${String(payload.artifactKind??"unknown")}:${payload.productionMode==="managed"?"managed":"manual"}:${generationRevisionFromRequest(payload,documentId)}`;
+      const idempotencyKey=renderRequestIdempotencyKey(payload,documentId);payload.idempotencyKey=idempotencyKey;
+      active=candidates.find((candidate)=>renderRequestIdempotencyKey(parseRequest(candidate),documentId)===idempotencyKey)??null;
+    }
     else active=candidates[0]??null;
   }
   if(active)return Response.json({job:project?safeScopedJob(active):serializeJob(active),reused:true},{status:202});
@@ -982,16 +1256,27 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const field = kind === "chat" ? "message" : "prompt"; const text = String(payload[field] ?? "").trim();
     if (!text) return Response.json({ error: kind === "chat" ? "chat_message_required" : "adaptive_intent_required" }, { status: 400 });
     if (text.length > (kind === "chat" ? 4000 : 2000)) return Response.json({ error: kind === "chat" ? "chat_message_too_long" : "adaptive_intent_too_long" }, { status: 400 });
-    const stored = await storePrivateContent(env, user.userId, kind === "chat" ? "chat-user" : "adaptive-intent", text, user.projectExecution); payload[field] = undefined; payload.jobInputRef = stored.contentId;
+    const stored = await storePrivateContent(env, user.userId, kind === "chat" ? "chat-user" : "adaptive-intent", text, projectContentScope); payload[field] = undefined; payload.jobInputRef = stored.contentId;
   }
 
-  const jobId = uuidV7(); const requestedAt = new Date(); const configuredRetention = Number(env.FORMA_RETENTION_DAYS ?? 30); const retentionDays = Number.isFinite(configuredRetention) && configuredRetention > 0 ? configuredRetention : 30; const expiresAt = new Date(requestedAt.getTime() + retentionDays * 86_400_000).toISOString();
+  const jobId = uuidV7(); const requestedAt = new Date(); const configuredRetention = Number(projectRetentionDays ?? env.FORMA_RETENTION_DAYS ?? 30); const retentionDays = Number.isFinite(configuredRetention) && configuredRetention > 0 ? configuredRetention : 30; const expiresAt = new Date(requestedAt.getTime() + retentionDays * 86_400_000).toISOString();
   const sourceSurface = String(input.sourceSurface ?? payload.sourceSurface ?? "studio").slice(0, 80) || "studio"; const requestedSequence = await streamHead(env, user.streamId);
   const createdAt=requestedAt.toISOString();
-  const inserted=documentJobInsert(env,user,documentId,"?,?,?,?,?,'queued',?,?,?,?,NULL,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[jobId,user.userId,user.streamId,documentId,kind,sourceSurface,jobId,requestedSequence,JSON.stringify(payload),createdAt,expiresAt,createdAt]);
+  const receipt=kind==="render_document"?await acceptedGenerationReceipt(env,user,payload,documentId,jobId,estimatedGenerationCostMicrousd,productionPlan,projectContentScope):null;
+  const initialResult=receipt?{artifactKind:String(payload.artifactKind??""),generationReceipt:receipt,stage:"queued",progressMessage:"The accepted generation and its private source receipt are safely recorded."}:null;
+  const inserted=documentJobInsert(env,user,documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[jobId,user.userId,user.streamId,documentId,kind,sourceSurface,jobId,requestedSequence,JSON.stringify(payload),initialResult?JSON.stringify(initialResult):null,createdAt,expiresAt,createdAt],kind==="render_document"?{kind,key:String(payload.idempotencyKey??"")}:undefined);
   const resource=projectJobResource(env,user,jobId,documentId,createdAt);
-  if(resource){const results=await env.DB.batch([inserted,resource]);if(results.some((result)=>Number(result.meta.changes??0)!==1))return Response.json({error:"project_access_revoked"},{status:403});}
-  else await inserted.run();
+  let created=false;
+  if(resource){const results=await env.DB.batch([inserted,resource]);created=results.every((result)=>Number(result.meta.changes??0)===1);if(!created&&Number(results[0]?.meta.changes??0)!==0)return Response.json({error:"project_access_revoked"},{status:403});}
+  else created=Number((await inserted.run()).meta.changes??0)===1;
+  if(!created){
+    if(kind==="render_document"){
+      const duplicate=await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND document_id=? AND kind='render_document' AND status IN('queued','running','committing') AND json_extract(request_json,'$.idempotencyKey')=? ORDER BY requested_at DESC LIMIT 1`)
+        .bind(user.userId,user.streamId,documentId,String(payload.idempotencyKey??"")).first<DocumentJobRow>();
+      if(duplicate&&(!project||await activeProjectExecution(env,user,duplicate.document_id,duplicate.job_id)))return Response.json({job:project?safeScopedJob(duplicate):serializeJob(duplicate),reused:true},{status:202});
+    }
+    return Response.json({error:project?"project_access_revoked":"document_job_admission_conflict"},{status:project?403:409});
+  }
   if(resource)await anchorProjectJobs(env,user,[{jobId,kind,documentId}]);
   const job = await readJob(env, user.userId, jobId);
   context?.waitUntil(driveDocumentQueue(env, user));

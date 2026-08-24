@@ -3,7 +3,7 @@ import { icon } from "../icons";
 import { FormaPresentationalElement } from "../presentational-element";
 import { defineFormaElements, emitFormaEvent, nextFormaId, type FormaOption } from "./contracts";
 
-export type FormaNavigationDestination = FormaOption & { href: string };
+export type FormaNavigationDestination = FormaOption & { href: string; icon?: string; badge?: number; badgeLabel?: string };
 
 /**
  * @tag forma-ui-segmented-control
@@ -182,7 +182,7 @@ export class FormaUiAudienceNavigation extends FormaPresentationalElement {
     if (current && !destinations.includes(current)) destinations[destinations.length - 1] = current;
     const currentIndex = destinations.findIndex((destination) => destination.value === this.value);
     const label = this.label || this.i18n.t("navigation.scopedNavigation", "Workspace navigation");
-    return html`<nav class="ui-audience-navigation" aria-label=${label}><ul class="ui-audience-navigation-list">${destinations.map((destination, index) => html`<li><a href=${destination.href} title=${destination.description || nothing} aria-current=${index === currentIndex ? "page" : nothing} @click=${(event: MouseEvent) => this.#activate(event, destination)}>${destination.label}</a></li>`)}</ul></nav>`;
+    return html`<nav class="ui-audience-navigation" aria-label=${label}><ul class="ui-audience-navigation-list">${destinations.map((destination, index) => html`<li><a href=${destination.href} title=${destination.description || nothing} aria-label=${destination.badge && destination.badgeLabel ? destination.badgeLabel : nothing} aria-current=${index === currentIndex ? "page" : nothing} @click=${(event: MouseEvent) => this.#activate(event, destination)}>${destination.icon ? html`<span class="forma-primary-nav-icon" aria-hidden="true">${icon(destination.icon)}</span>` : nothing}<span class="forma-primary-nav-label">${destination.label}</span>${destination.badge ? html`<span class="forma-primary-nav-badge" aria-hidden="true">${destination.badge > 99 ? "99+" : destination.badge}</span>` : nothing}</a></li>`)}</ul></nav>`;
   }
 }
 

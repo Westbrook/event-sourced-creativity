@@ -87,20 +87,20 @@ by default and their exact technical receipt only on request.
 
 ### Collaboration must never overstate its boundary
 
-Current Canvas presence is browser-local, and creative streams are account-owned.
-Membership receipts can describe intended future access, but they do not send
-invitations or grant another signed-in account access. Interfaces must state
-this plainly until project-scoped authorization and a cross-account stream exist.
+Organizations, accepted invitations, server-owned project memberships, explicit
+project roles, project-scoped resource sidecars, and cross-account document and
+Canvas editing are implemented. Authorized collaborators synchronize durable
+changes through adaptive authenticated polling; role changes or revocation stop
+future access. Project outputs are collaborative while chat and queued jobs
+remain private to the initiating actor.
 
-A production collaboration milestone requires:
-
-1. A project membership and role authority owned by the server.
-2. Identity-preserving migration from per-user streams to project-scoped
-   sequencing or a dedicated durable project coordinator.
-3. Authenticated cross-session change distribution, ideally WebSocket-backed.
-4. Bounded, expiring, consent-aware presence separate from authored history.
-5. Optimistic conflict recovery that never drops or silently reorders edits.
-6. Multi-account authorization, revocation, and convergence integration tests.
+Creative event streams remain owner-backed, with identity-preserving
+project-scoped authorization layered over that history. Presence and cursors
+are still browser-local: neither cross-account live presence nor a WebSocket
+transport exists, and user-facing copy must never imply otherwise. Remaining
+collaboration milestones are consent-aware ephemeral presence, finer-grained
+project sequencing, explicit output review workflows, and stronger convergence
+coverage under simultaneous editing.
 
 ### Provider boundaries
 

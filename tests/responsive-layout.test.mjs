@@ -103,7 +103,7 @@ test("preserves usable controls when document navigation and editors get narrow"
   assert.match(design, /@media \(max-width: 760px\)[\s\S]*?\.composer \.generation-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(navigation, /class="studio-mode-action-label"/);
   assert.match(navigation, /aria-label="Add reusable context"/);
-  assert.match(navigation, /aria-label=\$\{this\.#focused \? "Exit focused document view" : "Enter focused document view"\}/);
+  assert.match(navigation, /aria-label=\$\{this\.#focused \? (?:this\.i18n\.system\()?"Exit focused document view"\)? : (?:this\.i18n\.system\()?"Enter focused document view"\)?\}/);
   assert.match(navigation, /class="studio-mode-links"/);
   assert.match(navigation, /#revealActiveMode\(\)/);
   assert.match(navigation, /a\[aria-current="page"\]/);
@@ -198,11 +198,12 @@ test("keeps the account menu inside the dynamic viewport with accessible interna
 });
 
 test("keeps document sharing reachable through the auto-dismissing account menu on narrow screens",async()=>{
-  const [shell,design]=await Promise.all([read("../src/components/forma-shell.ts"),read("../src/design-system.css")]);
+  const [shell,design,responsive]=await Promise.all([read("../src/components/forma-shell.ts"),read("../src/design-system.css"),read("../src/responsive-foundation.css")]);
   assert.match(shell,/isCreative&&this\.store\.canManageProjectShares\(\)&&isDocumentViewRoute\(path\)&&projection\.documentId\?html`<button type="button" class="button secondary compact account-share-action"/);
   assert.match(shell,/@click=\$\{\(\)=>this\.#openShare\(true\)\}/);
   assert.match(shell,/#openShare\(closeAccount=false\)[\s\S]*accountOpen:false[\s\S]*shareOpen:true/);
-  assert.match(design,/@media \(max-width: 480px\)[\s\S]*?\.command-trigger\s*\{\s*display:\s*none/);
+  assert.match(shell,/class="command-trigger forma-global-search"/);
+  assert.match(responsive,/\.topbar \.command-trigger\.forma-global-search\s*\{[^}]*display:\s*inline-flex/);
   assert.doesNotMatch(design,/\.account-share-action\s*\{[^}]*display:\s*none/);
 });
 
@@ -235,7 +236,7 @@ test("keeps the fixed document composer task-focused while disclosing generation
   assert.match(workspace,/class="composer-command"/);
   assert.match(workspace,/forma-generation-actions source="document"[\s\S]*?compact/);
   assert.match(actions,/generation-details-trigger/);
-  assert.match(actions,/Image options, \$\{ratio\} frame, \$\{statusLabel\}/);
+  assert.match(actions,/Image options, (?:\$\{ratio\}|\{ratio\}) frame, (?:\$\{statusLabel\}|\{statusLabel\})/);
   assert.match(actions,/this\.compact&&this\.#detailsOpen\?html`<dialog class="modal generation-details-dialog"/);
   assert.match(actions,/Output frame/);assert.match(actions,/Generation choices/);assert.match(actions,/Readiness and recovery/);assert.match(actions,/Compare prompt fans/);
   assert.match(styles,/\.modal-card\.generation-details-card\s*\{[^}]*grid-template-rows:\s*auto minmax\(0,1fr\) auto;[^}]*overflow:\s*hidden/);

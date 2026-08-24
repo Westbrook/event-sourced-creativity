@@ -39,7 +39,7 @@ explicit return to the personal Creator Workspace. Viewer-only project and
 conversation states describe their actual read access without showing an
 impossible creation or chat action. The shared Canvas board list, navigation,
 privacy guidance, role announcements, and failure states are localized in
-English, French, and Arabic, including right-to-left layouts and bidirectional
+English, French, Arabic, and Japanese, including right-to-left layouts and bidirectional
 user-authored project names.
 
 Shared generation reports that both the individual and their organization can
@@ -189,7 +189,7 @@ a restrained underline, never a fixed-dark administrative pill. Every link
 retains native modifier-click/new-tab behavior, at least 44-by-44-pixel hit
 areas, unclipped focus outlines, local horizontal scrolling, and forced-colors
 support. The component reveals its current link inside its own scroller for
-English, French, and right-to-left Arabic without moving the page viewport.
+English, French, Japanese, and right-to-left Arabic without moving the page viewport.
 Document and Canvas focus modes hide the entire rail.
 
 `<forma-area-navigation>` remains a compatibility adapter around this same
@@ -253,7 +253,7 @@ and account-partitioned offline work.
   its invoking control. Compact floating panels should use `scrollbar-gutter:
   auto` instead of reserving a permanently empty, one-sided gutter; use stable
   gutters only when preserving a changing scrollport's layout is necessary.
-- Translate human-readable labels into English, French, and Arabic; preserve
+- Translate human-readable labels into English, French, Arabic, and Japanese; preserve
   RTL, 320px layouts, 200% text scaling, forced colors, and reduced motion.
 - Never translate routes, grants, events, identifiers, destination values,
   ownership scopes, or CSS custom properties.

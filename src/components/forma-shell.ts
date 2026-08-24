@@ -3,11 +3,13 @@ import { FormaElement, icon, downloadJson, copyTextToClipboard } from "./forma-e
 import { loadRouteComponent } from "../route-loader";
 import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isDocumentViewRoute, withDocumentInRoute } from "../model/routes";
 import { APPLICATIONS, applicationAccessible, applicationDefinition, applicationIdFromRoute, authorizedApplicationHome, creativeCreationHref, navigationItemAccessible, navigationItemActive } from "../platform/applications";
+import { formaActivityAttention, scopedFormaActivity } from "../model/activity";
 import { canvasFocusFromRoute } from "../canvas/routes";
 import { ensureModalDialog } from "./modal-dialog";
 import { beginRoutePopulation, completeRoutePopulation, recordPopulationSource } from "../performance";
 import { FORMA_SUPPORTED_LOCALES, formaLocaleFamily, setFormaLocale } from "./design-system/localization";
 import "./design-system/navigation";
+import "./icons-navigation";
 import "./forma-attention-observer";
 
 export class FormaShell extends FormaElement {
@@ -23,6 +25,27 @@ export class FormaShell extends FormaElement {
   #routeAnnouncement = "";
   #focusNextRoute = false;
   #localeRequest = 0;
+  #layoutObserver?: ResizeObserver;
+  #layoutFrame = 0;
+  #layoutPosture: "compact" | "rail" | "expanded" = "expanded";
+  #shortHeight = false;
+  #syncLayout = () => {
+    cancelAnimationFrame(this.#layoutFrame);
+    this.#layoutFrame = requestAnimationFrame(() => {
+      const inline = this.getBoundingClientRect().width || document.documentElement.clientWidth;
+      const viewport = window.visualViewport;
+      const block = document.documentElement.clientHeight || window.innerHeight;
+      const short = block <= 600;
+      const posture = short && inline > block ? "rail" : inline < 768 ? "compact" : inline < 1200 ? "rail" : "expanded";
+      const keyboardOffset = viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0;
+      this.style.setProperty("--forma-keyboard-offset", `${Math.round(keyboardOffset)}px`);
+      if (posture !== this.#layoutPosture || short !== this.#shortHeight) {
+        this.#layoutPosture = posture;
+        this.#shortHeight = short;
+        this.requestUpdate();
+      }
+    });
+  };
   #shareScope(){const session=this.store.session.get(),context=session?.projectContext,projection=this.store.projection.get();return[session?.user.userId??"",context?.organizationId??"personal",context?.projectAccessId??"personal",projection.projectId,projection.documentId,session?.permissionEpoch??""].join("\u0000");}
   #clearShareSecret=()=>{this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;if(this.store.ui.shareOpen)this.store.patchUi({shareOpen:false});};
   #openShare(closeAccount=false){if(!this.store.canManageProjectShares())return;this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;void this.store.loadShares();this.store.patchUi({...closeAccount?{accountOpen:false}:{},shareOpen:true});}
@@ -83,6 +106,10 @@ export class FormaShell extends FormaElement {
 
   override connectedCallback() {
     super.connectedCallback();window.addEventListener("keydown",this.#keydown);window.addEventListener("popstate",this.#pop);window.addEventListener("forma-route-changed",this.#routeChanged);window.addEventListener("forma-performance",this.#populated);window.addEventListener("forma-authorization-changed",this.#clearShareSecret);
+    window.visualViewport?.addEventListener("resize", this.#syncLayout);
+    window.visualViewport?.addEventListener("scroll", this.#syncLayout);
+    if (typeof ResizeObserver !== "undefined") { this.#layoutObserver = new ResizeObserver(this.#syncLayout); this.#layoutObserver.observe(this); }
+    this.#syncLayout();
     this.#dialogObserver = new MutationObserver((records) => {
       const dialogChanged = records.some((record) => record.type === "attributes" || [...record.addedNodes].some((node) => node instanceof Element && (node.matches("dialog") || node.querySelector("dialog"))));
       if (dialogChanged) queueMicrotask(() => this.#raiseToast());
@@ -93,7 +120,7 @@ export class FormaShell extends FormaElement {
     if(shared){beginRoutePopulation(location.pathname);recordPopulationSource("miss",0);}
     else if(!this.store.events.get().length)void this.store.load();
   }
-  override disconnectedCallback(){this.#dialogObserver?.disconnect();window.removeEventListener("keydown",this.#keydown);window.removeEventListener("popstate",this.#pop);window.removeEventListener("forma-route-changed",this.#routeChanged);window.removeEventListener("forma-performance",this.#populated);window.removeEventListener("forma-authorization-changed",this.#clearShareSecret);this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;super.disconnectedCallback();}
+  override disconnectedCallback(){this.#dialogObserver?.disconnect();this.#layoutObserver?.disconnect();cancelAnimationFrame(this.#layoutFrame);window.visualViewport?.removeEventListener("resize",this.#syncLayout);window.visualViewport?.removeEventListener("scroll",this.#syncLayout);window.removeEventListener("keydown",this.#keydown);window.removeEventListener("popstate",this.#pop);window.removeEventListener("forma-route-changed",this.#routeChanged);window.removeEventListener("forma-performance",this.#populated);window.removeEventListener("forma-authorization-changed",this.#clearShareSecret);this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;super.disconnectedCallback();}
 
   #raiseToast() {
     const toast = this.querySelector<HTMLElement>(".toast[popover]");
@@ -192,7 +219,7 @@ export class FormaShell extends FormaElement {
         ${this.#freshShareUrl&&this.#freshShareScope===this.#shareScope()?html`<div class="fresh-share"><b aria-live="polite">${this.#freshShareCopied===true?this.i18n.t("share.copied", "Copied"):this.#freshShareCopied===false?this.i18n.t("clipboard.failure", "Could not copy. Select the text and copy it manually."):this.i18n.t("share.link", "Private sharing link")}</b><input readonly dir="ltr" aria-label=${this.i18n.t("share.link", "Private sharing link")} .value=${this.#freshShareUrl}><small>${this.i18n.t("share.once", "This private link is shown once and expires automatically.")}</small></div>` : nothing}
         ${this.store.shares.get().some((share)=>share.resourceId===p.documentId) ? html`<div class="share-list"><h3>${this.i18n.t("share.links", "Links to this document")}</h3>${this.store.shares.get().filter((share)=>share.resourceId===p.documentId).slice(0,4).map((share)=>html`<div><span><b>${share.active ? this.i18n.t("share.active", "Active") : this.i18n.t("share.closed", "Closed")}</b><small>${this.i18n.t("share.expires", "Expires {date}", { date: this.i18n.date(new Date(share.expiresAt), { dateStyle: "medium", timeStyle: "short" }) })}</small></span>${share.active?html`<button @click=${async()=>{this.#freshShareUrl="";this.#freshShareScope="";this.#freshShareCopied=null;this.requestUpdate();await this.store.revokeShare(share.shareId);}}>${this.i18n.t("share.revoke", "Revoke")}</button>`:nothing}</div>`)}</div>` : nothing}
         <div class="choice-grid">
-          ${downloads.map((item, i) => html`<button class="choice-card" @click=${async()=>{const receipt={type:"ObjectExported",payload:{object_id:latestResult?.id??p.documentId,destination_class:"download",format:"application/json"}},authorization=this.store.captureAuthorizationScope(),scoped=authorization?.shared??false;if(!authorization||scoped&&!await this.store.authorizeProjectExport(receipt,authorization)||!this.store.authorizationScopeActive(authorization))return;const scopedEventIds=new Set([...p.blocks.flatMap((block)=>block.sourceEvents),...p.outputs.map((output)=>output.sourceEventId),...p.artifacts.map((artifact)=>artifact.sourceEventId)]);const scopedEvents=this.store.events.get().filter((event)=>event.payload.document_id===p.documentId||event.payload.project_id===p.projectId&&event.type==="ProjectCreated"||scopedEventIds.has(event.eventId));downloadJson(`forma-${item.id}.json`, i === 0 ? { documentId:p.documentId,title:p.documentTitle,blocks:p.blocks,blockRelations:p.blockRelations,compile:p.latestCompile } : i === 1 ? {documentId:p.documentId,title:p.documentTitle,result:latestResult??null,blocks:p.blocks,blockRelations:p.blockRelations,compile:p.latestCompile,clearance:"owned"} : {documentId:p.documentId,projectId:p.projectId,events:scopedEvents,projection:{projectId:p.projectId,projectName:p.projectName,documentId:p.documentId,documentTitle:p.documentTitle,blocks:p.blocks,blockRelations:p.blockRelations,outputs:p.outputs,artifacts:p.artifacts}});if(!scoped)await this.store.append(receipt);this.#closeShare();}}><b>${item.name}</b><span>${item.description}</span><small>${icon("download")} ${this.i18n.t("share.download", "Download JSON")}</small></button>`) }
+          ${downloads.map((item, i) => html`<button class="choice-card" @click=${async()=>{const receipt={type:"ObjectExported",payload:{object_id:latestResult?.id??p.documentId,destination_class:"download",format:"application/json"}},authorization=this.store.captureAuthorizationScope();if(!authorization||!await this.store.authorizeProjectExport(receipt,authorization)||!this.store.authorizationScopeActive(authorization))return;const scopedEventIds=new Set([...p.blocks.flatMap((block)=>block.sourceEvents),...p.outputs.map((output)=>output.sourceEventId),...p.artifacts.map((artifact)=>artifact.sourceEventId)]);const scopedEvents=this.store.events.get().filter((event)=>event.payload.document_id===p.documentId||event.payload.project_id===p.projectId&&event.type==="ProjectCreated"||scopedEventIds.has(event.eventId));downloadJson(`forma-${item.name.normalize("NFKC").toLocaleLowerCase(this.i18n.locale).replace(/[^\p{L}\p{N}]+/gu,"-").replace(/^-|-$/g,"")||"forma"}.json`, i === 0 ? { documentId:p.documentId,title:p.documentTitle,blocks:p.blocks,blockRelations:p.blockRelations,compile:p.latestCompile } : i === 1 ? {documentId:p.documentId,title:p.documentTitle,result:latestResult??null,blocks:p.blocks,blockRelations:p.blockRelations,compile:p.latestCompile,clearance:"owned"} : {documentId:p.documentId,projectId:p.projectId,events:scopedEvents,projection:{projectId:p.projectId,projectName:p.projectName,documentId:p.documentId,documentTitle:p.documentTitle,blocks:p.blocks,blockRelations:p.blockRelations,outputs:p.outputs,artifacts:p.artifacts}});this.#closeShare();}}><b>${item.name}</b><span>${item.description}</span><small>${icon("download")} ${this.i18n.t("share.download", "Download JSON")}</small></button>`) }
         </div>
         <div class="gate-note"><span>${icon("lock")}</span><div><b>${this.i18n.t("share.private", "Private and view only")}</b><p>${this.i18n.t("share.privateDetail", "A link grants access to this document and its currently approved media only. It cannot change your work, expose another document, or remain active for more than seven days.")}</p></div></div>
       </div>
@@ -231,16 +258,25 @@ export class FormaShell extends FormaElement {
     const simplifiedEditor = documentViewFromRoute(path) === "editor";
     const creative = this.i18n.t("shell.creative", "Creative");
     const document = this.i18n.t("command.document", "Document");
+    const projection = this.store.projection.get();
+    const creativeNavigationCommands = application.navigation.filter((item) => ["projects", "work", "explore", "activity", "deliver"].includes(item.id)).map((item) => ({
+      id: `open-${item.id}`,
+      label: this.i18n.t("command.openNavigation", "Open {name}", { name: this.i18n.t(`shell.navigation.${item.id}`, item.label) }),
+      hint: creative,
+      run: () => this.#route(item.id === "work" ? creativeCreationHref(projection, (documentId, documentTitle) => withDocumentInRoute(item.href, documentId, documentTitle)) : item.href),
+    }));
     const creativeCommands = [
+      ...creativeNavigationCommands,
       { id: "generate", label: this.i18n.t("command.generate", "Generate from current context"), hint: this.i18n.t("shell.navigation.create", "Create"), run: () => this.#generateFromCommand() },
       { id: "add-context", label: simplifiedEditor ? this.i18n.t("command.addGoal", "Add a goal or creative decision") : this.i18n.t("command.addDecision", "Add a creative decision"), hint: document, run: () => this.#openContextComposer() },
       { id: "open-library", label: this.i18n.t("command.openLibrary", "Open reusable library"), hint: creative, run: () => this.#route("/library") },
       { id: "open-settings", label: this.i18n.t("command.openSettings", "Review personal privacy and usage"), hint: creative, run: () => this.#route("/settings") },
       { id: "run-scout", label: this.i18n.t("command.runScout", "Run a bounded scout report"), hint: creative, run: () => this.#route("/scout") },
       { id: "review-memory", label: this.i18n.t("command.reviewMemory", "Review taste and time memory"), hint: creative, run: () => this.#route("/memory") },
+      { id: "open-sessions", label: this.i18n.t("command.openSessions", "Resume a previous creative session"), hint: creative, run: () => this.#route("/sessions") },
       { id: "undo", label: this.i18n.t("command.undo", "Undo last authored change"), hint: "⌘Z", run: () => this.store.undo() },
       {id:"share",label:this.i18n.t("command.share","Share or download this document"),hint:document,run:()=>this.#openShare()},
-    ].filter((command)=>!session?.projectContext||((command.id!=="share"||this.store.canManageProjectShares())&&!['run-scout','review-memory'].includes(command.id)&&(command.id!=="generate"||session.projectContext.permissions.includes("project.output.request"))&&(!["add-context","undo"].includes(command.id)||session.projectContext.permissions.includes("project.author"))));
+    ].filter((command)=>!session?.projectContext||((command.id!=="share"||this.store.canManageProjectShares())&&!['run-scout','review-memory','open-sessions'].includes(command.id)&&(command.id!=="generate"||session.projectContext.permissions.includes("project.output.request"))&&(!["add-context","undo"].includes(command.id)||session.projectContext.permissions.includes("project.author"))));
     const applicationCommands=[
       ...application.navigation.filter((item)=>!(session?.projectContext&&applicationId==="canvas"&&item.id==="proposals")&&navigationItemAccessible(item,{role:session?.user.role,principalRole:session?.impersonation?.actor.role,capabilities:session?.capabilities,canvasAccess:session?.canvas.access})).map((item)=>({id:item.id,label:this.i18n.t("command.openNavigation","Open {name}",{name:this.i18n.t("shell.navigation."+item.id,item.label)}),hint:this.i18n.t("shell."+applicationId,application.label),run:()=>this.#route(item.href)})),
       {id:"return-creative",label:this.i18n.t("command.returnCreative","Return to Creator Workspace"),hint:this.i18n.t("shell.application","Application"),run:()=>this.#route("/projects")},
@@ -267,13 +303,16 @@ export class FormaShell extends FormaElement {
     const availableApplications=APPLICATIONS.filter((candidate)=>applicationAccessible(candidate.id,access));
     const simplifiedEditor = documentViewFromRoute(path) === "editor";
     const projection=this.store.projection.get();
-    const navigationHref=(id:string,href:string)=>id==="create"?creativeCreationHref(projection,(documentId,documentTitle)=>withDocumentInRoute(href,documentId,documentTitle)):href;
-    const authorizedTasks=application.navigation.filter((item)=>(!isCreative||["projects","create","library","sessions","settings"].includes(item.id))&&(canAuthor||item.id!=="create")&&!(shared&&isCanvas&&item.id==="proposals")&&!(shared&&isCreative&&item.id==="sessions"));
-    const destinations=authorizedTasks.map((item)=>({label:this.i18n.t("shell.navigation."+item.id,item.label),value:item.id,href:navigationHref(item.id,item.href),description:this.i18n.t("shell.description."+item.id,item.description)}));
+    const navigationHref=(id:string,href:string)=>id==="create"||id==="work"?creativeCreationHref(projection,(documentId,documentTitle)=>withDocumentInRoute(href,documentId,documentTitle)):href;
+    const authorizedTasks=application.navigation.filter((item)=>(!isCreative||["projects","work","explore","activity","deliver"].includes(item.id))&&navigationItemAccessible(item,access)&&!(shared&&isCanvas&&item.id==="proposals"));
+    const activity= isMaking ? scopedFormaActivity(session,projection,this.store.projectNotifications.get(),this.store.reviewInbox.get(),this.store.documentJobs.get()) : undefined;
+    const attention=activity?formaActivityAttention(activity):0;
+    const taskIcons:Record<string,string>={projects:"folder",work:"document",explore:"search",activity:"spark",deliver:"download"};
+    const destinations=[...authorizedTasks.map((item)=>({label:this.i18n.t("shell.navigation."+item.id,item.label),value:item.id,href:navigationHref(item.id,item.href),description:this.i18n.t("shell.description."+item.id,item.description),...(isCreative?{icon:taskIcons[item.id]}:{}),...(item.id==="activity"&&attention?{badge:attention,badgeLabel:this.i18n.t("activity.navigationBadge","Activity, {count} items need attention",{count:String(attention)})}:{})})),...(isCanvas?[{label:this.i18n.t("shell.navigation.activity","Activity"),value:"activity",href:"/activity",description:this.i18n.t("shell.description.activity","Review assigned work and project updates"),icon:"spark",...(attention?{badge:attention,badgeLabel:this.i18n.t("activity.navigationBadge","Activity, {count} items need attention",{count:String(attention)})}:{})}]:[])];
     const activeTask=authorizedTasks.find((item)=>navigationItemActive(applicationId,item.id,path))?.id||"";
-    const audienceNavigation=isCreative||isCanvas?html`<forma-ui-audience-navigation class=${`application-task-navigation area-navigation--${applicationId}`} .label=${this.i18n.t("shell."+applicationId,application.label)} .value=${activeTask} .destinations=${destinations} @forma-navigate=${(event:CustomEvent<{value:string;href:string}>)=>{event.preventDefault();this.#route(event.detail.href);}}></forma-ui-audience-navigation>`:nothing;
+    const audienceNavigation=isCreative||isCanvas?html`<forma-ui-audience-navigation class=${`application-task-navigation area-navigation--${applicationId}`} data-primary-navigation=${isCreative ? "true" : "false"} .label=${this.i18n.t("shell."+applicationId,application.label)} .value=${activeTask} .destinations=${destinations} @forma-navigate=${(event:CustomEvent<{value:string;href:string}>)=>{event.preventDefault();this.#route(event.detail.href);}}></forma-ui-audience-navigation>`:nothing;
     const workspaceDestinations=availableApplications.map((candidate)=>({label:this.i18n.t("shell."+candidate.id,candidate.label),value:candidate.id,href:authorizedApplicationHome(candidate.id,access),description:this.i18n.t("shell.description."+candidate.id,candidate.description)}));
-    return html`<div class=${`app-shell application-${applicationId} ${applicationId==="operations"?"admin-shell":""}`}>
+    return html`<div class=${`app-shell application-${applicationId} ${applicationId==="operations"?"admin-shell":""}`} data-nav-posture=${this.#layoutPosture} data-short-height=${String(this.#shortHeight)}>
       <a class="skip-link" href="#main-content">${this.i18n.t("shell.skip")}</a>
       <header class="topbar">
         <button class="brand" @click=${() => this.#route(isCanvas?"/canvas/projects":"/projects")} aria-label=${this.i18n.t("shell.openProjects","Open all Forma projects")}><span class="brand-mark">F</span><span>Forma</span></button>
@@ -281,7 +320,7 @@ export class FormaShell extends FormaElement {
         <div class="application-context"><b>${this.i18n.t("shell."+applicationId,application.label)}</b><span>${this.i18n.t("shell.description."+applicationId,application.description)}</span></div>
         <div class="top-actions">
           ${this.#localePicker()}
-          <button class="command-trigger" aria-label=${this.i18n.t("shell.command")} aria-keyshortcuts="Meta+K Control+K" @click=${() => this.store.patchUi({ commandOpen: true })}><span aria-hidden="true">${icon("search")}</span><span class="command-label">${this.i18n.t("shell.command")}</span><kbd>⌘ K</kbd></button>
+          <button type="button" class="command-trigger forma-global-search" aria-label=${this.i18n.t("shell.command")} aria-haspopup="dialog" aria-expanded=${String(this.store.ui.commandOpen)} aria-keyshortcuts="Meta+K Control+K" @click=${() => this.store.patchUi({ commandOpen: true })}><span aria-hidden="true">${icon("search")}</span><span class="command-label">${this.i18n.t("shell.command")}</span><kbd>⌘ K</kbd></button>
           ${isCreative&&this.store.canManageProjectShares()&&isDocumentViewRoute(path)&&projection.documentId?html`<button class="button secondary compact" @click=${()=>this.#openShare()}>${icon("share")} ${this.i18n.t("shell.share","Share")}</button>`:nothing}
           <button type="button" class=${`avatar ${impersonation?"impersonating":""}`} aria-label=${impersonation?this.i18n.t("shell.impersonationAccount","Open fictional account controls for {name}",{name:impersonation.fictionalUser.displayName}):this.i18n.t("shell.account")} popovertarget="account-popover" aria-controls="account-popover" aria-expanded=${this.store.ui.accountOpen}>${session?.user.displayName?this.i18n.firstGrapheme(session.user.displayName).toLocaleUpperCase(this.i18n.locale):icon("user")}</button>
         </div>
@@ -301,7 +340,7 @@ export class FormaShell extends FormaElement {
       ${audienceNavigation}
       ${this.store.error.get() ? html`<div class="error-banner" role="alert"><b>${simplifiedEditor ? this.i18n.t("shell.error") : this.i18n.t("shell.streamUnavailable","Durable stream unavailable.")}</b> ${this.store.error.get()} <button @click=${() => this.store.load()}>${this.i18n.t("action.retry")}</button></div>` : nothing}
       <main id="main-content" tabindex="-1" aria-busy=${this.store.loading.get()&&!this.store.events.get().length||!this.store.routeDataReady()?"true":"false"}>${this.store.loading.get()&&!this.store.events.get().length||!this.store.routeDataReady()?html`<section class="application-loading" role="status"><span aria-hidden="true"></span><div><b>${this.i18n.t("shell.loading","",{application:this.i18n.t("shell."+applicationId,application.label)})}</b><p>${this.i18n.t("shell.loadingDetail")}</p></div></section>`:this.#page()}</main>
-      ${this.store.ui.toast ? html`<div class="toast" role="status" aria-live="polite" popover="manual">${icon("check")} ${this.store.ui.toast}</div>` : nothing}
+      ${this.store.ui.toast ? html`<div class="toast" role="status" aria-live="polite" popover="manual">${icon("check")} ${this.i18n.system(this.store.ui.toast)}</div>` : nothing}
       ${this.store.ui.commandOpen ? this.#commands() : nothing}
       ${this.store.ui.shareOpen&&this.store.canManageProjectShares()?this.#share():nothing}
       ${this.store.ui.impersonationConfirmOpen ? this.#impersonationWarning() : nothing}
