@@ -75,6 +75,8 @@ const messages: Record<MarketingMessageKey, string> = {
   "outputPresentationDetail": "同じ方向性を軸にした、編集可能なプレゼンテーション。",
   "outputStoryboardDetail": "細部の流れを丁寧に保つ、一連のシーン。",
   "individualVideoScene": "単独の動画シーン",
+  "videoPlayLabel": "動画を再生",
+  "videoPauseLabel": "動画を一時停止",
   "outputVideoDetail": "同じクリエイティブコンテキストから生まれた、動きのあるシーン。",
   "galleryDisclaimer": "対応する出力形式を示したプレビューです。実際の結果は、クリエイティブの方向性とワークスペースの設定によって異なります。",
   "processEyebrow": "大切なことを、いつもそばに",

@@ -1,11 +1,20 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import { gzipSync } from "node:zlib";
 import { applicationIdFromRoute, resolveServerRoute } from "../src/platform/applications.ts";
 
 const source = async (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
+
+const supersededCampaignFingerprints = [
+  "3635a9c01f8d", "826af30a5a0e", "8e40d9aa1cb4",
+  "497a7b80f2c0", "4447050f2e7d", "fab0cc7be553",
+  "3bbe35b4c352", "cccd841c5c30", "bfbb9db50049",
+  "3073b94eb340", "b8caf5e92daf", "501051223d04",
+];
 
 test("marketing has an independent, truthful, fully readable public document", async () => {
   const [html, enhancement, styles] = await Promise.all([
@@ -55,12 +64,15 @@ test("original campaign imagery is public, fingerprinted, optimized, and never a
   const assets = [...new Set([...html.matchAll(/\/assets\/marketing\/quiet-coast-[\w.-]+\.(?:avif|webp)/g)].map(([path]) => path))];
   const images = [...html.matchAll(/<img\b[^>]*>/g)].map(([tag]) => tag);
 
-  assert.ok(assets.length >= 12, "The original campaign needs responsive AVIF and WebP derivatives.");
-  for (const variation of ["portrait", "landscape", "detail"]) {
+  assert.ok(assets.length >= 24, "All four campaign studies need responsive AVIF and WebP derivatives.");
+  for (const fingerprint of supersededCampaignFingerprints) {
+    assert.ok(!html.includes(fingerprint), "An obsolete full-moon campaign image remains in the landing page.");
+  }
+  for (const variation of ["portrait", "landscape", "detail", "twilight"]) {
     assert.ok(assets.some((path) => path.includes(`quiet-coast-${variation}-`)), variation);
   }
   for (const path of assets) {
-    const match = path.match(/^\/assets\/marketing\/quiet-coast-(?:portrait|landscape|detail)-\d+\.([a-f0-9]{12})\.(avif|webp)$/);
+    const match = path.match(/^\/assets\/marketing\/quiet-coast-(?:portrait|landscape|detail|twilight)-\d+\.([a-f0-9]{12})\.(avif|webp)$/);
     assert.ok(match, `Campaign asset must have an immutable content fingerprint: ${path}`);
     const bytes = await readFile(new URL(`../public${path}`, import.meta.url));
     assert.equal(createHash("sha256").update(bytes).digest("hex").slice(0, 12), match[1], path);
@@ -89,16 +101,234 @@ test("original campaign imagery is public, fingerprinted, optimized, and never a
   assert.doesNotMatch(html, /\/api\/media|\.r2\.dev|fal\.media|blob:|(?:signature|token)=/i);
 });
 
-test("four creative decisions inspect three existing image studies without changing their shared direction", async () => {
+test("the real campaign scene uses one lazy, fingerprinted video and an accessible hover-only toggle", async () => {
   const [html, enhancement, styles] = await Promise.all([
     source("marketing.html"),
     source("src/marketing/main.ts"),
     source("src/marketing/marketing.css"),
   ]);
-  const donors = [...html.matchAll(/<picture\b[^>]*\bdata-context-study="(portrait|landscape|detail)"[^>]*>([\s\S]*?)<\/picture>/g)];
+  const videos = [...html.matchAll(/<video\b([^>]*)>([\s\S]*?)<\/video>/g)];
+  const toggles = [...html.matchAll(/<button\b([^>]*\bdata-marketing-video-toggle[^>]*)><\/button>/g)];
 
-  assert.equal(donors.length, 3, "Exactly three previously published campaign studies must be reused.");
-  assert.deepEqual(new Set(donors.map(([, family]) => family)), new Set(["portrait", "landscape", "detail"]));
+  assert.equal(videos.length, 1, "Exactly one genuine campaign video should be published.");
+  assert.equal(toggles.length, 1, "The video should have exactly one custom playback control.");
+  const [, video, contents] = videos[0];
+  const [, toggle] = toggles[0];
+  for (const attribute of ["controls", "muted", "loop", "playsinline", "data-marketing-video"]) {
+    assert.match(video, new RegExp("(?:^|\\s)" + attribute + "(?:\\s|$)"), attribute);
+  }
+  assert.match(video, /\bpreload="none"/);
+  assert.match(video, /\bwidth="960"\s+height="540"/);
+  assert.match(video, /\baria-label="One individual video scene"/);
+  assert.match(video, /\bdata-copy-aria="individualVideoScene"/);
+  assert.doesNotMatch(video, /\bautoplay(?:\s|=|$)/);
+  assert.match(toggle, /\btype="button"/);
+  assert.match(toggle, /\baria-pressed="false"/);
+  assert.match(toggle, /\baria-label="Play video"/);
+  assert.match(toggle, /\bdata-copy-aria="videoPlayLabel"/);
+  assert.match(toggle, /\bhidden(?:\s|$)/);
+
+  const videoPath = contents.match(/\bsrc="(\/assets\/marketing\/quiet-coast-scene-4s\.([a-f0-9]{12})\.mp4)"\s+type="video\/mp4"/);
+  const posterPath = video.match(/\bposter="(\/assets\/marketing\/quiet-coast-scene-poster-960\.([a-f0-9]{12})\.jpg)"/);
+  assert.ok(videoPath, "The public MP4 must have an immutable content fingerprint.");
+  assert.ok(posterPath, "The genuine first-frame poster must have an immutable content fingerprint.");
+  for (const [match, budget] of [[videoPath, 350_000], [posterPath, 30_000]]) {
+    const bytes = await readFile(new URL("../public" + match[1], import.meta.url));
+    assert.equal(createHash("sha256").update(bytes).digest("hex").slice(0, 12), match[2]);
+    assert.ok(bytes.length < budget, match[1] + " exceeds its transfer budget.");
+    if (match === videoPath) assert.equal(bytes.subarray(4, 8).toString(), "ftyp");
+    else assert.equal(bytes.subarray(0, 2).toString("hex"), "ffd8");
+  }
+
+  assert.match(html, /data-context-study="detail"[\s\S]*?<\/picture>\s*<video\b/);
+  assert.match(enhancement, /motionVideo\.controls\s*=\s*false/);
+  assert.match(enhancement, /motionToggle\.hidden\s*=\s*false/);
+  assert.match(enhancement, /videoPauseLabel"\s*:\s*"videoPlayLabel/);
+  assert.match(enhancement, /intersectionRatio\s*>=\s*\.35/);
+  assert.match(enhancement, /threshold:\s*\[0\.08,\s*0\.35\]/);
+  assert.match(enhancement, /document\.hidden/);
+  assert.match(enhancement, /manuallyPaused\s*=\s*true/);
+  assert.match(styles, /\.output-motion__toggle\s*\{[^}]*inline-size:\s*3\.25rem[^}]*block-size:\s*3\.25rem[^}]*opacity:\s*0[^}]*pointer-events:\s*none/s);
+  assert.match(styles, /\.output-motion:hover \.output-motion__toggle,\s*\.output-motion:focus-within \.output-motion__toggle,\s*\.output-motion__toggle:focus-visible\s*\{\s*opacity:\s*1;\s*pointer-events:\s*auto/);
+  assert.match(styles, /@media \(hover:\s*none\),\s*\(pointer:\s*coarse\)\s*\{[^}]*\.output-motion__toggle\s*\{\s*opacity:\s*1;\s*pointer-events:\s*auto/s);
+  assert.match(styles, /\.output-motion__toggle\[hidden\]\s*\{\s*display:\s*none/);
+});
+
+test("viewport looping and the centered control honor visitor intent, visibility, and reduced motion", async () => {
+  const enhancement = await source("src/marketing/main.ts");
+  const marker = 'const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");';
+  const index = enhancement.indexOf(marker);
+  assert.notEqual(index, -1, "The isolated motion enhancement must remain inspectable.");
+  const behavior = stripTypeScriptTypes(enhancement.slice(index));
+
+  function harness({ reduced = false, supported = true, blocked = false } = {}) {
+    function events(initial = {}) {
+      const listeners = new Map();
+      return Object.assign(initial, {
+        addEventListener(type, listener) {
+          const existing = listeners.get(type) ?? [];
+          existing.push(listener);
+          listeners.set(type, existing);
+        },
+        emit(type) {
+          for (const listener of listeners.get(type) ?? []) listener();
+        },
+      });
+    }
+
+    const preference = events({ matches: reduced });
+    preference.change = (next) => {
+      preference.matches = next;
+      preference.emit("change");
+    };
+
+    const target = {};
+    const revealed = [];
+    const section = { classList: { add(name) { revealed.push(name); } } };
+    const video = events({
+      controls: true,
+      muted: false,
+      loop: true,
+      paused: true,
+      ended: false,
+      playCalls: 0,
+      pauseCalls: 0,
+      closest(selector) { return selector === ".output-piece--video" ? target : null; },
+      play() {
+        video.playCalls += 1;
+        if (blocked) return Promise.reject(new Error("Playback was blocked."));
+        video.paused = false;
+        video.emit("play");
+        return Promise.resolve();
+      },
+      pause() {
+        if (video.paused) return;
+        video.pauseCalls += 1;
+        video.paused = true;
+        video.emit("pause");
+      },
+    });
+    const attributes = new Map([["aria-pressed", "false"], ["aria-label", "Play video"]]);
+    const toggle = events({
+      hidden: true,
+      dataset: { copyAria: "videoPlayLabel" },
+      setAttribute(name, value) { attributes.set(name, value); },
+    });
+    const document = events({
+      hidden: false,
+      querySelector(selector) {
+        if (selector === "[data-marketing-video]") return video;
+        if (selector === "[data-marketing-video-toggle]") return toggle;
+        return null;
+      },
+      querySelectorAll(selector) { return selector === "[data-reveal]" ? [section] : []; },
+    });
+    const observers = [];
+    class Observer {
+      constructor(callback, options) {
+        this.callback = callback;
+        this.options = options;
+        this.observed = [];
+        this.unobserved = [];
+        observers.push(this);
+      }
+      observe(element) { this.observed.push(element); }
+      unobserve(element) { this.unobserved.push(element); }
+      intersect(element, ratio) {
+        this.callback([{ target: element, isIntersecting: ratio > 0, intersectionRatio: ratio }]);
+      }
+    }
+
+    const window = { matchMedia() { return preference; } };
+    if (supported) window.IntersectionObserver = Observer;
+    runInNewContext(behavior, {
+      document,
+      window,
+      IntersectionObserver: Observer,
+      messages: { videoPlayLabel: "Play video", videoPauseLabel: "Pause video" },
+    });
+    return { preference, target, section, revealed, video, toggle, attributes, document, observer: observers[0] };
+  }
+
+  const normal = harness();
+  assert.equal(normal.video.controls, false, "Native controls disappear only after enhancement.");
+  assert.equal(normal.toggle.hidden, false, "The custom control becomes available after enhancement.");
+  assert.ok(normal.observer.observed.includes(normal.target), "Observe the video card itself.");
+  assert.ok(normal.observer.observed.includes(normal.section), "Keep the existing section reveal behavior.");
+
+  normal.observer.intersect(normal.target, .2);
+  assert.equal(normal.video.playCalls, 0, "A barely visible card must not start playback.");
+  normal.observer.intersect(normal.target, .5);
+  assert.equal(normal.video.playCalls, 1, "A meaningfully visible card starts playback.");
+  assert.equal(normal.video.muted, true);
+  assert.equal(normal.video.loop, true);
+  assert.equal(normal.toggle.dataset.copyAria, "videoPauseLabel");
+  assert.equal(normal.attributes.get("aria-label"), "Pause video");
+  assert.equal(normal.attributes.get("aria-pressed"), "true");
+
+  normal.observer.intersect(normal.section, .1);
+  assert.deepEqual(normal.revealed, ["marketing-visible"]);
+  assert.ok(normal.observer.unobserved.includes(normal.section));
+  normal.observer.intersect(normal.target, .1);
+  assert.equal(normal.video.pauseCalls, 1, "Offscreen playback pauses.");
+  assert.equal(normal.toggle.dataset.copyAria, "videoPlayLabel");
+  normal.observer.intersect(normal.target, .65);
+  assert.equal(normal.video.playCalls, 2, "Automatically paused playback resumes when visible.");
+
+  normal.toggle.emit("click");
+  assert.equal(normal.video.pauseCalls, 2, "The centered button pauses a playing scene.");
+  normal.observer.intersect(normal.target, 0);
+  normal.observer.intersect(normal.target, .8);
+  assert.equal(normal.video.playCalls, 2, "Explicit visitor pauses remain authoritative.");
+  normal.toggle.emit("click");
+  assert.equal(normal.video.playCalls, 3, "The centered button explicitly resumes playback.");
+
+  normal.document.hidden = true;
+  normal.document.emit("visibilitychange");
+  assert.equal(normal.video.pauseCalls, 3, "A backgrounded tab pauses playback.");
+  normal.document.hidden = false;
+  normal.document.emit("visibilitychange");
+  assert.equal(normal.video.playCalls, 4, "A visible foregrounded card resumes playback.");
+
+  normal.preference.change(true);
+  assert.equal(normal.video.loop, false, "Reduced motion disables looping.");
+  assert.equal(normal.video.pauseCalls, 4, "Enabling reduced motion stops automatic playback.");
+  normal.observer.intersect(normal.target, .8);
+  assert.equal(normal.video.playCalls, 4, "Reduced motion never starts automatic playback.");
+  normal.toggle.emit("click");
+  assert.equal(normal.video.playCalls, 5, "Reduced-motion visitors may deliberately play once.");
+
+  const reduced = harness({ reduced: true });
+  assert.equal(reduced.video.loop, false);
+  reduced.observer.intersect(reduced.target, .8);
+  assert.equal(reduced.video.playCalls, 0);
+  reduced.toggle.emit("click");
+  assert.equal(reduced.video.playCalls, 1, "Manual playback remains available with reduced motion.");
+
+  const unsupported = harness({ supported: false });
+  assert.equal(unsupported.video.controls, false);
+  assert.equal(unsupported.toggle.hidden, false);
+  assert.equal(unsupported.observer, undefined);
+  unsupported.toggle.emit("click");
+  assert.equal(unsupported.video.playCalls, 1, "Custom manual controls work without IntersectionObserver.");
+
+  const denied = harness({ blocked: true });
+  denied.observer.intersect(denied.target, .8);
+  await Promise.resolve();
+  assert.equal(denied.video.playCalls, 1);
+  assert.equal(denied.attributes.get("aria-label"), "Play video", "Blocked autoplay preserves the visible action.");
+});
+
+test("four creative decisions each inspect their own context-faithful image study", async () => {
+  const [html, enhancement, styles] = await Promise.all([
+    source("marketing.html"),
+    source("src/marketing/main.ts"),
+    source("src/marketing/marketing.css"),
+  ]);
+  const donors = [...html.matchAll(/<picture\b[^>]*\bdata-context-study="(portrait|landscape|detail|twilight)"[^>]*>([\s\S]*?)<\/picture>/g)];
+
+  assert.equal(donors.length, 4, "Each creative decision must use its own actual campaign study.");
+  assert.deepEqual(new Set(donors.map(([, family]) => family)), new Set(["portrait", "landscape", "detail", "twilight"]));
   for (const [picture, family] of donors) {
     assert.match(picture, new RegExp(`quiet-coast-${family}-`), `${family} must use its genuine campaign image.`);
     assert.match(picture, /<source\b[^>]*type="image\/avif"/);
@@ -118,7 +348,7 @@ test("four creative decisions inspect three existing image studies without chang
     ["mood", "landscape", "moodLabel", "moodValue"],
     ["audience", "portrait", "audienceLabel", "audienceValue"],
     ["boundary", "detail", "creativeBoundaryLabel", "creativeBoundaryValue"],
-    ["source", "landscape", "referenceLabel", "referenceValue"],
+    ["source", "twilight", "referenceLabel", "referenceValue"],
   ]) {
     assert.match(enhancement, new RegExp(`${decision}:\\s*\\{\\s*family:\\s*"${family}",\\s*label:\\s*"${label}",\\s*value:\\s*"${value}"`));
   }
@@ -131,9 +361,13 @@ test("four creative decisions inspect three existing image studies without chang
   assert.match(enhancement, /focusValue\.dataset\.copy\s*=\s*focus\.value/);
   assert.match(enhancement, /stage\.dataset\.contextDecision\s*=\s*decision/);
   assert.doesNotMatch(enhancement, /fetch\(|navigator\.sendBeacon|\/api\/media|\/api\/session/);
-  assert.match(styles, /\[data-context-decision="audience"\][^{]*\{[^}]*object-position:\s*50%\s+68%/);
+  assert.match(styles, /\[data-context-decision="audience"\][^{]*\{[^}]*object-position:\s*50%\s+74%/);
   assert.match(styles, /\[data-context-decision="boundary"\][^{]*\{[^}]*object-position:\s*25%\s+50%/);
-  assert.match(styles, /\[data-context-decision="source"\][^{]*\{[^}]*transform:\s*scale\(1\.16\)/);
+  assert.match(styles, /\[data-context-decision="source"\][^{]*\{[^}]*object-position:\s*50%\s+38%[^}]*transform:\s*none/);
+  assert.match(styles, /\.coast-art__moon\s*\{[^}]*inline-size:\s*3%[^}]*background:\s*transparent[^}]*box-shadow:\s*inset/s);
+  assert.doesNotMatch(styles, /\.coast-art__moon\s*\{[^}]*radial-gradient/);
+  assert.match(html, /data-context-study="twilight"[\s\S]*?quiet-coast-twilight-480[\s\S]*?quiet-coast-twilight-768[\s\S]*?quiet-coast-twilight-1200/);
+  assert.match(html, /output-frames__image--landscape" data-context-study="twilight"[\s\S]*?quiet-coast-twilight[\s\S]*?output-frames__image--portrait[\s\S]*?quiet-coast-portrait[\s\S]*?output-frames__image--detail[\s\S]*?quiet-coast-detail/);
   assert.match(styles, /@media \(prefers-reduced-motion: no-preference\)[\s\S]*?\.context-outcome__art \.coast-art__generated > img\s*\{\s*transition:/);
 });
 
@@ -229,7 +463,7 @@ test("all four marketing catalogs completely translate markup, metadata, decisio
   const required = [
     ...markup,
     "pageTitle", "pageDescription", "socialTitle", "socialDescription",
-    "languageLabel", "languageChangeError", "languageChanged",
+    "languageLabel", "languageChangeError", "languageChanged", "videoPlayLabel", "videoPauseLabel",
     ...["Mood", "Audience", "Boundary", "Source"].flatMap((decision) => [
       `demoImage${decision}`, `demoStory${decision}`, `demoAnnouncement${decision}`,
     ]),
@@ -278,6 +512,8 @@ test("localized marketing routes are translated before JavaScript and never touc
       headers: { "accept-language": "de-DE, en;q=0.9", cookie: "forma_project_context=private-project" },
     }), environment, context);
     const body = await response.text();
+    assert.ok(body.includes('aria-label="' + escape(catalog.individualVideoScene) + '"'), locale + " localized video description");
+    assert.ok(body.includes('aria-label="' + escape(catalog.videoPlayLabel) + '" data-copy-aria="videoPlayLabel"'), locale + " localized playback action");
     assert.equal(response.status, 200, locale);
     assert.equal(response.headers.get("x-forma-route-family"), "marketing", locale);
     assert.equal(response.headers.get("content-language"), locale, locale);
@@ -356,8 +592,22 @@ test("production marketing assets stay isolated from authenticated application e
     assert.doesNotMatch(catalog, /FormaStore|api\/session|protected-assets/);
   }
 
+  const video = publicHtml.match(/\/assets\/marketing\/quiet-coast-scene-4s\.([a-f0-9]{12})\.mp4/);
+  const poster = publicHtml.match(/\/assets\/marketing\/quiet-coast-scene-poster-960\.([a-f0-9]{12})\.jpg/);
+  assert.ok(video, "Production marketing must include the genuine Forma-generated video.");
+  assert.ok(poster, "Production marketing must include the genuine first-frame poster.");
+  assert.match(publicHtml, /\bdata-marketing-video-toggle\b/);
+  for (const [asset, budget] of [[video, 350_000], [poster, 30_000]]) {
+    const bytes = await readFile(new URL("../dist/client" + asset[0], import.meta.url));
+    assert.equal(createHash("sha256").update(bytes).digest("hex").slice(0, 12), asset[1]);
+    assert.ok(bytes.length < budget, "Production video asset exceeds its transfer budget.");
+  }
+
   const campaignAssets = [...new Set([...publicHtml.matchAll(/\/assets\/marketing\/quiet-coast-[\w.-]+\.(?:avif|webp)/g)].map(([path]) => path))];
-  assert.ok(campaignAssets.length >= 12, "Built marketing document must retain its original public campaign imagery.");
+  assert.ok(campaignAssets.length >= 24, "Built marketing document must retain all four corrected campaign studies.");
+  for (const fingerprint of supersededCampaignFingerprints) {
+    assert.ok(!publicHtml.includes(fingerprint), "An obsolete full-moon campaign image remains in production.");
+  }
   for (const path of campaignAssets) {
     const bytes = await readFile(new URL(`../dist/client${path}`, import.meta.url));
     assert.ok(bytes.length < 90_000, `Built campaign asset exceeds the transfer budget: ${path}`);

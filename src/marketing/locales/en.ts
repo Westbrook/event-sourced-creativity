@@ -73,6 +73,8 @@ export const messages = {
   "outputPresentationDetail": "An editable pitch built around the same direction.",
   "outputStoryboardDetail": "A sequence that keeps the details in order.",
   "individualVideoScene": "One individual video scene",
+  "videoPlayLabel": "Play video",
+  "videoPauseLabel": "Pause video",
   "outputVideoDetail": "A moving scene, grounded in the same creative context.",
   "galleryDisclaimer": "Illustrative previews of supported output formats. Actual results depend on your creative direction and workspace configuration.",
   "processEyebrow": "Stay close to what matters",

@@ -75,6 +75,8 @@ const messages: Record<MarketingMessageKey, string> = {
   "outputPresentationDetail": "عرض تقديمي قابل للتعديل ينطلق من الاتجاه نفسه.",
   "outputStoryboardDetail": "تسلسل يحافظ على ترتيب كل التفاصيل.",
   "individualVideoScene": "مشهد فيديو واحد مستقل",
+  "videoPlayLabel": "تشغيل الفيديو",
+  "videoPauseLabel": "إيقاف الفيديو مؤقتًا",
   "outputVideoDetail": "مشهد متحرك يستند إلى السياق الإبداعي نفسه.",
   "galleryDisclaimer": "معاينات توضيحية للصيغ المدعومة. تعتمد النتائج الفعلية على اتجاهك الإبداعي وإعدادات مساحة عملك.",
   "processEyebrow": "ابقَ قريبًا مما يهم",

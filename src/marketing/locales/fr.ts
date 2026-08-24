@@ -75,6 +75,8 @@ const messages: Record<MarketingMessageKey, string> = {
   "outputPresentationDetail": "Une présentation modifiable construite autour de la même direction.",
   "outputStoryboardDetail": "Un enchaînement qui préserve l’ordre de chaque détail.",
   "individualVideoScene": "Une scène vidéo individuelle",
+  "videoPlayLabel": "Lire la vidéo",
+  "videoPauseLabel": "Mettre la vidéo en pause",
   "outputVideoDetail": "Une scène en mouvement, ancrée dans le même contexte créatif.",
   "galleryDisclaimer": "Aperçus illustratifs des formats pris en charge. Les résultats réels dépendent de votre direction créative et de la configuration de votre espace de travail.",
   "processEyebrow": "Rester proche de l’essentiel",

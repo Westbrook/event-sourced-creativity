@@ -320,10 +320,11 @@ html[dir="rtl"] .marketing-text-link > [aria-hidden="true"] { display: inline-bl
   position: absolute;
   inset-block-start: 15%;
   inset-inline-end: 20%;
-  inline-size: 17%;
+  inline-size: 3%;
   aspect-ratio: 1;
-  background: radial-gradient(circle at 38% 36%, #fbf0d7 0%, #e0cdad 61%, #c2af92 100%);
+  background: transparent;
   border-radius: 50%;
+  box-shadow: inset -.11rem .03rem 0 rgb(247 214 161 / 65%);
 }
 
 .coast-art__horizon {
@@ -549,9 +550,9 @@ html[dir="rtl"] .marketing-text-link > [aria-hidden="true"] { display: inline-bl
 
 .context-outcome[data-highlighted="true"] { border-color: var(--marketing-accent); }
 .context-outcome__art { inline-size: 100%; aspect-ratio: 1.75; }
-.context-outcome__art[data-context-decision="audience"] .coast-art__generated > img { object-position: 50% 68%; }
+.context-outcome__art[data-context-decision="audience"] .coast-art__generated > img { object-position: 50% 74%; }
 .context-outcome__art[data-context-decision="boundary"] .coast-art__generated > img { object-position: 25% 50%; }
-.context-outcome__art[data-context-decision="source"] .coast-art__generated > img { object-position: 72% 35%; transform: scale(1.16); transform-origin: 78% 28%; }
+.context-outcome__art[data-context-decision="source"] .coast-art__generated > img { object-position: 50% 38%; transform: none; }
 .context-outcome__copy { padding: 1rem .2rem .25rem; }
 
 .context-outcome__copy > p {
@@ -645,8 +646,66 @@ html[dir="rtl"] .marketing-text-link > [aria-hidden="true"] { display: inline-bl
   background: linear-gradient(168deg, #223559 0%, #395470 44%, #b3a390 49%, #2c4058 52%, #111923 100%);
 }
 
+.output-motion__video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+  object-position: 45% 50%;
+  background: #172449;
+}
+
 .output-motion__frame { position: absolute; inset: .875rem; border: 1px solid rgb(255 255 255 / 72%); }
 .output-motion__label { position: relative; justify-self: start; padding: .3rem .55rem; color: #171717; background: #f3f3ef; font-size: .75rem; }
+.output-motion--playable .output-motion__frame { z-index: 2; pointer-events: none; }
+.output-motion--playable .output-motion__label { position: absolute; z-index: 2; inset-block-start: 1rem; inset-inline-start: 1rem; pointer-events: none; }
+
+.output-motion__toggle {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: grid;
+  inline-size: 3.25rem;
+  block-size: 3.25rem;
+  place-items: center;
+  margin: auto;
+  padding: 0;
+  color: #f3f3ef;
+  background: rgb(23 36 73 / 76%);
+  border: 1px solid rgb(255 255 255 / 72%);
+  border-radius: 50%;
+  box-shadow: 0 .375rem 1.25rem rgb(0 0 0 / 22%);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.output-motion__toggle[hidden] { display: none; }
+.output-motion:hover .output-motion__toggle,
+.output-motion:focus-within .output-motion__toggle,
+.output-motion__toggle:focus-visible { opacity: 1; pointer-events: auto; }
+.output-motion__toggle:hover { background: rgb(17 26 53 / 92%); }
+.output-motion__toggle:focus-visible { outline: 3px solid #abc0ff; outline-offset: 4px; }
+
+.output-motion__toggle::before {
+  inline-size: .875rem;
+  block-size: 1rem;
+  background: currentColor;
+  clip-path: polygon(15% 0, 100% 50%, 15% 100%);
+  content: "";
+}
+
+.output-motion__toggle[aria-pressed="true"]::before {
+  background: linear-gradient(90deg, currentColor 0 32%, transparent 32% 66%, currentColor 66% 100%);
+  clip-path: none;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .output-motion__toggle { opacity: 1; pointer-events: auto; }
+}
+
 .marketing-exhibit__note { margin-block-start: 2rem; color: #bdbdb8; }
 
 .marketing-process { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: clamp(3rem, 8vw, 8rem); }
@@ -690,6 +749,7 @@ html[dir="rtl"] .marketing-text-link > [aria-hidden="true"] { display: inline-bl
 @media (prefers-reduced-motion: no-preference) {
   [data-reveal].marketing-visible { animation: marketing-appear 440ms cubic-bezier(.2, 0, 0, 1) both; }
   .context-outcome__art .coast-art__generated > img { transition: object-position 220ms ease, transform 220ms ease; }
+  .output-motion__toggle { transition: opacity 160ms ease; }
   @keyframes marketing-appear { from { opacity: .75; } to { opacity: 1; } }
 }
 

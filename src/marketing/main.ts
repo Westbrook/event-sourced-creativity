@@ -5,7 +5,7 @@ import english, { type MarketingMessageKey } from "./locales/en";
 document.documentElement.dataset.formaExperience = "marketing";
 
 type CreativeDecision = "mood" | "audience" | "boundary" | "source";
-type CreativeStudyFamily = "landscape" | "portrait" | "detail";
+type CreativeStudyFamily = "landscape" | "portrait" | "detail" | "twilight";
 type MarketingLocale = "en" | "fr" | "ar" | "ja";
 type MarketingCatalog = Readonly<Record<MarketingMessageKey, string>>;
 
@@ -22,7 +22,7 @@ const DECISION_STUDIES: Record<CreativeDecision, Readonly<{
   mood: { family: "landscape", label: "moodLabel", value: "moodValue" },
   audience: { family: "portrait", label: "audienceLabel", value: "audienceValue" },
   boundary: { family: "detail", label: "creativeBoundaryLabel", value: "creativeBoundaryValue" },
-  source: { family: "landscape", label: "referenceLabel", value: "referenceValue" },
+  source: { family: "twilight", label: "referenceLabel", value: "referenceValue" },
 };
 
 const STORAGE_KEY = "forma:locale";
@@ -206,7 +206,7 @@ class FormaContextDemo {
 
     for (const picture of document.querySelectorAll<HTMLPictureElement>("picture[data-context-study]")) {
       const family = picture.dataset.contextStudy as CreativeStudyFamily | undefined;
-      if (!family || !["landscape", "portrait", "detail"].includes(family)) continue;
+      if (!family || !["landscape", "portrait", "detail", "twilight"].includes(family)) continue;
 
       const image = picture.querySelector<HTMLImageElement>("img");
       const sources = new Map<string, string>();
@@ -306,14 +306,93 @@ void (async () => {
   for (const demo of document.querySelectorAll<HTMLElement>("[data-context-demo]")) new FormaContextDemo(demo);
 })();
 
-if ("IntersectionObserver" in window && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+const motionVideo = document.querySelector<HTMLVideoElement>("[data-marketing-video]");
+const motionToggle = document.querySelector<HTMLButtonElement>("[data-marketing-video-toggle]");
+let manuallyPaused = false;
+if (motionVideo) motionVideo.loop = !motionPreference.matches;
+
+if (motionVideo && motionToggle) {
+  const updateMotionToggle = () => {
+    const playing = !motionVideo.paused && !motionVideo.ended;
+    const key: MarketingMessageKey = playing ? "videoPauseLabel" : "videoPlayLabel";
+    motionToggle.setAttribute("aria-pressed", String(playing));
+    motionToggle.dataset.copyAria = key;
+    motionToggle.setAttribute("aria-label", messages[key]);
+  };
+
+  motionToggle.addEventListener("click", () => {
+    if (motionVideo.paused || motionVideo.ended) {
+      manuallyPaused = false;
+      motionVideo.muted = true;
+      void motionVideo.play().catch(updateMotionToggle);
+    } else {
+      manuallyPaused = true;
+      motionVideo.pause();
+    }
+  });
+  for (const event of ["play", "pause", "ended", "error"]) motionVideo.addEventListener(event, updateMotionToggle);
+  motionVideo.controls = false;
+  motionToggle.hidden = false;
+}
+
+if ("IntersectionObserver" in window) {
+  const videoTarget = motionVideo?.closest<HTMLElement>(".output-piece--video");
+  let videoVisible = false;
+  let automaticallyPausing = false;
+
+  const playMotion = () => {
+    if (!motionVideo || !videoVisible || document.hidden || motionPreference.matches || manuallyPaused) return;
+    motionVideo.muted = true;
+    void motionVideo.play().catch(() => { /* The accessible play button remains available if autoplay is blocked. */ });
+  };
+
+  const pauseMotion = () => {
+    if (!motionVideo || motionVideo.paused) return;
+    automaticallyPausing = true;
+    motionVideo.pause();
+  };
+
+  motionVideo?.addEventListener("pause", () => {
+    if (automaticallyPausing || !videoVisible || document.hidden || motionPreference.matches) {
+      automaticallyPausing = false;
+      return;
+    }
+    manuallyPaused = true;
+  });
+  motionVideo?.addEventListener("play", () => {
+    manuallyPaused = false;
+    automaticallyPausing = false;
+  });
+
   const observer = new IntersectionObserver((entries) => {
     for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
+      if (entry.target === videoTarget) {
+        videoVisible = entry.isIntersecting && entry.intersectionRatio >= .35;
+        if (videoVisible) playMotion();
+        else pauseMotion();
+        continue;
+      }
+      if (!entry.isIntersecting || motionPreference.matches) continue;
       entry.target.classList.add("marketing-visible");
       observer.unobserve(entry.target);
     }
-  }, { rootMargin: "0px 0px -8% 0px", threshold: 0.08 });
+  }, { rootMargin: "0px 0px -8% 0px", threshold: [0.08, 0.35] });
 
-  for (const section of document.querySelectorAll<HTMLElement>("[data-reveal]")) observer.observe(section);
+  if (!motionPreference.matches) {
+    for (const section of document.querySelectorAll<HTMLElement>("[data-reveal]")) observer.observe(section);
+  }
+
+  if (videoTarget && motionVideo) {
+    observer.observe(videoTarget);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) pauseMotion();
+      else playMotion();
+    });
+    motionPreference.addEventListener("change", () => {
+      motionVideo.loop = !motionPreference.matches;
+      if (motionPreference.matches) pauseMotion();
+      else playMotion();
+    });
+  }
 }
