@@ -162,6 +162,39 @@ test("machine-readable attributes, options, defaults, themes, and event details 
   }
 });
 
+test("one published choice card unifies context creation across document, canvas, and creative lenses", async () => {
+  const [choiceSource, workspace, navigation, canvas, alternatives, editors, creative, chat, reference] = await Promise.all([
+    read("../src/components/design-system/choice-card.ts"),
+    read("../src/components/forma-workspace.ts"),
+    read("../src/components/studio-navigation.ts"),
+    read("../src/canvas/canvas-application.ts"),
+    read("../src/components/forma-studio-alternatives.ts"),
+    read("../src/components/forma-studio-editor-alternatives.ts"),
+    read("../src/components/forma-creative-editor.ts"),
+    read("../src/components/forma-chat-studio.ts"),
+    read("../docs/components.md"),
+  ]);
+  const tag = "forma-ui-choice-card";
+  const choice = declarationByTag.get(tag);
+
+  assert.ok(choice, "the same production choice component is documented in the generated manifest");
+  assert.equal(choice["x-forma"].category, "molecule");
+  assert.equal(choice["x-forma"].renderRoot, "light");
+  assert.deepEqual(choice["x-forma"].i18n.authorTextAttributes, ["detail", "label"]);
+  assert.deepEqual(choice["x-forma"].i18n.invariantValuePaths, ["value"]);
+  assert.equal(choice.demos[0].url, `/knowledge/design-system#${tag}`);
+  assert.match(choice.events.find((event) => event.name === "forma-action").type.text, /value:\s*string/);
+  assert.match(choiceSource, /<button\s+type="button"/);
+  assert.match(choiceSource, /emitFormaEvent\(this, "forma-action", \{ value: this\.value \}\)/);
+  assert.doesNotMatch(choiceSource, /FormaStore|state\/store|fetch\(|\/api\//);
+  assert.match(catalogSource, /case "forma-ui-choice-card": return html`<forma-ui-choice-card/);
+  assert.match(reference, /## Context creation and reusable choice cards/);
+
+  for (const source of [workspace, navigation, canvas, alternatives, editors, creative, chat]) {
+    assert.match(source, /<forma-ui-choice-card/, "every applicable context-creation experience reuses the production molecule");
+  }
+});
+
 test("scoped locale contracts separate translated authored content from invariant machine identifiers", async () => {
   const [localeSource, languageOptionsSource] = await Promise.all([
     read("../src/components/design-system/localization.ts"),

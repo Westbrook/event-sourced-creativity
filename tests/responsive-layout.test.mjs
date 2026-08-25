@@ -102,7 +102,7 @@ test("preserves usable controls when document navigation and editors get narrow"
   assert.match(design, /@container studio \(max-width: 32rem\)[\s\S]*?\.editor-toolbar\s*\{\s*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\)/);
   assert.match(design, /@media \(max-width: 760px\)[\s\S]*?\.composer \.generation-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(navigation, /class="studio-mode-action-label"/);
-  assert.match(navigation, /aria-label="Add reusable context"/);
+  assert.match(navigation, /aria-label="Add context"/);
   assert.match(navigation, /aria-label=\$\{this\.#focused \? (?:this\.i18n\.system\()?"Exit focused document view"\)? : (?:this\.i18n\.system\()?"Enter focused document view"\)?\}/);
   assert.match(navigation, /class="studio-mode-links"/);
   assert.match(navigation, /#revealActiveMode\(\)/);

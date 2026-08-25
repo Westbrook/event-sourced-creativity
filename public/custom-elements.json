@@ -4100,6 +4100,224 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/design-system/choice-card.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaUiChoiceCard",
+          "tagName": "forma-ui-choice-card",
+          "customElement": true,
+          "summary": "Present an actionable choice with an icon, supporting context, and a stable value.",
+          "description": "Present an actionable choice with an icon, supporting context, and a stable value.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "compact",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "compact",
+              "description": "Whether the compact presentation is requested."
+            },
+            {
+              "kind": "field",
+              "name": "detail",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "detail",
+              "description": "Author-supplied, localized supporting explanation."
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "iconName",
+              "type": {
+                "text": "\"\" | FormaIconName"
+              },
+              "default": "\"\"",
+              "attribute": "icon-name",
+              "description": "Stable, locale-invariant icon identifier."
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "label",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "kind": "field",
+              "name": "selected",
+              "type": {
+                "text": "boolean | undefined"
+              },
+              "attribute": "selected",
+              "description": "Whether this item is selected."
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
+            }
+          ],
+          "attributes": [
+            {
+              "name": "compact",
+              "fieldName": "compact",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether the compact presentation is requested."
+            },
+            {
+              "name": "detail",
+              "fieldName": "detail",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting explanation."
+            },
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "name": "icon-name",
+              "fieldName": "iconName",
+              "type": {
+                "text": "\"\" | FormaIconName"
+              },
+              "default": "\"\"",
+              "description": "Stable, locale-invariant icon identifier."
+            },
+            {
+              "name": "label",
+              "fieldName": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "name": "selected",
+              "fieldName": "selected",
+              "type": {
+                "text": "boolean | undefined"
+              },
+              "description": "Whether this item is selected."
+            },
+            {
+              "name": "value",
+              "fieldName": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
+            }
+          ],
+          "events": [
+            {
+              "name": "forma-action",
+              "type": {
+                "text": "CustomEvent<{ value: string }>"
+              },
+              "description": "A non-disabled action was activated. Bubbles and crosses component boundaries."
+            }
+          ],
+          "cssProperties": [
+            {
+              "name": "--forma-color-accent",
+              "syntax": "<color>",
+              "description": "Accent and focus color."
+            },
+            {
+              "name": "--forma-control-min-size",
+              "syntax": "<length>",
+              "description": "Minimum interactive target size."
+            },
+            {
+              "name": "--forma-radius-medium",
+              "syntax": "<length>",
+              "description": "Control corner radius."
+            }
+          ],
+          "demos": [
+            {
+              "url": "/knowledge/design-system#forma-ui-choice-card"
+            }
+          ],
+          "x-forma": {
+            "category": "molecule",
+            "renderRoot": "light",
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-choice-card",
+              "authorTextAttributes": [
+                "detail",
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "invariantValuePaths": [
+                "value"
+              ]
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-ui-choice-card",
+          "declaration": {
+            "name": "FormaUiChoiceCard",
+            "module": "src/components/design-system/choice-card.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaUiChoiceCard",
+          "declaration": {
+            "name": "FormaUiChoiceCard",
+            "module": "src/components/design-system/choice-card.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/design-system/component-catalog.ts",
       "declarations": [
         {
@@ -12818,6 +13036,15 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "events": [
+            {
+              "name": "forma-context-create",
+              "type": {
+                "text": "CustomEvent<null>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",

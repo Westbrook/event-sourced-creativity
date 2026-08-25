@@ -4313,7 +4313,7 @@ forma-ui-button .button { max-width: 100%; }
 /* Composable, store-independent component families share inherited theme tokens.
  * Shadow-backed composition elements consume the same tokens in one adopted sheet. */
 :where(
-  forma-ui-icon,forma-ui-icon-button,forma-ui-avatar,forma-ui-chip,forma-ui-status,
+  forma-ui-icon,forma-ui-icon-button,forma-ui-avatar,forma-ui-choice-card,forma-ui-chip,forma-ui-status,
   forma-ui-spinner,forma-ui-progress,forma-ui-kbd,forma-ui-divider,forma-ui-skeleton,
   forma-ui-search,forma-ui-textarea,forma-ui-rich-text,forma-ui-select,forma-ui-checkbox,forma-ui-switch,
   forma-ui-radio-group,forma-ui-number-field,forma-ui-segmented-control,forma-ui-tabs,
@@ -4340,7 +4340,7 @@ forma-ui-theme[density="spacious"] { --forma-space-3: 1rem; --forma-space-4: 1.3
 forma-ui-theme[radius="soft"] { --forma-radius-small: .65rem; --forma-radius-medium: 1rem; }
 forma-ui-theme[radius="square"] { --forma-radius-small: .125rem; --forma-radius-medium: .25rem; }
 
-:where(forma-ui-button,forma-ui-icon-button,forma-ui-chip,forma-ui-segmented-control,
+:where(forma-ui-button,forma-ui-icon-button,forma-ui-choice-card,forma-ui-chip,forma-ui-segmented-control,
   forma-ui-tabs,forma-ui-pagination,forma-ui-toolbar,forma-ui-disclosure,forma-ui-workspace-switcher,
   forma-ui-popover,forma-ui-dialog,forma-ui-copy-button,forma-ui-card,forma-ui-list-item)
   :is(button,summary) {
@@ -4350,7 +4350,7 @@ forma-ui-theme[radius="square"] { --forma-radius-small: .125rem; --forma-radius-
 :where(forma-ui-icon-button,forma-ui-pagination) button {
   min-inline-size: var(--forma-control-min-size,2.75rem);
 }
-:where(forma-ui-button,forma-ui-icon-button,forma-ui-chip,forma-ui-field,forma-ui-search,
+:where(forma-ui-button,forma-ui-icon-button,forma-ui-choice-card,forma-ui-chip,forma-ui-field,forma-ui-search,
   forma-ui-textarea,forma-ui-rich-text,forma-ui-select,forma-ui-checkbox,forma-ui-switch,forma-ui-radio-group,
   forma-ui-number-field,forma-ui-segmented-control,forma-ui-tabs,forma-ui-pagination,
   forma-ui-toolbar,forma-ui-disclosure,forma-ui-popover,forma-ui-dialog,forma-ui-copy-button,
@@ -4375,6 +4375,65 @@ forma-ui-theme[radius="square"] { --forma-radius-small: .125rem; --forma-radius-
 .ui-icon--medium { --forma-icon-size: 1.25rem; }
 .ui-icon--large { --forma-icon-size: 1.5rem; }
 .ui-empty-state > span:first-child { --forma-icon-size: 2rem; }
+.ui-choice-card {
+  display: grid;
+  inline-size: 100%;
+  min-block-size: var(--forma-control-min-size,2.75rem);
+  grid-template-columns: auto minmax(0,1fr);
+  align-items: start;
+  gap: var(--forma-space-3,var(--space-3));
+  padding: var(--forma-space-4,var(--space-4));
+  color: var(--forma-color-text,var(--ink));
+  background: var(--forma-color-surface,var(--panel));
+  border: 1px solid var(--forma-color-border,var(--line));
+  border-radius: var(--forma-radius-medium,var(--radius-medium));
+  text-align: start;
+  transition: background-color var(--forma-duration-normal,160ms),border-color var(--forma-duration-normal,160ms);
+}
+.ui-choice-card:not(:has(.ui-choice-card-icon)) { grid-template-columns: minmax(0,1fr); }
+.ui-choice-card:hover:not(:disabled),
+.ui-choice-card--selected {
+  background: var(--forma-color-accent-subtle,var(--orange-soft));
+  border-color: var(--forma-color-accent,var(--orange));
+}
+.ui-choice-card:disabled { cursor: not-allowed; opacity: .55; }
+.ui-choice-card-icon {
+  display: grid;
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  flex: none;
+  place-items: center;
+  color: var(--forma-color-accent-text,var(--accent-strong));
+  background: var(--forma-color-accent-subtle,var(--orange-soft));
+  border-radius: var(--forma-radius-small,var(--radius-small));
+}
+.ui-choice-card-copy { display: grid; min-inline-size: 0; align-content: center; gap: .25rem; }
+.ui-choice-card-copy > strong { color: inherit; font-size: var(--forma-font-size-supporting,var(--type-small)); font-weight: 650; }
+.ui-choice-card-copy > small { color: var(--forma-color-text-muted,var(--muted)); font-size: var(--forma-font-size-supporting,var(--type-small)); line-height: 1.45; }
+.ui-choice-card--compact { align-items: center; gap: var(--forma-space-2,var(--space-2)); padding: var(--forma-space-3,var(--space-3)); }
+.ui-choice-card--compact .ui-choice-card-icon { inline-size: 2rem; block-size: 2rem; }
+.context-entry-choices { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--forma-space-3,var(--space-3)); margin-block-start: var(--forma-space-5,var(--space-5)); }
+.context-entry-back { min-block-size: var(--forma-control-min-size,2.75rem); color: var(--forma-color-accent-text,var(--accent-strong)); }
+.layer-create-form:has(.layer-type-catalog) { inline-size: min(68rem,calc(100vw - 2rem)); }
+.layer-type-catalog { max-block-size: min(38rem,calc(100dvh - 15rem)); overflow: auto; padding-block-start: var(--forma-space-4,var(--space-4)); }
+.layer-type-catalog .block-type-group h3 { margin: 0 0 .35rem; font-size: var(--forma-font-size-body,var(--type-body)); }
+.board-context-choice .ui-choice-card { border-style: dashed; }
+.chat-context-starters { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(12rem,100%),1fr)); gap: var(--forma-space-2,var(--space-2)); margin-block: var(--forma-space-4,var(--space-4)); }
+.creative-quick-tools forma-ui-choice-card {
+  --forma-color-text: var(--fixed-dark-ink);
+  --forma-color-text-muted: color-mix(in srgb,var(--fixed-dark-ink) 72%,transparent);
+  --forma-color-surface: var(--fixed-dark-panel);
+  --forma-color-border: #444;
+  --forma-color-accent-subtle: color-mix(in srgb,var(--orange) 16%,var(--fixed-dark-panel));
+}
+@media (max-width: 560px) { .context-entry-choices { grid-template-columns: minmax(0,1fr); } }
+@media (prefers-reduced-motion: reduce) { .ui-choice-card { transition: none; } }
+@media (forced-colors: active) {
+  .ui-choice-card { color: CanvasText; background: Canvas; border-color: CanvasText; }
+  .ui-choice-card:hover:not(:disabled),.ui-choice-card--selected { border-color: Highlight; }
+  .ui-choice-card:disabled { color: GrayText; border-color: GrayText; }
+  .ui-choice-card-icon { color: CanvasText; background: Canvas; }
+}
 .asset-preview > span,.context-set-preview > span { --forma-icon-size: 1.5rem; }
 .asset-preview.large > span { --forma-icon-size: 2rem; }
 .canvas-artifact-symbol > span,.canvas-document-output-placeholder-mark { --forma-icon-size: 2rem; }

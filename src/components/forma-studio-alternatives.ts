@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
+import { blockIconName } from "./icon-semantics";
 import type { CreativeBlock, EventInput } from "../model/events";
 import { BLOCK_GROUPS, BLOCK_TYPES, blockTypeDefinition, suggestedSubtype, type BlockGroup, type BlockKind } from "../model/block-types";
 import { documentFocusFromRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
@@ -9,6 +10,7 @@ import "./studio-navigation";
 import "./event-inspector";
 import "./spatial-scope-editor";
 import "./document-generations";
+import "./design-system/choice-card";
 
 const slug = (value: string, id = "") => value.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 42) || (id ? `decision-${id.slice(0, 8)}` : "untitled");
 
@@ -143,12 +145,11 @@ export class FormaContextBoard extends AlternativeStudio {
     const capture = html`
       <section class="board-capture" aria-labelledby="board-capture-title">
         <div>
-          <span class="eyebrow">Add one clear decision</span>
-          <h2 id="board-capture-title">Give the board something useful to work with</h2>
-          <p>Choose the role first, then state the decision in language a collaborator could act on.</p>
+          <h2 id="board-capture-title">Add context</h2>
+          <p>Choose the kind of creative decision you want to shape. You can edit or remove it later.</p>
         </div>
         <form class="board-quick-add" @submit=${this.#add}>
-          <label>Decision type
+          <label>Block type
             <select .value=${this.#type} @change=${(event: Event) => { this.#type = (event.target as HTMLSelectElement).value as BlockKind; this.#subtype = suggestedSubtype(this.#type); this.#userSelectedType = true; this.requestUpdate(); }}>
               ${BLOCK_TYPES.map((item) => html`<option value=${item.type}>${this.i18n.system(item.label)}</option>`)}
             </select>
@@ -161,7 +162,7 @@ export class FormaContextBoard extends AlternativeStudio {
           <label>Your decision
             <input id="board-decision" required placeholder=${this.i18n.system(definition.prompt)} .value=${this.#text} @input=${(event: InputEvent) => { this.#text = (event.target as HTMLInputElement).value; this.requestUpdate(); }}>
           </label>
-          <button class="button primary" ?disabled=${!this.#text.trim()}>${icon("plus")} Add decision</button>
+          <button class="button primary" ?disabled=${!this.#text.trim()}>${icon("plus")} Add context</button>
         </form>
       </section>`;
     const body = html`
@@ -177,7 +178,7 @@ export class FormaContextBoard extends AlternativeStudio {
             </header>
             <div class="board-lane-blocks">
               ${items.map((block) => html`<forma-context-block .block=${block} surface="board"></forma-context-block>`)}
-              ${!items.length ? html`<button class="board-empty" @click=${() => this.#prepare(lane.starter)}>Start with ${this.i18n.system(blockTypeDefinition(lane.starter)?.label??lane.starter)} ${icon("arrow")}</button>` : nothing}
+              ${!items.length ? html`<forma-ui-choice-card class="board-context-choice" compact .label=${this.i18n.system(blockTypeDefinition(lane.starter)?.label??lane.starter)} .detail=${this.i18n.system(lane.description)} .iconName=${blockIconName(lane.starter)} .value=${lane.starter} @forma-action=${() => this.#prepare(lane.starter)}></forma-ui-choice-card>` : nothing}
             </div>
           </section>`;
         })}
@@ -322,17 +323,17 @@ export class FormaGuidedBrief extends AlternativeStudio {
           <p>${this.i18n.system(section.outcome)}</p>
         </header>
         <div class="guided-question-grid">
-          ${section.fields.map((field, index) => {
+          ${section.fields.map((field) => {
             const existing = projection.blocks.find((block) => block.type === field.type);
             const definition = blockTypeDefinition(field.type)!;
             return html`<section class="guided-question">
               <header>
-                <span>${String(index + 1).padStart(2, "0")}</span>
+                <span aria-hidden="true">${icon(blockIconName(field.type))}</span>
                 <div><small>${this.i18n.system(field.label)}</small><h3>${this.i18n.system(field.question)}</h3></div>
                 ${existing ? html`<b class="resolved-chip">In document</b>` : html`<b class="unresolved-chip">Open</b>`}
               </header>
               <p>${this.i18n.system(field.help)}</p>
-              <label class="guided-subtype">Use this answer as
+              <label class="guided-subtype">Starting point
                 <select form=${guidedFormId} .value=${this.#subtypes[field.type]} @change=${(event: Event) => { this.#subtypes[field.type] = (event.target as HTMLSelectElement).value; this.requestUpdate(); }}>
                   ${definition.subtypes.map((subtype) => html`<option value=${subtype}>${this.i18n.system(subtype)}</option>`)}
                 </select>

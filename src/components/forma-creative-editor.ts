@@ -21,6 +21,7 @@ import "./reference-image";
 import "./reference-pixel-policy";
 import "./generation-actions";
 import "./document-artifacts";
+import "./design-system/choice-card";
 import "./prompt-fan-visual";
 import "./prompt-fan-review";
 import "./output-input-editor";
@@ -370,15 +371,15 @@ export class FormaCreativeEditor extends AlternativeStudio {
             <button ?disabled=${!this.store.canUndo()} title="Undo" @click=${() => this.store.undo()}>${icon("undo")}<span>Undo</span></button>
             <button ?disabled=${!this.store.canRedo()} title="Redo" @click=${() => this.store.redo()}>${icon("redo")}<span>Redo</span></button>
           </div>
-          <button class="button secondary compact" @click=${() => this.#openCreate()}>${icon("plus")} Add something</button>
+          <button class="button secondary compact" @click=${() => this.#openCreate()}>${icon("plus")} Add context</button>
           <forma-generation-actions source="editor" .selected=${latest??null} compact></forma-generation-actions>
         </header>
 
         <div class="creative-editor-layout">
           <aside class="creative-editor-tools" aria-label="Add creative material">
-            <header><span>Tools</span><h2>Add to the plan</h2><p>Choose what you want to shape. The editor will put it in the right place.</p></header>
+            <header><span>Tools</span><h2>Add context</h2><p>Choose what you want to shape. The editor will put it in the right place.</p></header>
             <div class="creative-quick-tools">
-              ${QUICK_TOOLS.map((tool) => html`<button @click=${() => this.#openCreate(tool.type, tool.intent)}><span>${icon(blockIconName(tool.type))}</span><b>${this.i18n.system(tool.label??FRIENDLY_LABELS[tool.type])}</b><small>${this.i18n.system(tool.description??blockTypeDefinition(tool.type)?.description??"")}</small></button>`)}
+              ${QUICK_TOOLS.map((tool) => html`<forma-ui-choice-card compact .label=${this.i18n.system(tool.label??FRIENDLY_LABELS[tool.type])} .detail=${this.i18n.system(tool.description??blockTypeDefinition(tool.type)?.description??"")} .iconName=${blockIconName(tool.type)} .value=${`${tool.type}:${tool.intent}`} @forma-action=${() => this.#openCreate(tool.type, tool.intent)}></forma-ui-choice-card>`)}
             </div>
             <button class="creative-tool-more" @click=${() => this.#openCreate()}>${icon("plus")} More ways to shape the work</button>
             <form @submit=${(event:SubmitEvent)=>{event.preventDefault();}}><label class="creative-reference-tool">${icon("image")}<span><b>Add an image</b><small>Use a visual reference</small></span><input type="file" accept="image/*" @change=${this.#queueReference}></label><label class="creative-reference-tool creative-audio-tool">${icon("audio")}<span><b>${this.i18n.t("artifact.audio.label","Audio")}</b><small>${this.i18n.t("audio.reference.private","Private audio reference")}</small></span><input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm" @change=${this.#queueReference}></label></form>
@@ -440,7 +441,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
                 <button type="button" @click=${() => this.#duplicate(selected)}>Make a copy</button>
                 <button type="button" class="danger" @click=${() => this.#remove(selected)}>Remove</button>
               </div>
-            </form><forma-spatial-scope-editor .block=${selected} surface="editor"></forma-spatial-scope-editor>` : html`<div class="creative-inspector-empty"><span>${icon("spark")}</span><h2>Start anywhere</h2><p>Add a goal, subject, look, or reference. Select it on the page whenever you want to refine it.</p><button class="button primary" @click=${() => this.#openCreate()}>Add something</button></div>`}
+            </form><forma-spatial-scope-editor .block=${selected} surface="editor"></forma-spatial-scope-editor>` : html`<div class="creative-inspector-empty"><span>${icon("spark")}</span><h2>Start anywhere</h2><p>Add a goal, subject, look, or reference. Select it on the page whenever you want to refine it.</p><button class="button primary" @click=${() => this.#openCreate()}>Add context</button></div>`}
           </aside>
         </div>
       </section>
@@ -448,12 +449,12 @@ export class FormaCreativeEditor extends AlternativeStudio {
       ${this.#creating ? html`<dialog class="modal creative-add-dialog" closedby="any" aria-labelledby="creative-add-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) this.#closeCreate(); }} @cancel=${(event: Event) => { event.preventDefault(); this.#closeCreate(); }}>
         <form class="modal-card creative-add-card" @submit=${this.#create}>
           <button type="button" class="icon-button modal-close" aria-label="Close" @click=${this.#closeCreate}>${icon("close")}</button>
-          <span class="eyebrow">Add to the plan</span><h2 id="creative-add-title">What should the plan do?</h2><p>${isNegativeIntent(this.#newIntent) ? this.i18n.system("Choose what kind of decision this is, then name what must stay out. The role remains explicit while the intent compiles as a negative guardrail.") : this.i18n.system("Choose what the instruction concerns and how the plan should treat it. You can change both later.")}</p>
+          <h2 id="creative-add-title">Add context</h2><p>${isNegativeIntent(this.#newIntent) ? this.i18n.system("Choose what kind of decision this is, then name what must stay out. The role remains explicit while the intent compiles as a negative guardrail.") : this.i18n.system("Choose what the instruction concerns and how the plan should treat it. You can change both later.")}</p>
           <label><span>Role in the plan</span><select @change=${(event: Event) => { this.#newType = (event.target as HTMLSelectElement).value as BlockKind; this.requestUpdate(); }}>${BLOCK_TYPES.filter((item) => item.type !== "reference").map((item) => html`<option value=${item.type} ?selected=${item.type === this.#newType}>${this.i18n.system(FRIENDLY_LABELS[item.type])}</option>`)}</select></label>
           <label><span>Intent</span><select @change=${(event: Event) => { this.#newIntent = (event.target as HTMLSelectElement).value as BlockIntent; this.requestUpdate(); }}>${BLOCK_INTENTS.map((intent) => html`<option value=${intent.id} ?selected=${intent.id === this.#newIntent}>${this.i18n.system(intent.label)} · ${this.i18n.system(intent.description)}</option>`)}</select></label>
           <label><span>${isNegativeIntent(this.#newIntent) ? this.i18n.system("What {value} must be excluded?", { value: this.i18n.system(FRIENDLY_LABELS[this.#newType]).toLocaleLowerCase(this.i18n.locale) }) : this.i18n.system("Your instruction")}</span><textarea autofocus required rows="4" placeholder=${isNegativeIntent(this.#newIntent) ? this.#newType==="subject"?this.i18n.system("For example: people under 20 years old"):this.i18n.system("For example: an unwanted {type}",{type:this.i18n.system(FRIENDLY_LABELS[this.#newType]).toLocaleLowerCase(this.i18n.locale)}) : this.i18n.system(blockTypeDefinition(this.#newType)?.prompt ?? "")} .value=${this.#newText} @input=${(event: InputEvent) => { this.#newText = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea></label>
           <fieldset><legend>${isNegativeIntent(this.#newIntent) ? this.i18n.system("How strongly should this guardrail apply?") : this.i18n.system("How much should it lead?")}</legend>${(isNegativeIntent(this.#newIntent) ? [["supporting", "Gentle"], ["balanced", "Standard"], ["lead", "Strict"]] : [["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]]).map(([value, label]) => html`<label><input type="radio" name="new-strength" value=${value} .checked=${this.#newStrength === value} @change=${() => { this.#newStrength = value; this.requestUpdate(); }}><span>${this.i18n.system(label)}</span></label>`)}</fieldset>
-          <footer><button type="button" class="button ghost" @click=${this.#closeCreate}>Cancel</button><button class="button primary" ?disabled=${!this.#newText.trim()}>Add to plan</button></footer>
+          <footer><button type="button" class="button ghost" @click=${this.#closeCreate}>Cancel</button><button class="button primary" ?disabled=${!this.#newText.trim()}>Add context</button></footer>
         </form>
       </dialog>` : nothing}
 

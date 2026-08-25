@@ -130,6 +130,45 @@ language. Public surfaces call the foundation directly with their own
 translated labels. Every dismissible host retains explicit close controls,
 backdrop and Escape behavior, focus restoration, and reduced-motion support.
 
+## Context creation and reusable choice cards
+
+`<forma-ui-choice-card>` is the shared, light-DOM molecule for a real actionable
+choice. Document block types, the create-or-reuse context entry, Canvas source
+categories, Context board starters, Adaptive path answers, Creative Editor
+tools, and optional Chat starters all render the same production component:
+
+```html
+<forma-ui-choice-card
+  label="Creative idea"
+  detail="Supporting context"
+  icon-name="spark"
+  value="creative-idea"
+></forma-ui-choice-card>
+```
+
+`label` and `detail` are caller-localized authored content; `value` is an
+untranslated, stable machine identifier. `icon-name`, `compact`, `disabled`,
+and an optional `selected` state control presentation without replacing the
+native `<button type="button">`. Only explicitly selectable choices expose
+`aria-pressed`; every
+enabled activation emits bubbling, composed
+`forma-action: CustomEvent<{ value: string }>`. Supporting text, focus rings,
+44px minimum targets, reduced motion, right-to-left layouts, forced colors, and
+light/dark surfaces use the shared design tokens.
+
+Use **Add context** for the common entry, distinguish **Add a context block**
+from **Add from project**, and reuse the canonical `BLOCK_GROUPS`/`BLOCK_TYPES`
+taxonomy wherever a decision type must be chosen. Broad Canvas add menus may
+also offer documents, finished outputs, references, and drawing; guided
+questions, adaptive adoption, board capture, and chat remain native to their
+working mode. Opening a choice never creates placeholder content, silently
+adopts a suggestion, uploads a reference, starts generation, or grants new
+permissions. Existing native modal hosts retain browser-owned focus, Escape,
+backdrop dismissal, separate form ownership, and explicit reference consent.
+
+The actual isolated demonstration and complete generated API are available at
+`/knowledge/design-system#forma-ui-choice-card`.
+
 ## Navigation destination and event contracts
 
 Both navigation components consume property-only records:

@@ -1094,6 +1094,8 @@ export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   "component.forma-ui-card.title": "Content card",
   "component.forma-ui-checkbox.summary": "Toggle an independently named, form-associated native checkbox.",
   "component.forma-ui-checkbox.title": "Checkbox",
+  "component.forma-ui-choice-card.summary": "Present an actionable choice with an icon, supporting context, and a stable value.",
+  "component.forma-ui-choice-card.title": "Choice card",
   "component.forma-ui-chip.summary": "Toggle or remove a named filtering decision with a real button.",
   "component.forma-ui-chip.title": "Filter chip",
   "component.forma-ui-cluster.summary": "Arrange authored child elements horizontally with responsive wrapping.",

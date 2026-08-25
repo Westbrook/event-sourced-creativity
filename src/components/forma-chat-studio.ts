@@ -1,5 +1,7 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
+import { blockIconName } from "./icon-semantics";
+import { blockTypeDefinition, type BlockKind } from "../model/block-types";
 import { generationHistoryItemIsDraft, generationHistoryItems, outputQualityLabel } from "../model/events";
 import { documentFocusFromRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import "./project-rail";
@@ -9,8 +11,10 @@ import "./generation-actions";
 import "./prompt-fan-visual";
 import "./prompt-fan-review";
 import "./document-artifacts";
+import "./design-system/choice-card";
 
 type ChatLine={id:string;role:"user"|"assistant";text:string;sequence:number};
+const CHAT_CONTEXT_STARTERS: readonly BlockKind[] = ["direction", "subject", "style", "exclusion"];
 
 export class FormaChatStudio extends FormaElement {
   #draft="";
@@ -32,6 +36,14 @@ export class FormaChatStudio extends FormaElement {
 
   #keydown(event:KeyboardEvent){if(event.key==="Enter"&&!event.shiftKey&&!event.isComposing&&!event.metaKey&&!event.ctrlKey&&!event.altKey){event.preventDefault();const submitter=this.querySelector<HTMLButtonElement>('.chat-composer button[type="submit"]');if(submitter&&!submitter.disabled)submitter.form?.requestSubmit(submitter);}}
 
+  #prepareContext(type: BlockKind) {
+    const definition = blockTypeDefinition(type);
+    if (!definition) return;
+    if (!this.#draft.trim()) this.#draft = this.i18n.system(definition.prompt);
+    this.requestUpdate();
+    void this.updateComplete.then(() => this.querySelector<HTMLTextAreaElement>("#creative-chat-message")?.focus({ preventScroll: true }));
+  }
+
   override render(){
     const projection=this.store.projection.get();const lines=this.#lines(projection.documentId);const history=generationHistoryItems(projection.outputs);const currentItem=history.find((item)=>(item.kind==="fan"?`fan:${item.id}`:item.id)===this.store.ui.selectedOutputId)??history[0]??null;const current=currentItem?.kind==="output"?currentItem.output:null;const previewProgress=this.store.documentPreviewProgress(projection.documentId);const previewActive=this.store.documentJobActive("preview",projection.documentId);const working=Boolean(previewProgress)||generationHistoryItemIsDraft(currentItem);const busy=this.store.busy.get();const chatActive=this.store.documentJobActive("chat");
     const projectContext=this.store.session.get()?.projectContext;
@@ -40,7 +52,7 @@ export class FormaChatStudio extends FormaElement {
     const conversation=html`<section class="chat-conversation" aria-labelledby="chat-thread-title">
       <header><div><span class="eyebrow">Creative conversation</span><h2 id="chat-thread-title">Chat with Forma</h2></div><button type="button" class="button secondary compact chat-result-toggle" aria-controls="chat-result-preview" aria-expanded=${this.#showResult} @click=${()=>{this.#showResult=!this.#showResult;this.requestUpdate();}}>${this.i18n.t(this.#showResult?"chat.hideResult":"chat.showResult",this.#showResult?"Hide result":"Show result")}</button><p>${canGenerate?this.i18n.system("Describe the image, revise an idea, or remove something that no longer belongs. Forma keeps the plan organized for you."):this.i18n.t("chat.viewerConversationPrivacy","Creative conversations are private to each project editor; your role can review shared results.")}</p></header>
       <div class="chat-thread" role="log" aria-live="polite" aria-busy=${chatActive}>
-        ${!lines.length&&canGenerate?html`<article class="chat-line assistant"><span>Forma</span><p>What would you like to make? Start with the subject, feeling, setting, or simply the outcome you have in mind.</p></article>`:nothing}
+        ${!lines.length&&canGenerate?html`<article class="chat-line assistant"><span>Forma</span><p>What would you like to make? Start with the subject, feeling, setting, or simply the outcome you have in mind.</p></article><section class="chat-context-starters" aria-label=${this.i18n.system("Add context")}>${CHAT_CONTEXT_STARTERS.map((type)=>{const definition=blockTypeDefinition(type)!;return html`<forma-ui-choice-card compact .label=${this.i18n.system(definition.label)} .detail=${this.i18n.system(definition.description)} .iconName=${blockIconName(type)} .value=${type} @forma-action=${()=>this.#prepareContext(type)}></forma-ui-choice-card>`;})}</section>`:nothing}
         ${lines.map((line)=>html`<article class=${`chat-line ${line.role}`}><span>${line.role==="user"?this.i18n.system("You"):"Forma"}</span><p>${line.text}</p></article>`)}
         ${chatActive?html`<article class="chat-line assistant thinking"><span>Forma</span><p>Working through that idea on the server… You can refresh or leave this view safely.</p></article>`:previewActive?html`<article class="chat-line assistant thinking previewing"><span>Forma</span><p>The plan is updated. I’m drawing its working preview separately, so the conversation is available before the image finishes.</p></article>`:nothing}
         <span class="chat-thread-end" aria-hidden="true"></span>

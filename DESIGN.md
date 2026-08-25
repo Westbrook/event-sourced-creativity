@@ -379,6 +379,12 @@ Use a card only when the item is independently actionable or movable. Otherwise 
 - Hover cannot move a card or change surrounding layout.
 - Selected cards use an accent border and accent wash, always paired with an accessible selected state.
 - Action regions reserve their space or remain visible.
+- Reuse `<forma-ui-choice-card>` for icon, label, and supporting-copy decisions;
+  Document creation, project reuse, Canvas categories, editor tools, adaptive
+  answers, board starters, and chat invitations share one native-button visual
+  language without forcing their distinct workflows into the same dialog.
+- Context entry uses the direct heading **Add context** and explicitly separates
+  creating a new typed block from reusing existing project work.
 
 ### Images
 

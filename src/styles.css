@@ -474,9 +474,9 @@ forma-project-rail { display: block; min-width: 0; background: #ecece5; border-i
 .block-type-group p { margin: 0; color: var(--muted); font-size: var(--type-micro); line-height: 1.45; }
 .block-type-group > header > span { flex: none; color: var(--muted); font: var(--type-micro) var(--mono); text-transform: uppercase; }
 .block-type-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
-.block-type-grid button { display: grid; grid-template-columns: 30px 1fr; gap: 0 9px; padding: 11px; background: #fff; border: 1px solid var(--line); border-radius: 6px; text-align: left; }
-.block-type-grid button:hover { border-color: var(--forest-2); background: var(--mint); }
-.block-type-grid button > span { grid-row: 1/3; display: grid; width: 29px; height: 29px; place-items: center; color: var(--forest); background: var(--acid); border-radius: 50%; font: var(--type-micro) var(--mono); }
+.block-type-grid > button { display: grid; grid-template-columns: 30px 1fr; gap: 0 9px; padding: 11px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; text-align: start; }
+.block-type-grid > button:hover { border-color: var(--forest-2); background: var(--mint); }
+.block-type-grid > button > span { grid-row: 1/3; display: grid; width: 29px; height: 29px; place-items: center; color: var(--forest); background: var(--acid); border-radius: 50%; font: var(--type-micro) var(--mono); }
 .block-type-grid b { font-size: var(--type-caption); }
 .block-type-grid small { color: var(--muted); font-size: var(--type-micro); }
 .block-draft-copy { display: grid; gap: 6px; color: var(--muted); font: var(--type-micro) var(--mono); text-transform: uppercase; }
