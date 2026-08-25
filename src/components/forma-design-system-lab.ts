@@ -47,7 +47,7 @@ const SYNTHETIC_AUDIENCE_TASKS = Object.freeze({
   canvas: Object.freeze(["canvases", "proposals", "library", "projects"]),
   operations: Object.freeze(["system", "providers", "release", "access"]),
   product: Object.freeze(["insights", "delivery"]),
-  knowledge: Object.freeze(["components", "patterns", "guidance"]),
+  knowledge: Object.freeze(["components", "patterns", "guidance", "landing-pages"]),
   engineering: Object.freeze(["health", "events", "sync", "jobs"]),
 });
 

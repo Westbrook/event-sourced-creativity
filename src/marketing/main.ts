@@ -1,6 +1,15 @@
 import english, { type MarketingMessageKey } from "./locales/en";
 import { FORMA_SUPPORTED_LOCALES } from "../components/design-system/language-options";
 import { ensureNativeModalDialog } from "../components/design-system/native-dialog";
+import {
+  isMarketingAudienceProfile,
+  isMarketingLocale,
+  marketingPath,
+  parseMarketingRoute,
+  type MarketingAudienceProfile,
+  type MarketingLocale,
+  type MarketingProfile,
+} from "./profiles";
 import "../components/design-system/language-picker";
 
 // This public entry deliberately stays independent of Forma's authenticated
@@ -10,8 +19,8 @@ document.documentElement.dataset.formaExperience = "marketing";
 type CreativeDecision = "mood" | "audience" | "boundary" | "source";
 type CreativeStudyFamily = "landscape" | "portrait" | "detail" | "twilight";
 type MarketingPreviewKind = "story" | "scene" | "presentation" | "storyboard";
-type MarketingLocale = "en" | "fr" | "ar" | "ja";
 type MarketingCatalog = Readonly<Record<MarketingMessageKey, string>>;
+type MarketingProfileCatalog = Readonly<Partial<Record<MarketingMessageKey, string>>>;
 
 type CreativeStudy = Readonly<{
   sources: ReadonlyMap<string, string>;
@@ -36,8 +45,29 @@ const LOADERS = {
   ar: () => import("./locales/ar"),
   ja: () => import("./locales/ja"),
 };
-const catalogs = new Map<MarketingLocale, MarketingCatalog>([["en", english]]);
-const requests = new Map<MarketingLocale, Promise<MarketingCatalog>>();
+const PROFILE_LOADERS: Record<MarketingAudienceProfile, Record<MarketingLocale, () => Promise<{ default: MarketingProfileCatalog }>>> = {
+  "hollywood-filmmakers": {
+    en: () => import("./profiles/hollywood-filmmakers/en"),
+    fr: () => import("./profiles/hollywood-filmmakers/fr"),
+    ar: () => import("./profiles/hollywood-filmmakers/ar"),
+    ja: () => import("./profiles/hollywood-filmmakers/ja"),
+  },
+  marketers: {
+    en: () => import("./profiles/marketers/en"),
+    fr: () => import("./profiles/marketers/fr"),
+    ar: () => import("./profiles/marketers/ar"),
+    ja: () => import("./profiles/marketers/ja"),
+  },
+  "indie-filmmakers": {
+    en: () => import("./profiles/indie-filmmakers/en"),
+    fr: () => import("./profiles/indie-filmmakers/fr"),
+    ar: () => import("./profiles/indie-filmmakers/ar"),
+    ja: () => import("./profiles/indie-filmmakers/ja"),
+  },
+};
+const activeProfile: MarketingProfile = parseMarketingRoute(location.pathname)?.profile ?? "generic";
+const catalogs = new Map<string, MarketingCatalog>([["generic:en", english]]);
+const requests = new Map<string, Promise<MarketingCatalog>>();
 let messages: MarketingCatalog = english;
 let activeLocale: MarketingLocale = "en";
 let revision = 0;
@@ -54,7 +84,7 @@ function normalizedLocale(value: string | null | undefined) {
 }
 
 function preferredLocale() {
-  const requested = location.pathname.match(/^\/welcome\/(en|fr|ar|ja)\/?$/)?.[1];
+  const requested = parseMarketingRoute(location.pathname)?.locale;
   const explicit = normalizedLocale(requested);
   if (explicit) return { ...explicit, persist: true };
 
@@ -72,24 +102,34 @@ function preferredLocale() {
 }
 
 async function catalogFor(locale: MarketingLocale): Promise<MarketingCatalog> {
-  const ready = catalogs.get(locale);
+  const key = `${activeProfile}:${locale}`;
+  const ready = catalogs.get(key);
   if (ready) return ready;
-  const pending = requests.get(locale);
+  const pending = requests.get(key);
   if (pending) return pending;
 
-  const load = LOADERS[locale as Exclude<MarketingLocale, "en">]().then(({ default: catalog }) => {
+  const base = locale === "en"
+    ? Promise.resolve(english as MarketingCatalog)
+    : LOADERS[locale]().then(({ default: catalog }) => catalog);
+  const overlay = activeProfile === "generic"
+    ? Promise.resolve({} as MarketingProfileCatalog)
+    : PROFILE_LOADERS[activeProfile][locale]().then(({ default: catalog }) => catalog);
+  const load = Promise.all([base, overlay]).then(([catalog, profile]) => {
     const expected = Object.keys(english);
-    if (Object.keys(catalog).length !== expected.length || expected.some((key) => !Object.hasOwn(catalog, key))) {
+    if (Object.keys(catalog).length !== expected.length || expected.some((message) => !Object.hasOwn(catalog, message))) {
       throw new Error("Incomplete public marketing language catalog.");
     }
-    const complete = Object.freeze({ ...catalog });
-    catalogs.set(locale, complete);
+    if (Object.entries(profile).some(([message, value]) => !Object.hasOwn(english, message) || typeof value !== "string" || !value.trim())) {
+      throw new Error("Invalid public marketing audience catalog.");
+    }
+    const complete = Object.freeze({ ...catalog, ...profile });
+    catalogs.set(key, complete);
     return complete;
   }).catch((error: unknown) => {
-    requests.delete(locale);
+    requests.delete(key);
     throw error;
   });
-  requests.set(locale, load);
+  requests.set(key, load);
   return load;
 }
 
@@ -119,7 +159,30 @@ function updateDocument(locale: MarketingLocale, languageTag: string) {
   for (const [selector, content] of Object.entries(metadata)) {
     document.querySelector<HTMLMetaElement>(selector)?.setAttribute("content", content);
   }
-  document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.setAttribute("href", `/welcome/${locale}`);
+  document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.setAttribute("href", marketingPath(activeProfile, locale));
+  for (const element of document.querySelectorAll<HTMLAnchorElement | HTMLLinkElement>("a[hreflang], link[rel=alternate][hreflang]")) {
+    const requested = element.getAttribute("hreflang") ?? undefined;
+    if (requested === "x-default") element.setAttribute("href", marketingPath(activeProfile));
+    else if (isMarketingLocale(requested)) element.setAttribute("href", marketingPath(activeProfile, requested));
+  }
+  for (const link of document.querySelectorAll<HTMLAnchorElement>("[data-profile-link]")) {
+    const profile = link.dataset.profileLink;
+    if (profile !== "generic" && !isMarketingAudienceProfile(profile)) continue;
+    link.href = marketingPath(profile, locale);
+    if (profile === activeProfile) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+  const audienceNavigation = document.querySelector<HTMLElement>(".marketing-audiences");
+  const currentAudience = audienceNavigation?.querySelector<HTMLElement>('[aria-current="page"]');
+  if (audienceNavigation && currentAudience) {
+    const container = audienceNavigation.getBoundingClientRect();
+    const current = currentAudience.getBoundingClientRect();
+    if (current.left < container.left || current.right > container.right) {
+      audienceNavigation.scrollLeft += direction === "rtl"
+        ? current.right - container.right
+        : current.left - container.left;
+    }
+  }
   if (languagePicker) {
     languagePicker.value = locale;
     languagePicker.label = messages.languageLabel;
@@ -152,7 +215,7 @@ async function setMarketingLocale(
     catch { /* The selected language remains usable without device storage. */ }
   }
   if (options.updateRoute) {
-    try { history.replaceState(history.state, "", `/welcome/${target.locale}${location.search}${location.hash}`); }
+    try { history.replaceState(history.state, "", `${marketingPath(activeProfile, target.locale)}${location.search}${location.hash}`); }
     catch { /* Translation remains functional when history updates are blocked. */ }
   }
   if (options.announce) {
@@ -518,7 +581,7 @@ class FormaImageViewer {
   #family(picture: HTMLPictureElement): CreativeStudyFamily | undefined {
     const image = picture.querySelector<HTMLImageElement>("img");
     const candidate = image?.getAttribute("src") ?? "";
-    return candidate.match(/quiet-coast-(landscape|portrait|detail|twilight)-/)?.[1] as CreativeStudyFamily | undefined;
+    return candidate.match(/\/(?:quiet-coast|glass-meridian|brighter-hour|mercer-midnight)-(landscape|portrait|detail|twilight)-/)?.[1] as CreativeStudyFamily | undefined;
   }
 
   #remember(picture: HTMLPictureElement, family: CreativeStudyFamily) {

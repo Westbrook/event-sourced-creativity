@@ -1,0 +1,94 @@
+.knowledge-landing-pages__content {
+  max-inline-size: var(--page-content-max, 90rem);
+  margin-inline: auto;
+}
+
+.knowledge-landing-pages__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr));
+  gap: clamp(1rem, 2.5vw, 2rem);
+}
+
+.knowledge-landing-pages__card {
+  --forma-card-inset: clamp(1rem, 2vw, 1.5rem);
+  --forma-heading-size: clamp(1.2rem, 2vw, 1.5rem);
+  min-inline-size: 0;
+}
+
+.knowledge-landing-pages__image {
+  display: block;
+  inline-size: 100%;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  background: var(--forma-color-surface-subtle, var(--panel-2));
+  border-radius: var(--forma-radius-medium, var(--radius-medium));
+}
+
+.knowledge-landing-pages__image img {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+}
+
+.knowledge-landing-pages__card > [slot="eyebrow"] {
+  color: var(--forma-color-text-muted, var(--muted));
+  font-size: var(--forma-font-size-supporting, var(--type-small));
+}
+
+.knowledge-landing-pages__card > [slot="heading"] {
+  overflow-wrap: anywhere;
+}
+
+.knowledge-landing-pages__locales {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .25rem;
+}
+
+.knowledge-landing-pages__locales a {
+  display: inline-flex;
+  min-inline-size: var(--forma-control-min-size, 2.75rem);
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  align-items: center;
+  justify-content: center;
+  padding-inline: .65rem;
+  color: var(--forma-color-text-muted, var(--muted));
+  border-radius: var(--forma-radius-small, var(--radius-small));
+}
+
+.knowledge-landing-pages__locales a[aria-current="true"] {
+  color: var(--forma-color-accent-text, var(--accent));
+  background: var(--forma-color-accent-subtle, var(--accent-soft));
+}
+
+.knowledge-landing-pages__actions {
+  display: grid;
+  gap: .4rem;
+}
+
+.knowledge-landing-pages__actions > a {
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+}
+
+.knowledge-landing-pages__actions > span {
+  color: var(--forma-color-text-muted, var(--muted));
+  font-size: var(--forma-font-size-supporting, var(--type-small));
+}
+
+:is(
+  .knowledge-landing-pages__image,
+  .knowledge-landing-pages__locales a,
+  .knowledge-landing-pages__actions a
+):focus-visible {
+  outline: var(--forma-focus-ring-width, .1875rem) solid
+    var(--forma-focus-ring-color, var(--forma-color-accent));
+  outline-offset: .1875rem;
+}
+
+@media (max-width: 32rem) {
+  .knowledge-landing-pages__actions,
+  .knowledge-landing-pages__actions > a {
+    inline-size: 100%;
+  }
+}

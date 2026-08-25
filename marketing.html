@@ -23,7 +23,7 @@
     <link rel="stylesheet" href="/src/marketing/marketing.css" />
     <script type="module" src="/src/marketing/main.ts"></script>
   </head>
-  <body>
+  <body data-marketing-profile="generic">
     <a class="marketing-skip" href="#main-content" data-copy="skip">Skip to the main content</a>
 
     <header class="marketing-header">
@@ -85,6 +85,13 @@
         </figure>
       </section>
 
+      <nav class="marketing-audiences" id="audiences" aria-label="Explore who Forma is for" data-copy-aria="audienceNavigationLabel">
+        <a href="/welcome/en" data-profile-link="generic" aria-current="page"><span data-copy="audienceOverviewLabel">All creators</span></a>
+        <a href="/welcome/hollywood-filmmakers/en" data-profile-link="hollywood-filmmakers"><span data-copy="audienceHollywoodLabel">Film &amp; television</span></a>
+        <a href="/welcome/marketers/en" data-profile-link="marketers"><span data-copy="audienceMarketersLabel">Brand &amp; marketing</span></a>
+        <a href="/welcome/indie-filmmakers/en" data-profile-link="indie-filmmakers"><span data-copy="audienceIndieLabel">Independent film</span></a>
+      </nav>
+
       <section class="marketing-formats" aria-label="Formats you can create from the same creative direction" data-copy-aria="formatsLabel">
         <p data-copy="formatsIntroduction">One direction, many forms.</p>
         <ul>
@@ -125,7 +132,7 @@
             <article class="proof-artifact proof-artifact--scene"><span data-copy="formatScene">Scene</span><strong data-copy="sceneLocation">EXT. EMPTY COASTLINE — BLUE HOUR</strong></article>
             <article class="proof-artifact proof-artifact--slide"><span data-copy="formatPresentation">Presentation</span><strong data-copy="slideTitle">Find the quieter way.</strong></article>
             <div class="proof-artifact proof-artifact--frames" aria-label="Three connected frames" data-copy-aria="proofStoryboardLabel"><picture><source type="image/avif" srcset="/assets/marketing/quiet-coast-twilight-480.7bf5dedd9bc8.avif" /><img src="/assets/marketing/quiet-coast-twilight-480.f9edf5bfa51d.webp" width="480" height="320" alt="" loading="lazy" decoding="async" /></picture><picture><source type="image/avif" srcset="/assets/marketing/quiet-coast-portrait-480.b2dbe571773f.avif" /><img src="/assets/marketing/quiet-coast-portrait-480.17569d70a333.webp" width="480" height="720" alt="" loading="lazy" decoding="async" /></picture><picture><source type="image/avif" srcset="/assets/marketing/quiet-coast-detail-320.7d8a36752b59.avif" /><img src="/assets/marketing/quiet-coast-detail-320.a686b01062b0.webp" width="320" height="320" alt="" loading="lazy" decoding="async" /></picture></div>
-            <a class="proof-artifact proof-artifact--motion" href="#motion-study"><img src="/assets/marketing/quiet-coast-scene-poster-960.616859215dd3.jpg" width="960" height="540" alt="" loading="lazy" decoding="async" /><span data-copy="proofMotionAction">See the moving scene</span></a>
+            <a class="proof-artifact proof-artifact--motion" href="#motion-study"><img src="/assets/marketing/quiet-coast-scene-poster-960.af29b34d50f0.jpg" width="960" height="540" alt="" loading="lazy" decoding="async" /><span data-copy="proofMotionAction">See the moving scene</span></a>
           </div>
         </div>
       </section>
@@ -209,13 +216,13 @@
             <article class="output-piece output-piece--video" id="motion-study" data-reveal>
               <div class="output-piece__visual output-motion output-motion--playable">
                 <picture class="coast-art__generated" data-context-study="detail" aria-hidden="true"><source type="image/avif" srcset="/assets/marketing/quiet-coast-detail-320.7d8a36752b59.avif 320w, /assets/marketing/quiet-coast-detail-512.260fba107967.avif 512w, /assets/marketing/quiet-coast-detail-768.b1fafb3bd8ee.avif 768w" sizes="(max-width: 760px) 90vw, 62vw" /><source type="image/webp" srcset="/assets/marketing/quiet-coast-detail-320.a686b01062b0.webp 320w, /assets/marketing/quiet-coast-detail-512.ac61303ba844.webp 512w, /assets/marketing/quiet-coast-detail-768.c18deeb5351c.webp 768w" sizes="(max-width: 760px) 90vw, 62vw" /><img src="/assets/marketing/quiet-coast-detail-320.a686b01062b0.webp" width="1254" height="1254" alt="" loading="lazy" decoding="async" /></picture>
-                <video class="output-motion__video" controls muted loop playsinline preload="none" poster="/assets/marketing/quiet-coast-scene-poster-960.616859215dd3.jpg" width="960" height="540" aria-label="One individual video scene" data-copy-aria="individualVideoScene" data-marketing-video>
-                  <source src="/assets/marketing/quiet-coast-scene-4s.daf9e9e53cd8.mp4" type="video/mp4" />
+                <video class="output-motion__video" controls muted loop playsinline preload="none" poster="/assets/marketing/quiet-coast-scene-poster-960.af29b34d50f0.jpg" width="960" height="540" aria-label="One individual video scene" data-copy-aria="individualVideoScene" data-marketing-video>
+                  <source src="/assets/marketing/quiet-coast-scene-8s.ff54358035c9.mp4" type="video/mp4" />
                 </video>
                 <button class="output-motion__toggle" type="button" aria-pressed="false" aria-label="Play video" data-copy-aria="videoPlayLabel" data-marketing-video-toggle hidden></button>
                 <span class="output-motion__frame" aria-hidden="true"></span><span class="output-motion__label" data-copy="proofMotionLabel">Shoreline motion study</span>
               </div>
-              <div class="output-piece__caption"><h3 data-copy="formatVideo">Video scenes</h3><p data-copy="outputVideoDetail">A silent, wide shoreline in motion, held in the same after-sunset blue.</p><span class="output-piece__signal output-piece__signal--verified" data-copy="proofVideoBadge">Video scene made in Forma</span></div>
+              <div class="output-piece__caption"><h3 data-copy="formatVideo">Video scenes</h3><p data-copy="outputVideoDetail">A silent, wide shoreline in motion, held in the same after-sunset blue.</p><span class="output-piece__signal output-piece__signal--verified" data-copy="proofVideoBadge">Original generated video study</span></div>
             </article>
             <article class="output-piece output-piece--image" data-reveal>
               <div class="output-piece__visual coast-art" aria-hidden="true">

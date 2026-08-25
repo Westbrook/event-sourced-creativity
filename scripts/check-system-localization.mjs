@@ -9,6 +9,22 @@ import frenchMessages from "../src/components/design-system/locales/fr.ts";
 import arabicMessages from "../src/components/design-system/locales/ar.ts";
 import japaneseMessages from "../src/components/design-system/locales/ja.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "../src/components/design-system/locales/responsive-messages.ts";
+import marketingEnglish from "../src/marketing/locales/en.ts";
+import marketingFrench from "../src/marketing/locales/fr.ts";
+import marketingArabic from "../src/marketing/locales/ar.ts";
+import marketingJapanese from "../src/marketing/locales/ja.ts";
+import hollywoodEnglish from "../src/marketing/profiles/hollywood-filmmakers/en.ts";
+import hollywoodFrench from "../src/marketing/profiles/hollywood-filmmakers/fr.ts";
+import hollywoodArabic from "../src/marketing/profiles/hollywood-filmmakers/ar.ts";
+import hollywoodJapanese from "../src/marketing/profiles/hollywood-filmmakers/ja.ts";
+import marketersEnglish from "../src/marketing/profiles/marketers/en.ts";
+import marketersFrench from "../src/marketing/profiles/marketers/fr.ts";
+import marketersArabic from "../src/marketing/profiles/marketers/ar.ts";
+import marketersJapanese from "../src/marketing/profiles/marketers/ja.ts";
+import indieEnglish from "../src/marketing/profiles/indie-filmmakers/en.ts";
+import indieFrench from "../src/marketing/profiles/indie-filmmakers/fr.ts";
+import indieArabic from "../src/marketing/profiles/indie-filmmakers/ar.ts";
+import indieJapanese from "../src/marketing/profiles/indie-filmmakers/ja.ts";
 import { auditStaticHtmlTemplate } from "./audit-static-html-localization.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -47,6 +63,43 @@ for (const [id, source] of Object.entries(FORMA_RESPONSIVE_MESSAGES.en)) {
     if (!translation?.trim()) errors.push(`${locale} is missing the responsive message ${id}`);
     else if (placeholders(translation) !== placeholders(source)) errors.push(`${locale} changes interpolation placeholders for responsive message ${id}`);
     else if (messages[id] !== translation) errors.push(`${locale} overrides the authoritative responsive message ${id}`);
+  }
+}
+
+const marketingCatalogs = { en: marketingEnglish, fr: marketingFrench, ar: marketingArabic, ja: marketingJapanese };
+const marketingProfiles = {
+  "hollywood-filmmakers": { name: "The Glass Meridian", catalogs: { en: hollywoodEnglish, fr: hollywoodFrench, ar: hollywoodArabic, ja: hollywoodJapanese } },
+  marketers: { name: "The Brighter Hour", catalogs: { en: marketersEnglish, fr: marketersFrench, ar: marketersArabic, ja: marketersJapanese } },
+  "indie-filmmakers": { name: "The Last Light on Mercer", catalogs: { en: indieEnglish, fr: indieFrench, ar: indieArabic, ja: indieJapanese } },
+};
+const marketingKeys = Object.keys(marketingEnglish).sort();
+for (const [locale, messages] of Object.entries(marketingCatalogs)) {
+  if (Object.keys(messages).sort().join("|") !== marketingKeys.join("|")) errors.push(`${locale} changes the shared public marketing catalog keys`);
+  for (const [id, source] of Object.entries(marketingEnglish)) {
+    if (!messages[id]?.trim()) errors.push(`${locale} is missing public marketing copy ${id}`);
+    else if (placeholders(messages[id]) !== placeholders(source)) errors.push(`${locale} changes public marketing interpolation placeholders for ${id}`);
+  }
+}
+
+for (const [profile, { name, catalogs: translations }] of Object.entries(marketingProfiles)) {
+  const source = translations.en;
+  const keys = Object.keys(source);
+  for (const [locale, messages] of Object.entries(translations)) {
+    if (Object.keys(messages).join("|") !== keys.join("|")) errors.push(`${profile}/${locale} changes the approved audience-catalog key order or coverage`);
+    if (messages.projectName !== name) errors.push(`${profile}/${locale} changes the authored project name`);
+    const upload = ({ en: /\bupload\b/iu, fr: /\b(?:téléversez|importez)\b/iu, ar: /(?:ارفع|رفع|تحميل)/u, ja: /アップロード/u })[locale];
+    if (!upload.test(messages.processCollectBody ?? "")) errors.push(`${profile}/${locale} hides the private, owned-or-licensed recording upload workflow`);
+    for (const [id, value] of Object.entries(source)) {
+      if (!Object.hasOwn(marketingEnglish, id)) errors.push(`${profile}/${locale} introduces an unknown public marketing message ${id}`);
+      else if (typeof messages[id] !== "string" || !messages[id].trim()) errors.push(`${profile}/${locale} is missing translated audience copy ${id}`);
+      else if (placeholders(messages[id]) !== placeholders(value)) errors.push(`${profile}/${locale} changes audience interpolation placeholders for ${id}`);
+      else if (/&(amp|lt|gt|quot);|&#\d+;/u.test(messages[id])) errors.push(`${profile}/${locale}.${id} contains pre-escaped HTML`);
+    }
+    if (locale !== "en") {
+      for (const id of ["pageTitle", "heroTitle", "heroIntroduction", "proofTitle", "previewStoryParagraphOne", "outputVideoDetail"]) {
+        if (messages[id] === source[id]) errors.push(`${profile}/${locale}.${id} falls back to untranslated English`);
+      }
+    }
   }
 }
 
@@ -185,5 +238,5 @@ if (errors.length) {
   console.error(`Localization audit failed with ${new Set(errors).size} uncovered system messages.`);
   process.exitCode = 1;
 } else {
-  console.log(`Localization audit passed: ${Object.keys(englishMessages).length} system phrases, ${defaults.size} English messages, ${referencedIds.size} referenced message IDs, ${BLOCK_TYPES.length} block types, and ${catalogs.size} translated locales.`);
+  console.log(`Localization audit passed: ${Object.keys(englishMessages).length} system phrases, ${defaults.size} English messages, ${referencedIds.size} referenced message IDs, ${BLOCK_TYPES.length} block types, ${catalogs.size} translated locales, and ${Object.keys(marketingProfiles).length} fully localized marketing audiences.`);
 }

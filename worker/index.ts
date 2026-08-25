@@ -22,7 +22,8 @@ import { handleEventPrivacy } from "./privacy-api";
 import { handleProjectNotifications } from "./project-notifications-api";
 import { processReviewReminders } from "./review-automation-api";
 import { handleProvisioning } from "./provisioning-api";
-import { negotiateMarketingLocale, renderMarketingDocument, type MarketingLocale } from "./marketing-localization";
+import { negotiateMarketingLocale, renderMarketingDocument } from "./marketing-localization";
+import { parseMarketingRoute } from "../src/marketing/profiles";
 
 async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string) {
     if(application==="creative"){
@@ -65,24 +66,23 @@ async function authorizeApplication(request: Request, env: WorkerEnv, applicatio
 
 async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const url=new URL(request.url);
-    const explicitMarketingLocale=url.pathname.match(/^\/welcome\/(en|fr|ar|ja)\/?$/)?.[1] as MarketingLocale|undefined;
-    const publicMarketingRoute=url.pathname==="/"||url.pathname==="/welcome"||url.pathname==="/welcome/"||Boolean(explicitMarketingLocale);
-    if(publicMarketingRoute){
+    const marketingRoute=parseMarketingRoute(url.pathname);
+    if(marketingRoute){
       if(request.method!=="GET"&&request.method!=="HEAD")return new Response(null,{status:405,headers:{allow:"GET, HEAD"}});
       // Cloudflare's asset binding resolves extensionless HTML directly. Asking
       // for `/marketing.html` instead would redirect away from the public route.
       const asset=await env.ASSETS.fetch(new Request(new URL("/marketing",request.url),request));
       const headers=new Headers(asset.headers);
-      const locale=explicitMarketingLocale??negotiateMarketingLocale(request.headers.get("accept-language"));
+      const locale=marketingRoute.locale??negotiateMarketingLocale(request.headers.get("accept-language"));
       headers.set("cache-control","public, max-age=0, must-revalidate");
       headers.set("x-forma-route-family","marketing");
       headers.set("content-language",locale);
-      if(!explicitMarketingLocale)headers.append("vary","Accept-Language");
+      if(!marketingRoute.locale)headers.append("vary","Accept-Language");
       if(!asset.ok)return new Response(request.method==="HEAD"?null:asset.body,{status:asset.status,statusText:asset.statusText,headers});
       headers.delete("content-length");
       headers.delete("etag");
       if(request.method==="HEAD")return new Response(null,{status:asset.status,statusText:asset.statusText,headers});
-      return new Response(renderMarketingDocument(await asset.text(),locale),{status:asset.status,statusText:asset.statusText,headers});
+      return new Response(renderMarketingDocument(await asset.text(),locale,marketingRoute.profile),{status:asset.status,statusText:asset.statusText,headers});
     }
     if(url.pathname.startsWith("/welcome/"))return new Response(null,{status:404,headers:{"cache-control":"public, max-age=0, must-revalidate"}});
     const scopedCookie=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");

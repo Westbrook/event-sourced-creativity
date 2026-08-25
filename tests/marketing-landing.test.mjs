@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
 import { gzipSync } from "node:zlib";
 import { applicationIdFromRoute, resolveServerRoute } from "../src/platform/applications.ts";
@@ -128,17 +130,33 @@ test("the real campaign scene uses one lazy, fingerprinted video and an accessib
   assert.match(toggle, /\bdata-copy-aria="videoPlayLabel"/);
   assert.match(toggle, /\bhidden(?:\s|$)/);
 
-  const videoPath = contents.match(/\bsrc="(\/assets\/marketing\/quiet-coast-scene-4s\.([a-f0-9]{12})\.mp4)"\s+type="video\/mp4"/);
+  const videoPath = contents.match(/\bsrc="(\/assets\/marketing\/quiet-coast-scene-8s\.([a-f0-9]{12})\.mp4)"\s+type="video\/mp4"/);
   const posterPath = video.match(/\bposter="(\/assets\/marketing\/quiet-coast-scene-poster-960\.([a-f0-9]{12})\.jpg)"/);
   assert.ok(videoPath, "The public MP4 must have an immutable content fingerprint.");
   assert.ok(posterPath, "The genuine cottage-frame video poster must have an immutable content fingerprint.");
-  for (const [match, budget] of [[videoPath, 350_000], [posterPath, 30_000]]) {
+  for (const [match, budget] of [[videoPath, 950_000], [posterPath, 45_000]]) {
     const bytes = await readFile(new URL("../public" + match[1], import.meta.url));
     assert.equal(createHash("sha256").update(bytes).digest("hex").slice(0, 12), match[2]);
     assert.ok(bytes.length < budget, match[1] + " exceeds its transfer budget.");
     if (match === videoPath) assert.equal(bytes.subarray(4, 8).toString(), "ftyp");
     else assert.equal(bytes.subarray(0, 2).toString("hex"), "ffd8");
   }
+
+  const inspection = spawnSync("ffprobe", [
+    "-v", "error", "-show_entries",
+    "stream=codec_name,codec_type,width,height,r_frame_rate:format=duration",
+    "-of", "json", fileURLToPath(new URL("../public" + videoPath[1], import.meta.url)),
+  ], { encoding: "utf8" });
+  assert.equal(inspection.status, 0, inspection.stderr);
+  const generatedScene = JSON.parse(inspection.stdout);
+  assert.equal(generatedScene.streams.length, 1, "The Quiet Coast scene must stay genuinely silent.");
+  assert.equal(generatedScene.streams[0].codec_type, "video");
+  assert.equal(generatedScene.streams[0].codec_name, "h264");
+  assert.equal(generatedScene.streams[0].width, 1280);
+  assert.equal(generatedScene.streams[0].height, 720);
+  assert.equal(generatedScene.streams[0].r_frame_rate, "24/1");
+  assert.ok(Math.abs(Number(generatedScene.format.duration) - 8) < .15,
+    "The Quiet Coast scene must genuinely contain eight seconds.");
 
   assert.match(html, /data-context-study="detail"[\s\S]*?<\/picture>\s*<video\b/);
   assert.match(enhancement, /motionVideo\.controls\s*=\s*false/);
@@ -168,7 +186,7 @@ test("the coherent campaign stays discoverable, touch-safe, and truthful across 
   assert.match(html, /class="marketing-button marketing-exhibit__action" href="\/projects" data-copy="openForma"/);
 
   const poster = html.match(/<video[^>]*poster="([^"]+)"/)?.[1];
-  assert.equal(poster, "/assets/marketing/quiet-coast-scene-poster-960.616859215dd3.jpg");
+  assert.equal(poster, "/assets/marketing/quiet-coast-scene-poster-960.af29b34d50f0.jpg");
   assert.match(html, new RegExp(`proof-artifact--motion"[^>]*>[\\s\\S]*?<img src="${poster.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
 
   assert.match(enhancement, /from "\.\.\/components\/design-system\/language-options"/);
@@ -473,7 +491,7 @@ test("one authored coastal world is visually carried through a kinetic, truthful
   assert.match(html, /href="#motion-study"/);
   assert.match(html, /class="output-piece output-piece--video" id="motion-study"/);
   assert.match(html, /<div class="output-gallery"[^>]*>\s*<article class="output-piece output-piece--video"/);
-  assert.match(html, /data-copy="proofVideoBadge">Video scene made in Forma/);
+  assert.match(html, /data-copy="proofVideoBadge">Original generated video study/);
   assert.match(html, /data-copy="proofImageBadge">Original generated image study/);
   assert.equal([...html.matchAll(/class="output-frame"/g)].length, 3);
   for (const frame of ["01", "02", "03"]) assert.match(html, new RegExp(`<span dir="ltr">${frame}</span>`));
@@ -1255,12 +1273,12 @@ test("production marketing assets stay isolated from authenticated application e
     assert.doesNotMatch(catalog, /FormaStore|api\/session|protected-assets/);
   }
 
-  const video = publicHtml.match(/\/assets\/marketing\/quiet-coast-scene-4s\.([a-f0-9]{12})\.mp4/);
+  const video = publicHtml.match(/\/assets\/marketing\/quiet-coast-scene-8s\.([a-f0-9]{12})\.mp4/);
   const poster = publicHtml.match(/\/assets\/marketing\/quiet-coast-scene-poster-960\.([a-f0-9]{12})\.jpg/);
   assert.ok(video, "Production marketing must include the genuine Forma-generated video.");
   assert.ok(poster, "Production marketing must include the genuine cottage-frame video poster.");
   assert.match(publicHtml, /\bdata-marketing-video-toggle\b/);
-  for (const [asset, budget] of [[video, 350_000], [poster, 30_000]]) {
+  for (const [asset, budget] of [[video, 950_000], [poster, 45_000]]) {
     const bytes = await readFile(new URL("../dist/client" + asset[0], import.meta.url));
     assert.equal(createHash("sha256").update(bytes).digest("hex").slice(0, 12), asset[1]);
     assert.ok(bytes.length < budget, "Production video asset exceeds its transfer budget.");

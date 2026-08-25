@@ -129,6 +129,7 @@ export const APPLICATIONS: readonly ApplicationDefinition[] = [
       { id: "components", href: "/knowledge/design-system", label: "Components", description: "Explore production components using fictional examples only", requiredCapabilities: ["design.catalog.read"] },
       { id: "patterns", href: "/knowledge/patterns", label: "Patterns", description: "Review accessible interaction and composition patterns", requiredCapabilities: ["design.catalog.read", "design.docs.read"] },
       { id: "guidance", href: "/knowledge/guidance", label: "Guidance", description: "Read approved product, localization, and accessibility guidance", requiredCapabilities: ["design.docs.read"] },
+      { id: "landing-pages", href: "/knowledge/landing-pages", label: "Landing page catalog", description: "Explore four audience-specific landing pages, each available in every supported language.", requiredCapabilities: ["design.catalog.read", "design.docs.read"] },
     ],
   },
   {
@@ -203,6 +204,7 @@ export function routeRequiredCapabilities(route: string): readonly FormaCapabili
     if (path !== "/product") return ["evaluation.synthetic.read", "evaluation.synthetic.run", "evaluation.qualification.read", "evaluation.qualification.run"];
   }
   if (application === "knowledge") {
+    if (path === "/knowledge/landing-pages") return ["design.catalog.read", "design.docs.read"];
     if (path === "/knowledge/guidance") return ["design.docs.read"];
     if (path === "/knowledge/design-system" || path === "/knowledge/focal-points" || path === "/laboratory/design-system" || path === "/laboratory/focal-points" || path === "/system/focal-points") return ["design.catalog.read"];
   }
@@ -338,6 +340,7 @@ export const SITE_ROUTE_ENTRIES: readonly SiteRouteEntry[] = [
   route("/knowledge/patterns", "knowledge", "Interaction patterns — Forma", "Review accessible interaction and application patterns."),
   route("/knowledge/focal-points", "knowledge", "Focal-point comparison — Forma", "Compare image presentation methods using approved fictional examples only."),
   route("/knowledge/guidance", "knowledge", "Product guidance — Forma", "Review approved accessibility, localization, and delivery guidance."),
+  route("/knowledge/landing-pages", "knowledge", "Landing page catalog — Forma", "Explore four audience-specific landing pages in every supported language."),
   route("/laboratory/design-system", "knowledge", "Design system — Forma", "Explore components without loading creator projects."),
   route("/laboratory/focal-points", "knowledge", "Synthetic image patterns — Forma", "Compare fictional image focal-point examples."),
   route("/system/focal-points", "knowledge", "Synthetic image patterns — Forma", "Compare fictional image focal-point examples."),

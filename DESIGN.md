@@ -168,7 +168,7 @@ server-issued capabilities actually permit.
 | Canvas | Creators with spatial-workspace access | `/canvas`, `/canvas/projects`, `/canvas/library` | Project boards, the same projects, and the same project Library |
 | Platform Operations | Authorized platform operators | `/operations` | Providers, releases, platform access, service policy |
 | Product & Quality | Product owners, delivery leads, authorized evaluators | `/product` | Aggregate insights, delivery evidence, separately granted evaluation |
-| Design & Knowledge | Designers and authorized internal readers | `/knowledge` | Components, audience patterns, accessibility and design guidance |
+| Design & Knowledge | Designers and authorized internal readers | `/knowledge` | Components, audience patterns, accessibility and design guidance, localized landing-page catalog |
 | Engineering Diagnostics | Authorized reliability and engineering specialists | `/engineering` | Redacted event, synchronization, and job diagnostics |
 
 - `<forma-ui-workspace-switcher>` receives only explicitly authorized
@@ -230,7 +230,11 @@ server-issued capabilities actually permit.
   means the recovered attempt consumed no additional tokens.
 - Design **Patterns** exposes focal-point comparison only to
   `design.catalog.read`; docs-only readers never see inaccessible destinations.
-  Components, Patterns, and Guidance have distinct titles and task boundaries.
+  Components, Patterns, Guidance, and the **Landing page catalog** have distinct
+  titles and task boundaries. The landing catalog is available to either
+  existing Knowledge grant and composes documented content cards, approved
+  public imagery, native links, and all supported language endonyms without
+  loading customer projects or protected creative media.
 - Public review is a presentation-only surface: approved images, storyboard
   frames, and prompt-fan alternatives open in an exact-token native dialog with
   localized unique labels, RTL-aware keyboard comparison, and focus return.
@@ -412,7 +416,9 @@ Use a card only when the item is independently actionable or movable. Otherwise 
 
 The application demonstrates its real production components at
 `/knowledge/design-system`. Audience patterns and approved interaction rules
-live at `/knowledge/patterns` and `/knowledge/guidance`. The inventory is
+live at `/knowledge/patterns` and `/knowledge/guidance`; audience-specific
+public introductions are cataloged at `/knowledge/landing-pages` using the
+same documented content-card and navigation primitives. The inventory is
 cumulative:
 
 1. **Foundations:** preference-reactive semantic color tokens, the spacing scale,

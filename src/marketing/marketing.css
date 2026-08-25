@@ -408,6 +408,59 @@ html[dir="rtl"] .marketing-text-link > [aria-hidden="true"] { display: inline-bl
   white-space: nowrap;
 }
 
+.marketing-audiences {
+  display: flex;
+  inline-size: min(calc(100% - 2 * var(--marketing-gutter)), calc(var(--marketing-max) - 2 * var(--marketing-gutter)));
+  align-items: center;
+  gap: clamp(.75rem, 2.8vw, 2.5rem);
+  margin-inline: auto;
+  padding-block: .35rem 1.15rem;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+  scroll-snap-type: inline proximity;
+}
+
+.marketing-audiences::-webkit-scrollbar { display: none; }
+
+.marketing-audiences > a {
+  display: inline-flex;
+  min-block-size: 2.75rem;
+  min-inline-size: 2.75rem;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--marketing-muted);
+  font-size: .875rem;
+  font-weight: 580;
+  text-decoration: none;
+  scroll-snap-align: start;
+  border-block-end: 2px solid transparent;
+}
+
+.marketing-audiences > a[aria-current="page"] {
+  color: var(--marketing-ink);
+  border-block-end-color: var(--marketing-accent);
+}
+
+body[data-marketing-profile="marketers"] .coast-art {
+  background: linear-gradient(145deg, #f0b778 0%, #f0643c 48%, #2457d6 100%);
+}
+
+body[data-marketing-profile="indie-filmmakers"] .coast-art {
+  background: linear-gradient(145deg, #10232b 0%, #84c6c8 47%, #753640 100%);
+}
+
+body[data-marketing-profile="hollywood-filmmakers"] .coast-art {
+  background: linear-gradient(145deg, #162337 0%, #335c70 49%, #8ba8c2 100%);
+}
+
+body[data-marketing-profile]:not([data-marketing-profile="generic"]) .coast-art__moon,
+body[data-marketing-profile]:not([data-marketing-profile="generic"]) .coast-art__horizon,
+body[data-marketing-profile]:not([data-marketing-profile="generic"]) .coast-art__shore,
+body[data-marketing-profile]:not([data-marketing-profile="generic"]) .coast-art__light {
+  display: none;
+}
+
 .marketing-formats {
   display: flex;
   inline-size: min(calc(100% - 2 * var(--marketing-gutter)), calc(var(--marketing-max) - 2 * var(--marketing-gutter)));
@@ -1281,6 +1334,8 @@ html[dir="rtl"] { --marketing-flow: -1; --marketing-slide-overlay-angle: 260deg;
   .hero-artifact--landscape { inset-inline-end: 0; }
   .hero-artifact--detail { inset-inline-start: 1%; }
   .hero-artifact--story { max-inline-size: 44%; }
+  .marketing-audiences { gap: 1.15rem; padding-block-end: .8rem; }
+  .marketing-audiences > a { font-size: .8125rem; }
   .marketing-formats { gap: 1rem; padding-block: 1.5rem; }
   .marketing-formats > p { min-inline-size: 0; max-inline-size: 100%; flex: 1 1 100%; text-wrap: balance; }
   .marketing-formats ul { flex-basis: 100%; justify-content: start; gap: .45rem; }
@@ -1344,6 +1399,8 @@ html[dir="rtl"] { --marketing-flow: -1; --marketing-slide-overlay-angle: 260deg;
   .marketing-hero h1 { font-size: clamp(2.15rem, 10vw, 3.6rem); }
   .marketing-hero .marketing-eyebrow { font-size: .75rem; }
   .marketing-hero__introduction { font-size: .875rem; }
+  body[data-marketing-profile]:not([data-marketing-profile="generic"]) .marketing-hero h1 { font-size: clamp(1.9rem, 9vw, 3.2rem); }
+  body[data-marketing-profile]:not([data-marketing-profile="generic"]) .marketing-hero__introduction { font-size: .8125rem; }
   .marketing-note { min-inline-size: 8.75rem; padding: .75rem; }
   .marketing-note strong { font-size: .8125rem; }
   .marketing-note--mood { inset-block-start: 27%; max-inline-size: 46%; }
@@ -1412,6 +1469,8 @@ html[dir="rtl"] { --marketing-flow: -1; --marketing-slide-overlay-angle: 260deg;
   .marketing-hero__introduction { margin-block-start: .25rem; }
   .marketing-hero__actions { margin-block-start: .35rem; }
   .marketing-button--primary { min-block-size: 2.75rem; }
+  body[data-marketing-profile]:not([data-marketing-profile="generic"]) .marketing-hero h1 { font-size: clamp(1.2rem, 6svh, 1.35rem); }
+  body[data-marketing-profile]:not([data-marketing-profile="generic"]) .marketing-hero__introduction { font-size: .8125rem; line-height: var(--marketing-body-line-height, 1.4); }
 }
 
 @media (min-width: 761px) and (max-width: 1100px) and (min-height: 481px) and (max-height: 680px) {

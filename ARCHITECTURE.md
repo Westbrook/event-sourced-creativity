@@ -64,9 +64,12 @@ navigation patterns, and design/accessibility/localization guidance. Its shell
 and routes are store-independent and never hydrate creator history.
 
 Canonical routes begin with `/knowledge`. `/knowledge/design-system`,
-`/knowledge/patterns`, and `/knowledge/guidance` provide distinct Components,
-Patterns, and Guidance views. Historical `/laboratory/design-system` and focal
-point URLs resolve to their appropriate Knowledge destination.
+`/knowledge/patterns`, `/knowledge/guidance`, and `/knowledge/landing-pages`
+provide distinct Components, Patterns, Guidance, and Landing page catalog views.
+The catalog reuses approved public campaign imagery and links to each audience
+experience in every supported language; it never hydrates private creator work.
+Historical `/laboratory/design-system` and focal point URLs resolve to their
+appropriate Knowledge destination.
 
 ### Engineering Diagnostics
 

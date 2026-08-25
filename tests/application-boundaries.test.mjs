@@ -59,6 +59,8 @@ test("the server resolves every shareable deep-link family before SPA hydration"
     ["/laboratory/design-system","/laboratory/design-system/","knowledge"],
     ["/product/insights","/product/insights/","product"],
     ["/knowledge/patterns","/knowledge/patterns/","knowledge"],
+    ["/knowledge/landing-pages","/knowledge/landing-pages/","knowledge"],
+    ["/knowledge/landing-pages/","/knowledge/landing-pages/","knowledge"],
     ["/engineering/jobs","/engineering/jobs/","engineering"],
     ["/creative/create/conversational","/creative/create/","creative"],
   ];

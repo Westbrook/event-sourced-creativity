@@ -47,7 +47,10 @@ function routeSurfaceModule(path: string): string | null {
     if (path === "/product" || path === "/product/insights" || path === "/operations/analytics") return "src/apps/product/insights.ts";
     return "src/apps/product/evaluation.ts";
   }
-  if (application === "knowledge") return path.endsWith("/focal-points")?"src/components/forma-focal-point-lab.ts":"src/components/forma-design-system-lab.ts";
+  if (application === "knowledge") {
+    if (path === "/knowledge/landing-pages") return "src/apps/knowledge/landing-pages.ts";
+    return path.endsWith("/focal-points") ? "src/components/forma-focal-point-lab.ts" : "src/components/forma-design-system-lab.ts";
+  }
   if (application === "engineering") return "src/apps/engineering/diagnostics.ts";
   throw new Error(`No isolated production surface was declared for ${path}.`);
 }
