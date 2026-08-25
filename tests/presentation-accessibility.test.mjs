@@ -95,6 +95,12 @@ test("all chart points, compact bullets, visual labels, and verbatim stakeholder
   assert.match(presentation, /@container presentation-slide \(max-width: 30rem\)/);
 });
 
+test("long source excerpts receive one uncapped full-width evidence row without a nested scrollbar",()=>{
+  assert.match(presentation,/\.presentation-slide\.presentation-slide--evidence-rail \{[^}]*grid-template-rows:\s*auto minmax\(0,1fr\) auto auto/);
+  assert.match(presentation,/\.presentation-slide\.presentation-slide--evidence-rail > \.presentation-slide__footnotes \{[^}]*width:\s*100%[^}]*max-height:\s*none[^}]*max-block-size:\s*none[^}]*overflow:\s*clip/);
+  assert.match(presentation,/\.presentation-slide\.presentation-slide--evidence-rail > \.presentation-slide__footnotes > ol \{[^}]*width:\s*100%[^}]*grid-template-columns:\s*minmax\(0,1fr\)/,"a single long citation cannot be squeezed back into a half-width dense column");
+});
+
 test("speaker notes, readable evidence, current-slide state, fullscreen, and forced colors have dedicated styles", () => {
   for (const selector of [
     ".presentation-deck-notes",

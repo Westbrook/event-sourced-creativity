@@ -4,7 +4,7 @@ import { combinedContextMemberships } from "../model/combined-context";
 import { FormaElement, icon } from "./forma-element";
 import { readSlideFooterLabelPreference, writeSlideFooterLabelPreference } from "./presentation-slide";
 import { presentationEditableExportFilename } from "../model/presentation-export";
-import { authorizedPresentationCitations, planSlideLayout, presentationRequiresReadingPosture } from "../model/presentation-layout";
+import { authorizedPresentationCitations, presentationRequiresReadingPosture } from "../model/presentation-layout";
 import { localizedSourceAnchor } from "../model/source-anchor";
 import { inferPresentationAudienceLocale } from "../model/presentation-source";
 import { renderSoundtrackCompanions as renderAudioCompanions, soundtrackCompanions, type SoundtrackAsset } from "./audio-playback";
@@ -45,9 +45,12 @@ export class PresentationDeck extends FormaElement{
   };
   #slideFit=(event:CustomEvent<{contentFits:boolean}>)=>{
     const overflow=!event.detail.contentFits;
-    if(overflow===this.#visualOverflow)return;
+    const unsafeVisualOverride=overflow&&this.#readingOverride===false;
+    if(overflow===this.#visualOverflow&&!unsafeVisualOverride)return;
     this.#visualOverflow=overflow;
-    if(this.#readingOverride===null)this.requestUpdate();
+    if(unsafeVisualOverride)this.#readingOverride=null;
+    this.requestUpdate();
+    if(unsafeVisualOverride)void this.updateComplete.then(()=>this.querySelector<HTMLElement>(".presentation-deck-reading")?.focus({preventScroll:true}));
   };
   override connectedCallback(){super.connectedCallback();document.addEventListener("fullscreenchange",this.#fullscreenChanged);}
   override disconnectedCallback(){document.removeEventListener("fullscreenchange",this.#fullscreenChanged);this.#readingObserver?.disconnect();this.#readingViewport=undefined;super.disconnectedCallback();}
@@ -62,11 +65,23 @@ export class PresentationDeck extends FormaElement{
     }
   }
   #setReading(reading:boolean){
+    if(!reading&&this.#visualOverflow){
+      this.#readingOverride=null;
+      this.requestUpdate();
+      void this.updateComplete.then(()=>this.querySelector<HTMLElement>(".presentation-deck-reading")?.focus({preventScroll:true}));
+      return;
+    }
     this.#readingOverride=reading;
     this.requestUpdate();
     void this.updateComplete.then(()=>this.querySelector<HTMLElement>(reading?".presentation-deck-reading":".presentation-deck-reading-toggle")?.focus({preventScroll:true}));
   }
-  #setView(view:DeckView){this.#view=view;writeDeckView(view);this.requestUpdate();}
+  #setView(view:DeckView){
+    if(view==="list"&&this.#fullscreenActive){
+      void document.exitFullscreen().then(()=>{this.#view=view;writeDeckView(view);this.requestUpdate();}).catch(()=>{/* Fullscreen retains its visible exit control. */});
+      return;
+    }
+    this.#view=view;writeDeckView(view);this.requestUpdate();
+  }
   #setIndex(index:number,total:number){if(!total)return;const next=Math.max(0,Math.min(total-1,index));if(next!==this.#index&&this.#readingOverride===false)this.#readingOverride=null;this.#index=next;this.#visualOverflow=false;writeDeckIndex(this.#styleKey(),this.#index);this.#seekPlayingSoundtrack();this.requestUpdate();}
   #seekPlayingSoundtrack(){
     if(!this.#followSoundtrackCues)return;
@@ -96,7 +111,7 @@ export class PresentationDeck extends FormaElement{
   #styleKey(){return this.preferenceKey.trim()||"unscoped";}
   #selectedStyle(presentation:SlidePresentation){const key=this.#styleKey();return this.#styleOverride?.key===key?this.#styleOverride.value:readDeckStyle(key)??presentation.stylePreset;}
   get activePresentation(){const presentation=normalizeSlidePresentation(this.presentation)??applySlideStylePreset(null,"gallery");return applySlideStylePreset(presentation,this.#selectedStyle(presentation));}
-  #setStyle(event:Event){const value=(event.target as HTMLSelectElement).value;if(!isSlideStylePresetId(value))return;const key=this.#styleKey();this.#styleOverride={key,value};writeDeckStyle(key,value);this.dispatchEvent(new CustomEvent("slide-style-changed",{bubbles:true,composed:true,detail:{preferenceKey:this.preferenceKey,stylePreset:value}}));this.requestUpdate();}
+  #setStyle(event:Event){const value=(event.target as HTMLSelectElement).value;if(!isSlideStylePresetId(value))return;const key=this.#styleKey();this.#styleOverride={key,value};this.#visualOverflow=false;writeDeckStyle(key,value);this.dispatchEvent(new CustomEvent("slide-style-changed",{bubbles:true,composed:true,detail:{preferenceKey:this.preferenceKey,stylePreset:value}}));this.requestUpdate();}
   #positionExportMenu(event:MouseEvent){const trigger=event.currentTarget as HTMLButtonElement,menu=this.querySelector<HTMLElement>(`#${this.#exportMenuId}`);if(!menu||menu.matches(":popover-open"))return;const rect=trigger.getBoundingClientRect(),unit=Number.parseFloat(getComputedStyle(document.documentElement).fontSize)||16,width=Math.min(24*unit,Math.max(window.innerWidth-16,0)),height=Math.min(8*unit,Math.max(window.innerHeight-16,0)),desired=this.matches(":dir(rtl)")?rect.left:rect.right-width,left=Math.max(8,Math.min(desired,window.innerWidth-width-8)),top=rect.bottom+height+6<=window.innerHeight-8?rect.bottom+6:Math.max(8,rect.top-height-6);menu.style.setProperty("--presentation-export-top",`${top}px`);menu.style.setProperty("--presentation-export-left",`${left}px`);}
   #toggleExportMenu(event:ToggleEvent){this.#exportMenuOpen=event.newState==="open";this.requestUpdate();}
   #exportFromMenu(format:"pdf"|"powerpoint",items:DocumentArtifactDraftItem[],presentation:SlidePresentation){const menu=this.querySelector<HTMLElement>(`#${this.#exportMenuId}`);if(menu?.matches(":popover-open"))menu.hidePopover();this.querySelector<HTMLButtonElement>(".presentation-deck-export")?.focus({preventScroll:true});return format==="pdf"?this.#downloadPdf(items,presentation):this.#downloadPowerPoint(items,presentation);}
@@ -174,7 +189,7 @@ export class PresentationDeck extends FormaElement{
     else if(event.key==="Home"||event.key==="End"){event.preventDefault();this.#setIndex(event.key==="Home"?0:total-1,total);}
   }
   #slide(item:DocumentArtifactDraftItem,presentation:SlidePresentation,index:number,total:number){return html`<div class="presentation-deck-frame"><forma-presentation-slide .item=${item} .presentation=${presentation} .index=${index} .total=${total} .showFooterLabel=${this.#showFooterLabel}></forma-presentation-slide></div>`;}
-  override render(){const items=this.items.map((item,index)=>normalizeSlideItem(item,index)),total=items.length,generatedPresentation=normalizeSlidePresentation(this.presentation)??applySlideStylePreset(null,"gallery"),selectedStyle=this.#selectedStyle(generatedPresentation),presentation=applySlideStylePreset(generatedPresentation,selectedStyle),styleDefinition=slideStylePresetDefinition(selectedStyle),index=this.#syncIndex(total),current=items[index],preferenceFormId=`presentation-deck-preferences-${this.#styleKey()}`;const layout=current?planSlideLayout(current,presentation):null;const contentNeedsReading=Boolean(layout?.density==="dense"&&layout.overflow.readingModeRecommended);const reading=this.#view==="slideshow"&&(this.#readingOverride??(this.#automaticReading||this.#visualOverflow||contentNeedsReading));const readingLabel=this.i18n.system(reading?"Slide view":"Read slide");const artifact=this.store.projection.get().libraryArtifacts.find((candidate)=>candidate.id===this.preferenceKey);const soundtracks=soundtrackCompanions(artifact?.settings.soundtrack_assets);const renderSoundtrackCompanions=(value:Parameters<typeof renderAudioCompanions>[0],locale:Parameters<typeof renderAudioCompanions>[1],options:Parameters<typeof renderAudioCompanions>[2]={})=>renderAudioCompanions(value,locale,{...options,...(this.releaseAllowed?{onDownload:(asset:SoundtrackAsset)=>void this.#downloadSoundtrack(asset)}:{})});return html`<section class=${`presentation-deck presentation-deck--${this.#view}${reading?" presentation-deck--reading":""}${this.#fullscreenActive?" presentation-deck--fullscreen":""}`} aria-label="Slide deck" tabindex="0" @keydown=${(event:KeyboardEvent)=>this.#key(event,total)}>
+  override render(){const items=this.items.map((item,index)=>normalizeSlideItem(item,index)),total=items.length,generatedPresentation=normalizeSlidePresentation(this.presentation)??applySlideStylePreset(null,"gallery"),selectedStyle=this.#selectedStyle(generatedPresentation),presentation=applySlideStylePreset(generatedPresentation,selectedStyle),styleDefinition=slideStylePresetDefinition(selectedStyle),index=this.#syncIndex(total),current=items[index],preferenceFormId=`presentation-deck-preferences-${this.#styleKey()}`;const reading=this.#view==="slideshow"&&(this.#visualOverflow||(this.#readingOverride??this.#automaticReading));const readingLabel=this.i18n.system(reading?"Slide view":"Read slide");const artifact=this.store.projection.get().libraryArtifacts.find((candidate)=>candidate.id===this.preferenceKey);const soundtracks=soundtrackCompanions(artifact?.settings.soundtrack_assets);const renderSoundtrackCompanions=(value:Parameters<typeof renderAudioCompanions>[0],locale:Parameters<typeof renderAudioCompanions>[1],options:Parameters<typeof renderAudioCompanions>[2]={})=>renderAudioCompanions(value,locale,{...options,...(this.releaseAllowed?{onDownload:(asset:SoundtrackAsset)=>void this.#downloadSoundtrack(asset)}:{})});return html`<section class=${`presentation-deck presentation-deck--${this.#view}${reading?" presentation-deck--reading":""}${this.#fullscreenActive?" presentation-deck--fullscreen":""}`} aria-label="Slide deck" tabindex="0" @keydown=${(event:KeyboardEvent)=>this.#key(event,total)}>
     <form id=${preferenceFormId} hidden @submit=${(event:SubmitEvent)=>event.preventDefault()}></form>
     <header class="presentation-deck-toolbar" data-tools-open=${String(this.#compactToolsOpen)}>
       <button type="button" class="button ghost compact presentation-deck-tools-toggle" aria-label=${this.i18n.system("Slideshow controls")} title=${this.i18n.system("Slideshow controls")} aria-expanded=${String(this.#compactToolsOpen)} aria-controls=${`${this.#exportMenuId}-view ${this.#exportMenuId}-delivery`} @click=${()=>{this.#compactToolsOpen=!this.#compactToolsOpen;this.requestUpdate();}}>${icon("dots")}</button>

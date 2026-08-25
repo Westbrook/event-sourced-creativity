@@ -10,6 +10,7 @@ import {
   PRESENTATION_LAYOUT_CAPACITIES,
   PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS,
   PRESENTATION_LAYOUT_VERSION,
+  PRESENTATION_VISUAL_FIT_SELECTOR,
   presentationRequiresReadingPosture,
 } from "../src/model/presentation-layout.ts";
 
@@ -63,6 +64,7 @@ test("presentation layout plans share one versioned trusted 960 × 540 artboard"
   assert.deepEqual(plan.safeArea, { inline: 48, block: 32 });
   assert.equal(plan.capacities.minimumBodyFontPx, 14);
   assert.equal(plan.capacities.minimumLabelFontPx, 12);
+  assert.equal(plan.citationPlacement, "inline");
   assert.match(plan.className, /^presentation-slide--density-(?:comfortable|compact|dense)$/u);
   assert.equal(Object.hasOwn(plan, "html"), false);
   assert.equal(Object.hasOwn(plan, "css"), false);
@@ -86,6 +88,53 @@ test("visible slide plans preserve complete citation excerpts and never mutate a
   assert.deepEqual(plan.visibleItem.context_group_ids, ["context_group_1"]);
   assert.equal(plan.overflow.citationExcerpts, 1);
   assert.ok(plan.overflow.reasons.includes("citation-excerpts"));
+});
+
+test("real executive slide nine coordinates dense copy and a complete full-width source rail",()=>{
+  const excerpt="Make Intelligence and Cost Understandable. At 20,000 input and 4,000 output tokens, estimated model costs are Luna $0.0088, Terra $0.0880, and Sol $0.2200. Proposed Fast, Balanced, and Deep modes apply organization-approved models, spending limits, measured escalation, explicit premium approvals, and visible cost consequences.";
+  const source=item({
+    title:"Make Intelligence and Cost Understandable",
+    body:"At 20,000 input and 4,000 output tokens, estimated model costs are Luna $0.0088, Terra $0.0880, and Sol $0.2200.",
+  });
+  source.slide.layout="comparison";
+  source.slide.bullets=["Proposed Fast, Balanced, and Deep modes apply organization-approved models, spending limits, measured escalation, explicit premium approvals, and visible cost consequences."];
+  source.slide.quote=undefined;
+  source.slide.citations=[{sourceId:"PRIVATE_AUTHORIZED_SOURCE_42",label:"Approved interview",anchor:"Slide 9",excerpt}];
+  source.slide.visual={
+    kind:"comparison",
+    label:"Estimated cost",
+    value:"20,000 input + 4,000 output tokens",
+    data:[
+      {label:"Luna",value:"$0.0088",weight:.04},
+      {label:"Terra",value:"$0.0880",weight:.4},
+      {label:"Sol",value:"$0.2200",weight:1},
+    ],
+  };
+
+  const plan=planSlideLayout(source,defaultSlidePresentation("field-notes"));
+
+  assert.equal(plan.density,"dense","dense typography is adaptation, not an instruction to hide a fitting slide");
+  assert.equal(plan.citationPlacement,"full-width","a protected source excerpt owns the whole evidence row");
+  assert.ok(plan.overflow.reasons.includes("long-bullet"));
+  assert.ok(plan.overflow.reasons.includes("long-citation-excerpt"));
+  assert.ok(plan.overflow.narrativeCharacters>300);
+  assert.ok(plan.overflow.citationCharacters>300);
+  assert.equal(plan.visibleItem.slide.citations[0].excerpt,excerpt,"the complete approved excerpt is never summarized or mutated");
+  assert.deepEqual(plan.visibleItem.slide.visual.data.map(({label,value})=>[label,value]),[
+    ["Luna","$0.0088"],["Terra","$0.0880"],["Sol","$0.2200"],
+  ]);
+});
+
+test("trusted layout measurements cover protected evidence and every structured visual kind",()=>{
+  for(const selector of [
+    ".presentation-slide__footnotes",
+    ".presentation-slide__matrix",
+    ".presentation-slide__table",
+    ".presentation-visual-bars",
+    ".presentation-visual-timeline",
+    ".presentation-visual-diagram",
+    ".presentation-slide__quote-card",
+  ])assert.ok(PRESENTATION_VISUAL_FIT_SELECTOR.includes(selector),`${selector} is verified before visual display or PDF release`);
 });
 
 test("dense protected quotations, score rows, and bullets are classified rather than dropped", () => {
@@ -121,6 +170,8 @@ test("provider layout guidance protects exact authored evidence and forbids exec
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /960 × 540px 16:9 artboard/u);
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /never permission to truncate or omit a protected quotation/u);
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /chart row, authored slide, or source citation/u);
+  assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /Budget the title, body, bullets, chart labels and values, and every complete source excerpt together/u);
+  assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /full-width evidence rail/u);
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /never emit HTML, CSS, JavaScript, iframes/u);
 });
 

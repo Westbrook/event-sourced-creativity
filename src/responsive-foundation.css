@@ -3718,6 +3718,37 @@ forma-presentation-deck {
   container: presentation-deck-host / inline-size;
 }
 
+.document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader {
+  min-block-size: 0;
+  overflow: hidden;
+}
+
+.document-artifact-view[data-artifact-kind="slides"]:not([data-output-focus="true"]) > .document-artifact-reader:has(> .artifact-review-actions:not([hidden]),> .artifact-review-guidance,> .artifact-revision-history:not([hidden])) {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.document-artifact-view[data-artifact-kind="slides"] .document-artifact-reader-content:has(> .artifact-direct-editor) {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+:is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list {
+  display: grid;
+  block-size: 100%;
+  min-block-size: 0;
+  grid-template-rows: auto minmax(0,1fr);
+  overflow: hidden;
+}
+
+:is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--list > .presentation-deck-list {
+  box-sizing: border-box;
+  min-block-size: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .presentation-deck--slideshow .presentation-deck-stage[data-slide-posture],
 :is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow .presentation-deck-stage[data-slide-posture] {
   box-sizing: border-box;

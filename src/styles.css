@@ -2132,7 +2132,7 @@ forma-presentation-deck { display: block; width: 100%; min-width: 0; }
 .presentation-deck-empty { display: grid; min-height: 18rem; place-items: center; padding: 2rem; color: var(--muted); }
 .artifact-reader-slides > forma-presentation-deck { height: 100%; }
 .presentation-deck--slideshow { display: grid; height: 100%; min-height: 0; grid-template-rows: auto minmax(0,1fr); overflow: hidden; }
-.presentation-deck--slideshow .presentation-deck-stage { height: 100%; min-height: 0; grid-template-rows: minmax(0,1fr) auto auto; overflow: auto; overscroll-behavior: contain; padding-block: .75rem; }
+.presentation-deck--slideshow .presentation-deck-stage { height: 100%; min-height: 0; grid-template-rows: minmax(0,1fr) auto auto; overflow: hidden; padding-block: .75rem; }
 forma-presentation-deck:fullscreen { width: 100vw; height: 100dvh; background: var(--panel-2); }
 forma-presentation-deck:fullscreen > .presentation-deck,.presentation-deck:fullscreen { width: 100%; height: 100dvh; background: var(--panel-2); }
 forma-presentation-deck:fullscreen .presentation-deck-viewport > .presentation-deck-frame { inline-size: min(100cqi,calc(100cqb * 1.7778)); }
@@ -2258,6 +2258,9 @@ forma-presentation-slide > .presentation-slide[data-presentation-artboard] { pos
 .presentation-slide--density-dense .presentation-slide__quote-text { font-size: clamp(.875rem,1.6cqi,1.1rem); line-height: 1.35; }
 .presentation-slide--density-dense .presentation-slide__footnotes > ol { grid-template-columns: repeat(2,minmax(0,1fr)); gap: .15rem .5rem; }
 .presentation-slide--density-dense .presentation-slide__table :is(caption,th,td) { padding: .3rem .4rem; }
+.presentation-slide.presentation-slide--evidence-rail { grid-template-rows: auto minmax(0,1fr) auto auto; row-gap: .55rem; }
+.presentation-slide.presentation-slide--evidence-rail > .presentation-slide__footnotes { box-sizing: border-box; width: 100%; min-width: 0; max-height: none; max-block-size: none; align-self: start; margin-block-start: 0; padding-block-start: .3rem; border-block-start: 1px solid color-mix(in srgb,var(--slide-ink) 20%,transparent); overflow: clip; }
+.presentation-slide.presentation-slide--evidence-rail > .presentation-slide__footnotes > ol { width: 100%; grid-template-columns: minmax(0,1fr); }
 .presentation-slide.compact > footer { display: none; }
 .presentation-slide.compact { gap: .2rem; padding: clamp(.5rem,3cqi,1rem); }
 forma-presentation-slide > .presentation-slide[data-presentation-artboard].compact { gap: .2rem; padding: 1rem; }

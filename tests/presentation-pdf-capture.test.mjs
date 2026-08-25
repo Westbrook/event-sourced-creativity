@@ -108,6 +108,18 @@ test("browser PDF capture fails closed when protected visible evidence would be 
   assert.equal(presentationPdfVisualContentFits(host([])),false,"missing slide artwork cannot be released");
 });
 
+test("browser PDF capture measures nested protected tables, charts, diagrams, and source rails",()=>{
+  const safe={clientWidth:960,clientHeight:540,scrollWidth:960,scrollHeight:540};
+  const clippedTable={clientWidth:320,clientHeight:140,scrollWidth:320,scrollHeight:205};
+  let measuredSelector="";
+  const host={querySelectorAll(selector){measuredSelector=selector;return selector.includes(".presentation-slide__table")?[safe,clippedTable]:[safe];}};
+
+  assert.equal(presentationPdfVisualContentFits(host),false,"a clipped structured table cannot hide behind a superficially fitting slide shell");
+  for(const selector of [".presentation-slide__table",".presentation-visual-bars",".presentation-visual-timeline",".presentation-visual-diagram",".presentation-slide__footnotes"]){
+    assert.ok(measuredSelector.includes(selector),`${selector} receives the same protected-content fit contract as the live viewer`);
+  }
+});
+
 const sixScores=[
   ["Phone","39.75"],
   ["Tablet","53.00"],

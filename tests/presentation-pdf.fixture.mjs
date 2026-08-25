@@ -31,6 +31,30 @@ window.configurePresentationPdfFixture=async(config={})=>{
     image_prompt:"",
     slide:{layout:config.layout||"split",kicker:formatQuestion?"THE CONTEXT COMPANY":"Creative direction",bullets:formatQuestion?[]:["Protect the human scale","Keep the palette warm","Preserve every visible detail"],visual},
   };
+  if(config.content==="executive-evidence"){
+    first.title="Make Intelligence and Cost Understandable";
+    first.body="At 20,000 input and 4,000 output tokens, estimated model costs are Luna $0.0088, Terra $0.0880, and Sol $0.2200.";
+    first.slide={
+      layout:"comparison",
+      kicker:"Overview",
+      bullets:["Proposed Fast, Balanced, and Deep modes apply organization-approved models, spending limits, measured escalation, explicit premium approvals, and visible cost consequences."],
+      citations:[{
+        label:"Approved research",
+        anchor:"Slide 9",
+        excerpt:"Make Intelligence and Cost Understandable. At 20,000 input and 4,000 output tokens, estimated model costs are Luna $0.0088, Terra $0.0880, and Sol $0.2200. Proposed Fast, Balanced, and Deep modes apply organization-approved models, spending limits, measured escalation, explicit premium approvals, and visible cost consequences.",
+      }],
+      visual:{
+        kind:"comparison",
+        label:"Estimated cost",
+        value:"20,000 input + 4,000 output tokens",
+        data:[
+          {label:"Luna",value:"$0.0088",weight:.04},
+          {label:"Terra",value:"$0.0880",weight:.4},
+          {label:"Sol",value:"$0.2200",weight:1},
+        ],
+      },
+    };
+  }
   const pageCount=Math.max(1,Number.parseInt(String(config.pages??"1"),10)||1);
   items=Array.from({length:pageCount},(_,index)=>index?{...first,title:`${first.title} · ${index+1}`,slide:{...first.slide,visual:{...first.slide.visual,data:first.slide.visual.data.map((datum)=>({...datum}))}}}:first);
   const viaDeck=config.via==="deck";

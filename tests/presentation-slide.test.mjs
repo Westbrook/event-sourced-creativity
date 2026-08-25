@@ -109,6 +109,34 @@ test("canonical full and compact slides retain complete protected citation evide
   }
 });
 
+test("long protected source evidence renders exactly once in a full-width row after the complete visual",()=>{
+  const excerpt="Approved model-cost evidence remains complete and attributable. ".repeat(6).trim();
+  const citation={label:"Approved source evidence",anchor:"Slide 9",excerpt};
+  const markup=renderSlide({
+    layout:"comparison",
+    kicker:"Overview",
+    bullets:["Every authored model-cost consequence, spending limit, and explicit approval remains protected."],
+    citations:[citation],
+    visual:{
+      kind:"comparison",
+      label:"Estimated cost",
+      value:"20,000 input + 4,000 output tokens",
+      data:[
+        {label:"Luna",value:"$0.0088",weight:.04},
+        {label:"Terra",value:"$0.0880",weight:.4},
+        {label:"Sol",value:"$0.2200",weight:1},
+      ],
+    },
+  },{item:{title:"Make Intelligence and Cost Understandable"}});
+
+  assert.match(markup,/presentation-slide--evidence-rail/);
+  assert.match(markup,/data-citation-placement=full-width/);
+  assert.equal(markup.split(excerpt).length-1,1,"protected citations are never duplicated in the accessibility or PDF trees");
+  assert.ok(markup.indexOf('class="presentation-slide__matrix"')<markup.indexOf('class="presentation-slide__footnotes"'),"the complete comparison precedes its full-width source evidence");
+  assert.ok(markup.indexOf('class="presentation-slide__footnotes"')<markup.lastIndexOf("<footer>"),"the source rail remains inside the canonical artboard above its footer");
+  for(const value of ["$0.0088","$0.0880","$0.2200"])assert.ok(markup.includes(value));
+});
+
 test("audience-facing slide labels stay English when authored content is English and the application uses Japanese",()=>{
   const japanese={locale:"ja-JP",t:(_key,fallback)=>`日本語${fallback}`,system:(source)=>`日本語${source}`,number:(value,options)=>new Intl.NumberFormat("ja-JP",options).format(value)};
   const slide=scorecard({citations:[{label:"Approved source evidence",anchor:"Slide 1",excerpt:"The authored source remains accurate."}]});

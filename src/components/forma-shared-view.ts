@@ -1,6 +1,6 @@
 import { html, nothing } from "lit";
 import { documentArtifactDefinition, formatPresentationQuantity, type DocumentArtifact, type DocumentArtifactItem } from "../model/document-artifacts";
-import { planSlideLayout, presentationRequiresReadingPosture } from "../model/presentation-layout";
+import { presentationRequiresReadingPosture } from "../model/presentation-layout";
 import type { CreativeOutput } from "../model/events";
 import { FormaLocaleController } from "./design-system/localization";
 import { FormaPresentationalElement } from "./presentational-element";
@@ -74,26 +74,31 @@ export class FormaSharedView extends FormaPresentationalElement {
   async #openPresentation(event:MouseEvent,artifact:SharedArtifact){
     if(artifact.kind!=="slides"||!artifact.items.length)return;
     this.#presentationReturnFocus=event.currentTarget instanceof HTMLElement?event.currentTarget:undefined;
-    const first=artifact.items[0],layout=first?planSlideLayout({title:first.title,body:first.body,notes:first.notes,image_prompt:"",slide:first.slide},artifact.presentation):null;
-    this.#presentationFocused=false;this.#presentationReading=Boolean(layout?.density==="dense"&&layout.overflow.readingModeRecommended);this.#presentationReadingPreference=null;this.#presentationContentOverflow=false;this.#activePresentation={artifact,index:0};this.requestUpdate();await this.updateComplete;
+    this.#presentationFocused=false;this.#presentationReading=false;this.#presentationReadingPreference=null;this.#presentationContentOverflow=false;this.#activePresentation={artifact,index:0};this.requestUpdate();await this.updateComplete;
     const dialog=this.querySelector<HTMLDialogElement>(".shared-presentation-dialog");ensureModalDialog(dialog);dialog?.querySelector<HTMLElement>("button")?.focus();
   }
 
   #closePresentation(){this.querySelector<HTMLDialogElement>(".shared-presentation-dialog")?.close();this.#activePresentation=null;this.#presentationFocused=false;this.#presentationReading=false;this.#presentationReadingPreference=null;this.#presentationContentOverflow=false;this.#presentationTouchStart=null;this.#presentationObserver?.disconnect();this.#presentationObserved=undefined;const opener=this.#presentationReturnFocus;this.#presentationReturnFocus=undefined;this.requestUpdate();if(opener?.isConnected)opener.focus({preventScroll:true});}
   #setPresentationFocus(focused:boolean){this.#presentationFocused=focused;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLButtonElement>(".shared-presentation-focus-toggle")?.focus({preventScroll:true}));}
-  #setPresentationReading(reading:boolean){this.#presentationReadingPreference=reading;this.#presentationReading=reading;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLElement>(reading?".shared-presentation-reading":".shared-presentation-reading-toggle")?.focus({preventScroll:true}));}
-  #sharedSlideFit=(event:CustomEvent<{contentFits:boolean}>)=>{const overflow=!event.detail.contentFits;if(overflow===this.#presentationContentOverflow)return;this.#presentationContentOverflow=overflow;if(this.#presentationReadingPreference===null&&overflow){this.#presentationReading=true;this.requestUpdate();}};
+  #setPresentationReading(reading:boolean){
+    if(!reading&&this.#presentationContentOverflow){this.#presentationReadingPreference=null;this.#presentationReading=true;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLElement>(".shared-presentation-reading")?.focus({preventScroll:true}));return;}
+    this.#presentationReadingPreference=reading;this.#presentationReading=reading;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLElement>(reading?".shared-presentation-reading":".shared-presentation-reading-toggle")?.focus({preventScroll:true}));
+  }
+  #sharedSlideFit=(event:CustomEvent<{contentFits:boolean}>)=>{
+    const overflow=!event.detail.contentFits,unsafeVisualOverride=overflow&&this.#presentationReadingPreference===false;
+    if(overflow===this.#presentationContentOverflow&&!unsafeVisualOverride)return;
+    this.#presentationContentOverflow=overflow;
+    if(overflow){this.#presentationReadingPreference=null;this.#presentationReading=true;this.requestUpdate();if(unsafeVisualOverride)void this.updateComplete.then(()=>this.querySelector<HTMLElement>(".shared-presentation-reading")?.focus({preventScroll:true}));}
+  };
   #navigatePresentation(index:number){
     const active=this.#activePresentation;if(!active)return;
     const nextIndex=Math.max(0,Math.min(active.artifact.items.length-1,index));
     if(nextIndex!==active.index&&this.#presentationReadingPreference===false)this.#presentationReadingPreference=null;
     this.#presentationContentOverflow=false;
     if(this.#presentationReadingPreference===null){
-      const item=active.artifact.items[nextIndex];
-      const layout=item?planSlideLayout({title:item.title,body:item.body,notes:item.notes,image_prompt:"",slide:item.slide},active.artifact.presentation):null;
       const bounds=this.#presentationObserved?.getBoundingClientRect();
       const narrow=Boolean(bounds&&presentationRequiresReadingPosture(bounds.width,Math.max(0,bounds.height-56)));
-      this.#presentationReading=narrow||Boolean(layout?.density==="dense"&&layout.overflow.readingModeRecommended);
+      this.#presentationReading=narrow;
     }
     this.#activePresentation={...active,index:nextIndex};
     this.requestUpdate();

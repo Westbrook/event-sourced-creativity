@@ -8,6 +8,7 @@ import {
   type PresentationPdfSemanticNode,
 } from "../model/presentation-pdf.ts";
 import type { DocumentArtifactDraftItem, SlidePresentation } from "../model/document-artifacts";
+import { PRESENTATION_VISUAL_FIT_SELECTOR } from "../model/presentation-layout.ts";
 import type { PresentationSlide } from "./presentation-slide";
 
 const SVG_NAMESPACE="http://www.w3.org/2000/svg";
@@ -18,11 +19,9 @@ const fontResourceCache=new Map<string,Promise<string>>();
 const PRESENTATION_PDF_HIDDEN_SELECTOR="script,style,template,[hidden],[inert],[aria-hidden=\"true\"],[data-speaker-notes],[data-presentation-speaker-notes],.presentation-speaker-notes,.presentation-slide-speaker-notes";
 const PRESENTATION_PDF_HEADING_SELECTOR="h1,h2,h3,h4,h5,h6";
 const PRESENTATION_PDF_CHART_ROW_SELECTOR=".presentation-slide__chart-row,[data-presentation-chart-row]";
-const PRESENTATION_PDF_FIT_SELECTOR=".presentation-slide,.presentation-slide-body,.presentation-slide-body > section,.presentation-slide-body > aside,.presentation-slide__footnotes,.presentation-visual-fields,.presentation-slide__matrix";
-
 /** A tagged PDF must never claim evidence that its corresponding visible slide clips. */
 export const presentationPdfVisualContentFits=(host:Pick<HTMLElement,"querySelectorAll">)=>{
-  const surfaces=Array.from(host.querySelectorAll<HTMLElement>(PRESENTATION_PDF_FIT_SELECTOR));
+  const surfaces=Array.from(host.querySelectorAll<HTMLElement>(PRESENTATION_VISUAL_FIT_SELECTOR));
   return surfaces.length>0&&surfaces.every((surface)=>surface.clientWidth>0&&surface.clientHeight>0
     &&surface.scrollWidth<=surface.clientWidth+1&&surface.scrollHeight<=surface.clientHeight+1);
 };

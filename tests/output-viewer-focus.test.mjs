@@ -112,6 +112,26 @@ test("authenticated slides expose one readable surface with fixed reachable navi
   assert.match(responsive,/:is\(\.document-artifact-view,\.canvas-artifact-viewer\)\[data-artifact-kind="slides"\] \.presentation-deck--slideshow \.presentation-deck-stage\[data-slide-posture\]\s*\{[^}]*padding-inline-end:\s*calc\(var\(--forma-hit-target,2\.75rem\)\s*\+\s*\.875rem\)/s,"short-landscape action trays cannot cover the localized reading-mode toggle in either writing direction");
 });
 
+test("visual slides never acquire an outer scrollbar while review, editing, and list views keep one reachable scroll owner",()=>{
+  assert.match(responsive,/\.document-artifact-view\[data-artifact-kind="slides"\] > \.document-artifact-reader \{[^}]*overflow:\s*hidden/s);
+  assert.match(responsive,/\.document-artifact-view\[data-artifact-kind="slides"\]:not\(\[data-output-focus="true"\]\) > \.document-artifact-reader:has\(> \.artifact-review-actions:not\(\[hidden\]\),> \.artifact-review-guidance,> \.artifact-revision-history:not\(\[hidden\]\)\) \{[^}]*overflow-y:\s*auto/s,"expanded independent review remains accessible without restoring focused-slide scrollbars");
+  assert.match(responsive,/\.document-artifact-view\[data-artifact-kind="slides"\] \.document-artifact-reader-content:has\(> \.artifact-direct-editor\) \{[^}]*overflow-y:\s*auto/s,"long direct slide editors receive their own intentional scroll region");
+  assert.match(responsive,/:is\(\.document-artifact-view,\.canvas-artifact-viewer\)\[data-artifact-kind="slides"\] \.presentation-deck--list \{[^}]*grid-template-rows:\s*auto minmax\(0,1fr\)[^}]*overflow:\s*hidden/s);
+  assert.match(responsive,/:is\(\.document-artifact-view,\.canvas-artifact-viewer\)\[data-artifact-kind="slides"\] \.presentation-deck--list > \.presentation-deck-list \{[^}]*overflow-y:\s*auto/s,"the last list item stays reachable inside exactly one bounded scroll owner");
+  assert.match(styles,/\.presentation-deck--slideshow \.presentation-deck-stage \{[^}]*overflow:\s*hidden/);
+});
+
+test("actual measured evidence overflow overrides unsafe visual preferences without preempting adaptive dense slides",()=>{
+  assert.match(deck,/const unsafeVisualOverride=overflow&&this\.#readingOverride===false/);
+  assert.match(deck,/if\(!reading&&this\.#visualOverflow\)/);
+  assert.match(deck,/this\.#visualOverflow\|\|\(this\.#readingOverride\?\?this\.#automaticReading\)/);
+  assert.doesNotMatch(deck,/contentNeedsReading|layout\?\.density==="dense"&&layout\.overflow\.readingModeRecommended/,"dense styling gets a real canonical fit measurement before choosing the reading view");
+  assert.match(deck,/if\(view==="list"&&this\.#fullscreenActive\)[\s\S]*?document\.exitFullscreen\(\)/,"List cannot remove the last visible fullscreen exit action");
+  assert.match(shared,/if\(!reading&&this\.#presentationContentOverflow\)/);
+  assert.match(shared,/unsafeVisualOverride=overflow&&this\.#presentationReadingPreference===false/);
+  assert.doesNotMatch(shared,/layout\?\.density==="dense"&&layout\.overflow\.readingModeRecommended/,"public shares also allow dense full-evidence compositions to prove that they fit");
+});
+
 test("review, production disclosure, private inputs, and exact export gates remain available without occupying the initial stage", () => {
   assert.match(artifacts, /class="artifact-viewer-details"/);
   assert.match(artifacts, /class="artifact-review-status artifact-review-|class=\$\{`artifact-review-status artifact-review-/);

@@ -1,4 +1,4 @@
-import { defaultSlidePresentation } from "/src/model/document-artifacts.ts";
+import { defaultSlidePresentation, isSlideStylePresetId } from "/src/model/document-artifacts.ts";
 import "/src/components/presentation-slide.ts";
 import "/src/components/presentation-deck.ts";
 import { store } from "/src/state/store.ts";
@@ -7,7 +7,8 @@ import { setFormaLocale } from "/src/components/design-system/localization.ts";
 const parameters=new URLSearchParams(location.search);
 const locale=parameters.get("locale");
 if(locale)await setFormaLocale(locale,{persist:false});
-const presentation=defaultSlidePresentation("editorial");
+const requestedStyle=parameters.get("style");
+const presentation=defaultSlidePresentation(isSlideStylePresetId(requestedStyle)?requestedStyle:"editorial");
 const items=[{
   title:"A grounded decision, clearly presented",
   body:"A stable composition preserves authored evidence across every viewing surface.",
@@ -53,6 +54,49 @@ const items=[{
   },
 }];
 
+if(parameters.get("case")==="executive"||parameters.get("case")==="impossible"){
+  const excerpt="Make Intelligence and Cost Understandable. At 20,000 input and 4,000 output tokens, estimated model costs are Luna $0.0088, Terra $0.0880, and Sol $0.2200. Proposed Fast, Balanced, and Deep modes apply organization-approved models, spending limits, measured escalation, explicit premium approvals, and visible cost consequences.";
+  const impossible=parameters.get("case")==="impossible";
+  const citations=Array.from({length:impossible?4:1},(_,index)=>({
+    sourceId:"approved-source",
+    label:"Approved research",
+    anchor:`Slide ${9+index}`,
+    excerpt:impossible?Array(3).fill(excerpt).join(" "):excerpt,
+  }));
+  items[0]={
+    title:"Make Intelligence and Cost Understandable",
+    body:"At 20,000 input and 4,000 output tokens, estimated model costs are Luna $0.0088, Terra $0.0880, and Sol $0.2200.",
+    notes:"Every authorized model-cost decision remains available without a nested slide scrollbar.",
+    image_prompt:"",
+    slide:{
+      layout:"comparison",
+      kicker:"Overview",
+      bullets:["Proposed Fast, Balanced, and Deep modes apply organization-approved models, spending limits, measured escalation, explicit premium approvals, and visible cost consequences."],
+      citations,
+      sourceIds:["approved-source"],
+      visual:{
+        kind:"comparison",
+        label:"Estimated cost",
+        value:"20,000 input + 4,000 output tokens",
+        data:[
+          {label:"Luna",value:"$0.0088",weight:.04},
+          {label:"Terra",value:"$0.0880",weight:.4},
+          {label:"Sol",value:"$0.2200",weight:1},
+        ],
+      },
+    },
+  };
+}
+
+const requestedSlideCount=Number.parseInt(parameters.get("slides")??"",10);
+if(Number.isSafeInteger(requestedSlideCount)&&requestedSlideCount>items.length&&requestedSlideCount<=24){
+  const originals=items.map((item)=>structuredClone(item));
+  while(items.length<requestedSlideCount){
+    const original=originals[items.length%originals.length];
+    items.push({...structuredClone(original),title:`${original.title} · ${items.length+1}`});
+  }
+}
+
 const surface=parameters.get("surface");
 const documentId="11111111-1111-4111-8111-111111111111";
 const projectId="22222222-2222-4222-8222-222222222222";
@@ -65,6 +109,7 @@ store.events.set([
 ]);
 const deck=document.querySelector("#deck");
 const thumbnail=document.querySelector("#thumbnail");
+deck.preferenceKey=`responsive-acceptance-${parameters.get("case")??"default"}-${presentation.stylePreset}`;
 document.querySelector("#viewer").hidden=surface==="preview"||surface==="shared";
 document.querySelector("#preview").hidden=surface!=="preview";
 document.querySelector("#shared").hidden=surface!=="shared";
@@ -76,6 +121,13 @@ thumbnail.item=items[0];
 thumbnail.presentation=presentation;
 thumbnail.compact=true;
 await Promise.all([deck.updateComplete,thumbnail.updateComplete]);
+const requestedView=parameters.get("view")==="list"?"list":"slideshow";
+const requestedViewButton=deck.querySelectorAll(".presentation-deck-view-switch button")[requestedView==="list"?0:1];
+if(requestedViewButton?.getAttribute("aria-pressed")!=="true"){
+  requestedViewButton?.click();
+  await deck.updateComplete;
+}
+document.querySelector("#viewer > .document-artifact-reader > footer > span").textContent=`${items.length} slides · Approved`;
 document.querySelector("#focus").addEventListener("click",(event)=>{
   const viewer=document.querySelector("#viewer");
   const focused=viewer.dataset.outputFocus!=="true";

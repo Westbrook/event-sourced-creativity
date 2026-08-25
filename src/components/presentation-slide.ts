@@ -16,6 +16,7 @@ import { inferPresentationAudienceLocale } from "../model/presentation-source";
 import {
   PRESENTATION_CANVAS_HEIGHT,
   PRESENTATION_CANVAS_WIDTH,
+  PRESENTATION_VISUAL_FIT_SELECTOR,
   planSlideLayout,
 } from "../model/presentation-layout";
 import { FormaPresentationalElement } from "./presentational-element";
@@ -155,9 +156,7 @@ export class PresentationSlide extends FormaPresentationalElement {
     this.#fitFrame = requestAnimationFrame(() => {
       this.#fitFrame = 0;
       if (!this.isConnected || !this.clientWidth || !this.clientHeight) return;
-      const surfaces = this.querySelectorAll<HTMLElement>(
-        ".presentation-slide,.presentation-slide-body,.presentation-slide-body > section,.presentation-slide-body > aside,.presentation-slide__footnotes,.presentation-visual-fields,.presentation-slide__matrix",
-      );
+      const surfaces = this.querySelectorAll<HTMLElement>(PRESENTATION_VISUAL_FIT_SELECTOR);
       const contentFits = Array.from(surfaces).every((surface) =>
         surface.clientWidth > 0 && surface.clientHeight > 0
           && surface.scrollHeight <= surface.clientHeight + 1
@@ -373,12 +372,14 @@ export class PresentationSlide extends FormaPresentationalElement {
     const hasVisual = slideVisualIsComplete(slide) || kind === "quote" && Boolean(slide.quote?.text);
     const showDeckLabel = this.showFooterLabel && Boolean(presentation.footerLabel);
     const inlineQuote = slide.quote && kind !== "quote" ? slide.quote : null;
+    const evidenceRail = layout.citationPlacement === "full-width" && Boolean(slide.citations?.length);
 
     return html`<article
-      class=${`presentation-slide ${layout.className} style-${presentation.stylePreset} layout-${slide.layout} visual-${kind}${hasVisual ? "" : " no-visual"}${this.compact ? " compact" : ""}`}
+      class=${`presentation-slide ${layout.className}${evidenceRail ? " presentation-slide--evidence-rail" : ""} style-${presentation.stylePreset} layout-${slide.layout} visual-${kind}${hasVisual ? "" : " no-visual"}${this.compact ? " compact" : ""}`}
       data-presentation-artboard="960x540"
       data-layout-version=${layout.version}
       data-layout-density=${layout.density}
+      data-citation-placement=${layout.citationPlacement}
       data-reading-recommended=${String(layout.overflow.readingModeRecommended)}
       style=${`${slideStyle(presentation)};--presentation-safe-inline:${layout.safeArea.inline}px;--presentation-safe-block:${layout.safeArea.block}px`}
       aria-label=${this.#audienceText("presentation.slide", "Slide {index} of {total}: {title}", {
@@ -397,10 +398,11 @@ export class PresentationSlide extends FormaPresentationalElement {
           ${item.body ? html`<p dir="auto">${item.body}</p>` : nothing}
           ${slide.bullets.length ? html`<ul>${slide.bullets.map((bullet) => html`<li dir="auto">${bullet}</li>`)}</ul>` : nothing}
           ${inlineQuote ? this.#quote(inlineQuote, this.#audienceText("presentation.stakeholderQuote", "Stakeholder quotation")) : nothing}
-          ${this.#citations(slide)}
+          ${evidenceRail ? nothing : this.#citations(slide)}
         </section>
         ${hasVisual ? html`<aside aria-label=${slide.visual.label}>${this.#visual(slide)}</aside>` : nothing}
       </div>
+      ${evidenceRail ? this.#citations(slide) : nothing}
       <footer>
         ${showDeckLabel ? html`<span dir="auto">${presentation.footerLabel}</span>` : nothing}
         ${hasVisual ? html`<span dir="auto">${slide.visual.label}</span>` : nothing}
