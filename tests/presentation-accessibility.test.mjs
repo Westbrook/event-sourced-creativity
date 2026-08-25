@@ -44,6 +44,27 @@ test("presentation text and complete structured visual labels never shrink below
   ]) assert.match(rule(selector), /font-size:\s*clamp\(\.(?:75|8125|875)rem/);
 });
 
+test("architecture diagrams reserve stable readable geometry across embedded and fullscreen slide sizes",()=>{
+  assert.match(presentation,/(?:^|\n)forma-presentation-slide \{[^}]*container:\s*presentation-slide-host\s*\/\s*inline-size/,"slide padding and gaps scale against their own 16:9 frame rather than the fullscreen viewport");
+  assert.match(presentation,/(?:^|\n)\.presentation-slide \{[^}]*container:\s*presentation-slide\s*\/\s*inline-size/,"existing presentation-slide container queries remain intact");
+
+  const satellite=rule(".presentation-visual-diagram span");
+  assert.match(satellite,/width:\s*28%/,"circular satellites receive an explicit usable column rather than shrink-to-fit crumbs");
+  assert.match(satellite,/\)\s*\*\s*35%/,"the bounded orbit leaves space for every satellite");
+  assert.doesNotMatch(satellite,/overflow-wrap:\s*anywhere/,"ordinary labels such as Grounding must not split into arbitrary letter fragments");
+
+  const radius=.35,satelliteWidth=.28,hubWidth=.42;
+  assert.ok(.5-radius-satelliteWidth/2>=0,"the first circular label remains inside its visual");
+  assert.ok(.5+radius+satelliteWidth/2<=1,"the final circular label remains inside its visual");
+  assert.ok(.5-radius+satelliteWidth/2<=.5-hubWidth/2,"the circular labels never collide with the central hub");
+
+  const structured=rule(".presentation-visual-diagram.presentation-slide__diagram--structured");
+  assert.match(structured,/grid-template-columns:\s*repeat\(auto-fit,minmax\(min\(100%,8\.5rem\),1fr\)\)/,"long authored evidence occupies responsive nonoverlapping cards");
+  assert.match(rule(".presentation-slide__diagram--structured > strong"),/grid-column:\s*1\s*\/\s*-1[^}]*aspect-ratio:\s*auto/,"long central claims expand naturally instead of overflowing a forced circular box");
+  assert.match(rule(".presentation-slide__diagram--structured > span"),/position:\s*static[^}]*max-width:\s*none[^}]*translate:\s*none/,"structured evidence remains in normal flow across display sizes");
+  assert.match(rule(".presentation-slide__diagram--structured > .presentation-slide__caption"),/position:\s*static[^}]*grid-column:\s*1\s*\/\s*-1/,"the visual caption receives its own nonoverlapping row");
+});
+
 test("all chart points, compact bullets, visual labels, and verbatim stakeholder quotations remain available", () => {
   assert.doesNotMatch(presentation, /\.presentation-visual-fields\s+i:nth-child\(n\+\d+\)[^{]*\{[^}]*display:\s*none/);
   assert.doesNotMatch(presentation, /\.presentation-slide\.compact[^{}]*li:nth-child\(n\+\d+\)[^{]*\{[^}]*display:\s*none/);

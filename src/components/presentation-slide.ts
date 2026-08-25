@@ -224,7 +224,10 @@ export class PresentationSlide extends FormaPresentationalElement {
 
   #diagram(visual: PresentationVisual) {
     const data = visual.data as PresentationDatum[];
-    return html`<figure class="presentation-visual-diagram presentation-slide__diagram" style=${`--slide-node-count:${Math.max(1, data.length)}`}>
+    const structured = visual.value.trim().length > 40
+      || data.length > 4
+      || data.some((datum) => datum.label.trim().length > 20 || datumDisplayValue(datum).trim().length > 28);
+    return html`<figure class=${`presentation-visual-diagram presentation-slide__diagram${structured ? " presentation-slide__diagram--structured" : ""}`} style=${`--slide-node-count:${Math.max(1, data.length)}`}>
       ${visual.label ? html`<figcaption class="presentation-slide__caption" dir="auto">${visual.label}</figcaption>` : nothing}
       <strong dir="auto">${visual.value}</strong>
       ${data.map((datum, index) => html`<span class="presentation-slide__diagram-node" style=${`--slide-node:${index}`}>

@@ -221,6 +221,33 @@ test("comparison, personas, roadmap, architecture, and overflow visuals expose c
   assert.ok(architecture.includes("Relationship 6"), "Diagram must preserve node values and labels.");
 });
 
+test("long assistant foundations remain complete in a responsive structured architecture diagram",()=>{
+  const centralClaim="A consistent experience connects work context with responsive coordination.";
+  const interaction="page-specific intent and proposal-first actions";
+  const grounding="event-derived work";
+  const architecture=renderSlide({
+    layout:"architecture",
+    kicker:"Architecture overview",
+    bullets:[],
+    visual:{kind:"architecture",label:"Assistant foundations",value:centralClaim,data:[
+      {label:"Interaction",value:interaction,weight:.9},
+      {label:"Grounding",value:grounding,weight:.85},
+    ]},
+  });
+
+  assert.match(architecture,/class=presentation-visual-diagram presentation-slide__diagram presentation-slide__diagram--structured/);
+  assert.match(architecture,/--slide-node-count:2/);
+  assert.match(architecture,/<strong dir="auto">A consistent experience connects work context with responsive coordination\.<\/strong>/);
+  assert.equal((architecture.match(/presentation-slide__diagram-node/g)??[]).length,2);
+  for(const copy of ["Assistant foundations","Interaction",interaction,"Grounding",grounding]){
+    assert.ok(architecture.includes(copy),`Architecture diagram must preserve the complete authored text: ${copy}`);
+  }
+  assert.doesNotMatch(architecture,/coordination\.\.\.|Ground\s+ing|aria-hidden="true"/);
+
+  const concise=renderSlide({layout:"architecture",kicker:"Assistant foundations",bullets:[],visual:{kind:"architecture",label:"Connected work",value:"One workflow",data:[{label:"Intent",value:"Clear",weight:1},{label:"Context",value:"Grounded",weight:1}]}});
+  assert.doesNotMatch(concise,/presentation-slide__diagram--structured/,"brief architecture labels retain their bounded circular composition");
+});
+
 test("hero visuals retain supplemental source facts instead of silently dropping visual data", () => {
   const markup = renderSlide({
     layout: "statement",
