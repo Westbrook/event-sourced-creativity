@@ -108,7 +108,8 @@ const retainedCostBreakdown = (value: unknown, fallbackMicrousd: number): Provid
   return{textInputMicrousd:0,textOutputMicrousd:0,imageTextInputMicrousd:0,imageInputMicrousd:0,imageOutputMicrousd:total,totalMicrousd:total};
 };
 
-function combinedSceneSnapshot(snapshot: Record<string, unknown>, scenes: ProductionScene[]) {
+/** Reconstruct the exact page-scoped authorized source snapshot used by managed presentation generation. */
+export function combinedSceneSnapshot(snapshot: Record<string, unknown>, scenes: ProductionScene[]) {
   const facts = new Map<string, Record<string, unknown>>();
   const relationships = new Map<string, Record<string, unknown>>();
   for (const scene of scenes) {
@@ -250,6 +251,26 @@ export async function generateManagedArtifactDraft(
     videoAudioMode?: VideoAudioMode;
   } & ManagedProductionCallbacks,
 ) {
+  if (kind === "slides") {
+    const plannedCount = input.production.scenes.length;
+    const requestedCount = input.requestedSlideCount ?? input.production.requestedSlideCount ?? plannedCount;
+    const expectedBatchCount = Math.ceil(plannedCount / MANAGED_PRODUCTION_BATCH_SIZE);
+    const batchCoverage = input.production.providerBatches.reduce((total, batch) => total + batch.slideCount, 0);
+    if (requestedCount !== plannedCount || input.production.predictedSlideCount !== plannedCount
+      || input.production.providerBatchCount !== expectedBatchCount || batchCoverage !== plannedCount) {
+      throw new ProviderRequestError({
+        code: "presentation_slide_count_conflict",
+        category: "provider",
+        scope: "request",
+        action: "edit_request",
+        message: `The requested ${requestedCount}-slide presentation does not match its ${plannedCount} authorized planned slides and provider batches. Confirm the complete authored slide count before generation.`,
+        retryable: false,
+        retryAfterMs: null,
+        requestId: null,
+        httpStatus: 409,
+      });
+    }
+  }
   const pages: Array<Awaited<ReturnType<typeof generateDocumentArtifact>>> = [];
   const attempts: Array<Awaited<ReturnType<typeof generateDocumentArtifact>>> = [];
   const responseIdsFor=(attempt:Awaited<ReturnType<typeof generateDocumentArtifact>>)=>{
@@ -266,7 +287,7 @@ export async function generateManagedArtifactDraft(
   const presentationSources = kind === "slides"
     ? buildPresentationSourceContract(input.snapshot, {
       itemCount: input.production.scenes.length,
-      requestedSlideCount: input.requestedSlideCount ?? input.production.requestedSlideCount ?? input.production.scenes.length,
+      requestedSlideCount: input.production.scenes.length,
       presentationStyle: input.presentationStyle,
       fidelity: input.presentationFidelity,
     })
@@ -401,8 +422,12 @@ export async function generateManagedArtifactDraft(
       for (const [index, item] of output.items.entries()) {
         const assignedSources = input.production.scenes[index]?.sourceBlockIds ?? [];
         const attributedSources = item.slide?.sourceIds ?? [];
-        if (assignedSources.length && attributedSources.length && !attributedSources.some((sourceId) => assignedSources.includes(sourceId))) {
+        if (assignedSources.length && attributedSources.length && !attributedSources.every((sourceId) => assignedSources.includes(sourceId))) {
           issues.push({ code: "incorrect_slide_source", path: `items.${index}.slide.sourceIds`, message: "This slide is not attributed to its assigned authorized source scene." });
+        }
+        const assignedGroups = input.production.scenes[index]?.contextGroupIds ?? [];
+        if ((item.context_group_ids ?? []).some((groupId) => !assignedGroups.includes(groupId))) {
+          issues.push({ code: "incorrect_context_group_assignment", path: `items.${index}.context_group_ids`, message: "This slide includes Combined Context assigned to a different authorized presentation chapter." });
         }
       }
       for (const [index, item] of output.items.entries()) if (index > 0 && item.slide?.layout === "cover") issues.push({ code: "duplicate_opening_slide", path: `items.${index}.slide.layout`, message: "Only the global opening slide can use the cover layout." });

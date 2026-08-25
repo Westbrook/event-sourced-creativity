@@ -16,6 +16,7 @@ export type ProviderFailureDetail = {
   contributingBlockIds?: string[];
   contributingReferenceIds?: string[];
   probe?: string;
+  validationIssues?: PresentationCandidateValidationIssue[];
 };
 
 export type ProviderAttemptAccounting = {
@@ -171,5 +172,6 @@ export function providerErrorFromResponse(response: Response, body: unknown, fal
 }
 
 export function publicFailureDetail(detail: ProviderFailureDetail) {
-  return { code: detail.code, category: detail.category, scope: detail.scope, action: detail.action, message: detail.message, retryable: detail.retryable, retryAfterMs: detail.retryAfterMs, requestId: detail.requestId, httpStatus: detail.httpStatus, riskCategories: detail.riskCategories ?? [], contributingBlockIds: detail.contributingBlockIds ?? [], contributingReferenceIds: detail.contributingReferenceIds ?? [], probe: detail.probe ?? null };
+  return { code: detail.code, category: detail.category, scope: detail.scope, action: detail.action, message: detail.message, retryable: detail.retryable, retryAfterMs: detail.retryAfterMs, requestId: detail.requestId, httpStatus: detail.httpStatus, riskCategories: detail.riskCategories ?? [], contributingBlockIds: detail.contributingBlockIds ?? [], contributingReferenceIds: detail.contributingReferenceIds ?? [], probe: detail.probe ?? null,...(detail.validationIssues?.length?{validationIssues:detail.validationIssues}:{}) };
 }
+import type { PresentationCandidateValidationIssue } from "../src/model/presentation-candidates.ts";

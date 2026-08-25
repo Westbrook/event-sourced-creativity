@@ -54,6 +54,31 @@ test("removes repeated slide copy, empty bullets, and unfinished visual placehol
   const item=content?.items[0];assert.ok(item?.slide);assert.equal(item.body,"");assert.equal(item.slide.kicker,"Overview");assert.deepEqual(item.slide.bullets,["A specific conflict"]);assert.equal(item.slide.visual.kind,"hero-type");assert.equal(item.slide.visual.value,"A Reluctant Ally");assert.equal(item.slide.visual.label,"Visual emphasis");assert.deepEqual(item.slide.visual.data,[]);assert.equal(slideVisualIsComplete(item.slide),true);assert.doesNotMatch(JSON.stringify(item),/Point [23]/);
 });
 
+test("hero fallback preserves the exact source provenance of its promoted visual evidence",()=>{
+  for(const kind of ["hero-type","timeline","color-field"]){
+    const normalized=normalizeSlideVisual({layout:"statement",kicker:"Approved context",visual:{kind,label:"Visual evidence",value:"Duplicate heading",data:[{label:"Distinct source-authored evidence",value:"",source_ids:["blk_999"]}]}},{title:"Duplicate heading",body:""});
+    assert.equal(normalized.visual.kind,"hero-type");
+    assert.equal(normalized.visual.value,"Distinct source-authored evidence");
+    assert.deepEqual(normalized.sourceIds,["blk_999"],`${kind} must never erase an unauthorized provider source alias during visual conversion`);
+    assert.deepEqual(normalized.visual.data,[]);
+  }
+});
+
+test("quotation continuation preserves source provenance instead of authenticating unattributed fragments",()=>{
+  const normalized=normalizeSlideVisual({layout:"statement",kicker:"Interview",visual:{kind:"hero-type",label:"Product owner",value:"The governed release",data:[{label:"Continuation",value:"must preserve every source decision.",source_ids:["blk_999"]}]}},{title:"Stakeholder confidence",body:""});
+  assert.equal(normalized.visual.kind,"quote");
+  assert.deepEqual(normalized.sourceIds,["blk_999"]);
+});
+
+test("incomplete hero visuals report their missing authored value instead of an irrelevant two-row requirement",()=>{
+  const output=parseDocumentArtifactContent(JSON.stringify({title:"Deck",summary:"Source-grounded presentation",content_markdown:"# Deck",presentation,items:[{title:"Repeated heading",body:"",notes:"",image_prompt:"",slide:{layout:"statement",kicker:"Distinct context",visual:{kind:"hero-type",label:"Visual emphasis",value:"Repeated heading",data:[]}}}]}));
+  const issue=documentArtifactValidationIssues("slides",output,{itemCount:1}).find((candidate)=>candidate.code==="incomplete_visual");
+  assert.ok(issue);
+  assert.equal(issue.path,"items.0.slide.visual");
+  assert.match(issue.message,/meaningful.*source-authored visual value/u);
+  assert.doesNotMatch(issue.message,/two|points|rows/u);
+});
+
 test("retains meaningful label-only qualitative visuals while quantitative scorecards remain strict",()=>{
   for(const kind of ["comparison","personas","roadmap","timeline"]){
     const visual=normalizeSlideVisual({layout:kind==="timeline"?"timeline":kind,kicker:"Source evidence",bullets:[],visual:{kind,label:"Authored categories",value:"",data:[{label:"Phone",value:"",weight:1},{label:"Tablet",value:"",weight:1}]}},{title:"Distinct executive claim"});

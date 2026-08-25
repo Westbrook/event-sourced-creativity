@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
+import { createRequire } from "node:module";
 import test from "node:test";
 import { exportArchive, importArchive } from "../src/model/archive.ts";
 import { buildReplayScenario, buildScenario, explainReplayEvent, REPLAY_SCENARIOS, SCENARIOS, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
@@ -634,29 +635,46 @@ test("keeps creator, canvas, operations, product, design, and engineering scopes
   assert.match(review,/Deficiencies found and resolved/);assert.match(review,/Primary navigation/);assert.match(review,/Follow-up evaluation/);
 });
 
-test("never gives a rounded element an imbalanced border or simulated edge",async()=>{
-  const [styles,review]=await Promise.all([
-    readFile(new URL("../src/styles.css",import.meta.url),"utf8"),
+test("keeps every application content highlight balanced and free of shadow or simulated accent rails",async()=>{
+  const cssFiles=(await readdir(new URL("../src/",import.meta.url),{recursive:true})).filter((file)=>file.endsWith(".css"));
+  const [design,review,...stylesheets]=await Promise.all([
+    readFile(new URL("../DESIGN.md",import.meta.url),"utf8"),
     readFile(new URL("../docs/information-architecture-review.md",import.meta.url),"utf8"),
+    ...cssFiles.map((file)=>readFile(new URL(`../src/${file}`,import.meta.url),"utf8")),
   ]);
-  const rules=[...styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)].flatMap(([,selectorList,body])=>
-    selectorList.split(",").map((selector)=>({selector:selector.trim(),body})),
-  );
-  const rounded=rules.filter(({body})=>/\bborder-radius\s*:/.test(body)).map(({selector})=>selector);
-  const directional=rules.filter(({body})=>/\bborder-(?:top|right|bottom|left)(?:-(?:width|style|color))?\s*:/.test(body));
-  const violations=directional.filter(({selector})=>rounded.some((base)=>
-    selector===base||selector.startsWith(`${base}.`)||selector.startsWith(`${base}:`)||selector.startsWith(`${base}[`),
-  ));
-  assert.deepEqual(violations.map(({selector})=>selector),[]);
-  const insetOffsets=[...styles.matchAll(/\binset\s+(-?(?:\d*\.)?\d+)(?:[a-z%]+)?\s+(-?(?:\d*\.)?\d+)(?:[a-z%]+)?/gi)];
-  const insetShadowCount=[...styles.matchAll(/\bbox-shadow\s*:\s*([^;{}]+)/gi)].reduce((count,[,value])=>count+[...value.matchAll(/\binset\b/gi)].length,0);
-  assert.ok(insetOffsets.length>0,"expected balanced inset highlights to remain covered by the invariant");
-  assert.equal(insetOffsets.length,insetShadowCount,"every inset shadow must declare auditable numeric x/y offsets first");
-  assert.deepEqual(insetOffsets.filter(([,x,y])=>Number(x)!==0||Number(y)!==0).map((match)=>match[0]),[]);
-  assert.match(styles,/\.rail-links a\.active \{[^}]*box-shadow: inset 0 0 0/);
-  assert.match(styles,/\.observation-card \{[^}]*box-shadow: inset/);
-  assert.match(styles,/\.belief-card \{[^}]*box-shadow: inset/);
-  assert.match(styles,/\.blame-cluster \{[^}]*box-shadow: inset/);
+  const postcss=createRequire(import.meta.resolve("vite"))("postcss");
+  const explicitContent=/\.(?:design-synthetic-notice|block-combined-context|observation-card|belief-card|blame-cluster|presentation-slide__quote-card)(?=[\s.:#>+~[,]|$)|\.document-combined-contexts\s+article\b|\.analytics-benefits\s+article\b|\.(?:shared-presentation-reader\s*>\s*article|presentation-deck-reader-content)\s+blockquote\b|\.focal-lab-implementations\s+article:first-child\b|\.attention-episodes\s+article\b|\.asset-focus-trigger:(?:hover|focus)\s+\.asset-preview\b/;
+  const semanticState=/\.(?:[\w-]+(?:--|-))?(?:attention|unread|warning|danger|failed|failure|error|selected|current|preferred|recommended|terminal|brief-focus|drop-active|active)(?=[\s.:#>+~[,]|$)|\[(?:aria-(?:selected|pressed|current)|data-[\w-]*(?:status|state))\s*=\s*["']?(?:true|page|attention|warning|failed|error)["']?\]/;
+  const functionalNavigation=/\.(?:ui-audience-navigation|workspace-settings-navigation|application-task-navigation|ui-tabs|tabbar|global-nav|marketing-audiences|generation-context-links)\b|\[role\s*=\s*["']?tab["']?\]/;
+  const functionalIndicator=/\.adapter-scenarios\s+button\.active\s+span::before|\.(?:output-motion__toggle|marketing-motion-toggle|ui-spinner-mark)\b/;
+  const directionalBorder=/^border-(?:top|right|bottom|left|inline(?:-(?:start|end))?|block(?:-(?:start|end))?)(?:-(?:width|style|color))?$/;
+  const semanticAccent=/var\(--[\w-]*(?:accent|orange|warning|danger|acid|forest|highlight)[\w-]*(?:[\s,)]|$)/i;
+  const violations=[];
+  for(let index=0;index<stylesheets.length;index++){
+    const file=cssFiles[index];
+    const root=postcss.parse(stylesheets[index],{from:file});
+    root.walkRules((rule)=>{
+      for(const selector of rule.selectors??[]){
+        if(functionalNavigation.test(selector)||functionalIndicator.test(selector))continue;
+        const highlighted=explicitContent.test(selector)||semanticState.test(selector);
+        rule.walkDecls((declaration)=>{
+          const property=declaration.prop.toLowerCase();
+          const value=declaration.value.trim();
+          if(!highlighted&&!(directionalBorder.test(property)&&semanticAccent.test(value)))return;
+          if(directionalBorder.test(property)&&!/^(?:0(?:[a-z%]+)?|none|transparent)$/i.test(value))violations.push(`${file}: ${selector} uses ${property}: ${value}`);
+          if(property==="box-shadow"&&!/^none$/i.test(value))violations.push(`${file}: ${selector} uses box-shadow: ${value}`);
+          if((property==="background"||property==="background-image")&&/\blinear-gradient\s*\(/i.test(value))violations.push(`${file}: ${selector} uses a directional highlight gradient`);
+          if(/::(?:before|after)\b/.test(selector)&&/^(?:background(?:-image)?|border(?:-|$)|box-shadow)/.test(property))violations.push(`${file}: ${selector} simulates a highlighted edge`);
+        });
+      }
+    });
+  }
+  assert.deepEqual(violations,[]);
+  assert.ok(cssFiles.some((file)=>file.endsWith("responsive-foundation.css")),"responsive Activity styles remain covered");
+  assert.ok(cssFiles.some((file)=>file.endsWith("canvas.css")),"Canvas styles remain covered");
+  assert.match(design,/single-edge physical or logical border/);
+  assert.match(design,/Never use a box shadow to highlight in-flow content/);
+  assert.match(design,/uniform full-perimeter border/);
   assert.match(review,/must not simulate an imbalanced border with an offset inset shadow/);
 });
 

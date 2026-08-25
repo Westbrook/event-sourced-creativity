@@ -1046,6 +1046,183 @@ test("settles every metered initial and bounded-repair response when source-fide
     assert.equal(recorded.total_tokens,330);
     assert.equal(recorded.cost_microusd,1560);
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN('active','executing')").get().count,0);
+
+    const candidateRequest=(suffix,init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs/${job.jobId}/presentation-candidates${suffix}`,init),fixture.environment,`${job.jobId}/presentation-candidates${suffix}`);
+    const listed=await candidateRequest("");
+    assert.equal(listed.status,200,JSON.stringify(await listed.clone().json()));
+    assert.match(listed.headers.get("cache-control")??"",/private, no-store/u);
+    const listing=await listed.json();
+    assert.equal(listing.jobId,job.jobId);
+    assert.equal(listing.documentId,"doc-atmosphere");
+    assert.equal(listing.candidates.length,2);
+    assert.deepEqual(listing.candidates.map((candidate)=>candidate.stage),["initial","repair"]);
+    assert.deepEqual(listing.candidates.map((candidate)=>candidate.providerAttempt),[1,2]);
+    assert.ok(listing.candidates.every((candidate)=>candidate.generatedSlideCount===0&&candidate.complete===false));
+    assert.ok(listing.candidates.every((candidate)=>candidate.issues.some((issue)=>issue.code==="invalid_json"&&issue.category==="structure"&&issue.blocking)));
+    assert.ok(listing.candidates.every((candidate)=>candidate.settledCostMicrousd===1560&&candidate.providerCalls===2));
+    assert.doesNotMatch(JSON.stringify(listing),/output_text|contentRef|source_snapshot_sha256|compiled_snapshot_sha256|source-outline/u);
+
+    const detailed=await candidateRequest("/paid-validation-response-2");
+    assert.equal(detailed.status,200,JSON.stringify(await detailed.clone().json()));
+    const detail=(await detailed.json()).candidate;
+    assert.equal(detail.stage,"repair");
+    assert.deepEqual(detail.slides,[]);
+    assert.equal(detail.complete,false);
+    assert.equal(providerCalls,2,"reviewing rejected paid responses must never contact a provider");
+
+    const originalResult=fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json;
+    const racedResponseBefore=fixture.sqlite.prepare("SELECT content,expires_at FROM private_content WHERE kind='provider-response' AND json_extract(content,'$.response_id')=?").get("paid-validation-response-1");
+    const originalPreservationPrepare=fixture.environment.DB.prepare.bind(fixture.environment.DB);
+    let checkpointPreservationRace=false;
+    fixture.environment.DB.prepare=(sql)=>{
+      if(!checkpointPreservationRace&&sql.includes("AS presentation_preservation_verified")){
+        checkpointPreservationRace=true;
+        fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify({...JSON.parse(originalResult),privatePreservationRace:true}),job.jobId);
+      }
+      return originalPreservationPrepare(sql);
+    };
+    try{
+      const racedPreservation=await candidateRequest("/paid-validation-response-1/preserve",{method:"POST"});
+      assert.equal(checkpointPreservationRace,true,"preservation must detect a checkpoint changed after evidence inspection");
+      assert.equal(racedPreservation.status,404);
+      const racedResponseAfter=fixture.sqlite.prepare("SELECT content,expires_at FROM private_content WHERE kind='provider-response' AND json_extract(content,'$.response_id')=?").get("paid-validation-response-1");
+      assert.deepEqual(racedResponseAfter,racedResponseBefore,"a stale checkpoint must roll back every private evidence mutation");
+      assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='PresentationCandidatePreserved' AND json_extract(payload,'$.provider_response_id')=?").get("paid-validation-response-1").count,0);
+      assert.equal(providerCalls,2);
+    }finally{
+      fixture.environment.DB.prepare=originalPreservationPrepare;
+      fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(originalResult,job.jobId);
+    }
+
+    const preserved=await candidateRequest("/paid-validation-response-2/preserve",{method:"POST"});
+    assert.equal(preserved.status,200,JSON.stringify(await preserved.clone().json()));
+    const preservation=(await preserved.json()).candidate;
+    assert.equal(preservation.retentionClass,"governed-evidence");
+    assert.ok(Date.parse(preservation.expiresAt)>Date.parse(listing.candidates[1].expiresAt));
+    const preservedContent=fixture.sqlite.prepare("SELECT kind,content,expires_at FROM private_content WHERE kind='provider-response' AND json_extract(content,'$.response_id')=?").get("paid-validation-response-2");
+    assert.equal(preservedContent.kind,"provider-response","preservation must not expose provider output through ordinary content hydration");
+    assert.equal(preservedContent.expires_at,preservation.expiresAt);
+    assert.ok(JSON.parse(preservedContent.content).preserved_at);
+    const repeated=await candidateRequest("/paid-validation-response-2/preserve",{method:"POST"});
+    assert.equal(repeated.status,200);
+    assert.equal((await repeated.json()).candidate.expiresAt,preservation.expiresAt,"repeated preservation must not renew the retention clock");
+    assert.equal(providerCalls,2,"explicit preservation must never contact a provider");
+
+    const expiredJobCheckpoint=fixture.sqlite.prepare("SELECT expires_at FROM document_jobs WHERE job_id=?").get(job.jobId).expires_at;
+    fixture.sqlite.prepare("UPDATE document_jobs SET request_json='{}',result_json=NULL,expires_at=? WHERE job_id=?").run("2000-01-01T00:00:00.000Z",job.jobId);
+    const historical=await candidateRequest("/paid-validation-response-2");
+    assert.equal(historical.status,200,"explicitly preserved drafts remain discoverable after transient job metadata expires");
+    const historicalCandidate=(await historical.json()).candidate;
+    assert.equal(historicalCandidate.retentionClass,"governed-evidence");
+    assert.equal(historicalCandidate.settledCostMicrousd,1560,"the immutable usage event preserves exact settled cost after transient receipts expire");
+    const rediscovered=await handleDocumentJobs(new Request("http://localhost/api/document-jobs/presentation-candidates?document=doc-atmosphere"),fixture.environment,"presentation-candidates");
+    assert.equal(rediscovered.status,200,JSON.stringify(await rediscovered.clone().json()));
+    const preservedJobs=(await rediscovered.json()).jobs;
+    assert.equal(preservedJobs.length,1);
+    assert.equal(preservedJobs[0].jobId,job.jobId);
+    assert.deepEqual(preservedJobs[0].candidates.map((candidate)=>candidate.responseId),["paid-validation-response-2"]);
+    assert.equal(preservedJobs[0].candidates[0].settledCostMicrousd,1560);
+    const ordinaryJobs=await handleDocumentJobs(new Request("http://localhost/api/document-jobs?document=doc-atmosphere"),fixture.environment,"");
+    assert.equal(ordinaryJobs.status,200,JSON.stringify(await ordinaryJobs.clone().json()));
+    assert.ok(!(await ordinaryJobs.json()).jobs.some((candidate)=>candidate.jobId===job.jobId),"preserved evidence must not resurrect expired jobs or private candidates in ordinary job serialization");
+    assert.equal(providerCalls,2);
+    fixture.sqlite.prepare("UPDATE document_jobs SET expires_at=? WHERE job_id=?").run(expiredJobCheckpoint,job.jobId);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+test("rejects a managed authored-slide count conflict before creating jobs, reserving funds, or contacting a provider",async()=>{
+  const fixture=await reliabilityWorker();
+  await authoredOutline(fixture,12);
+  const originalFetch=globalThis.fetch;
+  let providerCalls=0;
+  globalThis.fetch=async()=>{providerCalls+=1;throw new Error("No provider request may run before count acceptance.");};
+  try{
+    const beforeJobs=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count;
+    const beforeReservations=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count;
+    const payload={kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"slides",productionMode:"managed",itemCount:4,requestedSlideCount:4,requestKey:"reject-managed-outline-count-conflict"}};
+    const response=await handleDocumentJobs(new Request("http://localhost/api/document-jobs",json(payload)),fixture.environment,"");
+    assert.equal(response.status,409,JSON.stringify(await response.clone().json()));
+    const rejected=await response.json();
+    assert.equal(rejected.error,"presentation_slide_count_conflict");
+    assert.equal(rejected.authoredSlideCount,12);
+    assert.equal(rejected.requestedSlideCount,4);
+    assert.equal(rejected.plannedSlideCount,12);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count,beforeJobs);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count,beforeReservations);
+    assert.equal(providerCalls,0);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("invalid paid presentation alternatives retain visible drafts and safe per-attempt rejection diagnostics without promotion",async()=>{
+  const fixture=await reliabilityWorker();
+  const documentId=await seedIndependentPresentation(fixture,"private-rejected-slide-alternatives");
+  const requestSourceJob=(path="",init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs${path?`/${path}`:""}`,init),fixture.environment,path);
+  const previousFetch=globalThis.fetch;
+  let providerCalls=0;
+  globalThis.fetch=async(url,init={})=>{
+    assert.equal(String(url),"https://api.openai.com/v1/responses");
+    providerCalls+=1;
+    const draft=independentProviderResponse(init.body);
+    if(providerCalls===1)draft.items[2].slide.source_ids=["blk_999"];
+    else draft.items[3].context_group_ids=["context_group_999"];
+    return Response.json({id:`rejected-visible-alternative-${providerCalls}`,model:"gpt-5.6-terra",output_text:JSON.stringify(draft),usage:{input_tokens:800,output_tokens:400,total_tokens:1200}});
+  };
+  try{
+    const accepted=await requestSourceJob("",json(presentationAdmission(documentId,"private-rejected-slide-alternatives")));
+    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+    const{job}=await accepted.json();
+    const failed=await requestSourceJob(`${job.jobId}/run`,{method:"POST"});
+    assert.equal(failed.status,200,JSON.stringify(await failed.clone().json()));
+    const failedJob=(await failed.json()).job;
+    assert.equal(failedJob.status,"failed");
+    assert.ok(failedJob.errorDetail.validationIssues.some((issue)=>issue.code==="unknown_source_reference"&&issue.stage==="initial"&&issue.globalSlideIndex===3),JSON.stringify(failedJob.errorDetail.validationIssues));
+    assert.ok(failedJob.errorDetail.validationIssues.some((issue)=>issue.code==="unknown_context_group_reference"&&issue.stage==="repair"&&issue.globalSlideIndex===4));
+    assert.ok(failedJob.errorDetail.validationIssues.every((issue)=>issue.blocking&&issue.pageIndex===0&&issue.pageCount===1));
+    const publicFailure=fixture.sqlite.prepare("SELECT payload FROM events WHERE type='DocumentRenderFailed' AND json_extract(payload,'$.document_id')=?").get(documentId);
+    assert.ok(publicFailure);
+    assert.ok(JSON.parse(publicFailure.payload).validation_issues.some((issue)=>issue.stage==="initial"));
+    assert.ok(JSON.parse(publicFailure.payload).validation_issues.some((issue)=>issue.stage==="repair"));
+    assert.doesNotMatch(JSON.stringify(failedJob.errorDetail),/PRIVATE_AUTHORED_SLIDE_|blk_999|context_group_999|output_text|source_snapshot_sha256/u);
+    assert.doesNotMatch(publicFailure.payload,/PRIVATE_AUTHORED_SLIDE_|blk_999|context_group_999|output_text|source_snapshot_sha256/u,"shared failure events retain actionable codes without revealing source evidence");
+    assert.equal(providerCalls,2);
+
+    const listed=await requestSourceJob(`${job.jobId}/presentation-candidates`);
+    assert.equal(listed.status,200,JSON.stringify(await listed.clone().json()));
+    const candidates=(await listed.json()).candidates;
+    assert.equal(candidates.length,2);
+    assert.ok(candidates[0].issues.some((issue)=>issue.code==="unknown_source_reference"&&issue.category==="authorization"));
+    assert.ok(candidates[1].issues.some((issue)=>issue.code==="unknown_context_group_reference"&&issue.category==="authorization"));
+    assert.ok(candidates.every((candidate)=>candidate.generatedSlideCount===12&&!candidate.complete));
+
+    const detailed=await requestSourceJob(`${job.jobId}/presentation-candidates/rejected-visible-alternative-1`);
+    assert.equal(detailed.status,200,JSON.stringify(await detailed.clone().json()));
+    const text=await detailed.text();
+    const detail=JSON.parse(text).candidate;
+    assert.equal(detail.slides.length,12);
+    assert.equal(detail.slides[0].title,"RESPONSIVE ASSESSMENT");
+    assert.doesNotMatch(text,/PRIVATE_AUTHORED_SLIDE_|blk_999|context_group_999|"(?:sourceIds|source_id|source_ids|image_prompt|content_markdown|output_text)"\s*:/u);
+
+    const foreignHeaders={"oai-authenticated-user-id":"other-presentation-author","oai-authenticated-user-email":"other-presentation-author@example.test"};
+    assert.equal((await fixture.request("/api/session",{headers:foreignHeaders})).status,200);
+    fixture.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id=?").run("pilot-2026-08-10","other-presentation-author");
+    for(const[extension,method]of[["","GET"],["/rejected-visible-alternative-1","GET"],["/rejected-visible-alternative-1/preserve","POST"]]){
+      const privatePath=`${job.jobId}/presentation-candidates${extension}`;
+      const foreign=await handleDocumentJobs(new Request(`http://localhost/api/document-jobs/${privatePath}`,{method,headers:foreignHeaders}),fixture.environment,privatePath);
+      assert.equal(foreign.status,404,`${method} ${extension||"listing"} must remain isolated from another authenticated creator`);
+      assert.doesNotMatch(await foreign.text(),/RESPONSIVE ASSESSMENT|PRIVATE_AUTHORED_SLIDE_/u);
+    }
+
+    const retainedCandidate=fixture.sqlite.prepare("SELECT content_id,expires_at FROM private_content WHERE kind='provider-response' AND json_extract(content,'$.response_id')=?").get("rejected-visible-alternative-1");
+    fixture.sqlite.prepare("UPDATE private_content SET expires_at=? WHERE content_id=?").run("2000-01-01T00:00:00.000Z",retainedCandidate.content_id);
+    const expired=await requestSourceJob(`${job.jobId}/presentation-candidates/rejected-visible-alternative-1`);
+    assert.equal(expired.status,404,"expired rejected provider responses must never remain reviewable");
+    assert.doesNotMatch(await expired.text(),/RESPONSIVE ASSESSMENT|PRIVATE_AUTHORED_SLIDE_/u);
+    fixture.sqlite.prepare("UPDATE private_content SET expires_at=? WHERE content_id=?").run(retainedCandidate.expires_at,retainedCandidate.content_id);
+
+    const impossiblePromotion=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+    assert.equal(impossiblePromotion.status,409,"source-invalid rejected alternatives cannot be promoted");
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,0);
+    assert.equal(providerCalls,2,"candidate review and blocked promotion never issue another provider request");
   }finally{globalThis.fetch=previousFetch;}
 });
 
@@ -1207,7 +1384,93 @@ test("recovers a project owner's actor-private slideshow only while its selected
     assert.equal(visible.status,200,JSON.stringify(await visible.clone().json()));
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=? AND project_access_id=?").get(privateResponse.content_id,projectAccessId).count,1,"project synchronization must preserve an owner's retained actor-private provider response");
 
+    const reviewed=await requestSourceJob(`${job.jobId}/presentation-candidates`);
+    assert.equal(reviewed.status,200,JSON.stringify(await reviewed.clone().json()));
+    const reviewList=await reviewed.json();
+    assert.equal(reviewList.candidates.length,1);
+    assert.equal(reviewList.candidates[0].complete,true,"the valid paid response remains reviewable separately from its failed local persistence");
+    const inspected=await requestSourceJob(`${job.jobId}/presentation-candidates/project-owner-privately-retained-response`);
+    assert.equal(inspected.status,200,JSON.stringify(await inspected.clone().json()));
+    const inspectionText=await inspected.text();
+    assert.match(inspectionText,/RESPONSIVE ASSESSMENT/u);
+    assert.doesNotMatch(inspectionText,/PRIVATE_AUTHORED_SLIDE_|sourceIds|source_id|context_group_ids|image_prompt|content_markdown|output_text/u,"actor-private rendered drafts must not expose opaque source references or provider prompts");
+    const unscoped=await handleDocumentJobs(new Request(`http://localhost/api/document-jobs/${job.jobId}/presentation-candidates/project-owner-privately-retained-response`),fixture.environment,`${job.jobId}/presentation-candidates/project-owner-privately-retained-response`);
+    assert.equal(unscoped.status,404,"omitting the selected project context must not bypass actor-private project containment");
+
     const contextId=fixture.sqlite.prepare("SELECT context_id FROM project_context_sessions WHERE principal_user_id=? AND project_access_id=? AND revoked_at IS NULL").get("dev-local-creative",projectAccessId).context_id;
+    const originalCandidatePrepare=fixture.environment.DB.prepare.bind(fixture.environment.DB);
+    let candidateReadRevoked=false;
+    fixture.environment.DB.prepare=(sql)=>{
+      if(!candidateReadRevoked&&sql.includes("JOIN project_resource_scopes evidence")&&sql.includes("JOIN project_context_sessions selection")){
+        candidateReadRevoked=true;
+        fixture.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE context_id=?").run(new Date().toISOString(),contextId);
+      }
+      return originalCandidatePrepare(sql);
+    };
+    try{
+      const revokedDuringRead=await requestSourceJob(`${job.jobId}/presentation-candidates/project-owner-privately-retained-response`);
+      assert.equal(candidateReadRevoked,true,"review must recheck the selected session inside the guarded evidence query");
+      assert.equal(revokedDuringRead.status,404);
+      assert.doesNotMatch(await revokedDuringRead.text(),/RESPONSIVE ASSESSMENT|PRIVATE_AUTHORED_SLIDE_/u);
+      assert.equal(providerCalls,1);
+    }finally{
+      fixture.environment.DB.prepare=originalCandidatePrepare;
+      fixture.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=NULL WHERE context_id=?").run(contextId);
+    }
+
+    const originalProjectContent=fixture.sqlite.prepare("SELECT content,expires_at FROM private_content WHERE content_id=?").get(privateResponse.content_id);
+    const originalProjectRetention=fixture.sqlite.prepare("SELECT classification,assigned_expires_at FROM private_content_retention_scopes WHERE content_id=?").get(privateResponse.content_id);
+    const originalProjectCheckpoint=fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json;
+    const originalProjectPreservationPrepare=fixture.environment.DB.prepare.bind(fixture.environment.DB);
+    let preservationSessionRevoked=false;
+    fixture.environment.DB.prepare=(sql)=>{
+      if(!preservationSessionRevoked&&sql.includes("AS presentation_preservation_verified")){
+        preservationSessionRevoked=true;
+        fixture.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE context_id=?").run(new Date().toISOString(),contextId);
+      }
+      return originalProjectPreservationPrepare(sql);
+    };
+    try{
+      const revokedDuringPreservation=await requestSourceJob(`${job.jobId}/presentation-candidates/project-owner-privately-retained-response/preserve`,{method:"POST"});
+      assert.equal(preservationSessionRevoked,true,"preservation must recheck project authorization at its atomic commit");
+      assert.equal(revokedDuringPreservation.status,404);
+      assert.deepEqual(fixture.sqlite.prepare("SELECT content,expires_at FROM private_content WHERE content_id=?").get(privateResponse.content_id),originalProjectContent);
+      assert.deepEqual(fixture.sqlite.prepare("SELECT classification,assigned_expires_at FROM private_content_retention_scopes WHERE content_id=?").get(privateResponse.content_id),originalProjectRetention);
+      assert.equal(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json,originalProjectCheckpoint);
+      assert.equal(providerCalls,1,"failed project preservation cannot initiate a provider request");
+    }finally{
+      fixture.environment.DB.prepare=originalProjectPreservationPrepare;
+      fixture.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=NULL WHERE context_id=?").run(contextId);
+    }
+
+    const preservedDraft=await requestSourceJob(`${job.jobId}/presentation-candidates/project-owner-privately-retained-response/preserve`,{method:"POST"});
+    assert.equal(preservedDraft.status,200,JSON.stringify(await preservedDraft.clone().json()));
+    const governed=(await preservedDraft.json()).candidate;
+    assert.equal(governed.retentionClass,"governed-evidence");
+    const retention=fixture.sqlite.prepare("SELECT classification,assigned_expires_at FROM private_content_retention_scopes WHERE content_id=?").get(privateResponse.content_id);
+    assert.equal(retention.classification,"governed-evidence");
+    assert.equal(retention.assigned_expires_at,governed.expiresAt);
+    assert.equal(fixture.sqlite.prepare("SELECT kind,expires_at FROM private_content WHERE content_id=?").get(privateResponse.content_id).kind,"provider-response");
+
+    const originalHistoricalJob=fixture.sqlite.prepare("SELECT request_json,result_json,expires_at FROM document_jobs WHERE job_id=?").get(job.jobId);
+    fixture.sqlite.prepare("UPDATE document_jobs SET request_json='{}',result_json=NULL,expires_at=? WHERE job_id=?").run("2000-01-01T00:00:00.000Z",job.jobId);
+    const preservedProjectListing=await handleDocumentJobs(new Request(`http://localhost/api/document-jobs/presentation-candidates?document=${encodeURIComponent(documentId)}`,{headers:scoped}),fixture.environment,"presentation-candidates");
+    assert.equal(preservedProjectListing.status,200,JSON.stringify(await preservedProjectListing.clone().json()));
+    const rediscoveredProject=(await preservedProjectListing.json()).jobs;
+    assert.equal(rediscoveredProject.length,1);
+    assert.equal(rediscoveredProject[0].jobId,job.jobId);
+    assert.equal(rediscoveredProject[0].candidates[0].responseId,"project-owner-privately-retained-response");
+    assert.ok(rediscoveredProject[0].candidates[0].settledCostMicrousd>0,"project evidence retains its exact settled cost after private job checkpoints expire");
+    const historicalProjectDetail=await requestSourceJob(`${job.jobId}/presentation-candidates/project-owner-privately-retained-response`);
+    assert.equal(historicalProjectDetail.status,200,JSON.stringify(await historicalProjectDetail.clone().json()));
+    fixture.sqlite.prepare("UPDATE document_jobs SET request_json=?,result_json=?,expires_at=? WHERE job_id=?").run(originalHistoricalJob.request_json,originalHistoricalJob.result_json,originalHistoricalJob.expires_at,job.jobId);
+    assert.equal(providerCalls,1,"inspecting and preserving actor-private project evidence cannot initiate paid work");
+
+    fixture.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE context_id=?").run(new Date().toISOString(),contextId);
+    const deniedReview=await requestSourceJob(`${job.jobId}/presentation-candidates/project-owner-privately-retained-response`);
+    assert.ok([401,403,404].includes(deniedReview.status),"revoking the active project session immediately revokes draft review");
+    assert.doesNotMatch(await deniedReview.text(),/RESPONSIVE ASSESSMENT|PRIVATE_AUTHORED_SLIDE_/u);
+    fixture.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=NULL WHERE context_id=?").run(contextId);
     const originalPrepare=fixture.environment.DB.prepare.bind(fixture.environment.DB);
     let intercepted=false;
     fixture.environment.DB.prepare=(sql)=>{

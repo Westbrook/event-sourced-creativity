@@ -1,3 +1,5 @@
+import { safePresentationCandidateIssues } from "../src/model/presentation-candidates.ts";
+
 const SAFE_SCALAR_FIELDS = new Set([
   "type", "kind", "role", "scope", "state", "status", "operation", "period", "provider", "model", "quality", "purpose",
   "surface", "context", "capture_version", "terminal_type", "terminal_ref", "property_path", "format", "rights_class",
@@ -31,6 +33,27 @@ const scalarKey = (key: string) => SAFE_SCALAR_FIELDS.has(key)||SAFE_IDENTIFIER_
 export function publicEventPayload(eventId: string, payload: Record<string, unknown>, forcePrivateEnvelope = false): { payload: Record<string, unknown>; privateJson: string | null } {
   const visible: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(payload)) {
+    if (key === "validation_issues" && Array.isArray(value)) {
+      visible[key] = value.slice(0, 512).flatMap((candidate) => {
+        if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+        const issue = candidate as Record<string, unknown>;
+        const pageIndex = Number(issue.pageIndex), pageCount = Number(issue.pageCount), providerAttempt = Number(issue.providerAttempt);
+        if (![pageIndex, pageCount, providerAttempt].every(Number.isSafeInteger)
+          || pageIndex < 0 || pageCount < 1 || pageCount > 100 || pageIndex >= pageCount
+          || providerAttempt < 1 || providerAttempt > 128 || !["initial", "repair"].includes(String(issue.stage))) return [];
+        const path = typeof issue.path === "string" ? issue.path : "$";
+        const localPosition = /^items\.(\d+)(?:\.|$)/u.exec(path);
+        const globalSlide = Number(issue.globalSlideIndex);
+        const globalStartIndex = localPosition && Number.isSafeInteger(globalSlide) && globalSlide > Number(localPosition[1])
+          ? globalSlide - Number(localPosition[1]) - 1
+          : 0;
+        if (globalStartIndex > 100) return [];
+        return safePresentationCandidateIssues([{ code: typeof issue.code === "string" ? issue.code : "presentation_validation_failed", path, message: "" }], {
+          pageIndex, pageCount, globalStartIndex, providerAttempt, stage: issue.stage as "initial" | "repair",
+        });
+      });
+      continue;
+    }
     if (key === "source_block_versions" && Array.isArray(value)) {
       visible[key] = value.flatMap((candidate) => {
         if (!candidate || typeof candidate !== "object") return [];

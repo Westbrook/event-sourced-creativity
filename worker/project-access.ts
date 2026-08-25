@@ -200,7 +200,14 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
   const previousResources=await env.DB.prepare(`SELECT resource.resource_kind,resource.resource_id,resource.source_event_id,resource.actor_user_id,
     CASE WHEN retained.content_id IS NULL THEN 0 ELSE 1 END AS private_provider_response
     FROM project_resource_scopes resource LEFT JOIN private_content retained ON resource.resource_kind='content'
-      AND retained.content_id=resource.resource_id AND retained.owner_id=resource.actor_user_id AND retained.kind='provider-response'
+      AND retained.content_id=resource.resource_id AND retained.owner_id=resource.actor_user_id
+      AND(retained.kind='provider-response' OR retained.kind='document-artifact-input' AND json_valid(retained.content)=1
+        AND EXISTS(SELECT 1 FROM project_resource_scopes anchored JOIN document_jobs job ON job.job_id=anchored.resource_id
+          WHERE anchored.resource_kind='job' AND anchored.project_access_id=resource.project_access_id
+            AND anchored.organization_id=resource.organization_id AND anchored.project_id=resource.project_id
+            AND anchored.owner_user_id=resource.owner_user_id AND anchored.actor_user_id=resource.actor_user_id
+            AND job.owner_id=resource.actor_user_id AND job.job_id=json_extract(retained.content,'$.job_id')
+            AND job.document_id=json_extract(retained.content,'$.document_id')))
       AND retained.redacted_at IS NULL AND retained.expires_at>?
     WHERE resource.project_access_id=? AND resource.organization_id=?`)
     .bind(new Date().toISOString(),input.projectAccessId,input.organizationId).all<{resource_kind:string;resource_id:string;source_event_id:string|null;actor_user_id:string;private_provider_response:number}>();

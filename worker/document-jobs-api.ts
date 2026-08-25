@@ -1,5 +1,5 @@
 import { handleEvents } from "./events-api";
-import { POLICY_VERSION, adoptLegacyCostReservation, costBudgetReservation, hasCapability, loadPrivateContent, loadPrivateProviderResponse, pilotExecutionAllowance, readAccountBudgets, readCostBudgets, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, releaseCostReservationsForCorrelation, requireConsent, requireUser, settleInterruptedDocumentJobReservations, storePrivateContent, type PilotUser, type ProjectExecutionScope } from "./pilot-policy";
+import { DEFAULT_EVIDENCE_RETENTION_DAYS, POLICY_VERSION, adoptLegacyCostReservation, costBudgetReservation, hasCapability, loadPrivateContent, loadPrivateProviderResponse, pilotExecutionAllowance, readAccountBudgets, readCostBudgets, reconcileFailedBudgetReservations, releaseBudgetReservationsForCorrelation, releaseCostReservationsForCorrelation, requireConsent, requireUser, settleInterruptedDocumentJobReservations, storePrivateContent, type PilotUser, type ProjectExecutionScope } from "./pilot-policy";
 import { ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents, synchronizeProjectScope } from "./project-access";
 import { appendAuditEvent, ensureSchema, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readCorrelatedEvents, readWorkspaceEvents, StaleSequenceError, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { foldEvents } from "../src/model/events";
@@ -24,14 +24,17 @@ import { preflightGeneration } from "./generation-readiness";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter";
 import { AUDIO_ADAPTER_CONTRACT } from "../src/model/audio";
 import { clearPresentationServerOwnedCheckpointFields, estimatePlannerOperationMicrousd, generationBudgetGate, presentationServerOwnedCheckpointField, presentationTokenReservation } from "../src/model/generation-budget";
-import { buildManagedProductionPlan, MAX_MANAGED_PRESENTATION_SLIDES, type ManagedProductionPlan } from "../src/model/managed-production";
+import { buildManagedProductionPlan, ManagedPresentationPlanningError, MAX_MANAGED_PRESENTATION_SLIDES, type ManagedProductionPlan } from "../src/model/managed-production";
 import { buildPresentationSourceContract, inferPresentationSourceOutline } from "../src/model/presentation-source";
 import { documentArtifactValidationIssues, isSlideStylePresetId, parseDocumentArtifactContent, type DocumentArtifactDraft } from "../src/model/document-artifacts";
+import { combinedContextGroups } from "../src/model/combined-context";
+import { safePresentationCandidateIssues, sanitizePresentationCandidateSlides, sanitizePresentationCandidateText, type PresentationCandidateDetail, type PresentationCandidateSummary } from "../src/model/presentation-candidates";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./document-job-reservations";
 import { PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow } from "./access-policy";
 import { authoritativeCreativeContext, ContextIntegrityError } from "./context-authority";
 import { managedPilotSourceClassificationValid } from "./media-api";
 import { assessStoredPresentationCandidate, MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES } from "./openai-adapter";
+import { combinedSceneSnapshot } from "./managed-production";
 import { standingConstraints } from "../src/model/taste";
 
 type DocumentJobRow = {
@@ -191,7 +194,7 @@ function classifyDocumentJobFailure(input:unknown,existing:ProviderFailureDetail
   if(SOURCE_FIDELITY_FAILURE.test(evidence))return{
     code:"source_fidelity_validation_failed",category:"provider",scope:"request",action:"edit_request",
     message:`The generated presentation failed source-fidelity validation. Protected facts, quotations, slide coverage, or authorized source attribution must be corrected before another paid generation.${raw?` Technical detail: ${raw}`:""}`,
-    retryable:false,retryAfterMs:null,requestId:existing?.requestId??null,httpStatus:null,
+    retryable:false,retryAfterMs:null,requestId:existing?.requestId??null,httpStatus:null,...(existing?.validationIssues?.length?{validationIssues:existing.validationIssues}:{}),
   };
   return existing??classifyProviderFailure(input,status!==null?new Response(null,{status}):undefined);
 }
@@ -216,6 +219,257 @@ async function sourceSnapshotSha256(snapshot:Record<string,unknown>){
 async function retainedPresentationContentSha256(content:string){
   const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(content));
   return Array.from(new Uint8Array(digest),value=>value.toString(16).padStart(2,"0")).join("");
+}
+
+type PrivatePresentationCandidateRow={
+  content_id:string;content:string;expires_at:string;created_at:string;
+  classification:string;policy_version:number;source_content:string;source_expires_at:string;
+};
+type VerifiedPresentationCandidate={row:PrivatePresentationCandidateRow;envelope:Record<string,unknown>;summary:PresentationCandidateSummary;detail:PresentationCandidateDetail};
+
+/** Read paid drafts and their original governed source evidence under one live, actor-private authorization guard. */
+async function privatePresentationCandidateRows(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,projectContextId:string,responseId=""){
+  const now=new Date().toISOString();
+  const scope=user.projectExecution;
+  const sharedSelect="content.content_id,content.content,content.expires_at,content.created_at,source.content AS source_content,source.expires_at AS source_expires_at";
+  if(scope){
+    if(!projectContextId||scope.actorUserId!==user.userId)return[];
+    const result=await env.DB.prepare(`SELECT ${sharedSelect},retention.classification,retention.policy_version
+      FROM private_content content
+      JOIN project_resource_scopes evidence ON evidence.resource_kind='content' AND evidence.resource_id=content.content_id
+        AND evidence.visibility='actor_private' AND evidence.project_access_id=? AND evidence.organization_id=? AND evidence.project_id=?
+        AND evidence.owner_user_id=? AND evidence.actor_user_id=?
+      JOIN private_content_retention_scopes retention ON retention.content_id=content.content_id
+        AND retention.organization_id=evidence.organization_id AND retention.project_access_id=evidence.project_access_id
+        AND retention.project_id=evidence.project_id AND retention.actor_user_id=evidence.actor_user_id
+        AND retention.classification IN('transient-private','governed-evidence') AND retention.assigned_expires_at=content.expires_at
+      JOIN project_resource_scopes resource ON resource.resource_kind='job' AND resource.resource_id=?
+        AND resource.project_access_id=evidence.project_access_id AND resource.organization_id=evidence.organization_id
+        AND resource.project_id=evidence.project_id AND resource.owner_user_id=evidence.owner_user_id AND resource.actor_user_id=evidence.actor_user_id
+      JOIN events anchor ON anchor.event_id=resource.source_event_id AND anchor.stream_id=? AND anchor.actor='user:'||resource.actor_user_id
+        AND anchor.type='ProjectDocumentJobQueued' AND json_extract(anchor.payload,'$.job_id')=resource.resource_id
+        AND json_extract(anchor.payload,'$.organization_id')=resource.organization_id
+        AND json_extract(anchor.payload,'$.project_access_id')=resource.project_access_id
+        AND json_extract(anchor.payload,'$.actor_user_id')=resource.actor_user_id
+      JOIN project_context_sessions selection ON selection.context_id=? AND selection.principal_user_id=?
+        AND selection.organization_id=evidence.organization_id AND selection.project_access_id=evidence.project_access_id
+        AND selection.revoked_at IS NULL AND selection.expires_at>?
+      JOIN private_content source ON source.owner_id=content.owner_id AND source.kind='document-artifact-input'
+        AND source.redacted_at IS NULL AND source.expires_at>? AND json_valid(source.content)=1
+        AND json_extract(source.content,'$.job_id')=? AND json_extract(source.content,'$.document_id')=?
+      JOIN project_resource_scopes source_scope ON source_scope.resource_kind='content' AND source_scope.resource_id=source.content_id
+        AND source_scope.visibility='actor_private' AND source_scope.project_access_id=evidence.project_access_id
+        AND source_scope.organization_id=evidence.organization_id AND source_scope.project_id=evidence.project_id
+        AND source_scope.owner_user_id=evidence.owner_user_id AND source_scope.actor_user_id=evidence.actor_user_id
+      JOIN private_content_retention_scopes source_retention ON source_retention.content_id=source.content_id
+        AND source_retention.organization_id=evidence.organization_id AND source_retention.project_access_id=evidence.project_access_id
+        AND source_retention.project_id=evidence.project_id AND source_retention.actor_user_id=evidence.actor_user_id
+        AND source_retention.classification='governed-evidence' AND source_retention.assigned_expires_at=source.expires_at
+      WHERE content.owner_id=? AND content.kind='provider-response' AND content.redacted_at IS NULL AND content.expires_at>?
+        AND json_valid(content.content)=1 AND json_extract(content.content,'$.job_id')=?
+        AND json_extract(content.content,'$.stream_id')=? AND json_extract(content.content,'$.document_id')=?
+        AND (?='' OR json_extract(content.content,'$.response_id')=?) AND ${activeProjectExecutionSql}
+      ORDER BY content.created_at,content.content_id LIMIT 64`)
+      .bind(scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,user.userId,
+        job.job_id,user.streamId,projectContextId,user.userId,now,now,job.job_id,job.document_id,
+        user.userId,now,job.job_id,user.streamId,job.document_id,responseId,responseId,
+        ...projectExecutionBindings(scope,job.document_id)).all<PrivatePresentationCandidateRow>();
+    return result.results;
+  }
+  const result=await env.DB.prepare(`SELECT ${sharedSelect},CASE WHEN json_extract(content.content,'$.preserved_at') IS NOT NULL THEN 'governed-evidence' ELSE 'transient-private' END AS classification,0 AS policy_version
+    FROM private_content content
+    JOIN private_content source ON source.owner_id=content.owner_id AND source.kind='document-artifact-input'
+      AND source.redacted_at IS NULL AND source.expires_at>? AND json_valid(source.content)=1
+      AND json_extract(source.content,'$.job_id')=? AND json_extract(source.content,'$.document_id')=?
+    WHERE content.owner_id=? AND content.kind='provider-response' AND content.redacted_at IS NULL AND content.expires_at>?
+      AND json_valid(content.content)=1 AND json_extract(content.content,'$.job_id')=?
+      AND json_extract(content.content,'$.stream_id')=? AND json_extract(content.content,'$.document_id')=?
+      AND (?='' OR json_extract(content.content,'$.response_id')=?)
+      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='job' AND resource.resource_id=?)
+      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id IN(content.content_id,source.content_id))
+    ORDER BY content.created_at,content.content_id LIMIT 64`)
+    .bind(now,job.job_id,job.document_id,user.userId,now,job.job_id,user.streamId,job.document_id,responseId,responseId,job.job_id)
+    .all<PrivatePresentationCandidateRow>();
+  return result.results;
+}
+
+async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,projectContextId:string,responseId=""):Promise<VerifiedPresentationCandidate[]>{
+  if(job.kind!=="render_document"||!["failed","partial","completed"].includes(job.status)||job.owner_id!==user.userId||job.stream_id!==user.streamId)return[];
+  const checkpoint=parseResult(job);
+  const request=parseRequest(job);
+  const checkpointCandidates=Array.isArray(checkpoint.presentationCandidates)?checkpoint.presentationCandidates.filter((value):value is Record<string,unknown>=>Boolean(value)&&typeof value==="object"&&!Array.isArray(value)):[];
+  const recordedResponses=new Set([...(Array.isArray(checkpoint.plannerResponseIds)?checkpoint.plannerResponseIds.map(String):[]),String(checkpoint.plannerResponseId??"")].filter(Boolean));
+  const retained=await privatePresentationCandidateRows(env,user,job,projectContextId,responseId);
+  if(!retained.length)return[];
+  const receiptCheckpoint=checkpoint.generationReceipt&&typeof checkpoint.generationReceipt==="object"&&!Array.isArray(checkpoint.generationReceipt)?checkpoint.generationReceipt as Record<string,unknown>:{};
+  let settledCostMicrousd=Math.max(0,Math.floor(Number(receiptCheckpoint.settled_cost_microusd??0)));
+  if(!settledCostMicrousd){
+    const settled=await env.DB.prepare(`SELECT COALESCE(SUM(CASE WHEN json_valid(payload)=1
+      THEN MAX(0,CAST(COALESCE(json_extract(payload,'$.cost_microusd'),0) AS INTEGER)) ELSE 0 END),0) AS settled_cost_microusd
+      FROM events WHERE stream_id=? AND type='GenerationUsageRecorded'
+        AND json_extract(payload,'$.document_id')=? AND correlation_id LIKE ?`)
+      .bind(user.streamId,job.document_id,`${job.job_id}:attempt:%`).first<{settled_cost_microusd:number}>();
+    settledCostMicrousd=Math.max(0,Math.floor(Number(settled?.settled_cost_microusd??0)));
+  }
+  const verified:VerifiedPresentationCandidate[]=[];
+  for(const [ordinal,row] of retained.entries()){
+    let envelope:Record<string,unknown>;let receipt:Record<string,unknown>;
+    try{envelope=JSON.parse(row.content) as Record<string,unknown>;receipt=JSON.parse(row.source_content) as Record<string,unknown>;}catch{continue;}
+    const snapshot=receipt.document_snapshot&&typeof receipt.document_snapshot==="object"&&!Array.isArray(receipt.document_snapshot)?receipt.document_snapshot as Record<string,unknown>:null;
+    const receiptSource=receipt.source&&typeof receipt.source==="object"&&!Array.isArray(receipt.source)?receipt.source as Record<string,unknown>:{};
+    const receiptRequest=receipt.request&&typeof receipt.request==="object"&&!Array.isArray(receipt.request)?receipt.request as Record<string,unknown>:{};
+    const raw=typeof envelope.output_text==="string"?envelope.output_text:"";
+    const candidateResponse=String(envelope.response_id??"");
+    const candidate=checkpointCandidates.find((entry)=>entry.responseId===candidateResponse);
+    const sourceVersions=Array.isArray(receipt.source_block_versions)?receipt.source_block_versions:[];
+    const documentRevision=snapshot?documentGenerationRevision({snapshot,sourceBlockVersions:sourceVersions,documentId:job.document_id}):"";
+    const sourceHash=snapshot?await sourceSnapshotSha256(snapshot):"";
+    const rawBytes=new TextEncoder().encode(raw).byteLength;
+    if(!snapshot||receipt.job_id!==job.job_id||receipt.document_id!==job.document_id||receipt.artifact_kind!=="slides"
+      ||!raw||!candidateResponse||rawBytes>MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES
+      ||envelope.job_id!==job.job_id||envelope.stream_id!==job.stream_id||envelope.document_id!==job.document_id
+      ||envelope.document_revision!==documentRevision||envelope.source_snapshot_sha256!==sourceHash||receiptSource.snapshot_sha256!==sourceHash
+      ||await retainedPresentationContentSha256(raw)!==String(envelope.content_sha256??"")
+      ||recordedResponses.size&&!recordedResponses.has(candidateResponse)
+      ||!candidate&&row.classification!=="governed-evidence")continue;
+    if(candidate&&(candidate.contentRef!==row.content_id||candidate.contentExpiresAt!==row.expires_at||candidate.responseId!==candidateResponse
+      ||candidate.documentRevision!==documentRevision||candidate.sourceSnapshotSha256!==sourceHash
+      ||candidate.contentSha256!==envelope.content_sha256||Number(candidate.candidateBytes??-1)!==rawBytes
+      ||candidate.model!==envelope.model||candidate.compiledSnapshotSha256!==envelope.compiled_snapshot_sha256
+      ||candidate.pageIndex!==envelope.page_index||candidate.pageCount!==envelope.page_count||candidate.globalStartIndex!==envelope.global_start_index))continue;
+    const pageIndex=Number(envelope.page_index??0),pageCount=Number(envelope.page_count??1),globalStartIndex=Number(envelope.global_start_index??0);
+    const plannedSlideCount=Number(envelope.planned_slide_count??receiptRequest.predicted_slide_count??receiptRequest.item_count??request.itemCount??0);
+    const requestedSlideCount=Number(envelope.requested_slide_count??receiptRequest.requested_slide_count??request.requestedSlideCount??plannedSlideCount);
+    const mode=String(envelope.production_mode??receiptRequest.production_mode??request.productionMode??"manual");
+    if(!Number.isSafeInteger(plannedSlideCount)||plannedSlideCount<1||plannedSlideCount>MAX_MANAGED_PRESENTATION_SLIDES
+      ||!Number.isSafeInteger(requestedSlideCount)||requestedSlideCount<1
+      ||!Number.isSafeInteger(pageIndex)||!Number.isSafeInteger(pageCount)||pageIndex<0||pageIndex>=pageCount
+      ||!Number.isSafeInteger(globalStartIndex)||globalStartIndex<0
+      ||mode==="managed"&&(pageCount!==Math.ceil(plannedSlideCount/8)||globalStartIndex!==pageIndex*8)
+      ||mode!=="managed"&&(pageCount!==1||pageIndex!==0||globalStartIndex!==0))continue;
+    const documentTitle=typeof envelope.document_title==="string"?envelope.document_title:String((snapshot.document as Record<string,unknown>|undefined)?.title??"Presentation");
+    const compiledSnapshot={...snapshot,document:{id:job.document_id,title:documentTitle}};
+    const planned=checkpoint.productionPlan&&typeof checkpoint.productionPlan==="object"&&!Array.isArray(checkpoint.productionPlan)
+      ?checkpoint.productionPlan as ManagedProductionPlan
+      :mode==="managed"?buildManagedProductionPlan("slides",compiledSnapshot,{requestedSlideCount:plannedSlideCount}):null;
+    if(planned&&(planned.scenes.length!==plannedSlideCount||planned.providerBatchCount!==pageCount))continue;
+    const sceneSlice=planned?.scenes.slice(globalStartIndex,globalStartIndex+Math.min(8,plannedSlideCount-globalStartIndex))??[];
+    const sourceSnapshot=planned?combinedSceneSnapshot(compiledSnapshot,sceneSlice):compiledSnapshot;
+    const expectedPageCount=planned?sceneSlice.length:Math.min(12,plannedSlideCount);
+    const productionPage=planned?{pageIndex,pageCount,globalStartIndex,totalItems:plannedSlideCount,phase:(pageCount===1?"complete":pageIndex===0?"opening":pageIndex===pageCount-1?"final":"continuation") as "complete"|"opening"|"continuation"|"final",priorSummary:"",priorEnding:"",priorVisibleCopy:[]}:undefined;
+    const presentationStyle=typeof request.presentationStyle==="string"&&isSlideStylePresetId(request.presentationStyle)?request.presentationStyle:undefined;
+    const assessment=assessStoredPresentationCandidate(raw,sourceSnapshot,{itemCount:expectedPageCount,requestedSlideCount:plannedSlideCount,presentationStyle,presentationFidelity:request.presentationFidelity==="creative"?"creative":"faithful",...(planned?{productionScenes:sceneSlice,productionPage}:{})});
+    const candidateOrdinal=checkpointCandidates.findIndex((entry)=>entry.responseId===candidateResponse);
+    const samePage=candidateOrdinal>=0
+      ?checkpointCandidates.slice(0,candidateOrdinal).filter((entry)=>Number(entry.pageIndex??0)===pageIndex).length
+      :retained.slice(0,ordinal).filter((previous)=>{try{return Number((JSON.parse(previous.content) as Record<string,unknown>).page_index??0)===pageIndex;}catch{return false;}}).length;
+    const stage: "initial"|"repair"=envelope.attempt_stage==="repair"||envelope.attempt_stage!=="initial"&&samePage%2===1?"repair":"initial";
+    const providerAttempt=Number.isSafeInteger(Number(envelope.provider_attempt))&&Number(envelope.provider_attempt)>0?Number(envelope.provider_attempt):candidateOrdinal>=0?candidateOrdinal+1:ordinal+1;
+    const issueMetadata={pageIndex,pageCount,globalStartIndex,providerAttempt,stage};
+    const groups=combinedContextGroups(compiledSnapshot);
+    const labels=new Map(groups.map((group)=>[group.id,group.name]));
+    const assignedGroups=new Set(assessment.output?.items.flatMap((item)=>item.context_group_ids??[])??[]);
+    const missingContextGroupLabels=groups.filter((group)=>!assignedGroups.has(group.id)).map((group)=>group.name);
+    const issues=safePresentationCandidateIssues(assessment.issues,issueMetadata);
+    const generatedSlideCount=assessment.output?.items.length??0;
+    const summary:PresentationCandidateSummary={
+      responseId:candidateResponse,jobId:job.job_id,documentId:job.document_id,model:String(envelope.model??""),
+      capturedAt:String(envelope.captured_at??candidate?.capturedAt??row.created_at),expiresAt:row.expires_at,
+      retentionClass:row.classification==="governed-evidence"?"governed-evidence":"transient-private",stage,providerAttempt,
+      pageIndex,pageCount,globalStartIndex,generatedSlideCount,requestedSlideCount,plannedSlideCount,
+      providerBatchCount:Number(envelope.provider_batch_count??planned?.providerBatchCount??1),
+      providerCalls:Math.max(recordedResponses.size,Number(receiptCheckpoint.actual_provider_call_count??0),providerAttempt),
+      settledCostMicrousd,
+      complete:Boolean(assessment.output&&issues.length===0&&pageCount===1&&generatedSlideCount===plannedSlideCount&&requestedSlideCount===plannedSlideCount&&missingContextGroupLabels.length===0),
+      missingContextGroupLabels,issues,
+    };
+    const sourceContract=buildPresentationSourceContract(sourceSnapshot,{requestedSlideCount:plannedSlideCount,itemCount:expectedPageCount});
+    const privateReferences=[...sourceContract.sources.flatMap((source)=>[source.alias,source.sourceId,source.blockId??"",...source.contextGroupIds]),...groups.map((group)=>group.id)];
+    const slides=sanitizePresentationCandidateSlides(assessment.output?.items??[],labels,privateReferences);
+    let rawOutput:Record<string,unknown>={};try{rawOutput=JSON.parse(raw) as Record<string,unknown>;}catch{/* Invalid paid JSON remains reviewable as metadata only. */}
+    const rawItems=Array.isArray(rawOutput.items)?rawOutput.items:[];
+    const normalizationChanges=slides.flatMap((slide,index)=>{
+      const original=rawItems[index]&&typeof rawItems[index]==="object"?(rawItems[index] as Record<string,unknown>).slide:null;
+      const originalVisual=original&&typeof original==="object"?(original as Record<string,unknown>).visual:null;
+      const originalValue=originalVisual&&typeof originalVisual==="object"?sanitizePresentationCandidateText((originalVisual as Record<string,unknown>).value,privateReferences):"";
+      const normalizedValue=slide.slide?.visual.value??"";
+      return originalValue!==normalizedValue?[{path:`items.${index}.slide.visual.value`,originalValue,normalizedValue,reason:normalizedValue?"Recovered from distinct authorized source evidence.":"Removed because the generated value repeated existing slide copy or was not source-authorized."}]:[];
+    });
+    const sourcePresentation=assessment.output?.presentation;
+    const presentation=sourcePresentation?{...sourcePresentation,theme:sanitizePresentationCandidateText(sourcePresentation.theme,privateReferences),footerLabel:sanitizePresentationCandidateText(sourcePresentation.footerLabel,privateReferences),...(sourcePresentation.fontFamily?{fontFamily:sanitizePresentationCandidateText(sourcePresentation.fontFamily,privateReferences)}:{})}:null;
+    const detail:PresentationCandidateDetail={...summary,title:sanitizePresentationCandidateText(assessment.output?.title,privateReferences),summary:sanitizePresentationCandidateText(assessment.output?.summary,privateReferences),presentation,slides,normalizationChanges};
+    verified.push({row,envelope,summary,detail});
+  }
+  return verified;
+}
+
+async function preservePresentationCandidate(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,projectContextId:string,candidate:VerifiedPresentationCandidate){
+  if(candidate.summary.retentionClass==="governed-evidence")return candidate.summary;
+  const now=new Date().toISOString();
+  const scope=user.projectExecution;
+  const policy=scope?await env.DB.prepare("SELECT evidence_days,version FROM organization_retention_policies WHERE organization_id=?").bind(scope.organizationId).first<{evidence_days:number;version:number}>():null;
+  const configuredDays=Number(policy?.evidence_days??env.FORMA_EVIDENCE_RETENTION_DAYS??DEFAULT_EVIDENCE_RETENTION_DAYS);
+  const evidenceDays=Math.max(1,Math.min(3650,Number.isFinite(configuredDays)?Math.floor(configuredDays):DEFAULT_EVIDENCE_RETENTION_DAYS));
+  const candidateExpiry=Math.max(Date.parse(candidate.row.expires_at),Math.min(Date.parse(candidate.row.source_expires_at),Date.parse(candidate.row.created_at)+evidenceDays*86_400_000));
+  if(!Number.isFinite(candidateExpiry)||candidateExpiry<=Date.now())return null;
+  const expiresAt=new Date(candidateExpiry).toISOString();
+  const envelope={...candidate.envelope,preserved_at:now,preservation_expires_at:expiresAt,retention_class:"governed-evidence"};
+  const checkpoint=parseResult(job);
+  if(Array.isArray(checkpoint.presentationCandidates))checkpoint.presentationCandidates=checkpoint.presentationCandidates.map((entry)=>entry&&typeof entry==="object"&&(entry as Record<string,unknown>).responseId===candidate.summary.responseId?{...entry as Record<string,unknown>,contentExpiresAt:expiresAt,retentionClass:"governed-evidence"}:entry);
+  const statements=[];
+  if(scope){
+    if(!projectContextId)return null;
+    const policyVersion=Number(policy?.version??0);
+    const projectGuard=` AND EXISTS(SELECT 1 FROM project_context_sessions selection WHERE selection.context_id=? AND selection.principal_user_id=?
+      AND selection.organization_id=? AND selection.project_access_id=? AND selection.revoked_at IS NULL AND selection.expires_at>?)
+      AND((?=0 AND NOT EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=?))
+        OR EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=? AND policy.version=?))
+      AND NOT EXISTS(SELECT 1 FROM organization_deletion_jobs deletion WHERE deletion.organization_id=? AND deletion.status IN('pending','partial','processing','completed'))
+      AND ${activeProjectExecutionSql}`;
+    const guardBindings=[projectContextId,user.userId,scope.organizationId,scope.projectAccessId,now,policyVersion,scope.organizationId,scope.organizationId,policyVersion,scope.organizationId,...projectExecutionBindings(scope,job.document_id)];
+    statements.push(env.DB.prepare(`UPDATE private_content SET content=?,expires_at=? WHERE content_id=? AND owner_id=? AND kind='provider-response'
+      AND redacted_at IS NULL AND expires_at=? AND EXISTS(SELECT 1 FROM private_content_retention_scopes retention
+        WHERE retention.content_id=private_content.content_id AND retention.organization_id=? AND retention.project_access_id=?
+          AND retention.actor_user_id=? AND retention.classification='transient-private' AND retention.assigned_expires_at=private_content.expires_at)${projectGuard}`)
+      .bind(JSON.stringify(envelope),expiresAt,candidate.row.content_id,user.userId,candidate.row.expires_at,scope.organizationId,scope.projectAccessId,user.userId,...guardBindings));
+    statements.push(env.DB.prepare(`UPDATE private_content_retention_scopes SET classification='governed-evidence',policy_version=?,assigned_expires_at=?
+      WHERE content_id=? AND organization_id=? AND project_access_id=? AND project_id=? AND actor_user_id=? AND classification='transient-private'
+        AND EXISTS(SELECT 1 FROM private_content content WHERE content.content_id=private_content_retention_scopes.content_id AND content.owner_id=? AND content.kind='provider-response' AND content.expires_at=?)`)
+      .bind(policyVersion,expiresAt,candidate.row.content_id,scope.organizationId,scope.projectAccessId,scope.projectId,user.userId,user.userId,expiresAt));
+  }else{
+    statements.push(env.DB.prepare(`UPDATE private_content SET content=?,expires_at=? WHERE content_id=? AND owner_id=? AND kind='provider-response'
+      AND redacted_at IS NULL AND expires_at=? AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource
+        WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id)`)
+      .bind(JSON.stringify(envelope),expiresAt,candidate.row.content_id,user.userId,candidate.row.expires_at));
+  }
+  const checkpointJson=JSON.stringify(checkpoint);
+  if(job.result_json!==null)statements.push(env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND result_json=?")
+    .bind(checkpointJson,now,job.job_id,user.userId,user.streamId,job.result_json));
+  // D1 commits zero-row UPDATE statements; force the entire batch to roll back unless every
+  // actor-private evidence, retention, source, and checkpoint invariant survived the transaction.
+  const projectVerification=scope?` AND EXISTS(SELECT 1 FROM private_content_retention_scopes retention
+    WHERE retention.content_id=content.content_id AND retention.organization_id=? AND retention.project_access_id=?
+      AND retention.project_id=? AND retention.actor_user_id=? AND retention.classification='governed-evidence'
+      AND retention.policy_version=? AND retention.assigned_expires_at=content.expires_at)`
+    :" AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id IN(content.content_id,source.content_id))";
+  const checkpointVerification=job.result_json!==null?" AND EXISTS(SELECT 1 FROM document_jobs saved WHERE saved.job_id=? AND saved.owner_id=? AND saved.stream_id=? AND saved.result_json=?)":"";
+  const verificationBindings:Array<string|number>=[expiresAt,job.job_id,job.document_id,candidate.row.content_id,user.userId,expiresAt,now,
+    ...(scope?[scope.organizationId,scope.projectAccessId,scope.projectId,user.userId,Number(policy?.version??0)]:[]),
+    ...(job.result_json!==null?[job.job_id,user.userId,user.streamId,checkpointJson]:[])];
+  statements.push(env.DB.prepare(`SELECT CASE WHEN EXISTS(SELECT 1 FROM private_content content
+    JOIN private_content source ON source.owner_id=content.owner_id AND source.kind='document-artifact-input'
+      AND source.redacted_at IS NULL AND source.expires_at>=? AND json_valid(source.content)=1
+      AND json_extract(source.content,'$.job_id')=? AND json_extract(source.content,'$.document_id')=?
+    WHERE content.content_id=? AND content.owner_id=? AND content.kind='provider-response' AND content.redacted_at IS NULL
+      AND content.expires_at=? AND json_extract(content.content,'$.preserved_at')=?
+      AND json_extract(content.content,'$.retention_class')='governed-evidence'${projectVerification})${checkpointVerification}
+    THEN 1 ELSE json_extract('invalid-presentation-evidence-preservation','$') END AS presentation_preservation_verified`)
+    .bind(...verificationBindings));
+  let results;
+  try{results=await env.DB.batch(statements);}catch{return null;}
+  if(results.slice(0,-1).some((result)=>Number(result.meta.changes??0)!==1))return null;
+  await appendAuditEvent(env,user.streamId,`user:${user.userId}`,"PresentationCandidatePreserved",{job_id:job.job_id,document_id:job.document_id,provider_response_id:candidate.summary.responseId,retention_class:"governed-evidence",expires_at:expiresAt},job.job_id);
+  return{...candidate.summary,retentionClass:"governed-evidence" as const,expiresAt};
 }
 
 type PresentationRecoveryResult={job:DocumentJobRow;recovered:true}|{error:string;status:number};
@@ -406,6 +660,7 @@ function errorDetailFromResult(result: Record<string, unknown>): DocumentJobErro
     message: String(detail.message ?? "The operation failed."), retryable: Boolean(detail.retryable), retryAfterMs: detail.retryAfterMs === null || detail.retryAfterMs === undefined || !Number.isFinite(Number(detail.retryAfterMs)) ? null : Number(detail.retryAfterMs),
     requestId: detail.requestId ? String(detail.requestId) : null, httpStatus: detail.httpStatus === null || detail.httpStatus === undefined || !Number.isFinite(Number(detail.httpStatus)) ? null : Number(detail.httpStatus),
     riskCategories: Array.isArray(detail.riskCategories) ? detail.riskCategories.map(String) : [], contributingBlockIds: Array.isArray(detail.contributingBlockIds) ? detail.contributingBlockIds.map(String) : [], contributingReferenceIds: Array.isArray(detail.contributingReferenceIds) ? detail.contributingReferenceIds.map(String) : [], probe: detail.probe ? String(detail.probe) : null,
+    ...(Array.isArray(detail.validationIssues)?{validationIssues:detail.validationIssues as import("../src/model/presentation-candidates").PresentationCandidateValidationIssue[]}:{}),
   };
   return publicFailureDetail(classifyDocumentJobFailure(parsed.message,{...parsed,probe:parsed.probe??undefined}));
 }
@@ -699,6 +954,7 @@ function correlatedFailureDetail(events: Awaited<ReturnType<typeof readWorkspace
     requestId: payload.provider_request_id ? String(payload.provider_request_id) : null,
     httpStatus: payload.http_status === null || payload.http_status === undefined || !Number.isFinite(Number(payload.http_status)) ? null : Number(payload.http_status),
     riskCategories: Array.isArray(payload.risk_categories) ? payload.risk_categories.map(String) : [], contributingBlockIds: Array.isArray(payload.contributing_block_ids) ? payload.contributing_block_ids.map(String) : [], contributingReferenceIds: Array.isArray(payload.contributing_reference_ids) ? payload.contributing_reference_ids.map(String) : [], probe: payload.preflight_probe ? String(payload.preflight_probe) : null,
+    ...(Array.isArray(payload.validation_issues)?{validationIssues:payload.validation_issues as import("../src/model/presentation-candidates").PresentationCandidateValidationIssue[]}:{}),
   } satisfies DocumentJobError;
   return publicFailureDetail(classifyDocumentJobFailure(detail.message,{...detail,probe:detail.probe??undefined}));
 }
@@ -1031,6 +1287,44 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const project=selected.context;
   if(project&&!hasCapability(principal,"project.output.request",{organizationId:project.organizationId,projectAccessId:project.projectAccessId}))return Response.json({error:"project_read_only"},{status:403});
   const user:PilotUser=project?{...principal,streamId:`creative:${project.ownerUserId}`,projectExecution:{organizationId:project.organizationId,projectAccessId:project.projectAccessId,projectId:project.projectId,ownerUserId:project.ownerUserId,actorUserId:principal.userId}}:principal;
+  if(path==="presentation-candidates"){
+    if(request.method!=="GET")return new Response("Method not allowed",{status:405,headers:{"cache-control":"private, no-store"}});
+    const documentId=new URL(request.url).searchParams.get("document")?.trim().slice(0,160)??"";
+    if(!documentId||project&&!await activeProjectExecution(env,user,documentId))return Response.json({error:"presentation_candidate_not_found"},{status:404,headers:{"cache-control":"private, no-store"}});
+    const rows=await env.DB.prepare(`SELECT DISTINCT job.* FROM document_jobs job JOIN private_content content
+      ON content.owner_id=job.owner_id AND content.kind='provider-response' AND content.redacted_at IS NULL AND content.expires_at>?
+        AND json_valid(content.content)=1 AND json_extract(content.content,'$.job_id')=job.job_id
+        AND json_extract(content.content,'$.stream_id')=job.stream_id AND json_extract(content.content,'$.document_id')=job.document_id
+        AND json_extract(content.content,'$.retention_class')='governed-evidence'
+      WHERE job.owner_id=? AND job.stream_id=? AND job.document_id=? AND job.kind='render_document'
+        AND job.status IN('failed','partial','completed') ORDER BY job.requested_at DESC LIMIT 40`)
+      .bind(new Date().toISOString(),user.userId,user.streamId,documentId).all<DocumentJobRow>();
+    const verified=await Promise.all(rows.results.map(async(row)=>({jobId:row.job_id,documentId:row.document_id,
+      candidates:(await verifiedPresentationCandidates(env,user,row,project?.contextId??"")).filter((candidate)=>candidate.summary.retentionClass==="governed-evidence").map((candidate)=>candidate.summary)})));
+    return Response.json({documentId,jobs:verified.filter((listing)=>listing.candidates.length)},{headers:{"cache-control":"private, no-store"}});
+  }
+  const candidateRoute=path.match(/^([^/]+)\/presentation-candidates(?:\/([^/]+)(\/preserve)?)?$/u);
+  if(candidateRoute){
+    const jobId=decodeURIComponent(candidateRoute[1]!);
+    const responseId=candidateRoute[2]?decodeURIComponent(candidateRoute[2]):"";
+    const preserve=Boolean(candidateRoute[3]);
+    const notFound=()=>Response.json({error:"presentation_candidate_not_found"},{status:404,headers:{"cache-control":"private, no-store"}});
+    if(request.method!=="GET"&&request.method!=="POST"||preserve&&request.method!=="POST"||!preserve&&request.method!=="GET"||preserve&&!responseId)return new Response("Method not allowed",{status:405,headers:{"cache-control":"private, no-store"}});
+    if(preserve){const consent=requireConsent(principal);if(consent)return consent;}
+    const row=await readJob(env,user.userId,jobId);
+    if(!row||row.owner_id!==user.userId||row.stream_id!==user.streamId)return notFound();
+    const candidates=await verifiedPresentationCandidates(env,user,row,project?.contextId??"",responseId);
+    if(responseId&&!candidates.length)return notFound();
+    if(preserve){
+      const saved=await preservePresentationCandidate(env,user,row,project?.contextId??"",candidates[0]!);
+      return saved?Response.json({jobId,documentId:row.document_id,candidate:saved},{headers:{"cache-control":"private, no-store"}}):notFound();
+    }
+    if(responseId){
+      await appendAuditEvent(env,user.streamId,`user:${user.userId}`,"PresentationCandidateReviewed",{job_id:jobId,document_id:row.document_id,provider_response_id:responseId,page_index:candidates[0]!.summary.pageIndex,provider_attempt:candidates[0]!.summary.providerAttempt},jobId);
+      return Response.json({jobId,documentId:row.document_id,candidate:candidates[0]!.detail},{headers:{"cache-control":"private, no-store"}});
+    }
+    return Response.json({jobId,documentId:row.document_id,candidates:candidates.map((candidate)=>candidate.summary)},{headers:{"cache-control":"private, no-store"}});
+  }
   const executionRequest=request.method==="POST"&&path.endsWith("/run");let verifiedPathJob:DocumentJobRow|null=null;
   if(!project&&path){
     const targetId=decodeURIComponent(path.replace(/\/(?:cancel|force-fail|ack|dismiss|retry|run|recover)$/,""));
@@ -1398,7 +1692,19 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       return Response.json({error:"pilot_non_sensitive_source_confirmation_required",message:"Every existing source in a controlled pilot must be re-uploaded with an explicit non-sensitive, licensed-material confirmation."},{status:428});
     }
     const account=scopes[0]?await readAccountBudgets(env,billingUserId,scopes[0].organizationId):null;
-    const artifactKind=String(payload.artifactKind??"");const production=kind==="render_document"&&payload.productionMode==="managed"&&["short_story","scene","slides","storyboard","video","audio"].includes(artifactKind)?buildManagedProductionPlan(artifactKind as "short_story"|"scene"|"slides"|"storyboard"|"video"|"audio",payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{},artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??0),...(artifactKind==="slides"&&payload.requestedSlideCount!==undefined?{requestedSlideCount:Number(payload.requestedSlideCount)}:{})}):null;
+    const artifactKind=String(payload.artifactKind??"");
+    let production:ManagedProductionPlan|null=null;
+    if(kind==="render_document"&&payload.productionMode==="managed"&&["short_story","scene","slides","storyboard","video","audio"].includes(artifactKind)){
+      try{
+        production=buildManagedProductionPlan(artifactKind as "short_story"|"scene"|"slides"|"storyboard"|"video"|"audio",payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{},artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??0),...(artifactKind==="slides"&&payload.requestedSlideCount!==undefined?{requestedSlideCount:Number(payload.requestedSlideCount)}:{})});
+      }catch(error){
+        if(error instanceof ManagedPresentationPlanningError)return Response.json({error:error.code,message:error.message},{status:422});
+        throw error;
+      }
+      if(artifactKind==="slides"&&production.requestedSlideCount!==null&&production.requestedSlideCount!==production.predictedSlideCount){
+        return Response.json({error:"presentation_slide_count_conflict",message:`The source contains ${production.authoredSlideCount} explicitly authored slides, but ${production.requestedSlideCount} slides were requested. Choose ${production.predictedSlideCount} slides to preserve every required authored position before generation.`,authoredSlideCount:production.authoredSlideCount,requestedSlideCount:production.requestedSlideCount,plannedSlideCount:production.predictedSlideCount},{status:409});
+      }
+    }
     const estimatedCostMicrousd=production?production.estimatedTotalCostMicrousd+(artifactKind==="storyboard"?production.scenes.length*1_000_000:artifactKind==="audio"?AUDIO_ADAPTER_CONTRACT.publishedCostMicrousd:0):kind==="chat"||kind==="structure_adaptive"?estimatePlannerOperationMicrousd(env.OPENAI_MODEL??"gpt-5.6-terra",kind):kind==="prompt_fan"?4_000_000:kind==="render_document"&&artifactKind==="video"?normalizeVideoDurationSeconds(payload.videoSeconds)*VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]+1_000_000:kind==="render_document"&&artifactKind==="audio"?AUDIO_ADAPTER_CONTRACT.publishedCostMicrousd+1_000_000:kind==="render_document"&&artifactKind==="storyboard"?Math.max(1,Math.floor(Number(payload.itemCount??6)))*1_000_000+1_000_000:1_000_000;
     productionPlan=production;estimatedGenerationCostMicrousd=estimatedCostMicrousd;
     if(pilotAllowance.pilot){

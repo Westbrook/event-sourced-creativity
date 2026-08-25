@@ -131,10 +131,11 @@ Page gutters should be fluid, normally `clamp(1rem, 4vw, 4.5rem)`. Content width
 - Standard controls use a 6px radius.
 - Larger interactive surfaces and dialogs may use a 10–14px radius.
 - Images may be square-edged in gallery layouts or use a restrained 4–8px radius in tools.
-- Borders and radii must always be balanced on every edge.
-- Do not simulate an imbalanced border with an inset shadow or pseudo-element on a rounded surface.
-- Shadows are reserved for floating layers: dialogs, command palettes, popovers, and fixed composers.
-- In-flow content should usually have no shadow.
+- Borders and radii must always be balanced on every edge, whether the surface is rounded or square.
+- Never highlight content with a single-edge physical or logical border, uneven border widths or colors, an accent rail, an inset or offset shadow, a directional gradient, a pseudo-element, or any equivalent simulated edge.
+- Selected, active, unread, recommended, warning, failed, and other emphasized content may use a uniform full-perimeter border, a restrained whole-surface semantic tint, explicit status text, an icon, or typography.
+- Shadows are reserved for actual floating layers: dialogs, command palettes, popovers, and fixed composers. Never use a box shadow to highlight in-flow content.
+- Functional layout separators, navigation and tab underlines, keyboard-focus outlines, animated progress indicators, and imagery are not content-highlight treatments.
 
 ## Layout system
 
@@ -564,8 +565,10 @@ Interface language should be direct, human, and compact.
   performance.
 - Keep the root font size user-owned and use `rem` for typography.
 - No text below 10px.
-- No imbalanced border on a rounded element.
-- No inset or pseudo-element workaround that simulates an imbalanced edge on a rounded element.
+- No imbalanced border on a rounded element or any other highlighted content surface.
+- No single-edge physical or logical border, inset or offset shadow, directional gradient, pseudo-element, or other simulated accent rail on highlighted content.
+- No box shadow as a selected, active, unread, recommended, warning, failed, or otherwise emphasized content treatment; preserve shadows for genuinely floating layers.
+- Express content emphasis with a uniform full-perimeter border, a whole-surface tint, explicit status text, an icon, or typography.
 - No layout-affecting hover reveal.
 - No hover translation of in-flow cards or controls.
 - No essential action available only on hover.

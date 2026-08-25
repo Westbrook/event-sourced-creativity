@@ -1,9 +1,21 @@
 import { html, nothing } from "lit";
 import { formaActivityUnread, scopedFormaActivity } from "../model/activity";
-import { documentArtifactDefinition } from "../model/document-artifacts";
+import { documentArtifactDefinition, isDocumentArtifactKind } from "../model/document-artifacts";
+import {
+  authorizedGenerationFailureRemediation,
+  documentJobCanRecoverProviderRender,
+  documentJobFailure,
+  documentJobProgress,
+  generationFailureGuidance,
+  type DocumentJob,
+} from "../model/document-jobs";
 import { libraryFocusRoute } from "../model/routes";
 import type { AssignedReviewTask, ProjectNotification } from "../state/store";
-import type { DocumentJob } from "../model/document-jobs";
+import {
+  localizedDocumentJobProgress,
+  localizedDocumentJobProgressDetail,
+  localizedGenerationFailureGuidance,
+} from "./design-system/localized-runtime-copy";
 import { FormaElement, icon } from "./forma-element";
 import "./project-rail";
 
@@ -18,6 +30,15 @@ const jobLabels: Record<string, string> = {
 };
 
 export class FormaActivity extends FormaElement {
+  override connectedCallback() {
+    super.connectedCallback();
+    const session = this.store.session.get();
+    if (!session) return;
+    void this.store.syncReviewInbox();
+    if (session.projectContext) void this.store.syncProjectNotifications();
+    void this.store.syncDocumentJobs();
+  }
+
   #open(path: string) { this.store.setRoute(path); }
 
   #review(task: AssignedReviewTask) {
@@ -41,10 +62,40 @@ export class FormaActivity extends FormaElement {
 
   #job(job: DocumentJob, documentName: string) {
     const failed = ["failed", "partial"].includes(job.status);
-    return html`<article class=${`forma-activity-card ${failed ? "forma-activity-card--attention" : ""}`}>
-      <div class="forma-activity-card-icon" aria-hidden="true">${icon(failed ? "close" : "spark")}</div>
-      <div class="forma-activity-card-copy"><span class="eyebrow">${this.i18n.t("activity.privateOperation", "Your private operation")}</span><h3>${this.i18n.t(`activity.kind.${job.kind}`, jobLabels[job.kind] ?? this.i18n.t("activity.documentOperation", "Document operation"))}</h3><p>${documentName} · ${this.i18n.t(`activity.status.${job.status}`, job.status)}</p></div>
-      <button type="button" class="button secondary" @click=${() => void this.store.openDocument(job.documentId, job.kind === "chat" ? "/studio/chat" : job.kind === "structure_adaptive" ? "/studio/adaptive" : "/")}>${this.i18n.t("activity.openDocument", "Open document")} ${icon("arrow")}</button>
+    const active = ["queued", "running", "committing"].includes(job.status);
+    const artifactKind = isDocumentArtifactKind(job.result?.artifactKind) ? job.result.artifactKind : null;
+    const operation = artifactKind
+      ? this.i18n.t(`artifact.${artifactKind}.label`, documentArtifactDefinition(artifactKind).label)
+      : this.i18n.t(`activity.kind.${job.kind}`, jobLabels[job.kind] ?? this.i18n.t("activity.documentOperation", "Document operation"));
+    const failure = failed ? documentJobFailure(job) : null;
+    const guidance = failed
+      ? localizedGenerationFailureGuidance(generationFailureGuidance(failure, job.error ?? "", job), failure, job.error ?? "", this.i18n)
+      : null;
+    const presentationRecoverable = artifactKind === "slides" && job.status === "failed" && job.result?.recoverablePresentationCandidate === true;
+    const providerRecoverable = Boolean(guidance?.retryAllowed && documentJobCanRecoverProviderRender(job));
+    const recoverable = presentationRecoverable || providerRecoverable;
+    const remediation = guidance && !recoverable ? authorizedGenerationFailureRemediation(guidance, this.store.session.get()) : null;
+    const progress = active ? documentJobProgress(job) : null;
+    const progressMessage = active ? localizedDocumentJobProgress(job, this.i18n) : "";
+    const progressDetail = progress?.detail ? localizedDocumentJobProgressDetail(progress.detail, job, this.i18n) : null;
+    const timestamp = new Date(job.completedAt ?? job.updatedAt ?? job.requestedAt);
+    const updatedAt = Number.isNaN(timestamp.getTime()) ? null : timestamp;
+    const attention = failed ? " forma-activity-card--attention" : "";
+    const terminal = failed && !recoverable && !guidance?.retryAllowed ? " forma-activity-card--terminal" : "";
+    return html`<article class=${`forma-activity-card forma-activity-card--job${attention}${terminal}`} data-activity-status=${job.status}>
+      <div class="forma-activity-card-icon" aria-hidden="true">${icon(failed ? "info" : active ? "clock" : "check")}</div>
+      <div class="forma-activity-card-copy">
+        <span class="eyebrow">${this.i18n.t("activity.privateOperation", "Your private operation")}${failed ? html` · ${operation}` : nothing}</span>
+        <h3>${guidance?.title ?? operation}</h3>
+        <p class="forma-activity-card-metadata"><span dir="auto">${documentName}</span><span class="forma-activity-card-status">${this.i18n.t(`activity.status.${job.status}`, job.status)}</span>${updatedAt ? html`<time datetime=${updatedAt.toISOString()}>${this.i18n.date(updatedAt, { dateStyle: "medium", timeStyle: "short" })}</time>` : nothing}</p>
+        ${guidance ? html`<p class="forma-activity-card-explanation">${guidance.summary}</p>` : progressMessage ? html`<p class="forma-activity-card-progress">${progressMessage}${progressDetail && progressDetail !== progressMessage ? html`<span>${progressDetail}</span>` : nothing}</p>` : nothing}
+        ${recoverable ? html`<small class="forma-activity-card-recovery-note">${this.i18n.system("Paid once · replay without another provider call")}</small>` : nothing}
+      </div>
+      <div class="forma-activity-card-actions">
+        ${recoverable ? html`<button type="button" class="button primary" @click=${() => void (presentationRecoverable ? this.store.recoverDocumentPresentation(job.jobId) : this.store.recoverDocumentRender(job.jobId))}>${this.i18n.system("Recover saved render")}</button>` : remediation ? html`<a class="button primary" href=${remediation.href} target=${remediation.external ? "_blank" : "_self"} rel=${remediation.external ? "noopener noreferrer" : nothing}>${remediation.label}</a>` : nothing}
+        <button type="button" class="button secondary" @click=${() => void this.store.openDocument(job.documentId, job.kind === "chat" ? "/studio/chat" : job.kind === "structure_adaptive" ? "/studio/adaptive" : "/")}>${this.i18n.t("activity.openDocument", "Open document")} ${icon("arrow")}</button>
+        ${failed ? html`<button type="button" class="button ghost" aria-label=${this.i18n.system("Dismiss this generation issue")} @click=${() => void this.store.dismissDocumentJobFailure(job.jobId)}>${this.i18n.system("Dismiss notice")}</button>` : nothing}
+      </div>
     </article>`;
   }
 

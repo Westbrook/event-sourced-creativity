@@ -91,6 +91,11 @@ export class PresentationStoreHarness {
   ${actualMethod("#hydrateDocumentJobGenerationReceipt")}
   ${actualMethod("loadDocumentJobDetail")}
   ${actualMethod("loadActorDocumentGenerationReceipt")}
+  ${actualMethod("loadPreservedPresentationCandidateJobs")}
+  ${actualMethod("loadPresentationCandidates")}
+  ${actualMethod("loadPresentationCandidate")}
+  ${actualMethod("preservePresentationCandidate")}
+  ${actualMethod("#assertPresentationCandidatePayload")}
   ${actualMethod("renderDocumentArtifact")}
 }
 `;
@@ -332,6 +337,63 @@ test("loads actor-private project generation receipts without entering shared jo
   assert.deepEqual(harness.jobs,[listed],"the ordinary project job list remains fully redacted");
   assert.deepEqual(harness.contentValues,{},"project-private source text never enters the shared content cache");
   assert.deepEqual(harness.hydrations,[],"actor-only receipt inspection never broadens project event hydration");
+});
+
+test("presentation draft review stays actor-private, uncached, and bound to its exact authorized job",async(context)=>{
+  const harness=new PresentationStoreHarness();
+  const listed={jobId:"job-private-presentation",documentId:"authorized-document",updatedAt:"2026-08-24T00:00:00.000Z",result:null};
+  harness.jobs=[listed];
+  const candidate={responseId:"private-response",jobId:listed.jobId,documentId:listed.documentId,retentionClass:"transient-private",stage:"initial",issues:[],slides:[{title:"Authorized visible draft",body:"Source-safe actor-private evidence."}]};
+  const requests=[];
+  context.mock.method(globalThis,"fetch",async(url)=>{requests.push(url);return{ok:true,json:async()=>url.endsWith("/presentation-candidates")?{jobId:listed.jobId,documentId:listed.documentId,candidates:[candidate]}:{jobId:listed.jobId,documentId:listed.documentId,candidate}};});
+
+  const candidates=await harness.loadPresentationCandidates(listed.jobId);
+  const detail=await harness.loadPresentationCandidate(listed.jobId,candidate.responseId);
+  assert.equal(candidates.candidates.length,1);
+  assert.equal(detail.slides[0].title,"Authorized visible draft");
+  assert.deepEqual(requests,[`/api/document-jobs/${listed.jobId}/presentation-candidates`,`/api/document-jobs/${listed.jobId}/presentation-candidates/${candidate.responseId}`]);
+  assert.deepEqual(harness.jobs,[listed],"rejected drafts never enter shared document-job state");
+  assert.deepEqual(harness.contentValues,{},"rejected drafts never enter private-content hydration state");
+  assert.deepEqual(harness.hydrations,[],"reviewing rejected drafts never hydrates raw provider evidence");
+});
+
+test("actor-private presentation draft review rejects mismatched identity, forbidden source fields, and revoked scope",async(context)=>{
+  const listed={jobId:"job-private-presentation",documentId:"authorized-document",updatedAt:"2026-08-24T00:00:00.000Z",result:null};
+  const invalidBodies=[
+    {jobId:"another-job",documentId:listed.documentId,candidates:[]},
+    {jobId:listed.jobId,documentId:"another-document",candidates:[]},
+    {jobId:listed.jobId,documentId:listed.documentId,candidate:{jobId:listed.jobId,documentId:listed.documentId,responseId:"another-response"}},
+    {jobId:listed.jobId,documentId:listed.documentId,candidate:{jobId:listed.jobId,documentId:listed.documentId,responseId:"private-response",slides:[{source_ids:["blk_999"]}]}},
+  ];
+  context.mock.method(globalThis,"fetch",async()=>({ok:true,json:async()=>invalidBodies.shift()}));
+  for(let index=0;index<4;index+=1){
+    const harness=new PresentationStoreHarness();harness.jobs=[listed];
+    const operation=index<2?harness.loadPresentationCandidates(listed.jobId):harness.loadPresentationCandidate(listed.jobId,"private-response");
+    await assert.rejects(operation,/could not be verified|disallowed source or provider data/u);
+    assert.deepEqual(harness.jobs,[listed]);
+    assert.deepEqual(harness.contentValues,{});
+  }
+});
+
+test("preserved actor-private drafts remain discoverable after their transient job leaves ordinary application state",async(context)=>{
+  const harness=new PresentationStoreHarness();
+  const jobId="expired-private-presentation-job";
+  const candidate={responseId:"preserved-private-response",jobId,documentId:"authorized-document",retentionClass:"governed-evidence",stage:"initial",issues:[],slides:[{title:"Preserved authorized slide"}]};
+  const requests=[];
+  context.mock.method(globalThis,"fetch",async(url)=>{
+    requests.push(url);
+    if(url.startsWith("/api/document-jobs/presentation-candidates?"))return{ok:true,json:async()=>({documentId:"authorized-document",jobs:[{jobId,documentId:"authorized-document",candidates:[candidate]}]})};
+    return{ok:true,json:async()=>url.endsWith("/presentation-candidates")?{jobId,documentId:"authorized-document",candidates:[candidate]}:{jobId,documentId:"authorized-document",candidate}};
+  });
+
+  const discovered=await harness.loadPreservedPresentationCandidateJobs("authorized-document");
+  assert.equal(discovered.jobs[0].jobId,jobId);
+  assert.equal((await harness.loadPresentationCandidates(jobId,"authorized-document")).candidates[0].retentionClass,"governed-evidence");
+  assert.equal((await harness.loadPresentationCandidate(jobId,candidate.responseId,"authorized-document")).slides[0].title,"Preserved authorized slide");
+  await assert.rejects(harness.loadPresentationCandidates(jobId,"another-document"),/do not belong/u);
+  assert.deepEqual(harness.jobs,[],"expired jobs must not be recreated in ordinary shared application state");
+  assert.deepEqual(harness.contentValues,{},"preserved draft discovery must not hydrate raw provider content");
+  assert.deepEqual(requests,[`/api/document-jobs/presentation-candidates?document=authorized-document`,`/api/document-jobs/${jobId}/presentation-candidates`,`/api/document-jobs/${jobId}/presentation-candidates/${candidate.responseId}`]);
 });
 
 test("rejects another job's private receipt before it enters the authorized local content cache",async(context)=>{

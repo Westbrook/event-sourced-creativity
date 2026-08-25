@@ -34,6 +34,7 @@ import { routeCapabilities } from "./route-capabilities";
 import type { FormaCapability } from "../platform/capabilities";
 import { applicationIdFromRoute, type ApplicationId } from "../platform/applications";
 import { workspaceTransitionAuthorized } from "../platform/workspace-transitions";
+import type { PresentationCandidateDetail, PresentationCandidateList, PresentationCandidateSummary, PreservedPresentationCandidateJobs } from "../model/presentation-candidates";
 
 type Listener = () => void;
 type HistoryGroup = CreativeEvent[];
@@ -284,6 +285,68 @@ export class FormaStore {
     if(!retained||typeof retained!=="object"||Array.isArray(retained)||(retained as Record<string,unknown>).job_id!==jobId||(retained as Record<string,unknown>).document_id!==current.documentId)throw new Error("The private generation receipt does not belong to this authorized job.");
     this.#assertAuthorizationScope(authorization);
     return{job:body.job,content:{[reference]:body.content[reference]}};
+  }
+  /** Rejected provider drafts remain ephemeral actor-private values, never shared job/content state. */
+  async loadPreservedPresentationCandidateJobs(documentId:string):Promise<PreservedPresentationCandidateJobs>{
+    const authorization=this.#activeAuthorizationScope();
+    if(!documentId||this.projection.get().documentId!==documentId)throw new Error("The preserved presentation drafts do not belong to this authorized document.");
+    const response=await fetch(`/api/document-jobs/presentation-candidates?document=${encodeURIComponent(documentId)}`);
+    this.#assertAuthorizationScope(authorization);
+    const body=await response.json() as Partial<PreservedPresentationCandidateJobs>&{error?:string};
+    this.#assertAuthorizationScope(authorization);
+    if(!response.ok||body.documentId!==documentId||!Array.isArray(body.jobs))throw new Error(body.error??"The preserved presentation drafts could not be verified.");
+    if(body.jobs.some((listing)=>!listing.jobId||listing.documentId!==documentId||!Array.isArray(listing.candidates)
+      ||listing.candidates.some((candidate)=>candidate.jobId!==listing.jobId||candidate.documentId!==documentId||candidate.retentionClass!=="governed-evidence")))throw new Error("A preserved presentation draft does not belong to this authorized document.");
+    this.#assertPresentationCandidatePayload(body);
+    return body as PreservedPresentationCandidateJobs;
+  }
+  async loadPresentationCandidates(jobId:string,documentId?:string):Promise<PresentationCandidateList>{
+    const authorization=this.#activeAuthorizationScope();
+    const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
+    const authorizedDocument=current?.documentId??documentId;
+    if(!authorizedDocument||documentId&&authorizedDocument!==documentId||!current&&authorizedDocument!==this.projection.get().documentId)throw new Error("The private presentation drafts do not belong to this authorized document.");
+    const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/presentation-candidates`);
+    this.#assertAuthorizationScope(authorization);
+    const body=await response.json() as Partial<PresentationCandidateList>&{error?:string};
+    this.#assertAuthorizationScope(authorization);
+    if(!response.ok||body.jobId!==jobId||body.documentId!==authorizedDocument||!Array.isArray(body.candidates))throw new Error(body.error??"The private presentation drafts could not be verified.");
+    if(body.candidates.some((candidate)=>candidate.jobId!==jobId||candidate.documentId!==authorizedDocument))throw new Error("A private presentation draft does not belong to this authorized document.");
+    this.#assertPresentationCandidatePayload(body);
+    return body as PresentationCandidateList;
+  }
+  async loadPresentationCandidate(jobId:string,responseId:string,documentId?:string):Promise<PresentationCandidateDetail>{
+    const authorization=this.#activeAuthorizationScope();
+    const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
+    const authorizedDocument=current?.documentId??documentId;
+    if(!authorizedDocument||!responseId||documentId&&authorizedDocument!==documentId||!current&&authorizedDocument!==this.projection.get().documentId)throw new Error("The private presentation draft does not belong to this authorized document.");
+    const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/presentation-candidates/${encodeURIComponent(responseId)}`);
+    this.#assertAuthorizationScope(authorization);
+    const body=await response.json() as {jobId?:string;documentId?:string;candidate?:PresentationCandidateDetail;error?:string};
+    this.#assertAuthorizationScope(authorization);
+    if(!response.ok||body.jobId!==jobId||body.documentId!==authorizedDocument||!body.candidate||body.candidate.jobId!==jobId||body.candidate.documentId!==authorizedDocument||body.candidate.responseId!==responseId)throw new Error(body.error??"The private presentation draft could not be verified.");
+    this.#assertPresentationCandidatePayload(body);
+    return body.candidate;
+  }
+  async preservePresentationCandidate(jobId:string,responseId:string,documentId?:string):Promise<PresentationCandidateSummary>{
+    const authorization=this.#activeAuthorizationScope();
+    const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
+    const authorizedDocument=current?.documentId??documentId;
+    if(!authorizedDocument||!responseId||documentId&&authorizedDocument!==documentId||!current&&authorizedDocument!==this.projection.get().documentId)throw new Error("The private presentation draft does not belong to this authorized document.");
+    const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/presentation-candidates/${encodeURIComponent(responseId)}/preserve`,{method:"POST"},"preserve this actor-private presentation draft");
+    this.#assertAuthorizationScope(authorization);
+    const body=await response.json() as {jobId?:string;documentId?:string;candidate?:PresentationCandidateSummary;error?:string};
+    this.#assertAuthorizationScope(authorization);
+    if(!response.ok||body.jobId!==jobId||body.documentId!==authorizedDocument||!body.candidate||body.candidate.jobId!==jobId||body.candidate.documentId!==authorizedDocument||body.candidate.responseId!==responseId||body.candidate.retentionClass!=="governed-evidence")throw new Error(body.error??"The private presentation draft could not be safely preserved.");
+    this.#assertPresentationCandidatePayload(body);
+    return body.candidate;
+  }
+  #assertPresentationCandidatePayload(value:unknown){
+    if(Array.isArray(value)){for(const entry of value)this.#assertPresentationCandidatePayload(entry);return;}
+    if(!value||typeof value!=="object")return;
+    for(const[key,entry]of Object.entries(value)){
+      if(/^(?:raw|candidateRaw|output_text|contentRef|content_ref|source(?:Snapshot|Alias|Id)|source_id|source_ids|compiledSnapshot|image_prompt|providerInput|content_markdown|context_group_ids)$/iu.test(key))throw new Error("The private presentation draft contains disallowed source or provider data.");
+      this.#assertPresentationCandidatePayload(entry);
+    }
   }
   async dismissDocumentJobFailure(jobId:string){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/dismiss`,{method:"POST"},"dismiss this generation issue");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job)throw new Error(body.error??"Generation issue could not be dismissed");this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast(this.session.get()?.projectContext?"Generation notice dismissed. Failure details remain available; generation inputs stay private to their author.":"Generation notice dismissed. Its retained inputs remain in this document’s failure history.");this.notify();return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Generation issue could not be dismissed");return false;}}
   async recoverDocumentRender(jobId:string){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/retry`,{method:"POST"},"recover this completed provider render");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job)throw new Error(body.error??"The saved provider render could not be recovered");this.documentJobs.set([body.job,...this.documentJobs.get().filter((job)=>job.jobId!==jobId)]);this.toast("Recovering the saved Fal video. No second paid video was submitted.");this.notify();this.#driveDocumentJobs(this.documentJobs.get());this.#scheduleJobPoll(800);return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}}
@@ -667,6 +730,10 @@ export class FormaStore {
         this.events.set(body.events);this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#historyProfile=profile;
         recordPopulationSource("miss",body.events.length);
         void writeAccountSnapshot(identity,body.events,body.head,profile);
+      }
+      while (!this.routeDataReady()) {
+        await this.#upgradeHistory(this.#profileForRoute(this.route.get()));
+        if (!ownsLoad()) throw new Error("The active workspace changed before its history finished loading.");
       }
       this.#assertAuthorizationScope(authorization);this.error.set("");this.loading.set(false);this.notify();
       requestAnimationFrame(()=>{

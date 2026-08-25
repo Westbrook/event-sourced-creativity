@@ -11821,6 +11821,76 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/presentation-rejected-drafts.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "PresentationRejectedDrafts",
+          "tagName": "forma-presentation-rejected-drafts",
+          "customElement": true,
+          "summary": "Presentation rejected drafts application interface.",
+          "description": "Actor-private rejected drafts never enter shared projections, accepted artifacts, or presentation export viewers.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "documentId",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "document-id"
+            },
+            {
+              "kind": "field",
+              "name": "jobs",
+              "type": {
+                "text": "DocumentJob[]"
+              },
+              "default": "[]"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "document-id",
+              "fieldName": "documentId",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-presentation-rejected-drafts",
+          "declaration": {
+            "name": "PresentationRejectedDrafts",
+            "module": "src/components/presentation-rejected-drafts.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "PresentationRejectedDrafts",
+          "declaration": {
+            "name": "PresentationRejectedDrafts",
+            "module": "src/components/presentation-rejected-drafts.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/presentation-slide.ts",
       "declarations": [
         {

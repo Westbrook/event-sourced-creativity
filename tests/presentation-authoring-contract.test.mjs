@@ -7,6 +7,7 @@ import { MAX_MANAGED_PRESENTATION_SLIDES, buildManagedProductionPlan } from "../
 
 const executiveFixture = JSON.parse(await readFile(new URL("./fixtures/presentation-executive-source.json", import.meta.url), "utf8"));
 const authoringSource = await readFile(new URL("../src/components/document-artifacts.ts", import.meta.url), "utf8");
+const rejectedDraftSource = await readFile(new URL("../src/components/presentation-rejected-drafts.ts", import.meta.url), "utf8");
 
 test("the real executive document exposes all twelve inline authored slides before generation", () => {
   const outline = inferPresentationSourceOutline(executiveFixture.snapshot);
@@ -68,6 +69,24 @@ test("clears actor-private presentation receipts immediately when authorization 
   assert.match(authoringSource, /addEventListener\("forma-authorization-changed",this\.#clearPrivateGenerationInputs\)/);
   assert.match(authoringSource, /removeEventListener\("forma-authorization-changed",this\.#clearPrivateGenerationInputs\)/);
   assert.match(authoringSource, /loadActorDocumentGenerationReceipt\(job\.jobId\)/);
+});
+
+test("rejected presentation drafts remain private, read-only, and available after their failure notice is dismissed",()=>{
+  assert.match(authoringSource,/rejectedDraftJobs=readOnly\?\[\]:this\.store\.documentJobs\.get\(\)\.filter/u);
+  assert.match(authoringSource,/<forma-presentation-rejected-drafts \.documentId=/u);
+  assert.match(rejectedDraftSource,/Rejected drafts · private/u);
+  assert.match(rejectedDraftSource,/Only you can see this material\. It cannot be shared, exported, or promoted/u);
+  assert.match(rejectedDraftSource,/loadPreservedPresentationCandidateJobs\(documentId\)/u,"governed drafts remain discoverable after transient job history expires");
+  assert.match(rejectedDraftSource,/loadPresentationCandidates\(jobId, this\.documentId\)/u);
+  assert.match(rejectedDraftSource,/loadPresentationCandidate\(this\.#jobId, responseId, this\.documentId\)/u);
+  assert.match(rejectedDraftSource,/preservePresentationCandidate\(this\.#jobId, responseId, this\.documentId\)/u);
+  assert.match(rejectedDraftSource,/addEventListener\("forma-authorization-changed", this\.#clearAuthorizedDrafts\)/u);
+  assert.match(rejectedDraftSource,/removeEventListener\("forma-authorization-changed", this\.#clearAuthorizedDrafts\)/u);
+  assert.match(rejectedDraftSource,/<forma-presentation-slide /u);
+  assert.doesNotMatch(rejectedDraftSource,/<forma-presentation-deck|unsafeHTML|localStorage|sessionStorage|DocumentRenderCompleted/u,"rejected drafts cannot inherit publication/export controls or enter durable shared state");
+  assert.match(rejectedDraftSource,/Compare alternatives/u);
+  assert.match(rejectedDraftSource,/Source material/u);
+  assert.match(rejectedDraftSource,/Accepted presentation/u);
 });
 
 test("managed presentation requests reject unsupported counts, prevent duplicate submission, and retain evidence assignments", () => {

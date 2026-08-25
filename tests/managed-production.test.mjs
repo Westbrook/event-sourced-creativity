@@ -409,6 +409,110 @@ test("requested managed slide expansion without a numbered outline grounds every
   assert.equal(plan.estimatedPlanningCostMicrousd, 1_000_000);
 });
 
+test("thirty unnumbered decisions and seven targeted chapters remain exactly seven isolated slides", () => {
+  const targets = ["last slide", "Slide 3", "Slide 6", "first slide", "Slide 2", "Slide 4", "Slide 5"];
+  const expectedPositions = [7, 3, 6, 1, 2, 4, 5];
+  const snapshot = {
+    facts: Array.from({ length: 30 }, (_, index) => {
+      const group = Math.min(6, Math.floor(index * 7 / 30));
+      return {
+        block_id: `PRIVATE_INCIDENT_SOURCE_${index + 1}`,
+        type: "message",
+        locked: true,
+        properties: {
+          label: `Evidence ${index + 1}`,
+          text: `Authorized decision ${index + 1} supports bounded chapter ${group + 1}.`,
+          combined_context_memberships: [{
+            context_set_id: `PRIVATE_INCIDENT_GROUP_${group + 1}`,
+            name: `Chapter ${group + 1}`,
+            target: targets[group],
+            role: "slide_chapter",
+            application: "isolate",
+            relativity: .95,
+            member_order: index,
+          }],
+        },
+      };
+    }),
+  };
+
+  const plan = buildManagedProductionPlan("slides", snapshot, { requestedSlideCount: 7 });
+
+  assert.equal(plan.authoredSlideCount, 0);
+  assert.equal(plan.requestedSlideCount, 7);
+  assert.equal(plan.predictedSlideCount, 7);
+  assert.equal(plan.scenes.length, 7);
+  assert.equal(plan.providerBatchCount, 1);
+  assert.deepEqual(plan.providerBatches.map(({ startSlide, endSlide, slideCount }) => [startSlide, endSlide, slideCount]), [[1, 7, 7]]);
+  for (const [groupIndex, expectedPosition] of expectedPositions.entries()) {
+    const groupId = `PRIVATE_INCIDENT_GROUP_${groupIndex + 1}`;
+    const positions = plan.scenes.flatMap((scene) => scene.contextGroupIds.includes(groupId) ? [scene.narrativeOrder] : []);
+    assert.deepEqual(positions, [expectedPosition], `Chapter ${groupIndex + 1} must occur only on its explicitly targeted slide`);
+    const sourceIds = snapshot.facts.filter((fact) => fact.properties.combined_context_memberships[0].context_set_id === groupId).map((fact) => fact.block_id);
+    assert.deepEqual(new Set(plan.scenes[expectedPosition - 1].sourceBlockIds), new Set(sourceIds));
+  }
+});
+
+test("explicit slide targets preserve contiguous ranges and reject ambiguity or conflicting placements", () => {
+  const snapshot = {
+    facts: [...Array.from({ length: 6 }, (_, index) => ({
+      block_id: `PRIVATE_TARGET_SOURCE_${index + 1}`,
+      type: "message",
+      locked: true,
+      properties: {
+        text: `Authorized ordered evidence ${index + 1}.`,
+        combined_context_memberships: [{
+          context_set_id: "PRIVATE_TARGET_GROUP",
+          name: "Ordered evidence",
+          target: "Slides 3–5",
+          role: "slide_chapter",
+          application: "ordered",
+          member_order: index,
+        }],
+      },
+    })), { block_id: "PRIVATE_TARGET_GLOBAL_SOURCE", type: "message", locked: true, properties: { text: "Approved global presentation context grounds positions outside the isolated chapter." } }],
+  };
+  const plan = buildManagedProductionPlan("slides", snapshot, { requestedSlideCount: 7 });
+  assert.deepEqual(plan.scenes.flatMap((scene) => scene.contextGroupIds.includes("PRIVATE_TARGET_GROUP") ? [scene.narrativeOrder] : []), [3, 4, 5]);
+
+  for (const target of ["Slide 0", "Slide 8", "Slides 5–3", "Slide 2 or Slide 6"]) {
+    const invalid = structuredClone(snapshot);
+    for (const fact of invalid.facts) if (fact.properties.combined_context_memberships) fact.properties.combined_context_memberships[0].target = target;
+    assert.throws(() => buildManagedProductionPlan("slides", invalid, { requestedSlideCount: 7 }), (error) => error instanceof RangeError && /Combined Context/u.test(error.message), `invalid target ${target} must fail before provider work`);
+  }
+
+  const conflicting = structuredClone(snapshot);
+  conflicting.facts[0].properties.combined_context_memberships[0].target = "Slide 2";
+  conflicting.facts[1].properties.combined_context_memberships[0].target = "Slide 6";
+  assert.throws(() => buildManagedProductionPlan("slides", conflicting, { requestedSlideCount: 7 }), /conflicting presentation targets/u);
+
+  const sameFactConflict = structuredClone(snapshot);
+  sameFactConflict.facts[0].properties.combined_context_memberships.push({
+    ...sameFactConflict.facts[0].properties.combined_context_memberships[0],
+    target: "Slide 6",
+  });
+  assert.throws(() => buildManagedProductionPlan("slides", sameFactConflict, { requestedSlideCount: 7 }), /conflicting presentation targets/u);
+
+  const impossible = { facts: [structuredClone(snapshot.facts[0])] };
+  impossible.facts[0].properties.combined_context_memberships[0].target = "Slide 3";
+  assert.throws(() => buildManagedProductionPlan("slides", impossible, { requestedSlideCount: 7 }), /no authorized source decision/u);
+});
+
+test("a valid explicit slide count is not rejected because unnumbered source evidence exceeds the old baseline", () => {
+  const snapshot = {
+    facts: Array.from({ length: 201 }, (_, index) => ({
+      block_id: `PRIVATE_DENSE_SOURCE_${index + 1}`,
+      type: "message",
+      locked: true,
+      properties: { text: `Distinct approved source evidence ${index + 1}.` },
+    })),
+  };
+  const plan = buildManagedProductionPlan("slides", snapshot, { requestedSlideCount: 7 });
+  assert.equal(plan.predictedSlideCount, 7);
+  assert.equal(plan.providerBatchCount, 1);
+  assert.equal(plan.scenes.flatMap((scene) => scene.sourceBlockIds).length, 201);
+});
+
 test("decomposes arbitrarily long authored context into legal, non-repeating anchor-first scenes", () => {
   const snapshot = productionFixture(40, 20);
   const plan = buildManagedProductionPlan("video", snapshot, { references: approvedReferences([1, 20, 40]) });
@@ -665,6 +769,33 @@ test("failed managed scene productions remain visibly recoverable without exposi
   const progress = documentJobProgress({ ...base, status: "running", stage: "rendering-scenes", progressMessage: "2 of 5 production scenes are safely stored." });
   assert.equal(progress.label, "Render");
   assert.match(progress.detail, /2 of 5 scenes stored/);
+});
+
+test("the thirty-decision seven-chapter incident generates seven source-local hero slides in one mocked provider request",async()=>{
+  const targets=["last slide","Slide 3","Slide 6","first slide","Slide 2","Slide 4","Slide 5"];
+  const snapshot={facts:Array.from({length:30},(_,index)=>{const group=Math.min(6,Math.floor(index*7/30));return{block_id:`PRIVATE_INCIDENT_BLOCK_${index+1}`,type:"message",locked:true,properties:{label:`Evidence ${index+1}`,text:`Approved source decision ${index+1} supports isolated editorial chapter ${group+1}.`,combined_context_memberships:[{context_set_id:`PRIVATE_INCIDENT_CHAPTER_${group+1}`,name:`Chapter ${group+1}`,target:targets[group],role:"slide_chapter",application:"isolate",relativity:.95,member_order:index}]}};})};
+  const production=buildManagedProductionPlan("slides",snapshot,{requestedSlideCount:7});
+  const originalFetch=globalThis.fetch;
+  const requests=[];
+  globalThis.fetch=async(_url,init={})=>{
+    const request=JSON.parse(String(init.body));requests.push(request);
+    const provider=JSON.parse(request.input);
+    const scenes=provider.production.assigned_scenes;
+    const items=scenes.map((scene)=>({title:`Bounded editorial position ${scene.narrative_order}`,body:scene.action,notes:`Approved evidence for position ${scene.narrative_order}.`,image_prompt:"",context_group_ids:scene.context_keys,slide:{layout:scene.narrative_order===7?"closing":"statement",kicker:`Independent section ${scene.narrative_order}`,bullets:[],source_ids:scene.source_keys,visual:{kind:"hero-type",label:`Source finding ${scene.narrative_order}`,value:`Bounded editorial position ${scene.narrative_order}`,data:[]}}}));
+    const presentation={aspect_ratio:"16:9",theme:"Seven isolated source chapters",footer_label:"Authorized editorial evidence",style_preset:"field-notes",mode:"light",palette:{background:"#edf1ef",foreground:"#14211d",accent:"#287260",muted:"#586b64",surface:"#d9e3df"}};
+    return Response.json({id:"incident-seven-slide-mock",model:"gpt-test",output_text:JSON.stringify({title:"Seven bounded editorial positions",summary:"Seven explicitly targeted source chapters remain isolated.",content_markdown:items.map((item,index)=>`## ${index+1}. ${item.title}\n${item.body}`).join("\n\n"),presentation,items}),usage:{input_tokens:900,output_tokens:600,total_tokens:1500}});
+  };
+  try{
+    const generated=await generateManagedArtifactDraft({OPENAI_API_KEY:"test-only",OPENAI_MODEL:"gpt-test"},"owner","slides",{documentTitle:"All approved source chapters",snapshot,production,requestedSlideCount:7});
+    assert.equal(requests.length,1,"seven explicitly requested slides require exactly one mocked provider request and no paid repair");
+    assert.equal(generated.output.items.length,7);
+    assert.deepEqual(generated.output.items.map((item)=>item.context_group_ids),production.scenes.map((scene)=>scene.contextGroupIds));
+    assert.ok(generated.output.items.every((item)=>item.slide?.visual.kind==="hero-type"&&/^Evidence \d+$/u.test(item.slide.visual.value)),"title-duplicating hero values are recovered from exact authorized source labels without another provider call");
+    assert.ok(generated.output.items.every((item,index)=>item.slide.sourceIds.every((sourceId)=>production.scenes[index].sourceBlockIds.includes(sourceId))));
+    assert.match(requests[0].instructions,/hero-type or metric visual needs exactly one meaningful source-authored visual\.value/u);
+    assert.doesNotMatch(JSON.stringify(requests[0]),/PRIVATE_INCIDENT_BLOCK_|PRIVATE_INCIDENT_CHAPTER_/u,"durable source and context identifiers never leave Forma");
+    assert.equal(generated.usage.totalTokens,1500);
+  }finally{globalThis.fetch=originalFetch;}
 });
 
 test("managed provider planning pages long films without inheriting the legacy twelve-scene schema", async () => {

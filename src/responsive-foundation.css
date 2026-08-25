@@ -1176,6 +1176,8 @@ html[data-document-focus] .studio-subpage-body {
 }
 
 .forma-activity-card {
+  --forma-activity-accent: var(--forma-color-accent);
+  --forma-activity-accent-text: var(--forma-color-accent-text);
   display: grid;
   min-inline-size: 0;
   grid-template-columns: 2.75rem minmax(0, 1fr) auto;
@@ -1189,7 +1191,23 @@ html[data-document-focus] .studio-subpage-body {
 
 .forma-activity-card--attention,
 .forma-activity-card--unread {
-  border-inline-start: .1875rem solid var(--forma-color-accent);
+  background: color-mix(in srgb, var(--forma-activity-accent) 5%, var(--forma-color-surface));
+  border-color: color-mix(in srgb, var(--forma-activity-accent) 34%, var(--forma-color-border));
+}
+
+.forma-activity-card--attention {
+  --forma-activity-accent: var(--forma-color-warning);
+  --forma-activity-accent-text: var(--forma-color-warning-text);
+}
+
+.forma-activity-card--terminal {
+  --forma-activity-accent: var(--forma-color-danger);
+  --forma-activity-accent-text: var(--forma-color-danger-text);
+}
+
+.forma-activity-card--job {
+  grid-template-columns: 2.75rem minmax(0, 1fr);
+  align-items: start;
 }
 
 .forma-activity-card-icon {
@@ -1197,8 +1215,8 @@ html[data-document-focus] .studio-subpage-body {
   inline-size: 2.5rem;
   block-size: 2.5rem;
   place-items: center;
-  color: var(--forma-color-accent-text);
-  background: var(--forma-color-accent-subtle);
+  color: var(--forma-activity-accent-text);
+  background: color-mix(in srgb, var(--forma-activity-accent) 12%, var(--forma-color-surface));
   border-radius: .625rem;
 }
 
@@ -1224,11 +1242,58 @@ html[data-document-focus] .studio-subpage-body {
   margin-block-end: .3rem;
 }
 
+.forma-activity-card-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .25rem .625rem;
+}
+
+.forma-activity-card-metadata > :not(:first-child)::before {
+  margin-inline-end: .625rem;
+  content: "·";
+}
+
+.forma-activity-card-status {
+  color: var(--forma-activity-accent-text);
+  font-weight: 600;
+}
+
+.forma-activity-card-copy > .forma-activity-card-explanation,
+.forma-activity-card-copy > .forma-activity-card-progress {
+  max-inline-size: 75ch;
+  margin-block-start: .625rem;
+  color: var(--forma-color-text);
+  line-height: 1.55;
+}
+
+.forma-activity-card-progress > span,
+.forma-activity-card-recovery-note {
+  display: block;
+  margin-block-start: .3rem;
+  color: var(--forma-color-text-muted);
+}
+
+.forma-activity-card-recovery-note {
+  font-size: .75rem;
+}
+
 .forma-activity-card-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: end;
   gap: .5rem;
+}
+
+.forma-activity-card--job > .forma-activity-card-actions {
+  grid-column: 2;
+  justify-content: start;
+}
+
+.forma-activity-card--job > .forma-activity-card-actions > .button {
+  min-block-size: var(--forma-hit-target);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .forma-deliver-summary {
@@ -1936,6 +2001,11 @@ html[data-document-focus] .studio-subpage-body {
     justify-content: stretch;
   }
 
+  .forma-activity-card--job > .forma-activity-card-actions {
+    grid-column: 1 / -1;
+    justify-content: stretch;
+  }
+
   .forma-activity-card-actions > .button {
     flex: 1 1 auto;
   }
@@ -2318,7 +2388,7 @@ html[data-document-focus] .studio-subpage-body {
 
 .document-workbench-tasks > button[aria-pressed="true"] {
   color: var(--forma-color-text);
-  box-shadow: inset 0 0 0 1px var(--forma-color-accent, currentColor);
+  border-color: var(--forma-color-accent, currentColor);
 }
 
 .document-workbench-task-count {

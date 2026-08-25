@@ -322,11 +322,44 @@ test("generation failure recovery cards adapt to their actual pane instead of cr
   assert.match(failureMarkup, /session&&!session\.impersonation/);
   assert.match(failureMarkup, /rel=\$\{remediation\.external\?"noopener noreferrer":nothing\}/);
   assert.ok(failureMarkup.indexOf('href=${remediation.href}') < failureMarkup.indexOf('>${this.i18n.system("Review & change request")}</button>'), "authorized terminal account failures prioritize their actual remedy without losing localized manual request review");
-  assert.match(failureMarkup, /detail\?\.requestId\|\|detail\?\.code\|\|detail\?\.httpStatus\?html`<details/);
+  assert.match(failureMarkup, /detail\?\.requestId\|\|detail\?\.code\|\|detail\?\.httpStatus(?:\|\|detail\?\.validationIssues\?\.length)?\?html`<details/);
   assert.match(failureMarkup, /class="document-artifact-failure-receipt" tabindex="0" aria-label=/);
   assert.doesNotMatch(failureMarkup, /\$\{(?:detail\?\.message|job\.error)\}/, "raw provider messages never enter the visible card or hidden disclosure");
   assert.match(artifacts, /#dismissFailure\(jobId:string,event:Event\)/);
   assert.match(artifacts, /next\?\.querySelector<HTMLElement>\("\.document-artifact-failure-actions > \.button"\)/);
+});
+
+test("Activity turns private generation failures into balanced, localized, safely actionable guidance", () => {
+  assert.match(activity, /isDocumentArtifactKind\(job\.result\?\.artifactKind\)/);
+  assert.match(activity, /localizedGenerationFailureGuidance\(generationFailureGuidance\(failure, job\.error \?\? "", job\)/);
+  assert.match(activity, /<h3>\$\{guidance\?\.title \?\? operation\}<\/h3>/);
+  assert.match(activity, /class="forma-activity-card-explanation">\$\{guidance\.summary\}/);
+  assert.match(activity, /localizedDocumentJobProgress\(job, this\.i18n\)/);
+  assert.match(activity, /localizedDocumentJobProgressDetail\(progress\.detail, job, this\.i18n\)/);
+  assert.match(activity, /this\.i18n\.date\(updatedAt, \{ dateStyle: "medium", timeStyle: "short" \}\)/);
+  assert.match(activity, /authorizedGenerationFailureRemediation\(guidance, this\.store\.session\.get\(\)\)/);
+  assert.match(activity, /documentJobCanRecoverProviderRender\(job\)/);
+  assert.match(activity, /recoverDocumentPresentation\(job\.jobId\)/);
+  assert.match(activity, /recoverDocumentRender\(job\.jobId\)/);
+  assert.match(activity, /dismissDocumentJobFailure\(job\.jobId\)/);
+  assert.match(activity, /rel=\$\{remediation\.external \? "noopener noreferrer" : nothing\}/);
+  assert.doesNotMatch(activity, /\$\{(?:job\.error|failure\?\.message)\}/, "raw provider errors never become visible Activity copy");
+
+  const activitySheet = sheets.find((sheet) => sheet.name === "responsive-foundation.css");
+  const cardRule = activitySheet?.root.nodes.find((rule) => rule.type === "rule" && rule.selector === ".forma-activity-card");
+  assert.match(cardRule?.nodes.find((declaration) => declaration.prop === "border")?.value ?? "", /^1px solid /);
+  for (const selector of [".forma-activity-card--attention", ".forma-activity-card--unread"]) {
+    assert.match(winning(selector, "border-color", viewports[6])?.value ?? "", /color-mix/, `${selector} accents the complete perimeter`);
+    for (const property of ["border-inline-start", "border-inline-end", "border-block-start", "border-block-end", "box-shadow"]) {
+      assert.equal(winning(selector, property, viewports[6]), undefined, `${selector} never uses ${property} as a highlight`);
+    }
+  }
+  assert.equal(winning(".forma-activity-card--job > .forma-activity-card-actions", "grid-column", viewports[6])?.value, "2");
+  assert.equal(winning(".forma-activity-card--job > .forma-activity-card-actions", "grid-column", viewports[0])?.value, "1 / -1");
+  const button = ".forma-activity-card--job > .forma-activity-card-actions > .button";
+  assert.match(winning(button, "min-block-size", viewports[0])?.value ?? "", /--forma-hit-target/);
+  assert.equal(winning(button, "white-space", viewports[0])?.value, "normal");
+  assert.equal(winning(button, "overflow-wrap", viewports[0])?.value, "anywhere");
 });
 
 test("the document overview adapts to actual workbench width without losing keyboard access or desktop state", () => {

@@ -1,4 +1,4 @@
-import { combinedContextGroups, combinedContextMemberships } from "./combined-context.ts";
+import { combinedContextGroups, combinedContextMemberships, normalizeCombinedContextMembership } from "./combined-context.ts";
 import { requiredContextAdaptationFacts } from "./context-adaptation.ts";
 import type { DocumentArtifactKind } from "./document-artifacts.ts";
 import { promptFactIsActive } from "./prompt-policy.ts";
@@ -487,6 +487,93 @@ function buildWaves(scenes: ProductionScene[], anchorId: string, maximumParallel
   return waves;
 }
 
+type ManagedPresentationSlideTarget = { start: number; end: number; explicit: boolean };
+
+/** Safe, actionable source-planning errors; messages never include durable source identifiers. */
+export class ManagedPresentationPlanningError extends RangeError {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+    this.name = "ManagedPresentationPlanningError";
+  }
+}
+
+const normalizedPresentationTarget = (value: string) => clean(value)
+  .normalize("NFKC")
+  .replace(/[‐‑‒–—―]/gu, "-")
+  .replace(/\s+/gu, " ")
+  .trim()
+  .toLowerCase();
+
+function explicitManagedPresentationTarget(target: string, count: number, groupName: string): ManagedPresentationSlideTarget | null {
+  const normalized = normalizedPresentationTarget(target);
+  if (!normalized) return null;
+  if (/^(?:first|opening) slide$/u.test(normalized)) return { start: 0, end: 0, explicit: true };
+  if (/^(?:last|final|closing) slide$/u.test(normalized)) return { start: count - 1, end: count - 1, explicit: true };
+  const range = /^slides?\s+(\d+)\s*(?:-|to|through)\s*(?:slides?\s+)?(\d+)$/u.exec(normalized);
+  const individual = /^slides?\s+(\d+)$/u.exec(normalized);
+  if (!range && !individual) {
+    if (/\bslides?\b/u.test(normalized)) {
+      throw new ManagedPresentationPlanningError("presentation_context_target_ambiguous", `Combined Context “${groupName}” needs one slide or one contiguous slide range; “${clean(target)}” is ambiguous.`);
+    }
+    return null;
+  }
+  const start = Number((range ?? individual)![1]);
+  const end = range ? Number(range[2]) : start;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end < start || end > count) {
+    throw new ManagedPresentationPlanningError("presentation_context_target_out_of_range", `Combined Context “${groupName}” targets ${clean(target)}, outside the requested ${count}-slide presentation.`);
+  }
+  return { start: start - 1, end: end - 1, explicit: true };
+}
+
+function managedPresentationGroupTargets(
+  snapshot: Record<string, unknown>,
+  groups: ReturnType<typeof combinedContextGroups>,
+  count: number,
+): Map<string, ManagedPresentationSlideTarget> {
+  const memberships = new Map<string, Array<{ target: string; name: string; role: string; application: string }>>();
+  for (const fact of (Array.isArray(snapshot.facts) ? snapshot.facts : []).filter(promptFactIsActive).map(asRecord)) {
+    const properties = asRecord(fact.properties);
+    const rawMemberships = Array.isArray(properties.combined_context_memberships)
+      ? properties.combined_context_memberships
+      : properties.combined_context ? [properties.combined_context] : [];
+    const definitions = rawMemberships.length
+      ? rawMemberships.flatMap((value, index) => {
+        const normalized = normalizeCombinedContextMembership(value, index);
+        return normalized ? [normalized] : [];
+      })
+      : combinedContextMemberships(properties);
+    for (const membership of definitions) {
+      const existing = memberships.get(membership.contextSetId) ?? [];
+      existing.push({ target: membership.target, name: membership.name, role: membership.role, application: membership.application });
+      memberships.set(membership.contextSetId, existing);
+    }
+  }
+  const targets = new Map<string, ManagedPresentationSlideTarget>();
+  for (const group of groups) {
+    const definitions = memberships.get(group.id) ?? [];
+    const roles = new Set(definitions.map((definition) => definition.role));
+    const applications = new Set(definitions.map((definition) => definition.application));
+    if (roles.size > 1 || applications.size > 1) {
+      throw new ManagedPresentationPlanningError("presentation_context_target_conflict", `Combined Context “${group.name}” has conflicting role or placement settings; resolve them before generating slides.`);
+    }
+    const resolved = definitions.flatMap((definition) => {
+      const target = explicitManagedPresentationTarget(definition.target, count, group.name);
+      return target ? [target] : [];
+    });
+    const distinctNamedTargets = new Set(definitions.map((definition) => normalizedPresentationTarget(definition.target)).filter(Boolean));
+    if (resolved.some((target) => target.start !== resolved[0]!.start || target.end !== resolved[0]!.end)
+      || resolved.length > 0 && resolved.length !== definitions.length
+      || resolved.length === 0 && distinctNamedTargets.size > 1) {
+      throw new ManagedPresentationPlanningError("presentation_context_target_conflict", `Combined Context “${group.name}” points to conflicting presentation targets; choose one slide or contiguous chapter.`);
+    }
+    if (resolved[0]) targets.set(group.id, resolved[0]);
+  }
+  return targets;
+}
+
 /** Compile the full source context without inheriting the legacy twelve-item schema cap. */
 export function buildManagedProductionPlan(format: ProductionFormat, snapshot: Record<string, unknown>, options: ProductionPlanOptions = {}): ManagedProductionPlan {
   const sourceClaims = productionClaims(snapshot);
@@ -530,11 +617,47 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
   }
   const requestedCount = Number.isFinite(Number(rawRequestedCount)) ? Math.max(0, Math.floor(Number(rawRequestedCount))) : 0;
   const requestedSlideCount = format === "slides" && requestedCount > 0 ? requestedCount : null;
-  if (format === "slides" && Math.max(baselineCount, requestedCount) > MAX_MANAGED_PRESENTATION_SLIDES) {
+  const plannedCount = format === "image"
+    ? 1
+    : format === "slides" && requestedSlideCount !== null
+      ? Math.max(authoredSlides.length, requestedSlideCount)
+      : Math.max(baselineCount, requestedCount);
+  if (format === "slides" && plannedCount > MAX_MANAGED_PRESENTATION_SLIDES) {
     throw new RangeError(`managed_presentation_slide_count_exceeds_supported_maximum:${MAX_MANAGED_PRESENTATION_SLIDES}`);
   }
-  const count = format === "image" ? 1 : Math.max(baselineCount, requestedCount);
+  const count = plannedCount;
+  const groupTargets = format === "slides" ? managedPresentationGroupTargets(snapshot, groups, count) : new Map<string, ManagedPresentationSlideTarget>();
   const buckets: ProductionClaim[][] = Array.from({ length: count }, () => []);
+  const targetedClaims = new Set<string>();
+  const groupMemberOrder = new Map(groups.flatMap((group) => group.members.map((member) => [`${group.id}\u0000${member.blockId}`, member.order] as const)));
+  const assignTargetedClaim = (claim: ProductionClaim, claimIndex: number, groupClaims: ProductionClaim[]) => {
+    const constraints = claim.contextGroupIds.flatMap((groupId) => groupTargets.has(groupId) ? [groupTargets.get(groupId)!] : []);
+    if (!constraints.length) return false;
+    const start = Math.max(...constraints.map((target) => target.start));
+    const end = Math.min(...constraints.map((target) => target.end));
+    if (end < start) {
+      throw new ManagedPresentationPlanningError("presentation_context_target_conflict", "A source decision belongs to Combined Context groups assigned to different slides; resolve the conflicting targets before generating.");
+    }
+    const offset = Math.min(end - start, Math.floor(claimIndex * (end - start + 1) / Math.max(1, groupClaims.length)));
+    const position = start + offset;
+    const authoredPosition = authoredClaims.findIndex((authored) => authored.id === claim.id);
+    if (authoredPosition >= 0 && (authoredPosition < start || authoredPosition > end)) {
+      const group = groups.find((candidate) => claim.contextGroupIds.includes(candidate.id) && groupTargets.has(candidate.id));
+      throw new ManagedPresentationPlanningError("presentation_context_target_conflict", `Combined Context “${group?.name ?? "source chapter"}” conflicts with its explicitly authored slide position.`);
+    }
+    if (!buckets[position]!.some((existing) => existing.id === claim.id)) buckets[position]!.push(claim);
+    targetedClaims.add(claim.id);
+    return true;
+  };
+  for (const group of groups.filter((candidate) => groupTargets.has(candidate.id))) {
+    const members = claims.filter((claim) => !claim.negative && !claim.continuity && claim.contextGroupIds.includes(group.id))
+      .sort((left, right) => (groupMemberOrder.get(`${group.id}\u0000${left.blockId}`) ?? left.ordinal ?? 0)
+        - (groupMemberOrder.get(`${group.id}\u0000${right.blockId}`) ?? right.ordinal ?? 0)
+        || (left.ordinal ?? 0) - (right.ordinal ?? 0));
+    members.forEach((claim, index) => {
+      if (!targetedClaims.has(claim.id)) assignTargetedClaim(claim, index, members);
+    });
+  }
   const finalOutlineSourceBlockId = authoredClaims.at(-1)?.blockId;
   const expansionSourceIndexes = authoredClaims
     .map((claim, index) => ({ claim, index }))
@@ -542,9 +665,15 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
     .map(({ index }) => index);
 
   if (authoredSlides.length) {
-    for (const [index, claim] of authoredClaims.entries()) buckets[index]!.push(claim);
+    for (const [index, claim] of authoredClaims.entries()) {
+      const constraints = claim.contextGroupIds.flatMap((groupId) => groupTargets.has(groupId) ? [groupTargets.get(groupId)!] : []);
+      if (constraints.some((target) => index < target.start || index > target.end)) {
+        throw new ManagedPresentationPlanningError("presentation_context_target_conflict", `An authored slide at position ${index + 1} conflicts with its Combined Context target.`);
+      }
+      if (!buckets[index]!.some((existing) => existing.id === claim.id)) buckets[index]!.push(claim);
+    }
     const supportingClaims = plotClaims.filter((claim) => !outlineSourceBlockIds.has(claim.blockId));
-    supportingClaims.forEach((claim, index) => buckets[index % authoredSlides.length]!.push(claim));
+    supportingClaims.filter((claim) => !targetedClaims.has(claim.id)).forEach((claim, index) => buckets[index % authoredSlides.length]!.push(claim));
     for (let index = authoredSlides.length; index < count; index += 1) {
       // Append extra evidence within the final authored chapter; reopening an earlier isolated
       // chapter would split its source group and fail the completed-deck grounding contract.
@@ -556,6 +685,10 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
         required: false,
         ordinal: (source.ordinal ?? 0) + count + index,
       };
+      if (extension.contextGroupIds.some((groupId) => {
+        const target = groupTargets.get(groupId);
+        return Boolean(target && (index < target.start || index > target.end));
+      })) throw new ManagedPresentationPlanningError("presentation_context_target_conflict", "Requested supporting slides would reopen a Combined Context chapter outside its explicitly assigned range.");
       claims.push(extension);
       buckets[index]!.push(extension);
     }
@@ -563,9 +696,9 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
     for (let index = 0; index < beats.length; index += 1) {
       const beat = beats[index]!;
       const claim = beat.claim;
-      if (claim) buckets[index % count]!.push(claim);
+      if (claim && !targetedClaims.has(claim.id)) buckets[index % count]!.push(claim);
     }
-    plotClaims.forEach((claim, index) => buckets[index % count]!.push(claim));
+    plotClaims.filter((claim) => !targetedClaims.has(claim.id)).forEach((claim, index) => buckets[index % count]!.push(claim));
   }
   for (const group of groups) {
     const assigned = buckets.findIndex((bucket) => bucket.some((claim) => claim.contextGroupIds.includes(group.id)));
@@ -574,7 +707,9 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
     if (groupClaim) buckets[Math.min(count - 1, groups.indexOf(group))]!.push(groupClaim);
   }
   const unassignedMandatory = claims.filter((claim) => claim.required && !claim.continuity && !claim.negative && !buckets.some((bucket) => bucket.some((item) => item.id === claim.id)));
-  unassignedMandatory.forEach((claim, index) => buckets[index % count]!.push(claim));
+  unassignedMandatory.forEach((claim, index) => {
+    if (!assignTargetedClaim(claim, index, unassignedMandatory)) buckets[index % count]!.push(claim);
+  });
   if (format === "slides" && !authoredSlides.length) {
     const authorizedBlockIds = new Set((Array.isArray(snapshot.facts) ? snapshot.facts : [])
       .filter(promptFactIsActive)
@@ -589,8 +724,13 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
         previous = assigned;
         continue;
       }
-      const source = previous ?? groundingClaims[0];
-      if (!source) continue;
+      const source = [previous, ...groundingClaims].find((candidate) => candidate && candidate.contextGroupIds.every((groupId) => {
+        const target = groupTargets.get(groupId);
+        return !target || index >= target.start && index <= target.end;
+      }));
+      if (!source) {
+        throw new ManagedPresentationPlanningError("presentation_context_target_unfillable", `Slide ${index + 1} has no authorized source decision that can be placed there without violating an isolated Combined Context target.`);
+      }
       const extension: ProductionClaim = {
         ...source,
         id: `${source.id}:supporting-slide:${index + 1}`,

@@ -218,6 +218,7 @@ const quoteContinuation=(initial:string,continuations:string[])=>continuations.r
 
 export function normalizeSlideVisual(value: unknown, item: { title?: unknown; body?: unknown } = {}, index = 0): SlideVisualData {
   const input=record(value),visual=record(input.visual);let rawData=Array.isArray(visual.data)?visual.data:[];
+  const retainedDatumSourceIds:string[]=[];
   let layout=slideLayout(input.layout,index);
   const title=text(item.title),body=text(item.body),used=[title,body].filter(Boolean),bulletSource=Array.isArray(input.bullets)?input.bullets:[],bullets:string[]=[];
   for(const candidate of bulletSource){const bullet=listText(candidate),accepted=distinctText(bullet,used);if(!accepted)continue;bullets.push(accepted);if(bullets.length===24)break;}
@@ -228,7 +229,10 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
     const complete=quoteContinuation(text(visual.value),continuations.map((datum)=>text(record(datum).value)).filter(Boolean));
     const unwrapped=complete.replace(/^[“"]([\s\S]*)[”"]$/u,"$1"),attribution=text(visual.label);
     if(unwrapped&&attribution)quote={text:unwrapped,speaker:attribution,role:attribution};
-    if(quote)rawData=rawData.filter((datum)=>!continuations.includes(datum));
+    if(quote){
+      retainedDatumSourceIds.push(...continuations.flatMap((datum)=>uniqueText(record(datum).sourceIds??record(datum).source_ids)));
+      rawData=rawData.filter((datum)=>!continuations.includes(datum));
+    }
   }
   const citations=(Array.isArray(input.citations)?input.citations:[]).flatMap((entry)=>{const citation=normalizeSlideCitation(entry);return citation?[citation]:[];}),section=text(input.section),requestedSourceOrder=Number(input.sourceOrder??input.source_order),sourceOrder=Number.isSafeInteger(requestedSourceOrder)&&requestedSourceOrder>0?requestedSourceOrder:undefined;
   let kind=quote&&continuations.length?"quote" as SlideVisualKind:slideVisualKind(visual.kind,index);const valueIsVisible=kind==="hero-type"||kind==="metric"||kind==="diagram"||kind==="quote";let visualValue=kind==="quote"&&quote?quote.text:valueIsVisible?distinctText(visual.value,used):placeholderText(visual.value)?"":text(visual.value);let visualLabel=distinctText(visual.label,used);const exactValue=text(visual.exactValue??visual.exact_value),displayValue=text(visual.displayValue??visual.display_value),unit=text(visual.unit),data:SlideVisualDatum[]=[];
@@ -252,10 +256,20 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
     for(const datum of duplicateCategoryRows)datum.value="";
   }
   if(kind==="bars"){const complete=data.filter((datum)=>Boolean(contentKey(datum.value)));data.splice(0,data.length,...complete);}
-  if((kind==="bars"||kind==="timeline"||kind==="diagram"||kind==="color-field")&&data.length<2){const singular=valueIsVisible?visualValue:distinctText(visualValue,used)||data[0]?.label||"";kind="hero-type";visualValue=singular;data.splice(0,data.length);}
-  if((kind==="hero-type"||kind==="metric")&&!visualValue){visualValue=data[0]?.label??"";data.splice(0,data.length);}
+  if((kind==="bars"||kind==="timeline"||kind==="diagram"||kind==="color-field")&&data.length<2){
+    const candidate=data.find((datum)=>Boolean(datum.label)&&!repeatedText(datum.label,used));
+    const singular=valueIsVisible?visualValue:distinctText(visualValue,used)||candidate?.label||"";
+    if(candidate&&singular===candidate.label)retainedDatumSourceIds.push(...(candidate.sourceIds??[]));
+    kind="hero-type";visualValue=singular;data.splice(0,data.length);
+  }
+  if((kind==="hero-type"||kind==="metric")&&!visualValue){
+    const candidate=data.find((datum)=>Boolean(datum.label)&&!repeatedText(datum.label,used));
+    visualValue=candidate?.label??"";
+    if(candidate)retainedDatumSourceIds.push(...(candidate.sourceIds??[]));
+    data.splice(0,data.length);
+  }
   if(!visualLabel&&visualValue)visualLabel=kind==="quote"?"Stakeholder perspective":"Visual emphasis";
-  const sourceIds=[...new Set([...uniqueText(input.sourceIds??input.source_ids),...(quote?.sourceId?[quote.sourceId]:[]),...citations.flatMap((citation)=>citation.sourceId?[citation.sourceId]:[]),...data.flatMap((datum)=>datum.sourceIds??[])])];
+  const sourceIds=[...new Set([...uniqueText(input.sourceIds??input.source_ids),...retainedDatumSourceIds,...(quote?.sourceId?[quote.sourceId]:[]),...citations.flatMap((citation)=>citation.sourceId?[citation.sourceId]:[]),...data.flatMap((datum)=>datum.sourceIds??[])])];
   return{
     layout,kicker,bullets,...(quote?{quote}:{}),...(citations.length?{citations}:{}),...(sourceIds.length?{sourceIds}:{}),...(section?{section}:{}),...(sourceOrder===undefined?{}:{sourceOrder}),
     visual:{kind,label:visualLabel,value:visualValue,...(exactValue?{exactValue}:{}),...(displayValue?{displayValue}:{}),...(unit?{unit}:{}),data},
@@ -415,6 +429,7 @@ export type DocumentArtifactValidationOptions={
   itemCount:number;
   contextGroupIds?:string[];
   unknownContextGroupAssignments?:string[];
+  rawContextGroupAssignments?:string[][];
   requireSourceGrounding?:boolean;
   sourceContract?:PresentationSourceContract;
   sourcePageStart?:number;
@@ -427,12 +442,17 @@ export function documentArtifactValidationIssues(kind:DocumentArtifactKind,outpu
   const issues:DocumentArtifactValidationIssue[]=[];const add=(code:string,path:string,message:string)=>issues.push({code,path,message});const expectedGroups=options.contextGroupIds??[];const knownGroups=new Set(expectedGroups);const assignedGroups=output.items.flatMap((item)=>item.context_group_ids??[]);
   if(!output.content_markdown.trim())add("missing_content","content_markdown","The durable readable output is empty.");
   if(output.items.length!==options.itemCount)add("wrong_item_count","items",`Expected ${options.itemCount} items but received ${output.items.length}.`);
-  if(options.unknownContextGroupAssignments?.length)add("unknown_context_group_reference","items.context_group_ids","At least one slide references a context alias that was not authorized for this request.");
+  if(options.unknownContextGroupAssignments?.length){
+    const unknown=new Set(options.unknownContextGroupAssignments);
+    const positions=(options.rawContextGroupAssignments??[]).flatMap((references,index)=>references.some((reference)=>unknown.has(reference))?[index]:[]);
+    if(positions.length)for(const index of positions)add("unknown_context_group_reference",`items.${index}.context_group_ids`,"This slide references a context alias that was not authorized for this request.");
+    else add("unknown_context_group_reference","items.context_group_ids","At least one slide references a context alias that was not authorized for this request.");
+  }
   for(const groupId of expectedGroups)if(!assignedGroups.includes(groupId))add("missing_context_group","items.context_group_ids",`Combined Context ${groupId} was not assigned to any item.`);
   for(const groupId of assignedGroups)if(!knownGroups.has(groupId))add("unknown_context_group","items.context_group_ids",`Unknown Combined Context ${groupId} was assigned.`);
   if(kind!=="slides")return issues;
   if(!output.presentation?.footerLabel?.trim())add("missing_footer_label","presentation.footer_label","The deck needs a document-derived footer label.");
-  for(const groupId of expectedGroups){const positions=output.items.flatMap((item,index)=>(item.context_group_ids??[]).includes(groupId)?[index]:[]);if(!positions.every((position,index)=>index===0||position===positions[index-1]!+1))add("split_context_group","items.context_group_ids",`Combined Context ${groupId} must occupy one slide or a contiguous chapter.`);}
+  for(const groupId of expectedGroups){const positions=output.items.flatMap((item,index)=>(item.context_group_ids??[]).includes(groupId)?[index]:[]);const reopened=positions.find((position,index)=>index>0&&position!==positions[index-1]!+1);if(reopened!==undefined)add("split_context_group",`items.${reopened}.context_group_ids`,`Combined Context ${groupId} must occupy one slide or a contiguous chapter.`);}
   let previousSourceOrder=0;let previousSection="";const completedSections=new Set<string>();
   output.items.forEach((item,index)=>{
     const path=`items.${index}`;
@@ -440,7 +460,12 @@ export function documentArtifactValidationIssues(kind:DocumentArtifactKind,outpu
     if(!item.slide){add("missing_slide",`${path}.slide`,"Every slide needs structured visual data.");return;}
     if(!slideVisualIsComplete(item.slide)){
       const kind=item.slide.visual.kind,points=item.slide.visual.data.length,missingValues=item.slide.visual.data.filter((datum)=>!datum.value.trim()).map((datum)=>datum.label).slice(0,4);
-      add("incomplete_visual",`${path}.slide.visual`,`${kind} visual needs at least two distinct source-authored points${["scorecard","bars","matrix"].includes(kind)?" with meaningful values":""}; found ${points}${missingValues.length?` and missing values for ${missingValues.join(", ")}`:""}. If only category names are authored, use an architecture visual; never invent evidence.`);
+      const message=kind==="hero-type"||kind==="metric"
+        ? `${kind} visual needs one meaningful, distinct source-authored visual value; none remains after normalization.`
+        :kind==="quote"
+          ? "Quote visual needs a complete verbatim source-authored quotation with its speaker and role attribution."
+          :`${kind} visual needs at least two distinct source-authored points${["scorecard","bars","matrix"].includes(kind)?" with meaningful values":""}; found ${points}${missingValues.length?` and missing values for ${missingValues.join(", ")}`:""}. If only category names are authored, use an architecture visual; never invent evidence.`;
+      add("incomplete_visual",`${path}.slide.visual`,message);
     }
     if(item.slide.visual.kind==="quote"&&!item.slide.quote?.text)add("missing_quote",`${path}.slide.quote`,"A quotation slide must retain its complete verbatim stakeholder quotation.");
     if(item.slide.quote&&(!item.slide.quote.speaker.trim()||!item.slide.quote.role.trim()))add("missing_quote_attribution",`${path}.slide.quote`,"Every protected stakeholder quotation must preserve its speaker and role attribution.");

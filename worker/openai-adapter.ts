@@ -15,6 +15,7 @@ import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, isVideoAudioMode, i
 import { VIDEO_AUDIO_REFERENCE_CONTRACT, audioRightsAllowed } from "../src/model/audio.ts";
 import { productionTeamInstructions, providerFacingProductionContinuity, type ManagedProductionPlan, type ProductionMode, type ProductionScene } from "../src/model/managed-production.ts";
 import { buildPresentationSourceContract, inferPresentationAudienceLocale, providerFacingPresentationSourceContract, resolvePresentationSourceReferences, type PresentationSourceContract, type PresentationSourceSlide } from "../src/model/presentation-source.ts";
+import { safePresentationCandidateIssues } from "../src/model/presentation-candidates.ts";
 import { adaptVideoPrompt, compactVideoCombinedContextPlan, resolveVideoAudioPolicy, videoPlannerCreativeContext, type VideoPromptAdaptation } from "./video-prompt-adapter.ts";
 
 type OpenAIError = { message?: string; type?: string; code?: string | null; param?: string | null };
@@ -446,7 +447,7 @@ export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output:parsed,raw:text,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
-const authoredVisualCategoryCopyInstructions="Concise source-authored visual.data row labels may repeat verbatim inside a longer independently meaningful slide body when the labels categorize its evidence; preserve both the authored argument and every structured row label. When authored evidence supplies categories without independent measurements or descriptions, use an architecture visual with an empty string for each category-only row value. Never copy a visual.data row label into its own value and never invent a measurement merely to populate a category. Real scorecard, bars, and matrix measurements must remain complete and exact.";
+const authoredVisualCategoryCopyInstructions="Concise source-authored visual.data row labels may repeat verbatim inside a longer independently meaningful slide body when the labels categorize its evidence; preserve both the authored argument and every structured row label. A hero-type or metric visual needs exactly one meaningful source-authored visual.value distinct from its title, body, kicker, and label; it requires no visual.data rows. Preserve the selected evidence source_ids and never invent a claim or add chart rows to satisfy a hero visual. When authored evidence supplies categories without independent measurements or descriptions, use an architecture visual with an empty string for each category-only row value. Never copy a visual.data row label into its own value and never invent a measurement merely to populate a category. Real scorecard, bars, and matrix measurements must remain complete and exact.";
 
 const artifactInstructions:Record<DocumentArtifactKind,string>={
   audio:"Create an original, production-ready music and sound-design brief. Preserve the document’s narrative purpose, authored emotional arc, ordered dramatic beats, atmosphere, musical texture, tempo when genuinely specified, instrumentation, and deliberate silence. Translate opted-in audio descriptions into musical meaning without copying an existing recording, recognizable melody, artist, or voice. content_markdown is a complete original composition brief with concise timed or ordered sections. Use one item whose body describes the complete arrangement, whose notes describe cue timing and vocal policy, and whose image_prompt describes an optional visual reference without implying that an image was supplied. Never invent measured tempo, duration, transcription, licensed lyrics, or artist approval.",
@@ -508,6 +509,7 @@ function resolveProviderPresentationSources(output:DocumentArtifactDraft|null,co
   const canonicalAssignments:string[][]=[];
   const unknownAssignments=new Set<string>();
   const deterministicallyAssigned:number[]=[];
+  const acceptedPresentationCopy:string[]=[];
   if(!output)return{output,receipt:{rawAssignments,canonicalAssignments,unknownAssignments:[],deterministicallyAssigned} satisfies PresentationSlideSourceResolutionReceipt};
 
   // A provider can return only an alias we actually disclosed. Checking this
@@ -589,7 +591,7 @@ function resolveProviderPresentationSources(output:DocumentArtifactDraft|null,co
       ...(item.context_group_ids??[]),
       ...resolution.contextGroupIds.filter((groupId)=>authorizedGroupIds.has(groupId)),
     ]);
-    const reconciledSlide=reconcileAuthoredPresentationVisual({
+    let reconciledSlide=reconcileAuthoredPresentationVisual({
       ...slide,
       kicker:audiencePresentationText(slide.kicker),
       bullets:slide.bullets.map(audiencePresentationText).filter(Boolean),
@@ -600,6 +602,22 @@ function resolveProviderPresentationSources(output:DocumentArtifactDraft|null,co
       ...(!slide.sourceOrder&&(scene?.sourceOutlineOrder??authored?.number)?{sourceOrder:scene?.sourceOutlineOrder??authored!.number}:{}),
       visual:{...slide.visual,label:audiencePresentationText(slide.visual.label),value:audiencePresentationText(slide.visual.value),data},
     },authored,contract);
+    if(["hero-type","metric"].includes(reconciledSlide.visual.kind)&&!reconciledSlide.visual.value.trim()){
+      const visibleCopy=[item.title,item.body,reconciledSlide.kicker,reconciledSlide.visual.label,...reconciledSlide.bullets,...acceptedPresentationCopy].filter(Boolean);
+      const authorizedEvidence=contract.sources.find((source)=>source.sourceKind==="block"
+        &&nestedSources.includes(source.sourceId)
+        &&(!scene||scene.sourceBlockIds.includes(source.sourceId))
+        &&(!scene?.contextGroupIds.length||source.contextGroupIds.length===0||source.contextGroupIds.some((groupId)=>scene.contextGroupIds.includes(groupId)))
+        &&Boolean(source.label.trim())
+        &&!/^(?:authored source(?:\s+\d+)?|source|evidence|decision|message|direction|context|block|claim|visual emphasis)$/iu.test(source.label.trim())
+        &&!opaquePresentationAlias(source.label)
+        &&visibleCopy.every((copy)=>!slideCopyIsNearDuplicate(source.label,copy)));
+      if(authorizedEvidence){
+        const value=audiencePresentationText(authorizedEvidence.label);
+        reconciledSlide={...reconciledSlide,sourceIds:uniquePresentationReferences([...(reconciledSlide.sourceIds??[]),authorizedEvidence.sourceId]),visual:{...reconciledSlide.visual,value}};
+      }
+    }
+    acceptedPresentationCopy.push(item.title,item.body,...reconciledSlide.bullets,...(reconciledSlide.quote?.text?[reconciledSlide.quote.text]:[]),...reconciledSlide.visual.data.map((datum)=>datum.value),...(["hero-type","metric"].includes(reconciledSlide.visual.kind)&&reconciledSlide.visual.value.trim()?[reconciledSlide.visual.value]:[]));
     return{
       ...item,
       title:audiencePresentationText(item.title),
@@ -633,14 +651,38 @@ function resolveProviderPresentationSources(output:DocumentArtifactDraft|null,co
   };
 }
 
-function presentationSourceSupplementalIssues(output:DocumentArtifactDraft|null,contract:PresentationSourceContract,receipt:PresentationSlideSourceResolutionReceipt,options:{complete:boolean;requestedStyle?:SlideStylePresetId;pageStart:number}):DocumentArtifactValidationIssue[]{
+function presentationSourceSupplementalIssues(output:DocumentArtifactDraft|null,contract:PresentationSourceContract,receipt:PresentationSlideSourceResolutionReceipt,options:{complete:boolean;requestedStyle?:SlideStylePresetId;pageStart:number;productionScenes?:readonly ProductionScene[]}):DocumentArtifactValidationIssue[]{
   const issues:DocumentArtifactValidationIssue[]=[];
-  if(receipt.unknownAssignments.length)issues.push({code:"unknown_source_reference",path:"items.slide.source_ids",message:"At least one slide references a source alias that was not authorized for this request."});
+  if(receipt.unknownAssignments.length){
+    const unknown=new Set(receipt.unknownAssignments);
+    const positions=receipt.rawAssignments.flatMap((references,index)=>references.some((reference)=>unknown.has(reference))?[index]:[]);
+    if(positions.length)for(const index of positions)issues.push({code:"unknown_source_reference",path:`items.${index}.slide.source_ids`,message:`Slide ${options.pageStart+index+1} references a source alias that was not authorized for this request.`});
+    else issues.push({code:"unknown_source_reference",path:"items.slide.source_ids",message:"At least one slide references a source alias that was not authorized for this request."});
+  }
   if(!output)return issues;
   if(options.requestedStyle&&output.presentation?.stylePreset!==options.requestedStyle)issues.push({code:"presentation_style_mismatch",path:"presentation.style_preset",message:`The presentation must use the explicitly selected ${options.requestedStyle} style.`});
   for(const [index,item] of output.items.entries()){
     const expected=contract.numberedOutline.find((source)=>source.number===options.pageStart+index+1);
     if(expected&&item.slide?.sourceOrder&&item.slide.sourceOrder!==expected.number)issues.push({code:"incorrect_slide_order",path:`items.${index}.slide.source_order`,message:`Slide ${options.pageStart+index+1} does not preserve its authored outline position.`});
+    const scene=options.productionScenes?.[index];
+    if(scene&&item.slide){
+      const allowedBlocks=new Set(scene.sourceBlockIds);
+      const allowedGroups=new Set(scene.contextGroupIds);
+      const references=uniquePresentationReferences([
+        ...(item.slide.sourceIds??[]),
+        item.slide.quote?.sourceId,
+        ...(item.slide.citations??[]).map((citation)=>citation.sourceId),
+        ...item.slide.visual.data.flatMap((datum)=>datum.sourceIds??[]),
+      ]);
+      const foreignSource=references.some((reference)=>{
+        const source=contract.sources.find((candidate)=>candidate.sourceId===reference);
+        if(!source)return true;
+        if(source.sourceKind==="context-group")return!allowedGroups.has(source.sourceId);
+        return!allowedBlocks.has(source.sourceKind==="block"?source.sourceId:source.blockId??"");
+      });
+      if(foreignSource)issues.push({code:"incorrect_slide_source",path:`items.${index}.slide.source_ids`,message:`Slide ${options.pageStart+index+1} includes source evidence assigned to a different presentation chapter.`});
+      if((item.context_group_ids??[]).some((groupId)=>!allowedGroups.has(groupId)))issues.push({code:"incorrect_context_group_assignment",path:`items.${index}.context_group_ids`,message:`Slide ${options.pageStart+index+1} includes Combined Context assigned to a different presentation chapter.`});
+    }
   }
   if(!options.complete)return issues;
   const markdown=output.content_markdown;
@@ -688,13 +730,14 @@ export function assessStoredPresentationCandidate(raw:string,snapshot:Record<str
     itemCount,
     contextGroupIds:groups.map((group)=>group.id),
     unknownContextGroupAssignments:groupResolution.receipt.unknownAssignments,
+    rawContextGroupAssignments:groupResolution.receipt.rawAssignments,
     sourceContract,
     sourcePageStart:page?.globalStartIndex??0,
     sourcePageSize:itemCount,
     requireSourceGrounding:sourceContract.sources.some((source)=>source.sourceKind==="block"),
     requireAllProtectedContent:complete,
   });
-  issues.push(...presentationSourceSupplementalIssues(output,sourceContract,sourceResolution.receipt,{complete,requestedStyle,pageStart:page?.globalStartIndex??0}));
+  issues.push(...presentationSourceSupplementalIssues(output,sourceContract,sourceResolution.receipt,{complete,requestedStyle,pageStart:page?.globalStartIndex??0,productionScenes:options.productionScenes}));
   return{output,issues,groupResolution:groupResolution.receipt,sourceResolution:sourceResolution.receipt};
 }
 
@@ -814,6 +857,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       contextGroupIds:groupIds,
       ...(sourceContract?{
         unknownContextGroupAssignments:groupResolution.receipt.unknownAssignments,
+        rawContextGroupAssignments:groupResolution.receipt.rawAssignments,
         sourceContract,
         sourcePageStart:page?.globalStartIndex??0,
         sourcePageSize:itemCount,
@@ -821,7 +865,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
         requireAllProtectedContent:completeSourceCoverage,
       }:{}),
     });
-    if(sourceContract&&sourceResolution)issues.push(...presentationSourceSupplementalIssues(output,sourceContract,sourceResolution.receipt,{complete:completeSourceCoverage,requestedStyle:selectedStyle,pageStart:page?.globalStartIndex??0}));
+    if(sourceContract&&sourceResolution)issues.push(...presentationSourceSupplementalIssues(output,sourceContract,sourceResolution.receipt,{complete:completeSourceCoverage,requestedStyle:selectedStyle,pageStart:page?.globalStartIndex??0,productionScenes:managedScenes}));
     return{output,groupResolution:groupResolution.receipt,sourceResolution:sourceResolution?.receipt??null,issues};
   };
 
@@ -868,8 +912,12 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
 
   const finalIssues=repairAttempted?repairIssues:initialIssues;
   if(finalIssues.length||!output){
-    const knownIdentifiers=sourceContract?[...groupContracts.map((contract)=>({id:contract.id,alias:"[authorized context]"})),...sourceContract.sources.map((source)=>({id:source.sourceId,alias:"[authorized source]"}))]:[];
-    const diagnostic=finalIssues.map((issue)=>`${issue.code} at ${issue.path}: ${knownIdentifiers.reduce((message,contract)=>message.replaceAll(contract.id,contract.alias),issue.message)}`).join(" | ");
+    const issueMetadata={pageIndex:page?.pageIndex??0,pageCount:page?.pageCount??1,globalStartIndex:page?.globalStartIndex??0};
+    const validationIssues=[
+      ...safePresentationCandidateIssues(initialIssues,{...issueMetadata,providerAttempt:1,stage:"initial"}),
+      ...safePresentationCandidateIssues(repairIssues,{...issueMetadata,providerAttempt:2,stage:"repair"}),
+    ];
+    const diagnostic=validationIssues.map((issue)=>`${issue.code} at ${issue.path}: ${issue.message}`).join(" | ");
     const sourceFailure=kind==="slides"&&finalIssues.some((issue)=>/source|citation|context_group|precision|protected|scorecard|quote|exact|display|roadmap|terminology|markdown|style|slide_count|slide_order/iu.test(issue.code));
     throw new ProviderRequestError({
       code:sourceFailure?"source_fidelity_validation_failed":"provider_returned_incomplete_document_artifact",
@@ -881,6 +929,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       retryAfterMs:null,
       requestId:null,
       httpStatus:502,
+      ...(validationIssues.length?{validationIssues}:{}),
     },`Document ${kind} instructions:\n${instructions}\n\nCreative context:\n${providerInput}\n\nValidation:\n${diagnostic}`,paidAccounting());
   }
   const usageBodies=paidResponses;

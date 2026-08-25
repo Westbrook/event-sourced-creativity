@@ -9,6 +9,12 @@ import "./output-visual";
 import "./project-rail";
 
 export class FormaDeliver extends FormaElement {
+  override connectedCallback() {
+    super.connectedCallback();
+    if (!this.store.session.get()) return;
+    void this.store.refreshEvents().catch(() => undefined);
+  }
+
   #open(path: string) { this.store.setRoute(path); }
 
   override render() {

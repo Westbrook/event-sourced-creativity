@@ -389,7 +389,7 @@ forma-ui-audience-navigation:empty { display: none; }
 .qualification-evidence-table table { inline-size: 100%; border-collapse: collapse; }
 .qualification-evidence-table :is(th,td) { padding: var(--forma-space-3, .75rem); border-block-end: 1px solid var(--line); text-align: start; vertical-align: top; }
 .qualification-evidence-table caption { padding-block-end: var(--forma-space-3, .75rem); color: var(--muted); text-align: start; }
-.design-synthetic-notice { padding: var(--forma-space-3, .75rem); border-inline-start: 3px solid var(--forma-color-accent, var(--accent)); }
+.design-synthetic-notice { padding: var(--forma-space-3, .75rem); background: color-mix(in srgb, var(--forma-color-accent, var(--accent)) 7%, var(--forma-color-surface, var(--panel))); border: 1px solid color-mix(in srgb, var(--forma-color-accent, var(--accent)) 35%, var(--forma-color-border, var(--line))); border-radius: var(--forma-radius-medium, .625rem); }
 .design-architecture-examples { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr)); gap: var(--forma-space-4, 1rem); }
 .design-architecture-examples > article { display: grid; min-block-size: 7.5rem; align-content: start; gap: var(--forma-space-3, .75rem); padding: var(--forma-space-4, 1rem); border: 1px solid var(--line); }
 .design-architecture-examples > article h3 { margin: 0; font-size: var(--type-small); }
@@ -1224,7 +1224,6 @@ forma-project-rail {
 
 .context-block.brief-focus {
   background: var(--orange-soft);
-  border-bottom-color: var(--orange);
   box-shadow: none;
 }
 
@@ -1964,7 +1963,7 @@ forma-document-generations { display: block; min-width: 0; }
   border-top: 1px solid var(--line);
 }
 
-.view-workflow-list article.preferred { border-top-color: var(--orange); }
+.view-workflow-list article.preferred { padding: 1rem; background: color-mix(in srgb, var(--orange) 6%, var(--panel)); border: 1px solid color-mix(in srgb, var(--orange) 35%, var(--line)); border-radius: var(--forma-radius-medium, .625rem); }
 .view-workflow-list article header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem 1rem; }
 .view-workflow-list article header span { color: var(--orange); font-size: var(--type-micro); font-weight: 700; text-transform: uppercase; }
 .view-workflow-list article > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; margin-top: 1rem; }
@@ -1981,12 +1980,11 @@ forma-document-generations { display: block; min-width: 0; }
 .workflow-memory-list em { flex: 0 0 auto; color: var(--forest-2); font: normal var(--type-caption) var(--mono); }
 .workflow-memory-policy { display: block; margin-top: 1rem; color: var(--muted); }
 
-/* Active evidence uses a complete horizontal rule, never a simulated inset edge on rounded cards. */
+/* Active evidence is emphasized evenly around its complete perimeter. */
 .observation-card,
 .belief-card {
-  border: 0;
-  border-top: 2px solid var(--observation-accent, var(--belief-accent, var(--line-strong)));
-  border-radius: 0;
+  border: 1px solid var(--observation-accent, var(--belief-accent, var(--line-strong)));
+  border-radius: var(--forma-radius-medium, .625rem);
   box-shadow: none;
 }
 
@@ -3674,7 +3672,7 @@ img, video, canvas { max-width: 100%; }
 .analytics-source-note span { color: var(--orange); font-size: var(--type-caption); font-weight: 650; text-transform: uppercase; letter-spacing: .04em; }
 .analytics-source-note p { margin: 0; color: var(--muted); font-size: var(--type-small); text-align: right; }
 .analytics-loading,.analytics-error,.analytics-empty { padding-block: clamp(2rem,5vw,4rem); }
-.analytics-error { color: var(--danger); border-bottom: 1px solid var(--line); }
+.analytics-error { padding-inline: 1rem; color: var(--danger); background: color-mix(in srgb, var(--danger) 5%, var(--panel)); border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--line)); border-radius: var(--forma-radius-medium, .625rem); }
 .analytics-error p,.analytics-empty p { margin: .3rem 0 0; color: var(--muted); }
 .analytics-overview { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 0; border-bottom: 1px solid var(--line); }
 .analytics-overview > div,.analytics-cost-summary > div,.analytics-block-grid > div,.analytics-readiness-outcomes > div { display: grid; min-width: 0; gap: .25rem; padding: clamp(1.25rem,3vw,2.5rem) clamp(.75rem,2vw,1.75rem); }
@@ -3724,7 +3722,7 @@ img, video, canvas { max-width: 100%; }
 .analytics-evidence-route { display: inline-flex; align-items: center; gap: .35rem; margin-top: 1.25rem; color: var(--ink); font-size: var(--type-small); font-weight: 600; text-decoration-thickness: 1px; text-underline-offset: .2em; }
 .analytics-evidence-route:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .analytics-benefits > div { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: clamp(1.5rem,3vw,3rem); }
-.analytics-benefits article { min-width: 0; padding-top: 1rem; border-top: 2px solid var(--orange); }
+.analytics-benefits article { min-width: 0; padding: 1rem; background: color-mix(in srgb, var(--orange) 5%, var(--panel)); border: 1px solid color-mix(in srgb, var(--orange) 35%, var(--line)); border-radius: var(--forma-radius-medium, .625rem); }
 .analytics-benefits article > b { display: block; margin-bottom: 1.25rem; color: var(--ink); font-size: clamp(1.5rem,3vw,2.3rem); font-weight: 560; }
 .analytics-reliability-grid { display: grid; grid-template-columns: minmax(18rem,1.4fr) minmax(15rem,.7fr) minmax(15rem,.8fr); gap: clamp(2rem,5vw,5rem); align-items: start; }
 .analytics-reliability h3,.analytics-failure-surfaces h3 { margin: 0 0 1rem; font-family: var(--sans); font-size: var(--type-lede); font-weight: 560; }
@@ -4258,7 +4256,7 @@ forma-ui-button .button { max-width: 100%; }
 .shared-presentation-reader>article :is(h3,h4,p,ul,figure,blockquote,dl){min-width:0;margin:0;overflow-wrap:anywhere}
 .shared-presentation-reader>article dl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.45rem .75rem}
 .shared-presentation-reader>article :is(dt,dd){margin:0}
-.shared-presentation-reader>article blockquote{padding-inline-start:1rem;border-inline-start:.2rem solid var(--accent)}
+.shared-presentation-reader>article blockquote{padding:.75rem 1rem;background:color-mix(in srgb,var(--accent) 6%,var(--paper));border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:var(--forma-radius-medium,.625rem)}
 .shared-presentation-reader>article section{display:grid;gap:.45rem}
 .shared-presentation-dialog[data-output-focus="true"]>.shared-presentation-card{width:100dvi;height:100dvb;max-height:100dvb;margin:0;padding-block-start:max(.35rem,env(safe-area-inset-top,0px));padding-block-end:max(.35rem,env(safe-area-inset-bottom,0px));padding-inline-start:max(.45rem,var(--forma-safe-inline-start,0px));padding-inline-end:max(.45rem,var(--forma-safe-inline-end,0px));border:0;border-radius:0}
 @media(max-width:30rem){

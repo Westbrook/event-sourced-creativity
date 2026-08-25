@@ -80,7 +80,7 @@
 .focal-lab-method code { font-family: var(--mono); font-size: var(--type-micro); }
 .focal-lab-implementations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2rem; }
 .focal-lab-implementations article { padding-top: 1rem; border-top: 2px solid var(--line-strong); }
-.focal-lab-implementations article:first-child { border-top-color: var(--orange); }
+.focal-lab-implementations article:first-child { padding: 1rem; background: color-mix(in srgb, var(--orange) 6%, var(--panel)); border: 1px solid color-mix(in srgb, var(--orange) 35%, var(--line)); border-radius: var(--forma-radius-medium, .625rem); }
 .focal-lab-implementations article > span { color: var(--muted); font-size: var(--type-micro); }
 .focal-lab-implementations h3 { margin: .35rem 0 .65rem; font: 650 var(--type-heading) var(--sans); }
 .focal-lab-implementations p { margin: 0; color: var(--muted); line-height: 1.55; }
@@ -211,7 +211,7 @@
 .legend-legacy { margin-left: .35rem; background: transparent; border-style: dashed; }
 .focal-lab-results { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(1rem, 2vw, 2rem); }
 .focal-lab-result { min-width: 0; padding-top: .8rem; border-top: 2px solid var(--line-strong); }
-.focal-lab-result.recommended { border-top-color: var(--orange); }
+.focal-lab-result.recommended { padding: 1rem; background: color-mix(in srgb, var(--orange) 6%, var(--panel)); border: 1px solid color-mix(in srgb, var(--orange) 35%, var(--line)); border-radius: var(--forma-radius-medium, .625rem); }
 .focal-lab-result > header { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; margin-bottom: .8rem; }
 .focal-lab-result > header span { color: var(--muted); font-size: var(--type-micro); }
 .focal-lab-result > header h3 { margin: .2rem 0 0; font: 650 var(--type-heading) var(--sans); }

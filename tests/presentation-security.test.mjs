@@ -18,6 +18,7 @@ import {
   resolvePresentationSourceReferences,
 } from "../src/model/presentation-source.ts";
 import { publicEventPayload } from "../worker/event-privacy.ts";
+import { assessStoredPresentationCandidate } from "../worker/openai-adapter.ts";
 
 const authorizedBlock = "PRIVATE_AUTHORIZED_BLOCK_9137";
 const authorizedGroup = "PRIVATE_AUTHORIZED_GROUP_9137";
@@ -116,6 +117,30 @@ test("guessed durable source identifiers and foreign aliases cannot authenticate
     assert.deepEqual(rejected.sourceIds, []);
     assert.deepEqual(rejected.unknownReferences, [guessed]);
   }
+});
+
+test("hero visual normalization cannot authenticate a foreign evidence alias after discarding its original data row",()=>{
+  const snapshot={facts:[{block_id:authorizedBlock,type:"message",locked:true,properties:{label:"Approved source evidence",text:"Authorized customer-approved product decision."}}]};
+  const presentation={aspect_ratio:"16:9",theme:"Authorized presentation",footer_label:"Authorized evidence",style_preset:"editorial",mode:"light",palette:{background:"#ffffff",foreground:"#111111",accent:"#2255aa",muted:"#555555",surface:"#eeeeee"}};
+  const raw=JSON.stringify({title:"Approved briefing",summary:"Authorized product conclusion",content_markdown:"# Approved briefing",presentation,items:[{title:"Approved product conclusion",body:"",notes:"",image_prompt:"",context_group_ids:[],slide:{layout:"statement",kicker:"Independent evidence",bullets:[],visual:{kind:"hero-type",label:"Source finding",value:"Approved product conclusion",data:[{label:foreignSecret,value:"",source_ids:["blk_999"]}]}}}]});
+  const scene=buildManagedProductionPlan("slides",snapshot,{requestedSlideCount:1}).scenes;
+  const assessed=assessStoredPresentationCandidate(raw,snapshot,{itemCount:1,requestedSlideCount:1,productionScenes:scene});
+  assert.ok(assessed.issues.some((issue)=>issue.code==="unknown_source_reference"),"promoted hero text must retain its foreign provider source alias for authorization validation");
+  assert.ok(assessed.sourceResolution.unknownAssignments.includes("blk_999"));
+});
+
+test("a globally valid source alias cannot cross an isolated managed presentation chapter",()=>{
+  const blocks=["PRIVATE_CHAPTER_SOURCE_A_9137","PRIVATE_CHAPTER_SOURCE_B_9137"];
+  const groups=["PRIVATE_CHAPTER_GROUP_A_9137","PRIVATE_CHAPTER_GROUP_B_9137"];
+  const snapshot={facts:blocks.map((blockId,index)=>({block_id:blockId,type:"message",locked:true,properties:{label:`Approved chapter evidence ${index+1}`,text:`Authorized source evidence for isolated presentation position ${index+1}.`,combined_context_memberships:[{context_set_id:groups[index],name:`Chapter ${index+1}`,target:`Slide ${index+1}`,role:"slide_chapter",application:"isolate",member_order:index}]}}))};
+  const plan=buildManagedProductionPlan("slides",snapshot,{requestedSlideCount:2});
+  const contract=buildPresentationSourceContract(snapshot,{requestedSlideCount:2,itemCount:2});
+  const aliases=blocks.map((blockId)=>contract.sources.find((source)=>source.sourceKind==="block"&&source.sourceId===blockId)?.alias);
+  const presentation={aspect_ratio:"16:9",theme:"Isolated evidence",footer_label:"Authorized chapters",style_preset:"editorial",mode:"light",palette:{background:"#ffffff",foreground:"#111111",accent:"#2255aa",muted:"#555555",surface:"#eeeeee"}};
+  const raw=JSON.stringify({title:"Isolated presentation",summary:"Two independently isolated chapters.",content_markdown:"# Isolated presentation",presentation,items:blocks.map((_blockId,index)=>({title:`Distinct chapter ${index+1}`,body:`Independent approved decision ${index+1}.`,notes:"",image_prompt:"",context_group_ids:[`context_group_${index+1}`],slide:{layout:"statement",kicker:`Authored stage ${index+1}`,bullets:[],source_ids:index===0?[aliases[0],aliases[1]]:[aliases[1]],visual:{kind:"hero-type",label:`Approved finding ${index+1}`,value:`Independent insight ${index+1}`,data:[]}}}))});
+  const assessed=assessStoredPresentationCandidate(raw,snapshot,{itemCount:2,requestedSlideCount:2,productionScenes:plan.scenes});
+  assert.ok(assessed.issues.some((issue)=>issue.code==="incorrect_slide_source"&&issue.path==="items.0.slide.source_ids"),"all canonical source references must belong to the slide's assigned isolated chapter");
+  assert.ok(assessed.issues.some((issue)=>issue.code==="incorrect_context_group_assignment"),"foreign source aliases must not silently attach an unrelated Combined Context chapter");
 });
 
 test("managed presentation limits never silently discard authored slides and expose bounded call reservations", () => {
@@ -225,6 +250,31 @@ test("public presentation receipts preserve accounting without exposing actor-pr
   assert.equal(event.payload.used_microusd, 81_250);
   assert.doesNotMatch(JSON.stringify(event.payload), /PRIVATE_|CUSTOMER_(?:ACCOUNT_)?SECRET|providerInput|sourceAliasMap|blk_001/);
   assert.match(event.privateJson, /PRIVATE_AUTHORIZED_BLOCK_9137/);
+});
+
+test("public presentation failure events retain safely reconstructed slide-level diagnostics without private source text",()=>{
+  const event=publicEventPayload("event-presentation-validation-security",{
+    document_id:"document-9137",
+    error_code:"source_fidelity_validation_failed",
+    validation_issues:[{
+      code:"unknown_source_reference",path:"items.2.slide.source_ids",message:`Provider exposed ${authorizedBlock} and ${mutedSecret}`,
+      category:"presentation-preference",blocking:false,overridable:true,pageIndex:0,pageCount:1,globalSlideIndex:3,
+      providerAttempt:1,stage:"initial",source_id:authorizedBlock,
+    },{
+      code:"unknown_context_group_reference",path:`items.${authorizedGroup}.context_group_ids`,message:foreignSecret,
+      category:"structure",blocking:false,overridable:true,pageIndex:0,pageCount:1,globalSlideIndex:4,
+      providerAttempt:2,stage:"repair",provider_prompt:mutedSecret,
+    }],
+  });
+  assert.equal(event.payload.validation_issues.length,2);
+  assert.deepEqual(event.payload.validation_issues.map((issue)=>issue.stage),["initial","repair"]);
+  assert.equal(event.payload.validation_issues[0].globalSlideIndex,3);
+  assert.equal(event.payload.validation_issues[0].category,"authorization");
+  assert.equal(event.payload.validation_issues[0].blocking,true);
+  assert.equal(event.payload.validation_issues[0].overridable,false);
+  assert.equal(event.payload.validation_issues[1].path,"$");
+  assert.doesNotMatch(JSON.stringify(event.payload),/PRIVATE_|CUSTOMER_(?:ACCOUNT_)?SECRET|provider_prompt|source_id"\s*:/u);
+  assert.match(event.privateJson,/PRIVATE_AUTHORIZED_BLOCK_9137/u,"original authored material remains solely inside the erasable private envelope");
 });
 
 test("anonymous presentation shares retain visible evidence while recursively removing durable source, claim, and group identifiers",()=>{
