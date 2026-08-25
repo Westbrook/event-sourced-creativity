@@ -18,6 +18,14 @@ const fontResourceCache=new Map<string,Promise<string>>();
 const PRESENTATION_PDF_HIDDEN_SELECTOR="script,style,template,[hidden],[inert],[aria-hidden=\"true\"],[data-speaker-notes],[data-presentation-speaker-notes],.presentation-speaker-notes,.presentation-slide-speaker-notes";
 const PRESENTATION_PDF_HEADING_SELECTOR="h1,h2,h3,h4,h5,h6";
 const PRESENTATION_PDF_CHART_ROW_SELECTOR=".presentation-slide__chart-row,[data-presentation-chart-row]";
+const PRESENTATION_PDF_FIT_SELECTOR=".presentation-slide,.presentation-slide-body,.presentation-slide-body > section,.presentation-slide-body > aside,.presentation-slide__footnotes,.presentation-visual-fields,.presentation-slide__matrix";
+
+/** A tagged PDF must never claim evidence that its corresponding visible slide clips. */
+export const presentationPdfVisualContentFits=(host:Pick<HTMLElement,"querySelectorAll">)=>{
+  const surfaces=Array.from(host.querySelectorAll<HTMLElement>(PRESENTATION_PDF_FIT_SELECTOR));
+  return surfaces.length>0&&surfaces.every((surface)=>surface.clientWidth>0&&surface.clientHeight>0
+    &&surface.scrollWidth<=surface.clientWidth+1&&surface.scrollHeight<=surface.clientHeight+1);
+};
 
 const semanticText=(element:Element)=>String((element as HTMLElement).innerText??element.textContent??"").replace(/\s+/gu," ").trim();
 
@@ -347,7 +355,7 @@ const svgImage=async(host:PresentationSlide,css:string)=>{
     const computed=getComputedStyle(originalSlide);
     // Container-query units used on a container itself resolve against its
     // surrounding viewport. Preserve those resolved values inside the SVG.
-    for(const property of ["padding-top","padding-right","padding-bottom","padding-left","row-gap","column-gap"]){
+    for(const property of ["padding-top","padding-right","padding-bottom","padding-left","row-gap","column-gap","scale","translate","transform-origin"]){
       copiedSlide.style.setProperty(property,computed.getPropertyValue(property));
     }
   }
@@ -400,7 +408,7 @@ export async function renderPresentationPdf(items:DocumentArtifactDraftItem[],pr
 
     for(let index=0;index<items.length;index+=1){
       const host=document.createElement("forma-presentation-slide") as PresentationSlide;
-      host.style.cssText=`display:block;width:${PRESENTATION_PDF_PAGE_WIDTH}px;height:${PRESENTATION_PDF_PAGE_HEIGHT}px;`;
+      host.style.cssText=`display:block;width:${PRESENTATION_PDF_PAGE_WIDTH}px;height:${PRESENTATION_PDF_PAGE_HEIGHT}px;--presentation-slide-scale:1;`;
       host.item=items[index]!;
       host.presentation=presentation;
       host.index=index;
@@ -413,6 +421,7 @@ export async function renderPresentationPdf(items:DocumentArtifactDraftItem[],pr
       await waitForImages(host);
       await nextFrame();
       await document.fonts.ready;
+      if(!presentationPdfVisualContentFits(host))throw new Error("Protected slide content cannot be exported without visible clipping.");
       const loadedFonts=Array.from(document.fonts).filter((face)=>face.status==="loaded").map((face)=>`${face.family}:${face.style}:${face.weight}:${face.unicodeRange}`).join("|");
       if(!css||loadedFonts!==fontSignature){
         css=await documentStyles();

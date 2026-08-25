@@ -1,8 +1,12 @@
 import { authoritativeSlideDatumWeight, formatPresentationQuantity, type DocumentArtifactDraftItem, type SlidePresentation, type SlideVisualData } from "./document-artifacts.ts";
+import { PRESENTATION_CANVAS_HEIGHT, PRESENTATION_CANVAS_WIDTH } from "./presentation-layout.ts";
 import { localizedSourceAnchor } from "./source-anchor.ts";
 
 export const WORD_DOCUMENT_MIME="application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 export const POWERPOINT_DOCUMENT_MIME="application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const POWERPOINT_EMUS_PER_CANVAS_PIXEL=12_700;
+const POWERPOINT_SLIDE_WIDTH=PRESENTATION_CANVAS_WIDTH*POWERPOINT_EMUS_PER_CANVAS_PIXEL;
+const POWERPOINT_SLIDE_HEIGHT=PRESENTATION_CANVAS_HEIGHT*POWERPOINT_EMUS_PER_CANVAS_PIXEL;
 
 const encoder=new TextEncoder();
 const XML='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
@@ -258,7 +262,7 @@ export function createPowerPointDocument(items:DocumentArtifactDraftItem[],prese
   const colors:SlideColors={background,foreground,accent,accentInk:readableInk(background,accent),muted,surface,surfaceInk:readableInk(surface,foreground)};
   const contentTypes=[override("ppt/presentation.xml","application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"),override("ppt/slideMasters/slideMaster1.xml","application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"),override("ppt/slideLayouts/slideLayout1.xml","application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"),override("ppt/notesMasters/notesMaster1.xml","application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml"),override("ppt/theme/theme1.xml","application/vnd.openxmlformats-officedocument.theme+xml")];
   for(let index=0;index<items.length;index+=1){contentTypes.push(override(`ppt/slides/slide${index+1}.xml`,"application/vnd.openxmlformats-officedocument.presentationml.slide+xml"));contentTypes.push(override(`ppt/notesSlides/notesSlide${index+1}.xml`,"application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"));}
-  const deck=`${XML}<p:presentation xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:notesMasterIdLst><p:notesMasterId r:id="rId2"/></p:notesMasterIdLst><p:sldIdLst>${items.map((_,index)=>`<p:sldId id="${256+index}" r:id="rId${index+3}"/>`).join("")}</p:sldIdLst><p:sldSz cx="12192000" cy="6858000" type="screen16x9"/><p:notesSz cx="6858000" cy="9144000"/><p:defaultTextStyle/></p:presentation>`;
+  const deck=`${XML}<p:presentation xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:notesMasterIdLst><p:notesMasterId r:id="rId2"/></p:notesMasterIdLst><p:sldIdLst>${items.map((_,index)=>`<p:sldId id="${256+index}" r:id="rId${index+3}"/>`).join("")}</p:sldIdLst><p:sldSz cx="${POWERPOINT_SLIDE_WIDTH}" cy="${POWERPOINT_SLIDE_HEIGHT}" type="screen16x9"/><p:notesSz cx="6858000" cy="9144000"/><p:defaultTextStyle/></p:presentation>`;
   const deckRels=[relationship("rId1","slideMaster","slideMasters/slideMaster1.xml"),relationship("rId2","notesMaster","notesMasters/notesMaster1.xml"),...items.map((_,index)=>relationship(`rId${index+3}`,"slide",`slides/slide${index+1}.xml`))];
   const master=`${XML}<p:sldMaster xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"><p:cSld name="${escapeXml(translated("Forma master"))}"><p:spTree>${group}</p:spTree></p:cSld>${colorMap}<p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>`;
   const layout=`${XML}<p:sldLayout xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}" type="blank" preserve="1"><p:cSld name="${escapeXml(translated("Forma editable layout"))}"><p:spTree>${group}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>`;
@@ -310,6 +314,14 @@ export function createPowerPointDocument(items:DocumentArtifactDraftItem[],prese
     }
     sourceEntries.forEach((citation,ordinal)=>{const row=Math.floor(ordinal/citationColumns),column=ordinal%citationColumns,width=Math.floor(10450000/citationColumns),evidence=[citation.visible,citation.excerpt&&citation.excerpt!==citation.visible?citation.excerpt:""].filter(Boolean).join(" — ");shapes.push(shape(nextId(),`Editable evidence citation ${ordinal+1}`,`[${ordinal+1}] ${evidence}`,850000+column*width,citationTop+row*citationRowHeight,width-90000,citationRowHeight-10000,muted,1050,false,locale,rtl,{description:"Authorized source citation and evidence excerpt"},localization));});
     if(options.showFooterLabel&&presentation.footerLabel)shapes.push(shape(nextId(),"Editable footer",presentation.footerLabel,820000,6340000,9900000,270000,muted,1100,false,locale,rtl,{},localization));
+    for(const part of shapes){
+      const box=part.match(/<a:off x="(-?\d+)" y="(-?\d+)"\/><a:ext cx="(\d+)" cy="(\d+)"\/>/u);
+      if(!box)throw new Error("office_archive_slide_geometry_invalid");
+      const[x,y,width,height]=box.slice(1).map(Number) as [number,number,number,number];
+      if(![x,y,width,height].every(Number.isSafeInteger)||x<0||y<0||width<1||height<1||x+width>POWERPOINT_SLIDE_WIDTH||y+height>POWERPOINT_SLIDE_HEIGHT){
+        throw new Error("office_archive_slide_layout_overflow");
+      }
+    }
     const document=`${XML}<p:sld xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"><p:cSld name="${escapeXml(item.title||`${translated("Slide")} ${localization.number?.(index+1)??index+1}`)}"><p:bg><p:bgPr><a:solidFill><a:srgbClr val="${background}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg><p:spTree>${group}${shapes.join("")}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`;
     const noteLines=String(item.notes??"").split(/\r?\n/);
     if(slide?.quote?.text&&!noteLines.join("\n").includes(slide.quote.text)){noteLines.push("",`[${translated("Stakeholder quotation")}]`,slide.quote.text);const attribution=[slide.quote.speaker,slide.quote.role].filter((value,ordinal,values)=>value&&values.indexOf(value)===ordinal).join(" · ");if(attribution)noteLines.push(`— ${attribution}`);}

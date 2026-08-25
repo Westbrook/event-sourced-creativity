@@ -193,6 +193,30 @@ test("dense architecture bullets reflow without collisions or clipped editable l
   assert.ok(chapter.x+chapter.width<=number.x,"chapter and page number occupy separate horizontal space");
 });
 
+test("editable PowerPoint fails closed before protected architecture shapes leave the canonical slide",()=>{
+  const architecture=(count)=>({
+    title:"Complete protected source architecture",
+    body:"Every approved source claim must remain on the visible page.",
+    notes:"Retain all source-authored presenter evidence.",
+    image_prompt:"",
+    slide:{
+      layout:"architecture",
+      kicker:"Approved source evidence",
+      bullets:[],
+      visual:{
+        kind:"architecture",
+        label:"Source-grounded architecture",
+        value:"",
+        data:Array.from({length:count},(_,index)=>({label:`Protected category ${index+1}`,value:String(index+1),weight:.5})),
+      },
+    },
+  });
+  const excessive=architecture(48),approved=structuredClone(excessive);
+  assert.throws(()=>createPowerPointDocument([excessive],defaultSlidePresentation()),/office_archive_slide_layout_overflow/);
+  assert.deepEqual(excessive,approved,"an unsafe export never rewrites or drops approved source evidence");
+  assert.doesNotThrow(()=>createPowerPointDocument([architecture(24)],defaultSlidePresentation()));
+});
+
 test("roadmap duration remains editable and round-trippable exactly once without units on qualitative milestones",async()=>{
   const item={title:"A fully governed program",body:"Deliver independently useful milestones.",notes:"",image_prompt:"",slide:{layout:"roadmap",kicker:"Delivery",bullets:[],visual:{kind:"roadmap",label:"Program milestones",value:"",exactValue:"12–16",displayValue:"12–16 weeks",unit:"weeks",data:[{label:"1",value:"truth/baseline",weight:.25},{label:"2",value:"adaptive shell",weight:.5},{label:"3",value:"secure Activity",weight:.75},{label:"4",value:"phone Work/Chat",weight:1}]}}};
   const bytes=createPowerPointDocument([item],defaultSlidePresentation("field-notes")),slide=verifyOfficeArchive(bytes).get("ppt/slides/slide1.xml");

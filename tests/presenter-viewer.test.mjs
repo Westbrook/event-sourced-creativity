@@ -64,6 +64,8 @@ test("source evidence resolves only authorized blocks in the current document an
   assert.match(source, /Some source references could not be verified against this document\./, "unresolvable source aliases must not appear valid");
   assert.match(source, /No authorized source evidence was retained for this slide\./, "missing slide-level provenance must be disclosed");
   assert.match(source, /presentation-deck-source-chip/, "authorized source labels must remain individually inspectable");
+  assert.match(source, /authorizedPresentationCitations\(citations,reference,source\.label\)/, "all approved citations for each authorized source must remain visible");
+  assert.match(source, /for\(const citation of matches\.length\?matches:\[undefined\]\)/, "multiple approved excerpts must not collapse into a single source disclosure");
   assert.match(source, /OPAQUE_SOURCE_LABEL/, "opaque provider aliases and durable UUIDs must never become source labels");
   assert.match(source, /visibleSourceLabel\(membership\.name,\s*this\.i18n\.system\(["']Authored context["']\)\)/, "opaque context aliases require a safe, localized human-readable fallback");
   assert.match(source, /visibleSourceLabel\(citation\?\.label/, "opaque citation aliases require privacy-preserving label filtering");

@@ -49,6 +49,7 @@ export class FormaWorkspace extends FormaElement {
   #drawerInspectorOpen=false;
   #compactInspector=false;
   #narrowWorkbench=false;
+  #artifactViewerOpen=false;
   #workbenchPane:"write"|"result"|"review"="write";
   #inspectorObserver?:ResizeObserver;
   #inspectorObserved?:Element;
@@ -83,6 +84,16 @@ export class FormaWorkspace extends FormaElement {
 
   #selectWorkbenchPane(pane:"write"|"result"|"review"){
     this.#workbenchPane=pane;
+    this.requestUpdate();
+  }
+
+  #setArtifactViewerOpen(open:boolean){
+    if(this.#artifactViewerOpen===open)return;
+    this.#artifactViewerOpen=open;
+    if(open&&this.#workbenchPane==="write"){
+      this.#selectWorkbenchPane("result");
+      return;
+    }
     this.requestUpdate();
   }
 
@@ -336,7 +347,7 @@ export class FormaWorkspace extends FormaElement {
     }
     const blockingIssue=health.issues.find((issue)=>issue.severity==="blocking");
     const artifactFirst=!previewProgress&&(failedTasks.length>0&&!selectedItem||p.artifacts.length>0&&(!selectedItem||(!this.store.ui.selectedOutputId&&p.artifacts[0]!.sequence>=selectedItem.sequence)));
-    const artifactGallery=html`<forma-document-artifacts compact source="document" @document-artifact-open=${()=>{if(this.#workbenchPane==="write")this.#selectWorkbenchPane("result");}}></forma-document-artifacts>`;
+    const artifactGallery=html`<forma-document-artifacts compact source="document" @document-artifact-open=${()=>{if(this.#workbenchPane==="write")this.#selectWorkbenchPane("result");}} @document-artifact-viewer-open=${()=>this.#setArtifactViewerOpen(true)} @document-artifact-close=${()=>this.#setArtifactViewerOpen(false)}></forma-document-artifacts>`;
     const visualResult=previewProgress?html`<div class="output-card primary streaming-output-card" data-forma-content="primary"><div class="output-art"><div class="streaming-preview"><img class="streaming-preview-image" src=${previewProgress.mediaUrl} width=${previewProgress.width} height=${previewProgress.height} alt="Early image preview still being refined"><span>Early preview · finalizing</span></div></div><div class="output-info"><div><span class="output-quality draft">Draft arriving</span><b>The plan is becoming visible</b><small>The finished draft will appear here automatically.</small></div></div></div>`:selectedItem?.kind==="fan"?html`<article class="output-card primary prompt-fan-output-card" data-forma-content="primary"><forma-prompt-fan-visual .outputs=${selectedItem.outputs}></forma-prompt-fan-visual><div class="output-info"><div><span class=${`output-quality ${selectedItem.purpose==="ideate"?"draft":"full"}`}>${selectedItem.purpose==="ideate"?this.i18n.system("Draft fan"):this.i18n.system("Full-quality fan")}</span><b>One generation · four prompt processes</b><small>${selectedItem.complete} of 4 ready · ${selectedItem.standaloneCount} promoted to stand alone</small></div></div><forma-prompt-fan-review .fanId=${selectedItem.id}></forma-prompt-fan-review></article>`:output ? html`<forma-output-card data-forma-content="primary" .output=${output} .primary=${true}></forma-output-card>` : p.artifacts.length ? nothing : html`<div class="empty-output" data-forma-empty-state><span>${icon("image")}</span><h3>${p.blocks.length ? this.i18n.system("Context is ready") : this.i18n.system("A genuinely blank canvas")}</h3><p>${p.blocks.length ? this.i18n.system("Your creative decisions are ready to become an image or another finished result.") : this.i18n.system("Nothing has been added yet. Start only when you are ready.")}</p></div>`;
     return html`<section class="workspace-page" data-workbench="document">
       <forma-project-rail surface="studio" destination="/" @edit-project=${()=>this.#openProjectSettings()}></forma-project-rail>
@@ -361,7 +372,7 @@ export class FormaWorkspace extends FormaElement {
             ${p.blocks.length?html`<div class="document-insight"><span>${icon("branch")}</span><p>${documentInsight}</p>${canAuthor?html`<button @click=${()=>this.store.setRoute("/studio/board")}>See spatially ${icon("arrow")}</button>`:nothing}</div>`:nothing}
             <details class="context-provenance"><summary>How these decisions are preserved</summary><div class="compile-bridge"><span>${icon("branch")}</span><div><b>Traceable creative history</b><small>${p.latestCompile ? this.i18n.system("The latest result retains its exact creative inputs") : this.i18n.system("Every decision will remain available with its next result")}</small></div><button @click=${() => this.store.patchUi({ inspectorOpen:true })}>Inspect</button></div></details>
           </section>
-          <section id="document-results-panel" class="output-column" aria-labelledby="output-title" ?hidden=${this.#narrowWorkbench&&this.#workbenchPane==="write"}><div class="section-heading"><div><span class="eyebrow">${this.store.session.get()?.provider.configured ? `${this.i18n.system("Images, stories, presentations & motion")} · ${this.i18n.t("artifact.audio.label", "Audio")}` : this.i18n.system("Connect a provider to begin")}</span><h2 id="output-title">Your results</h2></div><div class="output-heading-actions"><button class="text-button" ?disabled=${!canCompare} title=${canCompare?this.i18n.system("Compare output history"):this.i18n.system("Generate one more output to compare")} @click=${this.#compare}>Compare history</button><button type="button" class="button secondary compact document-inspector-toggle" aria-controls="document-workbench-inspector" aria-expanded=${this.#workbenchInspectorOpen} @click=${()=>this.#toggleWorkbenchInspector()}>${this.i18n.t(this.#workbenchInspectorOpen?"workbench.hideInspector":"workbench.showInspector",this.#workbenchInspectorOpen?"Hide overview":"Show overview")}</button></div></div>
+          <section id="document-results-panel" class="output-column" aria-labelledby="output-title" ?hidden=${this.#narrowWorkbench&&this.#workbenchPane==="write"&&!this.#artifactViewerOpen}><div class="section-heading"><div><span class="eyebrow">${this.store.session.get()?.provider.configured ? `${this.i18n.system("Images, stories, presentations & motion")} · ${this.i18n.t("artifact.audio.label", "Audio")}` : this.i18n.system("Connect a provider to begin")}</span><h2 id="output-title">Your results</h2></div><div class="output-heading-actions"><button class="text-button" ?disabled=${!canCompare} title=${canCompare?this.i18n.system("Compare output history"):this.i18n.system("Generate one more output to compare")} @click=${this.#compare}>Compare history</button><button type="button" class="button secondary compact document-inspector-toggle" aria-controls="document-workbench-inspector" aria-expanded=${this.#workbenchInspectorOpen} @click=${()=>this.#toggleWorkbenchInspector()}>${this.i18n.t(this.#workbenchInspectorOpen?"workbench.hideInspector":"workbench.showInspector",this.#workbenchInspectorOpen?"Hide overview":"Show overview")}</button></div></div>
             ${this.#workbenchPane==="review"?html`<section class="document-workbench-review" aria-label=${this.i18n.t("workbench.reviewQueue","Review queue")}>${documentReviews.length?documentReviews.map((review)=>html`<article data-forma-content="primary"><b dir="auto">${review.artifactTitle}</b><button type="button" class="button secondary compact" @click=${()=>void this.store.openAssignedReview(review)}>${this.i18n.t("activity.openReview","Open assigned review")}</button></article>`):html`<p data-forma-empty-state>${this.i18n.t("workbench.noTasks","No active tasks")}</p>`}</section>`:nothing}
             ${artifactFirst?nothing:visualResult}
             ${artifactGallery}

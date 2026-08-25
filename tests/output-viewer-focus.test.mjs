@@ -3,8 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
-const [artifacts, deck, output, outputCard, canvas, shared, styles, canvasStyles, design, visualFixture] = await Promise.all([
+const [artifacts, workspace, deck, output, outputCard, canvas, shared, styles, canvasStyles, design, responsive, visualFixture] = await Promise.all([
   read("../src/components/document-artifacts.ts"),
+  read("../src/components/forma-workspace.ts"),
   read("../src/components/presentation-deck.ts"),
   read("../src/components/output-visual.ts"),
   read("../src/components/output-card.ts"),
@@ -13,6 +14,7 @@ const [artifacts, deck, output, outputCard, canvas, shared, styles, canvasStyles
   read("../src/styles.css"),
   read("../src/canvas/canvas.css"),
   read("../src/design-system.css"),
+  read("../src/responsive-foundation.css"),
   read("./presentation-pdf.fixture.mjs"),
 ]);
 
@@ -73,6 +75,41 @@ test("the governed artifact dialog exposes reversible focused viewing for every 
   assert.match(styles, /\.document-artifact-view \.artifact-storyboard img \{ object-fit:\s*contain/);
   assert.match(styles, /\.document-artifact-reader > footer > div > \.button\.primary \{ order:\s*-1/);
   assert.doesNotMatch(styles, /\.document-artifact-view\[data-output-focus="true"\][^{]*\.artifact-review-status[^}]*display:\s*none/, "approval status must remain visible while focused");
+});
+
+test("active artifact viewers retain a visible result-pane ancestor across responsive transitions",()=>{
+  const lifecycle=artifacts.slice(artifacts.indexOf("protected override updated()"),artifacts.indexOf("  #bindCompletedWorkflowStage()"));
+  const opening=lifecycle.indexOf("document-artifact-viewer-open");
+  const promotion=lifecycle.indexOf("ensureModalDialog(view)");
+  assert.ok(opening>=0,"the viewer announces its ownership to the workbench");
+  assert.ok(promotion>opening,"the result pane is protected before native modal promotion");
+  assert.match(lifecycle,/new CustomEvent\("document-artifact-viewer-open",\{bubbles:true,composed:true\}\)/);
+  assert.match(workspace,/#artifactViewerOpen=false/);
+  assert.match(workspace,/#setArtifactViewerOpen\(open:boolean\)\s*\{[\s\S]*?if\(this\.#artifactViewerOpen===open\)return;/);
+  assert.match(workspace,/@document-artifact-viewer-open=\$\{\(\)=>this\.#setArtifactViewerOpen\(true\)\}/);
+  assert.match(workspace,/@document-artifact-close=\$\{\(\)=>this\.#setArtifactViewerOpen\(false\)\}/);
+  assert.match(artifacts,/if\(opener\?\.isConnected\)opener\.focus\(\{preventScroll:true\}\);this\.dispatchEvent\(new CustomEvent\("document-artifact-close"/);
+  const expression=workspace.match(/id="document-results-panel"[^>]*\?hidden=\$\{([^}]*)\}/)?.[1];
+  assert.ok(expression,"the result-pane visibility expression remains explicit");
+  const runnable=expression.replaceAll("this.#narrowWorkbench","narrow").replaceAll("this.#workbenchPane","pane").replaceAll("this.#artifactViewerOpen","viewerOpen");
+  const hidden=new Function("narrow","pane","viewerOpen",`return ${runnable};`);
+  assert.equal(hidden(false,"write",false),false);
+  assert.equal(hidden(true,"write",false),true);
+  assert.equal(hidden(true,"result",true),false);
+  assert.equal(hidden(true,"write",true),false);
+});
+
+test("authenticated slides expose one readable surface with fixed reachable navigation",()=>{
+  assert.match(deck,/presentationRequiresReadingPosture\(width,height\)/);
+  assert.match(deck,/@presentation-slide-fit=\$\{this\.#slideFit\}/);
+  assert.match(deck,/reading\?this\.#reader\(current,index,true\):this\.#slide\(current,presentation,index,total\)/);
+  assert.match(deck,/class="presentation-deck-reading" tabindex="0"/);
+  assert.match(deck,/class="button secondary compact presentation-deck-reading-toggle" aria-pressed=\$\{reading\}/);
+  assert.match(deck,/target\?\.closest\("\.presentation-deck-reading"\)/);
+  assert.match(responsive,/\.presentation-deck-reading\s*\{[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/s);
+  assert.match(responsive,/\.presentation-deck--slideshow \.presentation-deck-stage\[data-slide-posture\][\s\S]*?grid-template-rows:\s*minmax\(0,1fr\) auto;/);
+  assert.match(responsive,/\.presentation-deck-toolbar\[data-tools-open="false"\]\s*>\s*div\s*\{\s*display:\s*none;/);
+  assert.match(responsive,/:is\(\.document-artifact-view,\.canvas-artifact-viewer\)\[data-artifact-kind="slides"\] \.presentation-deck--slideshow \.presentation-deck-stage\[data-slide-posture\]\s*\{[^}]*padding-inline-end:\s*calc\(var\(--forma-hit-target,2\.75rem\)\s*\+\s*\.875rem\)/s,"short-landscape action trays cannot cover the localized reading-mode toggle in either writing direction");
 });
 
 test("review, production disclosure, private inputs, and exact export gates remain available without occupying the initial stage", () => {

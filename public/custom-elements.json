@@ -9719,6 +9719,13 @@
                 "text": "CustomEvent<{ documentId: string; kind: \"audio\" | \"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\"; }>"
               },
               "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "document-artifact-viewer-open",
+              "type": {
+                "text": "CustomEvent<null>"
+              },
+              "description": "Bubbles and crosses component boundaries."
             }
           ],
           "demos": [
@@ -12296,6 +12303,15 @@
                 "text": "number"
               },
               "default": "1"
+            }
+          ],
+          "events": [
+            {
+              "name": "presentation-slide-fit",
+              "type": {
+                "text": "CustomEvent<{ contentFits: boolean; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
             }
           ],
           "demos": [

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { deflateSync } from "node:zlib";
-import { presentationPdfSemanticStructure, renderPresentationPdf } from "../src/components/presentation-pdf-export.ts";
+import { presentationPdfSemanticStructure, presentationPdfVisualContentFits, renderPresentationPdf } from "../src/components/presentation-pdf-export.ts";
 import { createPresentationPdfFromRenderedSlides } from "../src/model/presentation-pdf.ts";
 
 class FixtureText {
@@ -96,6 +96,16 @@ test("captures slides within the requested locale scope while preserving authore
     if(originalDocument===undefined)delete globalThis.document;
     else globalThis.document=originalDocument;
   }
+});
+
+test("browser PDF capture fails closed when protected visible evidence would be clipped",()=>{
+  const surface=(clientWidth,clientHeight,scrollWidth=clientWidth,scrollHeight=clientHeight)=>({clientWidth,clientHeight,scrollWidth,scrollHeight});
+  const host=(surfaces)=>({querySelectorAll:()=>surfaces});
+  assert.equal(presentationPdfVisualContentFits(host([surface(960,540),surface(420,360)])),true);
+  assert.equal(presentationPdfVisualContentFits(host([surface(960,540),surface(420,360,420,428)])),false,"a stakeholder quotation or source citation must not vanish from the visible PDF");
+  assert.equal(presentationPdfVisualContentFits(host([surface(960,540),surface(420,360,480,360)])),false,"wide protected chart rows must not disappear while remaining searchable");
+  assert.equal(presentationPdfVisualContentFits(host([surface(960,540),surface(0,0)])),false,"unlaid-out capture surfaces are never treated as safe");
+  assert.equal(presentationPdfVisualContentFits(host([])),false,"missing slide artwork cannot be released");
 });
 
 const sixScores=[

@@ -13,6 +13,11 @@ import {
 } from "../model/document-artifacts";
 import { localizedSourceAnchor } from "../model/source-anchor";
 import { inferPresentationAudienceLocale } from "../model/presentation-source";
+import {
+  PRESENTATION_CANVAS_HEIGHT,
+  PRESENTATION_CANVAS_WIDTH,
+  planSlideLayout,
+} from "../model/presentation-layout";
 import { FormaPresentationalElement } from "./presentational-element";
 
 type PresentationQuote = {
@@ -73,6 +78,23 @@ const datumDisplayValue = (datum: PresentationDatum) => datum.displayValue ?? da
 const datumExactValue = (datum: PresentationDatum) => datum.exactValue ?? "";
 const privateSourceLabel = (value: string) => /^(?:(?:blk|grp|clm|source|decision)(?:_|-)\d+|context_group_\d+|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i.test(value.trim());
 const SLIDE_FOOTER_LABEL_PREFERENCE = "forma:slides:footer-label";
+let presentationSlideFitObserver: ResizeObserver | undefined;
+const presentationSlideFitMeasurements = new WeakMap<HTMLElement, () => void>();
+
+const observePresentationSlideFit = (host: HTMLElement) => {
+  if (typeof ResizeObserver === "undefined") return;
+  presentationSlideFitObserver ??= new ResizeObserver((entries) => {
+    for (const { target, contentRect: { width, height } } of entries) {
+      if (!width || !height) continue;
+      const scale = Math.min(width / PRESENTATION_CANVAS_WIDTH, height / PRESENTATION_CANVAS_HEIGHT);
+      if (Number.isFinite(scale) && scale > 0) {
+        (target as HTMLElement).style.setProperty("--presentation-slide-scale", String(scale));
+        presentationSlideFitMeasurements.get(target as HTMLElement)?.();
+      }
+    }
+  });
+  presentationSlideFitObserver.observe(host);
+};
 
 export const readSlideFooterLabelPreference = () => {
   try {
@@ -106,6 +128,55 @@ export class PresentationSlide extends FormaPresentationalElement {
   total = 1;
   compact = false;
   showFooterLabel = true;
+  #fitFrame = 0;
+
+  override connectedCallback() {
+    super.connectedCallback();
+    presentationSlideFitMeasurements.set(this, this.#scheduleFitMeasurement);
+    observePresentationSlideFit(this);
+    if (typeof document !== "undefined") {
+      void document.fonts?.ready.then(() => {
+        if (this.isConnected) this.#scheduleFitMeasurement();
+      });
+    }
+  }
+
+  override disconnectedCallback() {
+    presentationSlideFitObserver?.unobserve(this);
+    presentationSlideFitMeasurements.delete(this);
+    if (this.#fitFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this.#fitFrame);
+    this.#fitFrame = 0;
+    super.disconnectedCallback();
+  }
+
+  #scheduleFitMeasurement = () => {
+    if (typeof requestAnimationFrame !== "function") return;
+    if (this.#fitFrame) cancelAnimationFrame(this.#fitFrame);
+    this.#fitFrame = requestAnimationFrame(() => {
+      this.#fitFrame = 0;
+      if (!this.isConnected || !this.clientWidth || !this.clientHeight) return;
+      const surfaces = this.querySelectorAll<HTMLElement>(
+        ".presentation-slide,.presentation-slide-body,.presentation-slide-body > section,.presentation-slide-body > aside,.presentation-slide__footnotes,.presentation-visual-fields,.presentation-slide__matrix",
+      );
+      const contentFits = Array.from(surfaces).every((surface) =>
+        surface.clientWidth > 0 && surface.clientHeight > 0
+          && surface.scrollHeight <= surface.clientHeight + 1
+          && surface.scrollWidth <= surface.clientWidth + 1,
+      );
+      const value = String(contentFits);
+      if (this.dataset.presentationContentFits === value) return;
+      this.dataset.presentationContentFits = value;
+      this.dispatchEvent(new CustomEvent("presentation-slide-fit", {
+        bubbles: true,
+        composed: true,
+        detail: { contentFits },
+      }));
+    });
+  };
+
+  protected override updated() {
+    this.#scheduleFitMeasurement();
+  }
 
   #audienceLocale(){return inferPresentationAudienceLocale([this.item.title,this.item.body,this.item.notes,...(this.item.slide?.bullets??[])].join(" "),this.i18n.locale);}
   #audienceText(key:string,fallback:string,values?:Record<string,string|number>){
@@ -294,7 +365,9 @@ export class PresentationSlide extends FormaPresentationalElement {
 
   override render() {
     const presentation = normalizeSlidePresentation(this.presentation) ?? defaultSlidePresentation();
-    const item = normalizeSlideItem(this.item, this.index);
+    const originalItem = normalizeSlideItem(this.item, this.index);
+    const layout = planSlideLayout(originalItem, presentation);
+    const item = layout.visibleItem;
     const slide = (item.slide ?? normalizeSlideVisual(null, item, this.index)) as EnrichedSlideVisualData;
     const kind: string = slide.visual.kind;
     const hasVisual = slideVisualIsComplete(slide) || kind === "quote" && Boolean(slide.quote?.text);
@@ -302,8 +375,12 @@ export class PresentationSlide extends FormaPresentationalElement {
     const inlineQuote = slide.quote && kind !== "quote" ? slide.quote : null;
 
     return html`<article
-      class=${`presentation-slide style-${presentation.stylePreset} layout-${slide.layout} visual-${kind}${hasVisual ? "" : " no-visual"}${this.compact ? " compact" : ""}`}
-      style=${slideStyle(presentation)}
+      class=${`presentation-slide ${layout.className} style-${presentation.stylePreset} layout-${slide.layout} visual-${kind}${hasVisual ? "" : " no-visual"}${this.compact ? " compact" : ""}`}
+      data-presentation-artboard="960x540"
+      data-layout-version=${layout.version}
+      data-layout-density=${layout.density}
+      data-reading-recommended=${String(layout.overflow.readingModeRecommended)}
+      style=${`${slideStyle(presentation)};--presentation-safe-inline:${layout.safeArea.inline}px;--presentation-safe-block:${layout.safeArea.block}px`}
       aria-label=${this.#audienceText("presentation.slide", "Slide {index} of {total}: {title}", {
         index: this.#audienceNumber(this.index + 1),
         total: this.#audienceNumber(this.total),

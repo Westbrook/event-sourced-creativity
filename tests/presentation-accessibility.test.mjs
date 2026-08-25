@@ -28,6 +28,11 @@ test("essential presentation switches, navigation, and selectors meet the 44px t
   assert.match(presentation, /\.presentation-deck-reader > summary/);
 });
 
+test("slide-jump selectors keep complete native options on one ellipsized line",()=>{
+  assert.match(presentation,/\.presentation-deck-jump \{[^}]*min-width:\s*0;[^}]*max-inline-size:\s*100%;[^}]*flex-wrap:\s*nowrap/,"the slide label and selector stay on one responsive line");
+  assert.match(presentation,/\.presentation-deck-jump select \{[^}]*min-inline-size:\s*var\(--forma-control-min-size,2\.75rem\)[^}]*max-inline-size:\s*min\(18rem,70vi\)[^}]*flex:\s*1 1 auto[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/,"long slide titles truncate visually without modifying their complete option labels");
+});
+
 test("presentation text and complete structured visual labels never shrink below twelve pixels", () => {
   const minimums = [...presentation.matchAll(/font-size:\s*clamp\((\.?\d+(?:\.\d+)?)rem/g)]
     .map(([, minimum]) => Number(minimum));
@@ -45,7 +50,11 @@ test("presentation text and complete structured visual labels never shrink below
 });
 
 test("architecture diagrams reserve stable readable geometry across embedded and fullscreen slide sizes",()=>{
-  assert.match(presentation,/(?:^|\n)forma-presentation-slide \{[^}]*container:\s*presentation-slide-host\s*\/\s*inline-size/,"slide padding and gaps scale against their own 16:9 frame rather than the fullscreen viewport");
+  assert.match(presentation,/(?:^|\n)forma-presentation-slide \{[^}]*container:\s*presentation-slide-host\s*\/\s*size/,"the canonical slide host provides both contain-fit dimensions");
+  assert.match(presentation,/forma-presentation-slide > \.presentation-slide\[data-presentation-artboard\] \{[^}]*width:\s*960px[^}]*height:\s*540px[^}]*scale:\s*var\(--presentation-slide-scale,1\)/,"each slide has one invariant 960-by-540 composition");
+  assert.match(presentation,/forma-presentation-slide > \.presentation-slide\[data-presentation-artboard\] \{[^}]*margin:\s*0;[^}]*border:\s*0;[^}]*color:\s*var\(--slide-ink\);[^}]*background:\s*var\(--slide-bg\)/,"shared-page article chrome cannot offset or recolor protected slide artwork");
+  assert.doesNotMatch(styles,/\.shared-grid\s+article(?:\s+(?:h3|p|small))?\s*\{/u,"shared-page card typography cannot overwrite protected slide typography");
+  assert.match(presentation,/@supports \(scale:\s*calc\(100cqi\s*\/\s*960px\)\)/,"modern browsers progressively enhance to native two-axis scaling");
   assert.match(presentation,/(?:^|\n)\.presentation-slide \{[^}]*container:\s*presentation-slide\s*\/\s*inline-size/,"existing presentation-slide container queries remain intact");
 
   const satellite=rule(".presentation-visual-diagram span");
@@ -77,7 +86,9 @@ test("all chart points, compact bullets, visual labels, and verbatim stakeholder
   assert.match(quotation, /overflow:\s*visible/);
   assert.match(quotation, /overflow-wrap:\s*anywhere/);
   assert.match(quotation, /-webkit-line-clamp:\s*unset/);
-  assert.match(rule(".presentation-slide-body > aside"), /overflow:\s*auto/);
+  for(const selector of [".presentation-slide-body > aside",".presentation-visual-fields",".presentation-slide__footnotes"]){
+    assert.match(rule(selector),/overflow:\s*clip/,`${selector} never creates a nested visual-slide scrollbar`);
+  }
   assert.match(rule(".presentation-slide small"), /font-size:\s*max\(\.75rem,1em\)/);
   assert.match(rule(".presentation-visual-type strong"), /color:\s*var\(--slide-accent-ink,var\(--slide-ink\)\)/);
   assert.match(rule(".presentation-visual-diagram strong"), /color:\s*var\(--slide-on-accent,var\(--slide-bg\)\)/);

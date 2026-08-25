@@ -1179,7 +1179,7 @@ forma-output-visual { position: absolute; inset: 0; display: grid; min-width: 0;
 .share-link-builder { display: flex; align-items: end; gap: 9px; margin: 16px 0; padding: 13px; background: var(--mint); border-radius: 6px; }.share-link-builder label { flex: 1; color: var(--muted); font-size: var(--type-micro); text-transform: uppercase; }.share-link-builder select { width: 100%; margin-top: 4px; }.fresh-share { display: grid; gap: 5px; margin: 10px 0 16px; padding: 11px; color: #fff; background: var(--forest); border-radius: 6px; }.fresh-share input { min-width: 0; color: var(--acid); background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16); }.fresh-share small { color: #b9c5be; }.share-list { margin-bottom: 15px; }.share-list h3 { margin: 0 0 6px; font-size: var(--type-caption); text-transform: uppercase; }.share-list > div { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); }.share-list b,.share-list small { display: block; }.share-list small { color: var(--muted); }.share-list button { color: var(--orange); text-decoration: underline; }
 .provider-direction { padding: 16px; border-right: 1px solid var(--line); border-left: 1px solid var(--line); }.provider-direction h3 { margin: 5px 0; font: 600 var(--type-heading) var(--serif); }.provider-direction p { margin: 0; color: var(--muted); font-size: var(--type-caption); }.provider-direction > div { display: flex; gap: 4px; margin-top: 9px; }.provider-direction > div span { padding: 3px 5px; background: var(--panel-2); border-radius: 3px; font: var(--type-micro) var(--mono); }
 .role-matrix { margin-top: 40px; }
-.shared-view { min-height: 100dvh; color: var(--ink); background: var(--paper); }.shared-view > header { display: flex; align-items: center; justify-content: space-between; min-height: 64px; padding: 0 4vw; border-bottom: 1px solid var(--line); }.shared-view > header > span { color: var(--muted); font: var(--type-micro) var(--mono); }.shared-hero { padding: 72px 7vw 42px; color: #fff; background: var(--forest); }.shared-hero h1 { max-width: 900px; margin: 8px 0; color: var(--acid); font-size: clamp(var(--type-display),7vw,var(--type-display-xl)); }.shared-hero p { color: #c6d2cb; }.shared-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 40px; max-width: 1300px; margin: auto; padding: 46px 7vw; }.shared-grid article { margin: 8px 0; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; }.shared-grid article small { color: var(--orange); text-transform: uppercase; }.shared-grid article h2 { margin: 5px 0; font-size: var(--type-heading); }.shared-grid article p { color: var(--muted); }.shared-output { position: relative; min-height: 120px; margin: 8px 0; overflow: hidden; padding: 0 0 12px; color: #fff; background: var(--forest); border-radius: 7px; }.shared-output img { display: block; width: 100%; aspect-ratio: 3/2; margin-bottom: 10px; object-fit: cover; object-position: var(--focal-x,50%) var(--focal-y,50%); }.shared-output-empty { display: grid; min-height: 120px; place-items: center; color: #b8c4bd; }.shared-output b,.shared-output small { position: relative; display: block; padding: 0 14px; }.shared-output small { opacity: .75; }.shared-view > footer { padding: 22px; color: var(--muted); text-align: center; border-top: 1px solid var(--line); }.shared-status { display: grid; min-height: 100dvh; place-items: center; align-content: center; padding: 30px; text-align: center; }.shared-status h1 { max-width: 700px; font-size: var(--type-display); }.shared-status > span { color: var(--orange); text-transform: uppercase; }
+.shared-view { min-height: 100dvh; color: var(--ink); background: var(--paper); }.shared-view > header { display: flex; align-items: center; justify-content: space-between; min-height: 64px; padding: 0 4vw; border-bottom: 1px solid var(--line); }.shared-view > header > span { color: var(--muted); font: var(--type-micro) var(--mono); }.shared-hero { padding: 72px 7vw 42px; color: #fff; background: var(--forest); }.shared-hero h1 { max-width: 900px; margin: 8px 0; color: var(--acid); font-size: clamp(var(--type-display),7vw,var(--type-display-xl)); }.shared-hero p { color: #c6d2cb; }.shared-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 40px; max-width: 1300px; margin: auto; padding: 46px 7vw; }.shared-grid > .shared-direction > article { margin: 8px 0; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; }.shared-grid > .shared-direction > article small { color: var(--orange); text-transform: uppercase; }.shared-grid > .shared-direction > article h2 { margin: 5px 0; font-size: var(--type-heading); }.shared-grid > .shared-direction > article p { color: var(--muted); }.shared-output { position: relative; min-height: 120px; margin: 8px 0; overflow: hidden; padding: 0 0 12px; color: #fff; background: var(--forest); border-radius: 7px; }.shared-output img { display: block; width: 100%; aspect-ratio: 3/2; margin-bottom: 10px; object-fit: cover; object-position: var(--focal-x,50%) var(--focal-y,50%); }.shared-output-empty { display: grid; min-height: 120px; place-items: center; color: #b8c4bd; }.shared-output > .shared-result-description > b,.shared-output > .shared-result-description > small { position: relative; display: block; padding: 0 14px; }.shared-output > .shared-result-description > small { opacity: .75; }.shared-view > footer { padding: 22px; color: var(--muted); text-align: center; border-top: 1px solid var(--line); }.shared-status { display: grid; min-height: 100dvh; place-items: center; align-content: center; padding: 30px; text-align: center; }.shared-status h1 { max-width: 700px; font-size: var(--type-display); }.shared-status > span { color: var(--orange); text-transform: uppercase; }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
 
@@ -1877,8 +1877,8 @@ forma-document-artifacts { display: block; min-width: 0; }
 .artifact-text-preview { display: grid; align-content: end; min-height: 11rem; padding: 1.2rem; background: light-dark(#f3f1ed,#191c1b); }
 .artifact-text-preview span { width: 2rem; height: 2rem; color: var(--accent); }
 .artifact-text-preview p { display: -webkit-box; margin: 2.5rem 0 0; overflow: hidden; color: var(--ink); -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
-.artifact-slide-preview { display: block; min-height: 11rem; overflow: hidden; background: light-dark(#eae6df,#22201d); }
-.artifact-slide-preview forma-presentation-slide { height: 11rem; }
+.artifact-slide-preview { display: grid; height: 11rem; min-height: 11rem; place-items: center; overflow: clip; background: light-dark(#eae6df,#22201d); container: artifact-slide-preview / size; }
+.artifact-slide-preview forma-presentation-slide { width: min(100cqi,calc(100cqb * 16 / 9)); height: auto; max-height: 100%; aspect-ratio: 16 / 9; }
 .artifact-storyboard-strip { display: grid; grid-template-columns: repeat(3,1fr); height: 11rem; overflow: hidden; background: var(--ink); }
 .artifact-storyboard-strip img,.artifact-storyboard-strip span { width: 100%; height: 100%; min-width: 0; object-fit: cover; object-position: var(--focal-x,50%) var(--focal-y,50%); }
 .document-artifact-list video { display: block; width: 100%; height: 11rem; object-fit: cover; object-position: var(--focal-x,50%) var(--focal-y,50%); background: #000; }
@@ -2108,8 +2108,8 @@ forma-presentation-deck { display: block; width: 100%; min-width: 0; }
 .presentation-deck-stage > nav { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: center; gap: .75rem 1rem; }
 .presentation-deck-stage > nav span { min-width: 5rem; color: var(--muted); font-size: var(--type-caption); text-align: center; }
 .presentation-deck-stage > nav button:disabled { opacity: .42; cursor: not-allowed; }
-.presentation-deck-jump { display: inline-flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .5rem; color: var(--muted); font-size: var(--type-small); }
-.presentation-deck-jump select { max-width: min(18rem,70vw); padding: .4rem .6rem; }
+.presentation-deck-jump { display: inline-flex; min-width: 0; max-inline-size: 100%; flex-wrap: nowrap; align-items: center; gap: .5rem; color: var(--muted); font-size: var(--type-small); }
+.presentation-deck-jump select { min-inline-size: var(--forma-control-min-size,2.75rem); max-inline-size: min(18rem,70vi); flex: 1 1 auto; overflow: hidden; padding: .4rem .6rem; text-overflow: ellipsis; white-space: nowrap; }
 .presentation-deck-notes { box-sizing: border-box; width: min(100%,68rem); padding: .75rem 1rem; }
 .presentation-deck-reader { box-sizing: border-box; width: min(100%,68rem); min-width: 0; padding: .75rem 1rem; border: 1px solid var(--line); background: var(--paper); }
 .presentation-deck-supporting { display: grid; inline-size: min(100%,96rem); min-inline-size: 0; grid-template-columns: repeat(auto-fit,minmax(min(100%,18rem),1fr)); align-items: start; gap: .55rem; }
@@ -2150,8 +2150,12 @@ forma-presentation-deck:fullscreen .presentation-deck-viewport > .presentation-d
   .presentation-deck-stage > nav { gap: .4rem .65rem; }
 }
 
-forma-presentation-slide { display: block; min-width: 0; container: presentation-slide-host / inline-size; }
+forma-presentation-slide { position: relative; display: block; width: 100%; min-width: 0; aspect-ratio: 16 / 9; overflow: clip; container: presentation-slide-host / size; }
 .presentation-slide { position: relative; display: grid; box-sizing: border-box; width: 100%; min-width: 0; aspect-ratio: 16/9; grid-template-rows: auto minmax(0,1fr) auto; gap: clamp(.35rem,1.3cqi,1rem); overflow: hidden; padding: clamp(.65rem,3.4cqi,2.5rem); color: var(--slide-ink); background: var(--slide-bg); font-family: var(--slide-font,inherit); container: presentation-slide / inline-size; isolation: isolate; }
+forma-presentation-slide > .presentation-slide[data-presentation-artboard] { position: absolute; top: 50%; left: 50%; width: 960px; height: 540px; min-width: 960px; max-width: none; aspect-ratio: 16 / 9; gap: clamp(.35rem,12.48px,1rem); margin: 0; border: 0; border-radius: 0; padding-block: var(--presentation-safe-block,32px); padding-inline: var(--presentation-safe-inline,40px); color: var(--slide-ink); background: var(--slide-bg); translate: -50% -50%; scale: var(--presentation-slide-scale,1); transform-origin: center; }
+@supports (scale: calc(100cqi / 960px)) {
+  forma-presentation-slide > .presentation-slide[data-presentation-artboard] { scale: min(calc(100cqi / 960px),calc(100cqb / 540px)); }
+}
 .presentation-slide::before { position: absolute; z-index: -1; inset: 0; background: radial-gradient(circle at 86% 14%,color-mix(in srgb,var(--slide-accent) 24%,transparent),transparent 32%),linear-gradient(135deg,transparent 55%,color-mix(in srgb,var(--slide-surface) 72%,transparent)); content: ""; }
 .presentation-slide.style-gallery::before { background: radial-gradient(circle at 86% 14%,color-mix(in srgb,var(--slide-accent) 20%,transparent),transparent 32%),linear-gradient(135deg,transparent 55%,color-mix(in srgb,var(--slide-surface) 72%,transparent)); }
 .presentation-slide.style-gallery h3 { font-weight: 570; }
@@ -2166,7 +2170,7 @@ forma-presentation-slide { display: block; min-width: 0; container: presentation
 .presentation-slide > header span,.presentation-slide > footer span { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
 .presentation-slide > footer > span:only-child { margin-inline-start: auto; }
 .presentation-slide-body { display: grid; min-width: 0; min-height: 0; grid-template-columns: minmax(0,1.08fr) minmax(0,.92fr); gap: clamp(.75rem,4cqi,3rem); align-items: center; overflow: hidden; }
-.presentation-slide-body > section,.presentation-slide-body > aside { min-width: 0; min-height: 0; max-height: 100%; overflow: auto; overscroll-behavior: contain; }
+.presentation-slide-body > section,.presentation-slide-body > aside { min-width: 0; min-height: 0; max-height: 100%; overflow: clip; }
 .presentation-slide h3 { max-width: 18ch; margin: 0; color: inherit; font: 620 clamp(1rem,5.4cqi,4rem)/var(--forma-script-heading-line-height,.98) var(--forma-font-family,var(--sans)); letter-spacing: var(--forma-script-letter-spacing,-.045em); text-wrap: balance; }
 .presentation-slide small { font-size: max(.75rem,1em); }
 .presentation-slide figure { margin: 0; }
@@ -2174,7 +2178,7 @@ forma-presentation-slide { display: block; min-width: 0; container: presentation
 .presentation-slide-body > section > ul { display: grid; gap: clamp(.15rem,.8cqi,.5rem); margin: clamp(.35rem,1.5cqi,1rem) 0 0; padding-inline-start: 1.15em; color: var(--slide-ink); font-size: clamp(.8125rem,1.45cqi,1rem); list-style: disc; }
 .presentation-slide-body > section > ul > li { display: list-item; min-width: 0; padding: 0; line-height: 1.35; }
 .presentation-slide-body > section > ul > li::marker { color: var(--slide-accent); font-size: .82em; }
-.presentation-slide-body > aside { display: grid; height: 100%; max-height: 100%; place-items: center; overflow: auto; }
+.presentation-slide-body > aside { display: grid; height: 100%; max-height: 100%; place-items: center; overflow: clip; }
 .presentation-visual-type { display: grid; width: 100%; align-content: center; gap: .35rem; }
 .presentation-visual-type strong { display: block; max-height: none; color: var(--slide-accent-ink,var(--slide-ink)); font: 700 clamp(1rem,var(--slide-visual-size,10cqi),7rem)/var(--forma-script-heading-line-height,1.12) var(--forma-font-family,var(--sans)); letter-spacing: var(--forma-script-letter-spacing,-.045em); overflow-wrap: anywhere; }
 .presentation-visual-type span { color: var(--slide-muted); font-size: clamp(.8125rem,1.5cqi,1rem); }
@@ -2209,7 +2213,7 @@ forma-presentation-slide { display: block; min-width: 0; container: presentation
 .presentation-slide__diagram--structured > strong:empty { display: none; }
 .presentation-slide__diagram--structured > span { position: static; display: grid; width: auto; max-width: none; min-width: 0; align-content: start; gap: .3rem; padding: clamp(.5rem,1.25cqi,.8rem); translate: none; border: 1px solid color-mix(in srgb,var(--slide-accent) 32%,transparent); border-radius: .65rem; background: color-mix(in srgb,var(--slide-surface) 78%,transparent); text-align: start; }
 .presentation-slide__diagram--structured > span small { color: var(--slide-muted); text-wrap: pretty; }
-.presentation-visual-fields { display: grid; width: 100%; height: auto; max-height: 100%; min-height: 6rem; grid-template-columns: repeat(auto-fit,minmax(min(100%,5rem),1fr)); gap: .5rem; align-content: center; overflow: auto; }
+.presentation-visual-fields { display: grid; width: 100%; height: auto; max-height: 100%; min-height: 6rem; grid-template-columns: repeat(auto-fit,minmax(min(100%,5rem),1fr)); gap: .5rem; align-content: center; overflow: clip; }
 .presentation-visual-fields > .presentation-slide__caption { grid-column: 1 / -1; }
 .presentation-visual-fields i { display: grid; min-height: 4rem; place-items: center; padding: .55rem; color: var(--slide-ink); background: color-mix(in srgb,var(--slide-accent) var(--slide-field-mix,48%),var(--slide-surface)); border-radius: .75rem; font-style: normal; }
 .presentation-visual-fields span { max-width: 16ch; font-size: clamp(.75rem,1.25cqi,.875rem); overflow-wrap: anywhere; text-align: center; }
@@ -2228,7 +2232,7 @@ forma-presentation-slide { display: block; min-width: 0; container: presentation
 .presentation-slide__datum-value { color: var(--slide-muted); font-variant-numeric: tabular-nums; text-align: end; }
 .presentation-slide__diagram,.presentation-slide__timeline { max-width: 100%; min-width: 0; }
 .presentation-slide__timeline { display: grid; gap: .5rem; }
-.presentation-slide__footnotes { display: flex; min-width: 0; max-height: 6rem; flex-wrap: wrap; gap: .35rem .65rem; margin-block-start: .5rem; overflow: auto; }
+.presentation-slide__footnotes { display: flex; min-width: 0; max-height: 6rem; flex-wrap: wrap; gap: .35rem .65rem; margin-block-start: .5rem; overflow: clip; }
 .presentation-slide__footnotes > ol { display: grid; min-width: 0; gap: .25rem; margin: 0; padding-inline-start: 1.25rem; }
 .presentation-slide__citation { color: var(--slide-muted); font-size: clamp(.75rem,1.25cqi,.875rem); line-height: 1.4; overflow-wrap: anywhere; }
 .presentation-slide.layout-cover .presentation-slide-body,.presentation-slide.layout-closing .presentation-slide-body { grid-template-columns: minmax(0,1fr); }
@@ -2244,8 +2248,19 @@ forma-presentation-slide { display: block; min-width: 0; container: presentation
 .presentation-slide.layout-quote .presentation-slide-body { grid-template-columns: minmax(0,.85fr) minmax(0,1.15fr); }
 .presentation-slide.no-visual .presentation-slide-body { grid-template-columns: minmax(0,1fr); }
 .presentation-slide.no-visual .presentation-slide-body > section { width: min(100%,44rem); }
+.presentation-slide.presentation-slide--density-compact h3 { max-width: 20ch; font-size: clamp(1.5rem,4.2cqi,3rem); }
+.presentation-slide--density-compact .presentation-slide-body { gap: clamp(.75rem,2.5cqi,1.75rem); }
+.presentation-slide.presentation-slide--density-dense h3 { max-width: none; font-size: clamp(1.35rem,3.4cqi,2.4rem); line-height: var(--forma-script-heading-line-height,1.1); }
+.presentation-slide--density-dense p { margin-block-start: .45rem; font-size: clamp(.875rem,1.45cqi,1rem); line-height: 1.4; }
+.presentation-slide--density-dense .presentation-slide-body { gap: clamp(.65rem,2cqi,1.25rem); }
+.presentation-slide--density-dense .presentation-slide-body > section > ul { gap: .15rem; margin-block-start: .4rem; font-size: clamp(.8125rem,1.25cqi,.9rem); }
+.presentation-slide--density-dense .presentation-slide__quote-card { gap: .4rem; padding: .65rem; }
+.presentation-slide--density-dense .presentation-slide__quote-text { font-size: clamp(.875rem,1.6cqi,1.1rem); line-height: 1.35; }
+.presentation-slide--density-dense .presentation-slide__footnotes > ol { grid-template-columns: repeat(2,minmax(0,1fr)); gap: .15rem .5rem; }
+.presentation-slide--density-dense .presentation-slide__table :is(caption,th,td) { padding: .3rem .4rem; }
 .presentation-slide.compact > footer { display: none; }
 .presentation-slide.compact { gap: .2rem; padding: clamp(.5rem,3cqi,1rem); }
+forma-presentation-slide > .presentation-slide[data-presentation-artboard].compact { gap: .2rem; padding: 1rem; }
 .presentation-slide.compact .presentation-slide-body { gap: clamp(.4rem,2cqi,1rem); }
 .presentation-slide.compact .presentation-visual-type strong { font-size: clamp(.75rem,var(--slide-visual-size,7cqi),2.3rem); }
 @container presentation-slide (max-width: 30rem) {

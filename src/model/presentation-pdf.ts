@@ -1,7 +1,8 @@
 import { applySlideStylePreset, authoritativeSlideDatumWeight, defaultSlidePresentation, normalizeSlideItem, normalizeSlidePresentation, normalizeSlideVisual, slideVisualIsComplete, type DocumentArtifactDraftItem, type SlidePresentation, type SlideVisualData } from "./document-artifacts.ts";
+import { PRESENTATION_CANVAS_HEIGHT, PRESENTATION_CANVAS_WIDTH } from "./presentation-layout.ts";
 
-export const PRESENTATION_PDF_PAGE_WIDTH=960;
-export const PRESENTATION_PDF_PAGE_HEIGHT=540;
+export const PRESENTATION_PDF_PAGE_WIDTH=PRESENTATION_CANVAS_WIDTH;
+export const PRESENTATION_PDF_PAGE_HEIGHT=PRESENTATION_CANVAS_HEIGHT;
 const PAGE_WIDTH=PRESENTATION_PDF_PAGE_WIDTH;
 const PAGE_HEIGHT=PRESENTATION_PDF_PAGE_HEIGHT;
 const TEXT_LEFT=54;

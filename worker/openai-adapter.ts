@@ -15,6 +15,7 @@ import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, isVideoAudioMode, i
 import { VIDEO_AUDIO_REFERENCE_CONTRACT, audioRightsAllowed } from "../src/model/audio.ts";
 import { productionTeamInstructions, providerFacingProductionContinuity, type ManagedProductionPlan, type ProductionMode, type ProductionScene } from "../src/model/managed-production.ts";
 import { buildPresentationSourceContract, inferPresentationAudienceLocale, providerFacingPresentationSourceContract, resolvePresentationSourceReferences, type PresentationSourceContract, type PresentationSourceSlide } from "../src/model/presentation-source.ts";
+import { PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS } from "../src/model/presentation-layout.ts";
 import { safePresentationCandidateIssues } from "../src/model/presentation-candidates.ts";
 import { adaptVideoPrompt, compactVideoCombinedContextPlan, resolveVideoAudioPolicy, videoPlannerCreativeContext, type VideoPromptAdaptation } from "./video-prompt-adapter.ts";
 
@@ -460,6 +461,7 @@ const artifactInstructions:Record<DocumentArtifactKind,string>={
   storyboard:"Create a coherent previz storyboard that can be rendered frame by frame. Each item is one camera shot: title names the shot, body describes action and composition, notes specify camera/lens/movement/continuity, and image_prompt is a self-contained frame prompt that preserves recurring subjects and visual continuity. content_markdown is the ordered shot list.",
   video:"Create a concise, production-ready video prompt. content_markdown is the exact visual motion prompt: subject, action, environment, camera, timing, composition, visual style, emotional progression, and ordered authored shots. Communicate dramatic rhythm through visible action, camera movement, weather, and light. Never invent a score, song, soundtrack, dialogue, voice, musician, recording, or audio requirement. Use one item to summarize the visual sequence, with technical direction in notes and the same self-contained visual prompt in image_prompt.",
 };
+artifactInstructions.slides += ` ${PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS}`;
 
 type PresentationSlideSourceResolutionReceipt={
   rawAssignments:string[][];

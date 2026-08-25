@@ -96,6 +96,19 @@ test("real slide renderer exposes all six scorecard values and distinguishes exa
   assert.match(markup, /<i aria-hidden="true">/);
 });
 
+test("canonical full and compact slides retain complete protected citation evidence",()=>{
+  const citation={label:"Approved source evidence",anchor:"Slide 1",excerpt:"The complete protected source excerpt remains visible."};
+  for(const compact of [false,true]){
+    const markup=renderSlide(scorecard({citations:[citation]}),{compact});
+    assert.match(markup,/data-presentation-artboard="960x540"/);
+    assert.match(markup,/data-layout-version=1/);
+    assert.match(markup,/presentation-slide--density-compact/);
+    assert.ok(markup.includes(citation.label));
+    assert.ok(markup.includes(citation.excerpt));
+    for(const[label,value]of SCORES)assert.ok(markup.includes(label)&&markup.includes(value));
+  }
+});
+
 test("audience-facing slide labels stay English when authored content is English and the application uses Japanese",()=>{
   const japanese={locale:"ja-JP",t:(_key,fallback)=>`日本語${fallback}`,system:(source)=>`日本語${source}`,number:(value,options)=>new Intl.NumberFormat("ja-JP",options).format(value)};
   const slide=scorecard({citations:[{label:"Approved source evidence",anchor:"Slide 1",excerpt:"The authored source remains accurate."}]});

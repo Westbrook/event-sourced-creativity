@@ -3712,3 +3712,268 @@ html[data-document-focus] .application-creative[data-layout-intent="workbench"] 
     transition: none;
   }
 }
+
+/* A presentation has one surface at a time: composed artwork or complete readable content. */
+forma-presentation-deck {
+  container: presentation-deck-host / inline-size;
+}
+
+.presentation-deck--slideshow .presentation-deck-stage[data-slide-posture],
+:is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow .presentation-deck-stage[data-slide-posture] {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  min-block-size: 0;
+  block-size: 100%;
+  grid-template-columns: minmax(0,1fr) auto;
+  grid-template-rows: minmax(0,1fr) auto;
+  align-content: stretch;
+  justify-items: stretch;
+  gap: .4rem .5rem;
+  overflow: hidden;
+  padding: .4rem clamp(.25rem,.8vi,.625rem);
+}
+
+.presentation-deck--slideshow .presentation-deck-stage[data-slide-posture] > .presentation-deck-viewport,
+:is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture] > .presentation-deck-viewport {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  inline-size: 100%;
+  block-size: 100%;
+  min-block-size: 0;
+}
+
+.presentation-deck--slideshow .presentation-deck-stage[data-slide-posture] > nav,
+:is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture] > nav {
+  position: static;
+  inset: auto;
+  display: flex;
+  inline-size: auto;
+  min-inline-size: 0;
+  block-size: auto;
+  grid-column: 1;
+  grid-row: 2;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: .35rem;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.presentation-deck--slideshow .presentation-deck-stage[data-slide-posture] > nav > button,
+:is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture] > nav > button {
+  position: static;
+  inset: auto;
+  inline-size: auto;
+  block-size: auto;
+  min-inline-size: var(--forma-control-min-size,2.75rem);
+  min-block-size: var(--forma-control-min-size,2.75rem);
+  translate: none;
+  pointer-events: auto;
+}
+
+.presentation-deck--slideshow .presentation-deck-stage[data-slide-posture] > .presentation-deck-supporting,
+:is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage[data-slide-posture] > .presentation-deck-supporting {
+  position: static;
+  inset: auto;
+  display: flex;
+  inline-size: auto;
+  min-inline-size: 0;
+  grid-column: 2;
+  grid-row: 2;
+  align-self: center;
+  justify-self: end;
+  gap: 0;
+  overflow: visible;
+}
+
+.presentation-deck-reading-toggle {
+  min-inline-size: var(--forma-control-min-size,2.75rem);
+  min-block-size: var(--forma-control-min-size,2.75rem);
+  padding-inline: .65rem;
+  white-space: nowrap;
+}
+
+.presentation-deck-reading {
+  box-sizing: border-box;
+  inline-size: 100%;
+  block-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--forma-color-surface,var(--paper));
+}
+
+.presentation-deck-reading > .presentation-deck-reader-content {
+  box-sizing: border-box;
+  inline-size: min(100%,72ch);
+  min-inline-size: 0;
+  margin: 0 auto;
+  padding: clamp(.875rem,3cqi,2rem);
+  font-size: max(.9375rem,var(--type-small));
+  line-height: 1.65;
+}
+
+@container presentation-deck-host (max-width: 46rem) {
+  :is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar {
+    position: relative;
+    inset: auto;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    min-block-size: var(--forma-control-min-size,2.75rem);
+    overflow: visible;
+  }
+
+  :is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar > .presentation-deck-tools-toggle {
+    display: inline-flex;
+    min-inline-size: var(--forma-control-min-size,2.75rem);
+    min-block-size: var(--forma-control-min-size,2.75rem);
+  }
+
+  :is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar[data-tools-open="false"] > div {
+    display: none;
+  }
+
+  :is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar[data-tools-open="true"] {
+    max-block-size: min(45dvb,18rem);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  :is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar[data-tools-open="true"] > div {
+    display: flex;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+
+  .presentation-deck-stage[data-slide-posture] > nav > .presentation-deck-jump,
+  .presentation-deck-stage[data-slide-posture] .presentation-deck-navigation-label {
+    display: none;
+  }
+
+  .presentation-deck-stage[data-slide-posture] > nav > .presentation-deck-position {
+    position: static;
+    min-inline-size: 3.25rem;
+    padding: 0;
+    background: transparent;
+  }
+
+  .presentation-deck-reading .presentation-deck-reader-content dl {
+    grid-template-columns: minmax(0,1fr);
+  }
+
+  .presentation-deck-reading .presentation-deck-reader-content dd {
+    text-align: start;
+  }
+}
+
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow {
+    grid-template-rows: auto minmax(0,1fr);
+  }
+
+  :is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar {
+    position: relative;
+    inset: auto;
+    justify-content: flex-end;
+    min-block-size: var(--forma-control-min-size,2.75rem);
+  }
+
+  .presentation-deck-stage[data-slide-posture] > nav > .presentation-deck-jump,
+  .presentation-deck-stage[data-slide-posture] .presentation-deck-navigation-label {
+    display: none;
+  }
+
+  :is(.document-artifact-view,.canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow .presentation-deck-stage[data-slide-posture] {
+    padding-inline-end: calc(var(--forma-hit-target,2.75rem) + .875rem);
+  }
+}
+
+.shared-presentation-dialog .shared-presentation-stage[data-slide-posture] {
+  grid-template-columns: minmax(0,1fr);
+  grid-template-rows: minmax(0,1fr) auto;
+  gap: .4rem;
+}
+
+.shared-presentation-dialog .shared-presentation-stage.shared-presentation-stage--reading > .shared-presentation-reader.shared-presentation-reading {
+  position: static;
+  inset: auto;
+  grid-column: 1;
+  grid-row: 1;
+  inline-size: 100%;
+  block-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 0;
+  max-block-size: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: clamp(.75rem,2vi,1.25rem);
+}
+
+.shared-presentation-dialog .shared-presentation-stage[data-slide-posture] > nav {
+  position: static;
+  inset: auto;
+  display: flex;
+  grid-column: 1;
+  grid-row: 2;
+  align-items: center;
+  justify-content: center;
+  gap: .35rem;
+  pointer-events: auto;
+}
+
+.shared-presentation-dialog .shared-presentation-stage[data-slide-posture] > nav > button {
+  position: static;
+  inset: auto;
+  inline-size: auto;
+  block-size: auto;
+  min-inline-size: var(--forma-control-min-size,2.75rem);
+  min-block-size: var(--forma-control-min-size,2.75rem);
+  padding-inline: .65rem;
+  font-size: var(--type-small);
+  pointer-events: auto;
+  translate: none;
+}
+
+.shared-presentation-dialog .shared-presentation-stage[data-slide-posture] > nav > button::before {
+  content: none;
+}
+
+.shared-presentation-dialog .shared-presentation-stage[data-slide-posture] > nav > span {
+  position: static;
+  inset: auto;
+  background: transparent;
+}
+
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .shared-presentation-dialog[data-output-focus="true"] > .shared-presentation-card:has(.shared-presentation-stage[data-slide-posture]) {
+    grid-template-rows: auto minmax(0,1fr);
+  }
+
+  .shared-presentation-dialog[data-output-focus="true"] > .shared-presentation-card:has(.shared-presentation-stage[data-slide-posture]) > header {
+    position: relative;
+    inset: auto;
+    padding-block-end: .35rem;
+    pointer-events: auto;
+  }
+
+  .shared-presentation-dialog[data-output-focus="true"] > .shared-presentation-card:has(.shared-presentation-stage[data-slide-posture]) .shared-presentation-actions {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .shared-presentation-dialog[data-output-focus="true"] > .shared-presentation-card:has(.shared-presentation-stage[data-slide-posture]) .shared-presentation-actions > .button {
+    inline-size: auto;
+    min-inline-size: var(--forma-control-min-size,2.75rem);
+    min-block-size: var(--forma-control-min-size,2.75rem);
+    padding-inline: .45rem;
+    overflow: visible;
+    white-space: normal;
+  }
+}

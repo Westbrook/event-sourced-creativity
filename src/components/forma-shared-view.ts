@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
 import { documentArtifactDefinition, formatPresentationQuantity, type DocumentArtifact, type DocumentArtifactItem } from "../model/document-artifacts";
+import { planSlideLayout, presentationRequiresReadingPosture } from "../model/presentation-layout";
 import type { CreativeOutput } from "../model/events";
 import { FormaLocaleController } from "./design-system/localization";
 import { FormaPresentationalElement } from "./presentational-element";
@@ -23,10 +24,36 @@ export class FormaSharedView extends FormaPresentationalElement {
   #returnFocus?:HTMLElement;
   #activePresentation:{artifact:SharedArtifact;index:number}|null=null;
   #presentationFocused=false;
+  #presentationReading=false;
+  #presentationReadingPreference:boolean|null=null;
+  #presentationContentOverflow=false;
+  #presentationObserver?:ResizeObserver;
+  #presentationObserved?:Element;
   #presentationReturnFocus?:HTMLElement;
   #presentationTouchStart:{x:number;y:number}|null=null;
-  protected override updated(){document.title=this.#projection?`${this.#projection.documentTitle} — ${this.#i18n.t("shared.review","Shared review")} — Forma`:`${this.#i18n.t(this.#error?"shared.unavailable":"shared.loading",this.#error?"Link unavailable":"Opening shared review")} — Forma`;}
+  #syncPresentationPosture=(entries:ResizeObserverEntry[])=>{
+    const entry=entries.find((candidate)=>candidate.target===this.#presentationObserved);
+    if(!entry||this.#presentationReadingPreference!==null)return;
+    const{width,height}=entry.contentRect;
+    if(width<1||height<1)return;
+    const reading=presentationRequiresReadingPosture(width,Math.max(0,height-56))||this.#presentationContentOverflow;
+    if(reading===this.#presentationReading)return;
+    this.#presentationReading=reading;
+    this.requestUpdate();
+  };
+  protected override updated(){
+    document.title=this.#projection?`${this.#projection.documentTitle} — ${this.#i18n.t("shared.review","Shared review")} — Forma`:`${this.#i18n.t(this.#error?"shared.unavailable":"shared.loading",this.#error?"Link unavailable":"Opening shared review")} — Forma`;
+    const stage=this.querySelector(".shared-presentation-stage");
+    if(stage===this.#presentationObserved)return;
+    this.#presentationObserver?.disconnect();
+    this.#presentationObserved=stage??undefined;
+    if(stage&&typeof ResizeObserver==="function"){
+      this.#presentationObserver??=new ResizeObserver(this.#syncPresentationPosture);
+      this.#presentationObserver.observe(stage);
+    }
+  }
   override connectedCallback() { super.connectedCallback(); void this.#load(); }
+  override disconnectedCallback(){this.#presentationObserver?.disconnect();this.#presentationObserved=undefined;super.disconnectedCallback();}
 
   async #openImage(event:MouseEvent,url:string,label:string,approvedFan:Array<{url:string;label:string}>=[]){
     let parsed:URL;try{parsed=new URL(url,location.origin);}catch{return;}
@@ -47,13 +74,30 @@ export class FormaSharedView extends FormaPresentationalElement {
   async #openPresentation(event:MouseEvent,artifact:SharedArtifact){
     if(artifact.kind!=="slides"||!artifact.items.length)return;
     this.#presentationReturnFocus=event.currentTarget instanceof HTMLElement?event.currentTarget:undefined;
-    this.#presentationFocused=false;this.#activePresentation={artifact,index:0};this.requestUpdate();await this.updateComplete;
+    const first=artifact.items[0],layout=first?planSlideLayout({title:first.title,body:first.body,notes:first.notes,image_prompt:"",slide:first.slide},artifact.presentation):null;
+    this.#presentationFocused=false;this.#presentationReading=Boolean(layout?.density==="dense"&&layout.overflow.readingModeRecommended);this.#presentationReadingPreference=null;this.#presentationContentOverflow=false;this.#activePresentation={artifact,index:0};this.requestUpdate();await this.updateComplete;
     const dialog=this.querySelector<HTMLDialogElement>(".shared-presentation-dialog");ensureModalDialog(dialog);dialog?.querySelector<HTMLElement>("button")?.focus();
   }
 
-  #closePresentation(){this.querySelector<HTMLDialogElement>(".shared-presentation-dialog")?.close();this.#activePresentation=null;this.#presentationFocused=false;this.#presentationTouchStart=null;const opener=this.#presentationReturnFocus;this.#presentationReturnFocus=undefined;this.requestUpdate();if(opener?.isConnected)opener.focus({preventScroll:true});}
+  #closePresentation(){this.querySelector<HTMLDialogElement>(".shared-presentation-dialog")?.close();this.#activePresentation=null;this.#presentationFocused=false;this.#presentationReading=false;this.#presentationReadingPreference=null;this.#presentationContentOverflow=false;this.#presentationTouchStart=null;this.#presentationObserver?.disconnect();this.#presentationObserved=undefined;const opener=this.#presentationReturnFocus;this.#presentationReturnFocus=undefined;this.requestUpdate();if(opener?.isConnected)opener.focus({preventScroll:true});}
   #setPresentationFocus(focused:boolean){this.#presentationFocused=focused;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLButtonElement>(".shared-presentation-focus-toggle")?.focus({preventScroll:true}));}
-  #navigatePresentation(index:number){const active=this.#activePresentation;if(!active)return;this.#activePresentation={...active,index:Math.max(0,Math.min(active.artifact.items.length-1,index))};this.requestUpdate();}
+  #setPresentationReading(reading:boolean){this.#presentationReadingPreference=reading;this.#presentationReading=reading;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLElement>(reading?".shared-presentation-reading":".shared-presentation-reading-toggle")?.focus({preventScroll:true}));}
+  #sharedSlideFit=(event:CustomEvent<{contentFits:boolean}>)=>{const overflow=!event.detail.contentFits;if(overflow===this.#presentationContentOverflow)return;this.#presentationContentOverflow=overflow;if(this.#presentationReadingPreference===null&&overflow){this.#presentationReading=true;this.requestUpdate();}};
+  #navigatePresentation(index:number){
+    const active=this.#activePresentation;if(!active)return;
+    const nextIndex=Math.max(0,Math.min(active.artifact.items.length-1,index));
+    if(nextIndex!==active.index&&this.#presentationReadingPreference===false)this.#presentationReadingPreference=null;
+    this.#presentationContentOverflow=false;
+    if(this.#presentationReadingPreference===null){
+      const item=active.artifact.items[nextIndex];
+      const layout=item?planSlideLayout({title:item.title,body:item.body,notes:item.notes,image_prompt:"",slide:item.slide},active.artifact.presentation):null;
+      const bounds=this.#presentationObserved?.getBoundingClientRect();
+      const narrow=Boolean(bounds&&presentationRequiresReadingPosture(bounds.width,Math.max(0,bounds.height-56)));
+      this.#presentationReading=narrow||Boolean(layout?.density==="dense"&&layout.overflow.readingModeRecommended);
+    }
+    this.#activePresentation={...active,index:nextIndex};
+    this.requestUpdate();
+  }
   #presentationPointerDown(event:PointerEvent){if(event.pointerType==="touch")this.#presentationTouchStart={x:event.clientX,y:event.clientY};}
   #presentationPointerUp(event:PointerEvent){const start=this.#presentationTouchStart;this.#presentationTouchStart=null;if(event.pointerType!=="touch"||!start||!this.#activePresentation)return;const horizontal=event.clientX-start.x,vertical=event.clientY-start.y;if(Math.abs(horizontal)<48||Math.abs(horizontal)<Math.abs(vertical)*1.5)return;const direction=this.matches(":dir(rtl)")?(horizontal<0?-1:1):(horizontal<0?1:-1);this.#navigatePresentation(this.#activePresentation.index+direction);}
 
@@ -89,7 +133,7 @@ export class FormaSharedView extends FormaPresentationalElement {
   #sharedSlideReader(item:DocumentArtifactItem,index:number){
     const slide=item.slide,quote=slide?.quote,citations=slide?.citations??[];
     const safeLabel=(value:string)=>{const label=value.trim();return label&&!OPAQUE_SHARED_SOURCE_LABEL.test(label)?label:this.#i18n.system("Authorized source citation");};
-    return html`<details class="shared-presentation-reader"><summary>${this.#i18n.system("Read slide")} ${this.#i18n.number(index+1)}</summary>
+    return html`<div class="shared-presentation-reader shared-presentation-reading" tabindex="0">
       <article aria-label=${this.#i18n.system("Complete reading version of slide {count}",{count:this.#i18n.number(index+1)})}>
         <h3 dir="auto">${item.title}</h3>${item.body?html`<p dir="auto">${item.body}</p>`:nothing}
         ${slide?.bullets.length?html`<ul>${slide.bullets.map((bullet)=>html`<li dir="auto">${bullet}</li>`)}</ul>`:nothing}
@@ -98,7 +142,7 @@ export class FormaSharedView extends FormaPresentationalElement {
         ${citations.length?html`<section><h4>${this.#i18n.system("Authorized source evidence")}</h4><ul>${citations.map((citation)=>html`<li><b dir="auto">${safeLabel(citation.label)}</b>${citation.anchor&&!OPAQUE_SHARED_SOURCE_LABEL.test(citation.anchor.trim())?html` <span dir="auto">${citation.anchor}</span>`:nothing}${citation.excerpt?html`<p dir="auto">${citation.excerpt}</p>`:nothing}</li>`)}</ul></section>`:nothing}
         ${item.notes?html`<section><h4>${this.#i18n.system("Speaker notes")}</h4><p dir="auto">${item.notes}</p></section>`:nothing}
       </article>
-    </details>`;
+    </div>`;
   }
 
   #presentationDialog(){
@@ -108,14 +152,13 @@ export class FormaSharedView extends FormaPresentationalElement {
     return html`<dialog class="modal shared-presentation-dialog" data-output-focus=${String(this.#presentationFocused)} closedby="any" aria-labelledby="shared-presentation-heading"
       @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#closePresentation();}}
       @cancel=${(event:Event)=>{if(!this.#presentationFocused)return;event.preventDefault();this.#setPresentationFocus(false);}}
-      @keydown=${(event:KeyboardEvent)=>{if(event.defaultPrevented||event.isComposing||event.metaKey||event.ctrlKey||event.altKey)return;if(event.key==="ArrowLeft"||event.key==="ArrowRight"){event.preventDefault();event.stopPropagation();this.#navigatePresentation(index+(event.key===(rtl?"ArrowRight":"ArrowLeft")?-1:1));}else if(event.key==="Home"||event.key==="End"){event.preventDefault();event.stopPropagation();this.#navigatePresentation(event.key==="Home"?0:artifact.items.length-1);}}}
-      @close=${()=>{this.#activePresentation=null;this.#presentationFocused=false;this.#presentationTouchStart=null;const opener=this.#presentationReturnFocus;this.#presentationReturnFocus=undefined;this.requestUpdate();if(opener?.isConnected)opener.focus({preventScroll:true});}}>
+      @keydown=${(event:KeyboardEvent)=>{if(event.defaultPrevented||event.isComposing||event.metaKey||event.ctrlKey||event.altKey)return;if((event.target as Element|null)?.closest(".shared-presentation-reading")&&(event.key==="Home"||event.key==="End"))return;if(event.key==="ArrowLeft"||event.key==="ArrowRight"){event.preventDefault();event.stopPropagation();this.#navigatePresentation(index+(event.key===(rtl?"ArrowRight":"ArrowLeft")?-1:1));}else if(event.key==="Home"||event.key==="End"){event.preventDefault();event.stopPropagation();this.#navigatePresentation(event.key==="Home"?0:artifact.items.length-1);}}}
+      @close=${()=>{this.#activePresentation=null;this.#presentationFocused=false;this.#presentationReading=false;this.#presentationReadingPreference=null;this.#presentationContentOverflow=false;this.#presentationTouchStart=null;this.#presentationObserver?.disconnect();this.#presentationObserved=undefined;const opener=this.#presentationReturnFocus;this.#presentationReturnFocus=undefined;this.requestUpdate();if(opener?.isConnected)opener.focus({preventScroll:true});}}>
       <section class="modal-card shared-presentation-card">
-        <header><div><span>${this.#i18n.system("Presentation")}</span><h2 id="shared-presentation-heading" dir="auto">${artifact.title}</h2></div><div class="shared-presentation-actions"><button type="button" class="button secondary compact shared-presentation-focus-toggle" aria-pressed=${this.#presentationFocused} @click=${()=>this.#setPresentationFocus(!this.#presentationFocused)}>${this.#i18n.system(this.#presentationFocused?"Exit focus":"Focus view")}</button><button type="button" class="button secondary compact" @click=${()=>this.#closePresentation()}>${this.#i18n.t("action.close","Close")}</button></div></header>
-        <div class="shared-presentation-stage" @pointerdown=${this.#presentationPointerDown} @pointerup=${this.#presentationPointerUp} @pointercancel=${()=>{this.#presentationTouchStart=null;}}>
-          <div class="shared-presentation-viewport"><forma-presentation-slide .item=${{title:item.title,body:item.body,notes:item.notes,image_prompt:"",slide:item.slide}} .presentation=${artifact.presentation} .index=${index} .total=${artifact.items.length} .compact=${false}></forma-presentation-slide></div>
+        <header><div><span>${this.#i18n.system("Presentation")}</span><h2 id="shared-presentation-heading" dir="auto">${artifact.title}</h2></div><div class="shared-presentation-actions"><button type="button" class="button secondary compact shared-presentation-reading-toggle" aria-pressed=${String(this.#presentationReading)} @click=${()=>this.#setPresentationReading(!this.#presentationReading)}>${this.#i18n.system(this.#presentationReading?"Slide view":"Read slide")}</button><button type="button" class="button secondary compact shared-presentation-focus-toggle" aria-pressed=${this.#presentationFocused} @click=${()=>this.#setPresentationFocus(!this.#presentationFocused)}>${this.#i18n.system(this.#presentationFocused?"Exit focus":"Focus view")}</button><button type="button" class="button secondary compact" @click=${()=>this.#closePresentation()}>${this.#i18n.t("action.close","Close")}</button></div></header>
+        <div class=${`shared-presentation-stage${this.#presentationReading?" shared-presentation-stage--reading":""}`} data-slide-posture=${this.#presentationReading?"reading":"visual"} @presentation-slide-fit=${this.#sharedSlideFit} @pointerdown=${this.#presentationPointerDown} @pointerup=${this.#presentationPointerUp} @pointercancel=${()=>{this.#presentationTouchStart=null;}}>
+          ${this.#presentationReading?this.#sharedSlideReader(item,index):html`<div class="shared-presentation-viewport"><forma-presentation-slide .item=${{title:item.title,body:item.body,notes:item.notes,image_prompt:"",slide:item.slide}} .presentation=${artifact.presentation} .index=${index} .total=${artifact.items.length} .compact=${false}></forma-presentation-slide></div>`}
           <nav aria-label=${this.#i18n.system("Presentation")}><button type="button" class="button secondary compact" aria-keyshortcuts=${rtl?"ArrowRight":"ArrowLeft"} ?disabled=${index===0} @click=${()=>this.#navigatePresentation(index-1)}>${this.#i18n.system("Previous")}</button><span role="status" aria-live="polite" aria-atomic="true">${position}</span><button type="button" class="button secondary compact" aria-keyshortcuts=${rtl?"ArrowLeft":"ArrowRight"} ?disabled=${index===artifact.items.length-1} @click=${()=>this.#navigatePresentation(index+1)}>${this.#i18n.system("Next")}</button></nav>
-          ${this.#sharedSlideReader(item,index)}
         </div>
       </section>
     </dialog>`;
