@@ -34,9 +34,11 @@ import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./doc
 import { PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow } from "./access-policy";
 import { authoritativeCreativeContext, ContextIntegrityError } from "./context-authority";
 import { managedPilotSourceClassificationValid } from "./media-api";
+import { ProductionWorkflowContextError, resolveProductionWorkflowContext } from "./production-workflow";
 import { assessStoredPresentationCandidate, MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES } from "./openai-adapter";
 import { combinedSceneSnapshot } from "./managed-production";
 import { standingConstraints } from "../src/model/taste";
+import { productionWorkflowSourceIdentity, type ProductionWorkflowSource } from "../src/model/production-workflow";
 
 type DocumentJobRow = {
   job_id: string; owner_id: string; stream_id: string; document_id: string; kind: DocumentJobKind; status: DocumentJobStatus;
@@ -178,7 +180,10 @@ function generationRequestIdentity(kind: DocumentJobKind, request: Record<string
   const sourcePreviewId = typeof request.sourcePreviewId === "string" && request.sourcePreviewId ? request.sourcePreviewId : null;
   const promptTechnique = normalizePromptTechnique(request.promptTechnique); const promptFanId = typeof request.promptFanId === "string" && request.promptFanId ? request.promptFanId : null;
   const requestKey = kind === "preview" || kind === "generate" ? String(request.requestKey || documentGenerationRequestKey(kind, documentRevision, sourcePreviewId, promptTechnique, promptFanId)) : kind === "prompt_fan" || kind === "render_document" ? String(request.requestKey ?? "") : "";
-  return { documentRevision, requestKey, sourcePreviewId, promptTechnique, promptFanId };
+  const workflowIdentity = kind === "generate" && request.workflowId && request.workflowStageId
+    ? documentGenerationRevision({ workflowId: request.workflowId, workflowStageId: request.workflowStageId, sources: productionWorkflowSourceIdentity(Array.isArray(request.workflowSources) ? request.workflowSources as ProductionWorkflowSource[] : []) })
+    : null;
+  return { documentRevision, requestKey, sourcePreviewId, promptTechnique, promptFanId, workflowIdentity };
 }
 
 const LOCAL_PERSISTENCE_FAILURE=/\b(?:D1_ERROR|SQLITE_(?:CONSTRAINT|ERROR|BUSY|LOCKED|IOERR|CORRUPT|FULL)|SQLITE_CONSTRAINT_[A-Z_]+|UNIQUE constraint failed|FOREIGN KEY constraint failed|NOT NULL constraint failed|CHECK constraint failed|database is locked|Wrong number of parameter bindings|events\.event_id|event[_ -]store(?:\s+|[_ -])(?:write|persistence|collision|failure))/i;
@@ -208,6 +213,9 @@ function renderRequestIdempotencyKey(request:Record<string,unknown>,documentId:s
     presentationStyle:request.presentationStyle??null,presentationFidelity:request.presentationFidelity??null,
     videoSeconds:request.videoSeconds??null,videoSize:request.videoSize??null,videoAudioMode:request.videoAudioMode??null,
     soundtrackBlockIds:Array.isArray(request.soundtrackBlockIds)?[...new Set(request.soundtrackBlockIds.map(String))]:[],audioImageBlockId:request.audioImageBlockId??null,sendSoundtrackToVideoProvider:request.sendSoundtrackToVideoProvider===true,
+    workflowId:typeof request.workflowId==="string"?request.workflowId:null,
+    workflowStageId:typeof request.workflowStageId==="string"?request.workflowStageId:null,
+    workflowSources:productionWorkflowSourceIdentity(Array.isArray(request.workflowSources)?request.workflowSources as ProductionWorkflowSource[]:[]),
   };
   return `${String(request.requestKey??"").trim()||`render:${settings.artifactKind}:${settings.documentRevision}`}:${documentGenerationRevision(settings)}`;
 }
@@ -319,6 +327,8 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
     const snapshot=receipt.document_snapshot&&typeof receipt.document_snapshot==="object"&&!Array.isArray(receipt.document_snapshot)?receipt.document_snapshot as Record<string,unknown>:null;
     const receiptSource=receipt.source&&typeof receipt.source==="object"&&!Array.isArray(receipt.source)?receipt.source as Record<string,unknown>:{};
     const receiptRequest=receipt.request&&typeof receipt.request==="object"&&!Array.isArray(receipt.request)?receipt.request as Record<string,unknown>:{};
+    const receiptWorkflow=receiptRequest.production_workflow&&typeof receiptRequest.production_workflow==="object"&&!Array.isArray(receiptRequest.production_workflow)?receiptRequest.production_workflow as Record<string,unknown>:null;
+    const workflowSnapshot=receipt.production_workflow_snapshot&&typeof receipt.production_workflow_snapshot==="object"&&!Array.isArray(receipt.production_workflow_snapshot)?receipt.production_workflow_snapshot as Record<string,unknown>:null;
     const raw=typeof envelope.output_text==="string"?envelope.output_text:"";
     const candidateResponse=String(envelope.response_id??"");
     const candidate=checkpointCandidates.find((entry)=>entry.responseId===candidateResponse);
@@ -333,6 +343,7 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
       ||await retainedPresentationContentSha256(raw)!==String(envelope.content_sha256??"")
       ||recordedResponses.size&&!recordedResponses.has(candidateResponse)
       ||!candidate&&row.classification!=="governed-evidence")continue;
+    if((request.workflowId||request.workflowStageId)&&(!receiptWorkflow||!workflowSnapshot||receiptWorkflow.id!==request.workflowId||receiptWorkflow.stage_id!==request.workflowStageId||JSON.stringify(productionWorkflowSourceIdentity(Array.isArray(receiptWorkflow.sources)?receiptWorkflow.sources as ProductionWorkflowSource[]:[]))!==JSON.stringify(productionWorkflowSourceIdentity(Array.isArray(request.workflowSources)?request.workflowSources as ProductionWorkflowSource[]:[]))))continue;
     if(candidate&&(candidate.contentRef!==row.content_id||candidate.contentExpiresAt!==row.expires_at||candidate.responseId!==candidateResponse
       ||candidate.documentRevision!==documentRevision||candidate.sourceSnapshotSha256!==sourceHash
       ||candidate.contentSha256!==envelope.content_sha256||Number(candidate.candidateBytes??-1)!==rawBytes
@@ -349,7 +360,7 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
       ||mode==="managed"&&(pageCount!==Math.ceil(plannedSlideCount/8)||globalStartIndex!==pageIndex*8)
       ||mode!=="managed"&&(pageCount!==1||pageIndex!==0||globalStartIndex!==0))continue;
     const documentTitle=typeof envelope.document_title==="string"?envelope.document_title:String((snapshot.document as Record<string,unknown>|undefined)?.title??"Presentation");
-    const compiledSnapshot={...snapshot,document:{id:job.document_id,title:documentTitle}};
+    const compiledSnapshot={...(receiptWorkflow?workflowSnapshot??snapshot:snapshot),document:{id:job.document_id,title:documentTitle}};
     const planned=checkpoint.productionPlan&&typeof checkpoint.productionPlan==="object"&&!Array.isArray(checkpoint.productionPlan)
       ?checkpoint.productionPlan as ManagedProductionPlan
       :mode==="managed"?buildManagedProductionPlan("slides",compiledSnapshot,{requestedSlideCount:plannedSlideCount}):null;
@@ -512,11 +523,20 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
   }catch(error){return error instanceof ContextIntegrityError?{error:"presentation_recovery_source_changed",status:409}:failed();}
   const currentHash=await sourceSnapshotSha256(trusted.snapshot);
   if(currentHash!==originalHash||trusted.documentRevision!==String(request.documentRevision??"")||JSON.stringify(trusted.sourceBlockVersions)!==JSON.stringify(request.sourceBlockVersions??[]))return{error:"presentation_recovery_source_changed",status:409};
+  let effectiveSnapshot:Record<string,unknown>=trusted.snapshot;
+  if(request.workflowId!==undefined||request.workflowStageId!==undefined||request.workflowSources!==undefined){
+    try{
+      let workflowScope=user.projectExecution;
+      if(!workflowScope&&!user.fictional&&(user.billingUserId??user.userId)===user.userId){const scopes=await ownerDocumentBudgetScopes(env,user.userId,row.document_id,document.projectId);if(scopes.length>1)return{error:"presentation_recovery_source_changed",status:409};if(scopes[0])workflowScope={organizationId:scopes[0].organizationId,projectAccessId:scopes[0].projectAccessId,projectId:document.projectId,ownerUserId:user.userId,actorUserId:user.userId};}
+      const resolved=await resolveProductionWorkflowContext({env,events,documentId:row.document_id,projectId:document.projectId,ownerId:workflowScope?.ownerUserId??user.userId,scope:workflowScope,snapshot:trusted.snapshot,workflowId:request.workflowId,workflowStageId:request.workflowStageId,workflowSources:request.workflowSources,requestedFormat:"slides"});
+      effectiveSnapshot=resolved.snapshot;
+    }catch(error){if(error instanceof ProductionWorkflowContextError)return{error:"presentation_recovery_source_changed",status:409};throw error;}
+  }
   const authoredConstraints=standingConstraints(events).map((item)=>({preference_id:item.preferenceId,axis:item.axis,value:item.value,polarity:item.polarity,authority:"authored",source_event_refs:item.evidenceRefs,source_claim_ref:item.sourceClaimRef??null}));
-  const trustedSnapshot=trusted.snapshot as Record<string,unknown>;
+  const trustedSnapshot=effectiveSnapshot as Record<string,unknown>;
   const suppliedConstraints=Array.isArray(trustedSnapshot.standing_constraints)?trustedSnapshot.standing_constraints.filter((value):value is Record<string,unknown>=>Boolean(value)&&typeof value==="object"&&!Array.isArray(value)):[];
   const mergedConstraints=[...new Map([...suppliedConstraints,...authoredConstraints].map((constraint)=>[String(constraint.preference_id??`${constraint.polarity}:${constraint.axis}:${constraint.value}`),constraint])).values()];
-  const snapshot={...trusted.snapshot,document:{id:document.id,title:document.title},...(mergedConstraints.length?{standing_constraints:mergedConstraints}:{})};
+  const snapshot={...effectiveSnapshot,document:{id:document.id,title:document.title},...(mergedConstraints.length?{standing_constraints:mergedConstraints}:{})};
   const compiledHash=await sourceSnapshotSha256(snapshot);
   const itemCount=Number(request.itemCount??request.requestedSlideCount??0);
   const requestedSlideCount=Number(request.requestedSlideCount??itemCount);
@@ -569,13 +589,15 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
     const model=String(checkpoint.plannerModel??candidateModelFromResponse(candidates,recoveredResponseId)??env.OPENAI_MODEL??"gpt-5.6-terra");
     const productionSystem=production?productionSystemFor(production.format):null;
     const productionQuality=production?scoreManagedProductionPlan(production):null;
-    const inputReceipt={schema_version:1,artifact_id:artifactId,artifact_kind:"slides",document_id:document.id,project_id:document.projectId,captured_at:new Date().toISOString(),document_snapshot:snapshot,source_block_versions:trusted.sourceBlockVersions,request:{item_count:itemCount,requested_slide_count:itemCount,audience:String(request.audience??"general"),tone:String(request.tone??"document-derived"),production_mode:request.productionMode==="managed"?"managed":"manual",source_surface:row.source_surface},planner:{provider:"openai",model,response_id:plannerResponseId,recovered_response_id:recoveredResponseId,recovered_without_provider_request:true},accounting:{settled_cost_microusd:settledCost,incremental_cost_microusd:0},...(production?{production:{team:production.team,system:productionSystem,work_units:productionUnitsForPlan(production),plan:production,quality:productionQuality}}:{})};
+    const workflowLineage=request.workflowId&&request.workflowStageId?{workflow_id:String(request.workflowId),workflow_stage_id:String(request.workflowStageId),workflow_sources:Array.isArray(request.workflowSources)?request.workflowSources as ProductionWorkflowSource[]:[]}:null;
+    const workflowSettings=workflowLineage?{production_workflow:{id:workflowLineage.workflow_id,stage_id:workflowLineage.workflow_stage_id,sources:workflowLineage.workflow_sources}}:{};
+    const inputReceipt={schema_version:1,artifact_id:artifactId,artifact_kind:"slides",document_id:document.id,project_id:document.projectId,captured_at:new Date().toISOString(),document_snapshot:snapshot,source_block_versions:trusted.sourceBlockVersions,request:{item_count:itemCount,requested_slide_count:itemCount,audience:String(request.audience??"general"),tone:String(request.tone??"document-derived"),production_mode:request.productionMode==="managed"?"managed":"manual",source_surface:row.source_surface,...workflowSettings},planner:{provider:"openai",model,response_id:plannerResponseId,recovered_response_id:recoveredResponseId,recovered_without_provider_request:true},accounting:{settled_cost_microusd:settledCost,incremental_cost_microusd:0},...(production?{production:{team:production.team,system:productionSystem,work_units:productionUnitsForPlan(production),plan:production,quality:productionQuality}}:{})};
     const stored=await storePrivateContent(env,storageOwnerId,"document-artifact",JSON.stringify(plan));
     stagedContent.push({contentId:stored.contentId,ownerId:storageOwnerId,kind:"document-artifact"});
     const inputStored=await storePrivateContent(env,ownerId,"document-artifact-input",JSON.stringify(inputReceipt),user.projectExecution);
     stagedContent.push({contentId:inputStored.contentId,ownerId,kind:"document-artifact-input"});
     const items=plan.items.map((item,index)=>({id:`${artifactId}-item-${index+1}`,title:item.title,slide:item.slide??null,context_group_ids:item.context_group_ids??[],media_url:null,media_type:null,width:null,height:null,...(production?{scene_id:production.scenes[index]?.id??null,narrative_order:index+1,generation_order:production.executionOrder.indexOf(production.scenes[index]?.id??"")+1,duration_seconds:null}:{})}));
-    const completed=makeEvent(user.streamId,originalHead+1,"worker:renderer",`server:document-job:${row.kind}`,correlationId,"DocumentRenderCompleted",{artifact_id:artifactId,artifact_kind:"slides",document_id:document.id,project_id:document.projectId,source_block_versions:trusted.sourceBlockVersions,requested_by_user_id:ownerId,title:plan.title,summary:plan.summary,content_ref:stored.contentId,content_expires_at:stored.expiresAt,input_ref:inputStored.contentId,input_expires_at:inputStored.expiresAt,item_count:plan.items.length,items,presentation:plan.presentation??null,media_url:null,media_type:null,provider:"openai",provider_job_id:null,model_id:model,planner_model_id:model,planner_response_id:plannerResponseId,recovered_provider_response_id:recoveredResponseId,recovered_without_provider_request:true,reference_inputs:[],used_reference_pixels:false,latency_ms:Number(checkpoint.plannerLatencyMs??0),settings:{item_count:itemCount,authored_slide_count:request.authoredSlideCount??null,requested_slide_count:itemCount,predicted_slide_count:itemCount,presentation_style:presentationStyle??null,presentation_fidelity:request.presentationFidelity??"faithful",reserved_cost_microusd:Number(receipt.reservation_microusd??0),settled_cost_microusd:settledCost,incremental_cost_microusd:0,audience:String(request.audience??"general"),tone:String(request.tone??"document-derived"),production_mode:request.productionMode==="managed"?"managed":"manual",production_team:production?.team??null,production_system:productionSystem,production_quality:productionQuality},source_surface:row.source_surface},{causationId:null});
+    const completed=makeEvent(user.streamId,originalHead+1,"worker:renderer",`server:document-job:${row.kind}`,correlationId,"DocumentRenderCompleted",{artifact_id:artifactId,artifact_kind:"slides",document_id:document.id,project_id:document.projectId,source_block_versions:trusted.sourceBlockVersions,requested_by_user_id:ownerId,title:plan.title,summary:plan.summary,content_ref:stored.contentId,content_expires_at:stored.expiresAt,input_ref:inputStored.contentId,input_expires_at:inputStored.expiresAt,item_count:plan.items.length,items,presentation:plan.presentation??null,media_url:null,media_type:null,provider:"openai",provider_job_id:null,model_id:model,planner_model_id:model,planner_response_id:plannerResponseId,recovered_provider_response_id:recoveredResponseId,recovered_without_provider_request:true,reference_inputs:[],used_reference_pixels:false,latency_ms:Number(checkpoint.plannerLatencyMs??0),settings:{item_count:itemCount,authored_slide_count:request.authoredSlideCount??null,requested_slide_count:itemCount,predicted_slide_count:itemCount,presentation_style:presentationStyle??null,presentation_fidelity:request.presentationFidelity??"faithful",reserved_cost_microusd:Number(receipt.reservation_microusd??0),settled_cost_microusd:settledCost,incremental_cost_microusd:0,audience:String(request.audience??"general"),tone:String(request.tone??"document-derived"),production_mode:request.productionMode==="managed"?"managed":"manual",production_team:production?.team??null,production_system:productionSystem,production_quality:productionQuality,...workflowSettings},...(workflowLineage??{}),source_surface:row.source_surface},{causationId:null});
     const usage=makeEvent(user.streamId,originalHead+2,"worker:policy",`server:document-job:${row.kind}`,correlationId,"GenerationUsageRecorded",{operation:"document-render:slides:recovery",artifact_id:artifactId,artifact_kind:"slides",document_id:document.id,reservation_id:checkpoint.reservationId??null,cost_reservation_id:reservationId,input_tokens:0,output_tokens:0,total_tokens:0,planner_tokens:0,reserved_tokens:0,reserved_microusd:0,model_ids:[model],planner_response_id:plannerResponseId,planner_usage_previously_recorded:true,planner_cost_previously_recorded:true,recovered_provider_response_id:recoveredResponseId,recovered_without_provider_request:true,cost_microusd:0,planner_cost_microusd:0,previously_settled_cost_microusd:settledCost},{causationId:completed.eventId});
     if(!await activeProjectExecution(env,user,row.document_id,row.job_id))throw new Error("project_access_revoked");
     const finishedAt=new Date().toISOString();
@@ -634,7 +656,7 @@ type GenerationReceipt=Record<string,unknown>&{
   reservation_status:string;source_transmission_status:string;provider_request_status:string;
 };
 
-async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Record<string,unknown>,documentId:string,jobId:string,estimatedCostMicrousd:number,production:ManagedProductionPlan|null,contentScope:ProjectExecutionScope|undefined):Promise<GenerationReceipt>{
+async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Record<string,unknown>,documentId:string,jobId:string,estimatedCostMicrousd:number,production:ManagedProductionPlan|null,contentScope:ProjectExecutionScope|undefined,effectiveSnapshot?:Record<string,unknown>):Promise<GenerationReceipt>{
   const snapshot=payload.snapshot&&typeof payload.snapshot==="object"&&!Array.isArray(payload.snapshot)?payload.snapshot as Record<string,unknown>:{};
   const artifactKind=String(payload.artifactKind??"");
   const isSlides=artifactKind==="slides";
@@ -662,10 +684,11 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
     presentation_fidelity:typeof payload.presentationFidelity==="string"?payload.presentationFidelity:null,
     batch_count:batchCount,planned_provider_call_count:plannedProviderCallCount,max_repair_call_count:maxRepairCallCount,maximum_provider_call_count:maximumProviderCallCount,
     reservation_microusd:estimatedCostMicrousd,
+    ...(payload.workflowId&&payload.workflowStageId?{production_workflow:{id:String(payload.workflowId),stage_id:String(payload.workflowStageId),sources:Array.isArray(payload.workflowSources)?payload.workflowSources:[]}}:{}),
   };
   const privateReceipt={
     schema_version:1,job_id:jobId,artifact_kind:artifactKind,document_id:documentId,captured_at:capturedAt,
-    request:requestSettings,document_snapshot:snapshot,
+    request:requestSettings,document_snapshot:snapshot,...(effectiveSnapshot?{production_workflow_snapshot:effectiveSnapshot}:{}),
     source_block_versions:Array.isArray(payload.sourceBlockVersions)?payload.sourceBlockVersions:[],
     planner:{provider:plannerProvider,model:plannerModel,request_status:"not_submitted"},
     source:{scope:"authorized_document_context",status:"not_transmitted",snapshot_sha256:sourceHash},
@@ -1679,6 +1702,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const documentId = String(input.documentId ?? projection.documentId); const documentRecord = projection.documents.find((document) => document.id === documentId);
   if (!documentRecord) return Response.json({ error: "document_not_found" }, { status: 404 });
   if(project&&documentRecord.projectId!==project.projectId)return Response.json({error:"document_not_found"},{status:404});
+  let workflowPlanningSnapshot:Record<string,unknown>|undefined;
   if(kind==="preview"||kind==="generate"||kind==="prompt_fan"||kind==="render_document"){
     try{
       const trusted=authoritativeCreativeContext(events,{
@@ -1686,12 +1710,27 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         projectId:project?.projectId??documentRecord.projectId,
         canvasId:typeof payload.canvasId==="string"?payload.canvasId:undefined,
         contextSetId:typeof payload.contextSetId==="string"?payload.contextSetId:undefined,
+        contextRootBlockId:typeof payload.contextRootBlockId==="string"?payload.contextRootBlockId:undefined,
+        characterOutputKind:payload.characterOutputKind==="headshot"||payload.characterOutputKind==="character_sheet"?payload.characterOutputKind:undefined,
         snapshot:payload.snapshot&&typeof payload.snapshot==="object"&&!Array.isArray(payload.snapshot)?payload.snapshot as Record<string,unknown>:undefined,
         sourceBlockVersions:Array.isArray(payload.sourceBlockVersions)?payload.sourceBlockVersions as Array<Record<string,unknown>>:undefined,
       });
       payload.snapshot=trusted.snapshot;
       payload.sourceBlockVersions=trusted.sourceBlockVersions;
       payload.documentRevision=trusted.documentRevision;
+      if((kind==="render_document"||kind==="generate")&&(payload.workflowId!==undefined||payload.workflowStageId!==undefined||payload.workflowSources!==undefined)){
+        let workflowScope=user.projectExecution;
+        if(!workflowScope&&!user.fictional&&(user.billingUserId??user.userId)===user.userId){
+          const scopes=await ownerDocumentBudgetScopes(env,user.userId,documentId,documentRecord.projectId);
+          if(scopes.length>1)return Response.json({error:"ambiguous_project_budget_scope"},{status:409});
+          if(scopes[0])workflowScope={organizationId:scopes[0].organizationId,projectAccessId:scopes[0].projectAccessId,projectId:documentRecord.projectId,ownerUserId:user.userId,actorUserId:user.userId};
+        }
+        const resolved=await resolveProductionWorkflowContext({env,events,documentId,projectId:project?.projectId??documentRecord.projectId,ownerId:workflowScope?.ownerUserId??project?.ownerUserId??user.userId,scope:workflowScope,snapshot:trusted.snapshot,workflowId:payload.workflowId,workflowStageId:payload.workflowStageId,workflowSources:payload.workflowSources,requestedFormat:kind==="generate"?"image":payload.artifactKind});
+        // Persist only the authenticated authored snapshot. Synthetic output context is
+        // transient and will be re-resolved under fresh authorization during execution.
+        workflowPlanningSnapshot=resolved.snapshot;
+        payload.workflowSources=resolved.sources;
+      }
       if(kind==="render_document"&&payload.artifactKind==="slides"){
         const outline=inferPresentationSourceOutline(trusted.snapshot);
         if(payload.productionMode==="managed"&&Number(outline.authoredSlideCount??0)>MAX_MANAGED_PRESENTATION_SLIDES)return Response.json({error:"presentation_slide_count_invalid",message:`The authored outline contains more than the ${MAX_MANAGED_PRESENTATION_SLIDES}-slide managed presentation limit.`,supported:{minimum:1,maximum:MAX_MANAGED_PRESENTATION_SLIDES}},{status:400});
@@ -1699,6 +1738,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       }
     }catch(error){
       if(error instanceof ContextIntegrityError)return Response.json({error:error.code,message:error.message},{status:error.code==="document_not_found"?404:409});
+      if(error instanceof ProductionWorkflowContextError)return Response.json({error:error.code,message:error.message},{status:error.status});
       throw error;
     }
   }
@@ -1729,7 +1769,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     }
     const pilotAllowance=await pilotExecutionAllowance(env,billingUserId,scopes[0]);
     if(!pilotAllowance.allowed)return Response.json({error:"active_pilot_participation_required"},{status:403});
-    const trustedSnapshot=payload.snapshot&&typeof payload.snapshot==="object"&&!Array.isArray(payload.snapshot)?payload.snapshot as Record<string,unknown>:null;
+    const trustedSnapshot=workflowPlanningSnapshot??(payload.snapshot&&typeof payload.snapshot==="object"&&!Array.isArray(payload.snapshot)?payload.snapshot as Record<string,unknown>:null);
     const trustedFacts=Array.isArray(trustedSnapshot?.facts)?trustedSnapshot.facts.filter((fact):fact is Record<string,unknown>=>Boolean(fact&&typeof fact==="object"&&!Array.isArray(fact))).map((fact)=>({type:String(fact.type??""),properties:fact.properties&&typeof fact.properties==="object"&&!Array.isArray(fact.properties)?fact.properties as Record<string,unknown>:{}})):null;
     const providerBlocks=kind==="structure_adaptive"&&payload.projectScope===true?projection.libraryBlocks:["preview","generate","prompt_fan","render_document"].includes(kind)&&trustedFacts?trustedFacts:projection.blocks;
     if(pilotAllowance.pilot&&!await managedPilotSourceClassificationValid(env,project?.ownerUserId??user.userId,pilotAllowance.pilot.cohort_id,providerBlocks,projectContentScope?.projectAccessId)){
@@ -1740,7 +1780,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     let production:ManagedProductionPlan|null=null;
     if(kind==="render_document"&&payload.productionMode==="managed"&&["short_story","scene","slides","storyboard","video","audio"].includes(artifactKind)){
       try{
-        production=buildManagedProductionPlan(artifactKind as "short_story"|"scene"|"slides"|"storyboard"|"video"|"audio",payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{},artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??0),...(artifactKind==="slides"&&payload.requestedSlideCount!==undefined?{requestedSlideCount:Number(payload.requestedSlideCount)}:{})});
+        production=buildManagedProductionPlan(artifactKind as "short_story"|"scene"|"slides"|"storyboard"|"video"|"audio",workflowPlanningSnapshot??(payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:{}),artifactKind==="video"?{}:{requestedItemCount:Number(payload.itemCount??0),...(artifactKind==="slides"&&payload.requestedSlideCount!==undefined?{requestedSlideCount:Number(payload.requestedSlideCount)}:{})});
       }catch(error){
         if(error instanceof ManagedPresentationPlanningError)return Response.json({error:error.code,message:error.message},{status:422});
         throw error;
@@ -1770,7 +1810,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     }
     if(gate.requiresAcknowledgement&&payload.budgetAcknowledged!==true)return Response.json({error:"generation_budget_acknowledgement_required",message:`Review your ${Math.round(gate.projectedUtilization*100)}% monthly budget usage before starting this generation.`,gate},{status:428});
     if(kind==="render_document"&&artifactKind==="slides"){
-      const authorizedSources=new Set(buildPresentationSourceContract(payload.snapshot as Record<string,unknown>).sources.filter((source)=>source.sourceKind==="block").map((source)=>source.sourceId));
+      const authorizedSources=new Set(buildPresentationSourceContract(workflowPlanningSnapshot??payload.snapshot as Record<string,unknown>).sources.filter((source)=>source.sourceKind==="block").map((source)=>source.sourceId));
       if(!authorizedSources.size)return Response.json({error:"presentation_authorized_source_required",message:"Add at least one active, authorized source decision before generating a presentation. Exclusions and disabled decisions cannot become slide content."},{status:422});
       if(production&&production.scenes.some((scene)=>!scene.sourceBlockIds.some((sourceId)=>authorizedSources.has(sourceId))))return Response.json({error:"presentation_authorized_source_required",message:"Every planned slide requires an active, authorized positive source before any budget is reserved or a model is contacted."},{status:422});
     }
@@ -1784,7 +1824,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   }
 
   if(kind==="preview"||kind==="generate"||kind==="prompt_fan"){
-    const readinessKind=kind==="prompt_fan"?`${fanKindFromRequest(payload)??"generate"}_fan` as const:kind;const readiness=await preflightGeneration(env,user,{kind:readinessKind,documentId,documentRevision:String(payload.documentRevision??""),requestKey:String(payload.requestKey??""),sourcePreviewId:typeof payload.sourcePreviewId==="string"?payload.sourcePreviewId:null,promptTechnique:normalizePromptTechnique(payload.promptTechnique),productionMode:payload.productionMode==="managed"?"managed":"manual",snapshot:payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:undefined,force:true,sourceSurface:String(input.sourceSurface??"generation-controls")},{appendEvents:true,allowCache:false,sourceEvents:events});
+    const readinessKind=kind==="prompt_fan"?`${fanKindFromRequest(payload)??"generate"}_fan` as const:kind;const readiness=await preflightGeneration(env,user,{kind:readinessKind,documentId,documentRevision:String(payload.documentRevision??""),requestKey:String(payload.requestKey??""),sourcePreviewId:typeof payload.sourcePreviewId==="string"?payload.sourcePreviewId:null,promptTechnique:normalizePromptTechnique(payload.promptTechnique),productionMode:payload.productionMode==="managed"?"managed":"manual",contextRootBlockId:typeof payload.contextRootBlockId==="string"?payload.contextRootBlockId:undefined,characterOutputKind:payload.characterOutputKind==="headshot"||payload.characterOutputKind==="character_sheet"?payload.characterOutputKind:undefined,snapshot:payload.snapshot&&typeof payload.snapshot==="object"?payload.snapshot as Record<string,unknown>:undefined,force:true,sourceSurface:String(input.sourceSurface??"generation-controls"),...(payload.workflowId&&payload.workflowStageId?{workflowId:String(payload.workflowId),workflowStageId:String(payload.workflowStageId),workflowSources:Array.isArray(payload.workflowSources)?payload.workflowSources as ProductionWorkflowSource[]:[]}:{})},{appendEvents:true,allowCache:false,sourceEvents:events});
     if(readiness.status==="blocked"){await appendAuditEvent(env,user.streamId,"worker:policy","GenerationBlockedBeforeProvider",{preflight_id:readiness.preflightId,document_id:documentId,document_revision:readiness.documentRevision,request_key:readiness.requestKey,kind:readiness.kind,status:readiness.status,blocking_probes:readiness.probes.filter((probe)=>probe.status==="fail").map((probe)=>probe.id),estimated_cost_avoided_microusd:readiness.estimatedCostMicrousd},uuidV7());return Response.json({error:"generation_preflight_blocked",message:readiness.summary,readiness},{status:409});}
     if(readiness.status==="review"&&payload.preflightAcknowledged!==true)return Response.json({error:"generation_preflight_review_required",message:readiness.summary,readiness},{status:428});
     if(readiness.status==="review")await appendAuditEvent(env,user.streamId,"worker:policy","GenerationRiskAcknowledged",{preflight_id:readiness.preflightId,document_id:documentId,document_revision:readiness.documentRevision,request_key:readiness.requestKey,kind:readiness.kind,warning_probes:readiness.probes.filter((probe)=>probe.status==="warning"||probe.status==="unknown").map((probe)=>probe.id),source_surface:String(input.sourceSurface??"generation-controls")});
@@ -1824,7 +1864,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       .bind(...(project?[project.projectAccessId,project.organizationId]:[]),user.userId,user.streamId,documentId,kind).all<DocumentJobRow>()).results;
     if(kind==="preview"||kind==="generate"){
       const identity=generationRequestIdentity(kind,payload,documentId);payload.documentRevision=identity.documentRevision;payload.requestKey=identity.requestKey;
-      active=candidates.find((candidate)=>generationRequestIdentity(kind,parseRequest(candidate),documentId).requestKey===identity.requestKey)??null;
+      active=candidates.find((candidate)=>{const candidateIdentity=generationRequestIdentity(kind,parseRequest(candidate),documentId);return candidateIdentity.requestKey===identity.requestKey&&candidateIdentity.workflowIdentity===identity.workflowIdentity;})??null;
     }else if(kind==="render_document"){
       const providedRequestKey=String(payload.requestKey??"").trim();
       payload.requestKey=providedRequestKey||`render:${String(payload.artifactKind??"unknown")}:${payload.productionMode==="managed"?"managed":"manual"}:${generationRevisionFromRequest(payload,documentId)}`;
@@ -1845,7 +1885,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const jobId = uuidV7(); const requestedAt = new Date(); const configuredRetention = Number(projectRetentionDays ?? env.FORMA_RETENTION_DAYS ?? 30); const retentionDays = Number.isFinite(configuredRetention) && configuredRetention > 0 ? configuredRetention : 30; const expiresAt = new Date(requestedAt.getTime() + retentionDays * 86_400_000).toISOString();
   const sourceSurface = String(input.sourceSurface ?? payload.sourceSurface ?? "studio").slice(0, 80) || "studio"; const requestedSequence = await streamHead(env, user.streamId);
   const createdAt=requestedAt.toISOString();
-  const receipt=kind==="render_document"?await acceptedGenerationReceipt(env,user,payload,documentId,jobId,estimatedGenerationCostMicrousd,productionPlan,projectContentScope):null;
+  const receipt=kind==="render_document"?await acceptedGenerationReceipt(env,user,payload,documentId,jobId,estimatedGenerationCostMicrousd,productionPlan,projectContentScope,workflowPlanningSnapshot):null;
   const initialResult=receipt?{artifactKind:String(payload.artifactKind??""),generationReceipt:receipt,stage:"queued",progressMessage:"The accepted generation and its private source receipt are safely recorded."}:null;
   const inserted=documentJobInsert(env,user,documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[jobId,user.userId,user.streamId,documentId,kind,sourceSurface,jobId,requestedSequence,JSON.stringify(payload),initialResult?JSON.stringify(initialResult):null,createdAt,expiresAt,createdAt],kind==="render_document"?{kind,key:String(payload.idempotencyKey??"")}:undefined);
   const resource=projectJobResource(env,user,jobId,documentId,createdAt);

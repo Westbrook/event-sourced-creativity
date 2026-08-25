@@ -905,7 +905,7 @@ export function productionSceneSnapshot(snapshot: Record<string, unknown>, scene
     ...snapshot,
     facts,
     relationships,
-    context_groups: combinedContextGroups({ facts }),
+    context_groups: combinedContextGroups({ facts, relationships }),
     production_scene: {
       id: scene.id,
       narrative_order: scene.narrativeOrder,

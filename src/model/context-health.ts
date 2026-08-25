@@ -39,7 +39,7 @@ export function assessCreativeContext(projection: Pick<CreativeProjection, "bloc
     issues.push({ id: "missing-boundary", severity: "suggestion", label: "Set an explicit boundary", detail: "Capture any brand, safety, legal, or accuracy failure that must never appear.", blockIds: [] });
   }
 
-  const rights = new Set(events.filter((event) => event.type === "RightsAsserted" || event.type === "ReferenceIngested" && ["owned", "owned_or_licensed"].includes(String(event.payload.rights_class ?? ""))).map((event) => String(event.payload.reference_id ?? "")));
+  const rights = new Set(events.filter((event) => event.type === "RightsAsserted" || event.type === "ReferenceIngested" && ["owned", "owned_or_licensed", "account-generated"].includes(String(event.payload.rights_class ?? ""))).map((event) => String(event.payload.reference_id ?? "")));
   const audioRights = new Set(events.filter((event) => (event.type === "RightsAsserted" || event.type === "ReferenceIngested") && audioRightsAllowed(event.payload.rights_class)).map((event) => String(event.payload.reference_id ?? "")));
   let verifiedSources = 0;
   for(const decision of blocks.filter((block)=>block.type!=="reference")){
@@ -95,6 +95,12 @@ export function artifactSourceVersions(artifactId:string,events:CreativeEvent[])
 }
 
 export function artifactReviewState(artifact: Pick<DocumentArtifact, "id" | "documentId" | "sequence">, blocks: CreativeBlock[], events: CreativeEvent[]): ArtifactReviewState {
+  return artifactReviewStateFromSources(artifact,blocks,events,new Set<string>());
+}
+
+function artifactReviewStateFromSources(artifact: Pick<DocumentArtifact, "id" | "documentId" | "sequence">, blocks: CreativeBlock[], events: CreativeEvent[], visited:Set<string>): ArtifactReviewState {
+  if(visited.has(artifact.id))return{status:"unverified",label:"Input revision unavailable",changedBlockIds:[`output:${artifact.id}`],reviewedAt:null,reviewer:null};
+  const ancestors=new Set([...visited,artifact.id]);
   const versions = artifactSourceVersions(artifact.id,events);
   if(!versions)return{status:"unverified",label:"Input revision unavailable",changedBlockIds:[],reviewedAt:null,reviewer:null};
   const documentBlocks=blocks.filter((block)=>block.documentId===artifact.documentId);
@@ -105,6 +111,27 @@ export function artifactReviewState(artifact: Pick<DocumentArtifact, "id" | "doc
     }).map((version) => String(version.block_id ?? ""));
   const known=new Set(versions.map((version)=>String(version.block_id??"")));
   for(const block of documentBlocks)if(!block.removed&&!known.has(block.id))changedBlockIds.push(block.id);
+
+  const completed=[...events].reverse().find((event)=>event.type==="DocumentRenderCompleted"&&String(event.payload.artifact_id??"")===artifact.id&&String(event.payload.document_id??"")===artifact.documentId);
+  const settings=completed?.payload.settings&&typeof completed.payload.settings==="object"&&!Array.isArray(completed.payload.settings)?completed.payload.settings as Record<string,unknown>:null;
+  const workflow=settings?.production_workflow&&typeof settings.production_workflow==="object"&&!Array.isArray(settings.production_workflow)?settings.production_workflow as Record<string,unknown>:null;
+  const workflowSources=Array.isArray(workflow?.sources)?workflow.sources.filter((source):source is Record<string,unknown>=>Boolean(source)&&typeof source==="object"&&!Array.isArray(source)):[];
+  for(const source of workflowSources){
+    const sourceId=String(source.outputId??"");
+    const sourceEvent=events.find((event)=>event.eventId===String(source.sourceEventId??""));
+    if(!sourceId||String(source.documentId??"")!==artifact.documentId){changedBlockIds.push(`output:${sourceId||"unknown"}`);continue;}
+    if(source.outputKind==="artifact"){
+      const exact=sourceEvent?.type==="DocumentRenderCompleted"&&String(sourceEvent.payload.artifact_id??"")===sourceId&&String(sourceEvent.payload.document_id??"")===artifact.documentId;
+      const revision=events.filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===sourceId).length;
+      if(!exact||revision!==Number(source.revision??-1)){changedBlockIds.push(`output:${sourceId}`);continue;}
+      const upstream=artifactReviewStateFromSources({id:sourceId,documentId:artifact.documentId,sequence:sourceEvent.sequence},blocks,events,ancestors);
+      if(upstream.status==="stale"||upstream.status==="unverified"||upstream.status==="changes-requested"||source.approvalRequired===true&&upstream.status!=="approved")changedBlockIds.push(`output:${sourceId}`);
+    }else if(source.outputKind==="image"){
+      const exact=sourceEvent?.type==="GenerationCompleted"&&String(sourceEvent.payload.document_id??"")===artifact.documentId&&Array.isArray(sourceEvent.payload.object_ids)&&sourceEvent.payload.object_ids.map(String).includes(sourceId);
+      const discarded=events.some((event)=>event.type==="ObjectDiscarded"&&String(event.payload.object_id??"")===sourceId&&event.sequence>(sourceEvent?.sequence??0));
+      if(!exact||discarded)changedBlockIds.push(`output:${sourceId}`);
+    }else changedBlockIds.push(`output:${sourceId}`);
+  }
 
   const review = [...events].reverse().find((event) =>
     ["ArtifactReviewRequested", "ArtifactApproved", "ArtifactChangesRequested", "DocumentArtifactEdited"].includes(event.type)

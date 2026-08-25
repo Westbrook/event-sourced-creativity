@@ -281,12 +281,13 @@ function providerFacingCombinedContextPlan(snapshot:Record<string,unknown>,kind:
 }
 
 /** Assistant mutations retain editable IDs but never see disabled or private source data. */
-function providerFacingAssistantContext<T extends{blocks:Array<Record<string,unknown>>}>(input:T){
+function providerFacingAssistantContext<T extends{blocks:Array<Record<string,unknown>>;relationships?:Array<Record<string,unknown>>}>(input:T){
   const activeBlocks=input.blocks.filter(promptFactIsActive);
   const facts=activeBlocks.map((block)=>({...block,block_id:block.block_id??block.id??""}));
-  const {plan}=providerFacingCombinedContextPlan({facts});
+  const {plan}=providerFacingCombinedContextPlan({facts,relationships:input.relationships??[]});
+  const assistantInput={...input};delete assistantInput.relationships;
   return{
-    ...providerFacingCreativeContext({...input,blocks:activeBlocks}) as T,
+    ...providerFacingCreativeContext({...assistantInput,blocks:activeBlocks}) as T,
     ...(plan.length?{combined_context_plan:plan}:{}),
   };
 }
@@ -415,7 +416,7 @@ function assistantResponseLocale(value?: string) {
   }
 }
 
-export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{documentTitle:string;blocks:Array<Record<string,unknown>>;history:Array<{role:"user"|"assistant";text:string}>;message:string;locale?:string;signal?:AbortSignal}) {
+export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{documentTitle:string;blocks:Array<Record<string,unknown>>;relationships?:Array<Record<string,unknown>>;history:Array<{role:"user"|"assistant";text:string}>;message:string;locale?:string;signal?:AbortSignal}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
   const responseLocale=assistantResponseLocale(input.locale);
@@ -431,7 +432,7 @@ export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{d
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output:parsed,raw:text,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
-export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input:{intent:string;documentTitle:string;blocks:Array<Record<string,unknown>>;locale?:string;signal?:AbortSignal}) {
+export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input:{intent:string;documentTitle:string;blocks:Array<Record<string,unknown>>;relationships?:Array<Record<string,unknown>>;locale?:string;signal?:AbortSignal}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
   const responseLocale=assistantResponseLocale(input.locale);

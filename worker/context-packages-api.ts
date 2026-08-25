@@ -7,7 +7,8 @@ import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./acces
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 import { verifySourceDocumentEvidence } from "./media-api.ts";
 
-const MAX_PACKAGE_BLOCKS = 20;
+const MAX_PACKAGE_BLOCKS = 128;
+const MAX_PACKAGE_EVENTS = 384;
 const MAX_PACKAGE_BYTES = 250_000;
 const MAX_PACKAGE_SOURCE_BYTES=12*1024*1024;
 const PACKAGE_PROVENANCE_FIELDS = new Set([
@@ -199,7 +200,7 @@ async function authoritativeSnapshot(env: WorkerEnv, actor: PilotUser, organizat
   const relations = projection.blockRelations.filter((relation: CreativeBlockRelation) => !relation.removed && selectedIds.has(relation.fromBlockId) && selectedIds.has(relation.toBlockId))
     .map((relation) => ({ fromSourceBlockId: relation.fromBlockId, toSourceBlockId: relation.toBlockId, kind: relation.kind, properties: portableProperties(relation.properties) }));
   const adoptionEventCount=blocks.reduce((count,block)=>count+1+(block.source?2:0)+(block.locked?1:0),relations.length);
-  if(adoptionEventCount>45)return Response.json({error:"context_package_event_limit_exceeded",maximumEvents:45,requiredEvents:adoptionEventCount},{status:400});
+  if(adoptionEventCount>MAX_PACKAGE_EVENTS)return Response.json({error:"context_package_event_limit_exceeded",maximumEvents:MAX_PACKAGE_EVENTS,requiredEvents:adoptionEventCount},{status:400});
   const sourceHead=await readHead();
   if(sourceHead!==capturedSourceHead)return Response.json({error:"stale_context_package_source",head:sourceHead},{status:409});
   const snapshot: PackageSnapshot = { schema: 1, organizationId, sourceProjectAccessId: projectAccessId, sourceDocumentId: documentId, sourceHead, blocks, relations };
@@ -400,7 +401,7 @@ async function adoptVersion(env: WorkerEnv, actor: PilotUser, organizationId: st
     if (block.locked) events.push({ type: "BlockLocked", payload: { project_id: project.projectId, document_id: documentId, block_id: localIds.get(block.sourceBlockId) } });
   }
   for (const relation of version.snapshot.relations) events.push({ type: "BlockRelationAdded", payload: { project_id: project.projectId, document_id: documentId, relation_id: uuidV7(), from_block_id: localIds.get(relation.fromSourceBlockId), to_block_id: localIds.get(relation.toSourceBlockId), kind: relation.kind, properties: relation.properties } });
-  if(events.length>45){await cleanupSources();return Response.json({error:"context_package_event_limit_exceeded"},{status:400});}
+  if(events.length>MAX_PACKAGE_EVENTS){await cleanupSources();return Response.json({error:"context_package_event_limit_exceeded",maximumEvents:MAX_PACKAGE_EVENTS,requiredEvents:events.length},{status:400});}
   const result = await appendProjectEvents(env, project, actor, { action: "batch", events, ...(Number.isSafeInteger(body.expectedProjectHead) ? { expectedSequence: Number(body.expectedProjectHead) } : {}) }, undefined, {
     buildStatements:(eventId)=>[
       env.DB.prepare(`INSERT INTO project_context_package_bindings(binding_id,organization_id,project_access_id,project_id,document_id,package_id,version_id,update_mode,status,pending_version_id,created_by_user_id,created_at,updated_at)
@@ -573,7 +574,7 @@ async function updateBinding(env: WorkerEnv, actor: PilotUser, organizationId: s
     if(!from||!to){await cleanupSources();return Response.json({error:"context_package_relation_source_unavailable"},{status:409});}
     events.push({type:"BlockRelationAdded",payload:{project_id:project.projectId,document_id:String(binding.document_id),relation_id:uuidV7(),from_block_id:from,to_block_id:to,kind:relation.kind,properties:relation.properties}});
   }
-  if(events.length>45){await cleanupSources();return Response.json({error:"context_package_event_limit_exceeded",maximumEvents:45,requiredEvents:events.length},{status:400});}
+  if(events.length>MAX_PACKAGE_EVENTS){await cleanupSources();return Response.json({error:"context_package_event_limit_exceeded",maximumEvents:MAX_PACKAGE_EVENTS,requiredEvents:events.length},{status:400});}
   const bindingUpdate=(eventId="")=>env.DB.prepare(`UPDATE project_context_package_bindings SET version_id=?,pending_version_id=NULL,updated_at=?
     WHERE binding_id=? AND organization_id=? AND version_id=? AND status='active'
       AND(?='' OR EXISTS(SELECT 1 FROM events WHERE event_id=?))
