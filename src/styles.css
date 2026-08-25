@@ -2076,6 +2076,7 @@ forma-presentation-slide { display: block; min-width: 0; container: presentation
 .presentation-slide__diagram--structured::before { display: none; }
 .presentation-slide__diagram--structured > .presentation-slide__caption { position: static; grid-column: 1 / -1; text-align: start; }
 .presentation-slide__diagram--structured > strong { grid-column: 1 / -1; width: auto; aspect-ratio: auto; min-height: clamp(3.75rem,8cqi,6.5rem); padding: clamp(.7rem,2cqi,1.2rem); border-radius: clamp(.7rem,1.8cqi,1.25rem); font-size: clamp(.875rem,1.8cqi,1.2rem); }
+.presentation-slide__diagram--structured > strong:empty { display: none; }
 .presentation-slide__diagram--structured > span { position: static; display: grid; width: auto; max-width: none; min-width: 0; align-content: start; gap: .3rem; padding: clamp(.5rem,1.25cqi,.8rem); translate: none; border: 1px solid color-mix(in srgb,var(--slide-accent) 32%,transparent); border-radius: .65rem; background: color-mix(in srgb,var(--slide-surface) 78%,transparent); text-align: start; }
 .presentation-slide__diagram--structured > span small { color: var(--slide-muted); text-wrap: pretty; }
 .presentation-visual-fields { display: grid; width: 100%; height: auto; max-height: 100%; min-height: 6rem; grid-template-columns: repeat(auto-fit,minmax(min(100%,5rem),1fr)); gap: .5rem; align-content: center; overflow: auto; }

@@ -61,6 +61,7 @@ test("architecture diagrams reserve stable readable geometry across embedded and
   const structured=rule(".presentation-visual-diagram.presentation-slide__diagram--structured");
   assert.match(structured,/grid-template-columns:\s*repeat\(auto-fit,minmax\(min\(100%,8\.5rem\),1fr\)\)/,"long authored evidence occupies responsive nonoverlapping cards");
   assert.match(rule(".presentation-slide__diagram--structured > strong"),/grid-column:\s*1\s*\/\s*-1[^}]*aspect-ratio:\s*auto/,"long central claims expand naturally instead of overflowing a forced circular box");
+  assert.match(rule(".presentation-slide__diagram--structured > strong:empty"),/display:\s*none/,"category-only architecture diagrams never show an empty statement card");
   assert.match(rule(".presentation-slide__diagram--structured > span"),/position:\s*static[^}]*max-width:\s*none[^}]*translate:\s*none/,"structured evidence remains in normal flow across display sizes");
   assert.match(rule(".presentation-slide__diagram--structured > .presentation-slide__caption"),/position:\s*static[^}]*grid-column:\s*1\s*\/\s*-1/,"the visual caption receives its own nonoverlapping row");
 });
