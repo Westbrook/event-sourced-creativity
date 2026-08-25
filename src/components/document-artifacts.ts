@@ -1,7 +1,7 @@
 import { html, nothing } from "lit";
 import { ensureModalDialog } from "./modal-dialog";
 import { DOCUMENT_ARTIFACT_KINDS, SLIDE_STYLE_PRESETS, documentArtifactDefinition, parseDocumentArtifactContent, type DocumentArtifact, type DocumentArtifactDraftItem, type DocumentArtifactItem, type DocumentArtifactKind, type SlideStylePresetId } from "../model/document-artifacts";
-import { authorizedGenerationFailureRemediation, documentJobCanRecoverProviderRender, documentJobFailure, documentJobFailureVisible, generationFailureGuidance, type DocumentJob } from "../model/document-jobs";
+import { authorizedGenerationFailureRemediation, documentJobCanRecoverPresentation, documentJobCanRecoverProviderRender, documentJobFailure, documentJobFailureVisible, generationFailureGuidance, type DocumentJob } from "../model/document-jobs";
 import { documentRenderSuggestions } from "../model/document-render-suggestions";
 import { foldEvents } from "../model/events";
 import { focalPointCss } from "../model/focal-point";
@@ -324,7 +324,7 @@ export class DocumentArtifacts extends FormaElement {
     const jobs=readOnly?[]:this.store.documentRenderJobs(this.#targetDocumentId());
     const failedJobs=readOnly?[]:this.store.documentJobs.get().filter((job)=>job.documentId===this.#targetDocumentId()&&job.kind==="render_document"&&documentJobFailureVisible(job)).slice(0,3);
     const rejectedDraftJobs=readOnly?[]:this.store.documentJobs.get().filter((job)=>job.documentId===this.#targetDocumentId()&&job.kind==="render_document"&&job.result?.artifactKind==="slides"&&(job.status==="failed"||job.status==="partial"));
-    const recoverablePresentationJob=failedJobs.find((job)=>job.result?.artifactKind==="slides"&&job.status==="failed"&&job.result?.recoverablePresentationCandidate===true);
+    const recoverablePresentationJob=failedJobs.find(documentJobCanRecoverPresentation);
     const active=this.store.projection.get().libraryArtifacts.find((artifact)=>artifact.id===this.#activeId)??null;const inputArtifact=this.store.projection.get().libraryArtifacts.find((artifact)=>artifact.id===this.#inputId)??active;
     const inspectionContent=project?this.#actorInputContent:this.store.content.get();
     const dialogs=html`${readOnly?nothing:this.#createDialogTemplate()}${this.#viewer(active)}${this.#runningInputJob?html`<forma-generation-input-dialog .open=${true} .inspection=${documentGenerationInputInspection(this.#runningInputJob,this.store.events.get(),inspectionContent)} @generation-input-close=${()=>{this.#runningInputJob=null;this.#actorInputContent={};this.requestUpdate();}}></forma-generation-input-dialog>`:this.#failedInputJob?html`<forma-generation-input-dialog .open=${true} .inspection=${failedGenerationInputInspection(this.#failedInputJob,this.store.events.get(),inspectionContent)} @generation-input-close=${()=>{this.#failedInputJob=null;this.#actorInputContent={};this.requestUpdate();}}></forma-generation-input-dialog>`:!project&&inputArtifact?html`<forma-generation-input-dialog .open=${Boolean(this.#inputId)} .inspection=${artifactGenerationInputInspection(inputArtifact,this.store.content.get())} @generation-input-close=${()=>{this.#inputId="";this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}`;
@@ -339,7 +339,7 @@ export class DocumentArtifacts extends FormaElement {
         const detail=documentJobFailure(job);
         const guidance=localizedGenerationFailureGuidance(generationFailureGuidance(detail,job.error??"",job),detail,job.error??"",this.i18n);
         const recoverable=documentJobCanRecoverProviderRender(job)&&guidance.retryAllowed;
-        const presentationRecoverable=kind==="slides"&&job.status==="failed"&&job.result?.recoverablePresentationCandidate===true;
+        const presentationRecoverable=documentJobCanRecoverPresentation(job);
         const session=this.store.session.get();
         const infrastructureBlocked=Boolean(detail&&!recoverable&&!guidance.retryAllowed&&guidance.actionUrl&&(["authentication","quota","access"].includes(detail.category)||["review_budget","add_credits","verify_organization"].includes(detail.action)||detail.code==="video_provider_not_configured"));
         const remediation=infrastructureBlocked&&session&&!session.impersonation?authorizedGenerationFailureRemediation(guidance,session)??{href:"/settings",label:this.i18n.system("Review settings"),external:false}:null;

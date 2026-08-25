@@ -1,4 +1,4 @@
-import { generateCreativeDirection, generateCreativeVideo, generateDocumentArtifact, respondToCreativeChat, structureAdaptiveContext, validateCreativeVideoAudioReferences, validateCreativeVideoReferences, type CreativeChatMutation, type CreativeVideoPreparedReceipt, type ImageReference, type ProviderResponseReceipt, type VideoAudioReference, type VideoReference } from "./openai-adapter";
+import { assessStoredPresentationCandidate, generateCreativeDirection, generateCreativeVideo, generateDocumentArtifact, respondToCreativeChat, structureAdaptiveContext, validateCreativeVideoAudioReferences, validateCreativeVideoReferences, type CreativeChatMutation, type CreativeVideoPreparedReceipt, type ImageReference, type ProviderResponseReceipt, type VideoAudioReference, type VideoReference } from "./openai-adapter";
 import { generateCreativeImage, selectImageAdapter } from "./image-adapter";
 import { managedPilotSourceClassificationValid, readGeneratedImageReference, readOwnedAudioReference, storeGeneratedImage, storeGeneratedMedia, verifySourceDocumentEvidence } from "./media-api";
 import { claimCostBudgetReservation, costBudgetReservation, hasCapability, loadPrivateContent, pilotExecutionAllowance, readAccountBudgets, readBudgets, readCostBudgets, releaseBudget, releaseCostBudget, requireConsent, requireUser, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, storePrivateContent, type PilotUser, type ProjectExecutionScope } from "./pilot-policy";
@@ -40,7 +40,7 @@ import { buildManagedProductionPlan, MAX_MANAGED_PRESENTATION_SLIDES, production
 import { collectProductionEvidence, scoreProductionEvidence } from "../src/model/production-evidence";
 import { productionSystemFor, productionUnitsForPlan } from "../src/model/production-system";
 import { buildPresentationSourceContract, inferPresentationSourceOutline } from "../src/model/presentation-source";
-import { generateManagedArtifactDraft, renderManagedStoryboardProduction, renderManagedVideoProduction, type ProductionFrameReceipt, type ProductionSceneReceipt } from "./managed-production";
+import { combinedSceneSnapshot, generateManagedArtifactDraft, renderManagedStoryboardProduction, renderManagedVideoProduction, type ProductionFrameReceipt, type ProductionSceneReceipt } from "./managed-production";
 
 export type { WorkerEnv } from "./runtime";
 
@@ -697,10 +697,18 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
         const providerAttempt=Math.max(1,plannerResponseIds.indexOf(attempt.responseId)+1);
         const envelope=JSON.stringify({schema_version:2,job_id:jobId,stream_id:streamId,document_id:projection.documentId,document_title:projection.documentTitle,document_revision:body.documentRevision??null,source_snapshot_sha256:presentationSourceHash,compiled_snapshot_sha256:presentationCompiledHash,response_id:attempt.responseId,model:attempt.model,page_index:pageIndex,page_count:pageCount,global_start_index:globalStartIndex,requested_slide_count:requestedSlideCount??itemCount,planned_slide_count:itemCount,provider_batch_count:productionPlan?.providerBatchCount??1,production_mode:productionMode,attempt_stage:attemptStage,provider_attempt:providerAttempt,captured_at:capturedAt,content_sha256:contentHash,output_text:attempt.candidateRaw});
         const stored=await storePrivateContent(env,ownerId,"provider-response",envelope,executionScope);
-        const candidate={contentRef:stored.contentId,contentExpiresAt:stored.expiresAt,responseId:attempt.responseId,model:attempt.model,usage:attempt.usage,candidateBytes:attempt.candidateBytes,candidateTruncated:false,pageIndex,pageCount,globalStartIndex,documentRevision:body.documentRevision??null,sourceSnapshotSha256:presentationSourceHash,compiledSnapshotSha256:presentationCompiledHash,contentSha256:contentHash,capturedAt,attemptStage,providerAttempt};
+        let locallyRecoverable=false;
+        if(pageCount===1&&globalStartIndex===0&&itemCount<=12&&Number(requestedSlideCount??itemCount)===itemCount&&(!productionPlan||productionPlan.providerBatchCount===1&&productionPlan.scenes.length===itemCount)){
+          try{
+            const sourceSnapshot=productionPlan?combinedSceneSnapshot(compiledSnapshot,productionPlan.scenes):compiledSnapshot;
+            const assessment=assessStoredPresentationCandidate(attempt.candidateRaw,sourceSnapshot,{itemCount,requestedSlideCount:itemCount,presentationStyle,presentationFidelity,...(productionPlan?{productionScenes:productionPlan.scenes}:{})});
+            locallyRecoverable=Boolean(assessment.output&&assessment.issues.length===0);
+          }catch{/* A paid response still remains privately inspectable if its local reassessment cannot establish recovery eligibility. */}
+        }
+        const candidate={contentRef:stored.contentId,contentExpiresAt:stored.expiresAt,responseId:attempt.responseId,model:attempt.model,usage:attempt.usage,candidateBytes:attempt.candidateBytes,candidateTruncated:false,pageIndex,pageCount,globalStartIndex,documentRevision:body.documentRevision??null,sourceSnapshotSha256:presentationSourceHash,compiledSnapshotSha256:presentationCompiledHash,contentSha256:contentHash,capturedAt,attemptStage,providerAttempt,locallyRecoverable};
         presentationCandidates.push(candidate);
         if(presentationCandidates.length>64)presentationCandidates.splice(0,presentationCandidates.length-64);
-        await execution.progress("planning",`${plannerResponseIds.length} paid provider response${plannerResponseIds.length===1?"":"s"} privately retained before validation.`,{plannerModel,plannerResponseId,plannerResponseIds,plannerUsage,presentationCandidates,recoverablePresentationCandidate:pageCount===1&&itemCount<=12,reservationId,costReservationId,costReservationPeriod,costReservationMicrousd,presentationProviderSubmission:"confirmed"});
+        await execution.progress("planning",`${plannerResponseIds.length} paid provider response${plannerResponseIds.length===1?"":"s"} privately retained before validation.`,{plannerModel,plannerResponseId,plannerResponseIds,plannerUsage,presentationCandidates,recoverablePresentationCandidate:presentationCandidates.some((entry)=>entry.locallyRecoverable===true),reservationId,costReservationId,costReservationPeriod,costReservationMicrousd,presentationProviderSubmission:"confirmed"});
       }:undefined;
       try{
         type Plan=Awaited<ReturnType<typeof generateDocumentArtifact>>["output"];const cached=body.artifactPlan;let plan:Plan;

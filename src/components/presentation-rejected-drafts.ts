@@ -100,7 +100,14 @@ export class PresentationRejectedDrafts extends FormaElement {
       this.#candidates = listing.candidates;
       this.#busy = false;
       this.requestUpdate();
-      if (listing.candidates[0]) await this.#selectCandidate(listing.candidates[0].responseId);
+      const preferred = [...listing.candidates].sort((left, right) =>
+        Number(right.complete) - Number(left.complete)
+        || left.missingContextGroupLabels.length - right.missingContextGroupLabels.length
+        || left.issues.filter((issue) => !issue.overridable).length - right.issues.filter((issue) => !issue.overridable).length
+        || left.issues.length - right.issues.length
+        || right.providerAttempt - left.providerAttempt
+        || right.capturedAt.localeCompare(left.capturedAt))[0];
+      if (preferred) await this.#selectCandidate(preferred.responseId);
     } catch (error) {
       if (!this.store.authorizationScopeActive(authorization)) return;
       this.#busy = false;
@@ -178,7 +185,7 @@ export class PresentationRejectedDrafts extends FormaElement {
     const selected = this.#selected.map((responseId) => this.#details.get(responseId)).filter((detail): detail is PresentationCandidateDetail => Boolean(detail));
     const current = selected.at(-1);
     if (!current) return nothing;
-    if (this.#comparison === "requested") return html`<article class="presentation-rejected-draft-reference"><h3>${this.i18n.t("presentation.draft.requestedTitle", "Requested presentation")}</h3><p>${this.i18n.t("presentation.draft.requestedCounts", "{requested} requested slides · {planned} planned slides · {batches} provider batches", { requested: this.i18n.number(current.requestedSlideCount), planned: this.i18n.number(current.plannedSlideCount), batches: this.i18n.number(current.providerBatchCount) })}</p><p>${current.complete ? this.i18n.t("presentation.draft.requestComplete", "This response satisfies its page contract, but remains a private unapproved draft.") : this.i18n.t("presentation.draft.requestIncomplete", "This response is incomplete or failed a mandatory source, authorization, or structure requirement.")}</p>${current.missingContextGroupLabels.length ? html`<p>${this.i18n.t("presentation.draft.missingContext", "Missing Combined Context:")} ${current.missingContextGroupLabels.join(" · ")}</p>` : nothing}</article>`;
+    if (this.#comparison === "requested") return html`<article class="presentation-rejected-draft-reference"><h3>${this.i18n.t("presentation.draft.requestedTitle", "Requested presentation")}</h3><p>${this.i18n.t("presentation.draft.requestedCounts", "{requested} requested slides · {planned} planned slides · {batches} provider batches", { requested: this.i18n.number(current.requestedSlideCount), planned: this.i18n.number(current.plannedSlideCount), batches: this.i18n.number(current.providerBatchCount) })}</p><p>${current.complete ? this.i18n.t("presentation.draft.requestComplete", "This response satisfies its page contract, but remains a private unapproved draft.") : current.issues.length && current.issues.every((issue) => issue.overridable) ? this.i18n.t("presentation.draft.preference", "presentation preference; still requires explicit revision and full validation") : this.i18n.t("presentation.draft.requestIncomplete", "This response is incomplete or failed a mandatory source, authorization, or structure requirement.")}</p>${current.missingContextGroupLabels.length ? html`<p>${this.i18n.t("presentation.draft.missingContext", "Missing Combined Context:")} ${current.missingContextGroupLabels.join(" · ")}</p>` : nothing}</article>`;
     if (this.#comparison === "source") {
       const projection = this.store.projection.get();
       const blocks = projection.libraryBlocks.filter((block) => block.documentId === this.documentId && Number(block.properties.weight ?? .5) > 0);

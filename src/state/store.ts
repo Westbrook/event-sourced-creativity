@@ -8,7 +8,7 @@ import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isD
 import { normalizeSpatialScope } from "../model/spatial-scope";
 import { CURRENT_FOCAL_POINT_METHOD, normalizeImageFocalPoint } from "../model/focal-point";
 import { resolveImageFocalAnalysis } from "../model/image-focus";
-import { documentGenerationRequestKey as generationRequestKeyFor, documentGenerationRevision as generationRevisionFor, documentJobFailure, documentJobIsStale, documentJobTerminal, generationFailureGuidance, type DocumentJob, type DocumentJobKind } from "../model/document-jobs";
+import { documentGenerationRequestKey as generationRequestKeyFor, documentGenerationRevision as generationRevisionFor, documentJobCanRecoverPresentation, documentJobFailure, documentJobIsStale, documentJobTerminal, generationFailureGuidance, type DocumentJob, type DocumentJobKind } from "../model/document-jobs";
 import { effectivePromptPreference, normalizePromptTechnique, type PromptPreferenceScope, type PromptTechnique } from "../model/prompt-structures";
 import { canvasIdFromRoute } from "../canvas/routes";
 import { canvasProjectId, foldCanvasEvents, type CanvasContextSet, type CanvasProjection } from "../canvas/model";
@@ -354,7 +354,7 @@ export class FormaStore {
     const authorization=this.#activeAuthorizationScope();
     const original=this.documentJobs.get().find((job)=>job.jobId===jobId);
     try{
-      if(!original||original.result?.artifactKind!=="slides"||original.result.recoverablePresentationCandidate!==true)throw new Error("The saved presentation response could not be recovered");
+      if(!original||!documentJobCanRecoverPresentation(original))throw new Error("The saved presentation response could not be recovered");
       const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/recover`,{method:"POST"},"recover this saved presentation without another provider request");
       this.#assertAuthorizationScope(authorization);
       const body=await response.json() as {job?:DocumentJob;error?:string};

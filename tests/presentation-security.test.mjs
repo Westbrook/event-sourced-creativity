@@ -129,6 +129,17 @@ test("hero visual normalization cannot authenticate a foreign evidence alias aft
   assert.ok(assessed.sourceResolution.unknownAssignments.includes("blk_999"));
 });
 
+test("condensed title-and-question diagrams never authenticate a foreign source hidden in a removed row",()=>{
+  const snapshot={facts:[{block_id:authorizedBlock,type:"message",locked:true,properties:{label:"The Context Company",text:"Can it end file types?",weight:1,authority:"authored"}}]};
+  const presentation={aspect_ratio:"16:9",theme:"Authorized presentation",footer_label:"Authorized evidence",style_preset:"editorial",mode:"light",palette:{background:"#ffffff",foreground:"#111111",accent:"#2255aa",muted:"#555555",surface:"#eeeeee"}};
+  const title="The Context Company",body="Can it end file types?";
+  const raw=JSON.stringify({title:"Approved briefing",summary:"Authorized product conclusion",content_markdown:`# ${title}\n${body}`,presentation,items:[{title,body,notes:"Keep every source attribution.",image_prompt:"",context_group_ids:[],slide:{layout:"architecture",kicker:"Opening proposition",source_ids:["blk_001"],visual:{kind:"architecture",label:"Opening concepts",value:"",data:[{label:title,value:title,source_ids:["blk_001"]},{label:body,value:body,source_ids:["blk_999"]}]}}}]});
+  const assessed=assessStoredPresentationCandidate(raw,snapshot,{itemCount:1,requestedSlideCount:1});
+  assert.equal(assessed.output?.items[0]?.slide?.visual.kind,"hero-type");
+  assert.ok(assessed.issues.some((issue)=>issue.code==="unknown_source_reference"),"source-bearing diagram rows must remain attributable after visual condensation");
+  assert.ok(assessed.sourceResolution.unknownAssignments.includes("blk_999"));
+});
+
 test("a globally valid source alias cannot cross an isolated managed presentation chapter",()=>{
   const blocks=["PRIVATE_CHAPTER_SOURCE_A_9137","PRIVATE_CHAPTER_SOURCE_B_9137"];
   const groups=["PRIVATE_CHAPTER_GROUP_A_9137","PRIVATE_CHAPTER_GROUP_B_9137"];

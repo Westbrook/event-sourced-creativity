@@ -123,6 +123,43 @@ test("repairs echoed category-only proposal rows locally without inventing evide
   assert.deepEqual(documentArtifactValidationIssues("slides",output,{itemCount:1,contextGroupIds:["group-proposal"]}),[]);
 });
 
+test("repairs repeated authored title and question values without dropping their source-backed rows",()=>{
+  const title="The Context Company",body="Can it end file types?";
+  const rows=[{label:"Title",value:title,weight:.9,source_ids:["blk_001"]},{label:"Question",value:body,weight:.8,source_ids:["blk_002"]}];
+  const item={title,body,notes:"Keep both authored claims.",image_prompt:"An editable authored proposition.",context_group_ids:["group-opening"],slide:{layout:"comparison",kicker:"Opening proposition",source_ids:["blk_001","blk_002"],visual:{kind:"comparison",label:"Opening concepts",value:"",data:rows}}};
+  const output=parseDocumentArtifactContent(JSON.stringify({title:"Deck",summary:"An authored opening.",content_markdown:`# ${title}\n${body}`,presentation,items:[item]}));
+  const normalized=output?.items[0];
+  assert.ok(normalized?.slide);
+  assert.equal(normalized.title,title);
+  assert.equal(normalized.body,body);
+  assert.equal(normalized.slide.layout,"architecture");
+  assert.equal(normalized.slide.visual.kind,"architecture");
+  assert.deepEqual(normalized.slide.visual.data.map(({label,value,sourceIds})=>({label,value,sourceIds})),[{label:"Title",value:"",sourceIds:["blk_001"]},{label:"Question",value:"",sourceIds:["blk_002"]}]);
+  assert.deepEqual(normalized.slide.sourceIds,["blk_001","blk_002"]);
+  assert.deepEqual(normalized.context_group_ids,["group-opening"]);
+  assert.deepEqual(slideCopyIssues(normalized),[]);
+  assert.deepEqual(documentArtifactValidationIssues("slides",output,{itemCount:1,contextGroupIds:["group-opening"]}),[]);
+});
+
+test("condenses title-and-question diagrams while retaining every original source reference",()=>{
+  const title="The Context Company",body="Can it end file types?";
+  const rows=[{label:title,value:title,weight:1,source_ids:["blk_001"]},{label:body,value:body,weight:.8,source_ids:["blk_999"]}];
+  const item={title,body,notes:"Keep both source references available for authorization.",image_prompt:"An authored opening.",context_group_ids:["group-opening"],slide:{layout:"architecture",kicker:"Opening proposition",source_ids:["blk_001"],visual:{kind:"architecture",label:"Opening concepts",value:"",data:rows}}};
+  const output=parseDocumentArtifactContent(JSON.stringify({title:"Deck",summary:"An authored opening.",content_markdown:`# ${title}\n${body}`,presentation,items:[item]}));
+  const normalized=output?.items[0];
+  assert.ok(normalized?.slide);
+  assert.equal(normalized.title,title);
+  assert.equal(normalized.body,"");
+  assert.equal(normalized.slide.layout,"cover");
+  assert.equal(normalized.slide.visual.kind,"hero-type");
+  assert.equal(normalized.slide.visual.value,body);
+  assert.deepEqual(normalized.slide.visual.data,[]);
+  assert.deepEqual(normalized.slide.sourceIds,["blk_001","blk_999"],"normalization must not erase an unauthorized provider source reference");
+  assert.deepEqual(normalized.context_group_ids,["group-opening"]);
+  assert.deepEqual(slideCopyIssues(normalized),[]);
+  assert.equal(slideVisualIsComplete(normalized.slide),true);
+});
+
 test("never treats measured evidence, real comparisons, or ordered roadmaps as category filler",()=>{
   const base=(kind,data,additional={})=>normalizeSlideVisual({layout:kind,kicker:"Source-grounded evidence",bullets:[],visual:{kind,label:"Authored visual",value:"",data,...additional}},{title:"Independent executive decision"});
   for(const kind of ["comparison","matrix","personas","architecture"]){
@@ -179,6 +216,20 @@ test("preserves repeated source-authored status values across independently labe
   assert.equal(slideCopyIssues(duplicatedProse).some((issue)=>issue.firstPath==="body"&&issue.secondPath==="slide.bullets.0"),true,"ordinary narrative duplication remains rejected");
 });
 
+test("preserves short independently labeled factual statuses across different slides",()=>{
+  const slide=(title,rows)=>({title,body:"",notes:"Preserve every source-authored status.",image_prompt:"",context_group_ids:[],slide:{layout:"matrix",kicker:`Evidence for ${title}`,bullets:[],visual:{kind:"matrix",label:`${title} controls`,value:"",data:rows.map(([label,value])=>({label,value,weight:1}))}}});
+  const slides=[slide("Approval readiness",[["Reviewer approvals","not implemented"],["Identity controls","fully compliant"]]),slide("Privacy readiness",[["Erasure workflow","not implemented"],["Retention policy","fully compliant"]])];
+  assert.deepEqual(slideDeckCopyIssues(slides),[],"independent source-backed controls can truthfully share short status values");
+  const output=parseDocumentArtifactContent(JSON.stringify({title:"Governed readiness",summary:"Preserve each independent control.",content_markdown:"# Governed readiness",presentation,items:slides}));
+  assert.deepEqual(documentArtifactValidationIssues("slides",output,{itemCount:2}),[]);
+
+  const sameLabel=[slides[0],slide("A repeated control",[["Reviewer approvals","not implemented"],["Separate evidence","fully compliant"]])];
+  assert.equal(slideDeckCopyIssues(sameLabel).some((issue)=>issue.firstPath.endsWith(".value")&&issue.secondPath.endsWith(".value")),true,"repeated status for the same category is still visible as duplication");
+  const repeatedNarrative="Every customer control remains continuously verified";
+  const longNarrative=[slide("Governance",[["Reviewer approvals",repeatedNarrative],["Identity controls","fully compliant"]]),slide("Privacy",[["Erasure workflow",repeatedNarrative],["Retention policy","fully compliant"]])];
+  assert.equal(slideDeckCopyIssues(longNarrative).some((issue)=>issue.firstPath.endsWith(".value")&&issue.secondPath.endsWith(".value")),true,"substantive copied prose remains rejected");
+});
+
 test("preserves concise authored visual row labels inside independently meaningful slide body copy",()=>{
   const data=[
     {label:"Decision decomposition",value:"atomic",weight:1},
@@ -215,6 +266,11 @@ test("preserves concise authored visual row labels inside independently meaningf
 
   const echoedValue={...item,slide:{...item.slide,visual:{...item.slide.visual,data:[{...data[0],value:item.body},data[1]]}}};
   assert.equal(slideCopyIssues(echoedValue).some((issue)=>issue.firstPath==="body"&&issue.secondPath==="slide.visual.data.0.value"),true,"substantive repeated visual values remain rejected");
+
+  const independentHeading={...item,title:"Decision decomposition preserves independently scoped authority"};
+  assert.equal(slideCopyIssues(independentHeading).some((issue)=>issue.firstPath==="title"&&issue.secondPath==="slide.visual.data.0.label"),false,"an independently meaningful authored heading may name one of its source-backed categories");
+  const echoedHeading={...item,title:data[0].label};
+  assert.equal(slideCopyIssues(echoedHeading).some((issue)=>issue.firstPath==="title"&&issue.secondPath==="slide.visual.data.0.label"),true,"a heading that only repeats its category remains duplicated");
 });
 
 test("normalizes repeated narrative copy across the complete slide deck",()=>{

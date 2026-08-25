@@ -6,6 +6,7 @@ import { artifactReviewState } from "../src/model/context-health.ts";
 import { documentArtifactDefinition, isDocumentArtifactKind } from "../src/model/document-artifacts.ts";
 import {
   authorizedGenerationFailureRemediation,
+  documentJobCanRecoverPresentation,
   documentJobCanRecoverProviderRender,
   documentJobFailure,
   documentJobProgress,
@@ -29,6 +30,7 @@ const runtimeKey = Symbol.for("forma.activity-navigation-test.runtime");
 globalThis[runtimeKey] = {
   authorizedGenerationFailureRemediation,
   documentArtifactDefinition,
+  documentJobCanRecoverPresentation,
   documentJobCanRecoverProviderRender,
   documentJobFailure,
   documentJobProgress,
@@ -52,6 +54,7 @@ const harnessSource = `
 const {
   authorizedGenerationFailureRemediation,
   documentArtifactDefinition,
+  documentJobCanRecoverPresentation,
   documentJobCanRecoverProviderRender,
   documentJobFailure,
   documentJobProgress,
@@ -429,6 +432,17 @@ test("Activity safely recovers a previously paid presentation without starting a
   handlers[2]();
 
   assert.deepEqual(activity.calls, ["presentation:job-1", "open:document-1:/", "dismiss:job-1"]);
+});
+
+test("Activity never promises free slideshow recovery for a source-invalid retained response",()=>{
+  const activity=new ActivityLifecycleHarness({capabilities:[]});
+  const result=activity.renderJob(generationJob({
+    result:{artifactKind:"slides",recoverablePresentationCandidate:true},
+    errorDetail:{...generationJob().errorDetail,validationIssues:[{code:"unknown_source_reference",path:"items.0.slide.source_ids",category:"authorization",blocking:true,overridable:false,pageIndex:0,pageCount:1,globalSlideIndex:1,providerAttempt:2,stage:"repair"}]},
+  }),"Investor deck");
+
+  assert.doesNotMatch(visibleText(result),/Paid once · replay without another provider call|Recover saved render/);
+  assert.match(visibleText(result),/Open document/);
 });
 
 test("Activity resumes an existing provider video instead of creating a duplicate paid request", () => {

@@ -98,10 +98,10 @@ const INDEPENDENT_SLIDE_SCORES=[["Phone","39.75"],["Tablet","53.00"],["Small mon
 const INDEPENDENT_SLIDE_QUOTE="Every authored decision remains traceable, independently reviewable, and reusable across the complete presentation.";
 const INDEPENDENT_SLIDE_TITLES=["RESPONSIVE ASSESSMENT","STAKEHOLDER EVIDENCE","SOURCE GOVERNANCE","DOCUMENT AUTHORSHIP","CONTEXT IMMUTABILITY","PROJECT AUTHORIZATION","REVIEWER ACCOUNTABILITY","RECEIPT TRANSPARENCY","RECOVERY GUARANTEES","ACCESSIBLE DELIVERY","EDITABLE HANDOFF","EXECUTIVE DECISION"];
 
-async function seedIndependentPresentation(fixture,documentId="independent-slide-source-document"){
+async function seedIndependentPresentation(fixture,documentId="independent-slide-source-document",slideCount=12){
   const stream="creative:dev-local-creative",projectId="project-atmosphere";
   await appendAuditEvent(fixture.environment,stream,"user","DocumentCreated",{project_id:projectId,document_id:documentId,title:"Event-Sourced Conversational Experience — Executive Plan"});
-  for(let index=0;index<12;index+=1){
+  for(let index=0;index<slideCount;index+=1){
     const body=index===0?`${INDEPENDENT_SLIDE_SCORES.map(([label,value])=>`${label}: ${value}`).join("; ")}. Exact equal-weight average: 61.125. Rounded display value: 61.13.`:index===1?`“${INDEPENDENT_SLIDE_QUOTE}” — Product Owner`:`Independent evidence for ${INDEPENDENT_SLIDE_TITLES[index].toLowerCase()} preserves conversion ${index+10}.25%.`;
     await appendAuditEvent(fixture.environment,stream,"user","BlockCreated",{project_id:projectId,document_id:documentId,block_id:`PRIVATE_AUTHORED_SLIDE_${index+1}`,type:"direction",handle:`direction/independent-${index+1}`,position:`slide-${String(index+1).padStart(2,"0")}`,properties:{label:`Independently authored source ${index+1}`,text:`Slide ${index+1} — ${INDEPENDENT_SLIDE_TITLES[index]}\n${body}`,weight:1,authority:"authored"}});
   }
@@ -1175,6 +1175,7 @@ test("invalid paid presentation alternatives retain visible drafts and safe per-
     assert.equal(failed.status,200,JSON.stringify(await failed.clone().json()));
     const failedJob=(await failed.json()).job;
     assert.equal(failedJob.status,"failed");
+    assert.equal(failedJob.result.recoverablePresentationCandidate,undefined,"source-invalid paid alternatives must never advertise a guaranteed free recovery");
     assert.ok(failedJob.errorDetail.validationIssues.some((issue)=>issue.code==="unknown_source_reference"&&issue.stage==="initial"&&issue.globalSlideIndex===3),JSON.stringify(failedJob.errorDetail.validationIssues));
     assert.ok(failedJob.errorDetail.validationIssues.some((issue)=>issue.code==="unknown_context_group_reference"&&issue.stage==="repair"&&issue.globalSlideIndex===4));
     assert.ok(failedJob.errorDetail.validationIssues.every((issue)=>issue.blocking&&issue.pageIndex===0&&issue.pageCount===1));
@@ -1258,6 +1259,12 @@ test("recovers a privately retained paid slideshow without a second provider req
     const beforeCounters=fixture.sqlite.prepare("SELECT scope,scope_id,used_microusd,reserved_microusd FROM cost_budget_counters ORDER BY scope,scope_id").all();
     fixture.sqlite.exec("DROP TRIGGER fail_presentation_artifact_persistence");
 
+    fixture.sqlite.prepare("UPDATE users SET consent_version=NULL WHERE user_id=?").run("dev-local-creative");
+    const unconsented=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+    assert.equal(unconsented.status,428,"personal paid-response recovery still requires current creator consent");
+    assert.equal(providerCalls,1);
+    fixture.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id=?").run("pilot-2026-08-10","dev-local-creative");
+
     const originalCheckpoint=fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json;
     const originalEnvelope=privateRows[0].content;
     const forgedEnvelope=JSON.parse(originalEnvelope);
@@ -1277,12 +1284,16 @@ test("recovers a privately retained paid slideshow without a second provider req
     fixture.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(originalEnvelope,privateRows[0].content_id);
     fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(originalCheckpoint,job.jobId);
 
+    const beforeRecoveryArtifacts=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content WHERE kind='document-artifact' AND redacted_at IS NULL").get().count;
+    const beforeRecoveryInputs=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content WHERE kind='document-artifact-input' AND redacted_at IS NULL").get().count;
     fixture.sqlite.exec("CREATE TRIGGER fail_recovered_presentation_commit BEFORE UPDATE ON document_jobs WHEN NEW.status='completed' AND OLD.status='committing' AND json_extract(OLD.result_json,'$.presentationRecoveryOnly')=1 BEGIN SELECT RAISE(FAIL,'forced_atomic_presentation_commit_failure'); END");
     const atomicFailure=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
     assert.equal(atomicFailure.status,409,"an interrupted recovery rolls back both presentation completion and zero-cost usage events");
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,0);
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE json_extract(payload,'$.operation')='document-render:slides:recovery'").get().count,0);
     assert.equal(fixture.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(job.jobId).status,"failed");
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content WHERE kind='document-artifact' AND redacted_at IS NULL").get().count,beforeRecoveryArtifacts,"a failed commit must not leave an unreferenced durable slideshow behind");
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content WHERE kind='document-artifact-input' AND redacted_at IS NULL").get().count,beforeRecoveryInputs,"a failed commit must not leave a second private generation receipt behind");
     assert.equal(providerCalls,1,"a failed local commit never resubmits paid provider work");
     fixture.sqlite.exec("DROP TRIGGER fail_recovered_presentation_commit");
 
@@ -1305,6 +1316,121 @@ test("recovers a privately retained paid slideshow without a second provider req
     assert.equal(providerCalls,1,"a repeated recovery is idempotent");
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,1);
   }finally{globalThis.fetch=previousFetch;}
+});
+
+test("recovers a privately retained title-and-question slideshow without weakening source validation or paying again",async()=>{
+  for(const variant of ["row-values","row-labels"]){
+    const fixture=await reliabilityWorker();
+    const documentId=await seedIndependentPresentation(fixture,`historical-opening-recovery-${variant}`);
+    const requestSourceJob=(path="",init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs${path?`/${path}`:""}`,init),fixture.environment,path);
+    const previousFetch=globalThis.fetch;
+    let providerCalls=0;
+    globalThis.fetch=async(url,init={})=>{
+      assert.equal(String(url),"https://api.openai.com/v1/responses");
+      providerCalls+=1;
+      const output=independentProviderResponse(init.body);
+      const item=output.items[2],alias=item.slide.source_ids[0],body=item.body;
+      item.slide.layout=variant==="row-values"?"comparison":"architecture";
+      item.slide.visual={kind:item.slide.layout,label:"Authored opening concepts",value:"",data:variant==="row-values"
+        ?[{label:"Title",value:item.title,weight:1,source_ids:[alias]},{label:"Question",value:body,weight:.8,source_ids:[alias]}]
+        :[{label:item.title,value:item.title,weight:1,source_ids:[alias]},{label:body,value:body,weight:.8,source_ids:[alias]}]};
+      return Response.json({id:`historical-opening-response-${variant}`,model:"gpt-5.6-terra",output_text:JSON.stringify(output),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});
+    };
+    try{
+      const accepted=await requestSourceJob("",json(presentationAdmission(documentId,`historical-opening-recovery-${variant}`)));
+      assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+      const{job}=await accepted.json();
+      fixture.sqlite.exec("CREATE TRIGGER fail_historical_opening_persistence BEFORE INSERT ON private_content WHEN NEW.kind='document-artifact' BEGIN SELECT RAISE(FAIL,'forced_historical_opening_persistence_failure'); END");
+      const failedResponse=await requestSourceJob(`${job.jobId}/run`,{method:"POST"});
+      assert.equal(failedResponse.status,200,JSON.stringify(await failedResponse.clone().json()));
+      const failed=(await failedResponse.json()).job;
+      assert.equal(failed.status,"failed");
+      assert.equal(failed.result.recoverablePresentationCandidate,true);
+      assert.equal(providerCalls,1,"cosmetic normalization avoids an additional paid repair attempt");
+      const settledCost=failed.result.generationReceipt.settled_cost_microusd;
+      fixture.sqlite.exec("DROP TRIGGER fail_historical_opening_persistence");
+
+      const recoveredResponse=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+      assert.equal(recoveredResponse.status,200,JSON.stringify(await recoveredResponse.clone().json()));
+      const recovered=(await recoveredResponse.json()).job;
+      assert.equal(recovered.status,"completed");
+      assert.equal(recovered.result.generationReceipt.settled_cost_microusd,settledCost);
+      assert.equal(recovered.result.generationReceipt.recovered_without_provider_request,true);
+      assert.equal(providerCalls,1,`${variant}: the retained response is recovered without another provider request`);
+      const completed=JSON.parse(fixture.sqlite.prepare("SELECT payload FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).payload);
+      assert.equal(completed.item_count,12);
+      const recoveredDraft=JSON.parse(fixture.sqlite.prepare("SELECT content FROM private_content WHERE kind='document-artifact' AND redacted_at IS NULL ORDER BY created_at DESC,rowid DESC LIMIT 1").get().content);
+      assert.ok(recoveredDraft.items[2].slide.sourceIds.includes("PRIVATE_AUTHORED_SLIDE_3"));
+      assert.equal(recoveredDraft.items[2].slide.visual.kind,variant==="row-values"?"architecture":"hero-type");
+    }finally{globalThis.fetch=previousFetch;}
+  }
+});
+
+test("recovers a complete managed slideshow only with its original chapter-specific authorization",async()=>{
+  for(const foreignSource of [false,true]){
+    const fixture=await reliabilityWorker();
+    const documentId=await seedIndependentPresentation(fixture,`managed-private-recovery-${foreignSource}`,6);
+    const requestSourceJob=(path="",init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs${path?`/${path}`:""}`,init),fixture.environment,path);
+    const previousFetch=globalThis.fetch;
+    let providerCalls=0;
+    globalThis.fetch=async(url,init={})=>{
+      assert.equal(String(url),"https://api.openai.com/v1/responses");
+      providerCalls+=1;
+      const output=independentProviderResponse(init.body);
+      if(foreignSource)output.items[0].slide.source_ids.push("blk_002");
+      return Response.json({id:`managed-private-response-${foreignSource}-${providerCalls}`,model:"gpt-5.6-terra",output_text:JSON.stringify(output),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});
+    };
+    try{
+      const admission=presentationAdmission(documentId,`managed-private-recovery-${foreignSource}`);
+      Object.assign(admission.payload,{productionMode:"managed",itemCount:6,requestedSlideCount:6});
+      const accepted=await requestSourceJob("",json(admission));
+      assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+      const{job}=await accepted.json();
+      if(!foreignSource)fixture.sqlite.exec("CREATE TRIGGER fail_managed_presentation_persistence BEFORE INSERT ON private_content WHEN NEW.kind='document-artifact' BEGIN SELECT RAISE(FAIL,'forced_managed_presentation_persistence_failure'); END");
+      const failedResponse=await requestSourceJob(`${job.jobId}/run`,{method:"POST"});
+      assert.equal(failedResponse.status,200,JSON.stringify(await failedResponse.clone().json()));
+      const failed=(await failedResponse.json()).job;
+      assert.equal(failed.status,"failed");
+
+      if(foreignSource){
+        assert.equal(failed.result.recoverablePresentationCandidate,undefined,"a globally valid alias from the wrong managed chapter is not recoverable");
+        assert.ok(failed.errorDetail.validationIssues.some((issue)=>issue.code==="incorrect_slide_source"));
+        const checkpoint=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+        checkpoint.recoverablePresentationCandidate=true;
+        fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify(checkpoint),job.jobId);
+        const blocked=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+        assert.equal(blocked.status,409,"legacy overbroad recoverability flags cannot bypass chapter-specific source authorization");
+        assert.equal(providerCalls,2,"rejected candidate promotion never starts another paid provider request");
+        assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,0);
+      }else{
+        assert.equal(failed.result.recoverablePresentationCandidate,true);
+        const settledCost=failed.result.generationReceipt.settled_cost_microusd;
+        fixture.sqlite.exec("DROP TRIGGER fail_managed_presentation_persistence");
+        const recoveredResponse=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+        assert.equal(recoveredResponse.status,200,JSON.stringify(await recoveredResponse.clone().json()));
+        const recovered=(await recoveredResponse.json()).job;
+        assert.equal(recovered.status,"completed");
+        assert.equal(recovered.result.generationReceipt.settled_cost_microusd,settledCost);
+        assert.equal(recovered.result.generationReceipt.recovered_without_provider_request,true);
+        assert.equal(providerCalls,1);
+        const completed=JSON.parse(fixture.sqlite.prepare("SELECT secret.private_json AS payload FROM events completed JOIN event_private_payloads secret ON secret.private_event_id=completed.event_id WHERE completed.type='DocumentRenderCompleted' AND json_extract(completed.payload,'$.document_id')=?").get(documentId).payload);
+        assert.equal(completed.item_count,6);
+        assert.equal(completed.settings.production_mode,"managed");
+        assert.equal(completed.settings.production_team.id,"presentation-editorial-team");
+        assert.equal(completed.settings.production_system.format,"slides");
+        assert.ok(completed.settings.production_quality);
+        assert.deepEqual(completed.items.map((item)=>item.narrative_order),[1,2,3,4,5,6]);
+        assert.ok(completed.items.every((item)=>item.scene_id&&item.generation_order>0));
+        const recoveredReceipt=fixture.sqlite.prepare("SELECT content FROM private_content WHERE kind='document-artifact-input' AND json_extract(content,'$.planner.recovered_without_provider_request')=1 ORDER BY created_at DESC,rowid DESC LIMIT 1").get();
+        const recoveredInput=JSON.parse(recoveredReceipt.content);
+        assert.equal(recoveredInput.request.production_mode,"managed");
+        assert.equal(recoveredInput.production.team.id,"presentation-editorial-team");
+        assert.equal(recoveredInput.production.system.format,"slides");
+        assert.ok(recoveredInput.production.work_units.length>0);
+        assert.equal(recoveredInput.production.plan.scenes.length,6);
+      }
+    }finally{globalThis.fetch=previousFetch;}
+  }
 });
 
 test("settles a paid slideshow request truthfully when private provider-response capture fails",async()=>{
@@ -1487,6 +1613,8 @@ test("recovers a project owner's actor-private slideshow only while its selected
       assert.equal(collaboratorAttempt.status,404,`a legitimate project editor cannot ${method} another actor's presentation evidence`);
       assert.doesNotMatch(await collaboratorAttempt.text(),/RESPONSIVE ASSESSMENT|PRIVATE_AUTHORED_SLIDE_/u);
     }
+    const collaboratorRecovery=await handleDocumentJobs(new Request(`http://localhost/api/document-jobs/${job.jobId}/recover`,{method:"POST",headers:teammateScope}),fixture.environment,`${job.jobId}/recover`);
+    assert.equal(collaboratorRecovery.status,404,"a legitimate project editor cannot replay another actor's privately retained paid provider response");
     const collaboratorDiscovery=await handleDocumentJobs(new Request(`http://localhost/api/document-jobs/presentation-candidates?document=${encodeURIComponent(documentId)}`,{headers:teammateScope}),fixture.environment,"presentation-candidates");
     assert.equal(collaboratorDiscovery.status,200,JSON.stringify(await collaboratorDiscovery.clone().json()));
     assert.deepEqual((await collaboratorDiscovery.json()).jobs,[],"governed owner evidence cannot appear in a teammate's private discovery feed");
@@ -1498,6 +1626,8 @@ test("recovers a project owner's actor-private slideshow only while its selected
     assert.doesNotMatch(await deniedReview.text(),/RESPONSIVE ASSESSMENT|PRIVATE_AUTHORED_SLIDE_/u);
     fixture.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=NULL WHERE context_id=?").run(contextId);
     const originalPrepare=fixture.environment.DB.prepare.bind(fixture.environment.DB);
+    const beforeInterruptedProjectArtifacts=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content WHERE kind='document-artifact' AND redacted_at IS NULL").get().count;
+    const beforeInterruptedProjectInputs=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content WHERE kind='document-artifact-input' AND redacted_at IS NULL").get().count;
     let intercepted=false;
     fixture.environment.DB.prepare=(sql)=>{
       if(!intercepted&&sql.startsWith("INSERT INTO event_write_stage")&&sql.includes("project_context_sessions selection")){
@@ -1512,6 +1642,8 @@ test("recovers a project owner's actor-private slideshow only while its selected
       assert.equal(revoked.status,409);
       assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,0);
       assert.equal(fixture.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(job.jobId).status,"failed");
+      assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content WHERE kind='document-artifact' AND redacted_at IS NULL").get().count,beforeInterruptedProjectArtifacts,"revoking a selected project session must not expose an uncommitted recovered slideshow");
+      assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content WHERE kind='document-artifact-input' AND redacted_at IS NULL").get().count,beforeInterruptedProjectInputs,"revoking a selected project session must not retain a second readable generation receipt");
       assert.equal(providerCalls,1,"revocation never triggers another provider call");
     }finally{fixture.environment.DB.prepare=originalPrepare;}
 

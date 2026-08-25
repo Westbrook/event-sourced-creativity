@@ -354,6 +354,46 @@ test("locally repairs category-only proposal rows without submitting a second pa
   });
 });
 
+test("repairs redundant title-and-question visuals before a second paid slideshow request",async()=>{
+  for(const variant of ["row-values","row-labels"]){
+    const snapshot=independentSlideSnapshot();
+    const output=independentSlideOutput(snapshot);
+    const item=output.items[2];
+    const sourceAlias=item.slide.source_ids[0];
+    const originalBody=item.body;
+    item.slide.layout=variant==="row-values"?"comparison":"architecture";
+    item.slide.visual={
+      kind:item.slide.layout,label:"Opening concepts",value:"",exact_value:null,display_value:null,unit:null,
+      data:variant==="row-values"
+        ?[{label:"Title",value:item.title,weight:1,source_ids:[sourceAlias]},{label:"Question",value:originalBody,weight:.8,source_ids:[sourceAlias]}]
+        :[{label:item.title,value:item.title,weight:1,source_ids:[sourceAlias]},{label:originalBody,value:originalBody,weight:.8,source_ids:[sourceAlias]}],
+    };
+
+    await withProviderResponses([output],async(requests)=>{
+      const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-executive-actor","slides",{
+        documentTitle:"Event-Sourced Conversational Experience — Executive Plan",snapshot,
+        options:{itemCount:12,requestedSlideCount:12,presentationStyle:"field-notes",presentationFidelity:"faithful"},
+      });
+
+      assert.equal(requests.length,1,`${variant}: cosmetic source-faithful normalization never submits a second paid request`);
+      assert.equal(result.inputReceipt.validation.repair_attempted,false);
+      assert.deepEqual(result.inputReceipt.validation.initial_issues,[]);
+      assert.ok(result.output.items[2].slide.sourceIds.includes(snapshot.facts[2].block_id));
+      if(variant==="row-values"){
+        assert.equal(result.output.items[2].slide.visual.kind,"architecture");
+        assert.deepEqual(result.output.items[2].slide.visual.data.map(({value})=>value),["",""]);
+        assert.equal(result.output.items[2].body,originalBody);
+      }else{
+        assert.equal(result.output.items[2].slide.visual.kind,"hero-type");
+        assert.equal(result.output.items[2].slide.visual.value,originalBody);
+        assert.equal(result.output.items[2].body,"");
+      }
+      assert.equal(result.output.items[0].slide.visual.exactValue,"61.125");
+      assert.equal(result.output.items[1].slide.quote.text,STAKEHOLDER_QUOTE);
+    });
+  }
+});
+
 test("retains authored body categories, editable visual labels, and zero-valued release controls without a second paid presentation request",async()=>{
   const snapshot=independentSlideSnapshot();
   const acceptanceCriteria=" Deliver safety and source integrity first, then event-derived projections, nonblocking coordinator lanes, atomic proposals, complete output orchestration, and page-specific adapters. Measure zero lost turns, zero unauthorized actions, correct selections, bounded context, all 61 route policies, and four-language parity.";

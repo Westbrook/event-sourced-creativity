@@ -3,6 +3,7 @@ import { formaActivityUnread, scopedFormaActivity } from "../model/activity";
 import { documentArtifactDefinition, isDocumentArtifactKind } from "../model/document-artifacts";
 import {
   authorizedGenerationFailureRemediation,
+  documentJobCanRecoverPresentation,
   documentJobCanRecoverProviderRender,
   documentJobFailure,
   documentJobProgress,
@@ -71,7 +72,7 @@ export class FormaActivity extends FormaElement {
     const guidance = failed
       ? localizedGenerationFailureGuidance(generationFailureGuidance(failure, job.error ?? "", job), failure, job.error ?? "", this.i18n)
       : null;
-    const presentationRecoverable = artifactKind === "slides" && job.status === "failed" && job.result?.recoverablePresentationCandidate === true;
+    const presentationRecoverable = documentJobCanRecoverPresentation(job);
     const providerRecoverable = Boolean(guidance?.retryAllowed && documentJobCanRecoverProviderRender(job));
     const recoverable = presentationRecoverable || providerRecoverable;
     const remediation = guidance && !recoverable ? authorizedGenerationFailureRemediation(guidance, this.store.session.get()) : null;

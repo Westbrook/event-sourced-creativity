@@ -24,7 +24,8 @@ import { preflightGeneration } from "./generation-readiness";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter";
 import { AUDIO_ADAPTER_CONTRACT } from "../src/model/audio";
 import { clearPresentationServerOwnedCheckpointFields, estimatePlannerOperationMicrousd, generationBudgetGate, presentationServerOwnedCheckpointField, presentationTokenReservation } from "../src/model/generation-budget";
-import { buildManagedProductionPlan, ManagedPresentationPlanningError, MAX_MANAGED_PRESENTATION_SLIDES, type ManagedProductionPlan } from "../src/model/managed-production";
+import { buildManagedProductionPlan, ManagedPresentationPlanningError, MAX_MANAGED_PRESENTATION_SLIDES, scoreManagedProductionPlan, type ManagedProductionPlan } from "../src/model/managed-production";
+import { productionSystemFor, productionUnitsForPlan } from "../src/model/production-system";
 import { buildPresentationSourceContract, inferPresentationSourceOutline } from "../src/model/presentation-source";
 import { documentArtifactValidationIssues, isSlideStylePresetId, parseDocumentArtifactContent, type DocumentArtifactDraft } from "../src/model/document-artifacts";
 import { combinedContextGroups } from "../src/model/combined-context";
@@ -400,7 +401,10 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
     const detail:PresentationCandidateDetail={...summary,title:sanitizePresentationCandidateText(assessment.output?.title,privateReferences),summary:sanitizePresentationCandidateText(assessment.output?.summary,privateReferences),presentation,slides,normalizationChanges};
     verified.push({row,envelope,summary,detail});
   }
-  return verified;
+  return verified.sort((left,right)=>left.summary.providerAttempt-right.summary.providerAttempt
+    ||left.summary.pageIndex-right.summary.pageIndex
+    ||left.summary.capturedAt.localeCompare(right.summary.capturedAt)
+    ||left.summary.responseId.localeCompare(right.summary.responseId));
 }
 
 async function preservePresentationCandidate(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,projectContextId:string,candidate:VerifiedPresentationCandidate){
@@ -515,8 +519,21 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
   const snapshot={...trusted.snapshot,document:{id:document.id,title:document.title},...(mergedConstraints.length?{standing_constraints:mergedConstraints}:{})};
   const compiledHash=await sourceSnapshotSha256(snapshot);
   const itemCount=Number(request.itemCount??request.requestedSlideCount??0);
-  if(!Number.isSafeInteger(itemCount)||itemCount<1||itemCount>12)return failed();
+  const requestedSlideCount=Number(request.requestedSlideCount??itemCount);
+  if(!Number.isSafeInteger(itemCount)||itemCount<1||itemCount>12||!Number.isSafeInteger(requestedSlideCount)||requestedSlideCount!==itemCount)return failed();
   const presentationStyle=typeof request.presentationStyle==="string"&&isSlideStylePresetId(request.presentationStyle)?request.presentationStyle:undefined;
+  let production:ManagedProductionPlan|null=null;
+  if(request.productionMode==="managed"){
+    try{production=buildManagedProductionPlan("slides",snapshot,{requestedSlideCount});}catch{return failed();}
+    const recorded=checkpoint.productionPlan&&typeof checkpoint.productionPlan==="object"&&!Array.isArray(checkpoint.productionPlan)?checkpoint.productionPlan as ManagedProductionPlan:null;
+    if(!recorded||production.predictedSlideCount!==itemCount||production.providerBatchCount!==1||production.requestedSlideCount!==requestedSlideCount
+      ||recorded.predictedSlideCount!==itemCount||recorded.providerBatchCount!==1||recorded.requestedSlideCount!==requestedSlideCount
+      ||recorded.scenes.length!==production.scenes.length
+      ||recorded.scenes.some((scene,index)=>{const expected=production!.scenes[index];return!expected||scene.narrativeOrder!==expected.narrativeOrder||JSON.stringify(scene.sourceBlockIds)!==JSON.stringify(expected.sourceBlockIds)||JSON.stringify(scene.contextGroupIds)!==JSON.stringify(expected.contextGroupIds);}))return failed();
+    const plannedGroups=new Set(production.scenes.flatMap((scene)=>scene.contextGroupIds));
+    if(combinedContextGroups(snapshot).some((group)=>!plannedGroups.has(group.id)))return failed();
+  }
+  const assessmentSnapshot=production?combinedSceneSnapshot(snapshot,production.scenes):snapshot;
   let plan:DocumentArtifactDraft|null=null;
   let recoveredResponseId="";
   for(const candidate of [...candidates].reverse()){
@@ -526,8 +543,11 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
     if(!retained||retained.expires_at!==String(candidate.contentExpiresAt??""))continue;
     let envelope:Record<string,unknown>;try{envelope=JSON.parse(retained.content) as Record<string,unknown>;}catch{continue;}
     const raw=typeof envelope.output_text==="string"?envelope.output_text:"";
-    if(!raw||new TextEncoder().encode(raw).byteLength!==Number(candidate.candidateBytes??-1)||envelope.job_id!==row.job_id||envelope.stream_id!==row.stream_id||envelope.document_id!==row.document_id||envelope.document_revision!==trusted.documentRevision||envelope.source_snapshot_sha256!==originalHash||envelope.compiled_snapshot_sha256!==compiledHash||envelope.response_id!==responseId||envelope.model!==candidate.model||envelope.page_index!==0||envelope.page_count!==1||envelope.global_start_index!==0||await retainedPresentationContentSha256(raw)!==candidate.contentSha256||envelope.content_sha256!==candidate.contentSha256)continue;
-    const assessment=assessStoredPresentationCandidate(raw,snapshot,{itemCount,requestedSlideCount:Number(request.requestedSlideCount??itemCount),presentationStyle,presentationFidelity:request.presentationFidelity==="creative"?"creative":"faithful"});
+    if(!raw||new TextEncoder().encode(raw).byteLength!==Number(candidate.candidateBytes??-1)||envelope.job_id!==row.job_id||envelope.stream_id!==row.stream_id||envelope.document_id!==row.document_id||envelope.document_revision!==trusted.documentRevision||envelope.source_snapshot_sha256!==originalHash||envelope.compiled_snapshot_sha256!==compiledHash||envelope.response_id!==responseId||envelope.model!==candidate.model||envelope.page_index!==0||envelope.page_count!==1||envelope.global_start_index!==0
+      ||Number(envelope.requested_slide_count??requestedSlideCount)!==requestedSlideCount||Number(envelope.planned_slide_count??itemCount)!==itemCount||Number(envelope.provider_batch_count??1)!==1
+      ||String(envelope.production_mode??"manual")!==(production?"managed":"manual")
+      ||await retainedPresentationContentSha256(raw)!==candidate.contentSha256||envelope.content_sha256!==candidate.contentSha256)continue;
+    const assessment=assessStoredPresentationCandidate(raw,assessmentSnapshot,{itemCount,requestedSlideCount,presentationStyle,presentationFidelity:request.presentationFidelity==="creative"?"creative":"faithful",...(production?{productionScenes:production.scenes}:{})});
     if(assessment.output&&assessment.issues.length===0){plan=assessment.output;recoveredResponseId=responseId;break;}
   }
   if(!plan)return failed();
@@ -539,6 +559,7 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
     .bind(correlationId,new Date(Date.now()+DOCUMENT_JOB_LEASE_MS).toISOString(),JSON.stringify({...checkpoint,presentationRecoveryOnly:true,stage:"recovering",progressMessage:"Recovering the privately saved presentation without another provider request."}),startedAt,row.job_id,user.userId,user.streamId,row.correlation_id).run();
   if(Number(claim.meta.changes??0)!==1){const current=await readJob(env,user.userId,row.job_id);return current?.status==="completed"&&parseResult(current).presentationRecovered===true?{job:current,recovered:true}:failed();}
   const running={...row,status:"running" as const,correlation_id:correlationId,completed_at:null,error_message:null,result_json:JSON.stringify({...checkpoint,presentationRecoveryOnly:true}),updated_at:startedAt};
+  const stagedContent:Array<{contentId:string;ownerId:string;kind:"document-artifact"|"document-artifact-input"}>=[];
   try{
     await beginJobCommit(env,running,"Recovering the privately saved presentation without another provider request.");
     if(!await activeProjectExecution(env,user,row.document_id,row.job_id))throw new Error("project_access_revoked");
@@ -546,10 +567,15 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
     const artifactId=String(checkpoint.artifactId??uuidV7());
     const settledCost=Number(receipt.settled_cost_microusd??reservation.used_microusd??0);
     const model=String(checkpoint.plannerModel??candidateModelFromResponse(candidates,recoveredResponseId)??env.OPENAI_MODEL??"gpt-5.6-terra");
-    const inputReceipt={schema_version:1,artifact_id:artifactId,artifact_kind:"slides",document_id:document.id,project_id:document.projectId,captured_at:new Date().toISOString(),document_snapshot:snapshot,source_block_versions:trusted.sourceBlockVersions,request:{item_count:itemCount,requested_slide_count:itemCount,audience:String(request.audience??"general"),tone:String(request.tone??"document-derived"),production_mode:request.productionMode==="managed"?"managed":"manual",source_surface:row.source_surface},planner:{provider:"openai",model,response_id:plannerResponseId,recovered_response_id:recoveredResponseId,recovered_without_provider_request:true},accounting:{settled_cost_microusd:settledCost,incremental_cost_microusd:0}};
-    const [stored,inputStored]=await Promise.all([storePrivateContent(env,storageOwnerId,"document-artifact",JSON.stringify(plan)),storePrivateContent(env,ownerId,"document-artifact-input",JSON.stringify(inputReceipt),user.projectExecution)]);
-    const items=plan.items.map((item,index)=>({id:`${artifactId}-item-${index+1}`,title:item.title,slide:item.slide??null,context_group_ids:item.context_group_ids??[],media_url:null,media_type:null,width:null,height:null}));
-    const completed=makeEvent(user.streamId,originalHead+1,"worker:renderer",`server:document-job:${row.kind}`,correlationId,"DocumentRenderCompleted",{artifact_id:artifactId,artifact_kind:"slides",document_id:document.id,project_id:document.projectId,source_block_versions:trusted.sourceBlockVersions,requested_by_user_id:ownerId,title:plan.title,summary:plan.summary,content_ref:stored.contentId,content_expires_at:stored.expiresAt,input_ref:inputStored.contentId,input_expires_at:inputStored.expiresAt,item_count:plan.items.length,items,presentation:plan.presentation??null,media_url:null,media_type:null,provider:"openai",provider_job_id:null,model_id:model,planner_model_id:model,planner_response_id:plannerResponseId,recovered_provider_response_id:recoveredResponseId,recovered_without_provider_request:true,reference_inputs:[],used_reference_pixels:false,latency_ms:Number(checkpoint.plannerLatencyMs??0),settings:{item_count:itemCount,authored_slide_count:request.authoredSlideCount??null,requested_slide_count:itemCount,predicted_slide_count:itemCount,presentation_style:presentationStyle??null,presentation_fidelity:request.presentationFidelity??"faithful",reserved_cost_microusd:Number(receipt.reservation_microusd??0),settled_cost_microusd:settledCost,incremental_cost_microusd:0,audience:String(request.audience??"general"),tone:String(request.tone??"document-derived"),production_mode:request.productionMode==="managed"?"managed":"manual",production_team:null,production_system:null,production_quality:null},source_surface:row.source_surface},{causationId:null});
+    const productionSystem=production?productionSystemFor(production.format):null;
+    const productionQuality=production?scoreManagedProductionPlan(production):null;
+    const inputReceipt={schema_version:1,artifact_id:artifactId,artifact_kind:"slides",document_id:document.id,project_id:document.projectId,captured_at:new Date().toISOString(),document_snapshot:snapshot,source_block_versions:trusted.sourceBlockVersions,request:{item_count:itemCount,requested_slide_count:itemCount,audience:String(request.audience??"general"),tone:String(request.tone??"document-derived"),production_mode:request.productionMode==="managed"?"managed":"manual",source_surface:row.source_surface},planner:{provider:"openai",model,response_id:plannerResponseId,recovered_response_id:recoveredResponseId,recovered_without_provider_request:true},accounting:{settled_cost_microusd:settledCost,incremental_cost_microusd:0},...(production?{production:{team:production.team,system:productionSystem,work_units:productionUnitsForPlan(production),plan:production,quality:productionQuality}}:{})};
+    const stored=await storePrivateContent(env,storageOwnerId,"document-artifact",JSON.stringify(plan));
+    stagedContent.push({contentId:stored.contentId,ownerId:storageOwnerId,kind:"document-artifact"});
+    const inputStored=await storePrivateContent(env,ownerId,"document-artifact-input",JSON.stringify(inputReceipt),user.projectExecution);
+    stagedContent.push({contentId:inputStored.contentId,ownerId,kind:"document-artifact-input"});
+    const items=plan.items.map((item,index)=>({id:`${artifactId}-item-${index+1}`,title:item.title,slide:item.slide??null,context_group_ids:item.context_group_ids??[],media_url:null,media_type:null,width:null,height:null,...(production?{scene_id:production.scenes[index]?.id??null,narrative_order:index+1,generation_order:production.executionOrder.indexOf(production.scenes[index]?.id??"")+1,duration_seconds:null}:{})}));
+    const completed=makeEvent(user.streamId,originalHead+1,"worker:renderer",`server:document-job:${row.kind}`,correlationId,"DocumentRenderCompleted",{artifact_id:artifactId,artifact_kind:"slides",document_id:document.id,project_id:document.projectId,source_block_versions:trusted.sourceBlockVersions,requested_by_user_id:ownerId,title:plan.title,summary:plan.summary,content_ref:stored.contentId,content_expires_at:stored.expiresAt,input_ref:inputStored.contentId,input_expires_at:inputStored.expiresAt,item_count:plan.items.length,items,presentation:plan.presentation??null,media_url:null,media_type:null,provider:"openai",provider_job_id:null,model_id:model,planner_model_id:model,planner_response_id:plannerResponseId,recovered_provider_response_id:recoveredResponseId,recovered_without_provider_request:true,reference_inputs:[],used_reference_pixels:false,latency_ms:Number(checkpoint.plannerLatencyMs??0),settings:{item_count:itemCount,authored_slide_count:request.authoredSlideCount??null,requested_slide_count:itemCount,predicted_slide_count:itemCount,presentation_style:presentationStyle??null,presentation_fidelity:request.presentationFidelity??"faithful",reserved_cost_microusd:Number(receipt.reservation_microusd??0),settled_cost_microusd:settledCost,incremental_cost_microusd:0,audience:String(request.audience??"general"),tone:String(request.tone??"document-derived"),production_mode:request.productionMode==="managed"?"managed":"manual",production_team:production?.team??null,production_system:productionSystem,production_quality:productionQuality},source_surface:row.source_surface},{causationId:null});
     const usage=makeEvent(user.streamId,originalHead+2,"worker:policy",`server:document-job:${row.kind}`,correlationId,"GenerationUsageRecorded",{operation:"document-render:slides:recovery",artifact_id:artifactId,artifact_kind:"slides",document_id:document.id,reservation_id:checkpoint.reservationId??null,cost_reservation_id:reservationId,input_tokens:0,output_tokens:0,total_tokens:0,planner_tokens:0,reserved_tokens:0,reserved_microusd:0,model_ids:[model],planner_response_id:plannerResponseId,planner_usage_previously_recorded:true,planner_cost_previously_recorded:true,recovered_provider_response_id:recoveredResponseId,recovered_without_provider_request:true,cost_microusd:0,planner_cost_microusd:0,previously_settled_cost_microusd:settledCost},{causationId:completed.eventId});
     if(!await activeProjectExecution(env,user,row.document_id,row.job_id))throw new Error("project_access_revoked");
     const finishedAt=new Date().toISOString();
@@ -578,6 +604,23 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
     return finished?.status==="completed"?{job:finished,recovered:true}:failed();
   }catch(error){
     const restoredAt=new Date().toISOString();
+    for(const content of stagedContent){
+      try{
+        await env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE content_id=? AND owner_id=? AND kind=? AND redacted_at IS NULL
+          AND NOT EXISTS(SELECT 1 FROM document_jobs completed WHERE completed.job_id=? AND completed.owner_id=? AND completed.stream_id=? AND completed.status='completed')
+          AND NOT EXISTS(SELECT 1 FROM events completed WHERE completed.stream_id=? AND completed.type='DocumentRenderCompleted'
+            AND(json_extract(completed.payload,'$.content_ref')=private_content.content_id
+              OR json_extract(completed.payload,'$.input_ref')=private_content.content_id))
+          AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_retention_policies policy
+            ON policy.organization_id=scope.organization_id AND policy.legal_hold=1
+            WHERE scope.content_id=private_content.content_id AND scope.classification='governed-evidence')
+          AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_legal_holds hold
+            ON hold.organization_id=scope.organization_id AND hold.status='active'
+            WHERE scope.content_id=private_content.content_id
+              AND(hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=scope.project_access_id OR hold.scope_kind='content' AND hold.resource_id=scope.content_id))`)
+          .bind(restoredAt,content.contentId,content.ownerId,content.kind,row.job_id,user.userId,user.streamId,user.streamId).run();
+      }catch{/* Keep the failed job recoverable even if its unreferenced local staging cannot be cleaned immediately. */}
+    }
     await env.DB.prepare("UPDATE document_jobs SET status='failed',correlation_id=?,error_message=?,completed_at=?,lease_expires_at=NULL,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND status IN('running','committing') AND correlation_id=?")
       .bind(row.correlation_id,row.error_message,row.completed_at,JSON.stringify(checkpoint),restoredAt,row.job_id,user.userId,user.streamId,correlationId).run();
     return error instanceof StaleSequenceError||error instanceof Error&&error.message==="project_access_revoked"?{error:"presentation_recovery_source_changed",status:409}:failed();
@@ -1455,6 +1498,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   }
 
   if(path.endsWith("/recover")&&request.method==="POST"){
+    const consent=requireConsent(principal);if(consent)return consent;
     const jobId=decodeURIComponent(path.slice(0,-8).replace(/\/$/,""));
     const target=await readJob(env,user.userId,jobId);
     if(!target)return Response.json({error:"job_not_found"},{status:404});

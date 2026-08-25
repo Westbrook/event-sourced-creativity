@@ -78,6 +78,8 @@ test("rejected presentation drafts remain private, read-only, and available afte
   assert.match(rejectedDraftSource,/Only you can see this material\. It cannot be shared, exported, or promoted/u);
   assert.match(rejectedDraftSource,/loadPreservedPresentationCandidateJobs\(documentId\)/u,"governed drafts remain discoverable after transient job history expires");
   assert.match(rejectedDraftSource,/loadPresentationCandidates\(jobId, this\.documentId\)/u);
+  assert.match(rejectedDraftSource,/Number\(right\.complete\) - Number\(left\.complete\)/u,"review prioritizes the best fully validated retained provider response");
+  assert.match(rejectedDraftSource,/right\.providerAttempt - left\.providerAttempt/u,"later repairs win when candidate quality is otherwise identical");
   assert.match(rejectedDraftSource,/loadPresentationCandidate\(this\.#jobId, responseId, this\.documentId\)/u);
   assert.match(rejectedDraftSource,/preservePresentationCandidate\(this\.#jobId, responseId, this\.documentId\)/u);
   assert.match(rejectedDraftSource,/addEventListener\("forma-authorization-changed", this\.#clearAuthorizedDrafts\)/u);

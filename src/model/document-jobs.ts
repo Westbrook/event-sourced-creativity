@@ -233,6 +233,19 @@ export function documentJobCanRecoverProviderRender(job: DocumentJob) {
   return Boolean((failure?.retryable||recoverableReservationFailure)&&failure?.category!=="safety"&&failure?.httpStatus!==400&&failure?.httpStatus!==422);
 }
 
+/** Only advertise a paid slideshow replay when its newest rejection can be repaired without relaxing validation. */
+export function documentJobCanRecoverPresentation(job: Pick<DocumentJob, "kind" | "status" | "result" | "errorDetail">) {
+  if(job.kind!=="render_document"||job.status!=="failed"||job.result?.artifactKind!=="slides"||job.result.recoverablePresentationCandidate!==true)return false;
+  const issues=job.errorDetail?.validationIssues??[];
+  if(!issues.length)return true;
+  if(issues.some((issue)=>issue.pageCount!==1||issue.pageIndex!==0||!Number.isSafeInteger(issue.providerAttempt)||issue.providerAttempt<1))return false;
+  const latestAttempt=Math.max(...issues.map((issue)=>issue.providerAttempt));
+  const latestIssues=issues.filter((issue)=>issue.providerAttempt===latestAttempt);
+  return latestIssues.length>0&&latestIssues.every((issue)=>issue.category==="presentation-preference"&&issue.overridable===true
+    &&(issue.code==="duplicate_slide_copy"&&/^items\.\d+\.slide\.visual\.data\.\d+\.(?:label|value)$/u.test(issue.path)
+      ||issue.code==="duplicate_deck_copy"&&/^items\.\d+\.slide\.visual\.data\.\d+\.value$/u.test(issue.path)));
+}
+
 const TRUSTED_GENERATION_FAILURE_FALLBACKS = new Set([
   "Change this request or its reference before trying again.",
   "This prompt structure did not produce an image.",

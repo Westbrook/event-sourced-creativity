@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { authorizedGenerationFailureRemediation, generationFailureGuidance } from "../src/model/document-jobs.ts";
+import { authorizedGenerationFailureRemediation, documentJobCanRecoverPresentation, generationFailureGuidance } from "../src/model/document-jobs.ts";
 
 const failure = (patch = {}) => ({
   code: "provider_connection_failed",
@@ -110,6 +110,33 @@ test("blocks duplicate paid submission when provider contact is uncertain and on
   const guidance=generationFailureGuidance(interruption(),"",recoverable);
   assert.match(guidance.summary,/recover its saved result/i);
   assert.equal(guidance.retryAllowed,true);
+});
+
+test("offers free slideshow recovery only for the latest locally repairable paid response",()=>{
+  const issue=(patch={})=>({code:"duplicate_slide_copy",path:"items.0.slide.visual.data.1.value",category:"presentation-preference",overridable:true,pageIndex:0,pageCount:1,providerAttempt:2,...patch});
+  const presentation=(validationIssues=[],patch={})=>failedJob(null,{result:{artifactKind:"slides",recoverablePresentationCandidate:true},errorDetail:failure({validationIssues}),...patch});
+
+  assert.equal(documentJobCanRecoverPresentation(presentation()),true,"an already valid paid response remains recoverable after local persistence fails");
+  assert.equal(documentJobCanRecoverPresentation(presentation([issue()])),true,"an echoed source-backed visual value can be repaired without a provider call");
+  assert.equal(documentJobCanRecoverPresentation(presentation([issue({path:"items.0.slide.visual.data.0.label"})])),true,"a redundant title-and-question diagram can be condensed without dropping provenance");
+  assert.equal(documentJobCanRecoverPresentation(presentation([issue({code:"duplicate_deck_copy",path:"items.1.slide.visual.data.0.value"})])),true,"independently authored short status values may be safely reassessed across slides");
+  assert.equal(documentJobCanRecoverPresentation(presentation([issue({providerAttempt:1,code:"incomplete_visual",category:"structure"}),issue()])),true,"an earlier failed attempt never hides a safely recoverable newer paid response");
+
+  for(const unsafe of [
+    issue({code:"unknown_source_reference",category:"authorization"}),
+    issue({code:"missing_context_group",category:"source-integrity"}),
+    issue({code:"incomplete_visual",category:"structure"}),
+    issue({code:"duplicate_deck_copy",path:"items.1.body"}),
+    issue({path:"items.0.slide.quote.text"}),
+    issue({overridable:false}),
+    issue({pageCount:2}),
+    issue({pageIndex:1}),
+    issue({providerAttempt:0}),
+  ])assert.equal(documentJobCanRecoverPresentation(presentation([unsafe])),false,unsafe.code);
+
+  assert.equal(documentJobCanRecoverPresentation(presentation([issue(),issue({code:"incorrect_slide_source",category:"authorization"})])),false,"a cosmetic issue never overrides an authorization failure in the same response");
+  assert.equal(documentJobCanRecoverPresentation(presentation([issue({providerAttempt:1}),issue({providerAttempt:2,code:"missing_context_group",category:"source-integrity"})])),false,"a nonrecoverable newest response is never advertised as a guaranteed replay");
+  assert.equal(documentJobCanRecoverPresentation(presentation([],{result:{artifactKind:"slides",recoverablePresentationCandidate:false}})),false);
 });
 
 test("preserves transient provider guidance while honoring non-retryable network and server receipts", () => {

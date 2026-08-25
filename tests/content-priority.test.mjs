@@ -186,7 +186,7 @@ test("retained work leads failures and retains explicit, scoped, paid-once recov
   assert.ok(gallery.indexOf('class="document-artifact-failure-digest"') < gallery.indexOf("${this.#productionDesk"));
   assert.match(gallery, /<details class="document-artifact-failure-digest" \?open=\$\{!artifacts\.length\}/);
   assert.match(gallery, /recoverablePresentationJob&&artifacts\.length[\s\S]*?Recover saved render[\s\S]*?Paid once · replay without another provider call/);
-  assert.match(artifacts, /job\.result\?\.recoverablePresentationCandidate===true/);
+  assert.match(artifacts, /documentJobCanRecoverPresentation\(job\)/,"only validated or safely repairable paid slideshow responses advertise free recovery");
   assert.match(artifacts, /documentJobCanRecoverProviderRender/);
   assert.match(artifacts, /session&&!session\.impersonation/);
   assert.match(artifacts, /productionOwner&&\(artifact\.kind==="slides"\|\|artifact\.kind==="audio"\)/);

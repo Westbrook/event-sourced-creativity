@@ -235,7 +235,7 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
     }
   }
   const citations=(Array.isArray(input.citations)?input.citations:[]).flatMap((entry)=>{const citation=normalizeSlideCitation(entry);return citation?[citation]:[];}),section=text(input.section),requestedSourceOrder=Number(input.sourceOrder??input.source_order),sourceOrder=Number.isSafeInteger(requestedSourceOrder)&&requestedSourceOrder>0?requestedSourceOrder:undefined;
-  let kind=quote&&continuations.length?"quote" as SlideVisualKind:slideVisualKind(visual.kind,index);const valueIsVisible=kind==="hero-type"||kind==="metric"||kind==="diagram"||kind==="quote";let visualValue=kind==="quote"&&quote?quote.text:valueIsVisible?distinctText(visual.value,used):placeholderText(visual.value)?"":text(visual.value);let visualLabel=distinctText(visual.label,used);const exactValue=text(visual.exactValue??visual.exact_value),displayValue=text(visual.displayValue??visual.display_value),unit=text(visual.unit),data:SlideVisualDatum[]=[];
+  let kind=quote&&continuations.length?"quote" as SlideVisualKind:slideVisualKind(visual.kind,index);const originalKind=kind;const valueIsVisible=kind==="hero-type"||kind==="metric"||kind==="diagram"||kind==="quote";let visualValue=kind==="quote"&&quote?quote.text:valueIsVisible?distinctText(visual.value,used):placeholderText(visual.value)?"":text(visual.value);let visualLabel=distinctText(visual.label,used);const exactValue=text(visual.exactValue??visual.exact_value),displayValue=text(visual.displayValue??visual.display_value),unit=text(visual.unit),data:SlideVisualDatum[]=[];
   for(const datum of rawData){
     const entry=record(datum);let label=text(entry.label),datumValue=text(entry.value)||text(entry.displayValue??entry.display_value)||text(entry.exactValue??entry.exact_value);if(placeholderText(label))label="";if(placeholderText(datumValue))datumValue="";if(!label&&datumValue){label=datumValue;datumValue="";}if(!label)continue;
     const weight=Number(entry.weight),datumExact=text(entry.exactValue??entry.exact_value),datumDisplay=text(entry.displayValue??entry.display_value),sourceIds=uniqueText(entry.sourceIds??entry.source_ids);
@@ -254,6 +254,12 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
   if(categoryKinds.includes(kind)&&layout!=="roadmap"&&layout!=="timeline"&&data.length>=2&&new Set(data.map((datum)=>contentKey(datum.label))).size===data.length&&!quantitativeCategoryEvidence&&duplicateCategoryRows.length>meaningfulCategoryRows.length){
     kind="architecture";layout="architecture";
     for(const datum of duplicateCategoryRows)datum.value="";
+  }
+  const narrativeKeys=new Set([title,body].map(contentKey).filter(Boolean));
+  const narrativeRows=data.filter((datum)=>Boolean(datum.value)&&narrativeKeys.has(contentKey(datum.value)));
+  if(["comparison","matrix","personas","architecture"].includes(originalKind)&&data.length>=2&&new Set(data.map((datum)=>contentKey(datum.label))).size===data.length&&!quantitativeCategoryEvidence&&narrativeRows.length>0&&data.every((datum)=>!datum.value||narrativeKeys.has(contentKey(datum.value)))){
+    kind="architecture";layout="architecture";
+    for(const datum of narrativeRows)datum.value="";
   }
   if(kind==="bars"){const complete=data.filter((datum)=>Boolean(contentKey(datum.value)));data.splice(0,data.length,...complete);}
   if((kind==="bars"||kind==="timeline"||kind==="diagram"||kind==="color-field")&&data.length<2){
@@ -277,9 +283,20 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
 }
 
 export function normalizeSlideItem(value: unknown,index=0):DocumentArtifactDraftItem {
-  const input=record(value);const title=text(input.title);const requestedBody=text(input.body);const body=requestedBody&&!placeholderText(requestedBody)&&!slideCopyIsNearDuplicate(title,requestedBody)?requestedBody:"";
+  const input=record(value);const title=text(input.title);const requestedBody=text(input.body);let body=requestedBody&&!placeholderText(requestedBody)&&!slideCopyIsNearDuplicate(title,requestedBody)?requestedBody:"";
   const contextGroupIds=Array.isArray(input.context_group_ids)?[...new Set(input.context_group_ids.map(text).filter(Boolean))]:[];
-  return{title,body,notes:text(input.notes),image_prompt:text(input.image_prompt),context_group_ids:contextGroupIds,slide:input.slide?normalizeSlideVisual(input.slide,{title,body},index):null};
+  let slide=input.slide?normalizeSlideVisual(input.slide,{title,body},index):null;
+  if(slide&&body&&["architecture","diagram"].includes(slide.visual.kind)&&slide.visual.data.length>=2&&!slide.quote&&!slide.visual.unit&&!slide.visual.exactValue&&!slide.visual.displayValue){
+    const titleKey=contentKey(title),bodyKey=contentKey(body),narrativeKeys=new Set([titleKey,bodyKey].filter(Boolean));
+    const rows=slide.visual.data;
+    const narrativeOnly=rows.every((datum)=>narrativeKeys.has(contentKey(datum.label))&&(!datum.value||narrativeKeys.has(contentKey(datum.value)))&&!datum.exactValue&&!datum.displayValue&&preciseNumber(datum.label)===null&&preciseNumber(datum.value)===null);
+    if(narrativeOnly&&rows.some((datum)=>contentKey(datum.label)===titleKey)&&rows.some((datum)=>contentKey(datum.label)===bodyKey)){
+      const sourceIds=[...new Set([...(slide.sourceIds??[]),...rows.flatMap((datum)=>datum.sourceIds??[])])];
+      slide=normalizeSlideVisual({...slide,layout:index===0?"cover":"statement",...(sourceIds.length?{sourceIds}:{}),visual:{kind:"hero-type",label:slide.visual.label,value:body,data:[]}},{title,body:""},index);
+      body="";
+    }
+  }
+  return{title,body,notes:text(input.notes),image_prompt:text(input.image_prompt),context_group_ids:contextGroupIds,slide};
 }
 
 export type SlideCopyIssue={first:string;second:string;firstPath:string;secondPath:string};
@@ -290,10 +307,10 @@ export function slideCopyIssues(value:unknown):SlideCopyIssue[]{
   for(let left=0;left<fields.length;left+=1)for(let right=left+1;right<fields.length;right+=1){
     const first=fields[left],second=fields[right];
     if(!first||!second||!slideCopyIsNearDuplicate(first.value,second.value))continue;
-    const categoryLabel=first.path==="body"?/^slide\.visual\.data\.(\d+)\.label$/u.exec(second.path):null;
+    const categoryLabel=first.path==="body"||first.path==="title"?/^slide\.visual\.data\.(\d+)\.label$/u.exec(second.path):null;
     if(categoryLabel&&Array.isArray(visualData)&&visualData.length>=2){
-      const label=contentKey(second.value),body=contentKey(first.value),labelTokens=copyTokens(second.value);
-      if(label.length<=48&&labelTokens.length>=2&&labelTokens.length<=4&&body!==label&&(` ${body} `).includes(` ${label} `)&&copyTokens(first.value).length>=labelTokens.length+2&&visualData.filter((datum)=>contentKey(record(datum).label)===label).length===1)continue;
+      const label=contentKey(second.value),narrative=contentKey(first.value),labelTokens=copyTokens(second.value);
+      if(label.length<=48&&labelTokens.length>=2&&labelTokens.length<=4&&narrative!==label&&(` ${narrative} `).includes(` ${label} `)&&copyTokens(first.value).length>=labelTokens.length+2&&visualData.filter((datum)=>contentKey(record(datum).label)===label).length===1)continue;
     }
     const firstDatum=/^slide\.visual\.data\.(\d+)\.value$/u.exec(first.path),secondDatum=/^slide\.visual\.data\.(\d+)\.value$/u.exec(second.path);
     if(firstDatum&&secondDatum&&firstDatum[1]!==secondDatum[1]&&Array.isArray(visualData)){
@@ -310,7 +327,18 @@ export type SlideDeckCopyIssue=SlideCopyIssue&{firstSlide:number;secondSlide:num
 const slideNarrativeFields=(value:unknown)=>slideCopyFields(value).filter((field)=>field.path==="title"||field.path==="body"||field.path.startsWith("slide.bullets.")||field.path==="slide.visual.value"||field.path==="slide.quote.text"||field.path.endsWith(".value"));
 const crossSlideDuplicate=(left:{path:string;value:string},right:{path:string;value:string})=>{const leftKey=contentKey(left.value),rightKey=contentKey(right.value),exact=leftKey===rightKey;if(exact&&left.path==="title"&&right.path==="title")return true;const shorter=Math.min(leftKey.length,rightKey.length),tokens=Math.min(copyTokens(left.value).length,copyTokens(right.value).length);return exact&&shorter>=12&&tokens>=2||slideCopyIsNearDuplicate(left.value,right.value)&&tokens>=4;};
 export function slideDeckCopyIssues(values:unknown[]):SlideDeckCopyIssue[]{
-  const slides=values.map(slideNarrativeFields),issues:SlideDeckCopyIssue[]=[];for(let firstSlide=0;firstSlide<slides.length;firstSlide+=1)for(let secondSlide=firstSlide+1;secondSlide<slides.length;secondSlide+=1)for(const first of slides[firstSlide]??[])for(const second of slides[secondSlide]??[])if(crossSlideDuplicate(first,second))issues.push({first:first.value,second:second.value,firstPath:first.path,secondPath:second.path,firstSlide,secondSlide});return issues;
+  const slides=values.map(slideNarrativeFields),issues:SlideDeckCopyIssue[]=[];
+  for(let firstSlide=0;firstSlide<slides.length;firstSlide+=1)for(let secondSlide=firstSlide+1;secondSlide<slides.length;secondSlide+=1)for(const first of slides[firstSlide]??[])for(const second of slides[secondSlide]??[]){
+    if(!crossSlideDuplicate(first,second))continue;
+    const firstDatum=/^slide\.visual\.data\.(\d+)\.value$/u.exec(first.path),secondDatum=/^slide\.visual\.data\.(\d+)\.value$/u.exec(second.path);
+    if(firstDatum&&secondDatum){
+      const firstData=record(record(record(values[firstSlide]).slide).visual).data,secondData=record(record(record(values[secondSlide]).slide).visual).data;
+      const firstLabel=Array.isArray(firstData)?contentKey(record(firstData[Number(firstDatum[1])]).label):"",secondLabel=Array.isArray(secondData)?contentKey(record(secondData[Number(secondDatum[1])]).label):"",firstValue=contentKey(first.value);
+      if(firstLabel&&secondLabel&&firstLabel!==secondLabel&&firstValue===contentKey(second.value)&&firstValue.length<=32&&firstValue.split(" ").length<=2)continue;
+    }
+    issues.push({first:first.value,second:second.value,firstPath:first.path,secondPath:second.path,firstSlide,secondSlide});
+  }
+  return issues;
 }
 export const slideDeckCopyIsDistinct=(values:unknown[])=>slideDeckCopyIssues(values).length===0;
 
