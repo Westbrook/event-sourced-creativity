@@ -267,6 +267,11 @@ export function slideCopyIssues(value:unknown):SlideCopyIssue[]{
   for(let left=0;left<fields.length;left+=1)for(let right=left+1;right<fields.length;right+=1){
     const first=fields[left],second=fields[right];
     if(!first||!second||!slideCopyIsNearDuplicate(first.value,second.value))continue;
+    const categoryLabel=first.path==="body"?/^slide\.visual\.data\.(\d+)\.label$/u.exec(second.path):null;
+    if(categoryLabel&&Array.isArray(visualData)&&visualData.length>=2){
+      const label=contentKey(second.value),body=contentKey(first.value),labelTokens=copyTokens(second.value);
+      if(label.length<=48&&labelTokens.length>=2&&labelTokens.length<=4&&body!==label&&(` ${body} `).includes(` ${label} `)&&copyTokens(first.value).length>=labelTokens.length+2&&visualData.filter((datum)=>contentKey(record(datum).label)===label).length===1)continue;
+    }
     const firstDatum=/^slide\.visual\.data\.(\d+)\.value$/u.exec(first.path),secondDatum=/^slide\.visual\.data\.(\d+)\.value$/u.exec(second.path);
     if(firstDatum&&secondDatum&&firstDatum[1]!==secondDatum[1]&&Array.isArray(visualData)){
       const firstLabel=contentKey(record(visualData[Number(firstDatum[1])]).label),secondLabel=contentKey(record(visualData[Number(secondDatum[1])]).label),firstValue=contentKey(first.value);

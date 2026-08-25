@@ -116,6 +116,44 @@ test("preserves repeated source-authored status values across independently labe
   assert.equal(slideCopyIssues(duplicatedProse).some((issue)=>issue.firstPath==="body"&&issue.secondPath==="slide.bullets.0"),true,"ordinary narrative duplication remains rejected");
 });
 
+test("preserves concise authored visual row labels inside independently meaningful slide body copy",()=>{
+  const data=[
+    {label:"Decision decomposition",value:"atomic",weight:1},
+    {label:"Private conversations",value:"restricted",weight:1},
+    {label:"Specialist permissions",value:"scoped",weight:1},
+    {label:"Event-derived projections",value:"deterministic",weight:1},
+    {label:"Output orchestration",value:"coordinated",weight:1},
+  ];
+  const item={title:"Independent delivery controls",body:"Decision decomposition establishes accountable boundaries while private conversations remain protected, specialist permissions constrain access, event-derived projections reconstruct state, and output orchestration coordinates every release.",notes:"Preserve every authored category and its supporting argument.",image_prompt:"Editable operational-control matrix.",context_group_ids:[],slide:{layout:"matrix",kicker:"Governed source evidence",bullets:[],visual:{kind:"matrix",label:"Operational control categories",value:"",data}}};
+  const output=parseDocumentArtifactContent(JSON.stringify({title:"Executive release plan",summary:"Every authored category supports a distinct delivery control.",content_markdown:"# Executive release plan",presentation,items:[item]}));
+
+  assert.deepEqual(slideCopyIssues(output?.items[0]),[],"concise source categories remain useful in both the authored argument and its structured visual");
+  assert.deepEqual(documentArtifactValidationIssues("slides",output,{itemCount:1}),[]);
+  assert.deepEqual(output?.items[0]?.slide?.visual.data.map(({label})=>label),data.map(({label})=>label));
+
+  const exactEcho={...item,body:data[0].label};
+  assert.equal(slideCopyIssues(exactEcho).some((issue)=>issue.firstPath==="body"&&issue.secondPath==="slide.visual.data.0.label"),true,"a body that only echoes its row label remains duplicated");
+
+  const noIndependentClaim={...item,body:`The ${data[0].label} first`};
+  assert.equal(slideCopyIssues(noIndependentClaim).some((issue)=>issue.firstPath==="body"&&issue.secondPath==="slide.visual.data.0.label"),true,"one extra token does not turn a repeated label into an independently meaningful argument");
+
+  const partialWord={...item,body:"Decision decompositions establish independently accountable delivery boundaries."};
+  assert.equal(slideCopyIssues(partialWord).some((issue)=>issue.firstPath==="body"&&issue.secondPath==="slide.visual.data.0.label"),true,"partial-word overlaps never qualify as an authored category phrase");
+
+  const duplicatedRows={...item,slide:{...item.slide,visual:{...item.slide.visual,data:[data[0],{...data[0],value:"different"}]}}};
+  assert.equal(slideCopyIssues(duplicatedRows).some((issue)=>issue.firstPath.endsWith(".label")&&issue.secondPath.endsWith(".label")),true,"identical visual categories remain duplicated");
+
+  const narrativeLabel="Decision decomposition requires independent review and authorized approval";
+  const duplicatedNarrative={...item,body:`${narrativeLabel} before every production release can proceed safely.`,slide:{...item.slide,visual:{...item.slide.visual,data:[{...data[0],label:narrativeLabel},data[1]]}}};
+  assert.equal(slideCopyIssues(duplicatedNarrative).some((issue)=>issue.firstPath==="body"&&issue.secondPath==="slide.visual.data.0.label"),true,"substantive narrative row labels cannot duplicate the slide argument");
+
+  const echoedBullet={...item,slide:{...item.slide,bullets:[item.body]}};
+  assert.equal(slideCopyIssues(echoedBullet).some((issue)=>issue.firstPath==="body"&&issue.secondPath==="slide.bullets.0"),true,"ordinary narrative duplication remains rejected");
+
+  const echoedValue={...item,slide:{...item.slide,visual:{...item.slide.visual,data:[{...data[0],value:item.body},data[1]]}}};
+  assert.equal(slideCopyIssues(echoedValue).some((issue)=>issue.firstPath==="body"&&issue.secondPath==="slide.visual.data.0.value"),true,"substantive repeated visual values remain rejected");
+});
+
 test("normalizes repeated narrative copy across the complete slide deck",()=>{
   const repeated="The discovery changes what the librarian is willing to reveal.";
   const items=[

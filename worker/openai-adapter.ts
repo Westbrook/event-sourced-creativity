@@ -444,6 +444,8 @@ export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output:parsed,raw:text,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
+const authoredVisualCategoryCopyInstructions="Concise source-authored visual.data row labels may repeat verbatim inside a longer independently meaningful slide body when the labels categorize its evidence; preserve both the authored argument and every structured row label.";
+
 const artifactInstructions:Record<DocumentArtifactKind,string>={
   audio:"Create an original, production-ready music and sound-design brief. Preserve the document’s narrative purpose, authored emotional arc, ordered dramatic beats, atmosphere, musical texture, tempo when genuinely specified, instrumentation, and deliberate silence. Translate opted-in audio descriptions into musical meaning without copying an existing recording, recognizable melody, artist, or voice. content_markdown is a complete original composition brief with concise timed or ordered sections. Use one item whose body describes the complete arrangement, whose notes describe cue timing and vocal policy, and whose image_prompt describes an optional visual reference without implying that an image was supplied. Never invent measured tempo, duration, transcription, licensed lyrics, or artist approval.",
   short_story:"Write a polished short story, not a treatment. Preserve the document's named subjects, setting, tone, constraints, and spatial relationships. content_markdown is the complete story. Items are titled narrative movements with their prose in body; notes briefly explain continuity, and image_prompt describes an optional illustration.",
@@ -690,7 +692,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const managedDirection=managed&&managedPlan?productionTeamInstructions(managedPlan,managedScenes):"";
   const formatInstructions=managed&&kind==="video"
     ? "Write one production-ready, independently renderable motion prompt per assigned scene. Each item's body is its unique visual action, notes contain camera, identity, and transition continuity, and image_prompt is its standalone source-grounded clip prompt. content_markdown is the chronological scene script. Never compress multiple assigned scenes into one clip, repeat the complete plot in every item, or invent music, dialogue, voice, or soundtrack requirements."
-    : artifactInstructions[kind];
+    : kind==="slides"?`${artifactInstructions[kind]} ${authoredVisualCategoryCopyInstructions}`:artifactInstructions[kind];
   const videoContract=kind==="video"?managed
     ? ` Each assigned scene is a separate ${VIDEO_ADAPTER_CONTRACT.supportedDurations[0]}–${VIDEO_ADAPTER_CONTRACT.supportedDurations.at(-1)} second provider generation in ${input.options?.videoSize==="720x1280"?"9:16 portrait":"16:9 landscape"}; the complete production may be much longer. Respect the assigned per-scene duration and chronological source beat. Do not compress the complete narrative into one clip. ${audioMode==="original_ambient"?"Only original nonmelodic environmental ambience is allowed.":"Every clip is silent; communicate rhythm through visible action and light."}`
     : ` The requested output is exactly ${input.options?.videoSeconds??4} seconds in ${input.options?.videoSize==="720x1280"?"9:16 portrait":"16:9 landscape"}. The motion prompt must fit that duration; do not claim or imply a different runtime. Preserve every ordered storyboard shot as chronology, including description-only frames, compressing their beats into the available runtime without dropping named subjects or continuity. ${audioMode==="original_ambient"?"Original nonmelodic, in-scene environmental ambience is explicitly allowed; describe it only as visible natural sources, never as music, dialogue, voices, or a recorded work.":"This is a picture-only silent render. Do not invent or request any soundtrack, score, music, voice, dialogue, or other audio. Translate their implied dramatic rhythm into visible motion and light."}`:"";
@@ -810,7 +812,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       presentation_source:sourceFacing,
       ...(providerPage?{production:{page:providerPage,assigned_scenes:providerScenes}}:{}),
     });
-    const repaired=await run(repairInstructions,repairInput,"document_slides_repair");
+    const repaired=await run(`${repairInstructions} ${authoredVisualCategoryCopyInstructions}`,repairInput,"document_slides_repair");
     repairBody=repaired.body;
     body=repaired.body;
     raw=repaired.raw??"";

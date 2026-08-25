@@ -330,23 +330,37 @@ test("faithfully renders twelve independently authored blocks with exact quotati
   });
 });
 
-test("retains repeated authored zero-valued release controls without submitting a second paid presentation request",async()=>{
+test("retains authored body categories, editable visual labels, and zero-valued release controls without a second paid presentation request",async()=>{
   const snapshot=independentSlideSnapshot();
   const acceptanceCriteria=" Deliver safety and source integrity first, then event-derived projections, nonblocking coordinator lanes, atomic proposals, complete output orchestration, and page-specific adapters. Measure zero lost turns, zero unauthorized actions, correct selections, bounded context, all 61 route policies, and four-language parity.";
+  snapshot.facts[7].properties.text=snapshot.facts[7].properties.text.replace("for receipt transparency ","")+" Decision decomposition separates bounded choices before execution.";
+  snapshot.facts[10].properties.text+=" Private conversations remain access-controlled and specialist permissions constrain authorized collaboration.";
   snapshot.facts[11].properties.text+=acceptanceCriteria;
   const output=independentSlideOutput(snapshot);
+  const decomposition=output.items[7];
+  decomposition.slide.layout="matrix";
+  decomposition.slide.visual={kind:"matrix",label:"Independent execution controls",value:"",exact_value:null,display_value:null,unit:null,data:[
+    {label:"Decision decomposition",value:"bounded",weight:1,exact_value:null,display_value:null,source_ids:["blk_008"]},
+    {label:"Execution authority",value:"verified",weight:1,exact_value:null,display_value:null,source_ids:["blk_008"]},
+  ]};
+  const collaboration=output.items[10];
+  collaboration.slide.layout="matrix";
+  collaboration.slide.visual={kind:"matrix",label:"Independent collaboration controls",value:"",exact_value:null,display_value:null,unit:null,data:[
+    {label:"Private conversations",value:"restricted",weight:1,exact_value:null,display_value:null,source_ids:["blk_011"]},
+    {label:"Specialist permissions",value:"scoped",weight:1,exact_value:null,display_value:null,source_ids:["blk_011"]},
+  ]};
   const closing=output.items[11];
-  closing.body=closing.body.replace(acceptanceCriteria,"");
   closing.slide.layout="matrix";
   closing.slide.visual={kind:"matrix",label:"Independent release controls",value:"",exact_value:null,display_value:null,unit:null,data:[
     {label:"Safety and source integrity",value:"first",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
-    {label:"Projection architecture",value:"event-derived",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
+    {label:"Event-derived projections",value:"event-derived",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
     {label:"Coordinator lanes",value:"nonblocking",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
     {label:"Change proposals",value:"atomic",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
     {label:"Route policies",value:"61",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
     {label:"Language parity",value:"four",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
     {label:"Lost conversation turns",value:"zero",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
     {label:"Unauthorized actions",value:"zero",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
+    {label:"Output orchestration",value:"complete",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
   ]};
 
   await withProviderResponses([output],async(requests)=>{
@@ -355,16 +369,21 @@ test("retains repeated authored zero-valued release controls without submitting 
       options:{itemCount:12,requestedSlideCount:12,presentationStyle:"field-notes",presentationFidelity:"faithful"},
     });
 
-    assert.equal(requests.length,1,"source-faithful matching measurements must not trigger a second paid provider request");
-    assert.equal(result.output.items[11].slide.visual.data.length,8);
-    assert.deepEqual(result.output.items[11].slide.visual.data.slice(6).map(({label,value})=>({label,value})),[
+    assert.equal(requests.length,1,"source-faithful category labels and matching measurements must not trigger a second paid provider request");
+    assert.match(result.output.items[7].body,/Decision decomposition/u);
+    assert.match(result.output.items[10].body,/Private conversations.*specialist permissions/u);
+    assert.match(result.output.items[11].body,/event-derived projections.*output orchestration/u);
+    assert.equal(result.output.items[11].slide.visual.data.length,9);
+    assert.deepEqual(result.output.items[11].slide.visual.data.slice(6,8).map(({label,value})=>({label,value})),[
       {label:"Lost conversation turns",value:"zero"},
       {label:"Unauthorized actions",value:"zero"},
     ]);
+    assert.deepEqual([result.output.items[7].slide.visual.data[0].label,...result.output.items[10].slide.visual.data.map(({label})=>label),result.output.items[11].slide.visual.data[1].label,result.output.items[11].slide.visual.data[8].label],["Decision decomposition","Private conversations","Specialist permissions","Event-derived projections","Output orchestration"]);
     assert.equal(result.inputReceipt.validation.repair_attempted,false);
     assert.deepEqual(result.inputReceipt.validation.initial_issues,[]);
     assert.equal(result.inputReceipt.validation.provider_call_count,1);
     assert.match(requests[0].request.instructions,/different[^.]*visual\.data[^.]*same[^.]*value|visual\.data[^.]*same[^.]*value/i,"provider instructions must explicitly preserve equal authored values across distinct rows");
+    assert.match(requests[0].request.instructions,/visual\.data row labels[^.]*longer[^.]*body/i,"provider instructions must explicitly preserve concise authored visual categories within independently meaningful body copy");
   });
 });
 
@@ -408,6 +427,7 @@ test("repairs a fabricated citation excerpt once without disclosing private iden
     assert.equal(requests.length,2);
     assert.equal(result.inputReceipt.validation.repair_attempted,true);
     assert.ok(result.inputReceipt.validation.initial_issues.some((issue)=>issue.code==="ungrounded_citation_excerpt"));
+    assert.match(requests[1].request.instructions,/visual\.data row labels[^.]*longer[^.]*body/i,"bounded repair must retain authored visual categories that also appear in independently meaningful body copy");
     assertRequestContainsNoPrivateSourceIdentifiers(requests[1].request);
   });
 });
