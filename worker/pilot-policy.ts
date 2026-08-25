@@ -858,7 +858,7 @@ export async function releaseCostReservationsForCorrelation(env: WorkerEnv, user
 export const DURABLE_WORK_RETENTION_END = "9999-12-31T23:59:59.999Z";
 export const DEFAULT_EVIDENCE_RETENTION_DAYS = 365;
 
-type PrivateContentKind = "prompt" | "provider-output" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input";
+type PrivateContentKind = "prompt" | "provider-output" | "provider-response" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input";
 
 export function privateContentRetentionClass(kind: PrivateContentKind): "durable-work" | "governed-evidence" | "transient-private" {
   return kind === "document-artifact" ? "durable-work" : kind === "document-artifact-input" ? "governed-evidence" : "transient-private";
@@ -914,8 +914,19 @@ export async function loadPrivateContent(env: WorkerEnv, ownerId: string, scope:
     AND resource.project_access_id=? AND resource.organization_id=? AND resource.project_id=? AND resource.owner_user_id=? AND resource.actor_user_id=? AND resource.visibility='actor_private') AND ${activeProjectBillingSql}`:
     " AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id AND resource.actor_user_id=private_content.owner_id AND resource.owner_user_id!=private_content.owner_id AND resource.visibility='actor_private')";
   const bindings=projectScope?[ownerId,now,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,ownerId,ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId]:[ownerId,now];
-  const rows=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>?${restricted}${containment}`).bind(...bindings).all<{content_id:string;content:string}>();
+  const rows=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>? AND kind!='provider-response'${restricted}${containment}`).bind(...bindings).all<{content_id:string;content:string}>();
   return Object.fromEntries(rows.results.map((row) => [row.content_id, row.content]));
+}
+
+/** Paid response bodies are server-only evidence and never enter ordinary private-content hydration. */
+export async function loadPrivateProviderResponse(env:WorkerEnv,ownerId:string,contentId:string,projectScope?:ProjectExecutionScope){
+  if(!contentId||projectScope&&projectScope.actorUserId!==ownerId)return null;
+  const now=new Date().toISOString();
+  const containment=projectScope?` AND EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id
+    AND resource.project_access_id=? AND resource.organization_id=? AND resource.project_id=? AND resource.owner_user_id=? AND resource.actor_user_id=? AND resource.visibility='actor_private') AND ${activeProjectBillingSql}`
+    :" AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id)";
+  const bindings=projectScope?[ownerId,contentId,now,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,ownerId,ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId]:[ownerId,contentId,now];
+  return env.DB.prepare(`SELECT content,expires_at FROM private_content WHERE owner_id=? AND content_id=? AND kind='provider-response' AND redacted_at IS NULL AND expires_at>?${containment}`).bind(...bindings).first<{content:string;expires_at:string}>();
 }
 
 export async function handleSession(request: Request, env: WorkerEnv, _context?: WorkerExecutionContext) {

@@ -79,6 +79,44 @@ test("reclassifies prose-only scorecards as honest readable qualitative comparis
   assert.equal(protectedScores.visual.kind,"scorecard");
 });
 
+test("repairs echoed category-only proposal rows locally without inventing evidence",()=>{
+  const labels=["authorized evidence","affected resources","expected revision","approval requirements","cost when relevant"];
+  const rows=[{label:"proposed action",value:"Prepare an evidence-backed proposal",weight:.9,source_ids:["blk_001"]},...labels.map((label)=>({label,value:label,weight:.8,source_ids:["blk_001"]}))];
+  const item={title:"Proposals Before Changes",body:"Users selectively approve, edit, reject, or undo each proposed action.",notes:"Simple questions never change durable context.",image_prompt:"An editable proposal architecture.",context_group_ids:["group-proposal"],slide:{layout:"matrix",kicker:"Actionable approval",bullets:[],citations:[{source_id:"blk_001",label:"Authorized proposal evidence",anchor:"Slide 6",excerpt:"authorized evidence"}],source_ids:["blk_001"],visual:{kind:"matrix",label:"Proposal ingredients",value:"",data:rows}}};
+  const output=parseDocumentArtifactContent(JSON.stringify({title:"Executive plan",summary:"A source-grounded proposal experience.",content_markdown:"# Executive plan",presentation,items:[item]}));
+  const normalized=output?.items[0];
+  assert.ok(normalized?.slide);
+  assert.equal(normalized.slide.layout,"architecture");
+  assert.equal(normalized.slide.visual.kind,"architecture");
+  assert.deepEqual(normalized.slide.visual.data.map(({label})=>label),rows.map(({label})=>label));
+  assert.deepEqual(normalized.slide.visual.data.map(({value})=>value),["Prepare an evidence-backed proposal","","","","",""]);
+  assert.deepEqual(normalized.slide.visual.data.map(({sourceIds})=>sourceIds),rows.map(()=>["blk_001"]));
+  assert.deepEqual(normalized.slide.visual.data.map(({weight})=>weight),rows.map(({weight})=>weight));
+  assert.equal(normalized.slide.citations?.[0]?.sourceId,"blk_001");
+  assert.equal(normalized.notes,item.notes);
+  assert.deepEqual(slideCopyIssues(normalized),[]);
+  assert.deepEqual(documentArtifactValidationIssues("slides",output,{itemCount:1,contextGroupIds:["group-proposal"]}),[]);
+});
+
+test("never treats measured evidence, real comparisons, or ordered roadmaps as category filler",()=>{
+  const base=(kind,data,additional={})=>normalizeSlideVisual({layout:kind,kicker:"Source-grounded evidence",bullets:[],visual:{kind,label:"Authored visual",value:"",data,...additional}},{title:"Independent executive decision"});
+  for(const kind of ["comparison","matrix","personas","architecture"]){
+    const normalized=base(kind,[{label:"Authorized evidence",value:"Authorized evidence",weight:.8},{label:"Affected resources",value:"Affected resources",weight:.7}]);
+    assert.equal(normalized.visual.kind,"architecture",`${kind} becomes an architecture diagram`);
+    assert.deepEqual(normalized.visual.data.map(({value})=>value),["",""]);
+  }
+  const meaningful=base("comparison",[{label:"Phone",value:"One exact next action",weight:.8},{label:"Tablet",value:"Two useful panes",weight:.7}]);
+  assert.equal(meaningful.visual.kind,"comparison");
+  assert.deepEqual(meaningful.visual.data.map(({value})=>value),["One exact next action","Two useful panes"]);
+  const quantitative=base("scorecard",[{label:"39.75",value:"39.75",exact_value:"39.75",weight:.3975},{label:"53.00",value:"53.00",exact_value:"53.00",weight:.53}],{unit:"/100"});
+  assert.equal(quantitative.visual.kind,"scorecard");
+  assert.deepEqual(quantitative.visual.data.map(({value})=>value),["39.75","53.00"]);
+  for(const kind of ["roadmap","timeline"]){
+    const ordered=base(kind,[{label:"Foundation",value:"Foundation",weight:.8},{label:"Release",value:"Release",weight:.7}]);
+    assert.equal(ordered.visual.kind,kind,`${kind} preserves ordered source semantics`);
+  }
+});
+
 test("treats punctuation, line breaks, quote fragments, and close restatements as repeated slide copy",()=>{
   const quote='“Careful,” says the librarian. Then: “Show me what you found.”';const echo='“Careful,” says the librarian\nThen: “Show me what you found';
   assert.equal(slideCopyIsNearDuplicate(quote,echo),true);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildManagedProductionPlan } from "../src/model/managed-production.ts";
-import { generateDocumentArtifact } from "../worker/openai-adapter.ts";
+import { assessStoredPresentationCandidate, generateDocumentArtifact } from "../worker/openai-adapter.ts";
 
 const PRIVATE_BLOCK_ID = "PRIVATE_EXECUTIVE_SOURCE_BLOCK_8731";
 const PRIVATE_GROUP_ID = "PRIVATE_EXECUTIVE_SOURCE_GROUP_8731";
@@ -269,6 +269,7 @@ test("the strict slideshow schema preserves complete attributed quotes, editable
     assert.ok(slideSchema.properties.bullets.maxItems >= 24);
     assert.ok(slideSchema.properties.citations.maxItems >= 24);
     assert.ok(visualSchema.properties.data.maxItems >= 48, "editable scorecards and comparison matrices must not be capped at five rows");
+    assert.equal(visualSchema.properties.data.items.properties.value.minLength,undefined,"category-only architecture nodes must not be forced to invent or repeat a value");
     assert.ok(slideSchema.properties.source_ids.maxItems >= 24);
     assert.deepEqual(schema.properties.presentation.properties.style_preset.enum, ["field-notes"], "an explicitly selected deck style must be schema-locked before the first provider call");
 
@@ -327,6 +328,29 @@ test("faithfully renders twelve independently authored blocks with exact quotati
     assert.equal(result.output.items[1].slide.quote.text,STAKEHOLDER_QUOTE);
     assert.equal(result.output.items[1].slide.quote.role,"Product Owner");
     assert.doesNotMatch(JSON.stringify(requests[0].request),/PRIVATE_/);
+  });
+});
+
+test("locally repairs category-only proposal rows without submitting a second paid slideshow request",async()=>{
+  const snapshot=independentSlideSnapshot();
+  const categories=["authorized evidence","affected resources","expected revision","approval requirements","cost when relevant"];
+  snapshot.facts[5].properties.text+=` Proposal ingredients preserve ${categories.join(", ")}.`;
+  const output=independentSlideOutput(snapshot);
+  output.items[5].slide.layout="matrix";
+  output.items[5].slide.visual={kind:"matrix",label:"Proposal ingredients",value:"",exact_value:null,display_value:null,unit:null,data:categories.map((label)=>({label,value:label,weight:.8,exact_value:null,display_value:null,source_ids:["blk_006"]}))};
+
+  await withProviderResponses([output],async(requests)=>{
+    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-executive-actor","slides",{
+      documentTitle:"Event-Sourced Conversational Experience — Executive Plan",snapshot,
+      options:{itemCount:12,requestedSlideCount:12,presentationStyle:"field-notes",presentationFidelity:"faithful"},
+    });
+
+    assert.equal(requests.length,1,"echoed category-only visual values are corrected without a second paid provider call");
+    assert.equal(result.output.items[5].slide.layout,"architecture");
+    assert.equal(result.output.items[5].slide.visual.kind,"architecture");
+    assert.deepEqual(result.output.items[5].slide.visual.data.map(({label,value,sourceIds})=>({label,value,sourceIds})),categories.map((label)=>({label,value:"",sourceIds:[snapshot.facts[5].block_id]})));
+    assert.equal(result.inputReceipt.validation.repair_attempted,false);
+    assert.match(requests[0].request.instructions,/architecture visual with an empty string for each category-only row value/i);
   });
 });
 
@@ -678,9 +702,10 @@ test("checkpoints each successful paid response before bounded repair can fail",
   const invalid = executivePresentation();
   invalid.items[0].slide.source_ids = ["blk_999"];
   const attempts = [];
+  const responses=[];
 
   await withProviderResponses([invalid, invalid], async () => {
-    await assert.rejects(generateExecutivePresentation({ onProviderAttempt: (receipt) => attempts.push(receipt) }), (error) => {
+    await assert.rejects(generateExecutivePresentation({onProviderResponse:(receipt)=>responses.push(receipt),onProviderAttempt:(receipt)=>attempts.push(receipt)}), (error) => {
       assert.equal(error.providerCallCount, 2);
       assert.equal(error.providerUsage.totalTokens, 400);
       return true;
@@ -690,6 +715,25 @@ test("checkpoints each successful paid response before bounded repair can fail",
   assert.deepEqual(attempts.map((attempt) => attempt.usage.totalTokens), [200, 400]);
   assert.deepEqual(attempts.map((attempt) => attempt.responseIds), [["presentation-provider-response-1"], ["presentation-provider-response-1", "presentation-provider-response-2"]]);
   assert.doesNotMatch(JSON.stringify(attempts), /PRIVATE_EXECUTIVE_/);
+  assert.equal(responses.length,2,"every paid candidate is captured before local validation can reject it");
+  assert.deepEqual(responses.map(({responseId})=>responseId),["presentation-provider-response-1","presentation-provider-response-2"]);
+  for(const response of responses){
+    assert.equal(response.candidateRaw,JSON.stringify(invalid));
+    assert.equal(response.candidateBytes,new TextEncoder().encode(JSON.stringify(invalid)).byteLength);
+    assert.equal(response.candidateTruncated,false);
+    assert.doesNotMatch(response.candidateRaw,/PRIVATE_EXECUTIVE_/);
+  }
+});
+
+test("reassesses retained provider output with the complete source contract without another request",()=>{
+  const result=assessStoredPresentationCandidate(JSON.stringify(executivePresentation()),executiveSourceSnapshot(),{itemCount:2,presentationStyle:"field-notes"});
+  assert.deepEqual(result.issues,[]);
+  assert.equal(result.output?.items.length,2);
+  assert.ok(result.output?.items[0]?.slide?.sourceIds?.includes(PRIVATE_BLOCK_ID),"request-local provider aliases resolve only against the original authorized source");
+  const forged=executivePresentation();
+  forged.items[0].slide.source_ids=["blk_999"];
+  const rejected=assessStoredPresentationCandidate(JSON.stringify(forged),executiveSourceSnapshot(),{itemCount:2,presentationStyle:"field-notes"});
+  assert.ok(rejected.issues.some((issue)=>issue.code==="unknown_source_reference"),"retained replay cannot bypass source-authorization validation");
 });
 
 test("never automatically resubmits a paid OpenAI Responses request after an ambiguous gateway failure",async(context)=>{

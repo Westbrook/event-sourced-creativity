@@ -71,8 +71,10 @@ export type ProductionPageContext = {
   repairIssues?: string[];
 };
 export type ProviderAttemptReceipt = { model:string; responseId:string; responseIds:string[]; usage:{inputTokens:number;outputTokens:number;totalTokens:number}; latencyMs:number };
+export const MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES=512*1024;
+export type ProviderResponseReceipt=ProviderAttemptReceipt&{candidateRaw:string|null;candidateBytes:number;candidateTruncated:boolean};
 export type ProviderAttemptPreflight = {model:string;maximumInputTokens:number;maximumOutputTokens:number};
-export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; locale?:string; outputLocale?:string; presentationStyle?:SlideStylePresetId; presentationFidelity?:"faithful"|"creative"; requestedSlideCount?:number; authoredSlideCount?:number; videoSeconds?:VideoDurationSeconds; videoSize?:"1280x720"|"720x1280"; videoAudioMode?:VideoAudioMode; productionMode?:ProductionMode; productionPlan?:ManagedProductionPlan; productionScenes?:ProductionScene[]; productionPage?:ProductionPageContext; signal?:AbortSignal; onProviderAttempt?:(receipt:ProviderAttemptReceipt)=>void|Promise<void>;onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void> };
+export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; locale?:string; outputLocale?:string; presentationStyle?:SlideStylePresetId; presentationFidelity?:"faithful"|"creative"; requestedSlideCount?:number; authoredSlideCount?:number; videoSeconds?:VideoDurationSeconds; videoSize?:"1280x720"|"720x1280"; videoAudioMode?:VideoAudioMode; productionMode?:ProductionMode; productionPlan?:ManagedProductionPlan; productionScenes?:ProductionScene[]; productionPage?:ProductionPageContext; signal?:AbortSignal; onProviderResponse?:(receipt:ProviderResponseReceipt)=>void|Promise<void>;onProviderAttempt?:(receipt:ProviderAttemptReceipt)=>void|Promise<void>;onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void> };
 export type VideoReference = { bytes:Uint8Array; mimeType:string; blockId:string; referenceId:string; label:string; mode:ReferencePixelMode; sequence:number|null; shotDirection:string; cameraDirection:string; framePrompt:string; sourceArtifactId:string|null; sourceArtifactItemId:string|null; sourceArtifactKind:string|null; storyboardTitle:string; contextGroups?:Array<{id:string;name:string;target:string;role:string;application:string;relativity:number}>; provider?:string|null; providerModel?:string|null; providerRequestId?:string|null; providerMediaUrl?:string|null };
 export type VideoAudioReference = { bytes:Uint8Array; mimeType:string; blockId:string; referenceId:string; label:string; durationSeconds:number; rightsClass:string };
 export type CreativeVideoPreparedReceipt = { provider:string; model:string; submittedPrompt:string; parameters:Record<string,unknown>; referenceInputs:Array<Record<string,unknown>>; usedReferencePixels:boolean; adaptation?:VideoPromptAdaptation };
@@ -146,7 +148,7 @@ const slideVisualSchema={
           type:"array",minItems:0,maxItems:48,
           items:{
             type:"object",additionalProperties:false,required:["label","value","weight","exact_value","display_value","source_ids"],
-            properties:{label:{type:"string",minLength:1,maxLength:160},value:{type:"string",minLength:1,maxLength:240},weight:{type:"number",minimum:0,maximum:1},exact_value:{type:["string","null"],maxLength:120},display_value:{type:["string","null"],maxLength:120},source_ids:{type:"array",maxItems:12,items:{type:"string",minLength:1,maxLength:80}}},
+            properties:{label:{type:"string",minLength:1,maxLength:160},value:{type:"string",maxLength:240},weight:{type:"number",minimum:0,maximum:1},exact_value:{type:["string","null"],maxLength:120},display_value:{type:["string","null"],maxLength:120},source_ids:{type:"array",maxItems:12,items:{type:"string",minLength:1,maxLength:80}}},
           },
         },
       },
@@ -444,7 +446,7 @@ export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output:parsed,raw:text,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
-const authoredVisualCategoryCopyInstructions="Concise source-authored visual.data row labels may repeat verbatim inside a longer independently meaningful slide body when the labels categorize its evidence; preserve both the authored argument and every structured row label.";
+const authoredVisualCategoryCopyInstructions="Concise source-authored visual.data row labels may repeat verbatim inside a longer independently meaningful slide body when the labels categorize its evidence; preserve both the authored argument and every structured row label. When authored evidence supplies categories without independent measurements or descriptions, use an architecture visual with an empty string for each category-only row value. Never copy a visual.data row label into its own value and never invent a measurement merely to populate a category. Real scorecard, bars, and matrix measurements must remain complete and exact.";
 
 const artifactInstructions:Record<DocumentArtifactKind,string>={
   audio:"Create an original, production-ready music and sound-design brief. Preserve the document’s narrative purpose, authored emotional arc, ordered dramatic beats, atmosphere, musical texture, tempo when genuinely specified, instrumentation, and deliberate silence. Translate opted-in audio descriptions into musical meaning without copying an existing recording, recognizable melody, artist, or voice. content_markdown is a complete original composition brief with concise timed or ordered sections. Use one item whose body describes the complete arrangement, whose notes describe cue timing and vocal policy, and whose image_prompt describes an optional visual reference without implying that an image was supplied. Never invent measured tempo, duration, transcription, licensed lyrics, or artist approval.",
@@ -664,6 +666,38 @@ function redactPresentationRepairArtifact(raw:string,contract:PresentationSource
   return replacements.reduce((result,reference)=>result.replaceAll(reference,"unauthorized_reference"),raw);
 }
 
+/** Reapply the complete current source/alias contract to a retained paid response without contacting a provider. */
+export function assessStoredPresentationCandidate(raw:string,snapshot:Record<string,unknown>,options:Pick<DocumentArtifactOptions,"itemCount"|"presentationStyle"|"presentationFidelity"|"requestedSlideCount"|"productionScenes"|"productionPage">={}){
+  const itemCount=Math.max(1,Math.min(12,Math.floor(Number(options.itemCount??7))));
+  const page=options.productionPage;
+  const {groups}=providerFacingCombinedContextPlan(snapshot,"slides");
+  const groupContracts:DocumentArtifactContextGroupContract[]=groups.map((group,index)=>({id:group.id,alias:`context_group_${index+1}`}));
+  const requestedStyle=SLIDE_STYLE_PRESET_IDS.includes(options.presentationStyle as SlideStylePresetId)?options.presentationStyle:undefined;
+  const sourceContract=buildPresentationSourceContract(snapshot,{
+    requestedSlideCount:page?.totalItems??options.requestedSlideCount??itemCount,
+    itemCount,
+    contextGroups:groups,
+    presentationStyle:requestedStyle,
+    fidelity:options.presentationFidelity,
+  });
+  const groupResolution=resolveDocumentArtifactContextGroups(parseDocumentArtifactContent(raw),groupContracts);
+  const sourceResolution=resolveProviderPresentationSources(groupResolution.output,sourceContract,options.productionScenes??[],page?.globalStartIndex??0);
+  const output=sourceResolution.output;
+  const complete=Boolean(!page&&(!sourceContract.authoredSlideCount||sourceContract.authoredSlideCount===itemCount));
+  const issues=documentArtifactValidationIssues("slides",output,{
+    itemCount,
+    contextGroupIds:groups.map((group)=>group.id),
+    unknownContextGroupAssignments:groupResolution.receipt.unknownAssignments,
+    sourceContract,
+    sourcePageStart:page?.globalStartIndex??0,
+    sourcePageSize:itemCount,
+    requireSourceGrounding:sourceContract.sources.some((source)=>source.sourceKind==="block"),
+    requireAllProtectedContent:complete,
+  });
+  issues.push(...presentationSourceSupplementalIssues(output,sourceContract,sourceResolution.receipt,{complete,requestedStyle,pageStart:page?.globalStartIndex??0}));
+  return{output,issues,groupResolution:groupResolution.receipt,sourceResolution:sourceResolution.receipt};
+}
+
 export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
@@ -755,8 +789,15 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`,`Document ${kind} instructions:\n${requestInstructions}\n\nCreative context:\n${requestInput}`);
       paidResponses.push(body);
       const accounting=paidAccounting();
-      await input.options?.onProviderAttempt?.({model:accounting.providerModel,responseId:String(body.id??""),responseIds:accounting.providerResponseIds,usage:accounting.providerUsage,latencyMs:Date.now()-started});
-      return{body,raw:responseText(body)};
+      const receipt={model:accounting.providerModel,responseId:String(body.id??""),responseIds:accounting.providerResponseIds,usage:accounting.providerUsage,latencyMs:Date.now()-started};
+      const raw=responseText(body)??"";
+      if(input.options?.onProviderResponse){
+        const candidateBytes=new TextEncoder().encode(raw).byteLength;
+        const candidateTruncated=candidateBytes>MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES;
+        await input.options.onProviderResponse({...receipt,candidateRaw:candidateTruncated?null:raw,candidateBytes,candidateTruncated});
+      }
+      await input.options?.onProviderAttempt?.(receipt);
+      return{body,raw};
     }catch(error){
       if(!paidResponses.length)throw error;
       throw new ProviderRequestError(classifyProviderFailure(error),error instanceof ProviderRequestError?error.preparedPrompt:`Document ${kind} instructions:\n${requestInstructions}\n\nCreative context:\n${requestInput}`,paidAccounting());
@@ -805,6 +846,8 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     const invalidReferences=uniquePresentationReferences([...(initialSourceResolution?.unknownAssignments??[]),...initialResolution.unknownAssignments]);
     const repairInput=JSON.stringify({
       document_title:input.documentTitle,
+      audience:input.options?.audience??"general",
+      tone:input.options?.tone??"derived from the document",
       original_artifact:redactPresentationRepairArtifact(raw,sourceContract,groupContracts,invalidReferences),
       validation_issues:providerIssues,
       required_context_groups:providerGroups,

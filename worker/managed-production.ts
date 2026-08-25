@@ -21,6 +21,7 @@ import {
   type ImageReference,
   type ProviderAttemptPreflight,
   type ProviderAttemptReceipt,
+  type ProviderResponseReceipt,
   type VideoReference,
 } from "./openai-adapter.ts";
 import type { ProviderCostBreakdown } from "./replay-cost.ts";
@@ -76,6 +77,7 @@ type ManagedProductionCallbacks = {
   progress?: (stage: string, message: string, checkpoint?: ProductionCheckpoint) => void | Promise<void>;
   checkpoint?: (state: ProductionCheckpoint) => void;
   plannerAttempt?: (state: { model: string; responseId: string; responseIds: string[]; usage: ProviderUsage; latencyMs: number }) => void | Promise<void>;
+  plannerResponse?: (state:ProviderResponseReceipt&{pageIndex:number;pageCount:number;globalStartIndex:number})=>void|Promise<void>;
   plannerPreflight?: (attempt: ProviderAttemptPreflight) => void | Promise<void>;
 };
 
@@ -320,6 +322,7 @@ export async function generateManagedArtifactDraft(
         productionScenes: scenes,
         productionPage: pageOptions(index),
         signal: input.signal,
+        ...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),
         onProviderAttempt:recordPaidAttempt,
         onBeforeProviderAttempt:input.plannerPreflight,
       },
@@ -443,7 +446,7 @@ export async function generateManagedArtifactDraft(
       const repaired = await generateDocumentArtifact(env, ownerId, kind, {
         documentTitle: input.documentTitle,
         snapshot: combinedSceneSnapshot(input.snapshot, scenes),
-        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, outputLocale:presentationAudienceLocale,presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal, onProviderAttempt:recordPaidAttempt,onBeforeProviderAttempt:input.plannerPreflight },
+        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, outputLocale:presentationAudienceLocale,presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal,...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),onProviderAttempt:recordPaidAttempt,onBeforeProviderAttempt:input.plannerPreflight },
       });
       pages[pageIndex] = repaired;
       attempts.push(repaired);

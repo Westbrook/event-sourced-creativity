@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   DURABLE_WORK_RETENTION_END,
   loadPrivateContent,
+  loadPrivateProviderResponse,
   privateContentRetentionClass,
   storePrivateContent,
 } from "../worker/pilot-policy.ts";
@@ -181,6 +182,18 @@ test("finished deliverables and exact input receipts survive prompt-retention cl
   assert.equal(visible[artifact.contentId], "PAID FINISHED WORK");
   assert.equal(visible[input.contentId], "EXACT APPROVED INPUT");
   assert.equal(visible["expired-historical-output"], undefined, "expired historical work is never silently resurrected");
+});
+
+test("retained provider responses remain server-only, owner-bound, and subject to private retention",async()=>{
+  const {sqlite,env}=contentDatabase();
+  const secret="SERVER_ONLY_PAID_PRESENTATION_RESPONSE_9137";
+  const stored=await storePrivateContent(env,"owner","provider-response",secret);
+  assert.equal(privateContentRetentionClass("provider-response"),"transient-private");
+  assert.equal((await loadPrivateContent(env,"owner"))[stored.contentId],undefined,"ordinary browser content hydration never receives provider responses");
+  assert.equal((await loadPrivateProviderResponse(env,"owner",stored.contentId))?.content,secret);
+  assert.equal(await loadPrivateProviderResponse(env,"another-owner",stored.contentId),null,"another actor cannot replay a paid response");
+  sqlite.prepare("UPDATE private_content SET expires_at=? WHERE content_id=?").run(new Date(Date.now()-1000).toISOString(),stored.contentId);
+  assert.equal(await loadPrivateProviderResponse(env,"owner",stored.contentId),null,"expired provider output cannot be replayed");
 });
 
 test("immutable events preserve operational identifiers while authored nested context stays owner-scoped and erasable", async () => {

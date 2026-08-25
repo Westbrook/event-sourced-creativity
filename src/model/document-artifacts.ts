@@ -242,6 +242,15 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
   const quantitativeIntent=Boolean(exactValue||displayValue||/(?:\/\s*100|%)/u.test(unit));
   const qualitativeScorecard=(kind==="scorecard"||kind==="bars")&&!quantitativeIntent&&data.length>=2&&data.every((datum)=>{const value=datum.exactValue??datum.displayValue??datum.value;return/\p{L}/u.test(value)&&preciseNumber(value)===null;});
   if(qualitativeScorecard){kind="comparison";if(layout==="scorecard"||layout==="metric")layout="comparison";}
+  // Category-only diagrams have no authored measurements; repeated labels are schema filler, not evidence.
+  const categoryKinds:readonly SlideVisualKind[]=["bars","scorecard","comparison","matrix","personas","architecture"];
+  const duplicateCategoryRows=data.filter((datum)=>Boolean(datum.value)&&contentKey(datum.value)===contentKey(datum.label));
+  const meaningfulCategoryRows=data.filter((datum)=>Boolean(datum.value)&&contentKey(datum.value)!==contentKey(datum.label));
+  const quantitativeCategoryEvidence=quantitativeIntent||Boolean(unit)||preciseNumber(visualValue)!==null||data.some((datum)=>Boolean(datum.exactValue||datum.displayValue)||preciseNumber(datum.value)!==null);
+  if(categoryKinds.includes(kind)&&layout!=="roadmap"&&layout!=="timeline"&&data.length>=2&&new Set(data.map((datum)=>contentKey(datum.label))).size===data.length&&!quantitativeCategoryEvidence&&duplicateCategoryRows.length>meaningfulCategoryRows.length){
+    kind="architecture";layout="architecture";
+    for(const datum of duplicateCategoryRows)datum.value="";
+  }
   if(kind==="bars"){const complete=data.filter((datum)=>Boolean(contentKey(datum.value)));data.splice(0,data.length,...complete);}
   if((kind==="bars"||kind==="timeline"||kind==="diagram"||kind==="color-field")&&data.length<2){const singular=valueIsVisible?visualValue:distinctText(visualValue,used)||data[0]?.label||"";kind="hero-type";visualValue=singular;data.splice(0,data.length);}
   if((kind==="hero-type"||kind==="metric")&&!visualValue){visualValue=data[0]?.label??"";data.splice(0,data.length);}

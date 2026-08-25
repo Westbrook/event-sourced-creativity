@@ -197,8 +197,13 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
   const generationIds=new Set(projectOutputs.map((output)=>output.generationId).filter(Boolean));
   const referenceIds=new Set(projection.libraryBlocks.map((block)=>String(block.properties.reference_id??"")).filter(Boolean));
   const referenceMedia=projection.libraryBlocks.map((block)=>({key:mediaKey(block.properties.media_url),sourceEventId:block.sourceEvents.at(-1)??null})).filter((item)=>item.key);
-  const previousResources=await env.DB.prepare("SELECT resource_kind,resource_id,source_event_id,actor_user_id FROM project_resource_scopes WHERE project_access_id=? AND organization_id=?")
-    .bind(input.projectAccessId,input.organizationId).all<{resource_kind:string;resource_id:string;source_event_id:string|null;actor_user_id:string}>();
+  const previousResources=await env.DB.prepare(`SELECT resource.resource_kind,resource.resource_id,resource.source_event_id,resource.actor_user_id,
+    CASE WHEN retained.content_id IS NULL THEN 0 ELSE 1 END AS private_provider_response
+    FROM project_resource_scopes resource LEFT JOIN private_content retained ON resource.resource_kind='content'
+      AND retained.content_id=resource.resource_id AND retained.owner_id=resource.actor_user_id AND retained.kind='provider-response'
+      AND retained.redacted_at IS NULL AND retained.expires_at>?
+    WHERE resource.project_access_id=? AND resource.organization_id=?`)
+    .bind(new Date().toISOString(),input.projectAccessId,input.organizationId).all<{resource_kind:string;resource_id:string;source_event_id:string|null;actor_user_id:string;private_provider_response:number}>();
   const actorJobs=previousResources.results.filter((resource)=>resource.resource_kind==="job");
   const actorByJobCorrelation=new Map<string,string>();
   if(actorJobs.length){
@@ -272,7 +277,7 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     ["project",new Set([input.projectId])],["document",documentIds],["block",blockIds],["relation",relationIds],
     ["collection",collectionIds],["output",outputIds],["artifact",artifactIds],["reference",referenceIds],["canvas",canvasIds],
     ["canvas_item",canvasItemIds],["canvas_arrangement",arrangementIds],["canvas_context",contextSetIds],["manifest_version",new Set(["canvas-v1"])],
-    ["content",new Set([...projectArtifacts.flatMap((artifact)=>[artifact.contentRef,artifact.inputRef]).filter((value):value is string=>Boolean(value)),...conversationContent.map((item)=>item.id),...previousResources.results.filter((resource)=>resource.resource_kind==="content"&&resource.actor_user_id!==input.ownerUserId).map((resource)=>resource.resource_id)])],
+    ["content",new Set([...projectArtifacts.flatMap((artifact)=>[artifact.contentRef,artifact.inputRef]).filter((value):value is string=>Boolean(value)),...conversationContent.map((item)=>item.id),...previousResources.results.filter((resource)=>resource.resource_kind==="content"&&(resource.actor_user_id!==input.ownerUserId||resource.private_provider_response===1)).map((resource)=>resource.resource_id)])],
     ["media",new Set([...projectOutputs.map((output)=>mediaKey(output.mediaUrl)),...projectArtifacts.flatMap((artifact)=>[mediaKey(artifact.mediaUrl),...artifact.items.map((item)=>mediaKey(item.mediaUrl))]),...referenceMedia.map((item)=>item.key)].filter(Boolean))],
   ]);
   for(const resource of previousResources.results){

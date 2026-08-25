@@ -14,7 +14,7 @@ const sourceResolution=registerHooks({resolve(specifier,context,nextResolve){
   const workspaceSource=typeof context.parentURL==="string"&&context.parentURL.startsWith(workspaceRoot)&&!context.parentURL.includes("/node_modules/");
   return nextResolve(workspaceSource&&specifier.startsWith(".")&&!/\.[a-z0-9]+$/i.test(specifier)?`${specifier}.ts`:specifier,context);
 }});
-const {cancelProjectActorJobs}=await import("../worker/document-jobs-api.ts").finally(()=>sourceResolution.deregister());
+const {cancelProjectActorJobs,handleDocumentJobs}=await import("../worker/document-jobs-api.ts").finally(()=>sourceResolution.deregister());
 
 function reliabilityDatabase(){
   const sqlite=new DatabaseSync(":memory:");
@@ -795,6 +795,9 @@ test("rejects user-supplied slideshow recovery plans, provider receipts, and res
     {artifactId:"untrusted-artifact",renderedItems:[]},
     {presentationProviderSubmission:"pending"},
     {presentationProviderSubmission:"confirmed"},
+    {presentationCandidates:[{contentRef:"untrusted-provider-response"}]},
+    {presentationRecoveryOnly:true},
+    {recoverablePresentationCandidate:true},
   ];
   const previousFetch=globalThis.fetch;
   let providerCalls=0;
@@ -1043,6 +1046,194 @@ test("settles every metered initial and bounded-repair response when source-fide
     assert.equal(recorded.total_tokens,330);
     assert.equal(recorded.cost_microusd,1560);
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN('active','executing')").get().count,0);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+test("recovers a privately retained paid slideshow without a second provider request or additional charge",async()=>{
+  const fixture=await reliabilityWorker();
+  const documentId=await seedIndependentPresentation(fixture);
+  const requestSourceJob=(path="",init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs${path?`/${path}`:""}`,init),fixture.environment,path);
+  const previousFetch=globalThis.fetch;
+  let providerCalls=0;
+  globalThis.fetch=async(url,init={})=>{
+    assert.equal(String(url),"https://api.openai.com/v1/responses");
+    providerCalls+=1;
+    return Response.json({id:`privately-retained-response-${providerCalls}`,model:"gpt-5.6-terra",output_text:JSON.stringify(independentProviderResponse(init.body)),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});
+  };
+  try{
+    const accepted=await requestSourceJob("",json(presentationAdmission(documentId,"private-response-zero-provider-recovery")));
+    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+    const {job}=await accepted.json();
+    fixture.sqlite.exec("CREATE TRIGGER fail_presentation_artifact_persistence BEFORE INSERT ON private_content WHEN NEW.kind='document-artifact' BEGIN SELECT RAISE(FAIL,'forced_local_presentation_persistence_failure'); END");
+    const failedResponse=await requestSourceJob(`${job.jobId}/run`,{method:"POST"});
+    assert.equal(failedResponse.status,200,JSON.stringify(await failedResponse.clone().json()));
+    const failed=(await failedResponse.json()).job;
+    assert.equal(failed.status,"failed");
+    assert.equal(providerCalls,1);
+    assert.equal(failed.result.recoverablePresentationCandidate,true);
+    assert.equal(failed.result.presentationCandidates,undefined,"opaque recovery references never reach job projections");
+    const privateRows=fixture.sqlite.prepare("SELECT content_id,content FROM private_content WHERE owner_id=? AND kind='provider-response'").all("dev-local-creative");
+    assert.equal(privateRows.length,1);
+    assert.ok(JSON.parse(privateRows[0].content).output_text.includes(INDEPENDENT_SLIDE_TITLES[0]));
+    const priorSettledCost=Number(failed.result.generationReceipt.settled_cost_microusd);
+    assert.ok(priorSettledCost>0);
+    const beforeReservations=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count;
+    const beforeCounters=fixture.sqlite.prepare("SELECT scope,scope_id,used_microusd,reserved_microusd FROM cost_budget_counters ORDER BY scope,scope_id").all();
+    fixture.sqlite.exec("DROP TRIGGER fail_presentation_artifact_persistence");
+
+    const originalCheckpoint=fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json;
+    const originalEnvelope=privateRows[0].content;
+    const forgedEnvelope=JSON.parse(originalEnvelope);
+    const forgedOutput=JSON.parse(forgedEnvelope.output_text);
+    forgedOutput.items[0].slide.source_ids=["blk_999"];
+    forgedEnvelope.output_text=JSON.stringify(forgedOutput);
+    const forgedHash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(forgedEnvelope.output_text))),value=>value.toString(16).padStart(2,"0")).join("");
+    forgedEnvelope.content_sha256=forgedHash;
+    const forgedCheckpoint=JSON.parse(originalCheckpoint);
+    forgedCheckpoint.presentationCandidates[0].candidateBytes=new TextEncoder().encode(forgedEnvelope.output_text).byteLength;
+    forgedCheckpoint.presentationCandidates[0].contentSha256=forgedHash;
+    fixture.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(JSON.stringify(forgedEnvelope),privateRows[0].content_id);
+    fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify(forgedCheckpoint),job.jobId);
+    const unauthorized=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+    assert.equal(unauthorized.status,409,"recovery still rejects an invented source alias");
+    assert.equal(providerCalls,1,"invalid saved evidence never falls back to a paid provider call");
+    fixture.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(originalEnvelope,privateRows[0].content_id);
+    fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(originalCheckpoint,job.jobId);
+
+    fixture.sqlite.exec("CREATE TRIGGER fail_recovered_presentation_commit BEFORE UPDATE ON document_jobs WHEN NEW.status='completed' AND OLD.status='committing' AND json_extract(OLD.result_json,'$.presentationRecoveryOnly')=1 BEGIN SELECT RAISE(FAIL,'forced_atomic_presentation_commit_failure'); END");
+    const atomicFailure=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+    assert.equal(atomicFailure.status,409,"an interrupted recovery rolls back both presentation completion and zero-cost usage events");
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE json_extract(payload,'$.operation')='document-render:slides:recovery'").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(job.jobId).status,"failed");
+    assert.equal(providerCalls,1,"a failed local commit never resubmits paid provider work");
+    fixture.sqlite.exec("DROP TRIGGER fail_recovered_presentation_commit");
+
+    const recoveredResponse=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+    assert.equal(recoveredResponse.status,200,JSON.stringify(await recoveredResponse.clone().json()));
+    const recovered=(await recoveredResponse.json()).job;
+    assert.equal(recovered.status,"completed");
+    assert.equal(recovered.result.generationReceipt.settled_cost_microusd,priorSettledCost);
+    assert.equal(recovered.result.generationReceipt.actual_provider_call_count,1);
+    assert.equal(providerCalls,1,"replaying saved provider output never submits another paid request");
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count,beforeReservations);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT scope,scope_id,used_microusd,reserved_microusd FROM cost_budget_counters ORDER BY scope,scope_id").all(),beforeCounters);
+    const rendered=fixture.sqlite.prepare("SELECT payload FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId);
+    assert.ok(rendered);
+    assert.equal(JSON.parse(rendered.payload).item_count,12);
+    assert.equal(recovered.result.generationReceipt.recovered_without_provider_request,true);
+
+    const repeated=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+    assert.equal(repeated.status,200,JSON.stringify(await repeated.clone().json()));
+    assert.equal(providerCalls,1,"a repeated recovery is idempotent");
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,1);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+test("settles a paid slideshow request truthfully when private provider-response capture fails",async()=>{
+  const fixture=await reliabilityWorker();
+  const documentId=await seedIndependentPresentation(fixture,"provider-response-capture-failure-document");
+  const requestSourceJob=(path="",init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs${path?`/${path}`:""}`,init),fixture.environment,path);
+  const previousFetch=globalThis.fetch;
+  let providerCalls=0;
+  globalThis.fetch=async(url,init={})=>{
+    assert.equal(String(url),"https://api.openai.com/v1/responses");
+    providerCalls+=1;
+    return Response.json({id:"paid-response-private-capture-failed",model:"gpt-5.6-terra",output_text:JSON.stringify(independentProviderResponse(init.body)),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});
+  };
+  try{
+    const accepted=await requestSourceJob("",json(presentationAdmission(documentId,"private-provider-response-capture-failure")));
+    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+    const{job}=await accepted.json();
+    fixture.sqlite.exec("CREATE TRIGGER fail_private_provider_response_capture BEFORE INSERT ON private_content WHEN NEW.kind='provider-response' BEGIN SELECT RAISE(FAIL,'forced_private_provider_response_capture_failure'); END");
+    const response=await requestSourceJob(`${job.jobId}/run`,{method:"POST"});
+    assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+    const failed=(await response.json()).job;
+    assert.equal(failed.status,"failed");
+    assert.equal(providerCalls,1,"a failed private checkpoint must not duplicate the original provider request");
+    assert.equal(failed.result.generationReceipt.actual_provider_call_count,1);
+    assert.equal(failed.result.generationReceipt.provider_request_status,"submitted");
+    assert.ok(failed.result.generationReceipt.settled_cost_microusd>0,"the already-paid model response remains truthfully charged");
+    assert.equal(failed.result.recoverablePresentationCandidate,undefined,"a missing retained response must never advertise free recovery");
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content WHERE kind='provider-response'").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN('active','executing')").get().count,0);
+    const reservation=fixture.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE correlation_id=?").get(`${job.jobId}:attempt:1`);
+    assert.equal(reservation.status,"settled");
+    assert.equal(reservation.used_microusd,failed.result.generationReceipt.settled_cost_microusd);
+    const usage=fixture.sqlite.prepare("SELECT payload FROM events WHERE type='GenerationUsageRecorded' AND json_extract(payload,'$.planner_response_id')=?").get("paid-response-private-capture-failed");
+    assert.ok(usage,"the failed request retains an auditable paid-provider usage event");
+    assert.equal(JSON.parse(usage.payload).total_tokens,2000);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+test("recovers a project owner's actor-private slideshow only while its selected project session remains active",async()=>{
+  const fixture=await reliabilityWorker();
+  const documentId=await seedIndependentPresentation(fixture,"project-owner-private-response-recovery-document");
+  const workspace=await fixture.request("/api/workspaces",json({name:"Project owner private presentation recovery"}));
+  assert.equal(workspace.status,201,JSON.stringify(await workspace.clone().json()));
+  const organizationId=(await workspace.json()).organizationId;
+  const registered=await fixture.request(`/api/workspaces/${organizationId}/projects`,json({projectId:"project-atmosphere"}));
+  assert.equal(registered.status,201,JSON.stringify(await registered.clone().json()));
+  const projectAccessId=(await registered.json()).projectAccessId;
+  const opened=await fixture.request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST"});
+  assert.equal(opened.status,200,JSON.stringify(await opened.clone().json()));
+  const scoped={cookie:opened.headers.get("set-cookie")?.split(";")[0]??""};
+  const requestSourceJob=(path="",init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs${path?`/${path}`:""}`,{...init,headers:{...Object.fromEntries(new Headers(init.headers)),...scoped}}),fixture.environment,path);
+  const previousFetch=globalThis.fetch;
+  let providerCalls=0;
+  globalThis.fetch=async(url,init={})=>{
+    assert.equal(String(url),"https://api.openai.com/v1/responses");
+    providerCalls+=1;
+    return Response.json({id:"project-owner-privately-retained-response",model:"gpt-5.6-terra",output_text:JSON.stringify(independentProviderResponse(init.body)),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});
+  };
+  try{
+    const accepted=await requestSourceJob("",json(presentationAdmission(documentId,"project-owner-private-provider-response-recovery")));
+    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+    const{job}=await accepted.json();
+    fixture.sqlite.exec("CREATE TRIGGER fail_project_owner_presentation_artifact BEFORE INSERT ON private_content WHEN NEW.kind='document-artifact' BEGIN SELECT RAISE(FAIL,'forced_project_owner_presentation_artifact_failure'); END");
+    const failedResponse=await requestSourceJob(`${job.jobId}/run`,{method:"POST"});
+    assert.equal(failedResponse.status,200,JSON.stringify(await failedResponse.clone().json()));
+    const failed=(await failedResponse.json()).job;
+    assert.equal(failed.status,"failed");
+    assert.equal(failed.result.recoverablePresentationCandidate,true);
+    assert.equal(failed.result.generationReceipt,undefined,"project projections never expose the owner's private request receipt");
+    assert.equal(providerCalls,1);
+    fixture.sqlite.exec("DROP TRIGGER fail_project_owner_presentation_artifact");
+
+    const privateResponse=fixture.sqlite.prepare("SELECT content_id FROM private_content WHERE owner_id=? AND kind='provider-response'").get("dev-local-creative");
+    assert.ok(privateResponse);
+    assert.equal(fixture.sqlite.prepare("SELECT visibility FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=? AND project_access_id=?").get(privateResponse.content_id,projectAccessId).visibility,"actor_private");
+    const visible=await requestSourceJob(job.jobId);
+    assert.equal(visible.status,200,JSON.stringify(await visible.clone().json()));
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=? AND project_access_id=?").get(privateResponse.content_id,projectAccessId).count,1,"project synchronization must preserve an owner's retained actor-private provider response");
+
+    const contextId=fixture.sqlite.prepare("SELECT context_id FROM project_context_sessions WHERE principal_user_id=? AND project_access_id=? AND revoked_at IS NULL").get("dev-local-creative",projectAccessId).context_id;
+    const originalPrepare=fixture.environment.DB.prepare.bind(fixture.environment.DB);
+    let intercepted=false;
+    fixture.environment.DB.prepare=(sql)=>{
+      if(!intercepted&&sql.startsWith("INSERT INTO event_write_stage")&&sql.includes("project_context_sessions selection")){
+        intercepted=true;
+        fixture.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE context_id=?").run(new Date().toISOString(),contextId);
+      }
+      return originalPrepare(sql);
+    };
+    try{
+      const revoked=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+      assert.equal(intercepted,true,"the selected project session is revoked after recovery preparation but before its guarded commit");
+      assert.equal(revoked.status,409);
+      assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,0);
+      assert.equal(fixture.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(job.jobId).status,"failed");
+      assert.equal(providerCalls,1,"revocation never triggers another provider call");
+    }finally{fixture.environment.DB.prepare=originalPrepare;}
+
+    fixture.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=NULL WHERE context_id=?").run(contextId);
+    const recoveredResponse=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+    assert.equal(recoveredResponse.status,200,JSON.stringify(await recoveredResponse.clone().json()));
+    const recovered=(await recoveredResponse.json()).job;
+    assert.equal(recovered.status,"completed");
+    assert.equal(recovered.result.generationReceipt,undefined);
+    assert.equal(providerCalls,1,"the original project-scoped provider response is replayed without further spend");
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,1);
   }finally{globalThis.fetch=previousFetch;}
 });
 

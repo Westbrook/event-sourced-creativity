@@ -66,6 +66,7 @@ export class DocumentArtifacts extends FormaElement {
   }
   async #stop(jobId:string){await this.store.stopDocumentJob(jobId);this.requestUpdate();}
   async #recover(jobId:string){await this.store.recoverDocumentRender(jobId);this.requestUpdate();}
+  async #recoverPresentation(jobId:string){await this.store.recoverDocumentPresentation(jobId);this.requestUpdate();}
   async #prepareRetry(kind:DocumentArtifactKind){await this.openRender(kind,this.#targetDocumentId());}
   async #dismissFailure(jobId:string,event:Event){
     const trigger=event.currentTarget as HTMLElement;
@@ -324,6 +325,7 @@ export class DocumentArtifacts extends FormaElement {
         const detail=documentJobFailure(job);
         const guidance=localizedGenerationFailureGuidance(generationFailureGuidance(detail,job.error??"",job),detail,job.error??"",this.i18n);
         const recoverable=documentJobCanRecoverProviderRender(job)&&guidance.retryAllowed;
+        const presentationRecoverable=kind==="slides"&&job.status==="failed"&&job.result?.recoverablePresentationCandidate===true;
         const session=this.store.session.get();
         const infrastructureBlocked=Boolean(detail&&!recoverable&&!guidance.retryAllowed&&guidance.actionUrl&&(["authentication","quota","access"].includes(detail.category)||["review_budget","add_credits","verify_organization"].includes(detail.action)||detail.code==="video_provider_not_configured"));
         const remediation=infrastructureBlocked&&session&&!session.impersonation?authorizedGenerationFailureRemediation(guidance,session)??{href:"/settings",label:this.i18n.system("Review settings"),external:false}:null;
@@ -333,7 +335,8 @@ export class DocumentArtifacts extends FormaElement {
             <p>${guidance.summary}</p>
           </div>
           <div class="document-artifact-failure-actions">
-            ${remediation?html`<a class="button primary compact" href=${remediation.href} target=${remediation.external?"_blank":"_self"} rel=${remediation.external?"noopener noreferrer":nothing}>${remediation.label}</a><button type="button" class="button secondary compact" @click=${()=>this.#prepareRetry(kind)}>${this.i18n.system("Review & change request")}</button>`:html`<button type="button" class="button primary compact" @click=${()=>recoverable?this.#recover(job.jobId):this.#prepareRetry(kind)}>${recoverable?this.i18n.system("Recover saved render"):this.i18n.system("Review & change request")}</button>`}
+            ${remediation&&!presentationRecoverable?html`<a class="button primary compact" href=${remediation.href} target=${remediation.external?"_blank":"_self"} rel=${remediation.external?"noopener noreferrer":nothing}>${remediation.label}</a><button type="button" class="button secondary compact" @click=${()=>this.#prepareRetry(kind)}>${this.i18n.system("Review & change request")}</button>`:html`<button type="button" class="button primary compact" title=${presentationRecoverable?this.i18n.system("Paid once · replay without another provider call"):nothing} @click=${()=>presentationRecoverable?this.#recoverPresentation(job.jobId):recoverable?this.#recover(job.jobId):this.#prepareRetry(kind)}>${presentationRecoverable||recoverable?this.i18n.system("Recover saved render"):this.i18n.system("Review & change request")}</button>`}
+            ${presentationRecoverable?html`<button type="button" class="button secondary compact" @click=${()=>this.#prepareRetry(kind)}>${this.i18n.system("Review & change request")}</button>`:nothing}
             <button type="button" class="button secondary compact" @click=${()=>this.#inspectFailedInputs(job)}>Inspect inputs</button>
             <button type="button" class="button ghost compact" aria-label=${this.i18n.system("Dismiss this generation issue")} @click=${(event:Event)=>void this.#dismissFailure(job.jobId,event)}>Dismiss</button>
           </div>

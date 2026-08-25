@@ -275,6 +275,7 @@ test("project-scoped job responses never include actor-private generation receip
       stage: "queued",
       predicted_slide_count: 23,
       reserved_microusd: 3_000_000,
+      presentationCandidates:[{contentRef:"PRIVATE_PROVIDER_RESPONSE_REFERENCE_9137",candidateRaw:"PRIVATE_PROVIDER_RESPONSE_BODY_9137"}],
       generationReceipt: {
         input_ref: "PRIVATE_INPUT_REFERENCE_9137",
         source_snapshot_sha256: "PRIVATE_SOURCE_HASH_9137",
@@ -284,6 +285,7 @@ test("project-scoped job responses never include actor-private generation receip
         input_ref: "PRIVATE_NESTED_INPUT_REFERENCE_9137",
         sourceAliasMap: { blk_001: authorizedBlock },
         providerInput: { text: foreignSecret },
+        presentationCandidates:[{contentRef:"PRIVATE_NESTED_RESPONSE_REFERENCE_9137"}],
       },
     },
     members: [{
