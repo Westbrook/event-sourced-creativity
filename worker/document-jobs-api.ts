@@ -1421,6 +1421,102 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     }
     return Response.json({jobId,documentId:row.document_id,candidates:candidates.map((candidate)=>candidate.summary)},{headers:{"cache-control":"private, no-store"}});
   }
+  const issueNotesRoute=path.match(/^([^/]+)\/notes$/u);
+  if(issueNotesRoute){
+    const responseHeaders={"cache-control":"private, no-store"};
+    if(request.method!=="GET"&&request.method!=="POST")return new Response("Method not allowed",{status:405,headers:responseHeaders});
+    const jobId=decodeURIComponent(issueNotesRoute[1]!);
+    const row=await readJob(env,user.userId,jobId);
+    const now=new Date().toISOString();
+    const notFound=()=>Response.json({error:"job_not_found"},{status:404,headers:responseHeaders});
+    if(!row||row.owner_id!==user.userId||row.stream_id!==user.streamId
+      ||!["failed","partial"].includes(row.status)||row.expires_at<=now)return notFound();
+    if(project){if(!await activeProjectExecution(env,user,row.document_id,jobId))return notFound();}
+    else if(await env.DB.prepare("SELECT 1 AS present FROM project_resource_scopes WHERE resource_kind='job' AND resource_id=?")
+      .bind(jobId).first())return notFound();
+
+    if(request.method==="POST"){
+      const consent=requireConsent(principal);if(consent)return consent;
+      const origin=request.headers.get("origin");
+      if(origin&&origin!==new URL(request.url).origin)return Response.json({error:"same_origin_required"},{status:403,headers:responseHeaders});
+      let input:{body?:unknown};
+      try{input=await request.json() as typeof input;}catch{return Response.json({error:"activity_note_required"},{status:400,headers:responseHeaders});}
+      const body=typeof input.body==="string"?input.body.trim():"";
+      if(!body||body.length>2_000)return Response.json({error:"activity_note_invalid"},{status:400,headers:responseHeaders});
+      const privateBody=JSON.stringify({job_id:jobId,document_id:row.document_id,actor_user_id:user.userId,body});
+      let stored:Awaited<ReturnType<typeof storePrivateContent>>;
+      try{stored=await storePrivateContent(env,user.userId,"activity-issue-note",privateBody,user.projectExecution);}
+      catch(error){
+        if(error instanceof Error&&error.message==="project_private_content_access_revoked")return notFound();
+        throw error;
+      }
+      try{
+        if(project&&!await activeProjectExecution(env,user,row.document_id,jobId))throw new Error("project_access_revoked");
+        const event=await appendAuditEvent(env,user.streamId,`user:${user.userId}`,"ActivityIssueNoted",{
+          job_id:jobId,document_id:row.document_id,actor_user_id:user.userId,note_ref:stored.contentId,
+          content_expires_at:stored.expiresAt,...(project?{organization_id:project.organizationId,
+            project_access_id:project.projectAccessId,project_id:project.projectId}:{}),
+        },jobId);
+        return Response.json({jobId,documentId:row.document_id,note:{id:event.eventId,body,
+          createdAt:event.occurredAt,expiresAt:stored.expiresAt}},{status:201,headers:responseHeaders});
+      }catch(error){
+        await env.DB.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=? AND owner_id=? AND kind='activity-issue-note' AND redacted_at IS NULL")
+          .bind(new Date().toISOString(),stored.contentId,user.userId).run();
+        if(error instanceof Error&&error.message==="project_access_revoked")return notFound();
+        throw error;
+      }
+    }
+
+    const projectJoin=project?`JOIN project_resource_scopes scope ON scope.resource_kind='content'
+        AND scope.resource_id=content.content_id AND scope.project_access_id=? AND scope.organization_id=?
+        AND scope.project_id=? AND scope.owner_user_id=? AND scope.actor_user_id=? AND scope.visibility='actor_private'
+      JOIN private_content_retention_scopes retention ON retention.content_id=content.content_id
+        AND retention.organization_id=scope.organization_id AND retention.project_access_id=scope.project_access_id
+        AND retention.project_id=scope.project_id AND retention.actor_user_id=scope.actor_user_id
+        AND retention.classification='governed-evidence'
+      JOIN project_resource_scopes job_scope ON job_scope.resource_kind='job' AND job_scope.resource_id=?
+        AND job_scope.project_access_id=scope.project_access_id AND job_scope.organization_id=scope.organization_id
+        AND job_scope.project_id=scope.project_id AND job_scope.owner_user_id=scope.owner_user_id
+        AND job_scope.actor_user_id=scope.actor_user_id
+      JOIN events anchor ON anchor.event_id=job_scope.source_event_id AND anchor.stream_id=?
+        AND anchor.actor='user:'||job_scope.actor_user_id AND anchor.type='ProjectDocumentJobQueued'
+        AND json_extract(anchor.payload,'$.job_id')=job_scope.resource_id
+        AND json_extract(anchor.payload,'$.organization_id')=job_scope.organization_id
+        AND json_extract(anchor.payload,'$.project_access_id')=job_scope.project_access_id
+        AND json_extract(anchor.payload,'$.actor_user_id')=job_scope.actor_user_id
+      JOIN project_context_sessions selection ON selection.context_id=? AND selection.principal_user_id=?
+        AND selection.organization_id=scope.organization_id AND selection.project_access_id=scope.project_access_id
+        AND selection.revoked_at IS NULL AND selection.expires_at>?`:"";
+    const projectCondition=project?` AND json_extract(event.payload,'$.organization_id')=?
+        AND json_extract(event.payload,'$.project_access_id')=? AND json_extract(event.payload,'$.project_id')=?`:
+      " AND NOT EXISTS(SELECT 1 FROM project_resource_scopes scoped WHERE scoped.resource_kind='content' AND scoped.resource_id=content.content_id)";
+    const bindings:Array<string>=[user.userId,now,
+      ...(project?[project.projectAccessId,project.organizationId,project.projectId,project.ownerUserId,user.userId,
+        jobId,user.streamId,project.contextId,user.userId,now]:[]),
+      user.streamId,jobId,`user:${user.userId}`,jobId,row.document_id,user.userId,
+      ...(project?[project.organizationId,project.projectAccessId,project.projectId,
+        ...projectExecutionBindings(user.projectExecution!,row.document_id)]:[])];
+    const rows=await env.DB.prepare(`SELECT event.event_id,event.occurred_at,content.content,content.expires_at
+      FROM events event INDEXED BY idx_events_correlation
+      JOIN private_content content ON content.content_id=json_extract(event.payload,'$.note_ref')
+        AND content.owner_id=? AND content.kind='activity-issue-note' AND content.redacted_at IS NULL AND content.expires_at>?
+      ${projectJoin}
+      WHERE event.stream_id=? AND event.correlation_id=? AND event.type='ActivityIssueNoted' AND event.actor=?
+        AND json_extract(event.payload,'$.job_id')=? AND json_extract(event.payload,'$.document_id')=?
+        AND json_extract(event.payload,'$.actor_user_id')=?${projectCondition}
+        ${project?`AND ${activeProjectExecutionSql}`:""}
+      ORDER BY event.sequence DESC LIMIT 50`).bind(...bindings)
+      .all<{event_id:string;occurred_at:string;content:string;expires_at:string}>();
+    const notes=rows.results.flatMap((entry)=>{
+      try{
+        const value=JSON.parse(entry.content) as Record<string,unknown>;
+        return value.job_id===jobId&&value.document_id===row.document_id&&value.actor_user_id===user.userId
+          &&typeof value.body==="string"&&value.body.trim()&&value.body.length<=2_000
+          ?[{id:entry.event_id,body:value.body,createdAt:entry.occurred_at,expiresAt:entry.expires_at}]:[];
+      }catch{return[];}
+    });
+    return Response.json({jobId,documentId:row.document_id,notes},{headers:responseHeaders});
+  }
   const executionRequest=request.method==="POST"&&path.endsWith("/run");let verifiedPathJob:DocumentJobRow|null=null;
   if(!project&&path){
     const targetId=decodeURIComponent(path.replace(/\/(?:cancel|force-fail|ack|dismiss|retry|run|recover)$/,""));

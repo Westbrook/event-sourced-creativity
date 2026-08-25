@@ -6,7 +6,7 @@ import test from "node:test";
 import worker from "../dist/server/index.js";
 import { documentArtifactValidationIssues, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
 import { DOCUMENT_JOB_HEARTBEAT_MS, documentGenerationRevision, documentJobMaxAttempts, generationFailureGuidance } from "../src/model/document-jobs.ts";
-import { claimCostBudgetReservation, reconcileFailedBudgetReservations, reserveBudget, reserveCostBudget } from "../worker/pilot-policy.ts";
+import { claimCostBudgetReservation, loadPrivateContent, reconcileFailedBudgetReservations, reserveBudget, reserveCostBudget } from "../worker/pilot-policy.ts";
 import { appendAuditEvent } from "../worker/runtime.ts";
 
 const workspaceRoot=new URL("../",import.meta.url).href;
@@ -1830,6 +1830,111 @@ test("recovers a project owner's actor-private slideshow only while its selected
     assert.equal(providerCalls,1,"the original project-scoped provider response is replayed without further spend");
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,1);
   }finally{globalThis.fetch=previousFetch;}
+});
+
+test("personal activity issue notes persist privately without leaking into events or ordinary content hydration",async()=>{
+  const fixture=await reliabilityWorker();
+  const now=new Date().toISOString(),expires=new Date(Date.now()+3_600_000).toISOString();
+  const jobId="personal-private-activity-issue";
+  fixture.sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(jobId,"dev-local-creative","creative:dev-local-creative","doc-atmosphere","render_document","failed","activity",jobId,1,"{}","{}","source_fidelity_validation_failed",1,now,now,now,null,null,expires,now);
+  const requestNotes=(init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs/${jobId}/notes`,init),fixture.environment,`${jobId}/notes`);
+
+  const empty=await requestNotes();assert.equal(empty.status,200,JSON.stringify(await empty.clone().json()));
+  assert.deepEqual((await empty.json()).notes,[]);
+  const wrongOrigin=await requestNotes(json({body:"cross-origin secret"},{origin:"https://attacker.example"}));
+  assert.equal(wrongOrigin.status,403);
+  const missing=await requestNotes(json({body:"   "}));assert.equal(missing.status,400);
+  const oversized=await requestNotes(json({body:"a".repeat(2_001)}));assert.equal(oversized.status,400);
+
+  const prose="PRIVATE ISSUE NOTE: verify the source-grounded quarterly figure before asking for help.";
+  const saved=await requestNotes(json({body:`  ${prose}  `}));
+  assert.equal(saved.status,201,JSON.stringify(await saved.clone().json()));
+  assert.equal(saved.headers.get("cache-control"),"private, no-store");
+  assert.equal((await saved.json()).note.body,prose);
+  const note=fixture.sqlite.prepare("SELECT owner_id,kind,content,expires_at FROM private_content WHERE kind='activity-issue-note'").get();
+  assert.equal(note.owner_id,"dev-local-creative");
+  assert.equal(JSON.parse(note.content).body,prose);
+  assert.ok(new Date(note.expires_at).getTime()>Date.now()+300*86_400_000,"private issue notes use governed evidence retention");
+  const audit=fixture.sqlite.prepare("SELECT actor,payload,correlation_id FROM events WHERE type='ActivityIssueNoted'").get();
+  assert.equal(audit.actor,"user:dev-local-creative");
+  assert.equal(audit.correlation_id,jobId);
+  assert.doesNotMatch(audit.payload,/PRIVATE ISSUE NOTE|quarterly figure/u);
+  assert.doesNotMatch(JSON.stringify(await loadPrivateContent(fixture.environment,"dev-local-creative")),/PRIVATE ISSUE NOTE/u);
+
+  const listed=await requestNotes();assert.equal(listed.status,200);
+  assert.deepEqual((await listed.json()).notes.map(({body})=>body),[prose]);
+  const stranger={"oai-authenticated-user-id":"private-note-stranger","oai-authenticated-user-email":"private-note-stranger@example.test"};
+  assert.equal((await fixture.request("/api/session",{headers:stranger})).status,200);
+  fixture.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id=?").run("pilot-2026-08-10","private-note-stranger");
+  for(const init of [{headers:stranger},json({body:"unauthorized"},stranger)]){
+    const denied=await requestNotes(init);assert.equal(denied.status,404);assert.doesNotMatch(await denied.text(),/PRIVATE ISSUE NOTE/u);
+  }
+  fixture.sqlite.prepare("UPDATE document_jobs SET expires_at=? WHERE job_id=?").run("2000-01-01T00:00:00.000Z",jobId);
+  assert.equal((await requestNotes()).status,404,"expired issues cannot reopen previously retained private notes");
+});
+
+test("shared activity issue notes survive project synchronization and remain isolated from collaborators and revoked sessions",async()=>{
+  const fixture=await reliabilityWorker();await authoredOutline(fixture,12);addQueueBlocker(fixture);
+  const workspace=await fixture.request("/api/workspaces",json({name:"Activity issue-note isolation"}));
+  assert.equal(workspace.status,201,JSON.stringify(await workspace.clone().json()));const organizationId=(await workspace.json()).organizationId;
+  const registered=await fixture.request(`/api/workspaces/${organizationId}/projects`,json({projectId:"project-atmosphere"}));
+  assert.equal(registered.status,201,JSON.stringify(await registered.clone().json()));const projectAccessId=(await registered.json()).projectAccessId;
+  const opened=await fixture.request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST"});
+  assert.equal(opened.status,200,JSON.stringify(await opened.clone().json()));const scoped={cookie:opened.headers.get("set-cookie")?.split(";")[0]??""};
+  const queued=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"slides",productionMode:"manual",itemCount:12,requestKey:"private-activity-note"}},scoped));
+  assert.equal(queued.status,202,JSON.stringify(await queued.clone().json()));const ownerJob=(await queued.json()).job;
+  fixture.sqlite.prepare("UPDATE document_jobs SET status='failed',completed_at=?,updated_at=? WHERE job_id=?").run(new Date().toISOString(),new Date().toISOString(),ownerJob.jobId);
+  const sourceNotes=(jobId,init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs/${jobId}/notes`,init),fixture.environment,`${jobId}/notes`);
+  const ownerProse="OWNER ONLY: evaluate the confidential quarterly source claim.";
+  const ownerSaved=await sourceNotes(ownerJob.jobId,json({body:ownerProse},scoped));
+  assert.equal(ownerSaved.status,201,JSON.stringify(await ownerSaved.clone().json()));
+  const ownerEvent=fixture.sqlite.prepare("SELECT payload FROM events WHERE type='ActivityIssueNoted' AND correlation_id=?").get(ownerJob.jobId);
+  assert.doesNotMatch(ownerEvent.payload,/OWNER ONLY|quarterly source/u);
+  const ownerReference=JSON.parse(ownerEvent.payload).note_ref;
+  const governed=fixture.sqlite.prepare("SELECT classification,actor_user_id FROM private_content_retention_scopes WHERE content_id=?").get(ownerReference);
+  assert.equal(governed.classification,"governed-evidence");assert.equal(governed.actor_user_id,"dev-local-creative");
+  const scope=fixture.sqlite.prepare("SELECT visibility,actor_user_id,owner_user_id FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(ownerReference);
+  assert.equal(scope.visibility,"actor_private");assert.equal(scope.actor_user_id,"dev-local-creative");
+
+  const sharedHistory=await handleEvents(new Request("http://localhost/api/events?after=0&limit=2000&content=1",{headers:scoped}),fixture.environment);
+  assert.equal(sharedHistory.status,200,JSON.stringify(await sharedHistory.clone().json()));
+  assert.doesNotMatch(await sharedHistory.text(),/OWNER ONLY|quarterly source/u,"shared activity and hydration never reveal private note prose");
+  const survived=await sourceNotes(ownerJob.jobId,{headers:scoped});
+  assert.equal(survived.status,200,JSON.stringify(await survived.clone().json()));
+  assert.equal((await survived.json()).notes[0].body,ownerProse,"actor-private notes survive project-manifest synchronization");
+  const execution={organizationId,projectAccessId,projectId:"project-atmosphere",ownerUserId:"dev-local-creative",actorUserId:"dev-local-creative"};
+  assert.doesNotMatch(JSON.stringify(await loadPrivateContent(fixture.environment,"dev-local-creative","all",execution)),/OWNER ONLY/u);
+
+  const collaboratorHeaders={"oai-authenticated-user-id":"project-note-collaborator","oai-authenticated-user-email":"project-note-collaborator@example.test"};
+  assert.equal((await fixture.request("/api/session",{headers:collaboratorHeaders})).status,200);
+  fixture.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id=?").run("pilot-2026-08-10","project-note-collaborator");
+  const invited=await fixture.request(`/api/workspaces/${organizationId}/members`,json({email:"project-note-collaborator@example.test",role:"member"}));
+  assert.equal(invited.status,201,JSON.stringify(await invited.clone().json()));const invitation=await invited.json();
+  const accepted=await fixture.request(`/api/workspaces/${organizationId}/invitations/${invitation.invitationId}/accept`,json({token:new URL(invitation.invitationUrl).searchParams.get("token")},collaboratorHeaders));
+  assert.equal(accepted.status,200,JSON.stringify(await accepted.clone().json()));
+  const added=await fixture.request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/members`,json({userId:"project-note-collaborator",role:"editor"}));
+  assert.equal(added.status,201,JSON.stringify(await added.clone().json()));
+  const teammateOpened=await fixture.request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST",headers:collaboratorHeaders});
+  assert.equal(teammateOpened.status,200,JSON.stringify(await teammateOpened.clone().json()));
+  const teammate={...collaboratorHeaders,cookie:teammateOpened.headers.get("set-cookie")?.split(";")[0]??""};
+  for(const init of [{headers:teammate},json({body:"unauthorized collaborator note"},teammate)]){
+    const denied=await sourceNotes(ownerJob.jobId,init);assert.equal(denied.status,404);assert.doesNotMatch(await denied.text(),/OWNER ONLY/u);
+  }
+
+  const contextId=fixture.sqlite.prepare("SELECT context_id FROM project_context_sessions WHERE principal_user_id=? AND project_access_id=? AND revoked_at IS NULL").get("dev-local-creative",projectAccessId).context_id;
+  const originalPrepare=fixture.environment.DB.prepare.bind(fixture.environment.DB);let intercepted=false;
+  fixture.environment.DB.prepare=(sql)=>{
+    if(!intercepted&&sql.includes("FROM events event INDEXED BY idx_events_correlation")&&sql.includes("activity-issue-note")){
+      intercepted=true;fixture.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE context_id=?").run(new Date().toISOString(),contextId);
+    }
+    return originalPrepare(sql);
+  };
+  try{
+    const revoked=await sourceNotes(ownerJob.jobId,{headers:scoped});
+    assert.equal(intercepted,true,"the exact project session is revoked after admission but before private-note retrieval");
+    assert.doesNotMatch(await revoked.text(),/OWNER ONLY|quarterly source/u);
+  }finally{fixture.environment.DB.prepare=originalPrepare;}
 });
 
 test("scoped project job surfaces recursively redact actor-private generation receipts and raw source metadata",async()=>{

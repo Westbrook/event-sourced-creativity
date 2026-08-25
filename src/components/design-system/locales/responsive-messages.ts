@@ -1,6 +1,8 @@
+import { ACTIVITY_ISSUE_MESSAGES } from "./activity-issue-messages.ts";
 import { PRESENTATION_CANDIDATE_MESSAGES } from "./presentation-candidate-messages.ts";
 
 const english = {
+  ...ACTIVITY_ISSUE_MESSAGES.en,
   ...PRESENTATION_CANDIDATE_MESSAGES.en,
   "studio.family.label": "Creative work modes",
   "studio.family.write": "Write",
@@ -90,6 +92,7 @@ const english = {
 type ResponsiveMessages = Record<keyof typeof english, string>;
 
 const french: ResponsiveMessages = {
+  ...ACTIVITY_ISSUE_MESSAGES.fr,
   ...PRESENTATION_CANDIDATE_MESSAGES.fr,
   "studio.family.label": "Modes de travail créatif",
   "studio.family.write": "Écrire",
@@ -177,6 +180,7 @@ const french: ResponsiveMessages = {
 };
 
 const arabic: ResponsiveMessages = {
+  ...ACTIVITY_ISSUE_MESSAGES.ar,
   ...PRESENTATION_CANDIDATE_MESSAGES.ar,
   "studio.family.label": "أوضاع العمل الإبداعي",
   "studio.family.write": "كتابة",
@@ -264,6 +268,7 @@ const arabic: ResponsiveMessages = {
 };
 
 const japanese: ResponsiveMessages = {
+  ...ACTIVITY_ISSUE_MESSAGES.ja,
   ...PRESENTATION_CANDIDATE_MESSAGES.ja,
   "studio.family.label": "クリエイティブ作業モード",
   "studio.family.write": "書く",

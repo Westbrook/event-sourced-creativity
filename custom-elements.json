@@ -9921,6 +9921,92 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-activity-issue-panel.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaActivityIssuePanel",
+          "tagName": "forma-activity-issue-panel",
+          "customElement": true,
+          "summary": "Private, directly actionable activity issue interface.",
+          "description": "Inspect approved failure evidence, capture actor-private notes, resolve assigned reviews, and explicitly accept scoped context changes without leaving Activity.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "documentName",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "document-name"
+            },
+            {
+              "kind": "field",
+              "name": "job",
+              "type": {
+                "text": "DocumentJob | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "notification",
+              "type": {
+                "text": "ProjectNotification | null"
+              },
+              "default": "null"
+            },
+            {
+              "kind": "field",
+              "name": "review",
+              "type": {
+                "text": "AssignedReviewTask | null"
+              },
+              "default": "null"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "document-name",
+              "fieldName": "documentName",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-activity-issue-panel",
+          "declaration": {
+            "name": "FormaActivityIssuePanel",
+            "module": "src/components/forma-activity-issue-panel.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaActivityIssuePanel",
+          "declaration": {
+            "name": "FormaActivityIssuePanel",
+            "module": "src/components/forma-activity-issue-panel.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-activity.ts",
       "declarations": [
         {

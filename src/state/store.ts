@@ -57,6 +57,7 @@ export type PilotSession = {
 };
 export type ShareRecord = { shareId: string; token?: string; resourceKind?: string; resourceId?: string; projectId?: string; expiresAt: string; revokedAt?: string | null; createdAt?: string; active: boolean };
 export type CapturedAuthorizationScope = { key:string; shared:boolean };
+export type ActivityIssueNote={id:string;body:string;createdAt:string;expiresAt:string};
 export type ProjectNotification={id:string;kind:string;artifactId:string|null;documentId:string|null;message:string;createdAt:string;readAt:string|null};
 export type OrganizationContextPackage={id:string;name:string;description:string;status:string;versionId:string|null;version:number|null;contentSha256:string|null;publishedAt:string|null;publishedByUserId:string|null;blockCount:number;bindingCount:number;createdAt:string;updatedAt:string};
 export type OrganizationContextBinding={id:string;organizationId:string;projectAccessId:string;documentId:string;packageId:string;versionId:string;pendingVersionId:string|null;updateMode:"pinned"|"follow-approved";status:string};
@@ -299,6 +300,40 @@ export class FormaStore {
     if(!retained||typeof retained!=="object"||Array.isArray(retained)||(retained as Record<string,unknown>).job_id!==jobId||(retained as Record<string,unknown>).document_id!==current.documentId)throw new Error("The private generation receipt does not belong to this authorized job.");
     this.#assertAuthorizationScope(authorization);
     return{job:body.job,content:{[reference]:body.content[reference]}};
+  }
+  /** Issue-note bodies remain actor-private and never enter shared job or content caches. */
+  async loadActivityIssueNotes(jobId:string):Promise<ActivityIssueNote[]>{
+    const authorization=this.#activeAuthorizationScope();
+    const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
+    if(!current)throw new Error("The issue notes do not belong to this authorized job.");
+    const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/notes`);
+    const body=await response.json() as {jobId?:string;documentId?:string;notes?:ActivityIssueNote[];error?:string};
+    this.#assertAuthorizationScope(authorization);
+    if(!response.ok||body.jobId!==jobId||body.documentId!==current.documentId||!Array.isArray(body.notes)){
+      throw new Error(body.error??"The private issue notes could not be loaded.");
+    }
+    if(body.notes.some((note)=>!note.id||typeof note.body!=="string"||!note.createdAt||!note.expiresAt)){
+      throw new Error("The private issue notes could not be verified.");
+    }
+    return body.notes;
+  }
+  async saveActivityIssueNote(jobId:string,value:string):Promise<ActivityIssueNote>{
+    const authorization=this.#activeAuthorizationScope();
+    const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
+    const note=value.trim();
+    if(!current||!note||note.length>2_000)throw new Error("Add a private issue note of no more than 2,000 characters.");
+    const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/notes`,{
+      method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({body:note}),
+    },"save this private issue note");
+    this.#assertAuthorizationScope(authorization);
+    const body=await response.json() as {jobId?:string;documentId?:string;note?:ActivityIssueNote;error?:string};
+    this.#assertAuthorizationScope(authorization);
+    if(!response.ok||body.jobId!==jobId||body.documentId!==current.documentId||!body.note?.id||body.note.body!==note){
+      throw new Error(body.error??"The private issue note could not be saved.");
+    }
+    await this.#refreshEvents();
+    this.#assertAuthorizationScope(authorization);
+    return body.note;
   }
   /** Rejected provider drafts remain ephemeral actor-private values, never shared job/content state. */
   async loadPreservedPresentationCandidateJobs(documentId:string):Promise<PreservedPresentationCandidateJobs>{

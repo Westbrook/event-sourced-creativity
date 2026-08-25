@@ -18,6 +18,7 @@ import {
   localizedGenerationFailureGuidance,
 } from "./design-system/localized-runtime-copy";
 import { FormaElement, icon } from "./forma-element";
+import "./forma-activity-issue-panel";
 import "./project-rail";
 
 const jobLabels: Record<string, string> = {
@@ -36,7 +37,10 @@ export class FormaActivity extends FormaElement {
     const session = this.store.session.get();
     if (!session) return;
     void this.store.syncReviewInbox();
-    if (session.projectContext) void this.store.syncProjectNotifications();
+    if (session.projectContext) {
+      void this.store.syncProjectNotifications();
+      void this.store.syncOrganizationContextPackages();
+    }
     void this.store.syncDocumentJobs();
   }
 
@@ -45,7 +49,7 @@ export class FormaActivity extends FormaElement {
   #review(task: AssignedReviewTask) {
     return html`<article class="forma-activity-card forma-activity-card--attention">
       <div class="forma-activity-card-icon" aria-hidden="true">${icon("check")}</div>
-      <div class="forma-activity-card-copy"><span class="eyebrow">${this.i18n.t("activity.review", "Assigned review")}</span><h3 dir="auto">${task.artifactTitle||this.i18n.system("Finished output")} · ${this.i18n.t("activity.reviewRevision", "Review revision {revision}", { revision: String(task.revision) })}</h3><p dir="auto">${[task.projectName,task.documentTitle].filter(Boolean).join(" · ")||task.organizationName}</p><p>${this.i18n.t("activity.requestedBy", "Requested by {name}", { name: task.requestedByName })}</p>${task.dueAt ? html`<small>${this.i18n.t("activity.due", "Due {date}", { date: new Date(task.dueAt).toLocaleDateString(this.i18n.locale) })}</small>` : nothing}</div>
+      <div class="forma-activity-card-copy"><span class="eyebrow">${this.i18n.t("activity.review", "Assigned review")}</span><h3 dir="auto">${task.artifactTitle||this.i18n.system("Finished output")} · ${this.i18n.t("activity.reviewRevision", "Review revision {revision}", { revision: String(task.revision) })}</h3><p dir="auto">${[task.projectName,task.documentTitle].filter(Boolean).join(" · ")||task.organizationName}</p><p>${this.i18n.t("activity.requestedBy", "Requested by {name}", { name: task.requestedByName })}</p>${task.dueAt ? html`<small>${this.i18n.t("activity.due", "Due {date}", { date: new Date(task.dueAt).toLocaleDateString(this.i18n.locale) })}</small>` : nothing}<forma-activity-issue-panel .review=${task}></forma-activity-issue-panel></div>
       <button type="button" class="button primary" @click=${() => void this.store.openAssignedReview(task)}>${this.i18n.t("activity.openReview", "Open assigned review")} ${icon("arrow")}</button>
     </article>`;
   }
@@ -56,7 +60,7 @@ export class FormaActivity extends FormaElement {
     const document = notification.documentId ? projection.documents.find((entry) => entry.id === notification.documentId) : undefined;
     return html`<article class=${`forma-activity-card ${notification.readAt ? "" : "forma-activity-card--unread"}`}>
       <div class="forma-activity-card-icon" aria-hidden="true">${icon("spark")}</div>
-      <div class="forma-activity-card-copy"><span class="eyebrow">${this.i18n.t("activity.projectUpdate", "Project update")}</span><h3>${notification.kind==="changes_requested"&&notification.message?notification.message:this.i18n.t(`notifications.${notification.kind}.detail`,this.i18n.system(notification.message))}</h3><p>${documentName} · ${new Date(notification.createdAt).toLocaleString(this.i18n.locale)}</p></div>
+      <div class="forma-activity-card-copy"><span class="eyebrow">${this.i18n.t("activity.projectUpdate", "Project update")}</span><h3>${notification.kind==="changes_requested"&&notification.message?notification.message:this.i18n.t(`notifications.${notification.kind}.detail`,this.i18n.system(notification.message))}</h3><p>${documentName} · ${new Date(notification.createdAt).toLocaleString(this.i18n.locale)}</p><forma-activity-issue-panel .notification=${notification}></forma-activity-issue-panel></div>
       <div class="forma-activity-card-actions">${artifact ? html`<button type="button" class="button secondary" @click=${() => this.#open(libraryFocusRoute("artifact", artifact.id, artifact.title))}>${this.i18n.t("activity.openResult", "Open result")}</button>` : document ? html`<button type="button" class="button secondary" @click=${() => void this.store.openDocument(document.id, "/")}>${this.i18n.t("activity.openDocument", "Open document")}</button>` : nothing}${!notification.readAt ? html`<button type="button" class="button ghost" @click=${() => void this.store.acknowledgeProjectNotification(notification.id)}>${this.i18n.t("activity.markRead", "Mark as read")}</button>` : nothing}</div>
     </article>`;
   }
@@ -91,6 +95,7 @@ export class FormaActivity extends FormaElement {
         <p class="forma-activity-card-metadata"><span dir="auto">${documentName}</span><span class="forma-activity-card-status">${this.i18n.t(`activity.status.${job.status}`, job.status)}</span>${updatedAt ? html`<time datetime=${updatedAt.toISOString()}>${this.i18n.date(updatedAt, { dateStyle: "medium", timeStyle: "short" })}</time>` : nothing}</p>
         ${guidance ? html`<p class="forma-activity-card-explanation">${guidance.summary}</p>` : progressMessage ? html`<p class="forma-activity-card-progress">${progressMessage}${progressDetail && progressDetail !== progressMessage ? html`<span>${progressDetail}</span>` : nothing}</p>` : nothing}
         ${recoverable ? html`<small class="forma-activity-card-recovery-note">${this.i18n.system("Paid once · replay without another provider call")}</small>` : nothing}
+        ${failed ? html`<forma-activity-issue-panel .job=${job} .documentName=${documentName}></forma-activity-issue-panel>` : nothing}
       </div>
       <div class="forma-activity-card-actions">
         ${recoverable ? html`<button type="button" class="button primary" @click=${() => void (presentationRecoverable ? this.store.recoverDocumentPresentation(job.jobId) : this.store.recoverDocumentRender(job.jobId))}>${this.i18n.system("Recover saved render")}</button>` : remediation ? html`<a class="button primary" href=${remediation.href} target=${remediation.external ? "_blank" : "_self"} rel=${remediation.external ? "noopener noreferrer" : nothing}>${remediation.label}</a>` : nothing}

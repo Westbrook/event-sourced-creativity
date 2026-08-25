@@ -1296,6 +1296,161 @@ html[data-document-focus] .studio-subpage-body {
   overflow-wrap: anywhere;
 }
 
+forma-activity-issue-panel {
+  display: block;
+  min-inline-size: 0;
+}
+
+.forma-activity-issue-panel {
+  display: grid;
+  gap: .75rem;
+  min-inline-size: 0;
+  margin-block-start: .875rem;
+  padding-block-start: .875rem;
+  border-block-start: 1px solid var(--forma-color-border);
+}
+
+.forma-activity-issue-panel h4,
+.forma-activity-issue-panel p,
+.forma-activity-issue-panel ol,
+.forma-activity-issue-panel ul {
+  margin: 0;
+}
+
+.forma-activity-issue-panel h4 {
+  color: var(--forma-color-text);
+  font-size: .8125rem;
+}
+
+.forma-activity-issue-list,
+.forma-activity-issue-note-list {
+  display: grid;
+  gap: .625rem;
+  padding: 0;
+  list-style: none;
+}
+
+.forma-activity-issue-list > li,
+.forma-activity-issue-note-list > li,
+.forma-activity-issue-output,
+.forma-activity-issue-draft-preview {
+  display: grid;
+  gap: .25rem;
+  padding: .625rem .75rem;
+  background: color-mix(in srgb, var(--forma-color-surface) 82%, var(--forma-color-canvas));
+  border: 1px solid color-mix(in srgb, var(--forma-activity-accent) 16%, var(--forma-color-border));
+  border-radius: .5rem;
+}
+
+.forma-activity-issue-list > li > b,
+.forma-activity-issue-output > b,
+.forma-activity-issue-draft-preview > b {
+  color: var(--forma-color-text);
+  font-size: .8125rem;
+}
+
+.forma-activity-issue-list > li > span,
+.forma-activity-issue-list > li > code,
+.forma-activity-issue-list > li > small,
+.forma-activity-issue-note-list time,
+.forma-activity-issue-private {
+  color: var(--forma-color-text-muted);
+  font-size: .75rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.forma-activity-issue-list > li > code {
+  color: var(--forma-activity-accent-text);
+  font-family: var(--mono);
+}
+
+.forma-activity-issue-guidance,
+.forma-activity-issue-notes {
+  display: grid;
+  gap: .5rem;
+}
+
+.forma-activity-issue-guidance > summary,
+.forma-activity-issue-notes > summary {
+  color: var(--forma-color-text);
+  cursor: pointer;
+  font-size: .8125rem;
+  font-weight: 600;
+}
+
+.forma-activity-issue-guidance > p,
+.forma-activity-issue-notes > p,
+.forma-activity-issue-notes > form,
+.forma-activity-issue-notes > ol {
+  margin-block-start: .5rem;
+}
+
+.forma-activity-issue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+.forma-activity-issue-panel > form,
+.forma-activity-issue-panel form,
+.forma-activity-issue-context,
+.forma-activity-issue-draft,
+.forma-activity-issue-correction,
+.forma-activity-issue-review {
+  display: grid;
+  gap: .625rem;
+}
+
+.forma-activity-issue-panel label,
+.forma-activity-issue-panel fieldset {
+  display: grid;
+  gap: .375rem;
+  color: var(--forma-color-text);
+  font-size: .8125rem;
+}
+
+.forma-activity-issue-panel fieldset {
+  min-inline-size: 0;
+  margin: 0;
+  padding: .625rem;
+  border: 1px solid var(--forma-color-border);
+  border-radius: .5rem;
+}
+
+.forma-activity-issue-panel textarea,
+.forma-activity-issue-panel input:not([type="checkbox"]) {
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding: .625rem;
+  color: var(--forma-color-text);
+  background: var(--forma-color-surface);
+  border: 1px solid var(--forma-color-border);
+  border-radius: .5rem;
+  font: inherit;
+}
+
+.forma-activity-issue-panel textarea {
+  resize: vertical;
+}
+
+.forma-activity-issue-panel .forma-activity-issue-confirm {
+  display: flex;
+  align-items: start;
+  gap: .5rem;
+  line-height: 1.45;
+}
+
+.forma-activity-issue-output > ol,
+.forma-activity-issue-draft-preview > ol,
+.forma-activity-issue-context > ul {
+  display: grid;
+  gap: .3rem;
+  padding-inline-start: 1.15rem;
+  color: var(--forma-color-text-muted);
+  font-size: .75rem;
+}
+
 .forma-deliver-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

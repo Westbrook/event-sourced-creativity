@@ -176,6 +176,7 @@ class ActivityBase {
       refreshEvents: () => { this.calls.push("events"); return Promise.resolve(); },
       syncReviewInbox: () => { this.calls.push("reviews"); },
       syncProjectNotifications: () => { this.calls.push("notifications"); },
+      syncOrganizationContextPackages: () => { this.calls.push("context-packages"); },
       syncDocumentJobs: () => { this.calls.push("jobs"); },
       recoverDocumentPresentation: (jobId) => { this.calls.push("presentation:" + jobId); },
       recoverDocumentRender: (jobId) => { this.calls.push("provider:" + jobId); },
@@ -361,7 +362,7 @@ test("Activity refreshes project notifications only within the current shared-pr
 
   activity.connectedCallback();
 
-  assert.deepEqual(activity.calls, ["connected", "reviews", "notifications", "jobs"]);
+  assert.deepEqual(activity.calls, ["connected", "reviews", "notifications", "context-packages", "jobs"]);
 });
 
 test("Activity cannot request private feeds before an authenticated session exists", () => {
