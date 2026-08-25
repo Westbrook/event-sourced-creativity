@@ -1006,7 +1006,88 @@ html[data-document-focus] .studio-subpage-body {
 }
 
 .application-creative[data-nav-posture="compact"] .composer-dock {
+  inset-inline: 0;
   inset-block-end: max(var(--forma-bottom-nav-size), var(--forma-keyboard-offset));
+}
+
+.application-creative[data-nav-posture="compact"] .workspace-page,
+.application-creative[data-nav-posture="compact"] .library-page,
+.application-creative[data-nav-posture="compact"] .workspace-page:has(> forma-project-rail > .project-rail.collapsed),
+.application-creative[data-nav-posture="compact"] .library-page:has(> forma-project-rail > .project-rail.collapsed) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.application-creative[data-nav-posture="compact"] .workspace-page > forma-project-rail,
+.application-creative[data-nav-posture="compact"] .library-page > forma-project-rail {
+  position: relative;
+  z-index: 36;
+  inline-size: 100%;
+  width: 100%;
+  max-inline-size: 100%;
+  border-inline-end: 0;
+  border-block-end: 1px solid var(--forma-color-border);
+}
+
+.application-creative[data-nav-posture="compact"] .project-rail {
+  position: relative;
+  inset-block-start: 0;
+  inline-size: 100%;
+  width: 100%;
+  block-size: auto;
+  height: auto;
+  max-block-size: none;
+  overflow: visible;
+}
+
+.application-creative[data-nav-posture="compact"] .project-rail.collapsed .rail-toolbar {
+  min-block-size: var(--forma-hit-target);
+  justify-content: space-between;
+  padding-inline: var(--forma-row-inset-inline);
+}
+
+.application-creative[data-nav-posture="compact"] .project-rail.collapsed .rail-toolbar-context {
+  display: flex;
+  min-inline-size: 0;
+}
+
+.application-creative[data-nav-posture="compact"] .project-rail.collapsed .rail-collapse-toggle {
+  inline-size: auto;
+  width: auto;
+  min-inline-size: var(--forma-hit-target);
+  padding-inline: var(--forma-control-inset-inline);
+}
+
+.application-creative[data-nav-posture="compact"] .project-rail.collapsed .rail-collapse-toggle b {
+  position: static;
+  inline-size: auto;
+  width: auto;
+  block-size: auto;
+  height: auto;
+  overflow: visible;
+  clip: auto;
+}
+
+.application-creative[data-nav-posture="compact"] .project-rail.collapsed .rail-dock {
+  display: none;
+}
+
+.application-creative[data-nav-posture="compact"] .project-rail.expanded .rail-content {
+  position: absolute;
+  z-index: 37;
+  inset-block-start: 100%;
+  inset-inline: 0;
+  max-block-size: calc(70dvb - var(--forma-bottom-nav-size));
+  overflow-y: auto;
+  background: var(--forma-color-surface);
+  border-block-end: 1px solid var(--forma-color-border);
+  box-shadow: var(--shadow);
+  overscroll-behavior: contain;
+}
+
+.application-creative[data-nav-posture="compact"] .workspace-page:has(> forma-project-rail > .project-rail.collapsed) > .composer-dock {
+  inset-inline-start: 0;
+  inset-inline-end: 0;
 }
 
 .application-creative[data-nav-posture="rail"][data-short-height="true"] > .application-task-navigation[data-primary-navigation="true"] {
@@ -1650,7 +1731,9 @@ html[data-document-focus] .studio-subpage-body {
 
 @media (max-width: 75rem) and (min-width: 48rem) {
   .workspace-page:has(.project-rail.collapsed),
-  .library-page:has(.project-rail.collapsed) {
+  .library-page:has(.project-rail.collapsed),
+  .workspace-page:has(> forma-project-rail > .project-rail.collapsed),
+  .library-page:has(> forma-project-rail > .project-rail.collapsed) {
     grid-template-columns: var(--forma-nav-rail-width) minmax(0, 1fr);
   }
 
@@ -1659,7 +1742,8 @@ html[data-document-focus] .studio-subpage-body {
     inline-size: var(--forma-nav-rail-width);
   }
 
-  .workspace-page:has(.project-rail.collapsed) > .composer-dock {
+  .workspace-page:has(.project-rail.collapsed) > .composer-dock,
+  .workspace-page:has(> forma-project-rail > .project-rail.collapsed) > .composer-dock {
     inset-inline-start: var(--forma-nav-rail-width);
   }
 }

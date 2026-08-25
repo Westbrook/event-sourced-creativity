@@ -86,12 +86,20 @@ function ruleActive(rule, viewport, container) {
 }
 
 function specificity(selector) {
-  const simplified = selector.replace(/:where\([^)]*\)/g, "");
-  return [
+  let simplified = selector.replace(/:where\([^)]*\)/g, "");
+  const functional = [0, 0, 0];
+  const compare = (left, right) => left.map((value, index) => value - right[index]).find((value) => value !== 0) ?? 0;
+  simplified = simplified.replace(/:(?:is|not|has)\(([^()]*)\)/g, (_, argumentsList) => {
+    const strongest = argumentsList.split(",").map((argument) => specificity(argument.trim())).reduce((left, right) => compare(left, right) >= 0 ? left : right, [0, 0, 0]);
+    for (let index = 0; index < functional.length; index++) functional[index] += strongest[index];
+    return "";
+  });
+  const direct = [
     (simplified.match(/#[\w-]+/g) ?? []).length,
     (simplified.match(/\.[\w-]+|\[[^\]]+\]|:(?!:)[\w-]+(?:\([^)]*\))?/g) ?? []).length,
     (simplified.replace(/#[\w-]+|\.[\w-]+|\[[^\]]+\]/g, "").match(/(^|[\s>+~])[\w-]+/g) ?? []).length,
   ];
+  return direct.map((value, index) => value + functional[index]);
 }
 
 function winning(selectors, property, viewport, container) {
@@ -355,6 +363,70 @@ test("the final responsive cascade keeps Search, Ask, and every collection acces
   assert.match(responsive, /data-nav-posture="compact"/);
   assert.match(responsive, /data-nav-posture="rail"\]\[data-short-height="true"/);
   assert.match(responsive, /\.project-rail\.expanded \.rail-content\s*\{[^}]*position:\s*absolute/s);
+});
+
+test("the collapsed document rail stays coherent across the 760–768px compact-posture seam", () => {
+  const legacyCollapsed = ".workspace-page:has(> forma-project-rail > .project-rail.collapsed)";
+  assert.deepEqual(specificity(legacyCollapsed), [0, 3, 1], "regression checks model :has() specificity correctly");
+  assert.match(shell, /inline < 768 \? "compact"/);
+
+  for (const width of [759, 760, 761, 762, 766, 767, 767.5, 767.9, 768, 769]) {
+    const viewport = { name: `${width}px compact rail seam`, width, height: 900, pointer: "fine" };
+    const compact = width < 768;
+    const postureSelectors = (selector) => compact ? [selector] : [];
+
+    for (const page of ["workspace-page", "library-page"]) {
+      const legacy = `.${page}:has(> forma-project-rail > .project-rail.collapsed)`;
+      const compactPage = `.application-creative[data-nav-posture="compact"] .${page}`;
+      const compactCollapsed = `${compactPage}:has(> forma-project-rail > .project-rail.collapsed)`;
+      const selectors = [`.${page}`, legacy, `.${page}:has(.project-rail.collapsed)`, `.application-creative .${page}`, ...postureSelectors(compactPage), ...postureSelectors(compactCollapsed)];
+      const columns = winning(selectors, "grid-template-columns", viewport);
+      if (compact) {
+        assert.equal(columns?.value, "minmax(0, 1fr)", `${viewport.name}: ${page} never retains an empty 72px sidebar`);
+        assert.equal(columns?.selector, compactCollapsed, `${viewport.name}: measured compact posture defeats the legacy :has() rule`);
+      } else assert.match(columns?.value ?? "", /--forma-nav-rail-width/, `${viewport.name}: wider windows preserve their zoom-aware token-sized side rail`);
+
+      const host = `.application-creative[data-nav-posture="compact"] .${page} > forma-project-rail`;
+      if (compact) assert.equal(winning(["forma-project-rail:has(.project-rail.collapsed)", host], "width", viewport)?.value, "100%", `${viewport.name}: ${page} rail fills its single row`);
+    }
+
+    const toolbar = [".project-rail.collapsed .rail-toolbar", ...postureSelectors('.application-creative[data-nav-posture="compact"] .project-rail.collapsed .rail-toolbar')];
+    assert.equal(winning(toolbar, "justify-content", viewport)?.value, compact ? "space-between" : "center", `${viewport.name}: toolbar matches the active navigation posture`);
+
+    const context = [".project-rail.collapsed .rail-toolbar-context", ...postureSelectors('.application-creative[data-nav-posture="compact"] .project-rail.collapsed .rail-toolbar-context')];
+    assert.equal(winning(context, "display", viewport)?.value, compact ? "flex" : "none", `${viewport.name}: compact rails keep their project context visible`);
+
+    const label = [".project-rail.collapsed .rail-collapse-toggle b", ...postureSelectors('.application-creative[data-nav-posture="compact"] .project-rail.collapsed .rail-collapse-toggle b')];
+    assert.equal(winning(label, "position", viewport)?.value, compact ? "static" : "absolute", `${viewport.name}: compact expand action is visibly labeled`);
+    if (compact) {
+      assert.equal(winning(label, "clip", viewport)?.value, "auto", `${viewport.name}: the expand label is never visually clipped`);
+      const toggle = [".project-rail.collapsed .rail-collapse-toggle", '.application-creative[data-nav-posture="compact"] .project-rail.collapsed .rail-collapse-toggle'];
+      assert.equal(winning(toggle, "width", viewport)?.value, "auto");
+      assert.match(winning(toggle, "min-inline-size", viewport)?.value ?? "", /--forma-hit-target/);
+    }
+
+    const dock = [".rail-dock", ".project-rail.collapsed .rail-dock", ".application-creative .project-rail.collapsed .rail-dock", ...postureSelectors('.application-creative[data-nav-posture="compact"] .project-rail.collapsed .rail-dock')];
+    assert.equal(winning(dock, "display", viewport)?.value, compact ? "none" : "grid", `${viewport.name}: only true side rails show icon shortcuts`);
+
+    const composer = [".workspace-page:has(.project-rail.collapsed) > .composer-dock", ...postureSelectors('.application-creative[data-nav-posture="compact"] .workspace-page:has(> forma-project-rail > .project-rail.collapsed) > .composer-dock')];
+    assert.equal(winning(composer, "inset-inline-start", viewport)?.value, compact ? "0" : "var(--forma-nav-rail-width)", `${viewport.name}: composer starts at the correct logical edge`);
+
+    if (compact) {
+      const overlay = [".application-creative .project-rail.expanded .rail-content", '.application-creative[data-nav-posture="compact"] .project-rail.expanded .rail-content'];
+      assert.equal(winning(overlay, "position", viewport)?.value, "absolute", `${viewport.name}: expanded project navigation remains usable`);
+      assert.equal(winning(overlay, "overflow-y", viewport)?.value, "auto");
+      assert.equal(winning('.application-creative[data-nav-posture="compact"] .composer-dock', "inset-inline", viewport)?.value, "0", `${viewport.name}: expanding the project rail never reintroduces a desktop composer offset`);
+    }
+  }
+
+  const narrowShellInWideBrowser = { name: "compact shell in wide browser", width: 1280, height: 900, pointer: "fine" };
+  const measuredCompactPage = '.application-creative[data-nav-posture="compact"] .workspace-page:has(> forma-project-rail > .project-rail.collapsed)';
+  assert.equal(winning([legacyCollapsed, measuredCompactPage], "grid-template-columns", narrowShellInWideBrowser)?.value, "minmax(0, 1fr)", "a narrow measured application never inherits the wider browser's desktop sidebar");
+  assert.equal(winning('.application-creative[data-nav-posture="compact"] .composer-dock', "inset-inline", narrowShellInWideBrowser)?.value, "0", "expanded and collapsed measured-compact rails keep the composer within their shell");
+
+  assert.match(projectRail, /aria-controls="project-rail-content"/);
+  assert.match(projectRail, /aria-expanded=\$\{!collapsed\}/);
+  assert.match(projectRail, /event\.key==="Escape"&&!collapsed/);
 });
 
 test("custom controls and zoomed Canvas handles retain real 44-pixel hit areas", () => {
