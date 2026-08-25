@@ -53,6 +53,22 @@ test("extracts the actual executive presentation's twelve inline headings, three
   assert.doesNotMatch(outline.slides[0].title, /One creative world/);
 });
 
+test("preserves twelve independently authored slide blocks and excludes non-authoritative supporting constraints",()=>{
+  const snapshot={facts:[
+    ...Array.from({length:12},(_,index)=>({block_id:`authored-slide-${index+1}`,type:"direction",locked:true,properties:{text:`Slide ${index+1} — Independent executive decision ${index+1}\nAuthorized evidence and exact assessment ${index+10}.25%.`,weight:1,authority:"authored"}})),
+    ...[["objective","direction","Protect every source decision."],["audience","audience","Executive decision-makers."],["deliverable","format","Faithful Field Notes presentation."],["exclusion","exclusion","Do not invent unsupported evidence."]].map(([label,type,text])=>({block_id:`support-${label}`,type,properties:{label,text,weight:1,authority:"authored"}})),
+  ],relationships:[]};
+  const contract=buildPresentationSourceContract(snapshot,{requestedSlideCount:12,stylePreset:"field-notes",fidelity:"faithful"});
+
+  assert.equal(contract.authoredSlideCount,12);
+  assert.equal(contract.predictedSlideCount,12);
+  assert.equal(contract.slideCountMismatch,false);
+  assert.equal(contract.style.preset,"field-notes");
+  assert.deepEqual(contract.numberedOutline.map((slide)=>slide.sourceBlockId),Array.from({length:12},(_,index)=>`authored-slide-${index+1}`));
+  assert.equal(contract.sources.filter((source)=>source.sourceKind==="block").length,15);
+  assert.equal(contract.sources.some((source)=>source.sourceId==="support-exclusion"),false);
+});
+
 test("preserves all twenty-three authored positions, named chapters, source groups, and an explicit requested count", () => {
   const contract = buildPresentationSourceContract(managed.snapshot, { requestedSlideCount: 23, stylePreset: "field-notes" });
 

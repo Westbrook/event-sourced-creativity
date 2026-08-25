@@ -112,7 +112,10 @@ test("recovers an expired running job before advancing queued document renders",
   const jobsApi=await readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8");
   assert.match(jobsApi,/if \(!rowIsStale\(running\)\) return;/);
   assert.match(jobsApi,/const recovered = await runDocumentJob\(env, owner, running\.job_id\);/);
-  assert.match(jobsApi,/if \(recoveryBlocker\) context\?\.waitUntil\(driveDocumentQueue\(env, user\)\);/);
+  assert.match(jobsApi,/if \(recoveryBlocker&&!requiresForegroundDocumentExecution\(recoveryBlocker\)\) context\?\.waitUntil\(driveDocumentQueue\(env, user\)\);/);
+  assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(running\)\)\{await failStaleJob\(env,owner,running,unsafePresentationRecovery\(running\)\?\?undefined\);continue;\}/);
+  assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(next\)\)return;/);
+  assert.match(jobsApi,/if \(context&&!requiresForegroundDocumentExecution\(existing\)\)/);
   assert.match(jobsApi,/stage: "queue-recovery"/);
   assert.match(jobsApi,/An earlier operation lost contact\. The server is recovering it before this render starts\./);
   assert.doesNotMatch(jobsApi,/if \(running\) return;/);

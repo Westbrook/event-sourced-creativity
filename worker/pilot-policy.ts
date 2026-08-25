@@ -431,7 +431,7 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
 
   const active=await env.DB.prepare(`SELECT * FROM budget_reservations reservation
     WHERE reservation.owner_id=? AND reservation.stream_id=? AND reservation.status='active' AND reservation.created_at<=?
-      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND job.status IN ('queued','running','committing')
+      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND (job.status IN ('queued','running','committing') OR job.status IN ('failed','canceled') AND json_extract(COALESCE(job.result_json,'{}'),'$.presentationProviderSubmission')='pending')
         AND (job.correlation_id=reservation.correlation_id OR json_extract(COALESCE(job.result_json,'{}'),'$.reservationId')=reservation.reservation_id))
     ORDER BY reservation.created_at ASC LIMIT 100`).bind(billingUserId,user.streamId,cutoff,user.streamId,user.userId).all<BudgetReservationRow>();
 
@@ -453,7 +453,7 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
   const activeCosts=await env.DB.prepare(`SELECT * FROM cost_budget_reservations reservation
     WHERE reservation.owner_id=? AND reservation.stream_id=? AND reservation.operation LIKE 'document-render:%'
       AND reservation.status IN ('active','executing') AND reservation.created_at<=?
-      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND job.status IN ('queued','running','committing')
+      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND (job.status IN ('queued','running','committing') OR job.status IN ('failed','canceled') AND json_extract(COALESCE(job.result_json,'{}'),'$.presentationProviderSubmission')='pending')
         AND (job.correlation_id=reservation.correlation_id OR json_extract(COALESCE(job.result_json,'{}'),'$.costReservationId')=reservation.reservation_id))
     ORDER BY reservation.created_at ASC LIMIT 100`).bind(billingUserId,user.streamId,cutoff,user.streamId,user.userId).all<CostBudgetReservationRow>();
   for(const row of activeCosts.results){

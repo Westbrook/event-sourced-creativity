@@ -289,7 +289,7 @@ export class DocumentArtifacts extends FormaElement {
       ${failedJobs.length?html`<div class="document-artifact-failures" role="region" aria-label="Recent document render issues">${failedJobs.map((job)=>{
         const kind=DOCUMENT_ARTIFACT_KINDS.includes(job.result?.artifactKind as DocumentArtifactKind)?job.result!.artifactKind as DocumentArtifactKind:"short_story";
         const detail=documentJobFailure(job);
-        const guidance=localizedGenerationFailureGuidance(generationFailureGuidance(detail,job.error??""),detail,job.error??"",this.i18n);
+        const guidance=localizedGenerationFailureGuidance(generationFailureGuidance(detail,job.error??"",job),detail,job.error??"",this.i18n);
         const recoverable=documentJobCanRecoverProviderRender(job)&&guidance.retryAllowed;
         const session=this.store.session.get();
         const infrastructureBlocked=Boolean(detail&&!recoverable&&!guidance.retryAllowed&&guidance.actionUrl&&(["authentication","quota","access"].includes(detail.category)||["review_budget","add_credits","verify_organization"].includes(detail.action)||detail.code==="video_provider_not_configured"));

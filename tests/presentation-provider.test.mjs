@@ -179,6 +179,26 @@ function executivePresentation({ grouped = true, style = "field-notes" } = {}) {
   };
 }
 
+function independentSlideSnapshot(){
+  const titles=["RESPONSIVE ASSESSMENT","STAKEHOLDER DIFFERENTIATOR","SOURCE GOVERNANCE","DOCUMENT AUTHORSHIP","CONTEXT IMMUTABILITY","PROJECT AUTHORIZATION","REVIEWER ACCOUNTABILITY","RECEIPT TRANSPARENCY","RECOVERY GUARANTEES","ACCESSIBLE DELIVERY","EDITABLE HANDOFF","EXECUTIVE DECISION"];
+  const facts=titles.map((title,index)=>({block_id:`PRIVATE_AUTHORED_SLIDE_${index+1}`,type:"direction",locked:true,properties:{label:`Independently authored source ${index+1}`,text:`Slide ${index+1} — ${title}\n${index===0?`${SCORES.map(([label,value])=>`${label}: ${value}`).join("; ")}. Exact equal-weight average: 61.125. Rounded display value: 61.13.`:index===1?`“${STAKEHOLDER_QUOTE}” — Product Owner`:`Independent evidence for ${title.toLowerCase()} preserves conversion ${index+10}.25%.`}`}}));
+  for(const [label,type,text] of [["objective","direction","Preserve source evidence."],["audience","audience","Executive stakeholders."],["deliverable","format","Faithful Field Notes presentation."],["exclusion","exclusion","Unsupported fabricated claims."]])facts.push({block_id:`PRIVATE_${label.toUpperCase()}`,type,properties:{label,text}});
+  return{facts,relationships:[]};
+}
+
+function independentSlideOutput(snapshot){
+  const quote=JSON.parse(JSON.stringify(attributedQuoteSlide({grouped:false})).replaceAll("blk_001","blk_002"));
+  const items=snapshot.facts.slice(0,12).map((fact,index)=>{
+    if(index===0)return scorecardSlide({grouped:false});
+    if(index===1)return quote;
+    const alias=`blk_${String(index+1).padStart(3,"0")}`;
+    const [heading,body]=fact.properties.text.split("\n");
+    const title=heading.replace(/^Slide\s+\d+\s*[—–:-]\s*/,"");
+    return{title,body,notes:`${body}\n[Sources] Independently authored source ${index+1}`,image_prompt:`Editable source-grounded visual ${index+1}`,context_group_ids:[],slide:{layout:index===11?"closing":"statement",kicker:`Authored decision ${index+1}`,bullets:[],quote:null,citations:[{source_id:alias,label:`Independently authored source ${index+1}`,anchor:`Authored slide ${index+1}`,excerpt:title}],source_ids:[alias],section:null,source_order:index+1,visual:{kind:"hero-type",label:"Authorized authored evidence",value:`Grounded decision ${index+1}`,exact_value:null,display_value:null,unit:null,data:[]}}};
+  });
+  return{title:"Faithful executive source evidence",summary:"Twelve independently authored and individually attributed slides.",content_markdown:items.map((item,index)=>`## ${index+1}. ${item.title}\n${index===0?`${SCORES.map(([label,value])=>`${label}: ${value}`).join("; ")}. Exact equal-weight average: 61.125. Rounded display value: 61.13.`:index===1?`“${STAKEHOLDER_QUOTE}” — Product Owner`:item.body}`).join("\n\n"),presentation:presentation("field-notes"),items};
+}
+
 async function withProviderResponses(outputs, callback) {
   const requests = [];
   const originalFetch = globalThis.fetch;
@@ -287,6 +307,26 @@ test("the strict slideshow schema preserves complete attributed quotes, editable
     assert.equal(result.inputReceipt.validation.maximum_provider_calls, 2);
     assert.equal(result.inputReceipt.validation.provider_call_count, 1);
     assert.deepEqual(result.usage, { inputTokens: 120, outputTokens: 80, totalTokens: 200 });
+  });
+});
+
+test("faithfully renders twelve independently authored blocks with exact quotations, numerical evidence, and Field Notes styling in one provider request",async()=>{
+  const snapshot=independentSlideSnapshot();
+  await withProviderResponses([independentSlideOutput(snapshot)],async(requests)=>{
+    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-executive-actor","slides",{
+      documentTitle:"Event-Sourced Conversational Experience — Executive Plan",snapshot,
+      options:{itemCount:12,requestedSlideCount:12,presentationStyle:"field-notes",presentationFidelity:"faithful"},
+    });
+
+    assert.equal(requests.length,1);
+    assert.deepEqual(requests[0].input.presentation_source.outline.map((slide)=>slide.sourceAlias),Array.from({length:12},(_,index)=>`blk_${String(index+1).padStart(3,"0")}`));
+    assert.deepEqual(result.output.items.map((item)=>item.slide.sourceIds[0]),snapshot.facts.slice(0,12).map((fact)=>fact.block_id));
+    assert.equal(result.output.presentation.stylePreset,"field-notes");
+    assert.equal(result.output.items[0].slide.visual.exactValue,"61.125");
+    assert.equal(result.output.items[0].slide.visual.displayValue,"61.13");
+    assert.equal(result.output.items[1].slide.quote.text,STAKEHOLDER_QUOTE);
+    assert.equal(result.output.items[1].slide.quote.role,"Product Owner");
+    assert.doesNotMatch(JSON.stringify(requests[0].request),/PRIVATE_/);
   });
 });
 

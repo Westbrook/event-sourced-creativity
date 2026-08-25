@@ -75,7 +75,7 @@ export function presentationTokenReservation(maximumProviderCalls = 2) {
 }
 
 const PRESENTATION_SERVER_OWNED_CHECKPOINT_FIELDS = [
-  "artifactId", "artifactPlan", "plannerUsage", "plannerResponseId", "plannerResponseIds", "plannerModel", "plannerLatencyMs", "plannerInput",
+  "artifactId", "artifactPlan", "plannerUsage", "plannerResponseId", "plannerResponseIds", "plannerModel", "plannerLatencyMs", "plannerInput", "presentationProviderSubmission",
   "reservationId", "costReservationId", "costReservationPeriod", "costReservationMicrousd", "prepaidProviderCostMicrousd",
   "providerJobId", "providerModel", "providerStatusUrl", "providerResponseUrl", "providerCancelUrl", "videoInputReceipt", "renderedItems",
   "productionPlan", "productionSceneReceipts", "productionFrameReceipts", "productionPrepaidSceneIds", "productionPrepaidAnchor", "productionAnchor",

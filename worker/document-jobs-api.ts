@@ -25,6 +25,7 @@ import { DEFAULT_REFERENCE_VIDEO_MODEL, normalizeVideoDurationSeconds, VIDEO_ADA
 import { clearPresentationServerOwnedCheckpointFields, estimatePlannerOperationMicrousd, generationBudgetGate, presentationServerOwnedCheckpointField, presentationTokenReservation } from "../src/model/generation-budget";
 import { buildManagedProductionPlan, MAX_MANAGED_PRESENTATION_SLIDES, type ManagedProductionPlan } from "../src/model/managed-production";
 import { buildPresentationSourceContract, inferPresentationSourceOutline } from "../src/model/presentation-source";
+import { documentArtifactValidationIssues, parseDocumentArtifactContent } from "../src/model/document-artifacts";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./document-job-reservations";
 import { PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow } from "./access-policy";
 import { authoritativeCreativeContext, ContextIntegrityError } from "./context-authority";
@@ -41,6 +42,11 @@ const KINDS = new Set<DocumentJobKind>(["preview", "generate", "prompt_fan", "ch
 const MAX_PAYLOAD_BYTES = 750_000;
 const TOKEN_RESERVATION_HANDOFF_SQL = "UPDATE budget_reservations SET correlation_id=?,updated_at=? WHERE reservation_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND operation=? AND status='active' AND EXISTS (SELECT 1 FROM cost_budget_reservations paired WHERE paired.reservation_id=? AND paired.owner_id=budget_reservations.owner_id AND paired.stream_id=budget_reservations.stream_id AND paired.correlation_id=budget_reservations.correlation_id AND paired.operation=budget_reservations.operation AND paired.period=budget_reservations.period AND paired.status IN ('active','executing')) AND EXISTS (SELECT 1 FROM document_jobs job WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=budget_reservations.stream_id AND job.correlation_id=? AND job.attempt_count=? AND job.status='running')";
 const COST_RESERVATION_HANDOFF_SQL = "UPDATE cost_budget_reservations SET correlation_id=?,status='active',updated_at=? WHERE reservation_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND operation=? AND status IN ('active','executing') AND EXISTS (SELECT 1 FROM budget_reservations paired WHERE paired.reservation_id=? AND paired.owner_id=cost_budget_reservations.owner_id AND paired.stream_id=cost_budget_reservations.stream_id AND paired.correlation_id=? AND paired.operation=cost_budget_reservations.operation AND paired.period=cost_budget_reservations.period AND paired.status='active') AND EXISTS (SELECT 1 FROM document_jobs job WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=cost_budget_reservations.stream_id AND job.correlation_id=? AND job.attempt_count=? AND job.status='running')";
+const UNCERTAIN_PRESENTATION_SUBMISSION_SQL="kind='render_document' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.presentationProviderSubmission'),'')='pending'";
+const UNCERTAIN_PRESENTATION_RECEIPT_SQL="json_patch(json_object('provider_request_status','submission_unknown','source_transmission_status',CASE WHEN json_extract(result_json,'$.generationReceipt.source_transmission_status')='transmitted' THEN 'transmitted' ELSE 'unknown' END,'settled_cost_microusd',CASE WHEN COALESCE(CAST(json_extract(result_json,'$.generationReceipt.settled_cost_microusd') AS INTEGER),0)>0 THEN json_extract(result_json,'$.generationReceipt.settled_cost_microusd') ELSE NULL END,'reservation_status','executing'),json_object('actual_provider_call_count',CASE WHEN COALESCE(CAST(json_extract(result_json,'$.generationReceipt.actual_provider_call_count') AS INTEGER),0)>0 THEN CAST(json_extract(result_json,'$.generationReceipt.actual_provider_call_count') AS INTEGER) ELSE NULL END))";
+const UNCERTAIN_PRESENTATION_TOMBSTONE_SQL=`json_patch(json_object('presentationProviderSubmission','pending','reservationId',json_extract(result_json,'$.reservationId'),'costReservationId',json_extract(result_json,'$.costReservationId'),'generationReceipt',${UNCERTAIN_PRESENTATION_RECEIPT_SQL}),json_object('plannerModel',json_extract(result_json,'$.plannerModel'),'plannerResponseId',json_extract(result_json,'$.plannerResponseId'),'plannerResponseIds',json(json_extract(result_json,'$.plannerResponseIds')),'plannerUsage',json(json_extract(result_json,'$.plannerUsage')),'costReservationPeriod',json_extract(result_json,'$.costReservationPeriod'),'costReservationMicrousd',json_extract(result_json,'$.costReservationMicrousd')))`;
+const EXPIRED_DOCUMENT_JOB_REDACTION_SQL=`request_json=CASE WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN json_object('artifactKind','slides') ELSE '{}' END,result_json=CASE WHEN ${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} THEN ${UNCERTAIN_PRESENTATION_TOMBSTONE_SQL} ELSE NULL END`;
+const DOCUMENT_JOB_REDACTION_REQUIRED_SQL=`(request_json!='{}' OR result_json IS NOT NULL) AND NOT (${UNCERTAIN_PRESENTATION_SUBMISSION_SQL} AND request_json=json_object('artifactKind','slides') AND result_json=${UNCERTAIN_PRESENTATION_TOMBSTONE_SQL})`;
 
 const activeProjectExecutionSql=`EXISTS(SELECT 1 FROM organization_projects project
   JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
@@ -104,7 +110,7 @@ async function anchorProjectJobs(env:WorkerEnv,user:PilotUser,jobs:Array<{jobId:
       const now=new Date().toISOString();
       const changed=await env.DB.prepare("UPDATE document_jobs SET status='canceled',error_message='project_job_authorization_failed',completed_at=?,lease_expires_at=NULL,notified_at=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status IN('queued','running')")
         .bind(now,now,now,row.job_id,row.owner_id,row.stream_id,row.correlation_id).run();
-      if(Number(changed.meta.changes??0)===1)await releaseInterruptedAttempt(env,user,row,"project_job_authorization_failed");
+      if(Number(changed.meta.changes??0)===1){const terminal=await readJob(env,user.userId,row.job_id);if(terminal)await releaseInterruptedAttempt(env,user,terminal,"project_job_authorization_failed");}
     }
     throw error;
   }
@@ -123,6 +129,31 @@ function parseResult(row: Pick<DocumentJobRow, "result_json">) {
 
 function parseRequest(row: Pick<DocumentJobRow, "request_json">) {
   try { return row.request_json ? JSON.parse(row.request_json) as Record<string, unknown> : {}; } catch { return {}; }
+}
+
+/** A presentation can outlive Cloudflare's response-detached waitUntil window. */
+function requiresForegroundDocumentExecution(row: Pick<DocumentJobRow, "kind" | "request_json">) {
+  return row.kind === "render_document" && parseRequest(row).artifactKind === "slides";
+}
+
+function unresolvedPresentationSubmission(row:Pick<DocumentJobRow,"kind"|"request_json"|"result_json">,failure?:ProviderFailureDetail|null){
+  if(!requiresForegroundDocumentExecution(row)||parseResult(row).presentationProviderSubmission!=="pending")return false;
+  return !(failure?.httpStatus&&["provider","safety","authentication","access","quota","rate_limit","server"].includes(failure.category));
+}
+
+
+function unsafePresentationRecovery(row:DocumentJobRow):ProviderFailureDetail|null{
+  if(!requiresForegroundDocumentExecution(row))return null;
+  const checkpoint=parseResult(row);const receipt=checkpoint.generationReceipt&&typeof checkpoint.generationReceipt==="object"?checkpoint.generationReceipt as Record<string,unknown>:{};
+  const uncertain=checkpoint.presentationProviderSubmission==="pending"||receipt.provider_request_status==="submission_unknown";
+  const usage=checkpoint.plannerUsage&&typeof checkpoint.plannerUsage==="object"?checkpoint.plannerUsage as Record<string,unknown>:{};
+  const paid=Boolean(checkpoint.plannerResponseId||Array.isArray(checkpoint.plannerResponseIds)&&checkpoint.plannerResponseIds.length||Number(usage.totalTokens??0)>0||receipt.provider_request_status==="submitted");
+  const request=parseRequest(row);const expectedCount=Number(request.requestedSlideCount??request.itemCount??0);
+  const saved=checkpoint.artifactPlan&&typeof checkpoint.artifactPlan==="object"?parseDocumentArtifactContent(JSON.stringify(checkpoint.artifactPlan)):null;
+  const resumable=Boolean(saved&&Number.isSafeInteger(expectedCount)&&expectedCount>0&&!documentArtifactValidationIssues("slides",saved,{itemCount:expectedCount}).length);
+  if(uncertain)return{code:"provider_submission_uncertain",category:"network",scope:"network",action:"contact_support",message:"The presentation request may already have reached its provider. Automatic resubmission was stopped to prevent a duplicate charge.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null};
+  if(paid&&!resumable)return{code:"presentation_recovery_unavailable",category:"server",scope:"unknown",action:"contact_support",message:"A paid presentation response was recorded before its complete draft was saved. Automatic resubmission was stopped to prevent a duplicate charge.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null};
+  return null;
 }
 
 function generationRevisionFromRequest(request: Record<string, unknown>, documentId: string) {
@@ -173,7 +204,7 @@ async function sourceSnapshotSha256(snapshot:Record<string,unknown>){
 }
 
 type GenerationReceipt=Record<string,unknown>&{
-  provider:string;model:string;reservation_microusd:number;settled_cost_microusd:number;
+  provider:string;model:string;reservation_microusd:number;settled_cost_microusd:number|null;
   reservation_status:string;source_transmission_status:string;provider_request_status:string;
 };
 
@@ -252,6 +283,9 @@ function failureProgressMessage(detail: ProviderFailureDetail | DocumentJobError
   if (!detail) return "The operation failed.";
   if(detail.code==="local_persistence_failed")return "Forma could not save the generation because a local database or event-store write failed. This is not a provider interruption.";
   if(detail.code==="source_fidelity_validation_failed")return "The generated presentation did not preserve its required source facts, quotations, or authorized slide evidence.";
+  if(detail.code==="execution_interrupted")return "Forma lost contact with the generation worker before this operation finished.";
+  if(detail.code==="provider_submission_uncertain")return "The presentation provider request could not be confirmed. Automatic resubmission was stopped to prevent a duplicate charge.";
+  if(detail.code==="presentation_recovery_unavailable")return "A paid presentation response was recorded, but its complete draft was not saved. Automatic resubmission was stopped to prevent a duplicate charge.";
   if (detail.category === "safety") return detail.riskCategories?.includes("audio-copyright") || /\baudio\b.*\bcopyright\b/i.test(detail.message)
     ? "The provider rejected generated audio. Start a silent video instead of recovering the rejected render."
     : "Safety checks stopped this generation. Change the request or reference before retrying.";
@@ -302,7 +336,7 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
     parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result: summarizedResult, error: row.error_message, errorDetail, moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
     requestedAt: row.requested_at, startedAt: row.started_at, completedAt: row.completed_at, notifiedAt: row.notified_at,
     leaseExpiresAt: row.lease_expires_at, updatedAt: row.updated_at,
-    stage: recovery?.stage ?? String(parsed.stage ?? row.status), progressMessage: recovery?.progressMessage ?? (errorDetail?.code==="local_persistence_failed"||errorDetail?.code==="source_fidelity_validation_failed"?failureProgressMessage(errorDetail):String(parsed.progressMessage ?? "")),
+    stage: recovery?.stage ?? String(parsed.stage ?? row.status), progressMessage: recovery?.progressMessage ?? (errorDetail&&["local_persistence_failed","source_fidelity_validation_failed","execution_interrupted","provider_submission_uncertain","presentation_recovery_unavailable"].includes(errorDetail.code)?failureProgressMessage(errorDetail):String(parsed.progressMessage ?? "")),
   };
 }
 
@@ -337,9 +371,9 @@ async function readJob(env: WorkerEnv, ownerId: string, jobId: string) {
   return env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=?").bind(jobId, ownerId).first<DocumentJobRow>();
 }
 
-async function refreshGenerationReceipt(env:WorkerEnv,user:PilotUser,row:DocumentJobRow,body:Record<string,unknown>={},failure:ProviderFailureDetail|null=null){
+async function refreshGenerationReceipt(env:WorkerEnv,user:PilotUser,row:DocumentJobRow,body:Record<string,unknown>={},failure:ProviderFailureDetail|null=null,interruptedStage="",retainedRow?:DocumentJobRow){
   if(row.kind!=="render_document")return row;
-  const latest=await readJob(env,user.userId,row.job_id);if(!latest)return row;
+  const latest=retainedRow??await readJob(env,user.userId,row.job_id);if(!latest)return row;
   const checkpoint=parseResult(latest);
   const previous=checkpoint.generationReceipt&&typeof checkpoint.generationReceipt==="object"&&!Array.isArray(checkpoint.generationReceipt)?checkpoint.generationReceipt as GenerationReceipt:null;
   if(!previous)return latest;
@@ -356,24 +390,34 @@ async function refreshGenerationReceipt(env:WorkerEnv,user:PilotUser,row:Documen
   const plannerInput=checkpoint.plannerInput&&typeof checkpoint.plannerInput==="object"?checkpoint.plannerInput as Record<string,unknown>:{};
   const plannerValidation=plannerInput.validation&&typeof plannerInput.validation==="object"?plannerInput.validation as Record<string,unknown>:{};
   const recordedPlannerCalls=Math.max(plannerResponses.length,Math.max(0,Number(plannerInput.provider_request_count??plannerValidation.provider_call_count??0)));
-  const confirmedProviderRequest=Boolean(completed||checkpoint.plannerResponseId||plannerResponses.length||Number(plannerUsage.totalTokens??0)>0||checkpoint.providerJobId||usage.some((event)=>Boolean(event.planner_response_id)||Number(event.total_tokens??0)>0)||failure?.requestId);
-  const uncertainProviderRequest=!confirmedProviderRequest&&Boolean(failure&&(failure.category==="network"||failure.category==="rate_limit"||failure.category==="server"&&failure.scope==="provider"));
+  const providerResponseReceived=Boolean(checkpoint.presentationProviderSubmission==="pending"&&failure?.httpStatus&&["provider","safety","authentication","access","quota","rate_limit","server"].includes(failure.category));
+  const confirmedProviderRequest=Boolean(completed||checkpoint.plannerResponseId||plannerResponses.length||Number(plannerUsage.totalTokens??0)>0||checkpoint.providerJobId||usage.some((event)=>Boolean(event.planner_response_id)||Number(event.total_tokens??0)>0)||failure?.requestId||previous.provider_request_status==="submitted"||previous.provider_request_status==="completed"||providerResponseReceived);
+  const uncertainProviderRequest=!completed&&(checkpoint.presentationProviderSubmission==="pending"&&!providerResponseReceived||previous.provider_request_status==="submission_unknown"&&checkpoint.presentationProviderSubmission!=="confirmed"||!confirmedProviderRequest&&Boolean(failure&&(failure.category==="network"||failure.category==="rate_limit"||failure.category==="server"&&failure.scope==="provider")));
   const provider=String(completed?.provider??body.provider??checkpoint.provider??previous.provider??"openai");
   const model=String(completed?.model_id??checkpoint.providerModel??checkpoint.plannerModel??previous.model??env.OPENAI_MODEL??"gpt-5.6-terra");
   const settledFromEvents=usage.reduce((total,event)=>total+Math.max(0,Number(event.cost_microusd??0)),0);
+  const sourcePreviouslyTransmitted=previous.source_transmission_status==="transmitted";
+  const failedStage=interruptedStage||String(checkpoint.stage??"");
+  const failureStage=failure?.code==="local_persistence_failed"?"local_persistence"
+    :failure?.code==="source_fidelity_validation_failed"?"source_fidelity_validation"
+      :failure?.code==="provider_submission_uncertain"?"provider"
+        :failure?.code==="presentation_recovery_unavailable"?"planning"
+          :failure?.code==="execution_interrupted"?["queued","queue-recovery","recovering"].includes(failedStage)?"queue":["preparing","compiling","planning"].includes(failedStage)?"planning":uncertainProviderRequest||confirmedProviderRequest?"provider":"application"
+            :failure&&(failure.scope==="provider"||failure.category==="network"||failure.category==="rate_limit")?"provider":"application";
+  const verifiedSettledCost=reservation?Number(reservation.used_microusd??0):settledFromEvents;
   const receipt={
     ...previous,provider,model,
     ...(previous.artifact_kind==="slides"&&completed&&Number.isSafeInteger(Number(completed.item_count))?{actual_slide_count:Number(completed.item_count)}:{}),
     actual_provider_call_count:recordedPlannerCalls||previous.actual_provider_call_count||null,
     reservation_microusd:Number(reservation?.reserved_microusd??checkpoint.costReservationMicrousd??budget?.reserved_microusd??previous.reservation_microusd),
-    settled_cost_microusd:reservation?Number(reservation.used_microusd??0):settledFromEvents,
+    settled_cost_microusd:uncertainProviderRequest&&verifiedSettledCost===0?null:verifiedSettledCost,
     reservation_status:reservation?String(reservation.status):latest.status==="failed"&&settledFromEvents===0?"released":String(previous.reservation_status??"unknown"),
-    source_transmission_status:confirmedProviderRequest?"transmitted":uncertainProviderRequest?"unknown":"not_transmitted",
-    provider_request_status:completed?"completed":confirmedProviderRequest?"submitted":uncertainProviderRequest?"submission_unknown":"not_submitted",
-    ...(failure?{failure_code:failure.code,failure_category:failure.category,failure_stage:failure.code==="local_persistence_failed"?"local_persistence":failure.code==="source_fidelity_validation_failed"?"source_fidelity_validation":failure.scope==="provider"||failure.category==="network"||failure.category==="rate_limit"?"provider":"application"}:{}),
+    source_transmission_status:confirmedProviderRequest||sourcePreviouslyTransmitted?"transmitted":uncertainProviderRequest?"unknown":"not_transmitted",
+    provider_request_status:completed?"completed":uncertainProviderRequest?"submission_unknown":confirmedProviderRequest?"submitted":"not_submitted",
+    ...(failure?{failure_code:failure.code,failure_category:failure.category,failure_stage:failureStage}:{}),
   };
   const updatedAt=new Date().toISOString();
-  const result={...checkpoint,generationReceipt:receipt};
+  const result={...checkpoint,...(providerResponseReceived?{presentationProviderSubmission:"confirmed"}:{}),generationReceipt:receipt};
   const updated=await env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status=?")
     .bind(JSON.stringify(result),updatedAt,latest.job_id,user.userId,user.streamId,latest.correlation_id,latest.status).run();
   return Number(updated.meta.changes??0)===1?{...latest,result_json:JSON.stringify(result),updated_at:updatedAt}:await readJob(env,user.userId,row.job_id)??latest;
@@ -384,7 +428,12 @@ function rowIsStale(row: DocumentJobRow, now = Date.now()) {
 }
 
 async function updateJobProgress(env: WorkerEnv, row: DocumentJobRow, stage: string, progressMessage: string, patch:Record<string,unknown>={}) {
-  const updatedAt = new Date().toISOString(); const result = { ...parseResult(row), stage, progressMessage, ...patch };
+  const updatedAt = new Date().toISOString(); const previous=parseResult(row);const result:Record<string,unknown> = { ...previous, stage, progressMessage, ...patch };
+  if(requiresForegroundDocumentExecution(row)&&previous.generationReceipt&&typeof previous.generationReceipt==="object"&&!Array.isArray(previous.generationReceipt)){
+    const receipt=previous.generationReceipt as GenerationReceipt;
+    if(patch.presentationProviderSubmission==="pending")result.generationReceipt={...receipt,provider_request_status:"submission_unknown",source_transmission_status:receipt.source_transmission_status==="transmitted"?"transmitted":"unknown",settled_cost_microusd:Number(receipt.settled_cost_microusd??0)>0?receipt.settled_cost_microusd:null,reservation_status:"executing"};
+    if(patch.presentationProviderSubmission==="confirmed")result.generationReceipt={...receipt,provider_request_status:"submitted",source_transmission_status:"transmitted",...(Array.isArray(patch.plannerResponseIds)?{actual_provider_call_count:patch.plannerResponseIds.length}:{})};
+  }
   const updated=await env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND status='running' AND correlation_id=?").bind(JSON.stringify(result), updatedAt, row.job_id, row.owner_id, row.correlation_id).run();
   if(Number(updated.meta.changes??0)!==1)throw new Error("document_job_canceled");
   row.result_json = JSON.stringify(result); row.updated_at = updatedAt;
@@ -397,11 +446,14 @@ async function renewJobLease(env: WorkerEnv, row: DocumentJobRow) {
   row.lease_expires_at = leaseExpiresAt; row.updated_at = now.toISOString();
 }
 
-async function beginJobCommit(env: WorkerEnv, row: DocumentJobRow) {
+async function beginJobCommit(env: WorkerEnv, row: DocumentJobRow, progressMessage?:string) {
   const now = new Date().toISOString();
-  const result = await env.DB.prepare("UPDATE document_jobs SET status='committing',updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=? AND status='running'").bind(now, row.job_id, row.owner_id, row.correlation_id).run();
+  const checkpoint=progressMessage?{...parseResult(row),stage:"saving",progressMessage}:null;
+  const result = checkpoint
+    ?await env.DB.prepare("UPDATE document_jobs SET status='committing',result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=? AND status='running'").bind(JSON.stringify(checkpoint),now,row.job_id,row.owner_id,row.correlation_id).run()
+    :await env.DB.prepare("UPDATE document_jobs SET status='committing',updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=? AND status='running'").bind(now,row.job_id,row.owner_id,row.correlation_id).run();
   if (Number(result.meta.changes ?? 0) !== 1) throw new Error("document_job_canceled");
-  row.status = "committing"; row.updated_at = now;
+  row.status = "committing";row.updated_at=now;if(checkpoint)row.result_json=JSON.stringify(checkpoint);
 }
 
 async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow,user:PilotUser, operation: (control: { signal: AbortSignal; beginCommit: () => Promise<void>; progress: (stage:string,message:string,patch?:Record<string,unknown>) => Promise<void> }) => Promise<T>) {
@@ -409,9 +461,11 @@ async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow,user:Pilo
   const controller = new AbortController(); let commitStarted = false;
   const verify=async()=>{if(!await activeProjectExecution(env,user,row.document_id,row.job_id))throw new Error("document_job_canceled");};
   await verify();
-  const execution = operation({ signal: controller.signal, beginCommit: async () => { if (commitStarted) return;await verify();await updateJobProgress(env,row,"saving","Saving the provider result and its durable receipt.");await beginJobCommit(env, row); commitStarted = true; }, progress: async(stage,message,patch)=>{if(!commitStarted){await verify();await updateJobProgress(env,row,stage,message,patch);}} }).then((result) => { value = result; settled = true; }, (error) => { failure = error; settled = true; });
+  const execution = operation({ signal: controller.signal, beginCommit: async () => { if (commitStarted) return;await verify();if(requiresForegroundDocumentExecution(row))await beginJobCommit(env,row,"Saving the provider result and its durable receipt.");else{await updateJobProgress(env,row,"saving","Saving the provider result and its durable receipt.");await beginJobCommit(env,row);}commitStarted=true; }, progress: async(stage,message,patch)=>{if(!commitStarted){await verify();await updateJobProgress(env,row,stage,message,patch);}} }).then((result) => { value = result; settled = true; }, (error) => { failure = error; settled = true; });
   while (!settled) {
-    await Promise.race([execution, new Promise<void>((resolve) => setTimeout(resolve, DOCUMENT_JOB_HEARTBEAT_MS))]);
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    await Promise.race([execution, new Promise<void>((resolve) => {timer=setTimeout(resolve,DOCUMENT_JOB_HEARTBEAT_MS);})]);
+    if(timer!==undefined)clearTimeout(timer);
     if (!settled) try {await verify();await renewJobLease(env, row); } catch (error) { controller.abort("document_job_canceled"); failure = error; await execution; }
   }
   if (failure !== undefined) throw failure;
@@ -438,6 +492,7 @@ async function restoreLegacyCostReservation(env: WorkerEnv, user: PilotUser, row
 }
 
 async function releaseInterruptedAttempt(env: WorkerEnv, user: PilotUser, row: DocumentJobRow, reason: string) {
+  if(unresolvedPresentationSubmission(row))return;
   const checkpoint=parseResult(row);
   const activeSceneReceipts=Object.values(checkpoint.productionSceneReceipts&&typeof checkpoint.productionSceneReceipts==="object"?checkpoint.productionSceneReceipts as Record<string,Record<string,unknown>>:{});
   const activeFrameReceipts=Object.values(checkpoint.productionFrameReceipts&&typeof checkpoint.productionFrameReceipts==="object"?checkpoint.productionFrameReceipts as Record<string,Record<string,unknown>>:{});
@@ -462,12 +517,21 @@ async function releaseInterruptedAttempt(env: WorkerEnv, user: PilotUser, row: D
   } catch (error) { console.error("document_job_interruption_audit_failed", row.job_id, error instanceof Error ? error.message : "unknown"); }
 }
 
-async function failStaleJob(env: WorkerEnv, user: PilotUser, row: DocumentJobRow) {
-  const now = new Date().toISOString();
-  const errorDetail = { code: "execution_interrupted", category: "server", message: "The server lost contact with this operation before it finished.", retryable: false, requestId: null, httpStatus: null };
+async function failStaleJob(env: WorkerEnv, user: PilotUser, row: DocumentJobRow,detail?:ProviderFailureDetail) {
+  const timestamp=Date.now();const now = new Date(timestamp).toISOString();const staleBefore=new Date(timestamp-DOCUMENT_JOB_STALE_AFTER_MS).toISOString();
+  const previousStage=String(parseResult(row).stage??"");
+  const errorDetail:ProviderFailureDetail = detail??{ code:"execution_interrupted",category:"server",scope:"unknown",action:"contact_support",message:"The server lost contact with this operation before it finished.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null };
   const parentId = parentJobIdFromRequest(parseRequest(row));
-  const result = await env.DB.prepare("UPDATE document_jobs SET status='failed',error_message='execution_interrupted',completed_at=?,lease_expires_at=NULL,result_json=?,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND status IN ('running','committing') AND correlation_id=?").bind(now, JSON.stringify({ ...parseResult(row), errorDetail, stage: "failed", progressMessage: errorDetail.message }), parentId, now, now, row.job_id, user.userId, row.correlation_id).run();
-  if (Number(result.meta.changes ?? 0) === 1) { await releaseInterruptedAttempt(env, user, row, "execution_interrupted"); await reconcileParentForChild(env, row); }
+  const result = await env.DB.prepare("UPDATE document_jobs SET status='failed',error_message=?,completed_at=?,lease_expires_at=NULL,result_json=?,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND status IN ('running','committing') AND correlation_id=? AND (lease_expires_at<=? OR updated_at<=?) AND NOT (kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides' AND EXISTS(SELECT 1 FROM events terminal WHERE terminal.stream_id=document_jobs.stream_id AND terminal.correlation_id=document_jobs.correlation_id AND terminal.type IN('DocumentRenderCompleted','DocumentRenderFailed')))")
+    .bind(errorDetail.code,now,JSON.stringify({...parseResult(row),errorDetail,stage:"failed",progressMessage:failureProgressMessage(errorDetail)}),parentId,now,now,row.job_id,user.userId,row.correlation_id,now,staleBefore).run();
+  if(Number(result.meta.changes??0)!==1){
+    if(requiresForegroundDocumentExecution(row)&&operationFinished(await readCorrelatedEvents(env,user.streamId,[row.correlation_id]),row))await runDocumentJob(env,user,row.job_id);
+    return;
+  }
+  if(unresolvedPresentationSubmission(row,errorDetail)){
+    try{await appendAuditEvent(env,user.streamId,"worker:scheduler","JobAttemptInterrupted",{job_id:row.job_id,document_id:row.document_id,kind:row.kind,attempt:row.attempt_count,reason:errorDetail.code,released_reservation_count:0,provider_submission_status:"submission_unknown"},row.correlation_id);}catch(error){console.error("document_job_interruption_audit_failed",row.job_id,error instanceof Error?error.message:"unknown");}
+  }else await releaseInterruptedAttempt(env,user,row,errorDetail.code);
+  await refreshGenerationReceipt(env,user,row,{},errorDetail,previousStage);await reconcileParentForChild(env,row);
 }
 
 function operationFinished(events: Awaited<ReturnType<typeof readWorkspaceEvents>>, row: DocumentJobRow) {
@@ -547,9 +611,9 @@ async function queueFollowupPreview(env:WorkerEnv,user:PilotUser,parent:Document
   return readJob(env,user.userId,jobId);
 }
 
-export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: string) {
+export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: string, verifiedRow?:DocumentJobRow) {
   await ensureSchema(env);
-  let row = await readJob(env, user.userId, jobId); if (!row) return row;
+  let row=verifiedRow&&verifiedRow.job_id===jobId&&verifiedRow.owner_id===user.userId&&verifiedRow.stream_id===user.streamId?verifiedRow:await readJob(env,user.userId,jobId);if(!row)return row;
   if(!await activeProjectExecution(env,user,row.document_id,jobId)){
     if(user.projectExecution)await cancelProjectActorJobs(env,user,{organizationId:user.projectExecution.organizationId,projectAccessId:user.projectExecution.projectAccessId,actorUserId:user.userId});
     return null;
@@ -576,21 +640,23 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     return readJob(env,user.userId,jobId);
   }
 
-  const blocker = await env.DB.prepare("SELECT job_id FROM document_jobs WHERE stream_id=? AND kind!='prompt_fan' AND status IN ('queued','running','committing') AND (requested_at<? OR (requested_at=? AND job_id<?)) ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId, row.requested_at, row.requested_at, row.job_id).first<{ job_id: string }>();
+  const blocker = await env.DB.prepare("SELECT job_id FROM document_jobs WHERE stream_id=? AND kind!='prompt_fan' AND status IN ('queued','running','committing') AND NOT (status='queued' AND kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides') AND (requested_at<? OR (requested_at=? AND job_id<?)) ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId, row.requested_at, row.requested_at, row.job_id).first<{ job_id: string }>();
   if (blocker) return row;
   if (row.status === "running" && !rowIsStale(row)) return row;
+  if(row.status==="running"&&requiresForegroundDocumentExecution(row)){const unsafe=unsafePresentationRecovery(row);if(unsafe){await failStaleJob(env,user,row,unsafe);return readJob(env,user.userId,jobId);}}
   if (row.status === "running" && row.attempt_count >= documentJobMaxAttempts(row.kind)) { await failStaleJob(env, user, row); return readJob(env, user.userId, jobId); }
 
   const previousAttempt = row.attempt_count; const previousRow = { ...row }; const previousCheckpoint = parseResult(previousRow); const attempt = previousAttempt + 1;
   const previousSceneReceipts = Object.values(previousCheckpoint.productionSceneReceipts && typeof previousCheckpoint.productionSceneReceipts === "object" ? previousCheckpoint.productionSceneReceipts as Record<string, Record<string, unknown>> : {});
   const previousFrameReceipts = Object.values(previousCheckpoint.productionFrameReceipts && typeof previousCheckpoint.productionFrameReceipts === "object" ? previousCheckpoint.productionFrameReceipts as Record<string, Record<string, unknown>> : {});
-  const hasPaidProviderCheckpoint = Boolean(previousCheckpoint.providerJobId||previousCheckpoint.productionAnchor)
+  const hasSavedPaidPresentation=requiresForegroundDocumentExecution(row)&&previousCheckpoint.presentationProviderSubmission==="confirmed"&&Boolean(previousCheckpoint.plannerResponseId)&&Boolean(previousCheckpoint.artifactPlan)&&!unsafePresentationRecovery(row);
+  const hasPaidProviderCheckpoint = hasSavedPaidPresentation||Boolean(previousCheckpoint.providerJobId||previousCheckpoint.productionAnchor)
     || previousSceneReceipts.some((receipt) => Boolean(receipt.providerJobId) && (receipt.status === "submitted" || receipt.status === "completed"))
     || previousFrameReceipts.length > 0;
   const handoffPaidProviderReservations = previousAttempt > 0 && row.kind === "render_document" && hasPaidProviderCheckpoint
     && Boolean(previousCheckpoint.reservationId && previousCheckpoint.costReservationId);
   const now = new Date(); const nowIso = now.toISOString(); const staleBefore = new Date(now.getTime() - DOCUMENT_JOB_STALE_AFTER_MS).toISOString(); const leaseExpiresAt = new Date(now.getTime() + DOCUMENT_JOB_LEASE_MS).toISOString();
-  const attemptCorrelationId = `${jobId}:attempt:${attempt}`; const initialResult = { ...previousCheckpoint, stage: "preparing", progressMessage: attempt > 1 ? "Recovering the interrupted operation." : "Preparing the document context." };
+  const attemptCorrelationId=`${jobId}:attempt:${attempt}`;const foregroundPresentation=requiresForegroundDocumentExecution(row);const initialResult={...previousCheckpoint,stage:foregroundPresentation?"compiling":"preparing",progressMessage:foregroundPresentation?attempt>1?"Recovering the interrupted presentation and compiling its authorized document context.":"Compiling the document into the requested presentation.":attempt>1?"Recovering the interrupted operation.":"Preparing the document context."};
   const claimSql="UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=COALESCE(started_at,?),lease_expires_at=?,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND (status='queued' OR (status='running' AND (lease_expires_at<? OR updated_at<?))) AND NOT EXISTS(SELECT 1 FROM document_jobs active WHERE active.stream_id=document_jobs.stream_id AND active.job_id<>document_jobs.job_id AND active.kind!='prompt_fan' AND active.status IN('running','committing'))";
   const claimBindings=[attemptCorrelationId,nowIso,leaseExpiresAt,JSON.stringify(initialResult),nowIso,jobId,user.userId,user.streamId,nowIso,staleBefore] as const;
   let claimed;
@@ -615,7 +681,8 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   }
   if (Number(claimed.meta.changes ?? 0) !== 1) return readJob(env, user.userId, jobId);
   if (previousAttempt > 0 && !handoffPaidProviderReservations) await releaseInterruptedAttempt(env, user, previousRow, "execution_interrupted_retrying");
-  row = await readJob(env, user.userId, jobId); if (!row) return null;
+  if(foregroundPresentation)row={...row,status:"running",attempt_count:attempt,correlation_id:attemptCorrelationId,started_at:row.started_at??nowIso,lease_expires_at:leaseExpiresAt,result_json:JSON.stringify(initialResult),updated_at:nowIso};
+  else{row=await readJob(env,user.userId,jobId);if(!row)return null;}
   if(previousAttempt>0&&!handoffPaidProviderReservations&&!hasPaidProviderCheckpoint){
     const checkpoint=parseResult(row);
     for(const key of ["reservationId","costReservationId","costReservationMicrousd","costReservationPeriod"] as const)delete checkpoint[key];
@@ -626,6 +693,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     row.result_json=JSON.stringify(checkpoint);row.updated_at=updatedAt;
   }
 
+  let persistedForegroundPresentation:DocumentJobRow|null=null;
   try {
     const payload = JSON.parse(row.request_json) as Record<string, unknown>;
     if(row.kind==="render_document"&&payload.artifactKind==="slides")clearPresentationServerOwnedCheckpointFields(payload);
@@ -638,16 +706,16 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     }
     delete payload.expectedSequence; delete payload.jobInputRef;
     if(row.kind==="render_document"){
-      const checkpoint=parseResult(row);for(const key of ["artifactId","providerJobId","providerModel","providerStatusUrl","providerResponseUrl","providerCancelUrl","artifactPlan","plannerModel","plannerResponseId","plannerResponseIds","plannerLatencyMs","plannerUsage","plannerInput","renderedItems","videoInputReceipt","productionPlan","productionSceneReceipts","productionFrameReceipts","productionPrepaidSceneIds","productionPrepaidAnchor","prepaidProviderCostMicrousd","productionAnchor","costReservationMicrousd","costReservationId","costReservationPeriod"] as const)if(checkpoint[key]!==undefined)payload[key]=checkpoint[key];if((checkpoint.providerJobId||checkpoint.productionSceneReceipts||checkpoint.productionFrameReceipts||checkpoint.productionAnchor)&&checkpoint.reservationId)payload.reservationId=checkpoint.reservationId;
+      const checkpoint=parseResult(row);for(const key of ["artifactId","providerJobId","providerModel","providerStatusUrl","providerResponseUrl","providerCancelUrl","artifactPlan","plannerModel","plannerResponseId","plannerResponseIds","plannerLatencyMs","plannerUsage","plannerInput","renderedItems","videoInputReceipt","productionPlan","productionSceneReceipts","productionFrameReceipts","productionPrepaidSceneIds","productionPrepaidAnchor","prepaidProviderCostMicrousd","productionAnchor","costReservationMicrousd","costReservationId","costReservationPeriod","presentationProviderSubmission"] as const)if(checkpoint[key]!==undefined)payload[key]=checkpoint[key];if((checkpoint.providerJobId||checkpoint.productionSceneReceipts||checkpoint.productionFrameReceipts||checkpoint.productionAnchor||hasSavedPaidPresentation)&&checkpoint.reservationId)payload.reservationId=checkpoint.reservationId;
     }
     payload.action = row.kind; payload.documentId = row.document_id; payload.sourceSurface = row.source_surface;
     payload.correlationId = row.correlation_id; payload.clientId = `server:document-job:${row.kind}`;
-    await updateJobProgress(env, row, "compiling", row.kind === "preview" || row.kind === "generate" ? "Compiling the checked document state for generation." : row.kind==="render_document"?"Compiling the document into the requested artifact.":"Processing the requested document change.");
+    if(!foregroundPresentation)await updateJobProgress(env,row,"compiling",row.kind==="preview"||row.kind==="generate"?"Compiling the checked document state for generation.":row.kind==="render_document"?"Compiling the document into the requested artifact.":"Processing the requested document change.");
     const response = await runWithHeartbeat(env, row,user, (control) => handleEvents(new Request("http://document-job.local/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: control.signal }), env, false, user, control));
     const body = await response.json() as Record<string, unknown>;let followup:DocumentJobRow|null=null;if(response.ok&&body.followupJob&&typeof body.followupJob==="object")followup=await queueFollowupPreview(env,user,row,body.followupJob as Record<string,unknown>);const completedAt = new Date().toISOString();
     const suppliedFailure=!response.ok?(body.errorDetail&&typeof body.errorDetail==="object"?body.errorDetail as ProviderFailureDetail:applicationFailureDetail(String(body.error??"document_job_failed"),body.scope,response.status)):null;
     const detail=!response.ok?classifyDocumentJobFailure(String(body.error??suppliedFailure?.message??"document_job_failed"),suppliedFailure,response.status):null;
-    const latestCheckpoint=parseResult(await readJob(env,user.userId,row.job_id)??row);
+    const latestCheckpoint=parseResult(response.ok&&foregroundPresentation?row:await readJob(env,user.userId,row.job_id)??row);
     const durableCheckpoint = {...(response.ok?{}:parseResult(row)),...(response.ok?{}:latestCheckpoint)};
     const liveCheckpoint=latestCheckpoint;
     const rawReceipt=liveCheckpoint.generationReceipt;
@@ -656,18 +724,21 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const observedPlannerCalls=Math.max(Array.isArray(liveCheckpoint.plannerResponseIds)?new Set(liveCheckpoint.plannerResponseIds.map(String).filter(Boolean)).size:0,Math.max(0,Number(livePlannerInput.provider_request_count??livePlannerValidation.provider_call_count??0)));
     const acceptedReceipt=rawReceipt&&typeof rawReceipt==="object"?{...rawReceipt as Record<string,unknown>,...(observedPlannerCalls?{actual_provider_call_count:observedPlannerCalls}:{})}:null;
     const terminalResult = { ...durableCheckpoint, ...(acceptedReceipt?{generationReceipt:acceptedReceipt}:{}), ...safeResult({...body,followupJobId:followup?.job_id}), ...(detail ? { errorDetail: publicFailureDetail(detail) } : {}), stage: response.ok ? "completed" : "failed", progressMessage: response.ok ? "The operation finished." : failureProgressMessage(detail) };
-    await finishDocumentJob(env, row, response.ok ? "completed" : "failed", terminalResult, response.ok ? null : detail?.message ?? String(body.error ?? "document_job_failed"), completedAt);
+    const terminalWrite=await finishDocumentJob(env,row,response.ok?"completed":"failed",terminalResult,response.ok?null:detail?.message??String(body.error??"document_job_failed"),completedAt);
     if(!response.ok&&row.kind==="render_document"){
       const failed=await readJob(env,user.userId,row.job_id);
       if(failed?.status==="failed"){
         if(detail?.code==="local_persistence_failed")await releaseInterruptedAttempt(env,user,failed,"document_render_local_persistence_failure");
-        else await settleInterruptedDocumentJobReservations(env,user,failed,{reason:"document_render_terminal_failure"});
+        else if(!unresolvedPresentationSubmission(failed,detail))await settleInterruptedDocumentJobReservations(env,user,failed,{reason:"document_render_terminal_failure"});
       }
     }else if(!response.ok&&user.projectExecution&&row.kind!=="extract_reference"){
       const failed=await readJob(env,user.userId,row.job_id);
       if(failed?.status==="failed")await releaseInterruptedAttempt(env,user,failed,"project_document_job_terminal_failure");
     }
-    await refreshGenerationReceipt(env,user,row,body,detail);
+    if(response.ok&&foregroundPresentation&&Number(terminalWrite.meta.changes??0)===1){
+      const saved:DocumentJobRow={...row,status:"completed",result_json:JSON.stringify(terminalResult),error_message:null,completed_at:completedAt,lease_expires_at:null,notified_at:parentJobIdFromRequest(parseRequest(row))?completedAt:row.notified_at,updated_at:completedAt};
+      persistedForegroundPresentation=await refreshGenerationReceipt(env,user,row,body,detail,"",saved);
+    }else await refreshGenerationReceipt(env,user,row,body,detail);
   } catch (error) {
     const completedAt = new Date().toISOString(); const detail = classifyDocumentJobFailure(error);
     const durableCheckpoint = parseResult(await readJob(env, user.userId, row.job_id) ?? row);
@@ -676,7 +747,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       const failed=await readJob(env,user.userId,row.job_id);
       if(failed?.status==="failed"){
         if(detail.code==="local_persistence_failed")await releaseInterruptedAttempt(env,user,failed,"document_render_local_persistence_failure");
-        else await settleInterruptedDocumentJobReservations(env,user,failed,{reason:"document_render_execution_interrupted"});
+        else if(!unresolvedPresentationSubmission(failed,detail))await settleInterruptedDocumentJobReservations(env,user,failed,{reason:"document_render_execution_interrupted"});
       }
     }else if(user.projectExecution&&row.kind!=="extract_reference"){
       const failed=await readJob(env,user.userId,row.job_id);
@@ -684,7 +755,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     }
     await refreshGenerationReceipt(env,user,row,{},detail);
   }
-  const finishedRow = await readJob(env, user.userId, jobId);
+  const finishedRow=persistedForegroundPresentation??await readJob(env,user.userId,jobId);
   if(finishedRow){
     await reconcileParentForChild(env,finishedRow);
     if(user.projectExecution)await synchronizeProjectScope(env,user.projectExecution);
@@ -719,12 +790,14 @@ async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
         if(scope){await cancelProjectActorJobs(env,user,{organizationId:scope.organization_id,projectAccessId:scope.project_access_id,actorUserId:running.owner_id});continue;}
         return;
       }
+      if(requiresForegroundDocumentExecution(running)){await failStaleJob(env,owner,running,unsafePresentationRecovery(running)??undefined);continue;}
       const recovered = await runDocumentJob(env, owner, running.job_id);
       if (!recovered || recovered.status === "queued" || recovered.status === "running" || recovered.status === "committing") return;
       continue;
     }
-    const next = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND kind!='prompt_fan' AND status='queued' ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
+    const next = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND kind!='prompt_fan' AND status='queued' AND NOT (kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
     if (!next) return;
+    if(requiresForegroundDocumentExecution(next))return;
     const owner=await documentJobPrincipal(env,next,user);
     if(!owner){
       const scope=await env.DB.prepare("SELECT organization_id,project_access_id,source_event_id FROM project_resource_scopes WHERE resource_kind='job' AND resource_id=? AND actor_user_id=?").bind(next.job_id,next.owner_id).first<{organization_id:string;project_access_id:string;source_event_id:string|null}>();
@@ -740,6 +813,7 @@ async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
 async function stopGenerationJob(env: WorkerEnv, user: PilotUser, target: DocumentJobRow, force: boolean) {
   if (target.kind !== "preview" && target.kind !== "generate" && target.kind !== "prompt_fan" && target.kind !== "render_document") return { error: "generation_job_required", status: 409 } as const;
   if (target.status === "committing") return { error: "job_finalizing", status: 409 } as const;
+  if(unresolvedPresentationSubmission(target))return{error:"provider_submission_in_flight",status:409} as const;
   if (documentJobTerminal(target)) return { job: target } as const;
   const request = parseRequest(target); const childIds = target.kind === "prompt_fan" && Array.isArray(request.childJobIds) ? request.childJobIds.map(String).filter(Boolean) : [];
   const children = (await Promise.all(childIds.map((id) => readJob(env, user.userId, id)))).filter((row): row is DocumentJobRow => Boolean(row));
@@ -750,9 +824,9 @@ async function stopGenerationJob(env: WorkerEnv, user: PilotUser, target: Docume
     const completedAt = new Date().toISOString();
     const errorDetail: DocumentJobError = { code: force ? "force_failed_by_admin" : "canceled_by_user", category: "canceled", scope: "request", action: "none", message: force ? "An administrator force-failed this generation." : "The user stopped this generation.", retryable: true, retryAfterMs: null, requestId: null, httpStatus: null };
     const result = { errorDetail, stage: force ? "failed" : "canceled", progressMessage: errorDetail.message };
-    const updated = await env.DB.prepare("UPDATE document_jobs SET status=?,result_json=json_patch(COALESCE(result_json,'{}'),?),error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=?,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=? AND status IN ('queued','running')")
+    const updated = await env.DB.prepare("UPDATE document_jobs SET status=?,result_json=json_patch(COALESCE(result_json,'{}'),?),error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=?,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=? AND status IN ('queued','running') AND NOT (kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.presentationProviderSubmission'),'')='pending')")
       .bind(force ? "failed" : "canceled", JSON.stringify(result), errorDetail.code, completedAt, force ? null : completedAt, completedAt, row.job_id, user.userId, row.correlation_id).run();
-    if (Number(updated.meta.changes ?? 0) !== 1) continue;
+    if(Number(updated.meta.changes??0)!==1){const retained=await readJob(env,user.userId,row.job_id);if(retained&&(unresolvedPresentationSubmission(retained)))return{error:"provider_submission_in_flight",status:409} as const;continue;}
     stopped.push(row);
     const reason=force?"generation_force_failed":"generation_canceled";
     const terminal=await readJob(env,user.userId,row.job_id);
@@ -801,8 +875,9 @@ export async function cancelProjectActorJobs(env:WorkerEnv,operator:PilotUser,sc
       .bind(JSON.stringify(result),now,now,now,row.job_id,row.owner_id,row.stream_id,row.correlation_id).run();
     if(Number(changed.meta.changes??0)!==1)continue;
     const actor:PilotUser={...operator,userId:row.owner_id,billingUserId:row.owner_id,streamId:row.stream_id,projectExecution:{organizationId:row.organization_id,projectAccessId:row.project_access_id,projectId:row.project_id,ownerUserId:row.owner_user_id,actorUserId:row.owner_id}};
-    await releaseInterruptedAttempt(env,actor,row,"project_access_revoked");
-    await reconcileParentForChild(env,row);
+    const terminal=await readJob(env,row.owner_id,row.job_id);
+    if(terminal)await releaseInterruptedAttempt(env,actor,terminal,"project_access_revoked");
+    await reconcileParentForChild(env,terminal??row);
   }
 }
 
@@ -816,12 +891,14 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const project=selected.context;
   if(project&&!hasCapability(principal,"project.output.request",{organizationId:project.organizationId,projectAccessId:project.projectAccessId}))return Response.json({error:"project_read_only"},{status:403});
   const user:PilotUser=project?{...principal,streamId:`creative:${project.ownerUserId}`,projectExecution:{organizationId:project.organizationId,projectAccessId:project.projectAccessId,projectId:project.projectId,ownerUserId:project.ownerUserId,actorUserId:principal.userId}}:principal;
+  const executionRequest=request.method==="POST"&&path.endsWith("/run");let verifiedPathJob:DocumentJobRow|null=null;
   if(!project&&path){
     const targetId=decodeURIComponent(path.replace(/\/(?:cancel|force-fail|ack|dismiss|retry|run)$/,""));
-    const personal=await env.DB.prepare(`SELECT 1 AS present FROM document_jobs job WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=?
+    const personal=await env.DB.prepare(`SELECT ${executionRequest?"job.*":"1 AS present"} FROM document_jobs job WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=?
       AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='job' AND resource.resource_id=job.job_id)`)
-      .bind(targetId,user.userId,user.streamId).first();
+      .bind(targetId,user.userId,user.streamId).first<DocumentJobRow|{present:number}>();
     if(!personal)return Response.json({error:"job_not_found"},{status:404,headers:{"cache-control":"private, no-store"}});
+    if(executionRequest)verifiedPathJob=personal as DocumentJobRow;
   }
   if(project&&request.method!=="GET"){const consent=requireConsent(principal);if(consent)return consent;}
   const privateReceiptPath=project&&request.method==="GET"?path.match(/^([^/]+)\/private-receipt$/):null;
@@ -886,12 +963,15 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       ORDER BY CASE WHEN job.status IN('queued','running','committing') THEN 0 ELSE 1 END,job.requested_at DESC LIMIT 120`)
       .bind(project.ownerUserId,principal.userId,user.streamId,project.projectAccessId,project.organizationId,project.projectId,requestedId,requestedId,Number(activeOnly),document,document,now).all<DocumentJobRow>();
     if(path&&!rows.results.length)return Response.json({error:"job_not_found"},{status:404});
-    return Response.json(path?{job:safeScopedJob(rows.results[0]!)}:{jobs:rows.results.map((row)=>safeScopedJob(row))},{headers:{"cache-control":"private, no-store"}});
+    const activeBlocker=[...rows.results].filter((row)=>row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
+    const recoveryBlocker=activeBlocker&&rowIsStale(activeBlocker)?activeBlocker:null;
+    return Response.json(path?{job:safeScopedJob(rows.results[0]!,recoveryBlocker)}:{jobs:rows.results.map((row)=>safeScopedJob(row,recoveryBlocker))},{headers:{"cache-control":"private, no-store"}});
   }
   if(project&&path){
     const targetId=decodeURIComponent(path.replace(/\/(?:cancel|force-fail|ack|dismiss|retry|run)$/,""));
     const target=await readJob(env,user.userId,targetId);
     if(!target||!await activeProjectExecution(env,user,target.document_id,targetId))return Response.json({error:"job_not_found"},{status:404});
+    if(executionRequest)verifiedPathJob=target;
   }
   type DocumentJobAdmission={kind?:string;documentId?:string;sourceSurface?:string;payload?:Record<string,unknown>};let submittedInput:DocumentJobAdmission|null=null;
   if(request.method==="POST"&&!path){const consent=requireConsent(user);if(consent)return consent;submittedInput=await request.json() as DocumentJobAdmission;const payload=submittedInput.payload;if(submittedInput.kind==="render_document"&&(payload?.artifactKind==="storyboard"||payload?.artifactKind==="video")&&payload.paidMediaConfirmed!==true)return Response.json({error:"paid_media_confirmation_required",message:"Confirm paid media generation before starting this render."},{status:428});}
@@ -901,7 +981,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   // rewrite account history. Maintenance starts only after financial admission.
   if(request.method!=="GET"&&path.endsWith("/retry")&&!project){
     await reconcileFailedBudgetReservations(env,user);
-    await env.DB.prepare(`UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND stream_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)
+    await env.DB.prepare(`UPDATE document_jobs SET ${EXPIRED_DOCUMENT_JOB_REDACTION_SQL},updated_at=? WHERE owner_id=? AND stream_id=? AND expires_at<=? AND ${DOCUMENT_JOB_REDACTION_REQUIRED_SQL}
       AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource JOIN organization_retention_policies policy ON policy.organization_id=resource.organization_id AND policy.legal_hold=1
         WHERE (resource.resource_kind='job' AND resource.resource_id=document_jobs.job_id)
           OR (resource.resource_kind='document' AND resource.resource_id=document_jobs.document_id AND resource.owner_user_id=document_jobs.owner_id))`).bind(now,user.userId,user.streamId,now).run();
@@ -1017,18 +1097,18 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
 
   if (path.endsWith("/run") && request.method === "POST") {
     const consent = requireConsent(user); if (consent) return consent;
-    const jobId = decodeURIComponent(path.slice(0, -4).replace(/\/$/, "")); const existing = await readJob(env, user.userId, jobId);
+    const jobId=decodeURIComponent(path.slice(0,-4).replace(/\/$/,""));const existing=verifiedPathJob??await readJob(env,user.userId,jobId);
     if (!existing) return Response.json({ error: "job_not_found" }, { status: 404 });
     if (existing.kind === "prompt_fan") {
       const job = await reconcilePromptFanParent(env, user.userId, jobId); if (!job) return Response.json({ error: "job_not_found" }, { status: 404 });
       context?.waitUntil(driveDocumentQueue(env, user));
       return Response.json({ job:project?safeScopedJob(job):serializeJob(job) }, { status: documentJobTerminal({ status: job.status }) ? 200 : 202 });
     }
-    if (context) {
+    if (context&&!requiresForegroundDocumentExecution(existing)) {
       context.waitUntil(driveDocumentQueue(env, user));
       return Response.json({ job:project?safeScopedJob(existing):serializeJob(existing), accepted: true }, { status: 202 });
     }
-    const job = await runDocumentJob(env, user, jobId); if (!job) return Response.json({ error: "job_not_found" }, { status: 404 });
+    const job=await runDocumentJob(env,user,jobId,existing);if(!job)return Response.json({error:"job_not_found"},{status:404});
     return Response.json({ job:project?safeScopedJob(job):serializeJob(job) }, { status: documentJobTerminal({ status: job.status }) ? 200 : 202 });
   }
 
@@ -1083,7 +1163,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       ? await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.userId, user.streamId).first<DocumentJobRow>()
       : visibleBlocker;
     const recoveryBlocker = activeBlocker && rowIsStale(activeBlocker) ? activeBlocker : null;
-    if (recoveryBlocker) context?.waitUntil(driveDocumentQueue(env, user));
+    if (recoveryBlocker&&!requiresForegroundDocumentExecution(recoveryBlocker)) context?.waitUntil(driveDocumentQueue(env, user));
     if (path && !rows.length) return Response.json({ error: "job_not_found" }, { status: 404 });
     return Response.json(path ? { job: serializeJob(rows[0], recoveryBlocker) } : { jobs: rows.map((row) => serializeJob(row, recoveryBlocker, false)) });
   }
@@ -1196,7 +1276,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   }
   if(!project){
     await reconcileFailedBudgetReservations(env,user);
-    await env.DB.prepare(`UPDATE document_jobs SET request_json='{}',result_json=NULL,updated_at=? WHERE owner_id=? AND stream_id=? AND expires_at<=? AND (request_json!='{}' OR result_json IS NOT NULL)
+    await env.DB.prepare(`UPDATE document_jobs SET ${EXPIRED_DOCUMENT_JOB_REDACTION_SQL},updated_at=? WHERE owner_id=? AND stream_id=? AND expires_at<=? AND ${DOCUMENT_JOB_REDACTION_REQUIRED_SQL}
       AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource JOIN organization_retention_policies policy ON policy.organization_id=resource.organization_id AND policy.legal_hold=1
         WHERE (resource.resource_kind='job' AND resource.resource_id=document_jobs.job_id)
           OR (resource.resource_kind='document' AND resource.resource_id=document_jobs.document_id AND resource.owner_user_id=document_jobs.owner_id))`).bind(now,user.userId,user.streamId,now).run();
@@ -1281,6 +1361,6 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   }
   if(resource)await anchorProjectJobs(env,user,[{jobId,kind,documentId}]);
   const job = await readJob(env, user.userId, jobId);
-  context?.waitUntil(driveDocumentQueue(env, user));
+  if(!requiresForegroundDocumentExecution(job!))context?.waitUntil(driveDocumentQueue(env,user));
   return Response.json({job:project?safeScopedJob(job!):serializeJob(job!),accepted:true},{status:202});
 }

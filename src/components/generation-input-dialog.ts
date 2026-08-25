@@ -20,7 +20,7 @@ export class GenerationInputDialog extends FormaElement {
     const references=Array.isArray(render.reference_inputs)?render.reference_inputs:Array.isArray(inspection.receipt.reference_inputs)?inspection.receipt.reference_inputs:frozenReferences;
     const providerContacted=accounting.provider_contacted;
     const promptLabel=providerContacted===true?"Submitted prompt":providerContacted===false?"Prepared prompt":"Retained prompt";
-    const knownStatuses=new Set(["not_submitted","submitted","completed","submission_unknown","unknown","not_transmitted","transmitted","estimated","authorizing","active","executing","settled","released","local_persistence","source_fidelity_validation","provider","application","planning"]);
+    const knownStatuses=new Set(["not_submitted","submitted","completed","submission_unknown","unknown","not_transmitted","transmitted","estimated","authorizing","active","executing","settled","released","local_persistence","source_fidelity_validation","provider","application","planning","queue"]);
     const status=(value:unknown)=>typeof value==="string"?knownStatuses.has(value)?this.i18n.system(value.replaceAll("_"," ")):value.replaceAll("_"," "):this.i18n.system("unknown");
     const dollars=(value:unknown)=>typeof value==="number"&&Number.isFinite(value)?`$${(value/1_000_000).toFixed(6)}`:this.i18n.system("Not yet confirmed");
     const facts:Array<[string,string|null]>=[
@@ -32,6 +32,7 @@ export class GenerationInputDialog extends FormaElement {
       ["Provider batches",typeof accounting.batch_count==="number"?this.i18n.number(accounting.batch_count):null],
       ["Provider calls",typeof accounting.actual_provider_call_count==="number"?typeof accounting.maximum_provider_call_count==="number"?this.i18n.system("{count} recorded · up to {maximum}",{count:this.i18n.number(accounting.actual_provider_call_count),maximum:this.i18n.number(accounting.maximum_provider_call_count)}):this.i18n.system("{count} recorded",{count:this.i18n.number(accounting.actual_provider_call_count)}):typeof accounting.minimum_provider_call_count==="number"&&typeof accounting.maximum_provider_call_count==="number"?this.i18n.system("{minimum}–{maximum} possible",{minimum:this.i18n.number(accounting.minimum_provider_call_count),maximum:this.i18n.number(accounting.maximum_provider_call_count)}):null],
       ["Provider request",accounting.provider_request_status?status(accounting.provider_request_status):null],
+      ["Provider contacted",accounting.provider_request_status?providerContacted===true?this.i18n.system("Yes"):providerContacted===false?this.i18n.system("No"):this.i18n.system("Not yet confirmed"):null],
       ["Source transmission",accounting.source_transmission_status?status(accounting.source_transmission_status):null],
       ["Reserved amount",typeof accounting.reservation_microusd==="number"?dollars(accounting.reservation_microusd):null],
       ["Application spending ceiling",accounting.reservation_is_application_hard_cap===true&&typeof accounting.maximum_authorized_cost_microusd==="number"?dollars(accounting.maximum_authorized_cost_microusd):null],

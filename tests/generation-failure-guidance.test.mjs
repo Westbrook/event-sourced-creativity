@@ -15,6 +15,10 @@ const failure = (patch = {}) => ({
   ...patch,
 });
 
+const failedJob=(receipt,patch={})=>({kind:"render_document",status:"failed",stage:"planning",result:{artifactKind:"slides",...(receipt?{generationReceipt:receipt}:{})},...patch});
+
+const interruption=()=>failure({code:"execution_interrupted",category:"server",scope:"unknown",action:"contact_support",message:"The server lost contact with this operation before it finished.",retryable:false});
+
 test("identifies local persistence failures without implying a provider outage or exposing private diagnostics", () => {
   const privateDiagnostic = "D1_ERROR: private source text and actor-only receipt";
   const guidance = generationFailureGuidance(failure({
@@ -50,6 +54,62 @@ test("identifies source-fidelity validation failures without exposing source con
   assert.match(guidance.summary, /Review the source document/i);
   assert.doesNotMatch(guidance.summary, /secret acquisition target|retry/i);
   assert.equal(guidance.retryAllowed, false);
+});
+
+test("classifies worker interruption before provider submission without inventing contact, transmission, or charges",()=>{
+  const receipt={provider_request_status:"not_submitted",source_transmission_status:"not_transmitted",settled_cost_microusd:0,failure_stage:"planning"};
+  const guidance=generationFailureGuidance(interruption(),"execution_interrupted",failedJob(receipt));
+
+  assert.equal(guidance.title,"Forma lost contact with the generation worker");
+  assert.match(guidance.summary,/No provider request was submitted/i);
+  assert.match(guidance.summary,/source was not transmitted/i);
+  assert.match(guidance.summary,/no provider charge was recorded/i);
+  assert.doesNotMatch(guidance.title,/provider connection/i);
+  assert.equal(guidance.retryAllowed,false);
+
+  const projectSafe=generationFailureGuidance(interruption(),"execution_interrupted",failedJob(null));
+  assert.match(projectSafe.title,/generation worker/i);
+  assert.match(projectSafe.summary,/saved generation receipt/i);
+  assert.doesNotMatch(projectSafe.summary,/no provider request|not transmitted|no provider charge/i);
+
+  const legacy=generationFailureGuidance(null,"execution_interrupted",failedJob(null));
+  assert.match(legacy.title,/generation worker/i);
+  assert.doesNotMatch(legacy.summary,/provider connection was interrupted/i);
+});
+
+test("distinguishes internal planning and queue failures from verified provider transport and rejection",()=>{
+  const local=failedJob({provider_request_status:"not_submitted",source_transmission_status:"not_transmitted",settled_cost_microusd:0,failure_stage:"planning"});
+  const planning=generationFailureGuidance(failure({category:"server",scope:"unknown"}),"",local);
+  assert.equal(planning.title,"Forma could not prepare this generation");
+  assert.match(planning.summary,/before a provider request was submitted/i);
+
+  const queue=generationFailureGuidance(failure({code:"document_queue_starved",category:"server",scope:"unknown",retryable:false}),"",failedJob({...local.result.generationReceipt,failure_stage:"queue"}));
+  assert.match(queue.title,/generation queue/i);
+  assert.equal(queue.retryAllowed,false);
+
+  const submitted=failedJob({provider_request_status:"submitted",source_transmission_status:"transmitted",settled_cost_microusd:12000});
+  const transport=generationFailureGuidance(failure(),"",submitted);
+  assert.equal(transport.title,"The provider connection was interrupted");
+  assert.equal(transport.retryAllowed,true);
+
+  const rejected=generationFailureGuidance(failure({code:"provider_invalid_request",category:"provider",scope:"request",httpStatus:422,retryable:false}),"",submitted);
+  assert.match(rejected.title,/provider rejected/i);
+  assert.equal(rejected.retryAllowed,false);
+});
+
+test("blocks duplicate paid submission when provider contact is uncertain and only resumes retained provider jobs",()=>{
+  const uncertain=failedJob({provider_request_status:"submission_unknown",source_transmission_status:"unknown",settled_cost_microusd:null});
+  for(const detail of [interruption(),failure(),failure({code:"provider_submission_uncertain",retryable:false})]){
+    const guidance=generationFailureGuidance(detail,"",uncertain);
+    assert.match(guidance.title,/submission could not be confirmed/i);
+    assert.match(guidance.summary,/duplicate|another request/i);
+    assert.equal(guidance.retryAllowed,false);
+  }
+
+  const recoverable=failedJob({provider_request_status:"submitted",source_transmission_status:"transmitted"},{result:{artifactKind:"video",providerJobId:"saved-provider-request",generationReceipt:{provider_request_status:"submitted",source_transmission_status:"transmitted"}}});
+  const guidance=generationFailureGuidance(interruption(),"",recoverable);
+  assert.match(guidance.summary,/recover its saved result/i);
+  assert.equal(guidance.retryAllowed,true);
 });
 
 test("preserves transient provider guidance while honoring non-retryable network and server receipts", () => {
