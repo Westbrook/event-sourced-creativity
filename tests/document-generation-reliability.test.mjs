@@ -1402,7 +1402,7 @@ test("recovers a privately retained title-and-question slideshow without weakeni
 
 test("recovers paid presentations from the legacy source compiler without accepting changed authored evidence",async()=>{
   const sha256=async(value)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(value)))),byte=>byte.toString(16).padStart(2,"0")).join("");
-  for(const variant of ["valid","changed-source","changed-membership","changed-relation","forged-revision","forged-source-hash"]){
+  for(const variant of ["valid","legacy-member-order","foreign-chapter","changed-source","changed-membership","changed-relation","forged-revision","forged-source-hash"]){
     const fixture=await reliabilityWorker();
     const documentId=await seedIndependentPresentation(fixture,`legacy-source-recovery-${variant}`,6);
     await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockRelationAdded",{
@@ -1415,6 +1415,16 @@ test("recovers paid presentations from the legacy source compiler without accept
       property_path:"combined_context_memberships",new_value:[{context_set_id:`legacy-chapter-${index+1}`,
         name:`Authorized chapter ${index+1}`,target:index===0?"first slide":index===5?"last slide":`Slide ${index+1}`,
         role:"slide_chapter",application:"isolate",member_order:0}],
+    });
+    await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockPropertyEdited",{
+      project_id:"project-atmosphere",document_id:documentId,block_id:"PRIVATE_OBJECTIVE",
+      property_path:"combined_context_memberships",new_value:[{context_set_id:"legacy-chapter-1",
+        name:"Authorized chapter 1",target:"first slide",role:"slide_chapter",application:"isolate",member_order:1}],
+    });
+    await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockRelationAdded",{
+      project_id:"project-atmosphere",document_id:documentId,relation_id:`legacy-membership-${variant}`,
+      from_block_id:"PRIVATE_AUTHORED_SLIDE_1",to_block_id:"PRIVATE_OBJECTIVE",kind:"combined_context_member",
+      properties:{context_set_id:"legacy-chapter-1",member_order:1,semantic_isolation:true},
     });
     const requestSourceJob=(path="",init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs${path?`/${path}`:""}`,init),fixture.environment,path);
     const previousFetch=globalThis.fetch;
@@ -1466,6 +1476,11 @@ test("recovers paid presentations from the legacy source compiler without accept
       checkpoint.presentationCandidates=checkpoint.presentationCandidates.map(candidate=>({
         ...candidate,documentRevision:legacyRevision,sourceSnapshotSha256:legacyHash,compiledSnapshotSha256:legacyCompiledHash,
       }));
+      if(variant==="legacy-member-order"){
+        assert.ok(checkpoint.productionPlan.scenes[0].sourceBlockIds.length>1);
+        checkpoint.productionPlan.scenes[0].sourceBlockIds.reverse();
+      }
+      if(variant==="foreign-chapter")checkpoint.productionPlan.scenes[0].sourceBlockIds.push("PRIVATE_AUTHORED_SLIDE_2");
       receipt.document_snapshot=legacySnapshot;
       receipt.source.snapshot_sha256=legacyHash;
       Object.assign(envelope,{document_revision:legacyRevision,source_snapshot_sha256:legacyHash,compiled_snapshot_sha256:legacyCompiledHash});
@@ -1490,7 +1505,7 @@ test("recovers paid presentations from the legacy source compiler without accept
       });
 
       const recovered=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
-      if(variant==="valid"){
+      if(variant==="valid"||variant==="legacy-member-order"){
         assert.equal(recovered.status,200,JSON.stringify(await recovered.clone().json()));
         const completed=(await recovered.json()).job;
         assert.equal(completed.status,"completed");
@@ -1499,7 +1514,7 @@ test("recovers paid presentations from the legacy source compiler without accept
         assert.equal(completed.result.generationReceipt.recovered_without_provider_request,true);
       }else{
         assert.equal(recovered.status,409,`${variant}: ${JSON.stringify(await recovered.clone().json())}`);
-        assert.equal((await recovered.json()).error,"presentation_recovery_source_changed");
+        assert.equal((await recovered.json()).error,variant==="foreign-chapter"?"presentation_recovery_unavailable":"presentation_recovery_source_changed");
         assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,0);
       }
       assert.equal(providerCalls,1,`${variant}: reviewing historical evidence never invokes a provider`);

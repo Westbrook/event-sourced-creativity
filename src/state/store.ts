@@ -406,9 +406,9 @@ export class FormaStore {
       if(!original||!documentJobCanRecoverPresentation(original))throw new Error("The saved presentation response could not be recovered");
       const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/recover`,{method:"POST"},"recover this saved presentation without another provider request");
       this.#assertAuthorizationScope(authorization);
-      const body=await response.json() as {job?:DocumentJob;error?:string};
+      const body=await response.json() as {job?:DocumentJob;error?:string;reason?:string};
       this.#assertAuthorizationScope(authorization);
-      if(!response.ok||!body.job)throw new Error(body.error??"The saved presentation response could not be recovered");
+      if(!response.ok||!body.job)throw new Error(body.reason&&body.error?`${body.error}: ${body.reason}`:body.error??"The saved presentation response could not be recovered");
       if(body.job.jobId!==jobId||body.job.documentId!==original.documentId)throw new Error("The saved presentation response does not belong to this authorized document");
       this.#jobDetails.delete(jobId);
       this.documentJobs.set([body.job,...this.documentJobs.get().filter((job)=>job.jobId!==jobId)]);

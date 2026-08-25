@@ -513,11 +513,11 @@ async function preservePresentationCandidate(env:WorkerEnv,user:PilotUser,job:Do
   return{...candidate.summary,retentionClass:"governed-evidence" as const,expiresAt};
 }
 
-type PresentationRecoveryResult={job:DocumentJobRow;recovered:true}|{error:string;status:number};
+type PresentationRecoveryResult={job:DocumentJobRow;recovered:true}|{error:string;status:number;reason?:string};
 
 /** Recover a fully paid presentation solely from actor-private retained provider output. */
 async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:DocumentJobRow,projectContextId=""):Promise<PresentationRecoveryResult>{
-  const failed=()=>({error:"presentation_recovery_unavailable",status:409} as const);
+  const failed=(reason="paid_evidence_unavailable")=>({error:"presentation_recovery_unavailable",status:409,reason} as const);
   const request=parseRequest(row);
   const checkpoint=parseResult(row);
   if(row.status==="completed"&&checkpoint.presentationRecovered===true)return{job:row,recovered:true};
@@ -529,13 +529,13 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
   const responseIds=new Set(Array.isArray(checkpoint.plannerResponseIds)?checkpoint.plannerResponseIds.map(String).filter(Boolean):[]);
   const plannerResponseId=String(checkpoint.plannerResponseId??"");
   if(plannerResponseId)responseIds.add(plannerResponseId);
-  if(!receipt||!originalHash||!plannerResponseId||!candidates.length)return failed();
+  if(!receipt||!originalHash||!plannerResponseId||!candidates.length)return failed("paid_response_receipt_missing");
   const reservationId=String(checkpoint.costReservationId??"");
   const reservation=reservationId?await costBudgetReservation(env,user.billingUserId??user.userId,reservationId):null;
-  if(!reservation||reservation.status!=="settled"||reservation.stream_id!==user.streamId||reservation.operation!=="document-render:slides")return failed();
+  if(!reservation||reservation.status!=="settled"||reservation.stream_id!==user.streamId||reservation.operation!=="document-render:slides")return failed("settled_reservation_unavailable");
   const paidReceipt=await env.DB.prepare("SELECT payload FROM events WHERE stream_id=? AND type='GenerationUsageRecorded' AND json_extract(payload,'$.planner_response_id')=? AND json_extract(payload,'$.document_id')=? AND json_extract(payload,'$.cost_reservation_id')=? LIMIT 1")
     .bind(user.streamId,plannerResponseId,row.document_id,reservationId).first<{payload:string}>();
-  if(!paidReceipt)return failed();
+  if(!paidReceipt)return failed("settled_usage_receipt_missing");
 
   const originalHead=await streamHead(env,user.streamId);
   const events=user.projectExecution?await readProjectSourceEvents(env,user.projectExecution):await readWorkspaceEvents(env,user.streamId);
@@ -564,37 +564,80 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
   const compiledHash=await sourceSnapshotSha256(snapshot);
   const itemCount=Number(request.itemCount??request.requestedSlideCount??0);
   const requestedSlideCount=Number(request.requestedSlideCount??itemCount);
-  if(!Number.isSafeInteger(itemCount)||itemCount<1||itemCount>12||!Number.isSafeInteger(requestedSlideCount)||requestedSlideCount!==itemCount)return failed();
+  if(!Number.isSafeInteger(itemCount)||itemCount<1||itemCount>12||!Number.isSafeInteger(requestedSlideCount)||requestedSlideCount!==itemCount)return failed("requested_slide_count_changed");
   const presentationStyle=typeof request.presentationStyle==="string"&&isSlideStylePresetId(request.presentationStyle)?request.presentationStyle:undefined;
   let production:ManagedProductionPlan|null=null;
   if(request.productionMode==="managed"){
-    try{production=buildManagedProductionPlan("slides",snapshot,{requestedSlideCount});}catch{return failed();}
+    let current:ManagedProductionPlan;
+    try{current=buildManagedProductionPlan("slides",snapshot,{requestedSlideCount});}catch{return failed("authorized_chapter_plan_invalid");}
     const recorded=checkpoint.productionPlan&&typeof checkpoint.productionPlan==="object"&&!Array.isArray(checkpoint.productionPlan)?checkpoint.productionPlan as ManagedProductionPlan:null;
-    if(!recorded||production.predictedSlideCount!==itemCount||production.providerBatchCount!==1||production.requestedSlideCount!==requestedSlideCount
+    if(!recorded||current.predictedSlideCount!==itemCount||current.providerBatchCount!==1||current.requestedSlideCount!==requestedSlideCount
       ||recorded.predictedSlideCount!==itemCount||recorded.providerBatchCount!==1||recorded.requestedSlideCount!==requestedSlideCount
-      ||recorded.scenes.length!==production.scenes.length
-      ||recorded.scenes.some((scene,index)=>{const expected=production!.scenes[index];return!expected||scene.narrativeOrder!==expected.narrativeOrder||JSON.stringify(scene.sourceBlockIds)!==JSON.stringify(expected.sourceBlockIds)||JSON.stringify(scene.contextGroupIds)!==JSON.stringify(expected.contextGroupIds);}))return failed();
-    const plannedGroups=new Set(production.scenes.flatMap((scene)=>scene.contextGroupIds));
-    if(combinedContextGroups(snapshot).some((group)=>!plannedGroups.has(group.id)))return failed();
+      ||recorded.scenes.length!==current.scenes.length)return failed("paid_chapter_plan_mismatch");
+    const groups=combinedContextGroups(snapshot);
+    const groupsById=new Map(groups.map((group)=>[group.id,group]));
+    const sourceFacts=(snapshot as Record<string,unknown>).facts;
+    const sourceIds=new Set((Array.isArray(sourceFacts)?sourceFacts:[])
+      .filter((fact):fact is Record<string,unknown>=>Boolean(fact)&&typeof fact==="object"&&!Array.isArray(fact))
+      .map((fact)=>String(fact.block_id??"")));
+    const sameMembers=(left:string[],right:string[])=>{
+      if(left.length!==right.length||new Set(left).size!==left.length)return false;
+      const expected=[...right].sort();
+      return[...left].sort().every((value,index)=>value===expected[index]);
+    };
+    const assignedSources=new Map<string,Set<string>>();
+    for(const [index,scene]of recorded.scenes.entries()){
+      const expected=current.scenes[index];
+      if(!expected||scene.narrativeOrder!==expected.narrativeOrder
+        ||!Array.isArray(scene.sourceBlockIds)||!scene.sourceBlockIds.length
+        ||!Array.isArray(scene.contextGroupIds)
+        ||!sameMembers(scene.contextGroupIds,expected.contextGroupIds)
+        ||scene.sourceBlockIds.some((blockId)=>!sourceIds.has(blockId)))return failed("paid_chapter_assignment_mismatch");
+      if(!scene.contextGroupIds.length){
+        if(!sameMembers(scene.sourceBlockIds,expected.sourceBlockIds))return failed("paid_chapter_source_mismatch");
+        continue;
+      }
+      for(const groupId of scene.contextGroupIds){
+        const group=groupsById.get(groupId);
+        if(!group)return failed("paid_chapter_group_unavailable");
+        const members=new Set(group.members.map((member)=>member.blockId));
+        const assigned=assignedSources.get(groupId)??new Set<string>();
+        for(const blockId of scene.sourceBlockIds)if(members.has(blockId))assigned.add(blockId);
+        if(!assigned.size)return failed("paid_chapter_group_empty");
+        assignedSources.set(groupId,assigned);
+      }
+      if(scene.sourceBlockIds.some((blockId)=>groups.some((group)=>group.application==="isolate"
+        &&group.members.some((member)=>member.blockId===blockId)
+        &&!scene.contextGroupIds.includes(group.id))))return failed("paid_chapter_isolation_mismatch");
+    }
+    if(groups.some((group)=>!assignedSources.has(group.id)
+      ||group.members.some((member)=>!assignedSources.get(group.id)?.has(member.blockId))))return failed("paid_chapter_coverage_incomplete");
+    // The server-owned paid plan is the provider's immutable chapter contract.
+    // Replanning after a compiler upgrade may reorder its authorized members;
+    // source, chapter, target, isolation, and complete coverage remain verified.
+    production=recorded;
   }
   const assessmentSnapshot=production?combinedSceneSnapshot(snapshot,production.scenes):snapshot;
   let plan:DocumentArtifactDraft|null=null;
   let recoveredResponseId="";
+  let candidateRejection="paid_provider_response_unavailable";
   for(const candidate of [...candidates].reverse()){
     const responseId=String(candidate.responseId??"");
-    if(!responseIds.has(responseId)||Number(candidate.pageCount??1)!==1||Number(candidate.pageIndex??0)!==0||Number(candidate.globalStartIndex??0)!==0||candidate.candidateTruncated===true||Number(candidate.candidateBytes??0)>MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES||candidate.documentRevision!==trusted.documentRevision||candidate.sourceSnapshotSha256!==originalHash||candidate.compiledSnapshotSha256!==compiledHash)continue;
+    if(!responseIds.has(responseId)||Number(candidate.pageCount??1)!==1||Number(candidate.pageIndex??0)!==0||Number(candidate.globalStartIndex??0)!==0||candidate.candidateTruncated===true||Number(candidate.candidateBytes??0)>MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES||candidate.documentRevision!==trusted.documentRevision||candidate.sourceSnapshotSha256!==originalHash){candidateRejection="paid_provider_receipt_mismatch";continue;}
+    if(candidate.compiledSnapshotSha256!==compiledHash){candidateRejection="compiled_source_receipt_mismatch";continue;}
     const retained=await loadPrivateProviderResponse(env,user.userId,String(candidate.contentRef??""),user.projectExecution);
-    if(!retained||retained.expires_at!==String(candidate.contentExpiresAt??""))continue;
+    if(!retained||retained.expires_at!==String(candidate.contentExpiresAt??"")){candidateRejection="private_provider_response_expired";continue;}
     let envelope:Record<string,unknown>;try{envelope=JSON.parse(retained.content) as Record<string,unknown>;}catch{continue;}
     const raw=typeof envelope.output_text==="string"?envelope.output_text:"";
     if(!raw||new TextEncoder().encode(raw).byteLength!==Number(candidate.candidateBytes??-1)||envelope.job_id!==row.job_id||envelope.stream_id!==row.stream_id||envelope.document_id!==row.document_id||envelope.document_revision!==trusted.documentRevision||envelope.source_snapshot_sha256!==originalHash||envelope.compiled_snapshot_sha256!==compiledHash||envelope.response_id!==responseId||envelope.model!==candidate.model||envelope.page_index!==0||envelope.page_count!==1||envelope.global_start_index!==0
       ||Number(envelope.requested_slide_count??requestedSlideCount)!==requestedSlideCount||Number(envelope.planned_slide_count??itemCount)!==itemCount||Number(envelope.provider_batch_count??1)!==1
       ||String(envelope.production_mode??"manual")!==(production?"managed":"manual")
-      ||await retainedPresentationContentSha256(raw)!==candidate.contentSha256||envelope.content_sha256!==candidate.contentSha256)continue;
+      ||await retainedPresentationContentSha256(raw)!==candidate.contentSha256||envelope.content_sha256!==candidate.contentSha256){candidateRejection="paid_provider_response_integrity_mismatch";continue;}
     const assessment=assessStoredPresentationCandidate(raw,assessmentSnapshot,{itemCount,requestedSlideCount,presentationStyle,presentationFidelity:request.presentationFidelity==="creative"?"creative":"faithful",...(production?{productionScenes:production.scenes}:{})});
     if(assessment.output&&assessment.issues.length===0){plan=assessment.output;recoveredResponseId=responseId;break;}
+    candidateRejection="paid_provider_response_validation_failed";
   }
-  if(!plan)return failed();
+  if(!plan)return failed(candidateRejection);
   if(!await activeProjectExecution(env,user,row.document_id,row.job_id)||await streamHead(env,user.streamId)!==originalHead)return{error:"presentation_recovery_source_changed",status:409};
 
   const correlationId=`${row.job_id}:recovery:${uuidV7()}`;
@@ -1653,7 +1696,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const target=await readJob(env,user.userId,jobId);
     if(!target)return Response.json({error:"job_not_found"},{status:404});
     const recovered=await recoverRetainedPresentation(env,user,target,project?.contextId??"");
-    if("error" in recovered)return Response.json({error:recovered.error},{status:recovered.status});
+    if("error" in recovered)return Response.json({error:recovered.error,...(recovered.reason?{reason:recovered.reason}:{})},{status:recovered.status});
     return Response.json({job:project?safeScopedJob(recovered.job):serializeJob(recovered.job),recovered:true},{headers:{"cache-control":"private, no-store"}});
   }
 
