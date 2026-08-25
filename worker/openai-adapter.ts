@@ -7,7 +7,7 @@ import { classifyProviderFailure, ProviderRequestError, providerErrorFromRespons
 import { normalizeImageFormat, validateProviderImageSize } from "../src/model/image-format.ts";
 import { buildReplayDevelopmentStages, type CreativeStudyKind, type ReplayDevelopmentStage } from "../src/model/replay-development.ts";
 import { moderateExactImagePrompt } from "./openai-moderation.ts";
-import { documentArtifactValidationIssues, parseDocumentArtifactContent, resolveDocumentArtifactContextGroups, slideCopyIsNearDuplicate, slideCopyIssues, slideVisualIsComplete, SLIDE_LAYOUTS, SLIDE_STYLE_PRESET_IDS, SLIDE_VISUAL_KINDS, type DocumentArtifactContextGroupContract, type DocumentArtifactDraft, type DocumentArtifactKind, type DocumentArtifactValidationIssue, type SlidePresentation, type SlideStylePresetId, type SlideVisualData, type SlideVisualDatum } from "../src/model/document-artifacts.ts";
+import { documentArtifactValidationIssues, parseDocumentArtifactContent, resolveDocumentArtifactContextGroups, slideCopyIsNearDuplicate, slideCopyIssues, slideDeckCopyIssues, slideVisualIsComplete, SLIDE_LAYOUTS, SLIDE_STYLE_PRESET_IDS, SLIDE_VISUAL_KINDS, type DocumentArtifactContextGroupContract, type DocumentArtifactDraft, type DocumentArtifactKind, type DocumentArtifactValidationIssue, type SlidePresentation, type SlideStylePresetId, type SlideVisualData, type SlideVisualDatum } from "../src/model/document-artifacts.ts";
 import { combinedContextGroups, combinedContextPromptDirectives } from "../src/model/combined-context.ts";
 import { creativeEvaluationPromptGuardrails, creativePromptGuardrails, promptFactIsActive, providerFacingCreativeContext, providerFacingRenderingContext } from "../src/model/prompt-policy.ts";
 import { REPLAY_EXPERIENCE_PROFILES, replayExperienceDefinition, type ReplayExperienceId } from "../src/model/replay-experiences.ts";
@@ -514,6 +514,7 @@ function resolveProviderPresentationSources(output:DocumentArtifactDraft|null,co
   const deterministicallyAssigned:number[]=[];
   const acceptedPresentationCopy:string[]=[];
   const acceptedSlideTitles:string[]=[];
+  const acceptedSlideItems:DocumentArtifactDraft["items"]=[];
   const repairedSlideTitles=new Map<number,{original:string;replacement:string}>();
   if(!output)return{output,receipt:{rawAssignments,canonicalAssignments,unknownAssignments:[],deterministicallyAssigned} satisfies PresentationSlideSourceResolutionReceipt};
 
@@ -623,7 +624,8 @@ function resolveProviderPresentationSources(output:DocumentArtifactDraft|null,co
       }
     }
     let title=audiencePresentationText(item.title);
-    if(acceptedSlideTitles.some((previous)=>slideCopyIsNearDuplicate(previous,title))){
+    const duplicatesEarlierDeckCopy=slideDeckCopyIssues([...acceptedSlideItems,{...item,title,slide:reconciledSlide}]).some((issue)=>issue.secondSlide===acceptedSlideItems.length&&issue.secondPath==="title");
+    if(acceptedSlideTitles.some((previous)=>slideCopyIsNearDuplicate(previous,title))||duplicatesEarlierDeckCopy){
       const groupTitles=scene?contract.sources.filter((source)=>source.sourceKind==="context-group"&&scene.contextGroupIds.includes(source.sourceId)).map((source)=>source.label):[];
       const sourceTitles=contract.sources.filter((source)=>source.sourceKind==="block"&&nestedSources.includes(source.sourceId)&&(!scene||scene.sourceBlockIds.includes(source.sourceId))).map((source)=>source.label);
       const candidates=uniquePresentationReferences([authored?.title,...(!contract.authoredSlideCount?[...groupTitles,scene?.title,...sourceTitles]:[])]).map(audiencePresentationText);
@@ -632,7 +634,7 @@ function resolveProviderPresentationSources(output:DocumentArtifactDraft|null,co
     }
     acceptedSlideTitles.push(title);
     acceptedPresentationCopy.push(title,item.body,...reconciledSlide.bullets,...(reconciledSlide.quote?.text?[reconciledSlide.quote.text]:[]),...reconciledSlide.visual.data.map((datum)=>datum.value),...(["hero-type","metric"].includes(reconciledSlide.visual.kind)&&reconciledSlide.visual.value.trim()?[reconciledSlide.visual.value]:[]));
-    return{
+    const resolvedItem={
       ...item,
       title,
       body:audiencePresentationText(item.body),
@@ -641,6 +643,8 @@ function resolveProviderPresentationSources(output:DocumentArtifactDraft|null,co
       context_group_ids:contextGroupIds,
       slide:reconciledSlide,
     };
+    acceptedSlideItems.push(resolvedItem);
+    return resolvedItem;
   });
   let markdownSlideIndex=0;
   const contentMarkdown=audiencePresentationText(output.content_markdown).split(/\r?\n/u).map((line)=>{

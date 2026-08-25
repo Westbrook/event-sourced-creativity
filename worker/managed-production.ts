@@ -1,5 +1,5 @@
 import { combinedContextGroups } from "../src/model/combined-context.ts";
-import { documentArtifactValidationIssues, formatPresentationQuantity, normalizeSlideDeckItems, slideCopyIsNearDuplicate, slideCopyIssues, type DocumentArtifactDraft, type DocumentArtifactDraftItem, type DocumentArtifactKind, type DocumentArtifactValidationIssue, type SlideStylePresetId } from "../src/model/document-artifacts.ts";
+import { documentArtifactValidationIssues, formatPresentationQuantity, normalizeSlideDeckItems, slideCopyIsNearDuplicate, slideCopyIssues, slideDeckCopyIssues, type DocumentArtifactDraft, type DocumentArtifactDraftItem, type DocumentArtifactKind, type DocumentArtifactValidationIssue, type SlideStylePresetId } from "../src/model/document-artifacts.ts";
 import { documentImageFormat, imageFormatForPreset, providerRenderFormat } from "../src/model/image-format.ts";
 import {
   MANAGED_PRODUCTION_BATCH_SIZE,
@@ -365,6 +365,7 @@ export async function generateManagedArtifactDraft(
     let items = pages.flatMap((page) => page.output.items);
     if (kind === "slides") {
       const acceptedTitles:string[]=[];
+      const acceptedItems:DocumentArtifactDraftItem[]=[];
       const authorizedBlocks = new Set((Array.isArray(input.snapshot.facts) ? input.snapshot.facts : []).flatMap((fact) => {
         if (!fact || typeof fact !== "object" || Array.isArray(fact)) return [];
         const blockId = String((fact as Record<string, unknown>).block_id ?? "").trim();
@@ -377,7 +378,7 @@ export async function generateManagedArtifactDraft(
         const sourceIds = item.slide.sourceIds?.length ? item.slide.sourceIds : scopedSourceIds;
         const contextGroupIds = item.context_group_ids?.length ? item.context_group_ids : scene.contextGroupIds;
         let title=item.title;
-        if(acceptedTitles.some((previous)=>slideCopyIsNearDuplicate(previous,title))){
+        if(acceptedTitles.some((previous)=>slideCopyIsNearDuplicate(previous,title))||slideDeckCopyIssues([...acceptedItems,item]).some((issue)=>issue.secondSlide===acceptedItems.length&&issue.secondPath==="title")){
           const authored=presentationSources?.numberedOutline.find((entry)=>entry.number===(scene.sourceOutlineOrder??index+1));
           const groupTitles=(presentationSources?.sources??[]).filter((source)=>source.sourceKind==="context-group"&&scene.contextGroupIds.includes(source.sourceId)).map((source)=>source.label);
           const sourceTitles=(presentationSources?.sources??[]).filter((source)=>source.sourceKind==="block"&&sourceIds.includes(source.sourceId)&&scene.sourceBlockIds.includes(source.sourceId)).map((source)=>source.label);
@@ -404,7 +405,7 @@ export async function generateManagedArtifactDraft(
           .map((citation) => citation.label.trim())
           .filter((label) => label && !notes.includes(label)))];
         if (missingCitationLabels.length) notes = [notes.trim(), `[${managedSlideLabels(presentationAudienceLocale).sources}] ${missingCitationLabels.join("; ")}`].filter(Boolean).join("\n\n");
-        return {
+        const resolved={
           ...item,
           title,
           notes,
@@ -416,6 +417,8 @@ export async function generateManagedArtifactDraft(
             ...(scene.sourceOutlineOrder && !item.slide.sourceOrder ? { sourceOrder: scene.sourceOutlineOrder } : {}),
           },
         };
+        acceptedItems.push(resolved);
+        return resolved;
       });
       if (normalizeSlides) items = normalizeSlideDeckItems(items);
     }

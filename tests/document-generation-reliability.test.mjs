@@ -14,7 +14,7 @@ const sourceResolution=registerHooks({resolve(specifier,context,nextResolve){
   const workspaceSource=typeof context.parentURL==="string"&&context.parentURL.startsWith(workspaceRoot)&&!context.parentURL.includes("/node_modules/");
   return nextResolve(workspaceSource&&specifier.startsWith(".")&&!/\.[a-z0-9]+$/i.test(specifier)?`${specifier}.ts`:specifier,context);
 }});
-const {cancelProjectActorJobs,handleDocumentJobs}=await import("../worker/document-jobs-api.ts").finally(()=>sourceResolution.deregister());
+const [{cancelProjectActorJobs,handleDocumentJobs},{handleEvents}]=await Promise.all([import("../worker/document-jobs-api.ts"),import("../worker/events-api.ts")]).finally(()=>sourceResolution.deregister());
 
 function reliabilityDatabase(){
   const sqlite=new DatabaseSync(":memory:");
@@ -780,6 +780,31 @@ test("rejects source-free slideshow requests at both admission boundaries withou
   }finally{globalThis.fetch=previousFetch;}
 });
 
+test("both slideshow admission boundaries reject six slides for seven isolated authored chapters before any paid work",async()=>{
+  const fixture=await reliabilityWorker();
+  const documentId="seven-independent-authored-presentation-chapters";
+  await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","DocumentCreated",{project_id:"project-atmosphere",document_id:documentId,title:"Seven independently isolated chapters"});
+  const targets=["first slide","Slide 2","Slide 3","Slide 4","Slide 5","Slide 6","last slide"];
+  for(let index=0;index<7;index+=1)await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockCreated",{project_id:"project-atmosphere",document_id:documentId,block_id:`isolated-chapter-${index+1}`,type:"message",handle:`message/isolated-${index+1}`,position:`chapter-${index+1}`,properties:{label:`Independent source ${index+1}`,text:`Approved and independently isolated decision ${index+1}.`,weight:1,authority:"authored",combined_context_memberships:[{context_set_id:`isolated-context-${index+1}`,name:`Isolated chapter ${index+1}`,target:targets[index],role:"slide_chapter",application:"isolate",member_order:0}]}});
+  const baselineEvents=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count;
+  const baselinePrivate=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count;
+  const original=globalThis.fetch;let providerCalls=0;
+  globalThis.fetch=async()=>{providerCalls+=1;throw new Error("An impossible chapter assignment must not contact a provider.");};
+  try{
+    for(const mode of ["manual","managed"])for(const boundary of ["jobs","events"]){
+      const payload={artifactKind:"slides",productionMode:mode,itemCount:6,requestedSlideCount:6,budgetAcknowledged:true};
+      const rejected=boundary==="jobs"?await handleDocumentJobs(new Request("http://localhost/api/document-jobs",json({kind:"render_document",documentId,payload})),fixture.environment,""):await handleEvents(new Request("http://localhost/api/events",json({action:"render_document",documentId,...payload})),fixture.environment);
+      assert.equal(rejected.status,409,`${boundary}/${mode}: ${JSON.stringify(await rejected.clone().json())}`);
+      const detail=await rejected.json();assert.equal(detail.error,"presentation_slide_count_conflict");assert.equal(detail.sourceMinimumSlideCount,7);
+    }
+    assert.equal(providerCalls,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count,baselineEvents);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count,baselinePrivate);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count,0);
+  }finally{globalThis.fetch=original;}
+});
+
 test("rejects user-supplied slideshow recovery plans, provider receipts, and reservation state at both public admission boundaries",async()=>{
   const fixture=await reliabilityWorker();
   await authoredOutline(fixture,12);
@@ -1373,6 +1398,39 @@ test("recovers a privately retained title-and-question slideshow without weakeni
       assert.equal(recoveredDraft.items[2].slide.visual.kind,variant==="row-values"?"architecture":"hero-type");
     }finally{globalThis.fetch=previousFetch;}
   }
+});
+
+test("an identical paid slideshow retry automatically recovers its retained complete response before reserving or spending again",async()=>{
+  const fixture=await reliabilityWorker();
+  const documentId=await seedIndependentPresentation(fixture,"identical-paid-recovery");
+  const requestSourceJob=(path="",init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs${path?`/${path}`:""}`,init),fixture.environment,path);
+  const admission=presentationAdmission(documentId,"identical-paid-recovery");
+  const previousFetch=globalThis.fetch;let providerCalls=0;
+  globalThis.fetch=async(_url,init={})=>{providerCalls+=1;return Response.json({id:`identical-paid-response-${providerCalls}`,model:"gpt-5.6-terra",output_text:JSON.stringify(independentProviderResponse(init.body)),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});};
+  try{
+    const accepted=await requestSourceJob("",json(admission));
+    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+    const{job}=await accepted.json();
+    fixture.sqlite.exec("CREATE TRIGGER fail_identical_paid_persistence BEFORE INSERT ON private_content WHEN NEW.kind='document-artifact' BEGIN SELECT RAISE(FAIL,'forced_identical_paid_persistence_failure'); END");
+    const failedResponse=await requestSourceJob(`${job.jobId}/run`,{method:"POST"});
+    assert.equal((await failedResponse.json()).job.status,"failed");
+    fixture.sqlite.exec("DROP TRIGGER fail_identical_paid_persistence");
+    const checkpoint=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+    checkpoint.recoverablePresentationCandidate=false;checkpoint.presentationCandidates=checkpoint.presentationCandidates.map((candidate)=>({...candidate,locallyRecoverable:false}));
+    fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify(checkpoint),job.jobId);
+    const beforeJobs=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count;
+    const beforeReservations=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count;
+    const settledCost=checkpoint.generationReceipt.settled_cost_microusd;
+    const repeated=await requestSourceJob("",json(admission));
+    assert.equal(repeated.status,200,JSON.stringify(await repeated.clone().json()));
+    const recovered=await repeated.json();
+    assert.equal(recovered.reused,true);assert.equal(recovered.recovered,true);assert.equal(recovered.job.jobId,job.jobId);assert.equal(recovered.job.status,"completed");
+    assert.equal(recovered.job.result.generationReceipt.settled_cost_microusd,settledCost);
+    assert.equal(recovered.job.result.generationReceipt.actual_provider_call_count,1);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count,beforeJobs);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count,beforeReservations);
+    assert.equal(providerCalls,1,"the identical retry must recover before another source receipt, reservation, or paid provider request");
+  }finally{globalThis.fetch=previousFetch;}
 });
 
 test("recovers a complete managed slideshow only with its original chapter-specific authorization",async()=>{

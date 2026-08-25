@@ -337,7 +337,7 @@ test("repairs a repeated slide title and empty hero from that slide's exact auth
   const snapshot=independentSlideSnapshot();
   const output=independentSlideOutput(snapshot);
   const originalBody=output.items[3].body;
-  output.items[3].title=output.items[2].title;
+  output.items[3].title=output.items[2].slide.visual.value;
   output.items[3].slide.visual.value=output.items[3].title;
   await withProviderResponses([output],async(requests)=>{
     const generated=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-executive-actor","slides",{documentTitle:"Independent approved presentation",snapshot,options:{itemCount:12,requestedSlideCount:12,presentationStyle:"field-notes",presentationFidelity:"faithful"}});

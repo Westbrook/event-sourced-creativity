@@ -17,6 +17,7 @@ import {
   scoreManualVideoBaseline,
 } from "../src/model/managed-production.ts";
 import { productionSystemFor, productionUnitsForPlan, validateProductionUnits } from "../src/model/production-system.ts";
+import { buildPresentationSourceContract } from "../src/model/presentation-source.ts";
 import { VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
 import { generateManagedArtifactDraft, renderManagedStoryboardProduction, renderManagedVideoProduction } from "../worker/managed-production.ts";
 
@@ -466,12 +467,14 @@ test("relationship-authored isolated presentation chapters retain their own sour
   const snapshot={facts,relationships};
   assert.equal(minimumPresentationSlideCount(snapshot),3);
   const production=buildManagedProductionPlan("slides",snapshot,{requestedSlideCount:3});
+  const contract=buildPresentationSourceContract(snapshot,{requestedSlideCount:3,itemCount:3});
   for(const [index,scene]of production.scenes.entries()){
     const expected=new Set([`PRIVATE_RELATION_CHAPTER_${index+1}`,`PRIVATE_RELATION_DECISION_${index+1}`]);
     assert.deepEqual(new Set(scene.sourceBlockIds),expected);
     assert.deepEqual(scene.contextGroupIds,[`PRIVATE_RELATION_CHAPTER_${index+1}`]);
     const scoped=productionSceneSnapshot(snapshot,scene);
     assert.deepEqual(new Set(scoped.facts.map((fact)=>fact.block_id)),expected,"relationship-scoped decisions must never leak into another chapter's provider snapshot");
+    for(const sourceId of expected){const source=contract.sources.find((entry)=>entry.sourceKind==="block"&&entry.sourceId===sourceId);assert.deepEqual(source.contextGroupIds,[`PRIVATE_RELATION_CHAPTER_${index+1}`]);}
   }
   const collision=structuredClone(snapshot);
   collision.facts[2].properties.context_group.target="Slide 1";
@@ -798,7 +801,7 @@ test("failed managed scene productions remain visibly recoverable without exposi
 
 test("the thirty-decision seven-chapter incident generates seven source-local hero slides in one mocked provider request",async()=>{
   const targets=["last slide","Slide 3","Slide 6","first slide","Slide 2","Slide 4","Slide 5"];
-  const snapshot={facts:Array.from({length:30},(_,index)=>{const group=Math.min(6,Math.floor(index*7/30));return{block_id:`PRIVATE_INCIDENT_BLOCK_${index+1}`,type:"message",locked:true,properties:{label:`Evidence ${index+1}`,text:`Approved source decision ${index+1} supports isolated editorial chapter ${group+1}.`,combined_context_memberships:[{context_set_id:`PRIVATE_INCIDENT_CHAPTER_${group+1}`,name:`Chapter ${group+1}`,target:targets[group],role:"slide_chapter",application:"isolate",relativity:.95,member_order:index}]}};})};
+  const snapshot={facts:Array.from({length:30},(_,index)=>{const group=Math.min(6,Math.floor(index*7/30));return{block_id:`PRIVATE_INCIDENT_BLOCK_${index+1}`,type:"message",locked:true,properties:{label:`Evidence ${index+1} key`,text:`Approved source decision ${index+1} supports isolated editorial chapter ${group+1}.`,combined_context_memberships:[{context_set_id:`PRIVATE_INCIDENT_CHAPTER_${group+1}`,name:`Chapter ${group+1}`,target:targets[group],role:"slide_chapter",application:"isolate",relativity:.95,member_order:index}]}};})};
   const production=buildManagedProductionPlan("slides",snapshot,{requestedSlideCount:7});
   const originalFetch=globalThis.fetch;
   const requests=[];
@@ -807,7 +810,8 @@ test("the thirty-decision seven-chapter incident generates seven source-local he
     const provider=JSON.parse(request.input);
     const scenes=provider.production.assigned_scenes;
     const items=scenes.map((scene)=>({title:`Bounded editorial position ${scene.narrative_order}`,body:scene.action,notes:`Approved evidence for position ${scene.narrative_order}.`,image_prompt:"",context_group_ids:scene.context_keys,slide:{layout:scene.narrative_order===7?"closing":"statement",kicker:`Independent section ${scene.narrative_order}`,bullets:[],source_ids:scene.source_keys,visual:{kind:"hero-type",label:`Source finding ${scene.narrative_order}`,value:`Bounded editorial position ${scene.narrative_order}`,data:[]}}}));
-    items[6].title=items[0].title;items[6].slide.visual.value=items[6].title;
+    items[6].title=provider.presentation_source.sources.find((source)=>source.alias===scenes[0].source_keys[0]).label;
+    items[6].slide.visual.value=items[6].title;
     const presentation={aspect_ratio:"16:9",theme:"Seven isolated source chapters",footer_label:"Authorized editorial evidence",style_preset:"field-notes",mode:"light",palette:{background:"#edf1ef",foreground:"#14211d",accent:"#287260",muted:"#586b64",surface:"#d9e3df"}};
     return Response.json({id:"incident-seven-slide-mock",model:"gpt-test",output_text:JSON.stringify({title:"Seven bounded editorial positions",summary:"Seven explicitly targeted source chapters remain isolated.",content_markdown:items.map((item,index)=>`## ${index+1}. ${item.title}\n${item.body}`).join("\n\n"),presentation,items}),usage:{input_tokens:900,output_tokens:600,total_tokens:1500}});
   };
@@ -815,10 +819,10 @@ test("the thirty-decision seven-chapter incident generates seven source-local he
     const generated=await generateManagedArtifactDraft({OPENAI_API_KEY:"test-only",OPENAI_MODEL:"gpt-test"},"owner","slides",{documentTitle:"All approved source chapters",snapshot,production,requestedSlideCount:7});
     assert.equal(requests.length,1,"seven explicitly requested slides require exactly one mocked provider request and no paid repair");
     assert.equal(generated.output.items.length,7);
-    assert.equal(generated.output.items[6].title,production.contextGroups.find((group)=>group.id===production.scenes[6].contextGroupIds[0]).name,"a duplicated final title must be replaced only with its own authorized chapter label");
+    assert.equal(generated.output.items[6].title,production.contextGroups.find((group)=>group.id===production.scenes[6].contextGroupIds[0]).name,`a duplicated final title must be replaced only with its own authorized chapter label: ${JSON.stringify(generated.output.items.map((item)=>({title:item.title,visual:item.slide.visual.value})))}`);
     assert.equal(new Set(generated.output.items.map((item)=>item.title.toLowerCase())).size,7);
     assert.deepEqual(generated.output.items.map((item)=>item.context_group_ids),production.scenes.map((scene)=>scene.contextGroupIds));
-    assert.ok(generated.output.items.every((item)=>item.slide?.visual.kind==="hero-type"&&/^Evidence \d+$/u.test(item.slide.visual.value)),"title-duplicating hero values are recovered from exact authorized source labels without another provider call");
+    assert.ok(generated.output.items.every((item)=>item.slide?.visual.kind==="hero-type"&&/^Evidence \d+ key$/u.test(item.slide.visual.value)),"title-duplicating hero values are recovered from exact authorized source labels without another provider call");
     assert.ok(generated.output.items.every((item,index)=>item.slide.sourceIds.every((sourceId)=>production.scenes[index].sourceBlockIds.includes(sourceId))));
     assert.match(requests[0].instructions,/hero-type or metric visual needs exactly one meaningful source-authored visual\.value/u);
     assert.doesNotMatch(JSON.stringify(requests[0]),/PRIVATE_INCIDENT_BLOCK_|PRIVATE_INCIDENT_CHAPTER_/u,"durable source and context identifiers never leave Forma");
@@ -1493,6 +1497,14 @@ test("an unrepaired protected stakeholder quotation fails terminally after one b
         assert.match(error.detail.message, /missing_protected_quote/);
         assert.doesNotMatch(error.detail.message, /PRIVATE_SOURCE_(?:BLOCK|SECTION|CANVAS)_/);
         assert.ok(!error.detail.message.includes(EXECUTIVE_STAKEHOLDER_QUOTES[1]), "a public failure diagnostic must not echo customer-authored protected source text");
+        const missing=error.detail.validationIssues.find((issue)=>issue.code==="missing_protected_quote");
+        assert.ok(missing,"whole-production validation must preserve its sanitized slide-level issue instead of collapsing it into a generic failure");
+        assert.equal(missing.category,"source-integrity");
+        assert.equal(missing.pageIndex,0);
+        assert.equal(missing.globalSlideIndex,7);
+        assert.equal(missing.providerAttempt,3);
+        assert.equal(missing.overridable,false);
+        assert.doesNotMatch(JSON.stringify(error.detail.validationIssues),/PRIVATE_SOURCE_|blk_\d+|traceable, editable/u);
         return true;
       },
     );

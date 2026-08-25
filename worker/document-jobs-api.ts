@@ -421,7 +421,11 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
 /** Reassess a bounded number of actor-owned paid drafts without exposing their private checkpoints. */
 async function freshlyRecoverablePresentationRows(env:WorkerEnv,user:PilotUser,rows:DocumentJobRow[],projectContextId=""){
   const certified=new Map<string,boolean>();
-  const candidates=rows.filter((row)=>row.status==="failed"&&row.kind==="render_document"&&parseRequest(row).artifactKind==="slides").slice(0,4);
+  const candidates=rows.filter((row)=>{
+    if(row.status!=="failed"||row.kind!=="render_document"||parseRequest(row).artifactKind!=="slides")return false;
+    const checkpoint=parseResult(row);
+    return Boolean(checkpoint.costReservationId&&(checkpoint.plannerResponseId||Array.isArray(checkpoint.plannerResponseIds)&&checkpoint.plannerResponseIds.length));
+  }).slice(0,4);
   for(const compact of candidates){
     try{
       const retained=await readJob(env,user.userId,compact.job_id);
