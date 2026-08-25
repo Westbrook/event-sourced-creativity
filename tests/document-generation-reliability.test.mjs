@@ -1464,6 +1464,32 @@ test("recovers a project owner's actor-private slideshow only while its selected
     const historicalProjectDetail=await requestSourceJob(`${job.jobId}/presentation-candidates/project-owner-privately-retained-response`);
     assert.equal(historicalProjectDetail.status,200,JSON.stringify(await historicalProjectDetail.clone().json()));
     fixture.sqlite.prepare("UPDATE document_jobs SET request_json=?,result_json=?,expires_at=? WHERE job_id=?").run(originalHistoricalJob.request_json,originalHistoricalJob.result_json,originalHistoricalJob.expires_at,job.jobId);
+
+    const collaboratorHeaders={"oai-authenticated-user-id":"project-presentation-collaborator","oai-authenticated-user-email":"project-presentation-collaborator@example.test"};
+    assert.equal((await fixture.request("/api/session",{headers:collaboratorHeaders})).status,200);
+    fixture.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id=?").run("pilot-2026-08-10","project-presentation-collaborator");
+    const invited=await fixture.request(`/api/workspaces/${organizationId}/members`,json({email:"project-presentation-collaborator@example.test",role:"member"}));
+    assert.equal(invited.status,201,JSON.stringify(await invited.clone().json()));
+    const invitation=await invited.json();
+    const acceptedInvitation=await fixture.request(`/api/workspaces/${organizationId}/invitations/${invitation.invitationId}/accept`,json({token:new URL(invitation.invitationUrl).searchParams.get("token")},collaboratorHeaders));
+    assert.equal(acceptedInvitation.status,200,JSON.stringify(await acceptedInvitation.clone().json()));
+    const teammate=await fixture.request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/members`,json({userId:"project-presentation-collaborator",role:"editor"}));
+    assert.equal(teammate.status,201,JSON.stringify(await teammate.clone().json()));
+    const teammateContext=await fixture.request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST",headers:collaboratorHeaders});
+    assert.equal(teammateContext.status,200,JSON.stringify(await teammateContext.clone().json()));
+    const teammateScope={...collaboratorHeaders,cookie:teammateContext.headers.get("set-cookie")?.split(";")[0]??""};
+    const teammateSession=await fixture.request("/api/session",{headers:teammateScope});
+    assert.equal(teammateSession.status,200);
+    assert.ok((await teammateSession.json()).projectContext.permissions.includes("project.output.request"),"the collaborator has genuine access to this same shared project and document");
+    for(const[extension,method]of[["","GET"],["/project-owner-privately-retained-response","GET"],["/project-owner-privately-retained-response/preserve","POST"]]){
+      const privatePath=`${job.jobId}/presentation-candidates${extension}`;
+      const collaboratorAttempt=await handleDocumentJobs(new Request(`http://localhost/api/document-jobs/${privatePath}`,{method,headers:teammateScope}),fixture.environment,privatePath);
+      assert.equal(collaboratorAttempt.status,404,`a legitimate project editor cannot ${method} another actor's presentation evidence`);
+      assert.doesNotMatch(await collaboratorAttempt.text(),/RESPONSIVE ASSESSMENT|PRIVATE_AUTHORED_SLIDE_/u);
+    }
+    const collaboratorDiscovery=await handleDocumentJobs(new Request(`http://localhost/api/document-jobs/presentation-candidates?document=${encodeURIComponent(documentId)}`,{headers:teammateScope}),fixture.environment,"presentation-candidates");
+    assert.equal(collaboratorDiscovery.status,200,JSON.stringify(await collaboratorDiscovery.clone().json()));
+    assert.deepEqual((await collaboratorDiscovery.json()).jobs,[],"governed owner evidence cannot appear in a teammate's private discovery feed");
     assert.equal(providerCalls,1,"inspecting and preserving actor-private project evidence cannot initiate paid work");
 
     fixture.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE context_id=?").run(new Date().toISOString(),contextId);

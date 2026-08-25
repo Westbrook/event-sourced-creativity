@@ -59,6 +59,10 @@ export class PresentationRejectedDrafts extends FormaElement {
     const dialog = this.querySelector<HTMLDialogElement>(".presentation-rejected-drafts-dialog");
     if (this.#open && dialog && !dialog.open) ensureModalDialog(dialog);
     if (this.documentId && this.#discoveredFor !== this.documentId) {
+      if (this.#discoveredFor) {
+        this.#preservedJobs = [];
+        this.#clearPrivateDrafts();
+      }
       this.#discoveredFor = this.documentId;
       void this.#discoverPreservedDrafts(this.documentId);
     }
