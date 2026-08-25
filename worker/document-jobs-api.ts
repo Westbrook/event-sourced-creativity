@@ -32,7 +32,7 @@ import { combinedContextGroups } from "../src/model/combined-context";
 import { safePresentationCandidateIssues, sanitizePresentationCandidateSlides, sanitizePresentationCandidateText, type PresentationCandidateDetail, type PresentationCandidateSummary } from "../src/model/presentation-candidates";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./document-job-reservations";
 import { PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow } from "./access-policy";
-import { authoritativeCreativeContext, ContextIntegrityError } from "./context-authority";
+import { authoritativeCreativeContext, authoritativePresentationRecoveryContext, ContextIntegrityError } from "./context-authority";
 import { managedPilotSourceClassificationValid } from "./media-api";
 import { ProductionWorkflowContextError, resolveProductionWorkflowContext } from "./production-workflow";
 import { assessStoredPresentationCandidate, MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES, PRESENTATION_ADAPTER_VERSION } from "./openai-adapter";
@@ -543,12 +543,10 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
   const projection=foldEvents(events,Number.POSITIVE_INFINITY,row.document_id,user.projectExecution?.projectId??"");
   const document=projection.documents.find((candidate)=>candidate.id===row.document_id);
   if(!document||user.projectExecution&&document.projectId!==user.projectExecution.projectId)return{error:"job_not_found",status:404};
-  let trusted:ReturnType<typeof authoritativeCreativeContext>;
+  let trusted:Awaited<ReturnType<typeof authoritativePresentationRecoveryContext>>;
   try{
-    trusted=authoritativeCreativeContext(events,{documentId:row.document_id,projectId:document.projectId,canvasId:typeof request.canvasId==="string"?request.canvasId:undefined,contextSetId:typeof request.contextSetId==="string"?request.contextSetId:undefined,snapshot:request.snapshot&&typeof request.snapshot==="object"&&!Array.isArray(request.snapshot)?request.snapshot as Record<string,unknown>:undefined,sourceBlockVersions:Array.isArray(request.sourceBlockVersions)?request.sourceBlockVersions as Array<Record<string,unknown>>:undefined});
+    trusted=await authoritativePresentationRecoveryContext(events,{documentId:row.document_id,projectId:document.projectId,canvasId:typeof request.canvasId==="string"?request.canvasId:undefined,contextSetId:typeof request.contextSetId==="string"?request.contextSetId:undefined,snapshot:request.snapshot&&typeof request.snapshot==="object"&&!Array.isArray(request.snapshot)?request.snapshot as Record<string,unknown>:undefined,sourceBlockVersions:Array.isArray(request.sourceBlockVersions)?request.sourceBlockVersions as Array<Record<string,unknown>>:undefined,documentRevision:String(request.documentRevision??"")},originalHash);
   }catch(error){return error instanceof ContextIntegrityError?{error:"presentation_recovery_source_changed",status:409}:failed();}
-  const currentHash=await sourceSnapshotSha256(trusted.snapshot);
-  if(currentHash!==originalHash||trusted.documentRevision!==String(request.documentRevision??"")||JSON.stringify(trusted.sourceBlockVersions)!==JSON.stringify(request.sourceBlockVersions??[]))return{error:"presentation_recovery_source_changed",status:409};
   let effectiveSnapshot:Record<string,unknown>=trusted.snapshot;
   if(request.workflowId!==undefined||request.workflowStageId!==undefined||request.workflowSources!==undefined){
     try{

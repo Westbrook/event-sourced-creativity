@@ -5,7 +5,7 @@ import test from "node:test";
 
 import worker from "../dist/server/index.js";
 import { documentArtifactValidationIssues, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
-import { DOCUMENT_JOB_HEARTBEAT_MS, documentJobMaxAttempts, generationFailureGuidance } from "../src/model/document-jobs.ts";
+import { DOCUMENT_JOB_HEARTBEAT_MS, documentGenerationRevision, documentJobMaxAttempts, generationFailureGuidance } from "../src/model/document-jobs.ts";
 import { claimCostBudgetReservation, reconcileFailedBudgetReservations, reserveBudget, reserveCostBudget } from "../worker/pilot-policy.ts";
 import { appendAuditEvent } from "../worker/runtime.ts";
 
@@ -1396,6 +1396,113 @@ test("recovers a privately retained title-and-question slideshow without weakeni
       const recoveredDraft=JSON.parse(fixture.sqlite.prepare("SELECT content FROM private_content WHERE kind='document-artifact' AND redacted_at IS NULL ORDER BY created_at DESC,rowid DESC LIMIT 1").get().content);
       assert.ok(recoveredDraft.items[2].slide.sourceIds.includes("PRIVATE_AUTHORED_SLIDE_3"));
       assert.equal(recoveredDraft.items[2].slide.visual.kind,variant==="row-values"?"architecture":"hero-type");
+    }finally{globalThis.fetch=previousFetch;}
+  }
+});
+
+test("recovers paid presentations from the legacy source compiler without accepting changed authored evidence",async()=>{
+  const sha256=async(value)=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(value)))),byte=>byte.toString(16).padStart(2,"0")).join("");
+  for(const variant of ["valid","changed-source","changed-membership","changed-relation","forged-revision","forged-source-hash"]){
+    const fixture=await reliabilityWorker();
+    const documentId=await seedIndependentPresentation(fixture,`legacy-source-recovery-${variant}`,6);
+    await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockRelationAdded",{
+      project_id:"project-atmosphere",document_id:documentId,relation_id:`legacy-relation-${variant}`,
+      from_block_id:"PRIVATE_AUTHORED_SLIDE_1",to_block_id:"PRIVATE_AUTHORED_SLIDE_2",
+      kind:"supports",properties:{weight:.7},
+    });
+    for(let index=0;index<6;index+=1)await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockPropertyEdited",{
+      project_id:"project-atmosphere",document_id:documentId,block_id:`PRIVATE_AUTHORED_SLIDE_${index+1}`,
+      property_path:"combined_context_memberships",new_value:[{context_set_id:`legacy-chapter-${index+1}`,
+        name:`Authorized chapter ${index+1}`,target:index===0?"first slide":index===5?"last slide":`Slide ${index+1}`,
+        role:"slide_chapter",application:"isolate",member_order:0}],
+    });
+    const requestSourceJob=(path="",init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs${path?`/${path}`:""}`,init),fixture.environment,path);
+    const previousFetch=globalThis.fetch;
+    let providerCalls=0;
+    globalThis.fetch=async(_url,init={})=>{
+      providerCalls+=1;
+      const request=JSON.parse(init.body),input=JSON.parse(request.input),output=independentProviderResponse(init.body);
+      output.items=output.items.map((item,index)=>{
+        const scene=input.production.assigned_scenes[index],alias=scene.source_keys[0];
+        item.context_group_ids=scene.context_keys;
+        item.slide.source_ids=scene.source_keys;
+        item.slide.citations=item.slide.citations.map(citation=>({...citation,source_id:alias}));
+        if(item.slide.quote)item.slide.quote.source_id=alias;
+        item.slide.visual.data=item.slide.visual.data.map(value=>({...value,source_ids:[alias]}));
+        return item;
+      });
+      return Response.json({id:`legacy-source-response-${variant}`,model:"gpt-5.6-terra",output_text:JSON.stringify(output),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});
+    };
+    try{
+      const admission=presentationAdmission(documentId,`legacy-source-recovery-${variant}`);
+      Object.assign(admission.payload,{productionMode:"managed",itemCount:6,requestedSlideCount:6});
+      const accepted=await requestSourceJob("",json(admission));
+      assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+      const{job}=await accepted.json();
+      fixture.sqlite.exec("CREATE TRIGGER fail_legacy_source_persistence BEFORE INSERT ON private_content WHEN NEW.kind='document-artifact' BEGIN SELECT RAISE(FAIL,'forced_legacy_source_persistence_failure'); END");
+      const failed=await requestSourceJob(`${job.jobId}/run`,{method:"POST"});
+      assert.equal((await failed.json()).job.status,"failed");
+      fixture.sqlite.exec("DROP TRIGGER fail_legacy_source_persistence");
+
+      const persisted=fixture.sqlite.prepare("SELECT request_json,result_json FROM document_jobs WHERE job_id=?").get(job.jobId);
+      const request=JSON.parse(persisted.request_json);
+      const checkpoint=JSON.parse(persisted.result_json);
+      const originalSource=fixture.sqlite.prepare("SELECT content_id,content FROM private_content WHERE kind='document-artifact-input' AND json_extract(content,'$.job_id')=?").get(job.jobId);
+      const receipt=JSON.parse(originalSource.content);
+      const response=fixture.sqlite.prepare("SELECT content_id,content FROM private_content WHERE kind='provider-response' AND json_extract(content,'$.job_id')=?").get(job.jobId);
+      const envelope=JSON.parse(response.content);
+      const {context_groups,...legacySnapshot}=request.snapshot;
+      assert.equal(context_groups.length,6,"the current compiler materializes all six isolated, source-bound chapters");
+      const legacyHash=await sha256(legacySnapshot);
+      const legacyRevision=documentGenerationRevision({snapshot:legacySnapshot,sourceBlockVersions:request.sourceBlockVersions,documentId});
+      const modernCompiled={...request.snapshot,document:{id:documentId,title:"Event-Sourced Conversational Experience — Executive Plan"}};
+      assert.equal(await sha256(modernCompiled),envelope.compiled_snapshot_sha256,"the fixture must reproduce the exact retained provider source");
+      const legacyCompiled={...legacySnapshot,document:modernCompiled.document};
+      const legacyCompiledHash=await sha256(legacyCompiled);
+
+      request.snapshot=legacySnapshot;
+      request.documentRevision=variant==="forged-revision"?"rev-forged":legacyRevision;
+      checkpoint.generationReceipt.source_snapshot_sha256=variant==="forged-source-hash"?"0".repeat(64):legacyHash;
+      checkpoint.presentationCandidates=checkpoint.presentationCandidates.map(candidate=>({
+        ...candidate,documentRevision:legacyRevision,sourceSnapshotSha256:legacyHash,compiledSnapshotSha256:legacyCompiledHash,
+      }));
+      receipt.document_snapshot=legacySnapshot;
+      receipt.source.snapshot_sha256=legacyHash;
+      Object.assign(envelope,{document_revision:legacyRevision,source_snapshot_sha256:legacyHash,compiled_snapshot_sha256:legacyCompiledHash});
+      fixture.sqlite.prepare("UPDATE document_jobs SET request_json=?,result_json=? WHERE job_id=?")
+        .run(JSON.stringify(request),JSON.stringify(checkpoint),job.jobId);
+      fixture.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?")
+        .run(JSON.stringify(receipt),originalSource.content_id);
+      fixture.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?")
+        .run(JSON.stringify(envelope),response.content_id);
+
+      if(variant==="changed-source")await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockPropertyEdited",{
+        project_id:"project-atmosphere",document_id:documentId,block_id:"PRIVATE_AUTHORED_SLIDE_1",
+        property_path:"text",new_value:"A genuinely different authored decision must remain protected.",
+      });
+      if(variant==="changed-membership")await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockPropertyEdited",{
+        project_id:"project-atmosphere",document_id:documentId,block_id:"PRIVATE_AUTHORED_SLIDE_1",
+        property_path:"combined_context_memberships",new_value:[{context_set_id:"legacy-chapter-1",
+          name:"A different chapter authorization",target:"last slide",role:"slide_chapter",application:"isolate",member_order:0}],
+      });
+      if(variant==="changed-relation")await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockRelationRemoved",{
+        project_id:"project-atmosphere",document_id:documentId,relation_id:`legacy-relation-${variant}`,
+      });
+
+      const recovered=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+      if(variant==="valid"){
+        assert.equal(recovered.status,200,JSON.stringify(await recovered.clone().json()));
+        const completed=(await recovered.json()).job;
+        assert.equal(completed.status,"completed");
+        assert.equal(completed.result.generationReceipt.source_snapshot_sha256,legacyHash);
+        assert.equal(completed.result.generationReceipt.actual_provider_call_count,1);
+        assert.equal(completed.result.generationReceipt.recovered_without_provider_request,true);
+      }else{
+        assert.equal(recovered.status,409,`${variant}: ${JSON.stringify(await recovered.clone().json())}`);
+        assert.equal((await recovered.json()).error,"presentation_recovery_source_changed");
+        assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,0);
+      }
+      assert.equal(providerCalls,1,`${variant}: reviewing historical evidence never invokes a provider`);
     }finally{globalThis.fetch=previousFetch;}
   }
 });

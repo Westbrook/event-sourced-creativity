@@ -225,3 +225,56 @@ export function authoritativeCreativeContext(events: CreativeEvent[], request: C
     documentRevision: documentGenerationRevision({ snapshot, sourceBlockVersions, documentId: document.id }),
   };
 }
+
+/**
+ * Older paid slideshows predate the materialized context_groups field. Accept
+ * that one compiler-only difference only when every durable authored fact,
+ * relation, source revision, governance rule, and original receipt still match.
+ */
+export async function authoritativePresentationRecoveryContext(
+  events: CreativeEvent[],
+  request: ContextRequest & { documentRevision?: string },
+  expectedSnapshotSha256: string,
+) {
+  const trusted = authoritativeCreativeContext(events, request);
+  const expectedRevision = String(request.documentRevision ?? "");
+  const requestedVersions = Array.isArray(request.sourceBlockVersions) ? request.sourceBlockVersions : [];
+  const changed = () => new ContextIntegrityError(
+    "context_source_version_mismatch",
+    "The saved presentation no longer matches its authorized authored source.",
+  );
+  if (!expectedRevision || JSON.stringify(trusted.sourceBlockVersions) !== JSON.stringify(requestedVersions)) {
+    throw changed();
+  }
+
+  const digest = async (snapshot: Record<string, unknown>) => {
+    const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(snapshot)));
+    return Array.from(new Uint8Array(bytes), (value) => value.toString(16).padStart(2, "0")).join("");
+  };
+  const currentHash = await digest(trusted.snapshot);
+  if (currentHash === expectedSnapshotSha256 && trusted.documentRevision === expectedRevision) return trusted;
+
+  const original = request.snapshot;
+  if (!original || Object.hasOwn(original, "context_groups") || Object.hasOwn(original, "contextGroups")
+    || Object.hasOwn(original, "canvas") || Object.hasOwn(original, "context_scope")
+    || Object.hasOwn(original, "character_study")) {
+    throw changed();
+  }
+  const { context_groups: derivedGroups, ...legacySnapshot } = trusted.snapshot;
+  const expectedGroups = combinedContextGroups({
+    facts: legacySnapshot.facts,
+    relationships: legacySnapshot.relationships,
+  });
+  if (!Array.isArray(derivedGroups) || JSON.stringify(derivedGroups) !== JSON.stringify(expectedGroups)
+    || await digest(original) !== expectedSnapshotSha256
+    || await digest(legacySnapshot) !== expectedSnapshotSha256) {
+    throw changed();
+  }
+  const legacyRevision = documentGenerationRevision({
+    snapshot: legacySnapshot,
+    sourceBlockVersions: trusted.sourceBlockVersions,
+    documentId: request.documentId,
+  });
+  if (legacyRevision !== expectedRevision) throw changed();
+  return { ...trusted, snapshot: legacySnapshot, documentRevision: legacyRevision };
+}
