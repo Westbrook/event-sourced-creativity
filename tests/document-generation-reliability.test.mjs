@@ -1350,6 +1350,15 @@ test("recovers a privately retained title-and-question slideshow without weakeni
       const settledCost=failed.result.generationReceipt.settled_cost_microusd;
       fixture.sqlite.exec("DROP TRIGGER fail_historical_opening_persistence");
 
+      const staleCheckpoint=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+      staleCheckpoint.recoverablePresentationCandidate=false;
+      staleCheckpoint.presentationCandidates=staleCheckpoint.presentationCandidates.map((candidate)=>({...candidate,locallyRecoverable:false}));
+      fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify(staleCheckpoint),job.jobId);
+      const reassessed=await requestSourceJob();
+      assert.equal(reassessed.status,200,JSON.stringify(await reassessed.clone().json()));
+      assert.equal((await reassessed.json()).jobs.find((candidate)=>candidate.jobId===job.jobId).result.recoverablePresentationCandidate,true,"current validators must reassess retained paid drafts without trusting obsolete historical checkpoint flags");
+      assert.equal(providerCalls,1,"dynamic recovery certification must not contact a provider");
+
       const recoveredResponse=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
       assert.equal(recoveredResponse.status,200,JSON.stringify(await recoveredResponse.clone().json()));
       const recovered=(await recoveredResponse.json()).job;
