@@ -258,6 +258,10 @@ function factText(fact: Record<string, unknown>) {
 export function productionClaims(snapshot: Record<string, unknown>): ProductionClaim[] {
   const mandatory = new Set(requiredContextAdaptationFacts(snapshot).map((fact) => fact.blockId));
   const facts = (Array.isArray(snapshot.facts) ? snapshot.facts : []).filter(promptFactIsActive).map(asRecord);
+  const authoritativeGroups = new Map<string, string[]>();
+  for (const group of combinedContextGroups(snapshot)) for (const member of group.members) {
+    authoritativeGroups.set(member.blockId, [...(authoritativeGroups.get(member.blockId) ?? []), group.id]);
+  }
   const materializedItems = new Set(facts.flatMap((fact) => {
     const properties = asRecord(fact.properties);
     const artifactId = clean(properties.source_artifact_id);
@@ -276,6 +280,7 @@ export function productionClaims(snapshot: Record<string, unknown>): ProductionC
     const contextGroupIds = unique([
       ...combinedContextMemberships(properties).map((membership) => membership.contextSetId),
       ...(Array.isArray(properties.context_group_ids) ? properties.context_group_ids.map(clean) : []),
+      ...(authoritativeGroups.get(blockId) ?? []),
     ]);
     const artifactId = clean(properties.source_artifact_id);
     const artifactStructure = asRecord(properties.artifact_structure);
@@ -553,7 +558,7 @@ function managedPresentationGroupTargets(
   }
   const targets = new Map<string, ManagedPresentationSlideTarget>();
   for (const group of groups) {
-    const definitions = memberships.get(group.id) ?? [];
+    const definitions = memberships.get(group.id) ?? [{ target: group.target, name: group.name, role: group.role, application: group.application }];
     const roles = new Set(definitions.map((definition) => definition.role));
     const applications = new Set(definitions.map((definition) => definition.application));
     if (roles.size > 1 || applications.size > 1) {
@@ -571,7 +576,26 @@ function managedPresentationGroupTargets(
     }
     if (resolved[0]) targets.set(group.id, resolved[0]);
   }
+  const isolatedGroups = groups.filter((group) => group.role === "slide_chapter" && group.application === "isolate" && targets.has(group.id));
+  for (let left = 0; left < isolatedGroups.length; left += 1) for (let right = left + 1; right < isolatedGroups.length; right += 1) {
+    const first = targets.get(isolatedGroups[left]!.id)!;
+    const second = targets.get(isolatedGroups[right]!.id)!;
+    if (Math.max(first.start, second.start) <= Math.min(first.end, second.end)) {
+      throw new ManagedPresentationPlanningError("presentation_context_target_conflict", `Independently isolated Combined Context chapters “${isolatedGroups[left]!.name}” and “${isolatedGroups[right]!.name}” cannot share the same presentation slide.`);
+    }
+  }
   return targets;
+}
+
+/** Required authored outline positions and independently isolated chapters cannot be silently merged. */
+export function minimumPresentationSlideCount(snapshot: Record<string, unknown>): number {
+  const authoredCount = inferPresentationSourceOutline(snapshot).authoredSlideCount ?? 0;
+  const chapters = combinedContextGroups(snapshot).filter((group) => group.role === "slide_chapter" && group.application === "isolate");
+  const explicitPositions = chapters.flatMap((group) => {
+    const match = /^slides?\s+(\d+)(?:\s*(?:-|to|through)\s*(?:slides?\s+)?(\d+))?$/u.exec(normalizedPresentationTarget(group.target));
+    return match ? [Number(match[2] ?? match[1])] : [];
+  }).filter((position) => Number.isSafeInteger(position) && position > 0);
+  return Math.max(authoredCount, chapters.length, ...explicitPositions, 0);
 }
 
 /** Compile the full source context without inheriting the legacy twelve-item schema cap. */
@@ -608,7 +632,9 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
   const groups = combinedContextGroups(snapshot);
   const beats = storyboardFacts(snapshot, sourceClaims);
   const plotClaims = sourceClaims.filter((claim) => !claim.continuity && !claim.negative && claim.storyboardSequence === null);
-  const baselineCount = authoredSlides.length || beats.length || Math.max(1, Math.ceil(plotClaims.length / 2), groups.filter((group) => group.role === "sequence" || group.role === "scene" || group.role === "message").length);
+  const requiredSlideCount = format === "slides" ? minimumPresentationSlideCount(snapshot) : 0;
+  const isolatedSlideChapters = format === "slides" && groups.some((group) => group.role === "slide_chapter" && group.application === "isolate");
+  const baselineCount = Math.max(requiredSlideCount, authoredSlides.length || beats.length || (isolatedSlideChapters ? requiredSlideCount : Math.max(1, Math.ceil(plotClaims.length / 2), groups.filter((group) => group.role === "sequence" || group.role === "scene" || group.role === "message").length)));
   const rawRequestedCount = format === "slides" ? options.requestedSlideCount ?? options.requestedItemCount : options.requestedItemCount;
   if (format === "slides" && rawRequestedCount !== undefined && rawRequestedCount !== null
     && (!Number.isFinite(Number(rawRequestedCount)) || !Number.isInteger(Number(rawRequestedCount))
@@ -617,6 +643,9 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
   }
   const requestedCount = Number.isFinite(Number(rawRequestedCount)) ? Math.max(0, Math.floor(Number(rawRequestedCount))) : 0;
   const requestedSlideCount = format === "slides" && requestedCount > 0 ? requestedCount : null;
+  if (requestedSlideCount !== null && requestedSlideCount < requiredSlideCount && requiredSlideCount > authoredSlides.length) {
+    throw new ManagedPresentationPlanningError("presentation_slide_count_conflict", `The source requires at least ${requiredSlideCount} independently isolated or explicitly positioned slides; requesting ${requestedSlideCount} would merge or omit an authored chapter.`);
+  }
   const plannedCount = format === "image"
     ? 1
     : format === "slides" && requestedSlideCount !== null
@@ -873,14 +902,18 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
 export function productionSceneSnapshot(snapshot: Record<string, unknown>, scene: ProductionScene): Record<string, unknown> {
   const ids = new Set(scene.sourceBlockIds);
   const groups = new Set(scene.contextGroupIds);
+  const authoritativeGroups = new Map<string, string[]>();
+  for (const group of combinedContextGroups(snapshot)) for (const member of group.members) {
+    authoritativeGroups.set(member.blockId, [...(authoritativeGroups.get(member.blockId) ?? []), group.id]);
+  }
   const requiredIds = new Set(requiredContextAdaptationFacts(snapshot).map((fact) => fact.blockId));
   const facts = (Array.isArray(snapshot.facts) ? snapshot.facts : []).map(asRecord).filter(promptFactIsActive).filter((fact) => {
     const properties = asRecord(fact.properties);
     const blockId = clean(fact.block_id);
-    const memberships = combinedContextMemberships(properties);
+    const memberships = unique([...combinedContextMemberships(properties).map((membership) => membership.contextSetId), ...(authoritativeGroups.get(blockId) ?? [])]);
     const structuredItems = Array.isArray(asRecord(properties.artifact_structure).items) ? asRecord(properties.artifact_structure).items as unknown[] : [];
     if (structuredItems.length && scene.sourceArtifactItemIds?.length && !structuredItems.some((item) => scene.sourceArtifactItemIds!.includes(clean(asRecord(item).source_artifact_item_id ?? asRecord(item).id)))) return false;
-    if (memberships.length && !memberships.some((membership) => groups.has(membership.contextSetId))) return false;
+    if (memberships.length && !memberships.some((membership) => groups.has(membership))) return false;
     const type = clean(fact.type || fact.role);
     if (ids.has(blockId)) return true;
     const narrativeBeat = type === "message" && /^narrative[\s_-]+beat$/i.test(clean(properties.subtype));

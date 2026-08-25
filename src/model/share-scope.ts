@@ -128,6 +128,7 @@ export function sanitizeSharedValue(value: unknown, scope: Pick<DocumentShareSco
         && !/(?:^|_)provider(?:$|_(?:id|name|model|request|receipt|job|status|response|cancel|url))/.test(normalized)
         && !/^(?:request_id|client_id|correlation_id|causation_id|scene_id|target_id|source_artifact_item_id|reference_id|source_content_hash|source_evidence_hash|sha256)$/.test(normalized)
         && !/^(?:(?:source(?:_[a-z]+)*|context_(?:group|set)|block|claim|group)_ids?|source_(?:keys?|alias(?:es|_map)?))$/.test(normalized)
+        && !/^(?:(?:root|parent|ancestor)_(?:block|group)|(?:context|relation)_path|relation)_ids?$/.test(normalized)
         && !/^organization_context_(?:source_block|package(?:_version|_binding)?)_ids?$/.test(normalized)
         && !/^(?:source|evidence)(?:_[a-z]+)*_refs?$/.test(normalized)
         && !/^source_block_versions?$/.test(normalized)

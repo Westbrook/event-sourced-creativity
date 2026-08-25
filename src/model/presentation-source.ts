@@ -4,6 +4,8 @@
  * contract; `providerFacingPresentationSourceContract` exposes opaque aliases.
  */
 
+import { combinedContextGroups } from "./combined-context.ts";
+
 export type PresentationSourceInput = string | readonly unknown[] | Record<string, unknown>;
 
 export type PresentationSourceAlias = {
@@ -228,6 +230,12 @@ function blockGroups(value: Record<string, unknown>) {
 function sourceBlocks(input: PresentationSourceInput): SourceBlock[] {
   if (typeof input === "string") return input.trim() ? [{ id: null, text: input.replace(/\r\n?/gu, "\n"), label: "Authored source", contextGroupIds: [] }] : [];
   const root = Array.isArray(input) ? {} : asRecord(input);
+  const authoritativeGroups = new Map<string, string[]>();
+  if (!Array.isArray(input) && Array.isArray(root.facts)) {
+    for (const group of combinedContextGroups(root)) for (const member of group.members) {
+      authoritativeGroups.set(member.blockId, [...(authoritativeGroups.get(member.blockId) ?? []), group.id]);
+    }
+  }
   const values = Array.isArray(input) ? input
     : Array.isArray(root.facts) ? root.facts
       : Array.isArray(root.blocks) ? root.blocks
@@ -244,7 +252,7 @@ function sourceBlocks(input: PresentationSourceInput): SourceBlock[] {
     if (!text) return [];
     const id = clean(block.block_id ?? block.blockId ?? block.id ?? properties.block_id) || null;
     const label = compact(properties.label ?? block.label ?? block.handle ?? block.type ?? block.role) || `Authored source ${index + 1}`;
-    return [{ id, text, label, contextGroupIds: blockGroups(block) }];
+    return [{ id, text, label, contextGroupIds: unique([...blockGroups(block), ...(id ? authoritativeGroups.get(id) ?? [] : [])]) }];
   });
 }
 

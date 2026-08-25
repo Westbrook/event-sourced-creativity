@@ -56,6 +56,18 @@ test("identifies source-fidelity validation failures without exposing source con
   assert.equal(guidance.retryAllowed, false);
 });
 
+test("explains bounded presentation failures without exposing provider rationale or offering a blind paid retry",()=>{
+  for(const [code,expected] of [["presentation_output_limit_reached",/output limit/i],["presentation_provider_refused",/safety/i],["presentation_provider_call_cap_reached",/attempt limit/i],["presentation_empty_provider_response",/incomplete/i]]){
+    const guidance=generationFailureGuidance(failure({code,category:code==="presentation_provider_refused"?"safety":"provider",message:"PRIVATE_CUSTOMER_CONTENT_AND_PROVIDER_REASON",retryable:false}),"",failedJob({provider_request_status:"submitted",settled_cost_microusd:160000}));
+    assert.match(`${guidance.title} ${guidance.summary}`,expected);
+    assert.doesNotMatch(`${guidance.title} ${guidance.summary}`,/PRIVATE_CUSTOMER_CONTENT_AND_PROVIDER_REASON/u);
+    assert.equal(guidance.retryAllowed,false);
+  }
+  const incomplete=generationFailureGuidance(failure({code:"provider_returned_incomplete_document_artifact",category:"provider"}),"",failedJob({provider_request_status:"submitted",settled_cost_microusd:160000}));
+  assert.equal(incomplete.retryAllowed,false);
+  assert.match(incomplete.summary,/without another charge|saved draft/u);
+});
+
 test("classifies worker interruption before provider submission without inventing contact, transmission, or charges",()=>{
   const receipt={provider_request_status:"not_submitted",source_transmission_status:"not_transmitted",settled_cost_microusd:0,failure_stage:"planning"};
   const guidance=generationFailureGuidance(interruption(),"execution_interrupted",failedJob(receipt));
@@ -120,6 +132,7 @@ test("offers free slideshow recovery only for the latest locally repairable paid
   assert.equal(documentJobCanRecoverPresentation(presentation([issue()])),true,"an echoed source-backed visual value can be repaired without a provider call");
   assert.equal(documentJobCanRecoverPresentation(presentation([issue({path:"items.0.slide.visual.data.0.label"})])),true,"a redundant title-and-question diagram can be condensed without dropping provenance");
   assert.equal(documentJobCanRecoverPresentation(presentation([issue({code:"duplicate_deck_copy",path:"items.1.slide.visual.data.0.value"})])),true,"independently authored short status values may be safely reassessed across slides");
+  assert.equal(documentJobCanRecoverPresentation(presentation([issue({code:"duplicate_deck_copy",path:"items.6.title"})])),true,"a server-certified duplicate slide heading may be repaired only from its exact authorized chapter");
   assert.equal(documentJobCanRecoverPresentation(presentation([issue({providerAttempt:1,code:"incomplete_visual",category:"structure"}),issue()])),true,"an earlier failed attempt never hides a safely recoverable newer paid response");
 
   for(const unsafe of [

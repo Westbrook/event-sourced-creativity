@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { applySlideStylePreset, defaultSlidePresentation, documentArtifactValidationIssues, DOCUMENT_ARTIFACT_KINDS, normalizeSlideDeckItems, normalizeSlidePresentation, normalizeSlideVisual, parseDocumentArtifactContent, resolveDocumentArtifactContextGroups, SLIDE_LAYOUTS, SLIDE_STYLE_PRESETS, SLIDE_VISUAL_KINDS, slideCopyIsDistinct, slideCopyIsNearDuplicate, slideCopyIssues, slideDeckCopyIsDistinct, slideDeckCopyIssues, slidePrecisionIssues, slideSourceIds, slideVisualIsComplete } from "../src/model/document-artifacts.ts";
+import { applySlideStylePreset, defaultSlidePresentation, documentArtifactValidationIssues, DOCUMENT_ARTIFACT_KINDS, normalizeSlideDeckItems, normalizeSlideItem, normalizeSlidePresentation, normalizeSlideVisual, parseDocumentArtifactContent, resolveDocumentArtifactContextGroups, SLIDE_LAYOUTS, SLIDE_STYLE_PRESETS, SLIDE_VISUAL_KINDS, slideCopyIsDistinct, slideCopyIsNearDuplicate, slideCopyIssues, slideDeckCopyIsDistinct, slideDeckCopyIssues, slidePrecisionIssues, slideSourceIds, slideVisualIsComplete } from "../src/model/document-artifacts.ts";
 import { isVideoDurationSeconds, normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT, VIDEO_DURATION_SECONDS } from "../src/model/video-adapter.ts";
 import { buildPresentationSourceContract } from "../src/model/presentation-source.ts";
 import { selectArtifactProductionKind } from "../src/model/managed-production.ts";
@@ -62,6 +62,23 @@ test("hero fallback preserves the exact source provenance of its promoted visual
     assert.deepEqual(normalized.sourceIds,["blk_999"],`${kind} must never erase an unauthorized provider source alias during visual conversion`);
     assert.deepEqual(normalized.visual.data,[]);
   }
+});
+
+test("discarded rows, empty quotations, and competing source spellings never erase provider source provenance",()=>{
+  for(const kind of ["architecture","bars","hero-type","metric","timeline","diagram","color-field"]){
+    const normalized=normalizeSlideVisual({layout:"statement",sourceIds:["blk_001"],source_ids:["blk_002"],quote:{text:"",sourceId:"blk_003",source_id:"blk_004"},citations:[{sourceId:"blk_005",source_id:"blk_006"}],visual:{kind,label:"Approved evidence",value:"Distinct authorized finding",data:[{label:"",value:"",sourceIds:["blk_007"],source_ids:["blk_999"]}]}},{title:"Independent presentation heading",body:""});
+    assert.deepEqual(new Set(normalized.sourceIds),new Set(["blk_001","blk_002","blk_003","blk_004","blk_005","blk_006","blk_007","blk_999"]),`${kind} must retain every raw source alias even after malformed evidence is removed`);
+  }
+});
+
+test("an independently meaningful authored slide body repairs an empty nonquantitative hero verbatim",()=>{
+  const body="Second approved evidence remains exactly source-faithful.";
+  const normalized=normalizeSlideItem({title:"Distinct authored chapter",body,notes:"Preserve the original speaker notes.",image_prompt:"",slide:{layout:"statement",kicker:"Approved context",source_ids:["blk_001"],visual:{kind:"hero-type",label:"Approved evidence",value:"Distinct authored chapter",data:[]}}},1);
+  assert.equal(normalized.body,"");
+  assert.equal(normalized.slide?.visual.value,body);
+  assert.deepEqual(normalized.slide?.sourceIds,["blk_001"]);
+  assert.equal(normalized.notes,"Preserve the original speaker notes.");
+  assert.equal(slideVisualIsComplete(normalized.slide),true);
 });
 
 test("quotation continuation preserves source provenance instead of authenticating unattributed fragments",()=>{

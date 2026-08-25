@@ -6,6 +6,7 @@ import { generationBudgetGate, generationBudgetPreferenceKey } from "../src/mode
 import { documentJobCanRecoverProviderRender, documentJobProgress } from "../src/model/document-jobs.ts";
 import {
   buildManagedProductionPlan,
+  minimumPresentationSlideCount,
   productionClaims,
   productionDefectReduction,
   productionSceneSnapshot,
@@ -438,6 +439,9 @@ test("thirty unnumbered decisions and seven targeted chapters remain exactly sev
 
   const plan = buildManagedProductionPlan("slides", snapshot, { requestedSlideCount: 7 });
 
+  assert.equal(minimumPresentationSlideCount(snapshot),7);
+  assert.equal(buildManagedProductionPlan("slides",snapshot).predictedSlideCount,7,"independently authored chapters determine the default without silently merging source groups");
+  assert.throws(()=>buildManagedProductionPlan("slides",snapshot,{requestedSlideCount:6}),(error)=>error.code==="presentation_slide_count_conflict");
   assert.equal(plan.authoredSlideCount, 0);
   assert.equal(plan.requestedSlideCount, 7);
   assert.equal(plan.predictedSlideCount, 7);
@@ -451,6 +455,27 @@ test("thirty unnumbered decisions and seven targeted chapters remain exactly sev
     const sourceIds = snapshot.facts.filter((fact) => fact.properties.combined_context_memberships[0].context_set_id === groupId).map((fact) => fact.block_id);
     assert.deepEqual(new Set(plan.scenes[expectedPosition - 1].sourceBlockIds), new Set(sourceIds));
   }
+});
+
+test("relationship-authored isolated presentation chapters retain their own source groups throughout planning",()=>{
+  const facts=Array.from({length:3},(_,index)=>[
+    {block_id:`PRIVATE_RELATION_CHAPTER_${index+1}`,type:"message",locked:true,properties:{label:`Relationship chapter ${index+1}`,text:`Authorized presentation chapter ${index+1}.`,context_group:{name:`Relationship chapter ${index+1}`,role:"slide_chapter",application:"isolate",target:`Slide ${index+1}`}}},
+    {block_id:`PRIVATE_RELATION_DECISION_${index+1}`,type:"message",locked:true,properties:{label:`Approved chapter evidence ${index+1}`,text:`Independent approved customer decision ${index+1}.`}},
+  ]).flat();
+  const relationships=Array.from({length:3},(_,index)=>({relation_id:`relationship-${index+1}`,from_block_id:`PRIVATE_RELATION_CHAPTER_${index+1}`,to_block_id:`PRIVATE_RELATION_DECISION_${index+1}`,kind:"context_contains",properties:{member_order:0}}));
+  const snapshot={facts,relationships};
+  assert.equal(minimumPresentationSlideCount(snapshot),3);
+  const production=buildManagedProductionPlan("slides",snapshot,{requestedSlideCount:3});
+  for(const [index,scene]of production.scenes.entries()){
+    const expected=new Set([`PRIVATE_RELATION_CHAPTER_${index+1}`,`PRIVATE_RELATION_DECISION_${index+1}`]);
+    assert.deepEqual(new Set(scene.sourceBlockIds),expected);
+    assert.deepEqual(scene.contextGroupIds,[`PRIVATE_RELATION_CHAPTER_${index+1}`]);
+    const scoped=productionSceneSnapshot(snapshot,scene);
+    assert.deepEqual(new Set(scoped.facts.map((fact)=>fact.block_id)),expected,"relationship-scoped decisions must never leak into another chapter's provider snapshot");
+  }
+  const collision=structuredClone(snapshot);
+  collision.facts[2].properties.context_group.target="Slide 1";
+  assert.throws(()=>buildManagedProductionPlan("slides",collision,{requestedSlideCount:3}),(error)=>error.code==="presentation_context_target_conflict");
 });
 
 test("explicit slide targets preserve contiguous ranges and reject ambiguity or conflicting placements", () => {
@@ -782,6 +807,7 @@ test("the thirty-decision seven-chapter incident generates seven source-local he
     const provider=JSON.parse(request.input);
     const scenes=provider.production.assigned_scenes;
     const items=scenes.map((scene)=>({title:`Bounded editorial position ${scene.narrative_order}`,body:scene.action,notes:`Approved evidence for position ${scene.narrative_order}.`,image_prompt:"",context_group_ids:scene.context_keys,slide:{layout:scene.narrative_order===7?"closing":"statement",kicker:`Independent section ${scene.narrative_order}`,bullets:[],source_ids:scene.source_keys,visual:{kind:"hero-type",label:`Source finding ${scene.narrative_order}`,value:`Bounded editorial position ${scene.narrative_order}`,data:[]}}}));
+    items[6].title=items[0].title;items[6].slide.visual.value=items[6].title;
     const presentation={aspect_ratio:"16:9",theme:"Seven isolated source chapters",footer_label:"Authorized editorial evidence",style_preset:"field-notes",mode:"light",palette:{background:"#edf1ef",foreground:"#14211d",accent:"#287260",muted:"#586b64",surface:"#d9e3df"}};
     return Response.json({id:"incident-seven-slide-mock",model:"gpt-test",output_text:JSON.stringify({title:"Seven bounded editorial positions",summary:"Seven explicitly targeted source chapters remain isolated.",content_markdown:items.map((item,index)=>`## ${index+1}. ${item.title}\n${item.body}`).join("\n\n"),presentation,items}),usage:{input_tokens:900,output_tokens:600,total_tokens:1500}});
   };
@@ -789,6 +815,8 @@ test("the thirty-decision seven-chapter incident generates seven source-local he
     const generated=await generateManagedArtifactDraft({OPENAI_API_KEY:"test-only",OPENAI_MODEL:"gpt-test"},"owner","slides",{documentTitle:"All approved source chapters",snapshot,production,requestedSlideCount:7});
     assert.equal(requests.length,1,"seven explicitly requested slides require exactly one mocked provider request and no paid repair");
     assert.equal(generated.output.items.length,7);
+    assert.equal(generated.output.items[6].title,production.contextGroups.find((group)=>group.id===production.scenes[6].contextGroupIds[0]).name,"a duplicated final title must be replaced only with its own authorized chapter label");
+    assert.equal(new Set(generated.output.items.map((item)=>item.title.toLowerCase())).size,7);
     assert.deepEqual(generated.output.items.map((item)=>item.context_group_ids),production.scenes.map((scene)=>scene.contextGroupIds));
     assert.ok(generated.output.items.every((item)=>item.slide?.visual.kind==="hero-type"&&/^Evidence \d+$/u.test(item.slide.visual.value)),"title-duplicating hero values are recovered from exact authorized source labels without another provider call");
     assert.ok(generated.output.items.every((item,index)=>item.slide.sourceIds.every((sourceId)=>production.scenes[index].sourceBlockIds.includes(sourceId))));

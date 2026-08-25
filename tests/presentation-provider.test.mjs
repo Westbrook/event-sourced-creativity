@@ -264,6 +264,8 @@ test("the strict slideshow schema preserves complete attributed quotes, editable
     const visualSchema = slideSchema.properties.visual;
     assert.equal(request.text.format.strict, true);
     assert.equal(schema.additionalProperties, false);
+    assert.equal(schema.properties.items.minItems,2,"the provider schema must require the exact approved slide count");
+    assert.equal(schema.properties.items.maxItems,2,"the provider schema must reject partial or expanded presentation output");
     assert.ok(slideSchema.properties.quote.properties.text.maxLength >= 1_000, "attributed quotations cannot inherit the legacy 120-character ceiling");
     assert.ok(visualSchema.properties.value.maxLength >= 1_000, "quote-card visible copy must retain a complete protected quotation");
     assert.ok(slideSchema.properties.bullets.maxItems >= 24);
@@ -329,6 +331,45 @@ test("faithfully renders twelve independently authored blocks with exact quotati
     assert.equal(result.output.items[1].slide.quote.role,"Product Owner");
     assert.doesNotMatch(JSON.stringify(requests[0].request),/PRIVATE_/);
   });
+});
+
+test("repairs a repeated slide title and empty hero from that slide's exact authored source without a paid repair",async()=>{
+  const snapshot=independentSlideSnapshot();
+  const output=independentSlideOutput(snapshot);
+  const originalBody=output.items[3].body;
+  output.items[3].title=output.items[2].title;
+  output.items[3].slide.visual.value=output.items[3].title;
+  await withProviderResponses([output],async(requests)=>{
+    const generated=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-executive-actor","slides",{documentTitle:"Independent approved presentation",snapshot,options:{itemCount:12,requestedSlideCount:12,presentationStyle:"field-notes",presentationFidelity:"faithful"}});
+    assert.equal(requests.length,1,"source-grounded local title and visual repairs must not initiate another provider request");
+    assert.equal(generated.output.items[3].title,"DOCUMENT AUTHORSHIP");
+    assert.equal(generated.output.items[3].body,"");
+    assert.equal(generated.output.items[3].slide.visual.value,originalBody);
+    assert.deepEqual(generated.output.items[3].slide.sourceIds,["PRIVATE_AUTHORED_SLIDE_4"]);
+    assert.equal(generated.output.items[0].slide.visual.exactValue,"61.125");
+    assert.equal(generated.output.items[1].slide.quote.text,STAKEHOLDER_QUOTE);
+    assert.deepEqual(generated.inputReceipt.validation.initial_issues,[]);
+    assert.doesNotMatch(requests[0].request.instructions,/Phone\/Tablet\/Small-snapped-monitor|Write\/Shape\/Present/u,"instructions must not import another document's device and product categories");
+  });
+});
+
+test("classifies paid output exhaustion, provider refusals, and empty presentation responses without blind retries",async()=>{
+  const variants=[
+    {name:"output limit",envelope:{status:"incomplete",incomplete_details:{reason:"max_output_tokens"},output_text:'{"items":['},code:"presentation_output_limit_reached"},
+    {name:"provider refusal",envelope:{status:"completed",output:[{content:[{type:"refusal",refusal:"Private provider safety rationale"}]}],output_text:""},code:"presentation_provider_refused"},
+    {name:"empty response",envelope:{status:"completed",output_text:""},code:"presentation_empty_provider_response"},
+  ];
+  for(const variant of variants){
+    const previous=globalThis.fetch;const receipts=[];let calls=0;
+    globalThis.fetch=async()=>{calls+=1;return Response.json({id:`paid-${calls}`,model:"gpt-presentation-test",usage:{input_tokens:40,output_tokens:20,total_tokens:60},...variant.envelope});};
+    try{
+      await assert.rejects(()=>generateExecutivePresentation({onProviderResponse:(receipt)=>receipts.push(receipt)}),(error)=>error.detail?.code===variant.code&&error.providerCallCount===1,variant.name);
+      assert.equal(calls,1,`${variant.name} must stop after the already-paid response`);
+      assert.equal(receipts.length,1,"the paid response must be checkpointed before its completion status is classified");
+      assert.equal(receipts[0].completionStatus,variant.envelope.status);
+      assert.doesNotMatch(JSON.stringify(receipts[0]),/Private provider safety rationale/u);
+    }finally{globalThis.fetch=previous;}
+  }
 });
 
 test("locally repairs category-only proposal rows without submitting a second paid slideshow request",async()=>{

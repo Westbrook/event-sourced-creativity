@@ -24,7 +24,7 @@ import { preflightGeneration } from "./generation-readiness";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter";
 import { AUDIO_ADAPTER_CONTRACT } from "../src/model/audio";
 import { clearPresentationServerOwnedCheckpointFields, estimatePlannerOperationMicrousd, generationBudgetGate, presentationServerOwnedCheckpointField, presentationTokenReservation } from "../src/model/generation-budget";
-import { buildManagedProductionPlan, ManagedPresentationPlanningError, MAX_MANAGED_PRESENTATION_SLIDES, scoreManagedProductionPlan, type ManagedProductionPlan } from "../src/model/managed-production";
+import { buildManagedProductionPlan, ManagedPresentationPlanningError, MAX_MANAGED_PRESENTATION_SLIDES, minimumPresentationSlideCount, scoreManagedProductionPlan, type ManagedProductionPlan } from "../src/model/managed-production";
 import { productionSystemFor, productionUnitsForPlan } from "../src/model/production-system";
 import { buildPresentationSourceContract, inferPresentationSourceOutline } from "../src/model/presentation-source";
 import { documentArtifactValidationIssues, isSlideStylePresetId, parseDocumentArtifactContent, type DocumentArtifactDraft } from "../src/model/document-artifacts";
@@ -35,7 +35,7 @@ import { PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow } from "./access-poli
 import { authoritativeCreativeContext, ContextIntegrityError } from "./context-authority";
 import { managedPilotSourceClassificationValid } from "./media-api";
 import { ProductionWorkflowContextError, resolveProductionWorkflowContext } from "./production-workflow";
-import { assessStoredPresentationCandidate, MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES } from "./openai-adapter";
+import { assessStoredPresentationCandidate, MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES, PRESENTATION_ADAPTER_VERSION } from "./openai-adapter";
 import { combinedSceneSnapshot } from "./managed-production";
 import { standingConstraints } from "../src/model/taste";
 import { productionWorkflowSourceIdentity, type ProductionWorkflowSource } from "../src/model/production-workflow";
@@ -418,6 +418,28 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
     ||left.summary.responseId.localeCompare(right.summary.responseId));
 }
 
+/** Reassess a bounded number of actor-owned paid drafts without exposing their private checkpoints. */
+async function freshlyRecoverablePresentationRows(env:WorkerEnv,user:PilotUser,rows:DocumentJobRow[],projectContextId=""){
+  const certified=new Map<string,boolean>();
+  const candidates=rows.filter((row)=>row.status==="failed"&&row.kind==="render_document"&&parseRequest(row).artifactKind==="slides").slice(0,4);
+  for(const compact of candidates){
+    try{
+      const retained=await readJob(env,user.userId,compact.job_id);
+      if(!retained||retained.owner_id!==user.userId||retained.stream_id!==user.streamId||retained.document_id!==compact.document_id)continue;
+      const checkpoint=parseResult(retained);
+      const reservationId=String(checkpoint.costReservationId??"");
+      const reservation=reservationId?await costBudgetReservation(env,user.billingUserId??user.userId,reservationId):null;
+      if(!reservation||reservation.status!=="settled"||reservation.stream_id!==user.streamId||reservation.operation!=="document-render:slides")continue;
+      const verified=await verifiedPresentationCandidates(env,user,retained,projectContextId);
+      certified.set(compact.job_id,verified.some((candidate)=>candidate.summary.complete));
+    }catch{/* Historical or unauthorized drafts fail closed; no provider request is made. */}
+  }
+  return rows.map((row)=>{
+    if(!certified.has(row.job_id))return row;
+    return{...row,result_json:JSON.stringify({...parseResult(row),recoverablePresentationCandidate:certified.get(row.job_id)===true})};
+  });
+}
+
 async function preservePresentationCandidate(env:WorkerEnv,user:PilotUser,job:DocumentJobRow,projectContextId:string,candidate:VerifiedPresentationCandidate){
   if(candidate.summary.retentionClass==="governed-evidence")return candidate.summary;
   const now=new Date().toISOString();
@@ -503,7 +525,7 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
   const responseIds=new Set(Array.isArray(checkpoint.plannerResponseIds)?checkpoint.plannerResponseIds.map(String).filter(Boolean):[]);
   const plannerResponseId=String(checkpoint.plannerResponseId??"");
   if(plannerResponseId)responseIds.add(plannerResponseId);
-  if(!receipt||!originalHash||!plannerResponseId||!candidates.length||checkpoint.recoverablePresentationCandidate!==true)return failed();
+  if(!receipt||!originalHash||!plannerResponseId||!candidates.length)return failed();
   const reservationId=String(checkpoint.costReservationId??"");
   const reservation=reservationId?await costBudgetReservation(env,user.billingUserId??user.userId,reservationId):null;
   if(!reservation||reservation.status!=="settled"||reservation.stream_id!==user.streamId||reservation.operation!=="document-render:slides")return failed();
@@ -601,7 +623,7 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
     const usage=makeEvent(user.streamId,originalHead+2,"worker:policy",`server:document-job:${row.kind}`,correlationId,"GenerationUsageRecorded",{operation:"document-render:slides:recovery",artifact_id:artifactId,artifact_kind:"slides",document_id:document.id,reservation_id:checkpoint.reservationId??null,cost_reservation_id:reservationId,input_tokens:0,output_tokens:0,total_tokens:0,planner_tokens:0,reserved_tokens:0,reserved_microusd:0,model_ids:[model],planner_response_id:plannerResponseId,planner_usage_previously_recorded:true,planner_cost_previously_recorded:true,recovered_provider_response_id:recoveredResponseId,recovered_without_provider_request:true,cost_microusd:0,planner_cost_microusd:0,previously_settled_cost_microusd:settledCost},{causationId:completed.eventId});
     if(!await activeProjectExecution(env,user,row.document_id,row.job_id))throw new Error("project_access_revoked");
     const finishedAt=new Date().toISOString();
-    const result:Record<string,unknown>={...checkpoint,presentationRecovered:true,recoveredProviderResponseId:recoveredResponseId,recoverablePresentationCandidate:false,generationReceipt:{...receipt,settled_cost_microusd:settledCost,provider_request_status:"completed",reservation_status:"settled",actual_provider_call_count:responseIds.size,recovered_without_provider_request:true},head:usage.sequence,eventIds:[completed.eventId,usage.eventId],artifactId,artifactKind:"slides",stage:"completed",progressMessage:"The saved presentation was recovered without another provider request."};
+    const result:Record<string,unknown>={...checkpoint,presentationRecovered:true,recoveredProviderResponseId:recoveredResponseId,recoverablePresentationCandidate:false,generationReceipt:{...receipt,presentation_adapter_version:PRESENTATION_ADAPTER_VERSION,settled_cost_microusd:settledCost,provider_request_status:"completed",reservation_status:"settled",actual_provider_call_count:responseIds.size,recovered_without_provider_request:true},head:usage.sequence,eventIds:[completed.eventId,usage.eventId],artifactId,artifactKind:"slides",stage:"completed",progressMessage:"The saved presentation was recovered without another provider request."};
     delete result.presentationRecoveryOnly;
     const scope=user.projectExecution;
     const projectGuard=scope?` AND ${activeProjectExecutionSql}
@@ -682,6 +704,7 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
     production_mode:payload.productionMode==="managed"?"managed":"manual",
     presentation_style:typeof payload.presentationStyle==="string"?payload.presentationStyle:null,
     presentation_fidelity:typeof payload.presentationFidelity==="string"?payload.presentationFidelity:null,
+    ...(isSlides?{presentation_adapter_version:PRESENTATION_ADAPTER_VERSION}:{}),
     batch_count:batchCount,planned_provider_call_count:plannedProviderCallCount,max_repair_call_count:maxRepairCallCount,maximum_provider_call_count:maximumProviderCallCount,
     reservation_microusd:estimatedCostMicrousd,
     ...(payload.workflowId&&payload.workflowStageId?{production_workflow:{id:String(payload.workflowId),stage_id:String(payload.workflowStageId),sources:Array.isArray(payload.workflowSources)?payload.workflowSources:[]}}:{}),
@@ -698,7 +721,8 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
   return{
     schema_version:1,captured_at:capturedAt,artifact_kind:artifactKind,production_mode:requestSettings.production_mode,
     provider,model,requested_slide_count:requestedSlideCount,authored_slide_count:authoredSlideCount,predicted_slide_count:predictedSlideCount,
-    slide_count_mismatch:isSlides&&authoredSlideCount!==null&&requestedSlideCount!==null&&authoredSlideCount!==requestedSlideCount,
+    slide_count_mismatch:isSlides&&authoredSlideCount!==null&&authoredSlideCount>0&&requestedSlideCount!==null&&authoredSlideCount!==requestedSlideCount,
+    ...(isSlides?{presentation_adapter_version:PRESENTATION_ADAPTER_VERSION}:{}),
     batch_count:batchCount,minimum_provider_call_count:plannedProviderCallCount,planned_provider_call_count:plannedProviderCallCount,actual_provider_call_count:null,max_repair_call_count:maxRepairCallCount,maximum_provider_call_count:maximumProviderCallCount,
     reservation_microusd:estimatedCostMicrousd,settled_cost_microusd:0,reservation_status:"estimated",
     reservation_is_provider_hard_cap:false,reservation_is_application_hard_cap:isSlides,...(isSlides?{maximum_authorized_cost_microusd:estimatedCostMicrousd}:{}),repair_calls_may_incur_additional_usage:maxRepairCallCount>0,
@@ -735,6 +759,10 @@ function failureProgressMessage(detail: ProviderFailureDetail | DocumentJobError
   if (!detail) return "The operation failed.";
   if(detail.code==="local_persistence_failed")return "Forma could not save the generation because a local database or event-store write failed. This is not a provider interruption.";
   if(detail.code==="source_fidelity_validation_failed")return "The generated presentation did not preserve its required source facts, quotations, or authorized slide evidence.";
+  if(detail.code==="presentation_output_limit_reached")return "The paid presentation response reached its output limit; divide or reduce the request before spending again.";
+  if(detail.code==="presentation_provider_refused")return "Provider safety checks rejected this presentation; change the request before another paid attempt.";
+  if(detail.code==="presentation_provider_call_cap_reached")return "The presentation reached its approved provider-attempt limit; no additional paid request was submitted.";
+  if(detail.code==="presentation_provider_response_incomplete"||detail.code==="presentation_empty_provider_response")return "The provider returned an incomplete paid presentation response; review the saved draft before spending again.";
   if(detail.code==="execution_interrupted")return "Forma lost contact with the generation worker before this operation finished.";
   if(detail.code==="provider_submission_uncertain")return "The presentation provider request could not be confirmed. Automatic resubmission was stopped to prevent a duplicate charge.";
   if(detail.code==="presentation_recovery_unavailable")return "A paid presentation response was recorded, but its complete draft was not saved. Automatic resubmission was stopped to prevent a duplicate charge.";
@@ -1465,7 +1493,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     if(path&&!rows.results.length)return Response.json({error:"job_not_found"},{status:404});
     const activeBlocker=[...rows.results].filter((row)=>row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
     const recoveryBlocker=activeBlocker&&rowIsStale(activeBlocker)?activeBlocker:null;
-    return Response.json(path?{job:safeScopedJob(rows.results[0]!,recoveryBlocker)}:{jobs:rows.results.map((row)=>safeScopedJob(row,recoveryBlocker))},{headers:{"cache-control":"private, no-store"}});
+    const certified=await freshlyRecoverablePresentationRows(env,user,rows.results,project.contextId);
+    return Response.json(path?{job:safeScopedJob(certified[0]!,recoveryBlocker)}:{jobs:certified.map((row)=>safeScopedJob(row,recoveryBlocker))},{headers:{"cache-control":"private, no-store"}});
   }
   if(project&&path){
     const targetId=decodeURIComponent(path.replace(/\/(?:cancel|force-fail|ack|dismiss|retry|run|recover)$/,""));
@@ -1675,7 +1704,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const recoveryBlocker = activeBlocker && rowIsStale(activeBlocker) ? activeBlocker : null;
     if (recoveryBlocker&&!requiresForegroundDocumentExecution(recoveryBlocker)) context?.waitUntil(driveDocumentQueue(env, user));
     if (path && !rows.length) return Response.json({ error: "job_not_found" }, { status: 404 });
-    return Response.json(path ? { job: serializeJob(rows[0], recoveryBlocker) } : { jobs: rows.map((row) => serializeJob(row, recoveryBlocker, false)) });
+    const certified=await freshlyRecoverablePresentationRows(env,user,rows);
+    return Response.json(path ? { job: serializeJob(certified[0], recoveryBlocker) } : { jobs: certified.map((row) => serializeJob(row, recoveryBlocker, false)) });
   }
 
   if (path || request.method !== "POST") return new Response("Method not allowed", { status: 405 });
@@ -1732,14 +1762,34 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         payload.workflowSources=resolved.sources;
       }
       if(kind==="render_document"&&payload.artifactKind==="slides"){
-        const outline=inferPresentationSourceOutline(trusted.snapshot);
-        if(payload.productionMode==="managed"&&Number(outline.authoredSlideCount??0)>MAX_MANAGED_PRESENTATION_SLIDES)return Response.json({error:"presentation_slide_count_invalid",message:`The authored outline contains more than the ${MAX_MANAGED_PRESENTATION_SLIDES}-slide managed presentation limit.`,supported:{minimum:1,maximum:MAX_MANAGED_PRESENTATION_SLIDES}},{status:400});
+        const sourceSnapshot=workflowPlanningSnapshot??trusted.snapshot;
+        const outline=inferPresentationSourceOutline(sourceSnapshot);
+        const sourceMinimumSlideCount=minimumPresentationSlideCount(sourceSnapshot);
+        const supportedMaximum=payload.productionMode==="managed"?MAX_MANAGED_PRESENTATION_SLIDES:12;
+        if(sourceMinimumSlideCount>supportedMaximum)return Response.json({error:"presentation_slide_count_invalid",message:`This presentation requires ${sourceMinimumSlideCount} source-authored slides, exceeding the ${supportedMaximum}-slide ${payload.productionMode==="managed"?"managed":"manual"} limit.`,supported:{minimum:1,maximum:supportedMaximum},sourceMinimumSlideCount},{status:400});
+        const requested=Number(payload.requestedSlideCount??payload.itemCount??0);
+        if(requested>0&&requested<sourceMinimumSlideCount)return Response.json({error:"presentation_slide_count_conflict",message:`This presentation requires at least ${sourceMinimumSlideCount} source-authored or independently isolated slides; ${requested} would merge or omit required chapters.`,sourceMinimumSlideCount,authoredSlideCount:outline.authoredSlideCount??sourceMinimumSlideCount,requestedSlideCount:requested,plannedSlideCount:sourceMinimumSlideCount},{status:409});
         payload.authoredSlideCount=outline.authoredSlideCount;
       }
     }catch(error){
       if(error instanceof ContextIntegrityError)return Response.json({error:error.code,message:error.message},{status:error.code==="document_not_found"?404:409});
       if(error instanceof ProductionWorkflowContextError)return Response.json({error:error.code,message:error.message},{status:error.status});
       throw error;
+    }
+  }
+  if(kind==="render_document"&&payload.artifactKind==="slides"&&payload.paidRetryConfirmed!==true){
+    const previous=await env.DB.prepare("SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND document_id=? AND kind='render_document' AND status='failed' AND expires_at>? AND json_extract(request_json,'$.artifactKind')='slides' ORDER BY requested_at DESC LIMIT 8")
+      .bind(user.userId,user.streamId,documentId,new Date().toISOString()).all<DocumentJobRow>();
+    const requestIdentity=renderRequestIdempotencyKey(payload,documentId);
+    for(const failed of previous.results){
+      if(renderRequestIdempotencyKey(parseRequest(failed),documentId)!==requestIdentity)continue;
+      if(project&&!await activeProjectExecution(env,user,failed.document_id,failed.job_id))continue;
+      const checkpoint=parseResult(failed),reservationId=String(checkpoint.costReservationId??"");
+      const reservation=reservationId?await costBudgetReservation(env,user.billingUserId??user.userId,reservationId):null;
+      if(!reservation||reservation.status!=="settled"||reservation.stream_id!==user.streamId||reservation.operation!=="document-render:slides")continue;
+      const recovered=await recoverRetainedPresentation(env,user,failed,project?.contextId??"");
+      if("job" in recovered)return Response.json({job:project?safeScopedJob(recovered.job):serializeJob(recovered.job),reused:true,recovered:true},{headers:{"cache-control":"private, no-store"}});
+      return Response.json({error:"presentation_identical_paid_retry_requires_confirmation",message:"An identical paid presentation already failed. Review its retained draft, change the request, or explicitly confirm another paid attempt before submitting it again."},{status:409});
     }
   }
   if(project&&kind==="extract_reference"){

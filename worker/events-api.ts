@@ -1,4 +1,4 @@
-import { assessStoredPresentationCandidate, generateCreativeDirection, generateCreativeVideo, generateDocumentArtifact, respondToCreativeChat, structureAdaptiveContext, validateCreativeVideoAudioReferences, validateCreativeVideoReferences, type CreativeChatMutation, type CreativeVideoPreparedReceipt, type ImageReference, type ProviderResponseReceipt, type VideoAudioReference, type VideoReference } from "./openai-adapter";
+import { assessStoredPresentationCandidate, generateCreativeDirection, generateCreativeVideo, generateDocumentArtifact, PRESENTATION_ADAPTER_VERSION, respondToCreativeChat, structureAdaptiveContext, validateCreativeVideoAudioReferences, validateCreativeVideoReferences, type CreativeChatMutation, type CreativeVideoPreparedReceipt, type ImageReference, type ProviderResponseReceipt, type VideoAudioReference, type VideoReference } from "./openai-adapter";
 import { generateCreativeImage, selectImageAdapter } from "./image-adapter";
 import { managedPilotSourceClassificationValid, readGeneratedImageReference, readOwnedAudioReference, storeGeneratedImage, storeGeneratedMedia, verifySourceDocumentEvidence } from "./media-api";
 import { claimCostBudgetReservation, costBudgetReservation, hasCapability, loadPrivateContent, pilotExecutionAllowance, readAccountBudgets, readBudgets, readCostBudgets, releaseBudget, releaseCostBudget, requireConsent, requireUser, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, storePrivateContent, type PilotUser, type ProjectExecutionScope } from "./pilot-policy";
@@ -36,7 +36,7 @@ import { generateCreativeAudio, type AudioImageReference, type CreativeAudioPrep
 import { appendProjectEvents, ownerDocumentBudgetScopes, readProjectEventPage, readProjectRequestContext, readProjectSourceEvents } from "./project-access";
 import { authoritativeCreativeContext, ContextIntegrityError } from "./context-authority";
 import { ARTIFACT_REVIEW_EVENT_TYPES, validateArtifactReview } from "./artifact-review";
-import { buildManagedProductionPlan, MAX_MANAGED_PRESENTATION_SLIDES, productionSceneSnapshot, productionTeamFor, providerFacingProductionContinuity, providerFacingProductionTargets, scoreManagedProductionPlan, type ManagedProductionPlan, type ProductionMode } from "../src/model/managed-production";
+import { buildManagedProductionPlan, MAX_MANAGED_PRESENTATION_SLIDES, minimumPresentationSlideCount, productionSceneSnapshot, productionTeamFor, providerFacingProductionContinuity, providerFacingProductionTargets, scoreManagedProductionPlan, type ManagedProductionPlan, type ProductionMode } from "../src/model/managed-production";
 import { collectProductionEvidence, scoreProductionEvidence } from "../src/model/production-evidence";
 import { productionSystemFor, productionUnitsForPlan } from "../src/model/production-system";
 import { productionWorkflowIssues, type ProductionWorkflow, type ProductionWorkflowSource } from "../src/model/production-workflow";
@@ -443,6 +443,13 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
             const resolved=await resolveProductionWorkflowContext({env,events:paidSourceEvents,documentId,projectId,ownerId:workflowScope?.ownerUserId??ownerId,scope:workflowScope,snapshot:trusted.snapshot,workflowId:body.workflowId,workflowStageId:body.workflowStageId,workflowSources:body.workflowSources,requestedFormat:body.action==="generate"?"image":body.artifactKind});
             body.snapshot=resolved.snapshot;body.workflowSources=resolved.sources;
           }
+          if(body.action==="render_document"&&body.artifactKind==="slides"){
+            const sourceMinimumSlideCount=minimumPresentationSlideCount(body.snapshot??trusted.snapshot);
+            const supportedMaximum=body.productionMode==="managed"?MAX_MANAGED_PRESENTATION_SLIDES:12;
+            if(sourceMinimumSlideCount>supportedMaximum)return Response.json({error:"presentation_slide_count_invalid",message:`This presentation requires ${sourceMinimumSlideCount} source-authored slides, exceeding the ${supportedMaximum}-slide ${body.productionMode==="managed"?"managed":"manual"} limit.`,supported:{minimum:1,maximum:supportedMaximum},sourceMinimumSlideCount},{status:400});
+            const requested=Number(presentationRequest.requestedSlideCount??body.itemCount??0);
+            if(requested>0&&requested<sourceMinimumSlideCount)return Response.json({error:"presentation_slide_count_conflict",message:`This presentation requires at least ${sourceMinimumSlideCount} source-authored or independently isolated slides; ${requested} would merge or omit required chapters.`,sourceMinimumSlideCount,authoredSlideCount:inferPresentationSourceOutline(body.snapshot??trusted.snapshot).authoredSlideCount??sourceMinimumSlideCount,requestedSlideCount:requested,plannedSlideCount:sourceMinimumSlideCount},{status:409});
+          }
         }catch(error){
           if(error instanceof ContextIntegrityError)return Response.json({error:error.code,message:error.message},{status:error.code==="document_not_found"?404:409});
           if(error instanceof ProductionWorkflowContextError)return Response.json({error:error.code,message:error.message},{status:error.status});
@@ -667,6 +674,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       const authoredSlideCount=artifactKind==="slides"?productionPlan?.authoredSlideCount??inferPresentationSourceOutline(compiledSnapshot).authoredSlideCount??0:undefined;
       const presentationOptions=artifactKind==="slides"?{...(presentationStyle?{presentationStyle}:{}),presentationFidelity,requestedSlideCount,authoredSlideCount}:{};
       const presentationReceipt=artifactKind==="slides"?{
+        presentation_adapter_version:PRESENTATION_ADAPTER_VERSION,
         presentation_style:presentationStyle??null,presentation_fidelity:presentationFidelity,
         authored_slide_count:authoredSlideCount,requested_slide_count:requestedSlideCount,predicted_slide_count:itemCount,
         slide_count_mismatch:productionPlan?.slideCountMismatch??Boolean(authoredSlideCount&&requestedSlideCount!==authoredSlideCount),
@@ -728,6 +736,8 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
         type Plan=Awaited<ReturnType<typeof generateDocumentArtifact>>["output"];const cached=body.artifactPlan;let plan:Plan;
         const cachedPlan=cached?parseDocumentArtifactContent(JSON.stringify(cached)):null;
         const guardPresentationSpend=artifactKind==="slides"?async(attempt:{model:string;maximumInputTokens:number;maximumOutputTokens:number})=>{
+          const maximumProviderCallCount=productionPlan?.maximumProviderCallCount??2;
+          if(new Set(plannerResponseIds.filter(Boolean)).size>=maximumProviderCallCount)throw new ProviderRequestError({code:"presentation_provider_call_cap_reached",category:"provider",scope:"request",action:"edit_request",message:"The approved presentation provider-attempt limit was reached; no additional paid request was submitted.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:409});
           if(!hasKnownTextModelPricing(attempt.model))throw new ProviderRequestError({code:"presentation_model_pricing_unavailable",category:"quota",scope:"request",action:"review_budget",message:"The configured slideshow model has no verified pricing; no paid request was submitted.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:429});
           if(plannerUsage.totalTokens+attempt.maximumInputTokens+attempt.maximumOutputTokens>reserved)throw new ProviderRequestError({code:"presentation_token_cap_reached",category:"quota",scope:"request",action:"review_budget",message:"The next slideshow provider request could exceed its reserved monthly token budget and was not submitted.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:429});
           const previous=priceTextUsageBreakdownMicrousd(attempt.model,plannerUsage).totalMicrousd;

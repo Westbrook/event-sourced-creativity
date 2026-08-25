@@ -16,6 +16,7 @@ import {
 import { foldEvents } from "../src/model/events.ts";
 import { artifactReviewState, assessCreativeContext } from "../src/model/context-health.ts";
 import { buildBulletPrompt, buildProsePrompt, buildStructuredPrompt, buildXmlPrompt } from "../src/model/prompt-structures.ts";
+import { sanitizeSharedValue } from "../src/model/share-scope.ts";
 import { authoritativeCreativeContext, ContextIntegrityError } from "../worker/context-authority.ts";
 
 const identifiers={woman:"private-woman-root-9173",face:"private-face-node-9173",eyes:"private-eyes-node-9173",color:"private-eye-color-9173",other:"private-other-person-9173",boundary:"private-boundary-9173"};
@@ -161,6 +162,8 @@ test("deep character relationships retain request-local prompt aliases without l
   const structured=buildStructuredPrompt(snapshot,direction);
   const eyeRegion=structured.user_edited_layout.regions.find((region)=>region.label.includes("Eye color"));
   assert.ok(eyeRegion.context_group_ids.length>=3,"a deeply nested decision receives every ancestor’s request-local isolation alias");
+  const shared=sanitizeSharedValue({root_block_id:identifiers.woman,parentBlockId:identifiers.face,ancestor_block_ids:[identifiers.eyes],relation_id:"private-relation",label:"Akiko"},{ownerId:"owner",mediaKeys:[]},"token");
+  assert.deepEqual(shared,{label:"Akiko"},"public sharing removes every durable composition identifier");
 });
 
 test("character profile fields stay optional, structured, and neutral across more than forty controls",()=>{
@@ -191,6 +194,8 @@ test("document, reusable library, character editor, and governed packages expose
   assert.match(component,/CHARACTER_FIELD_SECTIONS\.map/);
   assert.match(component,/context\.character\.headshot/);
   assert.match(component,/context\.character\.sheet/);
+  assert.match(component,/characterGenerationRequestKey\(this\.block\.id,kind\)/);
+  assert.match(component,/acknowledgeGenerationRisk\(requestKey\)/);
   assert.match(component,/likeness_transfer_consent/);
   assert.match(component,/context\.character\.allowPixels/);
   assert.match(workspace,/const visibleBlocks=rootBlocks\.length\?rootBlocks:p\.blocks/);

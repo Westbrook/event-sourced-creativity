@@ -329,7 +329,85 @@ export class ContextBlock extends FormaElement {
     if(!isCharacterContext(this.block.type,properties))return nothing;
     const summary=characterProfileSummary(properties),references=this.#characterReferences(),outputs=this.#characterOutputs();
     const session=this.store.session.get(),canGenerate=!readOnly&&Boolean(session?.provider.configured)&&(!session?.projectContext||session.projectContext.permissions.includes("project.output.request"));
-    return html`<section class="character-context" aria-label=${this.i18n.t("context.character.title")}><header><span>${icon("branch")}</span><div><b>${this.i18n.t("context.character.title")}</b><small>${this.i18n.t("context.character.description")}</small></div></header>${summary?html`<p class="character-context-summary" dir="auto">${summary}</p>`:nothing}<p class="character-identity-notice">${this.i18n.t("context.character.identityNotice")}</p><div class="character-context-sections">${CHARACTER_FIELD_SECTIONS.map((section,index)=>html`<details class="character-context-section" ?open=${index===0}><summary><span>${this.i18n.t(`context.character.section.${section.id}`,section.label)}</span><small>${this.i18n.number(section.fields.filter((field)=>Boolean(characterProfileValue(properties,section.id,field.id))).length)}</small></summary><fieldset class="character-context-fields" ?disabled=${readOnly||this.block.locked}><legend class="sr-only">${this.i18n.t(`context.character.section.${section.id}`,section.label)}</legend>${section.fields.map((field)=>html`<label><span>${this.i18n.t(`context.character.field.${field.id}`,field.label)}</span>${field.multiline?html`<textarea rows="2" .value=${characterProfileValue(properties,section.id,field.id)} @change=${(event:Event)=>this.#characterField(section.id,field.id,(event.currentTarget as HTMLTextAreaElement).value)}></textarea>`:html`<input .value=${characterProfileValue(properties,section.id,field.id)} @change=${(event:Event)=>this.#characterField(section.id,field.id,(event.currentTarget as HTMLInputElement).value)}>`}</label>`)}</fieldset></details>`)}</div><section class="character-reference-stage"><header><b>${this.i18n.t("context.character.references")}</b><small>${this.i18n.number(references.length)}</small></header>${references.length?html`<ul class="character-reference-list">${references.map((reference)=>{const allowed=reference.properties.pixel_reference_mode==="preserve_subject"&&reference.properties.likeness_transfer_consent===true;return html`<li>${reference.properties.media_url?html`<img src=${String(reference.properties.media_url)} alt=${String(reference.properties.label??reference.handle)} loading="lazy">`:nothing}<div><b>${String(reference.properties.label??reference.handle)}</b><small>${allowed?this.i18n.t("context.character.pixelsAllowed"):this.i18n.t("context.character.textOnly")}</small>${readOnly?nothing:html`<button type="button" class="button ghost compact" ?disabled=${reference.locked||this.block.locked} @click=${()=>void this.#characterPixels(reference,!allowed)}>${allowed?this.i18n.t("context.character.revokePixels"):this.i18n.t("context.character.allowPixels")}</button>`}</div></li>`;})}</ul><p class="character-reference-consent">${this.i18n.t("context.character.consent")}</p>`:html`<p>${this.i18n.t("context.character.referencesEmpty")}</p>`}${outputs.length?html`<div class="character-generated-portraits">${outputs.map((output)=>html`<article><img src=${String(output.mediaUrl)} alt=${String(properties.label??properties.text??this.block.handle)} loading="lazy">${readOnly||references.some((reference)=>reference.properties.source_output_id===output.id)?nothing:html`<button type="button" class="button secondary compact" ?disabled=${this.block.locked} @click=${()=>void this.store.addImageOutputAsContext(output.id,this.block.documentId,`${this.surface}-character-reference`,{reveal:false,contextParentBlockId:this.block.id,identityReference:true})}>${this.i18n.t("context.character.useReference")}</button>`}</article>`)}</div>`:nothing}</section>${canGenerate?html`<footer class="character-generation-actions"><button type="button" class="button secondary compact" ?disabled=${this.#characterGenerating} @click=${()=>void this.#generateCharacter("headshot")}>${icon("spark")}${this.#characterGenerating?this.i18n.t("context.character.generating"):this.i18n.t("context.character.headshot")}</button><button type="button" class="button ghost compact" ?disabled=${this.#characterGenerating} @click=${()=>void this.#generateCharacter("character_sheet")}>${this.i18n.t("context.character.sheet")}</button></footer>`:nothing}</section>`;
+    const pendingReviews=canGenerate?(["headshot","character_sheet"] as const).flatMap((kind)=>{
+      const requestKey=this.store.characterGenerationRequestKey(this.block.id,kind),readiness=this.store.generationReadiness.get()[requestKey];
+      return readiness?.status==="review"&&!this.store.generationRiskAcknowledged(requestKey)?[{kind,readiness,requestKey}]:[];
+    }):[];
+    return html`
+      <section class="character-context" aria-label=${this.i18n.t("context.character.title")}>
+        <header>
+          <span>${icon("branch")}</span>
+          <div><b>${this.i18n.t("context.character.title")}</b><small>${this.i18n.t("context.character.description")}</small></div>
+        </header>
+        ${summary?html`<p class="character-context-summary" dir="auto">${summary}</p>`:nothing}
+        <p class="character-identity-notice">${this.i18n.t("context.character.identityNotice")}</p>
+        <div class="character-context-sections">
+          ${CHARACTER_FIELD_SECTIONS.map((section,index)=>html`
+            <details class="character-context-section" ?open=${index===0}>
+              <summary>
+                <span>${this.i18n.t(`context.character.section.${section.id}`,section.label)}</span>
+                <small>${this.i18n.number(section.fields.filter((field)=>Boolean(characterProfileValue(properties,section.id,field.id))).length)}</small>
+              </summary>
+              <fieldset class="character-context-fields" ?disabled=${readOnly||this.block.locked}>
+                <legend class="sr-only">${this.i18n.t(`context.character.section.${section.id}`,section.label)}</legend>
+                ${section.fields.map((field)=>html`
+                  <label>
+                    <span>${this.i18n.t(`context.character.field.${field.id}`,field.label)}</span>
+                    ${field.multiline
+                      ?html`<textarea rows="2" .value=${characterProfileValue(properties,section.id,field.id)} @change=${(event:Event)=>this.#characterField(section.id,field.id,(event.currentTarget as HTMLTextAreaElement).value)}></textarea>`
+                      :html`<input .value=${characterProfileValue(properties,section.id,field.id)} @change=${(event:Event)=>this.#characterField(section.id,field.id,(event.currentTarget as HTMLInputElement).value)}>`}
+                  </label>
+                `)}
+              </fieldset>
+            </details>
+          `)}
+        </div>
+        <section class="character-reference-stage">
+          <header><b>${this.i18n.t("context.character.references")}</b><small>${this.i18n.number(references.length)}</small></header>
+          ${references.length?html`
+            <ul class="character-reference-list">
+              ${references.map((reference)=>{
+                const allowed=reference.properties.pixel_reference_mode==="preserve_subject"&&reference.properties.likeness_transfer_consent===true;
+                return html`
+                  <li>
+                    ${reference.properties.media_url?html`<img src=${String(reference.properties.media_url)} alt=${String(reference.properties.label??reference.handle)} loading="lazy">`:nothing}
+                    <div>
+                      <b>${String(reference.properties.label??reference.handle)}</b>
+                      <small>${allowed?this.i18n.t("context.character.pixelsAllowed"):this.i18n.t("context.character.textOnly")}</small>
+                      ${readOnly?nothing:html`<button type="button" class="button ghost compact" ?disabled=${reference.locked||this.block.locked} @click=${()=>void this.#characterPixels(reference,!allowed)}>${allowed?this.i18n.t("context.character.revokePixels"):this.i18n.t("context.character.allowPixels")}</button>`}
+                    </div>
+                  </li>
+                `;
+              })}
+            </ul>
+            <p class="character-reference-consent">${this.i18n.t("context.character.consent")}</p>
+          `:html`<p>${this.i18n.t("context.character.referencesEmpty")}</p>`}
+          ${outputs.length?html`
+            <div class="character-generated-portraits">
+              ${outputs.map((output)=>html`
+                <article>
+                  <img src=${String(output.mediaUrl)} alt=${String(properties.label??properties.text??this.block.handle)} loading="lazy">
+                  ${readOnly||references.some((reference)=>reference.properties.source_output_id===output.id)?nothing:html`<button type="button" class="button secondary compact" ?disabled=${this.block.locked} @click=${()=>void this.store.addImageOutputAsContext(output.id,this.block.documentId,`${this.surface}-character-reference`,{reveal:false,contextParentBlockId:this.block.id,identityReference:true})}>${this.i18n.t("context.character.useReference")}</button>`}
+                </article>
+              `)}
+            </div>
+          `:nothing}
+        </section>
+        ${canGenerate?html`
+          ${pendingReviews.map(({kind,readiness,requestKey})=>html`
+            <section class="character-generation-review" role="status">
+              <b>${this.i18n.t(kind==="headshot"?"context.character.headshot":"context.character.sheet")}</b>
+              <p>${readiness.summary}</p>
+              <button type="button" class="button ghost compact" @click=${()=>this.store.acknowledgeGenerationRisk(requestKey)}>${this.i18n.t("context.character.review")}</button>
+            </section>
+          `)}
+          <footer class="character-generation-actions">
+            <button type="button" class="button secondary compact" ?disabled=${this.#characterGenerating} @click=${()=>void this.#generateCharacter("headshot")}>${icon("spark")}${this.#characterGenerating?this.i18n.t("context.character.generating"):this.i18n.t("context.character.headshot")}</button>
+            <button type="button" class="button ghost compact" ?disabled=${this.#characterGenerating} @click=${()=>void this.#generateCharacter("character_sheet")}>${this.i18n.t("context.character.sheet")}</button>
+          </footer>
+        `:nothing}
+      </section>
+    `;
   }
 
   #changeIntent(value:BlockIntent) { const oldValue=blockIntentFor(this.block.type,this.block.properties);if(value!==oldValue||!this.block.properties.intent)void this.store.append({type:"BlockPropertyEdited",payload:{block_id:this.block.id,property_path:"intent",old_value:oldValue,new_value:value,source_surface:"context-block"}}); }

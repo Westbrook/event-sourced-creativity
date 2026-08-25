@@ -129,6 +129,17 @@ test("hero visual normalization cannot authenticate a foreign evidence alias aft
   assert.ok(assessed.sourceResolution.unknownAssignments.includes("blk_999"));
 });
 
+test("every discarded visualization row and empty quotation retains conflicting unauthorized aliases",()=>{
+  const snapshot={facts:[{block_id:authorizedBlock,type:"message",locked:true,properties:{label:"Approved source evidence",text:"Authorized customer-approved product decision."}}]};
+  const presentation={aspect_ratio:"16:9",theme:"Authorized presentation",footer_label:"Authorized evidence",style_preset:"editorial",mode:"light",palette:{background:"#ffffff",foreground:"#111111",accent:"#2255aa",muted:"#555555",surface:"#eeeeee"}};
+  for(const kind of ["architecture","bars","hero-type","metric","timeline","diagram","color-field"]){
+    const raw=JSON.stringify({title:"Approved briefing",summary:"Authorized product conclusion",content_markdown:"# Approved briefing",presentation,items:[{title:"Approved product conclusion",body:"Independent source-authored evidence.",notes:"",image_prompt:"",context_group_ids:[],slide:{layout:"statement",kicker:"Independent evidence",sourceIds:["blk_001"],source_ids:["blk_998"],quote:{text:"",sourceId:"blk_001",source_id:"blk_997"},visual:{kind,label:"Source finding",value:"Distinct approved visual evidence",data:[{label:"",value:"",sourceIds:["blk_001"],source_ids:["blk_999"]}]}}}]});
+    const assessed=assessStoredPresentationCandidate(raw,snapshot,{itemCount:1,requestedSlideCount:1});
+    assert.ok(assessed.issues.some((issue)=>issue.code==="unknown_source_reference"),`${kind} must not authenticate an alias hidden in a discarded row or empty quotation`);
+    for(const alias of ["blk_997","blk_998","blk_999"])assert.ok(assessed.sourceResolution.unknownAssignments.includes(alias),`${kind} must retain ${alias} despite an authorized competing spelling`);
+  }
+});
+
 test("condensed title-and-question diagrams never authenticate a foreign source hidden in a removed row",()=>{
   const snapshot={facts:[{block_id:authorizedBlock,type:"message",locked:true,properties:{label:"The Context Company",text:"Can it end file types?",weight:1,authority:"authored"}}]};
   const presentation={aspect_ratio:"16:9",theme:"Authorized presentation",footer_label:"Authorized evidence",style_preset:"editorial",mode:"light",palette:{background:"#ffffff",foreground:"#111111",accent:"#2255aa",muted:"#555555",surface:"#eeeeee"}};

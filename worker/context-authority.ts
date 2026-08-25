@@ -191,7 +191,7 @@ export function authoritativeCreativeContext(events: CreativeEvent[], request: C
   const requestedPins = Array.isArray(supplied.pins) ? supplied.pins.map(String) : [];
   const pins = canvasSnapshot
     ? requestedPins.filter((id) => approvedOutputIds.has(id))
-    : projection.outputs.filter((output) => output.pinned).map((output) => output.id);
+    : projection.outputs.filter((output) => output.pinned&&(!rootBlockId||blocks.some((block)=>String(block.properties.source_output_id??"")===output.id))).map((output) => output.id);
   const characterOutputKind=request.characterOutputKind??(suppliedScope.output_kind==="character_sheet"?"character_sheet":"headshot");
   const snapshot = {
     facts,

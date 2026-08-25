@@ -1,5 +1,5 @@
 import { combinedContextGroups } from "../src/model/combined-context.ts";
-import { documentArtifactValidationIssues, formatPresentationQuantity, normalizeSlideDeckItems, slideCopyIsNearDuplicate, type DocumentArtifactDraft, type DocumentArtifactDraftItem, type DocumentArtifactKind, type DocumentArtifactValidationIssue, type SlideStylePresetId } from "../src/model/document-artifacts.ts";
+import { documentArtifactValidationIssues, formatPresentationQuantity, normalizeSlideDeckItems, slideCopyIsNearDuplicate, slideCopyIssues, type DocumentArtifactDraft, type DocumentArtifactDraftItem, type DocumentArtifactKind, type DocumentArtifactValidationIssue, type SlideStylePresetId } from "../src/model/document-artifacts.ts";
 import { documentImageFormat, imageFormatForPreset, providerRenderFormat } from "../src/model/image-format.ts";
 import {
   MANAGED_PRODUCTION_BATCH_SIZE,
@@ -11,6 +11,7 @@ import {
   type ProductionScene,
 } from "../src/model/managed-production.ts";
 import { buildPresentationSourceContract, inferPresentationAudienceLocale, validatePresentationSourceCoverage } from "../src/model/presentation-source.ts";
+import { safePresentationCandidateIssues } from "../src/model/presentation-candidates.ts";
 import { VIDEO_ADAPTER_CONTRACT, type VideoAudioMode } from "../src/model/video-adapter.ts";
 import { generateCreativeImage } from "./image-adapter.ts";
 import { readGeneratedImageReference, storeGeneratedImage, storeGeneratedMedia } from "./media-api.ts";
@@ -212,7 +213,7 @@ function managedSlideVisibleCopy(item: DocumentArtifactDraftItem): string[] {
   ].filter((value): value is string => Boolean(value.trim()));
 }
 
-function managedProductionValidationFailure(kind: DocumentArtifactKind, issues: DocumentArtifactValidationIssue[], phase: "review" | "assembly") {
+function managedProductionValidationFailure(kind: DocumentArtifactKind, issues: DocumentArtifactValidationIssue[], phase: "review" | "assembly",options:{pageCount:number;providerAttempt:number}) {
   const sourceFidelityFailure = kind === "slides" && issues.some((issue) =>
     /(?:source|citation|protected|precision|scorecard|numeric|quote|roadmap|outline|context_group|exact_value|display_value|slide_count_mismatch)/u.test(issue.code));
   const diagnostic = issues.map((issue) => `${issue.code} ${issue.path}`).join(", ");
@@ -229,6 +230,13 @@ function managedProductionValidationFailure(kind: DocumentArtifactKind, issues: 
     retryAfterMs: null,
     requestId: null,
     httpStatus: 502,
+    ...(kind==="slides"?{validationIssues:issues.flatMap((issue)=>{
+      const match=/^items\.(\d+)(.*)$/u.exec(issue.path);
+      const globalIndex=match?Number(match[1]):0;
+      const pageIndex=Math.min(options.pageCount-1,Math.floor(globalIndex/MANAGED_PRODUCTION_BATCH_SIZE));
+      const path=match?`items.${globalIndex-pageIndex*MANAGED_PRODUCTION_BATCH_SIZE}${match[2]??""}`:issue.path;
+      return safePresentationCandidateIssues([{...issue,path}],{pageIndex,pageCount:options.pageCount,globalStartIndex:pageIndex*MANAGED_PRODUCTION_BATCH_SIZE,providerAttempt:Math.max(1,options.providerAttempt),stage:"repair"});
+    })}:{}),
   });
 }
 
@@ -356,6 +364,7 @@ export async function generateManagedArtifactDraft(
     const first = pages[0]!;
     let items = pages.flatMap((page) => page.output.items);
     if (kind === "slides") {
+      const acceptedTitles:string[]=[];
       const authorizedBlocks = new Set((Array.isArray(input.snapshot.facts) ? input.snapshot.facts : []).flatMap((fact) => {
         if (!fact || typeof fact !== "object" || Array.isArray(fact)) return [];
         const blockId = String((fact as Record<string, unknown>).block_id ?? "").trim();
@@ -367,6 +376,16 @@ export async function generateManagedArtifactDraft(
         const scopedSourceIds = scene.sourceBlockIds.filter((sourceId) => authorizedBlocks.has(sourceId));
         const sourceIds = item.slide.sourceIds?.length ? item.slide.sourceIds : scopedSourceIds;
         const contextGroupIds = item.context_group_ids?.length ? item.context_group_ids : scene.contextGroupIds;
+        let title=item.title;
+        if(acceptedTitles.some((previous)=>slideCopyIsNearDuplicate(previous,title))){
+          const authored=presentationSources?.numberedOutline.find((entry)=>entry.number===(scene.sourceOutlineOrder??index+1));
+          const groupTitles=(presentationSources?.sources??[]).filter((source)=>source.sourceKind==="context-group"&&scene.contextGroupIds.includes(source.sourceId)).map((source)=>source.label);
+          const sourceTitles=(presentationSources?.sources??[]).filter((source)=>source.sourceKind==="block"&&sourceIds.includes(source.sourceId)&&scene.sourceBlockIds.includes(source.sourceId)).map((source)=>source.label);
+          const candidates=[authored?.title,...(!presentationSources?.authoredSlideCount?[...groupTitles,scene.title,...sourceTitles]:[])].filter((candidate):candidate is string=>Boolean(candidate?.trim()));
+          const replacement=candidates.find((candidate)=>!/^(?:(?:blk|grp|clm|context_group)_\d+|authored source(?:\s+\d+)?|source|evidence|decision|message|direction|context|block|claim|slide\s+\d+)$/iu.test(candidate)&&acceptedTitles.every((previous)=>!slideCopyIsNearDuplicate(previous,candidate))&&slideCopyIssues({...item,title:candidate}).every((issue)=>issue.firstPath!=="title"&&issue.secondPath!=="title"));
+          if(replacement)title=replacement;
+        }
+        acceptedTitles.push(title);
         const visibleCopy = managedSlideVisibleCopy(item).join("\n");
         const protectedQuotes = (presentationSources?.protectedQuotes ?? []).filter((quote) =>
           visibleCopy.includes(quote.text)
@@ -387,6 +406,7 @@ export async function generateManagedArtifactDraft(
         if (missingCitationLabels.length) notes = [notes.trim(), `[${managedSlideLabels(presentationAudienceLocale).sources}] ${missingCitationLabels.join("; ")}`].filter(Boolean).join("\n\n");
         return {
           ...item,
+          title,
           notes,
           context_group_ids: [...new Set(contextGroupIds)],
           slide: {
@@ -481,12 +501,12 @@ export async function generateManagedArtifactDraft(
     output = assemble();
     finalIssues = wholeWorkIssues(output);
   }
-  if (finalIssues.length) throw managedProductionValidationFailure(kind, finalIssues, "review");
+  if (finalIssues.length) throw managedProductionValidationFailure(kind, finalIssues, "review",{pageCount,providerAttempt:attempts.flatMap(responseIdsFor).length});
   if (kind === "slides") output = assemble(true);
   finalIssues = kind === "slides"
     ? wholeWorkIssues(output)
     : documentArtifactValidationIssues(kind, output, { itemCount: input.production.scenes.length, contextGroupIds: expectedGroups });
-  if (finalIssues.length) throw managedProductionValidationFailure(kind, finalIssues, "assembly");
+  if (finalIssues.length) throw managedProductionValidationFailure(kind, finalIssues, "assembly",{pageCount,providerAttempt:attempts.flatMap(responseIdsFor).length});
   const first = pages[0]!;
   return {
     output,

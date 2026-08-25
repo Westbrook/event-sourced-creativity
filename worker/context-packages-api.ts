@@ -6,6 +6,7 @@ import { uuidV7, type WorkerEnv } from "./runtime.ts";
 import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./access-policy.ts";
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 import { verifySourceDocumentEvidence } from "./media-api.ts";
+import { isContextCompositionRelation } from "../src/model/combined-context.ts";
 
 const MAX_PACKAGE_BLOCKS = 128;
 const MAX_PACKAGE_EVENTS = 384;
@@ -135,7 +136,9 @@ async function authoritativeSnapshot(env: WorkerEnv, actor: PilotUser, organizat
   const events = await readProjectSourceEvents(env, source);
   const projection = foldEvents(events, Number.POSITIVE_INFINITY, documentId, source.projectId);
   if (!projection.documents.some((document) => document.id === documentId && !document.removed)) return denied();
-  const requested = Array.isArray(body.blockIds) ? body.blockIds.map((id) => String(id)) : projection.blocks.map((block) => block.id);
+  const selectedRoots=Array.isArray(body.blockIds)?body.blockIds.map((id)=>String(id)):projection.blocks.map((block)=>block.id);
+  const requested=[...selectedRoots];const expanded=new Set(requested);
+  for(let index=0;index<requested.length;index+=1)for(const relation of projection.blockRelations)if(isContextCompositionRelation(relation.kind)&&relation.fromBlockId===requested[index]&&!expanded.has(relation.toBlockId)){expanded.add(relation.toBlockId);requested.push(relation.toBlockId);}
   if (!requested.length || requested.length > MAX_PACKAGE_BLOCKS || requested.length !== new Set(requested).size) {
     return Response.json({ error: "valid_context_package_block_selection_required", maximum: MAX_PACKAGE_BLOCKS }, { status: 400 });
   }

@@ -404,6 +404,8 @@ forma-project-rail { display: block; min-width: 0; background: #ecece5; border-i
 .character-generated-portraits article { display: grid; min-inline-size: 0; gap: .4rem; }
 .character-generated-portraits article img { inline-size: 100%; aspect-ratio: 1; object-fit: cover; object-position: var(--focal-x,50%) var(--focal-y,50%); border-radius: 4px; }
 .character-generated-portraits article .button { justify-content: center; white-space: normal; text-align: center; }
+.character-generation-review { display: grid; justify-items: start; gap: .35rem; padding: .65rem; border: 1px solid color-mix(in srgb,var(--orange) 40%,var(--line)); border-radius: 5px; }
+.character-generation-review > :is(b,p) { margin: 0; font-size: var(--type-micro); }
 .character-generation-actions { padding-block-start: .3rem; }
 @container (max-width: 420px) { .character-context-fields,.context-composition-settings > div { grid-template-columns: minmax(0,1fr); } .context-tree-node { flex-wrap: wrap; } .context-tree-copy { flex-basis: 100%; } .context-tree-actions { flex-wrap: wrap; } .context-tree-children { margin-inline-start: .3rem; padding-inline-start: .55rem; } }
 @media (forced-colors: active) { .context-composition summary:focus-visible,.context-tree :is(input,button,summary):focus-visible,.character-context :is(input,textarea,button,summary):focus-visible { outline: 2px solid Highlight; outline-offset: 3px; } }

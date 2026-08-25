@@ -218,7 +218,10 @@ const quoteContinuation=(initial:string,continuations:string[])=>continuations.r
 
 export function normalizeSlideVisual(value: unknown, item: { title?: unknown; body?: unknown } = {}, index = 0): SlideVisualData {
   const input=record(value),visual=record(input.visual);let rawData=Array.isArray(visual.data)?visual.data:[];
-  const retainedDatumSourceIds:string[]=[];
+  // Preserve every provider-disclosed reference before malformed visual content is
+  // discarded. Validation must still reject a foreign alias hidden in an empty row.
+  const rawSourceReferences=(value:unknown)=>{const source=record(value);return[...uniqueText(source.sourceIds),...uniqueText(source.source_ids),text(source.sourceId),text(source.source_id),text(source.source_key)].filter(Boolean);};
+  const retainedDatumSourceIds:string[]=[...rawData.flatMap(rawSourceReferences),...rawSourceReferences(input.quote),...(Array.isArray(input.citations)?input.citations:[]).flatMap(rawSourceReferences)];
   let layout=slideLayout(input.layout,index);
   const title=text(item.title),body=text(item.body),used=[title,body].filter(Boolean),bulletSource=Array.isArray(input.bullets)?input.bullets:[],bullets:string[]=[];
   for(const candidate of bulletSource){const bullet=listText(candidate),accepted=distinctText(bullet,used);if(!accepted)continue;bullets.push(accepted);if(bullets.length===24)break;}
@@ -238,7 +241,7 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
   let kind=quote&&continuations.length?"quote" as SlideVisualKind:slideVisualKind(visual.kind,index);const originalKind=kind;const valueIsVisible=kind==="hero-type"||kind==="metric"||kind==="diagram"||kind==="quote";let visualValue=kind==="quote"&&quote?quote.text:valueIsVisible?distinctText(visual.value,used):placeholderText(visual.value)?"":text(visual.value);let visualLabel=distinctText(visual.label,used);const exactValue=text(visual.exactValue??visual.exact_value),displayValue=text(visual.displayValue??visual.display_value),unit=text(visual.unit),data:SlideVisualDatum[]=[];
   for(const datum of rawData){
     const entry=record(datum);let label=text(entry.label),datumValue=text(entry.value)||text(entry.displayValue??entry.display_value)||text(entry.exactValue??entry.exact_value);if(placeholderText(label))label="";if(placeholderText(datumValue))datumValue="";if(!label&&datumValue){label=datumValue;datumValue="";}if(!label)continue;
-    const weight=Number(entry.weight),datumExact=text(entry.exactValue??entry.exact_value),datumDisplay=text(entry.displayValue??entry.display_value),sourceIds=uniqueText(entry.sourceIds??entry.source_ids);
+    const weight=Number(entry.weight),datumExact=text(entry.exactValue??entry.exact_value),datumDisplay=text(entry.displayValue??entry.display_value),sourceIds=[...new Set([...uniqueText(entry.sourceIds),...uniqueText(entry.source_ids)])];
     const candidate={label,value:datumValue,weight:Number.isFinite(weight)?Math.max(0,Math.min(1,weight)):1,...(datumExact?{exactValue:datumExact}:{}),...(datumDisplay?{displayValue:datumDisplay}:{}),...(sourceIds.length?{sourceIds}:{})};
     candidate.weight=authoritativeSlideDatumWeight({kind,unit,value:visualValue},candidate);
     data.push(candidate);
@@ -275,7 +278,7 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
     data.splice(0,data.length);
   }
   if(!visualLabel&&visualValue)visualLabel=kind==="quote"?"Stakeholder perspective":"Visual emphasis";
-  const sourceIds=[...new Set([...uniqueText(input.sourceIds??input.source_ids),...retainedDatumSourceIds,...(quote?.sourceId?[quote.sourceId]:[]),...citations.flatMap((citation)=>citation.sourceId?[citation.sourceId]:[]),...data.flatMap((datum)=>datum.sourceIds??[])])];
+  const sourceIds=[...new Set([...rawSourceReferences(input),...retainedDatumSourceIds,...(quote?.sourceId?[quote.sourceId]:[]),...citations.flatMap((citation)=>citation.sourceId?[citation.sourceId]:[]),...data.flatMap((datum)=>datum.sourceIds??[])])];
   return{
     layout,kicker,bullets,...(quote?{quote}:{}),...(citations.length?{citations}:{}),...(sourceIds.length?{sourceIds}:{}),...(section?{section}:{}),...(sourceOrder===undefined?{}:{sourceOrder}),
     visual:{kind,label:visualLabel,value:visualValue,...(exactValue?{exactValue}:{}),...(displayValue?{displayValue}:{}),...(unit?{unit}:{}),data},
@@ -286,6 +289,10 @@ export function normalizeSlideItem(value: unknown,index=0):DocumentArtifactDraft
   const input=record(value);const title=text(input.title);const requestedBody=text(input.body);let body=requestedBody&&!placeholderText(requestedBody)&&!slideCopyIsNearDuplicate(title,requestedBody)?requestedBody:"";
   const contextGroupIds=Array.isArray(input.context_group_ids)?[...new Set(input.context_group_ids.map(text).filter(Boolean))]:[];
   let slide=input.slide?normalizeSlideVisual(input.slide,{title,body},index):null;
+  if(slide&&body&&body.length<=160&&slide.visual.kind==="hero-type"&&!slide.visual.value&&!slide.quote&&!slide.visual.unit&&!slide.visual.exactValue&&!slide.visual.displayValue){
+    slide=normalizeSlideVisual({...slide,visual:{...slide.visual,value:body}},{title,body:""},index);
+    body="";
+  }
   if(slide&&body&&["architecture","diagram"].includes(slide.visual.kind)&&slide.visual.data.length>=2&&!slide.quote&&!slide.visual.unit&&!slide.visual.exactValue&&!slide.visual.displayValue){
     const titleKey=contentKey(title),bodyKey=contentKey(body),narrativeKeys=new Set([titleKey,bodyKey].filter(Boolean));
     const rows=slide.visual.data;
