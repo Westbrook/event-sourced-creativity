@@ -144,7 +144,8 @@ export function combinedSceneSnapshot(snapshot: Record<string, unknown>, scenes:
     }
   }
   const selected = [...facts.values()];
-  return { ...snapshot, facts: selected, relationships: [...relationships.values()], context_groups: combinedContextGroups({ facts: selected }) };
+  const retainedRelationships=[...relationships.values()];
+  return { ...snapshot, facts: selected, relationships: retainedRelationships, context_groups: combinedContextGroups({ facts: selected, relationships: retainedRelationships }) };
 }
 
 function attributedSlideQuote(item: DocumentArtifactDraftItem): string {

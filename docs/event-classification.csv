@@ -9,6 +9,7 @@ DocumentRemoved,user_content,structured_only,user,immutable
 DocumentRestored,user_content,structured_only,user,immutable
 DocumentForked,identifier,structured_only,user,immutable
 DocumentOpened,behavioral,structured_only,user,immutable
+DocumentProductionWorkflowConfigured,user_content,external_pointer_for_free_text,user,immutable
 DocumentViewVisited,behavioral,structured_only,user,immutable
 ApplicationViewVisited,behavioral,structured_only,user,immutable
 AttentionEpisodeObserved,derived_sensitive,structured_only,user,expires_after_14_days_or_forgotten

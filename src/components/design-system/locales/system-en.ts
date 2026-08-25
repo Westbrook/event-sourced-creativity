@@ -4746,6 +4746,8 @@ const messages: Record<string, string> = {
   "system.auto.vc6rc8.18": "Supporting subject",
   "system.auto.3kkbo3.14": "Human presence",
   "system.auto.1ev7h0r.12": "Object study",
+  "system.auto.c8jp16.18": "Character headshot",
+  "system.auto.erxcc3.15": "Character sheet",
   "system.auto.1by78fe.35": "Where does this reality take place?",
   "system.auto.1kwkkxp.8": "Interior",
   "system.auto.1sdcu2r.8": "Exterior",

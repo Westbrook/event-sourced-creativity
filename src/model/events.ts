@@ -309,9 +309,14 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "BlockRelationAdded": {
         const id=String(p.relation_id??"");const fromBlockId=String(p.from_block_id??"");const toBlockId=String(p.to_block_id??"");if(!id||!fromBlockId||!toBlockId||fromBlockId===toBlockId)break;
         const from=blocks.get(fromBlockId);const to=blocks.get(toBlockId);const existing=blockRelations.get(id);const documentId=String(p.document_id??(from?.documentId&&from.documentId===to?.documentId?from.documentId:"")??"");const projectId=String(p.project_id??from?.projectId??to?.projectId??state.projectId);
-        blockRelations.set(id,{id,projectId,documentId,fromBlockId,toBlockId,kind:String(p.kind??existing?.kind??"visual_evidence"),removed:false,properties:{...(existing?.properties??{}),...asRecord(p.properties)},sourceEvents:[...(existing?.sourceEvents??[]),event.eventId]});break;
+        const kind=String(p.kind??existing?.kind??"visual_evidence");
+        blockRelations.set(id,{id,projectId,documentId,fromBlockId,toBlockId,kind,removed:false,properties:{...(existing?.properties??{}),...asRecord(p.properties)},sourceEvents:[...(existing?.sourceEvents??[]),event.eventId]});
+        // A structural edit changes both authored decisions and must invalidate
+        // every exact-source approval without altering historical relationship versions.
+        if(kind==="context_contains"){from?.sourceEvents.push(event.eventId);to?.sourceEvents.push(event.eventId);}
+        break;
       }
-      case "BlockRelationRemoved": { const relation=blockRelations.get(String(p.relation_id??""));if(relation){relation.removed=true;relation.sourceEvents.push(event.eventId);}break; }
+      case "BlockRelationRemoved": { const relation=blockRelations.get(String(p.relation_id??""));if(relation){relation.removed=true;relation.sourceEvents.push(event.eventId);if(relation.kind==="context_contains"){blocks.get(relation.fromBlockId)?.sourceEvents.push(event.eventId);blocks.get(relation.toBlockId)?.sourceEvents.push(event.eventId);}}break; }
       case "ChipEdited": { const b = blocks.get(String(p.block_id)); if (b) { b.properties[String(p.property ?? "value")] = p.new_value; b.properties.authority = event.compensatesEventId ? "inferred" : "authored"; b.sourceEvents.push(event.eventId); } break; }
       case "ExtractionRequested": { const b = blocks.get(String(p.block_id)); if (b) { b.properties.extraction_status = "pending"; b.sourceEvents.push(event.eventId); } break; }
       case "ExtractionCompleted": {

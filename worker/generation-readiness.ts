@@ -10,13 +10,15 @@ import { readGeneratedImageReference } from "./media-api.ts";
 import { moderateGenerationSnapshot, moderatePromptTechniqueSet } from "./openai-moderation.ts";
 import type { ImageReference } from "./openai-adapter.ts";
 import { hasCapability, readAccountBudgets, readBudgets, requireConsent, requireUser, type PilotUser } from "./pilot-policy.ts";
-import { readProjectRequestContext, readProjectSourceEvents } from "./project-access.ts";
+import { ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents } from "./project-access.ts";
 import { classifyProviderFailure, type ProviderFailureDetail } from "./provider-errors.ts";
 import { appendAuditEvent, ensureSchema, readWorkspaceEvents, uuidV7, type EventRow, type WorkerEnv } from "./runtime.ts";
 import { validateFalImageSize } from "./fal-image-adapter.ts";
 import { buildManagedProductionPlan, productionTeamFor, providerFacingProductionContinuity, providerFacingProductionTargets, type ProductionMode } from "../src/model/managed-production.ts";
+import { ProductionWorkflowContextError, resolveProductionWorkflowContext } from "./production-workflow.ts";
+import type { ProductionWorkflowSource } from "../src/model/production-workflow.ts";
 
-export type GenerationPreflightInput = { kind: GenerationReadinessKind; documentId: string; documentRevision?: string; requestKey?: string; sourcePreviewId?: string | null; promptTechnique?: PromptTechnique; productionMode?:ProductionMode; snapshot?: Record<string, unknown>; sourceBlockVersions?:Array<Record<string,unknown>>;canvasId?:string;contextSetId?:string; force?: boolean; sourceSurface?: string };
+export type GenerationPreflightInput = { kind: GenerationReadinessKind; documentId: string; documentRevision?: string; requestKey?: string; sourcePreviewId?: string | null; promptTechnique?: PromptTechnique; productionMode?:ProductionMode; snapshot?: Record<string, unknown>; sourceBlockVersions?:Array<Record<string,unknown>>;canvasId?:string;contextSetId?:string;contextRootBlockId?:string;characterOutputKind?:"headshot"|"character_sheet"; force?: boolean; sourceSurface?: string;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[] };
 export type PromptTechniqueComparisonInput = { documentId: string; documentRevision?: string; sourcePreviewId?: string | null; failedTechnique?: PromptTechnique; failedPrompt?: string; kind?: "preview" | "generate"; productionMode?:ProductionMode; snapshot?: Record<string, unknown>; sourceSurface?: string };
 type ProviderHealthRow = { status:string;scope:string;message:string;observed_at:string;expires_at:string;retry_after_ms:number|null;request_id:string|null };
 type PreflightRow = { result_json:string;expires_at:string;context_head?:number };
@@ -167,9 +169,10 @@ export async function comparePromptTechniqueSafety(env: WorkerEnv, user: PilotUs
 
 export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:GenerationPreflightInput,options:{appendEvents?:boolean;allowCache?:boolean;sourceEvents?:EventRow[]}={}):Promise<GenerationReadiness>{
   await ensureSchema(env);const checkedAt=nowIso();const technique=normalizePromptTechnique(input.promptTechnique);const productionMode:ProductionMode=input.productionMode==="managed"?"managed":"manual";
+  const hasWorkflow=input.workflowId!==undefined||input.workflowStageId!==undefined||input.workflowSources!==undefined;
   const execution=user.projectExecution,cachePrefix=execution?`${GENERATION_PREFLIGHT_VERSION}:project:${execution.projectAccessId}:${execution.actorUserId}:`:`${GENERATION_PREFLIGHT_VERSION}:`;
   let prefetched:PreflightRow|null|undefined;
-  const claimedRevisionMatches=!input.snapshot||documentGenerationRevision({snapshot:input.snapshot,sourceBlockVersions:input.sourceBlockVersions??[],documentId:input.documentId})===input.documentRevision;
+  const claimedRevisionMatches=!hasWorkflow&&(!input.snapshot||documentGenerationRevision({snapshot:input.snapshot,sourceBlockVersions:input.sourceBlockVersions??[],documentId:input.documentId})===input.documentRevision);
   if(options.allowCache!==false&&!input.force&&claimedRevisionMatches&&input.requestKey&&input.documentRevision&&input.documentId){
     prefetched=await env.DB.prepare(`SELECT result_json,expires_at,(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=? AND ${CONTEXT_MUTATION_SQL}) AS context_head FROM generation_preflights WHERE owner_id=? AND request_key=?`).bind(user.streamId,user.userId,`${cachePrefix}${input.requestKey}`).first<PreflightRow>();
     if(prefetched&&Date.parse(prefetched.expires_at)>Date.now())try{
@@ -180,7 +183,16 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
       prefetched=null;
     }catch{prefetched=null;/* Recompute malformed cache rows. */}
   }
-  const events=options.sourceEvents??await readWorkspaceEvents(env,user.streamId);const trusted=authoritativeCreativeContext(events,{documentId:input.documentId,projectId:execution?.projectId,canvasId:input.canvasId,contextSetId:input.contextSetId,snapshot:input.snapshot,sourceBlockVersions:input.sourceBlockVersions});const projection=trusted.projection;const baseSnapshot=trusted.snapshot;const documentRevision=trusted.documentRevision;const snapshot=productionPreflightSnapshot(baseSnapshot,productionMode);const requestKey=String(input.requestKey||`${input.kind}:${documentRevision}:${input.sourcePreviewId||"document"}:${technique}${productionMode==="managed"?":managed":""}`);const cacheKey=`${cachePrefix}${requestKey}`;
+  const events=options.sourceEvents??await readWorkspaceEvents(env,user.streamId);const trusted=authoritativeCreativeContext(events,{documentId:input.documentId,projectId:execution?.projectId,canvasId:input.canvasId,contextSetId:input.contextSetId,contextRootBlockId:input.contextRootBlockId,characterOutputKind:input.characterOutputKind,snapshot:input.snapshot,sourceBlockVersions:input.sourceBlockVersions});const projection=trusted.projection;const baseSnapshot=trusted.snapshot;const documentRevision=trusted.documentRevision;
+  let effectiveSnapshot:Record<string,unknown>=baseSnapshot;
+  if(hasWorkflow){
+    if(input.kind!=="generate")throw new ProductionWorkflowContextError("workflow_stage_unavailable","Production source checkpoints can only inform an explicitly requested final-quality image.",409);
+    let workflowScope=execution;
+    if(!workflowScope&&!user.fictional&&(user.billingUserId??user.userId)===user.userId){const scopes=await ownerDocumentBudgetScopes(env,user.userId,projection.documentId,projection.projectId);if(scopes.length>1)throw new ProductionWorkflowContextError("ambiguous_project_budget_scope","The production stage has more than one governed owner.",409);if(scopes[0])workflowScope={organizationId:scopes[0].organizationId,projectAccessId:scopes[0].projectAccessId,projectId:projection.projectId,ownerUserId:user.userId,actorUserId:user.userId};}
+    const resolved=await resolveProductionWorkflowContext({env,events,documentId:projection.documentId,projectId:projection.projectId,ownerId:workflowScope?.ownerUserId??user.userId,scope:workflowScope,snapshot:baseSnapshot,workflowId:input.workflowId,workflowStageId:input.workflowStageId,workflowSources:input.workflowSources,requestedFormat:"image"});
+    effectiveSnapshot=resolved.snapshot;
+  }
+  const snapshot=productionPreflightSnapshot(effectiveSnapshot,productionMode);const requestKey=String(input.requestKey||`${input.kind}:${documentRevision}:${input.sourcePreviewId||"document"}:${technique}${productionMode==="managed"?":managed":""}`);const cacheKey=`${cachePrefix}${requestKey}`;
   if(options.allowCache!==false&&!input.force){
     const cached=prefetched===undefined?await env.DB.prepare("SELECT result_json,expires_at FROM generation_preflights WHERE owner_id=? AND request_key=?").bind(user.userId,cacheKey).first<PreflightRow>():prefetched;
     if(cached&&Date.parse(cached.expires_at)>Date.now())try{
@@ -205,7 +217,7 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
   const facts=Array.isArray(snapshot.facts)?snapshot.facts as Array<Record<string,unknown>>:[];const missingReferences=facts.filter((fact)=>fact.type==="reference"&&sendsReferencePixels((fact.properties??{}) as Record<string,unknown>)&&!String(((fact.properties??{}) as Record<string,unknown>).media_url??"")).map((fact)=>String(fact.block_id??"")).filter(Boolean);
   if(input.sourcePreviewId&&!projection.outputs.some((output)=>output.id===input.sourcePreviewId))missingReferences.push(String(input.sourcePreviewId));
   add(missingReferences.length?{id:"reference-availability",label:"Reference pixels",status:"fail",severity:"blocking",summary:`${missingReferences.length} requested image reference${missingReferences.length===1?" is":"s are"} unavailable.`,action:"review_references",blockIds:missingReferences}:{id:"reference-availability",label:"Reference pixels",status:"pass",severity:"info",summary:"Requested reference inputs are available or context-only.",action:"none"});
-  const previousSafety=previous?.documentRevision===documentRevision&&(previous.productionMode??"manual")===productionMode&&Date.parse(previous.expiresAt)>Date.now()?previous.probes.find((probe)=>probe.id==="context-safety"):null;
+  const previousSafety=previous?.documentRevision===documentRevision&&(previous.productionMode??"manual")===productionMode&&(!hasWorkflow||previous.requestKey===requestKey)&&Date.parse(previous.expiresAt)>Date.now()?previous.probes.find((probe)=>probe.id==="context-safety"):null;
   if(previousSafety)add({...previousSafety,summary:`${previousSafety.summary} Reused for the same document revision; the exact prompt and selected pixels will still be checked before image work.`});
   else if(env.OPENAI_API_KEY&&!statusBlocksProvider(provider)&&remaining>=estimatedTokens)try{
     const moderation=await moderateGenerationSnapshot(env,snapshot);
@@ -242,5 +254,5 @@ export async function handleGenerationReadiness(request:Request,env:WorkerEnv,pa
     const sourceEvents=project?await readProjectSourceEvents(env,project):undefined;
     if(project){const projection=foldEvents(sourceEvents??[],Number.POSITIVE_INFINITY,input.documentId,project.projectId);if(!projection.documents.some((document)=>document.id===input.documentId&&document.projectId===project.projectId))return Response.json({error:"document_not_found"},{status:404});}
     return Response.json({readiness:await preflightGeneration(env,user,input,{appendEvents:true,allowCache:true,...(sourceEvents?{sourceEvents}:{})})},{headers:{"cache-control":"private, no-store"}});
-  }catch(error){if(error instanceof ContextIntegrityError)return Response.json({error:error.code,message:error.message},{status:error.code==="document_not_found"?404:409});const detail=classifyProviderFailure(error);return Response.json({error:detail.code,message:detail.message},{status:detail.httpStatus??500});}
+  }catch(error){if(error instanceof ContextIntegrityError)return Response.json({error:error.code,message:error.message},{status:error.code==="document_not_found"?404:409});if(error instanceof ProductionWorkflowContextError)return Response.json({error:error.code,message:error.message},{status:error.status});const detail=classifyProviderFailure(error);return Response.json({error:detail.code,message:detail.message},{status:detail.httpStatus??500});}
 }

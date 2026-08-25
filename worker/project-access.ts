@@ -8,10 +8,12 @@ import { ARTIFACT_REVIEW_EVENT_TYPES, validateArtifactReview } from "./artifact-
 import { managedPilotSourceClassificationValid, verifySourceDocumentEvidence } from "./media-api.ts";
 import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./access-policy.ts";
 import { artifactReviewState, artifactSourceVersions } from "../src/model/context-health.ts";
+import { productionWorkflowIssues, type ProductionWorkflow } from "../src/model/production-workflow.ts";
+import { isContextCompositionRelation, validateContextCompositionGraph } from "../src/model/combined-context.ts";
 
 const CONTEXT_COOKIE="forma_project_context";
 const PROJECT_EVENT_TYPES=new Set([
-  "ProjectCreated","ProjectRenamed","ProjectStateChanged","DocumentCreated","DocumentForked","DocumentRenamed","DocumentRemoved","DocumentRestored","EmptyCanvasChosen",
+  "ProjectCreated","ProjectRenamed","ProjectStateChanged","DocumentCreated","DocumentForked","DocumentRenamed","DocumentRemoved","DocumentRestored","DocumentProductionWorkflowConfigured","EmptyCanvasChosen",
   "BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet","BlockLocked","BlockUnlocked","BlockRemoved","BlockRestored","BlockRehomed",
   "BlockRelationAdded","BlockRelationRemoved","ReferenceIngested","RightsAsserted","RegionPromoted","ExtractionRequested","ExtractionCompleted","ExtractionFailed","ExtractionSuperseded","ChipEdited",
   "CollectionCreated","CollectionRenamed","CollectionRemoved","CollectionRestored","CollectionItemAdded","CollectionItemRemoved","CollectionItemMoved",
@@ -21,7 +23,7 @@ const PROJECT_EVENT_TYPES=new Set([
   "CanvasRegisterSet","CanvasLockAcquired","CanvasLockReleased","StrokeAdded","StrokeErased","ContextSetFormalized","CanvasItemRemoved","CanvasItemRestored","CanvasRenamed","CanvasRemoved","CanvasRestored",
 ]);
 const PROJECT_MUTATION_TYPES=new Set([
-  "DocumentCreated","DocumentRenamed","DocumentRemoved","DocumentRestored","BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet",
+  "DocumentCreated","DocumentRenamed","DocumentRemoved","DocumentRestored","DocumentProductionWorkflowConfigured","BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet",
   "BlockLocked","BlockUnlocked","BlockRemoved","BlockRestored","BlockRelationAdded","BlockRelationRemoved","CollectionCreated","CollectionRenamed",
   "CollectionRemoved","CollectionRestored","CollectionItemAdded","CollectionItemRemoved","CollectionItemMoved","ObjectSaved","ObjectPinned","ObjectUnpinned",
   "ObjectDiscarded","ObjectExported","DocumentArtifactEdited","DocumentArtifactExported","ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested","AddedToLibrary","RemovedFromLibrary","ChipEdited","ReferenceIngested","RightsAsserted",
@@ -572,6 +574,11 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
   const document=String(payload.document_id??"");
   if(type.startsWith("Document")&&!document)return"document_id_required";
   if(document&&type!=="DocumentCreated"&&!await exists("document",document))return"foreign_document_resource";
+  if(type==="DocumentProductionWorkflowConfigured"){
+    const workflow=payload.workflow as ProductionWorkflow|undefined;
+    if(!workflow||typeof workflow!=="object"||Array.isArray(workflow)||productionWorkflowIssues(workflow).length||workflow.id!==payload.workflow_id||workflow.documentId!==document||workflow.projectId!==context.projectId||workflow.target!==payload.target_kind||workflow.approvalRequired!==true)return"production_workflow_invalid";
+    for(const stage of workflow.stages){if(!stage.source)continue;if(!await exists(stage.source.outputKind==="image"?"output":"artifact",stage.source.outputId))return"foreign_workflow_source";if(stage.source.documentId!==document)return"foreign_document_resource";if(stage.source.outputKind==="artifact"&&(!stage.approvalRequired||!stage.source.approvalRequired))return"production_workflow_approval_required";}
+  }
   const block=String(payload.block_id??"");
   if((type.startsWith("Block")&&!type.startsWith("BlockRelation")||type==="ChipEdited")&&!block)return"block_id_required";
   if(block&&type!=="BlockCreated"&&!await exists("block",block))return"foreign_block_resource";
@@ -807,6 +814,12 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   const needsReviewValidation=incoming.some((event)=>ARTIFACT_REVIEW_EVENT_TYPES.has(String(event.type??"")));
   const validatedOwnerHead=needsReviewValidation?await streamHead(env,ownerStream):null;
   const reviewEvents=needsReviewValidation?await readProjectSourceEvents(env,context):null;
+  if(incoming.some((event)=>event.type==="BlockRelationRemoved"||event.type==="BlockRelationAdded"&&isContextCompositionRelation(event.payload?.kind))){
+    const graphEvents=reviewEvents??await readProjectSourceEvents(env,context);
+    const graph=foldEvents(graphEvents,Number.POSITIVE_INFINITY,"",context.projectId);
+    const issue=validateContextCompositionGraph({blocks:graph.libraryBlocks,relations:graph.libraryBlockRelations,events:incoming,ignoreLocks:Boolean(atomicSidecars)});
+    if(issue)return Response.json({error:issue.code,message:issue.message,index:issue.index},{status:409});
+  }
   if(incoming.some((event)=>event.type==="ArtifactApproved")&&incoming.some((event)=>/^(?:Block|Chip|DocumentArtifactEdited)/.test(String(event.type??"")))){
     return Response.json({error:"review_context_changed",message:"Approve the output separately after its latest context changes have been reviewed."},{status:409});
   }

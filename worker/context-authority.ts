@@ -1,6 +1,7 @@
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { blockEffectFor, blockIntentFor } from "../src/model/block-types.ts";
-import { combinedContextGroups } from "../src/model/combined-context.ts";
+import { combinedContextGroups, isContextCompositionRelation } from "../src/model/combined-context.ts";
+import { isCharacterContext } from "../src/model/character-context.ts";
 import { documentGenerationRevision } from "../src/model/document-jobs.ts";
 import { foldEvents, type CreativeBlock, type CreativeEvent } from "../src/model/events.ts";
 import { normalizeSpatialScope } from "../src/model/spatial-scope.ts";
@@ -11,6 +12,8 @@ type ContextRequest = {
   projectId?: string;
   canvasId?: string;
   contextSetId?: string;
+  contextRootBlockId?:string;
+  characterOutputKind?:"headshot"|"character_sheet";
   snapshot?: Record<string, unknown>;
   sourceBlockVersions?: Array<Record<string, unknown>>;
 };
@@ -58,11 +61,14 @@ export function authoritativeCreativeContext(events: CreativeEvent[], request: C
 
   const supplied = record(request.snapshot);
   const suppliedCanvas = record(supplied.canvas);
+  const suppliedScope=record(supplied.context_scope);
   const canvasId = String(request.canvasId ?? suppliedCanvas.canvas_id ?? "");
   const contextSetId = String(request.contextSetId ?? suppliedCanvas.context_set_id ?? "");
+  const rootBlockId=String(request.contextRootBlockId??suppliedScope.root_block_id??"");
   if (Boolean(canvasId) !== Boolean(contextSetId)) {
     throw new ContextIntegrityError("canvas_context_required", "A board generation must identify its approved board and context together.");
   }
+  if(rootBlockId&&canvasId)throw new ContextIntegrityError("context_scope_conflict","Choose either a board context or one character context, not both.");
 
   let blocks = projection.blocks;
   let selectedItemIds = new Set<string>();
@@ -109,9 +115,8 @@ export function authoritativeCreativeContext(events: CreativeEvent[], request: C
         selectedBlocks.add(block.id);
       }
     }
-    for (const relation of projection.libraryBlockRelations) {
-      if (relation.kind === "artifact_contains" && selectedBlocks.has(relation.fromBlockId)) selectedBlocks.add(relation.toBlockId);
-    }
+    let expanded=true;
+    while(expanded){expanded=false;for(const relation of projection.libraryBlockRelations)if((relation.kind==="artifact_contains"||isContextCompositionRelation(relation.kind))&&selectedBlocks.has(relation.fromBlockId)&&!selectedBlocks.has(relation.toBlockId)){selectedBlocks.add(relation.toBlockId);expanded=true;}}
     // A prohibited document decision remains binding even when a visual board
     // selection omitted it; browser selection cannot erase a safety boundary.
     for (const block of projection.blocks) {
@@ -132,6 +137,22 @@ export function authoritativeCreativeContext(events: CreativeEvent[], request: C
         frame: { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rot, z: item.z },
       })),
     };
+  }
+
+  if(rootBlockId){
+    const root=projection.blocks.find((block)=>block.id===rootBlockId&&block.documentId===document.id);
+    if(!root||!isCharacterContext(root.type,root.properties))throw new ContextIntegrityError("character_context_not_authorized","The selected character does not belong to the authorized document.");
+    const selected=new Set([root.id]),pending=[root.id];
+    while(pending.length){
+      const current=pending.pop()!;
+      for(const relation of projection.blockRelations){
+        if(!isContextCompositionRelation(relation.kind)||relation.fromBlockId!==current||selected.has(relation.toBlockId))continue;
+        selected.add(relation.toBlockId);pending.push(relation.toBlockId);
+      }
+    }
+    // Narrowing a portrait may never remove an authored document-wide safety boundary.
+    for(const block of projection.blocks)if(block.type==="exclusion"||blockIntentFor(block.type,block.properties)==="prohibit")selected.add(block.id);
+    blocks=projection.blocks.filter((block)=>selected.has(block.id));
   }
 
   const blockIds = new Set(blocks.map((block) => block.id));
@@ -171,12 +192,14 @@ export function authoritativeCreativeContext(events: CreativeEvent[], request: C
   const pins = canvasSnapshot
     ? requestedPins.filter((id) => approvedOutputIds.has(id))
     : projection.outputs.filter((output) => output.pinned).map((output) => output.id);
+  const characterOutputKind=request.characterOutputKind??(suppliedScope.output_kind==="character_sheet"?"character_sheet":"headshot");
   const snapshot = {
     facts,
     relationships: relations,
-    ...(canvasSnapshot ? { context_groups: combinedContextGroups({ facts }) } : {}),
+    context_groups: combinedContextGroups({ facts,relationships:relations }),
     pins,
     ...(canvasSnapshot ? { canvas: canvasSnapshot } : {}),
+    ...(rootBlockId?{context_scope:{kind:"character",root_block_id:rootBlockId,output_kind:characterOutputKind},character_study:{format:characterOutputKind,instruction:characterOutputKind==="character_sheet"?"Create one cohesive character sheet showing multiple consistent views of exactly this authored character.":"Create one shoulder-up headshot of exactly this authored character; preserve every specified facial and identity detail."}}:{}),
     tail: [],
   };
   const sourceBlockVersions = blocks.map((block) => ({ block_id: block.id, version: block.sourceEvents.length }));
