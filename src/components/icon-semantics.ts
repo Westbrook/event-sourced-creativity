@@ -23,6 +23,7 @@ const blockIcons: Readonly<Record<BlockKind, FormaIconName>> = {
   material: "layers",
   palette: "palette",
   typography: "edit",
+  audio: "audio",
   format: "grid",
   brand: "pin",
   exclusion: "warning",
@@ -37,6 +38,7 @@ const artifactIcons: Readonly<Record<DocumentArtifactKind, FormaIconName>> = {
   slides: "slides",
   storyboard: "storyboard",
   video: "video",
+  audio: "audio",
 };
 
 const creatorAxisIcons: Readonly<Record<CreatorAxis, FormaIconName>> = {

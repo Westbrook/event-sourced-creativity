@@ -95,6 +95,13 @@ const INTERNAL_CREATIVE_KEYS = new Set([
   "inputReceipt",
   "provider_input",
   "providerInput",
+  "inform_generation",
+  "include_in_output",
+  "allow_provider_audio_transfer",
+  "source_mime_type",
+  "rights_class",
+  "provider_media_url",
+  "providerMediaUrl",
   "frozen_inputs",
   "frozenInputs",
   "organization_context_source_block_id",
@@ -148,6 +155,7 @@ const RENDERING_IDENTIFIER_KEYS = new Set([
   "sourceEventRefs", "source_event_refs", "evidenceRefs", "evidence_refs",
   "source_key", "sourceKey", "source_group_keys", "sourceGroupKeys",
   "source_claim_keys", "sourceClaimKeys", "source_block_key", "sourceBlockKey",
+  "target_id", "targetId",
 ]);
 
 /** Trusted, request-local source mapping. Durable values must never be serialized. */
@@ -171,12 +179,34 @@ type ProviderFacingSourceAliasLookup = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
+const AUDIO_REFERENCE_METADATA_KEY = /(?:^|_)(?:asset|bytes|content|credentials?|file|fingerprint|hash|include|input|licen[cs]e|lyrics?|media|mime|output|provenance|provider|references?|rights?|samples?|secrets?|sources?|tokens?|tracks?|transcripts?|transfer|uploads?|uri|url|waveforms?)(?:_|$)/i;
+
+function hasAudioReferenceMetadata(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasAudioReferenceMetadata);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, item]) =>
+    AUDIO_REFERENCE_METADATA_KEY.test(key.replace(/([a-z0-9])([A-Z])/g, "$1_$2"))
+    || hasAudioReferenceMetadata(item));
+}
+
 /** One deterministic definition of whether a retained decision can influence an output. */
 export function promptFactIsActive(value: unknown): boolean {
   if (!isRecord(value)) return true;
   if (value.active === false || value.removed === true) return false;
   const properties = isRecord(value.properties) ? value.properties : null;
   if (properties?.active === false) return false;
+  const audioSource=value.type==="audio"||value.role==="audio"
+    ||Boolean(properties&&[properties.source_mime_type,properties.media_type].some((mime)=>String(mime??"").toLowerCase().startsWith("audio/")))
+    ||Boolean(properties?.media_url&&properties?.audio_role);
+  if (audioSource && properties?.inform_generation !== true) {
+    const authoredTextOnly = properties !== null
+      && typeof properties.text === "string"
+      && properties.text.trim().length > 0
+      && !Object.hasOwn(value, "inform_generation")
+      && !Object.hasOwn(properties, "inform_generation")
+      && !hasAudioReferenceMetadata(value);
+    if (!authoredTextOnly) return false;
+  }
   return properties?.weight === undefined || Number(properties.weight) > 0;
 }
 

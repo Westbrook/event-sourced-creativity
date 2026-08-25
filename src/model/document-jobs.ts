@@ -99,6 +99,14 @@ const VIDEO_PROGRESS: ProgressPhase[] = [
   { id: "save", label: "Save", stages: ["finalizing", "downloading", "saving", "committing"] },
 ];
 
+const AUDIO_PROGRESS: ProgressPhase[] = [
+  { id: "queue", label: "Queue", stages: ["queued", "queue-recovery", "recovering", "preparing"] },
+  { id: "compose", label: "Compose", stages: ["planning", "composing-audio"] },
+  { id: "submit", label: "Submit", stages: ["uploading-references", "submitting"] },
+  { id: "render", label: "Record", stages: ["rendering", "rendering-audio"] },
+  { id: "save", label: "Save", stages: ["finalizing", "downloading", "saving", "committing"] },
+];
+
 /** A UI-safe estimate from durable job checkpoints; it never implies provider precision we do not have. */
 export function documentJobProgress(job: DocumentJob): DocumentJobProgress {
   const artifactKind = String(job.result?.artifactKind ?? "");
@@ -108,6 +116,8 @@ export function documentJobProgress(job: DocumentJob): DocumentJobProgress {
       ? IMAGE_PROGRESS
       : artifactKind === "video"
         ? VIDEO_PROGRESS
+        : artifactKind === "audio"
+          ? AUDIO_PROGRESS
         : artifactKind === "storyboard"
           ? STORYBOARD_PROGRESS
           : TEXT_ARTIFACT_PROGRESS;
@@ -211,7 +221,7 @@ export function documentJobFailure(job: DocumentJob) {
 
 /** A saved provider request can only be resumed after a genuinely recoverable transport/result failure. */
 export function documentJobCanRecoverProviderRender(job: DocumentJob) {
-  if (job.kind !== "render_document" || job.status !== "failed" || job.result?.artifactKind !== "video") return false;
+  if (job.kind !== "render_document" || job.status !== "failed" || job.result?.artifactKind !== "video" && job.result?.artifactKind !== "audio") return false;
   const sceneReceipts = job.result.productionSceneReceipts && typeof job.result.productionSceneReceipts === "object"
     ? Object.values(job.result.productionSceneReceipts as Record<string, Record<string, unknown>>)
     : [];
@@ -234,7 +244,7 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
   const providerStatus=typeof receipt.provider_request_status==="string"?receipt.provider_request_status:"";
   const transmissionStatus=typeof receipt.source_transmission_status==="string"?receipt.source_transmission_status:"";
   const failureStage=typeof receipt.failure_stage==="string"?receipt.failure_stage:job?.stage??"";
-  const recoverableSubmittedRender=job?.kind==="render_document"&&result.artifactKind==="video"&&Boolean(result.providerJobId||result.recoverableProductionProviderRequest);
+  const recoverableSubmittedRender=job?.kind==="render_document"&&(result.artifactKind==="video"||result.artifactKind==="audio")&&Boolean(result.providerJobId||result.recoverableProductionProviderRequest);
   if(detail?.code==="execution_interrupted"||!detail&&fallback==="execution_interrupted"){
     if(providerStatus==="submission_unknown")return{title:"Provider submission could not be confirmed",summary:"The generation worker stopped while a paid provider request may have been in flight. Do not submit another request until the original attempt is reconciled.",actionLabel:null,actionUrl:null,retryAllowed:false};
     if(providerStatus==="submitted"||providerStatus==="completed")return{title:"Forma lost contact with the generation worker",summary:recoverableSubmittedRender?"The provider request was already submitted. Recover its saved result without starting another paid generation.":"The provider request was already submitted. Review its saved receipt before starting another request, which could duplicate a charge.",actionLabel:null,actionUrl:null,retryAllowed:recoverableSubmittedRender};
@@ -250,6 +260,15 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
   if(detail.code==="presentation_recovery_unavailable")return{title:"The paid presentation draft could not be recovered",summary:"A provider response was recorded before its complete presentation draft was saved. Automatic resubmission was stopped to prevent a duplicate charge.",actionLabel:null,actionUrl:null,retryAllowed:false};
   if(detail.code==="document_queue_starved"||detail.code==="queue_starvation"||failureStage==="queue"&&providerStatus==="not_submitted")return{title:"The generation queue could not advance",summary:"An earlier internal operation blocked this request before it was submitted to a provider. Review the queue and try again only after the blocked operation is resolved.",actionLabel:null,actionUrl:null,retryAllowed:detail.retryable};
   if(providerStatus==="not_submitted"&&(detail.category==="network"||detail.category==="server"))return{title:["planning","preparing","compiling"].includes(failureStage)?"Forma could not prepare this generation":"Forma could not complete this generation",summary:`The generation stopped inside Forma before a provider request was submitted.${transmissionStatus==="not_transmitted"?" The source was not transmitted.":""}${receipt.settled_cost_microusd===0?" No provider charge was recorded.":""}`,actionLabel:null,actionUrl:null,retryAllowed:detail.retryable};
+  const audioRender=result.artifactKind==="audio"||detail.code==="audio_provider_not_configured"||detail.code==="audio_provider_unsupported"||detail.code==="audio_model_unsupported"||detail.code.startsWith("fal_audio_");
+  if(audioRender){
+    if(detail.code==="audio_provider_not_configured"||detail.code==="audio_provider_unsupported"||detail.code==="audio_model_unsupported")return{title:"Fal audio generation is not configured",summary:"Configure a valid server-side Fal key and the supported Lyria 3 Pro adapter before creating an original track.",actionLabel:"Review Fal keys",actionUrl:"https://fal.ai/dashboard/keys",retryAllowed:false};
+    if(detail.category==="authentication")return{title:"The Fal audio credential was rejected",summary:"Replace the server-side Fal key before retrying Lyria audio generation.",actionLabel:"Review Fal keys",actionUrl:"https://fal.ai/dashboard/keys",retryAllowed:false};
+    if(detail.category==="quota")return{title:"The Fal account cannot fund this audio track",summary:"Add Fal credits or resolve the account limit before retrying this original composition.",actionLabel:"Review Fal billing",actionUrl:"https://fal.ai/dashboard/billing",retryAllowed:false};
+    if(detail.category==="rate_limit")return{title:"Fal is limiting audio generation",summary:detail.retryAfterMs?`Wait about ${Math.max(1,Math.ceil(detail.retryAfterMs/1000))} seconds before requesting another track.`:"Wait briefly before requesting another original track.",actionLabel:null,actionUrl:null,retryAllowed:true};
+    if(detail.category==="safety"||detail.riskCategories?.includes("audio-copyright"))return{title:"The original composition was rejected",summary:"Remove named-artist imitation, recognizable melodies, copyrighted lyrics, or unauthorized vocal references before requesting a new original track.",actionLabel:null,actionUrl:null,retryAllowed:false};
+    if(detail.httpStatus===400||detail.httpStatus===422||detail.category==="provider")return{title:"The audio composition or reference was not accepted",summary:"Review the original composition direction, approved image reference, recording rights, and retained provider receipt before trying a changed request.",actionLabel:null,actionUrl:null,retryAllowed:false};
+  }
   if (detail.category === "safety" && (detail.riskCategories?.includes("audio-copyright") || /\baudio\b.*\bcopyright\b/i.test(detail.message))) return { title: "The generated soundtrack was rejected", summary: "The provider flagged generated audio as a potential copyright issue. Create a silent video, or explicitly choose original environmental ambience without music or voices. This rejected provider render cannot be recovered.", actionLabel: null, actionUrl: null, retryAllowed: false };
   if (detail.code.startsWith("fal_") && detail.category !== "safety" && (detail.httpStatus === 400 || detail.httpStatus === 422)) return { title: "The video settings or references were not accepted", summary: "Review the requested duration, frame, reference images, and submitted prompt before trying again. The complete failed-attempt receipt remains available.", actionLabel: null, actionUrl: null, retryAllowed: false };
   if (detail.code === "video_provider_not_configured") return { title: "Fal video generation is not configured", summary: "Add a valid server-side Fal key before retrying this video. Other document renderers remain available.", actionLabel: "Review Fal keys", actionUrl: "https://fal.ai/dashboard/keys", retryAllowed: false };

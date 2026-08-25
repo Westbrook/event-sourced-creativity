@@ -365,7 +365,7 @@ function redactProjectPayload(payload:Record<string,unknown>,contentIds:Set<stri
     if(!value||typeof value!=="object")return value;
     const safe:Record<string,unknown>={};
     for(const [key,item] of Object.entries(value as Record<string,unknown>)){
-      if(/prompt|input_ref|planner_input|chat|attention|taste|authorization|credential|standing_constraints|preference_id|source_event_refs|evidence_refs|provider_(?:status|response|cancel)_url|provider_request|provider_response|video_input_receipt|artifact_plan/i.test(key))continue;
+      if(/prompt|input_ref|planner_input|chat|attention|taste|authorization|credential|standing_constraints|preference_id|source_event_refs|evidence_refs|provider_(?:status|response|cancel)_url|provider_request|provider_response|(?:video|audio)_input_receipt|artifact_plan/i.test(key))continue;
       if(key==="content_ref"&&!contentIds.has(String(item)))continue;
       if((key==="media_url"||key==="source_ref")&&typeof item==="string"&&mediaKey(item)&&!activeResources.get("media")?.has(mediaKey(item)))continue;
       safe[key]=redact(item);

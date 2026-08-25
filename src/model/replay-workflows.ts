@@ -75,7 +75,7 @@ export type ReplayWorkflowOptions = {
 
 const text = (value: unknown) => String(value ?? "").trim();
 const slug = (value: unknown) => text(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "creative-work";
-const labels: Record<ReplayOutputKind, string> = { image: "image", short_story: "short story", scene: "screen scene", slides: "presentation", storyboard: "storyboard", video: "video treatment" };
+const labels: Record<ReplayOutputKind, string> = { image: "image", short_story: "short story", scene: "screen scene", slides: "presentation", storyboard: "storyboard", video: "video treatment", audio: "original soundtrack" };
 const SAFE_SHARE_AUDIT_FIELDS = new Set([
   "share_id", "project_id", "document_id", "resource_id", "resource_kind", "access", "expires_at", "revoked_at", "revoked", "media_count", "audit_only", "trusted_share_service",
   "workflow_id", "workflow_mode", "inferred_history", "narrative_scenario", "experience_area", "narrative_position", "narrative_length", "chapter_cycle", "primary_facet",
@@ -368,9 +368,10 @@ export function buildNothingToSomethingWorkflow(inputs: FinishedWorkProduct[], o
     add("user", "IntentDeclared", { ...shared, scope_ref: documentId, statement_ref: `${workflowId}-private-intent-${suffix}`, expected_output_kind: product.kind, deadline: null }, branch);
 
     const image = product.kind === "image";
+    const paidMedia = product.kind === "video" || product.kind === "audio";
     const request = image
       ? { ...shared, generation_id: generationId, requested_output: "image", quality: "high", purpose: "final", job_kind: "generate", document_revision: revision, output_brief: brief, reference_rights_required: sharedReferences.length > 0 }
-      : { ...shared, artifact_id: artifactId, artifact_kind: product.kind, job_kind: "render_document", paid_media_confirmed: product.kind !== "video" || !options.providerBacked, ...(product.kind==="video"&&options.providerBacked?{approval_required:true}:{}), output_brief: brief, reference_rights_required: sharedReferences.length > 0 };
+      : { ...shared, artifact_id: artifactId, artifact_kind: product.kind, job_kind: "render_document", paid_media_confirmed: !paidMedia || !options.providerBacked, ...(paidMedia&&options.providerBacked?{approval_required:true}:{}), output_brief: brief, reference_rights_required: sharedReferences.length > 0 };
     add("user", image ? "GenerationRequested" : "DocumentRenderRequested", request, branch);
 
     if (sharedReferences.some((reference) => reference.rightsConfirmed !== true)) {
@@ -403,16 +404,17 @@ export function buildNothingToSomethingWorkflow(inputs: FinishedWorkProduct[], o
       },
     }, branch);
 
-    if (product.kind === "video" && options.providerBacked) {
+    if (paidMedia && options.providerBacked) {
       add("worker:renderer", "DocumentRenderFailed", {
         ...shared,
         artifact_id: artifactId,
-        artifact_kind: "video",
-        error_code: "video_provider_not_approved_for_actual_data_mock",
-        error_message: "The video treatment is ready; rendering requires a separate explicit approval.",
+        artifact_kind: product.kind,
+        error_code: `${product.kind}_provider_not_approved_for_actual_data_mock`,
+        error_message: `The ${product.kind} treatment is ready; rendering requires a separate explicit approval.`,
         retryable: false,
         provider_job_id: null,
-        video_mock_boundary: true,
+        provider_call_backed: false,
+        [`${product.kind}_mock_boundary`]: true,
         output_brief: brief,
       }, branch);
       continue;
@@ -447,21 +449,24 @@ export function buildNothingToSomethingWorkflow(inputs: FinishedWorkProduct[], o
           ...(product.kind === "storyboard" ? { media_url: `/api/media/replay%2Fstoryboard%2F${slug(artifactId)}-${index + 1}.jpg`, media_type: "image/jpeg", width: 1024, height: 1024 } : {}),
         };
       });
-      add("worker:renderer", "DocumentRenderCompleted", { ...shared, artifact_id: artifactId, artifact_kind: product.kind, content_ref: `synthetic-artifact:${artifactId}`, title: product.title, summary: product.purpose, output_brief: brief, items, item_count: count, presentation: product.kind === "slides" ? { ...defaultSlidePresentation("nocturne"), theme: product.title, footerLabel: product.title, footer_label: product.title } : null, media_url: product.kind === "video" ? `/api/media/replay%2Fvideo%2F${slug(artifactId)}.mp4` : null, media_type: product.kind === "video" ? "video/mp4" : null, ...(product.kind === "video" ? { provider_job_id: `simulation:${artifactId}` } : {}), provider: "fictional-replay", simulation: true }, branch);
-      add("user", "DocumentArtifactViewed", { ...shared, artifact_id: artifactId, artifact_kind: product.kind, viewer_kind: product.kind === "storyboard" ? "storyboard" : product.kind === "video" ? "media" : "reader" }, branch);
-      add("user", "DocumentArtifactExported", { ...shared, artifact_id: artifactId, artifact_kind: product.kind, format: product.kind === "video" ? "video/mp4" : product.kind === "slides" ? "application/pdf" : "markdown" }, branch);
+      const mediaType = product.kind === "video" ? "video/mp4" : product.kind === "audio" ? "audio/mpeg" : null;
+      const mediaUrl = product.kind === "video" ? `/api/media/replay%2Fvideo%2F${slug(artifactId)}.mp4` : product.kind === "audio" ? `/api/media/replay%2Faudio%2F${slug(artifactId)}.mp3` : null;
+      add("worker:renderer", "DocumentRenderCompleted", { ...shared, artifact_id: artifactId, artifact_kind: product.kind, content_ref: `synthetic-artifact:${artifactId}`, title: product.title, summary: product.purpose, output_brief: brief, items, item_count: count, presentation: product.kind === "slides" ? { ...defaultSlidePresentation("nocturne"), theme: product.title, footerLabel: product.title, footer_label: product.title } : null, media_url: mediaUrl, media_type: mediaType, ...(paidMedia ? { provider_job_id: `simulation:${artifactId}` } : {}), provider: "fictional-replay", simulation: true }, branch);
+      add("user", "DocumentArtifactViewed", { ...shared, artifact_id: artifactId, artifact_kind: product.kind, viewer_kind: product.kind === "storyboard" ? "storyboard" : paidMedia ? "media" : "reader" }, branch);
+      add("user", "DocumentArtifactExported", { ...shared, artifact_id: artifactId, artifact_kind: product.kind, format: mediaType ?? (product.kind === "slides" ? "application/pdf" : "markdown") }, branch);
     }
   }
 
   const firstCompleted = events.find((event) => event.type === "GenerationCompleted" || event.type === "DocumentRenderCompleted");
   if (firstCompleted) {
     const image = firstCompleted.type === "GenerationCompleted";
+    const reusedKind = image ? "reference" : firstCompleted.payload.artifact_kind === "audio" ? "audio" : "message";
     const nextFingerprint = replayContextFingerprint({ previous: contextFingerprint, output: firstCompleted.eventId });
     add("user", "BlockCreated", {
       document_id: documentId,
       block_id: `${workflowId}-output-as-context`,
-      type: image ? "reference" : "message",
-      handle: `${image ? "reference" : "message"}/accepted-result`,
+      type: reusedKind,
+      handle: `${reusedKind}/accepted-result`,
       position: "z9999",
       source_context_id: sourceContextId,
       parent_context_fingerprint: contextFingerprint,
@@ -471,6 +476,7 @@ export function buildNothingToSomethingWorkflow(inputs: FinishedWorkProduct[], o
         authority: "authored",
         input_mode: "full_output",
         ...(image ? { source_output_id: firstCompleted.payload.object_id, source_generation_id: firstCompleted.payload.generation_id } : { source_artifact_id: firstCompleted.payload.artifact_id, source_artifact_kind: firstCompleted.payload.artifact_kind }),
+        ...(reusedKind === "audio" ? { audio_role: "score", inform_generation: false, include_in_output: false, allow_provider_audio_transfer: false } : {}),
         source_document_id: documentId,
       },
     }, "reuse");
@@ -480,7 +486,7 @@ export function buildNothingToSomethingWorkflow(inputs: FinishedWorkProduct[], o
       const shared = { document_id: documentId, intent_id: `${workflowId}-derived-intent`, parent_intent_id: `${workflowId}-root-intent`, source_context_id: sourceContextId, context_fingerprint: nextFingerprint, context_revision: "context-revision-2", source_block_versions: [...sourceBlockVersions, { block_id: `${workflowId}-output-as-context`, version: 1 }] };
       add("user", "IntentDeclared", { ...shared, scope_ref: documentId, statement_ref: `${workflowId}-private-derived-intent`, expected_output_kind: "image", deadline: null }, "reuse");
       add("user", "GenerationRequested", { ...shared, generation_id: generationId, requested_output: "image", quality: "high", purpose: "final", job_kind: "generate", document_revision: "context-revision-2", output_brief: outputBrief(products.find((product) => product.kind === "image") ?? { ...products[0], kind: "image" }) }, "reuse");
-      add("worker:compiler", "ContextCompiled", { ...shared, generation_id: generationId, document_revision: "context-revision-2", compiled_snapshot: { facts: [{ type: image ? "reference" : "message", authority: "authored", ...(image ? { source_output_id: firstCompleted.payload.object_id } : { source_artifact_id: firstCompleted.payload.artifact_id }) }], source_context_id: sourceContextId, context_fingerprint: nextFingerprint, as_of: { document_revision: "context-revision-2", complete: true } } }, "reuse");
+      add("worker:compiler", "ContextCompiled", { ...shared, generation_id: generationId, document_revision: "context-revision-2", compiled_snapshot: { facts: [{ type: reusedKind, authority: "authored", ...(image ? { source_output_id: firstCompleted.payload.object_id } : { source_artifact_id: firstCompleted.payload.artifact_id }) }], source_context_id: sourceContextId, context_fingerprint: nextFingerprint, as_of: { document_revision: "context-revision-2", complete: true } } }, "reuse");
       add("worker:generator", "GenerationCompleted", { ...shared, generation_id: generationId, object_id: objectId, object_ids: [objectId], model_id: "fictional-replay", quality: "high", purpose: "final", simulation: true, media_url: `/api/media/replay%2Fgenerated%2F${slug(objectId)}.png`, output_brief: outputBrief(products.find((product) => product.kind === "image") ?? { ...products[0], kind: "image" }) }, "reuse");
       add("user", "ObjectSaved", { ...shared, object_id: objectId }, "reuse");
     }
@@ -503,4 +509,5 @@ export const DEFAULT_REPLAY_WORK_PRODUCTS: FinishedWorkProduct[] = [
   { kind: "slides", title: "A Field After the Crowd", audience: "campaign review group", purpose: "Explain which creative decisions are locked and what still needs approval." },
   { kind: "storyboard", title: "The Last Match · Previz", audience: "cinematographer and editor", purpose: "Test shot order and spatial continuity before motion production." },
   { kind: "video", title: "The Last Match · Motion Study", audience: "motion director", purpose: "Describe camera movement, pacing, and the separate video-provider handoff." },
+  { kind: "audio", title: "The Last Match · Original Score", audience: "music director and film composer", purpose: "Compose an original musical arc that follows the quiet field, human return, and final emotional reveal." },
 ];

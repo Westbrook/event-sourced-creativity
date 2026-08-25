@@ -9,10 +9,12 @@ import { DOCUMENT_JOB_HEARTBEAT_MS, documentJobMaxAttempts, generationFailureGui
 import { claimCostBudgetReservation, reconcileFailedBudgetReservations, reserveBudget, reserveCostBudget } from "../worker/pilot-policy.ts";
 import { appendAuditEvent } from "../worker/runtime.ts";
 
-const projectSourceRoot=new URL("../",import.meta.url).href;
-const sourceImports=registerHooks({resolve(specifier,context,nextResolve){return nextResolve(context.parentURL?.startsWith(projectSourceRoot)&&specifier.startsWith(".")&&!/\.[^/]+$/.test(specifier)?`${specifier}.ts`:specifier,context);}});
-const {cancelProjectActorJobs}=await import("../worker/document-jobs-api.ts");
-sourceImports.deregister();
+const workspaceRoot=new URL("../",import.meta.url).href;
+const sourceResolution=registerHooks({resolve(specifier,context,nextResolve){
+  const workspaceSource=typeof context.parentURL==="string"&&context.parentURL.startsWith(workspaceRoot)&&!context.parentURL.includes("/node_modules/");
+  return nextResolve(workspaceSource&&specifier.startsWith(".")&&!/\.[a-z0-9]+$/i.test(specifier)?`${specifier}.ts`:specifier,context);
+}});
+const {cancelProjectActorJobs}=await import("../worker/document-jobs-api.ts").finally(()=>sourceResolution.deregister());
 
 function reliabilityDatabase(){
   const sqlite=new DatabaseSync(":memory:");
@@ -147,6 +149,26 @@ async function stalePresentationAttempt(fixture,job,{attemptCount=1,reserve=fals
 }
 
 const flushExecution=async()=>{for(let index=0;index<8;index+=1)await new Promise(setImmediate);};
+
+test("refuses immediate and racing cancellation of an unresolved paid Lyria submission",async()=>{
+  for(const racing of [false,true]){
+    const fixture=await reliabilityWorker();fixture.environment.FAL_KEY="lyria-reliability-key";addQueueBlocker(fixture);
+    const accepted=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"audio",productionMode:"manual",itemCount:1,paidMediaConfirmed:true,requestKey:`lyria-pending-cancel-${racing}`}}));
+    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+    const{job}=await accepted.json(),owner="dev-local-creative",stream=`creative:${owner}`,correlation=`${job.jobId}:attempt:1`,operation="document-render:audio";
+    const tokens=await reserveBudget(fixture.environment,owner,24_000,{streamId:stream,correlationId:correlation,operation});assert.equal(tokens.ok,true);
+    const costs=await reserveCostBudget(fixture.environment,owner,150_000,{reservationId:`${job.jobId}-audio-cost`,maximumMicrousd:150_000,allowUserOverage:false,streamId:stream,correlationId:correlation,operation,period:tokens.period});assert.equal(costs.ok,true);assert.equal(await claimCostBudgetReservation(fixture.environment,owner,costs.reservationId),true);
+    const checkpoint={...job.result,stage:"submitting",reservationId:tokens.reservationId,costReservationId:costs.reservationId,costReservationPeriod:tokens.period,costReservationMicrousd:150_000,...(racing?{}:{audioProviderSubmission:"pending"}),generationReceipt:{...job.result.generationReceipt,provider_request_status:"submission_unknown",source_transmission_status:"unknown",settled_cost_microusd:null,reservation_status:"executing"}};
+    const now=new Date().toISOString(),lease=new Date(Date.now()+75_000).toISOString();fixture.sqlite.prepare("UPDATE document_jobs SET status='running',attempt_count=1,correlation_id=?,started_at=?,lease_expires_at=?,updated_at=?,result_json=? WHERE job_id=?").run(correlation,now,lease,now,JSON.stringify(checkpoint),job.jobId);
+    let checkpointRaced=false;if(racing)fixture.controls.beforeRun=async(statement)=>{if(checkpointRaced||!statement.sql.startsWith("UPDATE document_jobs SET status=?,result_json=json_patch"))return;checkpointRaced=true;fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify({...checkpoint,audioProviderSubmission:"pending"}),job.jobId);};
+    try{
+      const cancel=await fixture.request(`/api/document-jobs/${job.jobId}/cancel`,{method:"POST"});assert.equal(cancel.status,409,JSON.stringify(await cancel.clone().json()));assert.equal((await cancel.json()).error,"provider_submission_in_flight");if(racing)assert.equal(checkpointRaced,true);
+      assert.equal(fixture.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(job.jobId).status,"running");
+      assert.equal(fixture.sqlite.prepare("SELECT status FROM budget_reservations WHERE reservation_id=?").get(tokens.reservationId).status,"active");
+      assert.equal(fixture.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(costs.reservationId).status,"executing");
+    }finally{fixture.controls.beforeRun=null;}
+  }
+});
 
 test("keeps a faithful twelve-block presentation inside its live hosted execution request and checkpoints provider submission before dispatch",async()=>{
   const fixture=await reliabilityWorker();

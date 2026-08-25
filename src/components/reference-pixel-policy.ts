@@ -36,7 +36,7 @@ export class ReferencePixelPolicy extends FormaElement {
     return html`${inheritedForm ? nothing : html`<form id=${policyFormId} hidden @submit=${(event:SubmitEvent)=>event.preventDefault()}></form>`}<section class=${`reference-pixel-policy ${this.compact ? "compact" : ""}`} aria-label="Generation reference policy">
       <div class="reference-pixel-policy-heading">
         <span>${icon("image")}</span>
-        <div><b>Use in generation</b><small>${selected === "context_only" ? this.i18n.system("Original pixels stay private from image and video models") : this.i18n.system("Original pixels can be attached to compatible image and video generations")}</small>${storyboardFrame ? html`<small>Storyboard shot ${Number.isFinite(storyboardIndex) ? storyboardIndex : "—"}${Number.isFinite(storyboardCount) ? " " + this.i18n.system("of {storyboardCount}", { storyboardCount: this.i18n.number(storyboardCount) }) : ""} · retained in source order</small>` : nothing}</div>
+        <div><b>Use in generation</b><small>${selected === "context_only" ? this.i18n.t("audio.image.scopePrivate","Original pixels stay private from image, video, and audio models") : this.i18n.t("audio.image.scopeApproved","Original pixels can be attached to compatible image, video, and audio generations")}</small>${storyboardFrame ? html`<small>Storyboard shot ${Number.isFinite(storyboardIndex) ? storyboardIndex : "—"}${Number.isFinite(storyboardCount) ? " " + this.i18n.system("of {storyboardCount}", { storyboardCount: this.i18n.number(storyboardCount) }) : ""} · retained in source order</small>` : nothing}</div>
       </div>
       <label>
         <span class="sr-only">How should generation models use this reference?</span>

@@ -16,6 +16,11 @@ function actualMethod(name) {
 
 const harnessSource = `
 const MAX_MANAGED_PRESENTATION_SLIDES = 100;
+const generationRevisionFor = (value) => {
+  let hash = 0x811c9dc5;
+  for (const character of JSON.stringify(value)) hash = Math.imul(hash ^ character.charCodeAt(0), 0x01000193);
+  return "rev-" + (hash >>> 0).toString(36);
+};
 
 export class PresentationStoreHarness {
   requests = [];
@@ -153,6 +158,36 @@ test("deduplicates only matching active requests while preserving intentional st
   assert.equal(await harness.renderDocumentArtifact("slides", { ...base, presentationStyle: "editorial", presentationFidelity: "creative" }), true);
   assert.equal(harness.requests.length, 6, "a completed request does not block deliberate regeneration");
   assert.equal(harness.budgetChecks.length, 6);
+});
+
+test("keeps soundtrack, transfer, and image selections distinct without changing ordinary request identities", async () => {
+  const harness = new PresentationStoreHarness();
+  const base = { productionMode: "managed", itemCount: 12 };
+
+  assert.equal(await harness.renderDocumentArtifact("slides", base), true);
+  assert.doesNotMatch(harness.requests[0].body.payload.requestKey, /:soundtracks:|:transfer:|:image:/);
+
+  assert.equal(await harness.renderDocumentArtifact("slides", { ...base, soundtrackBlockIds: ["PRIVATE_SOUNDTRACK_A_481"] }), true);
+  assert.equal(await harness.renderDocumentArtifact("slides", { ...base, soundtrackBlockIds: ["PRIVATE_SOUNDTRACK_B_792"] }), true);
+  assert.equal(harness.requests.length, 3);
+  assert.match(harness.requests[1].body.payload.requestKey, /:audio:rev-[a-z0-9]+$/);
+  assert.match(harness.requests[2].body.payload.requestKey, /:audio:rev-[a-z0-9]+$/);
+  assert.notEqual(harness.requests[1].body.payload.requestKey, harness.requests[2].body.payload.requestKey);
+  assert.deepEqual(harness.requests[1].body.payload.soundtrackBlockIds, ["PRIVATE_SOUNDTRACK_A_481"]);
+  assert.equal(await harness.renderDocumentArtifact("slides", { ...base, soundtrackBlockIds: ["PRIVATE_SOUNDTRACK_A_481"] }), true);
+  assert.equal(harness.requests.length, 3, "the same approved soundtrack reuses its own active request");
+
+  assert.equal(await harness.renderDocumentArtifact("video", { soundtrackBlockIds: ["PRIVATE_SOUNDTRACK_A_481"] }), true);
+  const descriptionOnlyKey = harness.requests.at(-1).body.payload.requestKey;
+  assert.equal(await harness.renderDocumentArtifact("video", { soundtrackBlockIds: ["PRIVATE_SOUNDTRACK_A_481"], sendSoundtrackToVideoProvider: true }), true);
+  assert.notEqual(harness.requests.at(-1).body.payload.requestKey, descriptionOnlyKey);
+  assert.equal(harness.requests.at(-1).body.payload.sendSoundtrackToVideoProvider, true);
+
+  assert.equal(await harness.renderDocumentArtifact("audio", { audioImageBlockId: "PRIVATE_IMAGE_REFERENCE_792" }), true);
+  assert.match(harness.requests.at(-1).body.payload.requestKey, /:audio:rev-[a-z0-9]+$/);
+  assert.equal(harness.requests.at(-1).body.payload.audioImageBlockId, "PRIVATE_IMAGE_REFERENCE_792");
+
+  for (const request of harness.requests) assert.doesNotMatch(request.body.payload.requestKey, /PRIVATE_/);
 });
 
 test("normalizes both count aliases without leaking slideshow-only settings into other artifact formats", async () => {

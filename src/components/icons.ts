@@ -20,7 +20,7 @@ import warningSvg from "@phosphor-icons/core/regular/warning.svg?raw";
 
 /** Semantic product names, independent of upstream filenames and icon weights. */
 export type FormaIconName =
-  | "admin" | "arrow" | "back" | "bold" | "branch" | "bullets" | "check"
+  | "admin" | "arrow" | "audio" | "back" | "bold" | "branch" | "bullets" | "check"
   | "clock" | "close" | "collapse" | "compare" | "contrast" | "copy"
   | "dashboard" | "document" | "dots" | "down" | "download" | "draw"
   | "edit" | "expand" | "eye" | "families" | "flask" | "focal-point"

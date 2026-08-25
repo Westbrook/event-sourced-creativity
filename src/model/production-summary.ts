@@ -14,7 +14,7 @@ export type CreatorProductionSummary = {
   fullyEvaluated: boolean;
   mediaInspected: boolean;
   delivery: "scene-reel" | "single-video" | "artifact";
-  audioMode: "silent" | "original_ambient" | null;
+  audioMode: "silent" | "original_ambient" | "provided_soundtrack" | "provided_soundtrack_and_original_ambient" | null;
 };
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -35,6 +35,8 @@ export function creatorProductionSummary(artifact: DocumentArtifact, events: rea
     })
     : [];
   const audio = artifact.settings.video_audio_mode;
+  const providedSoundtrack=artifact.kind==="video"&&Array.isArray(artifact.settings.soundtrack_assets)
+    &&artifact.settings.soundtrack_assets.some((value)=>value&&typeof value==="object"&&(value as Record<string,unknown>).provider_audio_transmitted===true);
 
   return {
     mode: artifact.settings.production_mode === "managed" ? "managed" : "manual",
@@ -49,6 +51,6 @@ export function creatorProductionSummary(artifact: DocumentArtifact, events: rea
     fullyEvaluated: evidence.fully_evaluated === true,
     mediaInspected: evidence.media_inspected === true,
     delivery: artifact.kind === "video" ? artifact.itemCount > 1 ? "scene-reel" : "single-video" : "artifact",
-    audioMode: audio === "silent" || audio === "original_ambient" ? audio : null,
+    audioMode: providedSoundtrack?(audio==="original_ambient"?"provided_soundtrack_and_original_ambient":"provided_soundtrack"):audio === "silent" || audio === "original_ambient" ? audio : null,
   };
 }

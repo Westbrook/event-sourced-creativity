@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   creativePromptGuardrails,
+  promptFactIsActive,
   providerFacingCreativeContext,
   providerFacingRenderingContext,
 } from "../src/model/prompt-policy.ts";
@@ -10,6 +11,45 @@ const differentiationQuote = "The differentiator is not that one brief can make 
 const marketResearchQuote = "An asynchronous job without a global, actionable inbox is just work the customer has to remember to check.";
 const productOwnerScreenQuote = "Every extra inch of screen should reveal a useful relationship, not another column of product chrome.";
 const leadDesignerScreenQuote = "A smaller screen is not a smaller product; it is a stricter argument about what deserves the next square inch.";
+
+test("authored text-only audio direction remains usable while private or opted-out references stay local", () => {
+  const authored = { block_id: "authored-audio", type: "audio", properties: { text: "Warm piano beneath distant waves.", label: "Soundtrack", subtype: "direction", weight: 1, spatial_scope: { kind: "document" } } };
+  assert.equal(promptFactIsActive(authored), true);
+  assert.deepEqual(providerFacingCreativeContext({ facts: [authored] }).facts, [authored]);
+
+  for (const properties of [
+    { inform_generation: false },
+    { media_url: "" },
+    { source_mime_type: "audio/mpeg" },
+    { source_content_hash: "PRIVATE_HASH" },
+    { contentRef: "PRIVATE_REFERENCE" },
+    { reference_id: "PRIVATE_REFERENCE" },
+    { transcript: "PRIVATE_TRANSCRIPT" },
+    { lyrics: "PRIVATE_LYRICS" },
+    { rights_class: "licensed" },
+    { include_in_output: false },
+    { allow_provider_audio_transfer: false },
+    { nested: { providerMediaUrl: "/private/theme.mp3" } },
+  ]) {
+    const privateReference = { ...authored, properties: { ...authored.properties, ...properties } };
+    assert.equal(promptFactIsActive(privateReference), false, Object.keys(properties)[0]);
+    assert.deepEqual(providerFacingCreativeContext({ facts: [privateReference] }), { facts: [] });
+  }
+
+  for (const privateReference of [
+    { ...authored, locked: true, properties: { ...authored.properties, inform_generation: false, transcript: "PRIVATE_LOCKED_TRANSCRIPT" } },
+    { ...authored, properties: { ...authored.properties, required: true, lyrics: "PRIVATE_REQUIRED_LYRICS" } },
+    { ...authored, properties: { ...authored.properties, audio_role: "silence", inform_generation: false, transcript: "PRIVATE_SILENCE_TRANSCRIPT" } },
+    { ...authored, inform_generation: false },
+    { ...authored, source_artifact_id: "PRIVATE_ARTIFACT" },
+    { ...authored, properties: { ...authored.properties, text: " " } },
+  ]) {
+    assert.equal(promptFactIsActive(privateReference), false);
+    assert.deepEqual(providerFacingCreativeContext({ facts: [privateReference] }), { facts: [] });
+  }
+
+  assert.equal(promptFactIsActive({ ...authored, properties: { ...authored.properties, inform_generation: true, media_url: "/private/theme.mp3" } }), true);
+});
 
 test("provider-facing rendering retains complete authored slide outlines, exact quotes, numerical precision, and protected product vocabulary", () => {
   const outline = [

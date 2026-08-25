@@ -46,6 +46,7 @@ const artifactSemantics = (artifact: DocumentArtifact) => ({
   slides: { type:"message", subtype:"Presentation source", role:"slide_chapter", application:"ordered", target:`${artifact.title} presentation sequence` },
   storyboard: { type:"composition", subtype:"Storyboard sequence", role:"sequence", application:"ordered", target:`${artifact.title} ordered shot sequence` },
   video: { type:"motion", subtype:"Rendered motion", role:"sequence", application:"ordered", target:`${artifact.title} motion continuity` },
+  audio: { type:"audio", subtype:"Score", role:"sequence", application:"ordered", target:`${artifact.title} musical and emotional continuity` },
 }[artifact.kind]);
 
 type AuthoredArtifactItem = DocumentArtifactDraftItem & { source_artifact_item_id: string; media_url?: string | null; media_type?: string | null; scene_id?: string | null; narrative_order?: number | null; generation_order?: number | null; duration_seconds?: number | null };
@@ -88,11 +89,13 @@ export function artifactContextEvents(artifact: DocumentArtifact, options: Artif
   const idFactory=options.idFactory??(()=>crypto.randomUUID());const semantics=artifactSemantics(artifact);const contextSetId=options.contextSetId??idFactory();const rootBlockId=options.existingRootBlockId??idFactory();const items=draftItems(artifact,options.content);const events:EventInput[]=[];const blockIds:string[]=[];const shared={...sharedPayload(options),source_artifact_id:artifact.id,source_artifact_kind:artifact.kind,source_document_id:artifact.documentId};
   if(!options.existingRootBlockId){
     blockIds.push(rootBlockId);
+    const audioReferenceId=artifact.kind==="audio"&&artifact.mediaUrl?idFactory():null;
+    if(audioReferenceId)events.push({type:"ReferenceIngested",payload:{...shared,reference_id:audioReferenceId,source_type:"generated-audio",source_ref:artifact.mediaUrl,media_url:artifact.mediaUrl,media_type:artifact.mediaType,content_hash:String(artifact.settings.source_media_sha256??""),rights_class:"account-generated",provider:artifact.provider,model_id:artifact.modelId}});
     events.push({type:"BlockCreated",payload:{...shared,block_id:rootBlockId,type:semantics.type,handle:`${semantics.type}/${slug(artifact.title)}-${artifact.id.slice(-8)}`,position:`${options.positionPrefix??"z"}${String(options.positionStart??0).padStart(8,"0")}`,properties:{
       label:artifact.title,text:artifactText(artifact,options.content),artifact_markdown:artifactText(artifact,options.content),subtype:semantics.subtype,intent:"include",authority:"authored",weight:.9,
       source_artifact_id:artifact.id,source_artifact_kind:artifact.kind,source_document_id:artifact.documentId,source_artifact_content_ref:artifact.contentRef,source_artifact_input_ref:artifact.inputRef??null,
       artifact_summary:artifact.summary,artifact_item_count:artifact.itemCount,artifact_structure:{presentation:options.content?.presentation??artifact.presentation,items},
-      media_url:artifact.mediaUrl,media_type:artifact.mediaType,provider:artifact.provider,model_id:artifact.modelId,input_mode:"full_output",
+      media_url:artifact.mediaUrl,media_type:artifact.mediaType,provider:artifact.provider,model_id:artifact.modelId,input_mode:"full_output",...(artifact.kind==="audio"?{reference_id:audioReferenceId,source_mime_type:artifact.mediaType,source_content_hash:String(artifact.settings.source_media_sha256??""),duration_seconds:typeof artifact.settings.duration_seconds==="number"?artifact.settings.duration_seconds:null,audio_role:"score",rights_class:"account-generated",inform_generation:false,include_in_output:false,allow_provider_audio_transfer:false,lyrics:typeof artifact.settings.lyrics==="string"?artifact.settings.lyrics:"",audio_cues:Array.isArray(artifact.settings.audio_cues)?artifact.settings.audio_cues:[]}:{}),
       context_set_id:contextSetId,context_set_root_id:rootBlockId,copied_as_context_set:true,semantic_isolation:true,
       combined_context_memberships:[{contextSetId,name:artifact.title,role:semantics.role,target:semantics.target,application:semantics.application,relativity:1,memberOrder:0,sourceCanvasId:options.sourceCanvasId??""}],
       created_from:options.sourceSurface,...(options.sourceCanvasItemIds?.length?{source_canvas_item_ids:options.sourceCanvasItemIds}:{}),

@@ -18,8 +18,10 @@ export interface WorkerEnv {
   FAL_IMAGE_EDIT_MODEL?: string;
   FAL_VIDEO_MODEL?: string;
   FAL_REFERENCE_VIDEO_MODEL?: string;
+  FAL_AUDIO_MODEL?: string;
   FORMA_IMAGE_PROVIDER?: string;
   FORMA_VIDEO_PROVIDER?: string;
+  FORMA_AUDIO_PROVIDER?: string;
   FORMA_ADMIN_EMAILS?: string;
   FORMA_RETENTION_DAYS?: string;
   FORMA_EVIDENCE_RETENTION_DAYS?: string;

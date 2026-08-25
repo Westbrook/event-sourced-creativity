@@ -1,7 +1,8 @@
 import { productionTeamFor, type ManagedProductionPlan, type ProductionFormat } from "./managed-production.ts";
 import { VIDEO_ADAPTER_CONTRACT } from "./video-adapter.ts";
+import { AUDIO_ADAPTER_CONTRACT } from "./audio.ts";
 
-export type ProductionUnitKind = "plan" | "look-development" | "write" | "render-image" | "render-video" | "review" | "assemble";
+export type ProductionUnitKind = "plan" | "look-development" | "write" | "render-image" | "render-video" | "render-audio" | "review" | "assemble";
 
 export type ProductionUnit = {
   id: string;
@@ -38,6 +39,7 @@ export type ProductionSystemContract = {
 
 const capabilities = (format: ProductionFormat): ProductionSystemCapabilities => ({
   unitKinds: format === "video" ? ["plan", "look-development", "write", "render-video", "review", "assemble"]
+    : format === "audio" ? ["plan", "write", "render-audio", "review", "assemble"]
     : format === "storyboard" ? ["plan", "write", "render-image", "review", "assemble"]
     : format === "image" ? ["plan", "render-image", "review"]
     : ["plan", "write", "review", "assemble"],
@@ -48,7 +50,7 @@ const capabilities = (format: ProductionFormat): ProductionSystemCapabilities =>
   nativeBoundaryFrames: false,
   videoFrameExtraction: false,
   finalVideoComposition: false,
-  delivery: format === "video" ? "ordered-scene-reel" : format === "image" || format === "short_story" || format === "scene" ? "single-artifact" : "ordered-item-collection",
+  delivery: format === "video" ? "ordered-scene-reel" : format === "image" || format === "audio" || format === "short_story" || format === "scene" ? "single-artifact" : "ordered-item-collection",
 });
 
 const contractFor = (format: ProductionFormat): ProductionSystemContract => ({
@@ -60,6 +62,7 @@ const contractFor = (format: ProductionFormat): ProductionSystemContract => ({
 });
 
 export const PRODUCTION_SYSTEMS: Readonly<Record<ProductionFormat, ProductionSystemContract>> = {
+  audio: contractFor("audio"),
   video: contractFor("video"),
   storyboard: contractFor("storyboard"),
   slides: contractFor("slides"),
@@ -85,7 +88,7 @@ export function productionUnitsForPlan(plan: ManagedProductionPlan): ProductionU
   }];
 
   const requiresAnchor = plan.format === "video" && plan.estimatedReferenceCostMicrousd > 0;
-  const requiresScript = plan.format === "video" || plan.format === "storyboard";
+  const requiresScript = plan.format === "video" || plan.format === "storyboard" || plan.format === "audio";
   if (requiresScript) units.push({
     id: "production-script",
     kind: "write",
@@ -114,9 +117,21 @@ export function productionUnitsForPlan(plan: ManagedProductionPlan): ProductionU
   }
 
   const rate = plan.totalDurationSeconds ? plan.estimatedVideoCostMicrousd / plan.totalDurationSeconds : 0;
-  for (const sceneId of plan.executionOrder) {
+  if(plan.format==="audio")units.push({
+    id:"production-audio-track",
+    kind:"render-audio",
+    format:plan.format,
+    dependsOn:["production-script"],
+    narrativeOrder:null,
+    sourceClaimIds:[...new Set(plan.scenes.flatMap((scene)=>scene.sourceClaimIds))],
+    contextGroupIds:[...new Set(plan.scenes.flatMap((scene)=>scene.contextGroupIds))],
+    referenceIds:[...new Set(plan.scenes.flatMap((scene)=>scene.referenceIds))],
+    estimatedCostMicrousd:AUDIO_ADAPTER_CONTRACT.publishedCostMicrousd,
+  });
+  for (const sceneId of plan.format==="audio"?[]:plan.executionOrder) {
     const scene = plan.scenes.find((item) => item.id === sceneId)!;
     const kind: ProductionUnitKind = plan.format === "video" ? "render-video"
+      : plan.format === "audio" ? "render-audio"
       : plan.format === "image" || plan.format === "storyboard" ? "render-image"
       : "write";
     const prerequisites = [
@@ -141,7 +156,7 @@ export function productionUnitsForPlan(plan: ManagedProductionPlan): ProductionU
     id: "production-review",
     kind: "review",
     format: plan.format,
-    dependsOn: plan.scenes.map((scene) => `production-unit:${scene.id}`),
+    dependsOn: plan.format==="audio"?["production-audio-track"]:plan.scenes.map((scene) => `production-unit:${scene.id}`),
     narrativeOrder: null,
     sourceClaimIds: [],
     contextGroupIds: [],

@@ -146,7 +146,7 @@ export function authoritativeCreativeContext(events: CreativeEvent[], request: C
       throw new ContextIntegrityError("context_source_not_authorized", "The supplied source is not authorized for the selected project and document.");
     }
     const properties = record(claimed.properties);
-    for (const key of ["media_url", "reference_id", "pixel_reference_mode", "source_evidence_hash", "source_content_hash", "source_mime_type"] as const) {
+    for (const key of ["media_url", "reference_id", "pixel_reference_mode", "source_evidence_hash", "source_content_hash", "source_mime_type", "media_type", "rights_class", "inform_generation", "include_in_output", "allow_provider_audio_transfer", "duration_seconds", "audio_role"] as const) {
       if (properties[key] !== undefined && JSON.stringify(properties[key]) !== JSON.stringify(actual.properties[key])) {
         throw new ContextIntegrityError("context_source_not_authorized", "The supplied source or media is not authorized for the selected project.");
       }

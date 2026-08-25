@@ -1837,7 +1837,7 @@ forma-document-artifacts { display: block; min-width: 0; }
 .document-artifact-reader-actions { display: flex; flex: none; align-items: center; gap: 1rem; }
 .artifact-slide-footer-toggle { display: inline-flex; align-items: center; gap: .55rem; color: var(--muted); font-size: var(--type-caption); font-weight: 600; cursor: pointer; }
 .artifact-slide-footer-toggle input { margin: 0; accent-color: var(--accent); }
-.artifact-kind-picker { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 1px; overflow: auto; margin: 0; padding: 0; border: 0; background: var(--line); }
+.artifact-kind-picker { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 1px; overflow: auto; margin: 0; padding: 0; border: 0; background: var(--line); }
 .artifact-kind-picker :is(button,label) { display: grid; align-content: start; gap: .45rem; min-width: 9rem; min-height: 10rem; padding: 1.2rem; text-align: start; color: inherit; border: 0; background: var(--panel); cursor: pointer; }
 .artifact-kind-picker :is(button,label).selected { background: light-dark(#fff8ef,#29231d); }
 .artifact-kind-picker :is(button,label) > span { width: 1.5rem; color: var(--accent); }
@@ -2118,7 +2118,7 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
   .document-artifact-jobs > span small { grid-column: 2 / -1; white-space: normal; }
   .document-artifact-failures article { align-items: stretch; flex-direction: column; }
   .document-artifact-failures article > div:last-child { flex-wrap: wrap; }
-  .artifact-kind-picker { grid-template-columns: repeat(5,11rem); }
+  .artifact-kind-picker { grid-template-columns: repeat(6,11rem); }
   .artifact-options { grid-template-columns: 1fr; }
   .document-artifact-dialog > footer,.document-artifact-reader > footer { align-items: stretch; flex-direction: column; }
   .document-artifact-dialog > footer .button,.document-artifact-reader > footer div,.document-artifact-reader > footer .button { width: 100%; }
@@ -2512,6 +2512,47 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
   .generation-queue-card > footer { align-items: stretch; flex-direction: column; gap: 12px; padding: 15px 18px; }
   .generation-queue-card > footer .button { width: 100%; }
 }
+
+/* Audio remains quiet until its native, keyboard-accessible controls are used. */
+.forma-audio-player { display: grid; min-inline-size: 0; gap: .625rem; }
+.forma-audio-player audio { inline-size: 100%; max-inline-size: 100%; min-block-size: 2.75rem; }
+.forma-audio-player--compact { gap: .35rem; }
+.forma-audio-description,.forma-audio-transcript p,.forma-soundtrack-notice,.artifact-audio-watermark { margin: 0; color: var(--muted); font-size: var(--type-small); line-height: 1.5; overflow-wrap: anywhere; }
+.forma-audio-transcript summary,.forma-audio-cues summary,.presentation-deck-soundtrack summary { min-block-size: 2.75rem; align-content: center; cursor: pointer; }
+.context-audio { display: grid; gap: 1rem; margin-block: .75rem; padding: .9rem; background: color-mix(in srgb,var(--accent) 4%,var(--paper)); border: 1px solid var(--line); border-radius: .7rem; }
+.context-audio-duration { margin: -.35rem 0 0; color: var(--muted); font: var(--type-micro) var(--mono); }
+.context-audio-notes { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .8rem; }
+.context-audio-notes label { display: grid; min-inline-size: 0; gap: .35rem; }
+.context-audio-notes label:first-child,.context-audio-notes label:last-child { grid-column: 1 / -1; }
+.context-audio-notes label > span { color: var(--muted); font-size: var(--type-small); }
+.context-audio-notes :is(input,textarea,select),.context-audio-cue :is(input,select) { min-inline-size: 0; min-block-size: 2.75rem; padding: .55rem .7rem; color: inherit; background: var(--paper); border: 1px solid var(--line-strong); border-radius: .45rem; font: inherit; }
+.context-audio-analysis { display: grid; justify-items: start; gap: .45rem; }
+.context-audio-analysis > small,.context-audio-cue label > span { color: var(--muted); font-size: var(--type-small); line-height: 1.45; }
+.context-audio-cue-editor { display: grid; gap: .8rem; min-inline-size: 0; margin: 0; padding: .8rem 0 0; border: 0; border-block-start: 1px solid var(--line); }
+.context-audio-cue-editor > legend { font-weight: 600; }
+.context-audio-cue { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); align-items: end; gap: .65rem; padding-block-end: .7rem; border-block-end: 1px solid var(--line); }
+.context-audio-cue label { display: grid; min-inline-size: 0; gap: .3rem; }
+.context-audio-cue > button { justify-self: start; }
+.audio-permissions { display: grid; gap: .7rem; margin: 0; padding: 0; border: 0; }
+.audio-permission,.artifact-soundtrack-transfer { display: flex; min-block-size: 2.75rem; align-items: flex-start; gap: .65rem; padding-block: .25rem; cursor: pointer; }
+.audio-permission input,.artifact-soundtrack-transfer input { inline-size: 1.1rem; block-size: 1.1rem; flex: none; margin-block-start: .2rem; accent-color: var(--accent); }
+.audio-permission > span,.artifact-soundtrack-transfer > span { display: grid; gap: .2rem; }
+.audio-permission small,.artifact-soundtrack-transfer small { color: var(--muted); line-height: 1.45; }
+.forma-soundtrack-companions { display: grid; gap: .8rem; margin-block-start: 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: .65rem; }
+.forma-soundtrack-companions > header { color: var(--muted); font-size: var(--type-small); }
+.forma-soundtrack-companion { display: grid; gap: .45rem; }
+.forma-soundtrack-follow { display: flex; align-items: flex-start; gap: .55rem; min-block-size: 2.75rem; }
+.forma-soundtrack-follow > span { display: grid; gap: .2rem; }
+.forma-soundtrack-follow small { color: var(--muted); line-height: 1.45; }
+.forma-included-audio-transcripts { display: grid; gap: .4rem; }
+.artifact-audio-result { display: grid; gap: 1rem; padding: clamp(1rem,4vw,2rem); }
+.artifact-audio-preview,.artifact-summary--audio .artifact-summary-copy { display: grid; gap: .65rem; align-content: center; color: var(--accent); }
+.artifact-audio-preview p { color: var(--ink); }
+.creative-audio-tool:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
+.presentation-deck-soundtrack { position: relative; }
+.presentation-deck-soundtrack > .forma-soundtrack-companions { position: absolute; z-index: 3; inset-block-start: calc(100% + .4rem); inset-inline-end: 0; inline-size: min(24rem,calc(100vw - 2rem)); margin: 0; background: var(--paper); box-shadow: 0 1rem 2rem color-mix(in srgb,var(--ink) 10%,transparent); }
+@media (max-width: 620px) { .context-audio-notes,.context-audio-cue { grid-template-columns: minmax(0,1fr); } .presentation-deck-soundtrack[open] { flex-basis: 100%; } .presentation-deck-soundtrack > .forma-soundtrack-companions { position: static; inline-size: 100%; max-inline-size: 100%; margin-block-start: .5rem; box-shadow: none; } }
+@media (forced-colors: active) { .creative-audio-tool:focus-within,.audio-permission:focus-within,.artifact-soundtrack-transfer:focus-within,.forma-soundtrack-follow:focus-within,.context-audio-cue :is(input,select,button):focus-visible { outline: 2px solid Highlight; outline-offset: 3px; } }
 
 /* Paid replay preflight: show the bounded authorization before the user can
    create provider work, then keep the decision legible at every width. */

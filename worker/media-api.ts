@@ -3,6 +3,8 @@ import { readProjectRequestContext, synchronizeProjectScope } from "./project-ac
 import { mediaKeyMatchesOwnerNamespace, ownerMediaNamespace } from "../src/model/media-ownership.ts";
 import { extractSourceDocument, sourceDocumentEvidence, sourceDocumentEvidenceDigest, sourceDocumentEvidenceFromProperties } from "../src/model/source-documents.ts";
 import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./access-policy.ts";
+import { audioFileExtension, audioMimeType, MAX_AUDIO_UPLOAD_BYTES } from "../src/model/audio.ts";
+import { verifiedAudioTiming } from "../src/model/audio-container.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
 const SAFE_UPLOADED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"]);
@@ -24,10 +26,13 @@ export function applySafeMediaResponseHeaders(headers: Headers) {
 }
 
 export async function storeGeneratedMedia(env:WorkerEnv,ownerId:string,artifactId:string,bytes:Uint8Array,model:string,mimeType:string,metadata:Record<string,string>={}) {
-  const extension=mimeType==="video/mp4"?"mp4":mimeType==="image/jpeg"?"jpg":mimeType==="image/webp"?"webp":mimeType==="application/pdf"?"pdf":"png";
+  const extension=audioFileExtension(mimeType)??(mimeType==="video/mp4"?"mp4":mimeType==="image/jpeg"?"jpg":mimeType==="image/webp"?"webp":mimeType==="application/pdf"?"pdf":"png");
   const key=`${ownerMediaNamespace(ownerId)}/generated/${artifactId}.${extension}`;
-  await env.MEDIA.put(key,bytes.buffer as ArrayBuffer,{httpMetadata:{contentType:mimeType},customMetadata:{ownerId,artifactId,model,source:"provider-generated-media",...metadata}});
-  return{key,url:`/api/media/${encodeURIComponent(key)}`,mimeType};
+  const digest=await crypto.subtle.digest("SHA-256",new Uint8Array(bytes).buffer);
+  const contentHash=Array.from(new Uint8Array(digest),(value)=>value.toString(16).padStart(2,"0")).join("");
+  const timing=audioMimeType(mimeType)?verifiedAudioTiming(bytes,mimeType):null;
+  await env.MEDIA.put(key,new Uint8Array(bytes).buffer,{httpMetadata:{contentType:mimeType},customMetadata:{ownerId,artifactId,model,source:"provider-generated-media",...(audioMimeType(mimeType)?{sha256:contentHash}:{}),...(timing?{durationSeconds:String(timing.durationSeconds),sampleRate:String(timing.sampleRate)}:{}),...metadata}});
+  return{key,url:`/api/media/${encodeURIComponent(key)}`,mimeType,contentHash,durationSeconds:timing?.durationSeconds??null};
 }
 
 export async function storeGeneratedImage(env:WorkerEnv,ownerId:string,generationId:string,bytes:Uint8Array,model:string,mimeType="image/png",metadata:Record<string,string>={}) {
@@ -42,6 +47,25 @@ export async function readGeneratedImageReference(env:WorkerEnv,ownerId:string,m
   const headers=new Headers();object.writeHttpMetadata(headers);const mimeType=headers.get("content-type")??"image/png";if(!mimeType.startsWith("image/"))return null;
   const metadata=object.customMetadata??{};const providerMediaUrl=String(metadata.providerMediaUrl??"").trim();
   return{bytes:new Uint8Array(await new Response(object.body).arrayBuffer()),mimeType,provider:String(metadata.provider??"")||null,providerModel:String(metadata.providerModel??metadata.model??"")||null,providerRequestId:String(metadata.providerRequestId??"")||null,providerMediaUrl:providerMediaUrl||null};
+}
+
+/** Retrieve only private, owner-scoped recordings; never trust browser-supplied URLs or metadata. */
+export async function readOwnedAudioReference(env: WorkerEnv, ownerId: string, mediaUrl: unknown, options: { metadataOnly?: boolean } = {}) {
+  const value = String(mediaUrl ?? "");
+  const prefix = "/api/media/";
+  if (!value.startsWith(prefix)) return null;
+  let key = "";
+  try { key = decodeURIComponent(value.slice(prefix.length)); } catch { return null; }
+  if (!mediaKeyMatchesOwnerNamespace(key, ownerId)) return null;
+  const object = options.metadataOnly && typeof env.MEDIA.head === "function" ? await env.MEDIA.head(key) : await env.MEDIA.get(key);
+  if (!object || object.customMetadata?.ownerId !== ownerId) return null;
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  const mimeType = audioMimeType(headers.get("content-type"));
+  if (!mimeType) return null;
+  const bytes = options.metadataOnly ? new Uint8Array(0) : new Uint8Array(await new Response((object as R2ObjectBody).body).arrayBuffer());
+  if (!options.metadataOnly && (!bytes.byteLength || bytes.byteLength > MAX_AUDIO_UPLOAD_BYTES)) return null;
+  return { key, bytes, mimeType, metadata: object.customMetadata ?? {}, durationSeconds: Number(object.customMetadata?.durationSeconds ?? 0) || null, size: typeof object.size === "number" ? object.size : bytes.byteLength };
 }
 
 /** Validate server-extracted source facts against immutable R2-owned evidence metadata. */
@@ -73,7 +97,7 @@ export async function verifySourceDocumentEvidence(env: WorkerEnv, ownerId: stri
 
 /** Controlled sources stay usable across closed, same-organization cohorts without losing exact project custody. */
 export async function managedPilotSourceClassificationValid(env:WorkerEnv,ownerId:string,cohortId:string,blocks:Array<{type:string;properties:Record<string,unknown>}>,projectAccessId=""):Promise<boolean>{
-  const references=blocks.filter((block)=>block.type==="reference"&&String(block.properties.media_url??"").trim());
+  const references=blocks.filter((block)=>(block.type==="reference"||block.type==="audio")&&String(block.properties.media_url??"").trim());
   for(const {properties} of references){
     const reference=String(properties.media_url??"").trim();
     if(!reference.startsWith("/api/media/"))return false;
@@ -110,7 +134,7 @@ export async function uploadMedia(request: Request, env: WorkerEnv) {
   if(selected.response)return selected.response;
   if(selected.context&&!hasCapability(auth.user,"project.author",{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId}))return new Response("Forbidden",{status:403});
   const form=await request.formData();const file=form.get("file");
-  if(!(file instanceof File))return Response.json({error:"A supported image or document is required"},{status:400});
+  if(!(file instanceof File))return Response.json({error:"A supported image, audio recording, or document is required"},{status:400});
   if(form.get("rightsConfirmed")!=="true")return Response.json({error:"external_asset_rights_confirmation_required"},{status:428});
   const managedPilot=selected.context
     ?await env.DB.prepare("SELECT cohort_id,source_classification FROM pilot_cohorts WHERE organization_id=? AND status IN ('active','paused','closed') ORDER BY CASE WHEN status='closed' THEN 1 ELSE 0 END,created_at DESC LIMIT 1")
@@ -123,7 +147,8 @@ export async function uploadMedia(request: Request, env: WorkerEnv) {
       .bind(auth.user.userId).first<{cohort_id:string;source_classification:string}>();
   if(managedPilot&&form.get("nonSensitiveConfirmed")!=="true")return Response.json({error:"pilot_non_sensitive_source_confirmation_required"},{status:428});
   const mimeType=file.type.toLowerCase();
-  if((!SAFE_UPLOADED_IMAGE_TYPES.has(mimeType)&&!SAFE_UPLOADED_DOCUMENT_TYPES.has(mimeType))||file.size>12*1024*1024)return Response.json({error:"Choose a supported image, PDF, text, Markdown, CSV, JSON, Word, presentation, or spreadsheet smaller than 12 MB"},{status:400});
+  const isAudio=Boolean(audioMimeType(mimeType));
+  if((!SAFE_UPLOADED_IMAGE_TYPES.has(mimeType)&&!SAFE_UPLOADED_DOCUMENT_TYPES.has(mimeType)&&!isAudio)||file.size>(isAudio?MAX_AUDIO_UPLOAD_BYTES:12*1024*1024))return Response.json({error:isAudio?"Choose an MP3, WAV, M4A, AAC, OGG, FLAC, or WebM audio recording smaller than 25 MB.":"Choose a supported image, audio recording, PDF, text, Markdown, CSV, JSON, Word, presentation, or spreadsheet smaller than 12 MB."},{status:400});
   const owner=selected.context?.ownerUserId??auth.user.userId;
   const key=`${ownerMediaNamespace(owner)}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"-")}`;
   const bytes=await file.arrayBuffer();
@@ -132,7 +157,8 @@ export async function uploadMedia(request: Request, env: WorkerEnv) {
   const extraction=SAFE_UPLOADED_DOCUMENT_TYPES.has(mimeType)?await extractSourceDocument(file):null;
   const evidence=extraction?sourceDocumentEvidence(extraction,contentHash,mimeType):null;
   const sourceEvidenceHash=evidence?await sourceDocumentEvidenceDigest(evidence):null;
-  await env.MEDIA.put(key,bytes,{httpMetadata:{contentType:mimeType},customMetadata:{originalName:file.name,ownerId:owner,uploadedBy:auth.user.userId,rights:"asserted",sha256:contentHash,mimeType,...(sourceEvidenceHash?{sourceEvidenceSha256:sourceEvidenceHash}:{}),...(selected.context?{projectAccessId:selected.context.projectAccessId}:{}),...(managedPilot?{sourceClassification:managedPilot.source_classification,pilotCohortId:managedPilot.cohort_id}:{})}});
+  const timing=isAudio?verifiedAudioTiming(new Uint8Array(bytes),mimeType):null;
+  await env.MEDIA.put(key,bytes,{httpMetadata:{contentType:mimeType},customMetadata:{originalName:file.name,ownerId:owner,uploadedBy:auth.user.userId,rights:"asserted",sha256:contentHash,mimeType,...(timing?{durationSeconds:String(timing.durationSeconds),sampleRate:String(timing.sampleRate)}:{}),...(sourceEvidenceHash?{sourceEvidenceSha256:sourceEvidenceHash}:{}),...(selected.context?{projectAccessId:selected.context.projectAccessId}:{}),...(managedPilot?{sourceClassification:managedPilot.source_classification,pilotCohortId:managedPilot.cohort_id}:{})}});
   if(selected.context){
     try{
       const inserted=await env.DB.prepare(`INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at)
@@ -151,7 +177,7 @@ export async function uploadMedia(request: Request, env: WorkerEnv) {
       if(Number(inserted.meta.changes??0)!==1)throw new Error("project_access_revoked");
     }catch{await env.MEDIA.delete(key).catch(()=>undefined);return new Response("Forbidden",{status:403});}
   }
-  return Response.json({key,url:`/api/media/${encodeURIComponent(key)}`,name:file.name,mimeType,contentHash,kind:SAFE_UPLOADED_IMAGE_TYPES.has(mimeType)?"image":"document",rights:"asserted",...(extraction&&sourceEvidenceHash?{extraction,sourceEvidenceHash}:{}),...(managedPilot?{sourceClassification:managedPilot.source_classification}:{})});
+  return Response.json({key,url:`/api/media/${encodeURIComponent(key)}`,name:file.name,mimeType,contentHash,kind:isAudio?"audio":SAFE_UPLOADED_IMAGE_TYPES.has(mimeType)?"image":"document",rights:"asserted",size:file.size,...(timing?{durationSeconds:timing.durationSeconds}:{}),...(extraction&&sourceEvidenceHash?{extraction,sourceEvidenceHash}:{}),...(managedPilot?{sourceClassification:managedPilot.source_classification}:{})});
 }
 export async function getMedia(request:Request,key:string,env:WorkerEnv){
   const scoped=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
@@ -173,11 +199,33 @@ export async function getMedia(request:Request,key:string,env:WorkerEnv){
   const object=await env.MEDIA.get(key);if(!object)return new Response("Not found",{status:404});
   if(object.customMetadata?.ownerId!==owner)return new Response("Forbidden",{status:403});
   const headers=new Headers();object.writeHttpMetadata(headers);headers.set("etag",object.httpEtag);applySafeMediaResponseHeaders(headers);
-  if(!String(headers.get("content-type")??"").toLowerCase().startsWith("image/")&&!String(headers.get("content-type")??"").toLowerCase().startsWith("video/")){
+  const mimeType=String(headers.get("content-type")??"").toLowerCase();
+  if(!mimeType.startsWith("image/")&&!mimeType.startsWith("video/")&&!mimeType.startsWith("audio/")){
     const filename=String(object.customMetadata?.originalName??"reference-document").replace(/[\r\n"\\]/g,"_");
     const fallback=filename.normalize("NFKD").replace(/[\u0300-\u036f]/g,"").replace(/[^\x20-\x7e]/g,"_")||"reference-document";
     const encoded=encodeURIComponent(filename).replace(/[!'()*]/g,(character)=>`%${character.charCodeAt(0).toString(16).toUpperCase()}`);
     headers.set("content-disposition",`attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`);
+  }
+  if(mimeType.startsWith("audio/")||mimeType.startsWith("video/")){
+    const totalBytes=typeof object.size==="number"&&Number.isSafeInteger(object.size)&&object.size>=0?object.size:null;
+    if(totalBytes!==null){
+      headers.set("accept-ranges","bytes");
+      const requestedRange=request.headers.get("range");
+      if(requestedRange){
+        const match=requestedRange.match(/^bytes=(\d*)-(\d*)$/i);
+        let offset=0,length=0;
+        if(match&&(match[1]||match[2])){
+          if(match[1]){offset=Number(match[1]);const end=match[2]?Math.min(totalBytes-1,Number(match[2])):totalBytes-1;length=end-offset+1;}
+          else{length=Math.min(totalBytes,Number(match[2]));offset=totalBytes-length;}
+        }
+        if(!match||!Number.isSafeInteger(offset)||!Number.isSafeInteger(length)||offset<0||length<=0||offset>=totalBytes){headers.set("content-range",`bytes */${totalBytes}`);return new Response(null,{status:416,headers});}
+        const partial=await env.MEDIA.get(key,{range:{offset,length}});
+        if(!partial||partial.customMetadata?.ownerId!==owner)return new Response("Not found",{status:404});
+        headers.set("content-range",`bytes ${offset}-${offset+length-1}/${totalBytes}`);
+        headers.set("content-length",String(length));
+        return new Response(partial.body,{status:206,headers});
+      }
+    }
   }
   return new Response(object.body,{headers});
 }

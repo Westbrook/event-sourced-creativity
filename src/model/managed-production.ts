@@ -28,6 +28,15 @@ const specialist = (id: string, label: string, responsibility: string, deliverab
 
 /** Deployable, versioned role contracts; these are not claims of autonomous model calls. */
 export const PRODUCTION_TEAMS: Readonly<Record<ProductionFormat, ProductionTeam>> = {
+  audio: {
+    id: "music-production-team", version: "1.0.0", label: "Music production team", format: "audio",
+    specialists: [
+      specialist("music-director", "Music director", "Choose a purposeful musical language, dramatic structure, recurring motifs, and cue timing.", "Emotional arc, music brief, and scene-by-scene cue sheet"),
+      specialist("film-music-composer", "Film music composer", "Translate authored narrative beats, images, and emotional turns into original composition.", "Original score, instrumentation, and dramatic transitions"),
+      specialist("sound-designer", "Sound designer", "Shape believable ambience, texture, spatial depth, environmental sound, and deliberate silence.", "Layered sonic environment and accessibility-ready descriptions"),
+      specialist("record-producer", "Record producer", "Balance arrangement, energy, originality, clarity, and audience impact without genre imitation.", "Production-ready arrangement and originality review"),
+    ],
+  },
   video: {
     id: "film-production-team", version: "1.0.0", label: "Film production team", format: "video",
     specialists: [
@@ -120,6 +129,7 @@ export type ProductionContinuityBible = {
   lighting: string[];
   camera: string[];
   style: string[];
+  sound: string[];
   prohibitions: string[];
   requiredBlockIds: string[];
 };
@@ -214,7 +224,7 @@ export const MAX_MANAGED_PRESENTATION_SLIDES = 100;
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const clean = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
 const unique = (values: Iterable<string>) => [...new Set([...values].map(clean).filter(Boolean))];
-const continuityTypes = new Set(["subject", "environment", "location", "wardrobe", "object", "prop", "palette", "lighting", "camera", "style", "material", "brand", "typography", "format"]);
+const continuityTypes = new Set(["subject", "environment", "location", "wardrobe", "object", "prop", "palette", "lighting", "camera", "style", "material", "brand", "typography", "format", "audio"]);
 const negativeIntents = new Set(["avoid", "prohibit", "exclude", "must_not_include", "exclusion", "forbid"]);
 
 export function isNegativeProductionFact(fact: Record<string, unknown>) {
@@ -339,6 +349,7 @@ function continuityBible(claims: ProductionClaim[]): ProductionContinuityBible {
     lighting: select("lighting"),
     camera: select("camera"),
     style: select("style", "material", "brand"),
+    sound: select("audio"),
     prohibitions: unique(claims.filter((claim) => claim.negative).map((claim) => claim.text)),
     requiredBlockIds: unique(claims.filter((claim) => claim.required).map((claim) => claim.blockId)),
   };
@@ -372,7 +383,7 @@ export function providerFacingProductionContinuity(
     ? plan.claims.filter((claim) => !claim.contextGroupIds.length || claim.contextGroupIds.some((id) => allowedGroups.has(id)))
     : plan.claims;
   const bible = continuityBible(scoped);
-  return { subjects: bible.subjects, locations: bible.locations, wardrobe: bible.wardrobe, props: bible.props, palette: bible.palette, lighting: bible.lighting, camera: bible.camera, style: bible.style, prohibitions: bible.prohibitions };
+  return { subjects: bible.subjects, locations: bible.locations, wardrobe: bible.wardrobe, props: bible.props, palette: bible.palette, lighting: bible.lighting, camera: bible.camera, style: bible.style, sound: bible.sound, prohibitions: bible.prohibitions };
 }
 
 const purposeFor = (index: number, count: number): ProductionScene["narrativePurpose"] =>

@@ -1,5 +1,5 @@
 export type BlockGroup = "intent" | "scene" | "craft" | "constraint" | "evidence";
-export type BlockKind = "direction" | "audience" | "message" | "emotion" | "subject" | "environment" | "motion" | "scale" | "composition" | "camera" | "lighting" | "style" | "material" | "palette" | "typography" | "format" | "brand" | "exclusion" | "accessibility" | "reference" | "sketch";
+export type BlockKind = "direction" | "audience" | "message" | "emotion" | "subject" | "environment" | "motion" | "scale" | "composition" | "camera" | "lighting" | "style" | "material" | "palette" | "typography" | "audio" | "format" | "brand" | "exclusion" | "accessibility" | "reference" | "sketch";
 export type BlockIntent = "include" | "prefer" | "avoid" | "prohibit";
 export type ReferencePixelMode = "context_only" | "inspiration" | "preserve_composition" | "preserve_subject" | "preserve_style";
 
@@ -34,7 +34,7 @@ export type BlockTypeDefinition = {
 export const BLOCK_GROUPS: readonly { id: BlockGroup; label: string; description: string }[] = [
   { id:"intent", label:"Purpose & audience", description:"Define what the work should accomplish, communicate, and make people feel." },
   { id:"scene", label:"Scene & reality", description:"Describe what exists, where it exists, and how it behaves in space." },
-  { id:"craft", label:"Visual craft", description:"Shape the composition, treatment, materials, color, light, and typography." },
+  { id:"craft", label:"Creative craft", description:"Shape the composition, treatment, materials, color, light, typography, and sound." },
   { id:"constraint", label:"Requirements & limits", description:"Set production, brand, accessibility, and exclusion boundaries." },
   { id:"evidence", label:"Grounding evidence", description:"Attach owned or licensed references that support creative decisions." },
 ];
@@ -71,6 +71,7 @@ export const BLOCK_TYPES: readonly BlockTypeDefinition[] = [
   { type:"material", label:"Material", description:"Surface, texture, fabrication, and wear", prompt:"What should the work feel made from?", group:"craft", subtypes:["Surface","Fabrication","Texture","Wear"] },
   { type:"palette", label:"Palette", description:"A deliberate family of colors and tonal relationships", prompt:"Name or describe this palette…", group:"craft", subtypes:["Extracted","Brand","Emotional","Tonal"] },
   { type:"typography", label:"Typography", description:"Type roles, voice, layout, and letterform rules", prompt:"How should type behave?", group:"craft", subtypes:["Role","Voice","Layout","Letterform constraint"] },
+  { type:"audio", label:"Audio", description:"Music, soundscapes, spoken words, and deliberate silence", prompt:"Describe the music, sonic environment, or emotional arc…", group:"craft", subtypes:["Score","Song","Soundscape","Sound design","Voice","Silence"] },
   { type:"format", label:"Format", description:"The destination, proportions, and production frame", prompt:"Where and at what dimensions will this live?", group:"constraint", subtypes:["Aspect ratio","Channel","Resolution","Safe area"] },
   { type:"brand", label:"Brand", description:"Identity cues and mandatory or forbidden treatments", prompt:"What identity rules must be carried forward?", group:"constraint", subtypes:["Identity cue","Mandatory asset","Tone rule","Forbidden treatment"] },
   { type:"exclusion", label:"Exclusion", description:"A failure mode or motif the work must avoid", prompt:"What would break the direction?", group:"constraint", subtypes:["Visual exclusion","Semantic exclusion","Safety boundary","Failure mode"] },

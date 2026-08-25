@@ -51,12 +51,22 @@ type VideoPromptOptions = {
   promptProfile: "standard" | "positive-only";
   audioMode?: VideoAudioMode;
   generateAudio?: boolean;
+  providedSoundtrack?: boolean;
   productionContinuity?: { prohibitions: string[]; scopedTargets: Array<{ target: string; role: string; prohibitions: string[] }> };
 };
 
 const record = (value: unknown): CreativeRecord => value && typeof value === "object" && !Array.isArray(value) ? value as CreativeRecord : {};
 const text = (value: unknown, maximum = 500) => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maximum);
 const activeFacts = (snapshot: CreativeRecord = {}) => Array.isArray(snapshot.facts) ? snapshot.facts.filter(promptFactIsActive).map(record) : [];
+// Local safety review must honor existing authored audio restrictions even when
+// a reusable recording has not been approved for provider-facing composition.
+const activeVideoAudioPolicyFacts = (snapshot: CreativeRecord = {}) => Array.isArray(snapshot.facts)
+  ? snapshot.facts.map(record).filter((fact) => {
+    const properties = record(fact.properties);
+    return fact.active !== false && fact.removed !== true && properties.active !== false
+      && (properties.weight === undefined || Number(properties.weight) > 0);
+  })
+  : [];
 const AUDIO_HEADING = /^\s*(?:[-*•]\s*)?(?:\*{0,2})?(?:audio|soundtrack|music|score|song|sound design|sound effects|sfx|foley|voiceover|voice-over|dialogue|speech)(?:\*{0,2})?\s*[:—-]\s*(.+)$/gim;
 const UNSUPPORTED_AUDIO = /\b(?:music|musical|orchestral|score|soundtrack|melod(?:y|ic)|harmon(?:y|ic)|songs?|sung|sing(?:s|ing)?|hums?|humming|whistl(?:e|es|ing)|lyrics?|vocal(?:s|ist)?|voices?|voiceover|voice-over|dialog(?:ue)?|speech|speak(?:s|ing)?|spoken|narrat(?:e|es|ed|ing|ion)|whisper(?:s|ed|ing)?|chant(?:s|ed|ing)?|riffs?|jingles?|beatbox(?:er|ers|es|ed|ing)?|rapp(?:er|ers|ed|ing)|freestyl(?:e|es|ed|ing)|concerto|overture|sonata|symphony|instrumental|imitat(?:e|es|ed|ing|ion)|impersonat(?:e|es|ed|ing|ion)|cover version|copyright(?:ed)?)\b/i;
 const AUDIO_FACT = /\b(?:audio|soundtrack|music|sound design|sound effects|foley|voiceover|voice-over|dialogue|speech)\b/i;
@@ -116,7 +126,7 @@ function requiresGeneratedAudio(direction: string) {
 
 function forbidsGeneratedAudio(snapshot: CreativeRecord = {}) {
   const prohibitsAllSound = (value: string) => /\b(?:must|requires?|required|essential|needs?)\b[^.;\n]{0,90}\b(?:silent|silence)\b|\b(?:silent|silence)\b[^.;\n]{0,90}\b(?:must|requires?|required|essential|needs?)\b|\b(?:no|without|forbid(?:den)?|prohibit(?:ed)?|exclude|excluding)\s+(?:(?:all|any|generated|audible|background|recorded)\s+){0,4}(?:audio|sound(?:\s+effects?)?)\b|\b(?:audio|sound(?:\s+effects?)?)\s+(?:must|should|may|will|can)\s+(?:not|never|be\s+(?:off|disabled|absent))\b|\b(?:do|does|did|must|should|may|will|can)\s+(?:not|never)\s+(?:have|include|contain|use|generate|play|feature|add|create)\s+(?:(?:all|any|generated|audible|background|recorded)\s+){0,4}(?:audio|sound(?:\s+effects?)?)\b|\b(?:audio|sound)[-\s]+free\b|\b(?:audio|sound(?:\s+design)?)\s*:\s*(?:silent|silence|off|disabled|absent)\b|\b(?:audio|sound)\s+(?:off|disabled|absent)\b/i.test(value);
-  if (activeFacts(snapshot).some((fact) => {
+  if (activeVideoAudioPolicyFacts(snapshot).some((fact) => {
     if (text(fact.type ?? fact.role, 80).toLowerCase() === "typography") return false;
     const direction = audioFactDirection(fact);
     if (visualAudioSubject(direction) && /\b(?:poster|sign|lettering|typography|printed|written|manuscript|labels?|display(?:ed|s)?|reads?)\b/i.test(direction)) return false;
@@ -150,10 +160,14 @@ function videoAdaptationFailure(code: string, message: string, prompt: string | 
 
 function authoredAudioFacts(snapshot: CreativeRecord = {}) {
   const affirmativeAudioPreferences: CreativeRecord[] = (Array.isArray(snapshot.standing_constraints) ? snapshot.standing_constraints.map(record) : []).filter((constraint) => /^(?:affirm|include|required)$/i.test(String(constraint.polarity ?? ""))).filter((constraint) => { const direction = text(constraint.value ?? constraint.text, 1_600); return AUDIO_FACT.test(direction) || requiresGeneratedAudio(direction) || /\b(?:audio|sound|music|score|soundtrack|voice)\b/i.test(text(constraint.axis, 80)); }).map((constraint) => ({ type: "audio", properties: { text: text(constraint.value ?? constraint.text, 1_600), required: true } }));
-  return [...activeFacts(snapshot), ...affirmativeAudioPreferences].filter((fact) => {
+  return [...activeVideoAudioPolicyFacts(snapshot), ...affirmativeAudioPreferences].filter((fact) => {
     if (factIsNegative(fact)) return false;
     const properties = record(fact.properties);
     const type = text(fact.type ?? fact.role, 80).toLowerCase();
+    // A reusable soundtrack has independent influence, attachment, and transfer
+    // decisions; describing it never requests provider-generated ambience.
+    if (type === "audio" && properties.inform_generation === true && properties.required !== true) return false;
+    if (type === "audio" && properties.inform_generation === false && fact.locked !== true && properties.locked !== true && properties.required !== true) return false;
     const direction = audioFactDirection(fact);
     return AUDIO_FACT.test(text(fact.type, 80)) || AUDIO_FACT.test(text(fact.role, 80))
       || AUDIO_FACT.test(text(properties.subtype, 120)) || AUDIO_FACT.test(text(properties.audio_mode, 80))
@@ -161,7 +175,7 @@ function authoredAudioFacts(snapshot: CreativeRecord = {}) {
   });
 }
 
-export function resolveVideoAudioPolicy(options: { snapshot?: CreativeRecord; audioMode?: unknown; generateAudio?: unknown } = {}): VideoAudioPolicy {
+export function resolveVideoAudioPolicy(options: { snapshot?: CreativeRecord; audioMode?: unknown; generateAudio?: unknown; providedSoundtrack?: boolean } = {}): VideoAudioPolicy {
   if (options.audioMode !== undefined && !isVideoAudioMode(options.audioMode)) {
     videoAdaptationFailure("video_audio_mode_unsupported", "Choose silent video or explicitly opt in to original, non-musical ambient sound.");
   }
@@ -181,8 +195,11 @@ export function resolveVideoAudioPolicy(options: { snapshot?: CreativeRecord; au
     return (fact.locked === true || properties.required === true) && !negativeDirection && !visualAudioSubject(direction) && !/\b(?:silent|silence|silently)\b/i.test(direction) || requiresGeneratedAudio(direction);
   });
 
-  if (required.length && requestedMode === "silent") {
+  if (required.length && requestedMode === "silent" && !options.providedSoundtrack) {
     videoAdaptationFailure("video_audio_required", "This document explicitly requires sound, but video renders are silent by default. Choose original ambient sound or revise the authored audio requirement before starting a paid render.");
+  }
+  if (options.providedSoundtrack && forbidsGeneratedAudio(options.snapshot)) {
+    videoAdaptationFailure("video_audio_forbidden", "This document explicitly requires a silent result. Remove the selected soundtrack or revise the protected audio restriction before starting a paid render.");
   }
   if (requestedMode === "original_ambient" && forbidsGeneratedAudio(options.snapshot)) {
     videoAdaptationFailure("video_audio_forbidden", "This document explicitly requires a silent result or forbids generated audio. Keep the video silent or revise the authored restriction before starting a paid render.");
@@ -389,6 +406,16 @@ export function videoPlannerCreativeContext(snapshot: CreativeRecord) {
     const values: CreativeRecord = {};
     const common = ["label", "subtype", "intent", "weight", "authority", "spatial_scope", "pixel_reference_mode", "source_artifact_kind", "exact_text", "colors", "palette", "image_format", "format", "aspect_ratio", "resolution", "safe_area", "accessibility", "contrast", "minimum_contrast", "font_family", "font_weight", "brand_name", "required", "motion", "camera", "camera_direction", "lens", "lighting", "materials"];
     for (const key of common) if (properties[key] !== undefined && properties[key] !== null && properties[key] !== "") values[key] = properties[key];
+    if(fact.type==="audio"||fact.role==="audio"){
+      for(const key of ["audio_role","mood","emotional_arc","narrative_purpose","instrumentation","texture","tempo_bpm","vocal_policy","transcript"] as const){
+        const value=properties[key];
+        if(value!==undefined&&value!==null&&value!=="")values[key]=typeof value==="string"?text(value,1_000):Array.isArray(value)?value.map((item)=>text(item,100)).slice(0,20):value;
+      }
+      if(Array.isArray(properties.audio_cues))values.audio_cues=properties.audio_cues.flatMap((value)=>{
+        const cue=record(value);if(typeof cue.start_seconds!=="number")return[];
+        return[{start_seconds:cue.start_seconds,...(typeof cue.end_seconds==="number"?{end_seconds:cue.end_seconds}:{}),target_kind:text(cue.target_kind,40),label:text(cue.label,120),emotional_intent:text(cue.emotional_intent,240)}];
+      }).slice(0,24);
+    }
     if (storyboardFrame) {
       for (const key of ["storyboard_frame_index", "storyboard_frame_count", "storyboard_title", "storyboard_shot_title", "storyboard_shot_direction", "storyboard_camera_direction", "storyboard_frame_prompt", "video_scene_index", "video_scene_count", "video_title", "video_scene_title", "video_scene_direction", "video_scene_camera_direction", "video_scene_frame_prompt", "narrative_order"] as const) {
         const value = properties[key];
@@ -448,10 +475,10 @@ export function compactVideoCombinedContextPlan(groups: Array<Record<string, unk
 
 /** Translate authored meaning into a short, provider-safe, auditable video contract. */
 export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): VideoPromptAdaptation {
-  const audio = resolveVideoAudioPolicy({ snapshot: options.snapshot, audioMode: options.audioMode, generateAudio: options.generateAudio });
+  const audio = resolveVideoAudioPolicy({ snapshot: options.snapshot, audioMode: options.audioMode, generateAudio: options.generateAudio, providedSoundtrack: options.providedSoundtrack });
   const cleanedPrompt = removeAudioDirections(prompt);
   if (!cleanedPrompt.text) videoAdaptationFailure("video_prompt_required", "The document did not produce usable visual motion direction after soundtrack-only instructions were removed.", prompt);
-  const authoredAudioChannels = [prompt, options.plan?.title, options.plan?.summary, ...(options.plan?.items ?? []).flatMap((item) => [item.notes, item.body]), ...activeFacts(options.snapshot).filter((fact) => !factIsNegative(fact) && String(fact.type ?? fact.role ?? "") !== "typography").flatMap((fact) => { const properties = record(fact.properties); return [audioFactDirection(fact), properties.storyboard_title, properties.storyboard_shot_title, properties.storyboard_shot_direction, properties.storyboard_frame_prompt]; }), ...options.references.flatMap((reference) => [reference.label, reference.storyboardTitle, reference.shotDirection, reference.cameraDirection, reference.framePrompt])].map((value) => text(value, 1_600));
+  const authoredAudioChannels = [prompt, options.plan?.title, options.plan?.summary, ...(options.plan?.items ?? []).flatMap((item) => [item.notes, item.body]), ...activeFacts(options.snapshot).filter((fact) => !factIsNegative(fact) && !["typography","audio"].includes(String(fact.type ?? fact.role ?? ""))).flatMap((fact) => { const properties = record(fact.properties); return [audioFactDirection(fact), properties.storyboard_title, properties.storyboard_shot_title, properties.storyboard_shot_direction, properties.storyboard_frame_prompt]; }), ...options.references.flatMap((reference) => [reference.label, reference.storyboardTitle, reference.shotDirection, reference.cameraDirection, reference.framePrompt])].map((value) => text(value, 1_600));
   if (audio.generateAudio && (cleanedPrompt.removed.some((direction) => unsupportedAudioIntent(direction)) || authoredAudioChannels.some((direction) => unsupportedAudioIntent(direction)))) {
     videoAdaptationFailure("video_audio_profile_unsupported", "The generated video direction requested musical scoring, voices, or another unsupported soundtrack. Original ambient mode permits newly generated, non-musical environmental effects only.", prompt);
   }
@@ -488,9 +515,13 @@ export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): V
     {
       id: "audio-contract",
       priority: "required",
-      content: audio.generateAudio
-        ? `SOUND DESIGN\nNewly created, non-musical, non-melodic environmental ambience and physical scene sounds only.${authoredAmbientDirections.length ? ` Required authored environmental details: ${authoredAmbientDirections.join("; ")}.` : ""}`
-        : "VISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.",
+      content: options.providedSoundtrack
+        ? audio.generateAudio
+          ? `AUTHORIZED SOUNDTRACK\nUse only the separately authorized @AudioN references as the musical soundtrack. Additional generated sound must remain newly created, non-musical, non-melodic environmental ambience and physical scene sounds only.${authoredAmbientDirections.length ? ` Required authored environmental details: ${authoredAmbientDirections.join("; ")}.` : ""}`
+          : "AUTHORIZED SOUNDTRACK\nUse only the separately authorized @AudioN references as the audible soundtrack. Do not generate additional music, speech, vocals, dialogue, or environmental ambience. Match visual timing and emotional progression to the authorized recording."
+        : audio.generateAudio
+          ? `SOUND DESIGN\nNewly created, non-musical, non-melodic environmental ambience and physical scene sounds only.${authoredAmbientDirections.length ? ` Required authored environmental details: ${authoredAmbientDirections.join("; ")}.` : ""}`
+          : "VISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.",
     },
     {
       id: "creative-meaning",

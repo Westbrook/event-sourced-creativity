@@ -1,4 +1,5 @@
 import { normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
+import { AUDIO_ADAPTER_CONTRACT } from "../src/model/audio.ts";
 import { priceTextUsageBreakdownMicrousd, type ProviderCostBreakdown, type ProviderUsage } from "./replay-cost.ts";
 
 type Checkpoint = Record<string, unknown>;
@@ -16,11 +17,19 @@ export type InterruptedDocumentJobUsage = {
   frameCostMicrousd: number;
   anchorCostMicrousd: number;
   singleVideoCostMicrousd: number;
+  singleAudioCostMicrousd: number;
   totalCostMicrousd: number;
   prepaidSceneIds: string[];
 };
 
 const positiveInteger = (value: unknown) => Math.max(0, Math.floor(Number(value) || 0));
+
+/** A definitive pre-acceptance HTTP rejection must not become an imaginary paid Lyria job. */
+export function audioProviderSubmissionState(options:{attempted:boolean;providerJobId?:unknown;httpStatus?:number|null}):"not_submitted"|"confirmed"|"rejected"|"unknown"{
+  if(String(options.providerJobId??"").trim())return"confirmed";
+  if(!options.attempted)return"not_submitted";
+  return new Set([400,401,402,403,404,405,413,415,422,429]).has(Number(options.httpStatus??0))?"rejected":"unknown";
+}
 
 const usageFrom = (value: unknown): ProviderUsage => {
   const usage = value && typeof value === "object" ? value as Record<string, unknown> : {};
@@ -114,8 +123,11 @@ export function interruptedDocumentJobUsage(
   const singleVideoCostMicrousd = checkpoint.providerJobId && !sceneReceipts.length && request.artifactKind === "video"
     ? Math.max(0, normalizeVideoDurationSeconds(request.videoSeconds) * VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution] - positiveInteger(checkpoint.prepaidProviderCostMicrousd))
     : 0;
+  const singleAudioCostMicrousd = checkpoint.providerJobId && request.artifactKind === "audio"
+    ? Math.max(0, AUDIO_ADAPTER_CONTRACT.publishedCostMicrousd - positiveInteger(checkpoint.prepaidProviderCostMicrousd))
+    : 0;
   const plannerCostMicrousd = remainingDocumentPlannerCost(plannerModel,costedPlannerUsage,options.plannerCostAlreadyRecordedMicrousd).totalMicrousd;
-  const totalCostMicrousd = plannerCostMicrousd + sceneCostMicrousd + frameCostMicrousd + anchorCostMicrousd + singleVideoCostMicrousd;
+  const totalCostMicrousd = plannerCostMicrousd + sceneCostMicrousd + frameCostMicrousd + anchorCostMicrousd + singleVideoCostMicrousd + singleAudioCostMicrousd;
 
   return {
     plannerModel,
@@ -129,6 +141,7 @@ export function interruptedDocumentJobUsage(
     frameCostMicrousd,
     anchorCostMicrousd,
     singleVideoCostMicrousd,
+    singleAudioCostMicrousd,
     totalCostMicrousd,
     prepaidSceneIds: [...prepaidSceneIds],
   };

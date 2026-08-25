@@ -1,7 +1,7 @@
 import type { ImageFocalPoint } from "./focal-point.ts";
 import { protectedPresentationScoreContradictions, validatePresentationSourceCoverage, type PresentationSourceContract } from "./presentation-source.ts";
 
-export const DOCUMENT_ARTIFACT_KINDS = ["short_story", "scene", "slides", "storyboard", "video"] as const;
+export const DOCUMENT_ARTIFACT_KINDS = ["short_story", "scene", "slides", "storyboard", "video", "audio"] as const;
 export type DocumentArtifactKind = typeof DOCUMENT_ARTIFACT_KINDS[number];
 
 export const SLIDE_LAYOUTS = ["cover", "statement", "split", "columns", "metric", "timeline", "closing", "quote", "scorecard", "comparison", "matrix", "architecture", "personas", "roadmap"] as const;
@@ -143,6 +143,7 @@ export const documentArtifactDefinition = (kind: DocumentArtifactKind) => ({
   slides: { label: "Slides", description: "A concise, presentational sequence with speaker notes and visual direction." },
   storyboard: { label: "Storyboard", description: "A shot-by-shot previz sequence rendered as connected draft frames." },
   video: { label: "Video", description: "A playable motion interpretation rendered by the configured video provider." },
+  audio: { label: "Audio", description: "An original, playable soundtrack shaped by the document’s creative direction." },
 }[kind]);
 
 export function isDocumentArtifactKind(value: unknown): value is DocumentArtifactKind {

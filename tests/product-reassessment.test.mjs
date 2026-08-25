@@ -569,6 +569,12 @@ test("paid context rejects missing or expired rights and contradictory mandatory
   const expired=[...contextHistory(),event(8,"RightsAsserted",{reference_id:"licensed"}),event(9,"BlockCreated",{project_id:"project-approved",document_id:"document-approved",block_id:"source",type:"reference",handle:"reference/source",properties:{reference_id:"licensed",label:"Expired source",license_expires_at:"2026-01-01T00:00:00.000Z",weight:1}})];
   assert.throws(()=>authoritativeCreativeContext(expired,{documentId:"document-approved",projectId:"project-approved"}),(error)=>error instanceof ContextIntegrityError&&error.code==="context_source_rights_expired");
 
+  const audioSource={project_id:"project-approved",document_id:"document-approved",block_id:"audio-source",type:"audio",handle:"audio/source",properties:{reference_id:"audio-licensed",label:"Private soundtrack",media_url:"/api/media/private.mp3",inform_generation:true,weight:1}};
+  const classlessAudio=[...contextHistory(),event(8,"RightsAsserted",{reference_id:"audio-licensed"}),event(9,"BlockCreated",audioSource)];
+  assert.throws(()=>authoritativeCreativeContext(classlessAudio,{documentId:"document-approved",projectId:"project-approved"}),(error)=>error instanceof ContextIntegrityError&&error.code==="context_source_rights_required","audio must never inherit a legacy classless reference-rights receipt");
+  const licensedAudio=[...contextHistory(),event(8,"RightsAsserted",{reference_id:"audio-licensed",rights_class:"licensed"}),event(9,"BlockCreated",audioSource)];
+  assert.doesNotThrow(()=>authoritativeCreativeContext(licensedAudio,{documentId:"document-approved",projectId:"project-approved"}));
+
   const contradiction=[...contextHistory(),event(8,"BlockCreated",{project_id:"project-approved",document_id:"document-approved",block_id:"contradiction",type:"subject",handle:"subject/contradiction",properties:{text:"Include customer account numbers",weight:1}})];
   assert.throws(()=>authoritativeCreativeContext(contradiction,{documentId:"document-approved",projectId:"project-approved"}),(error)=>error instanceof ContextIntegrityError&&error.code==="context_decisions_contradict");
 });

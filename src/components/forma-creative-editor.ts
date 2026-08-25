@@ -11,6 +11,9 @@ import { ensureModalDialog } from "./modal-dialog";
 import { AlternativeStudio } from "./forma-studio-alternatives";
 import { localizedSpatialScopeLabel } from "./design-system/localized-spatial-scope";
 import { outputInputDraft } from "../model/output-authoring";
+import { audioMimeType } from "../model/audio";
+import { browserAudioDuration } from "../model/audio-browser";
+import { renderAudioPlayer } from "./audio-playback";
 import "./icons-authoring";
 import "./spatial-scope-editor";
 import "./output-visual";
@@ -33,7 +36,7 @@ type EditorSection = {
 const EDITOR_SECTIONS: readonly EditorSection[] = [
   { id: "brief", label: "The brief", description: "What this needs to achieve and who it is for", types: ["direction", "audience", "message", "emotion"], starter: "direction" },
   { id: "picture", label: "The picture", description: "What appears, where it happens, and how it moves", types: ["subject", "environment", "motion", "scale"], starter: "subject" },
-  { id: "look", label: "The look", description: "How the work should be framed, lit, and styled", types: ["composition", "camera", "lighting", "style", "material", "palette", "typography"], starter: "style" },
+  { id: "look", label: "The look", description: "How the work should be framed, lit, and styled", types: ["composition", "camera", "lighting", "style", "material", "palette", "typography", "audio"], starter: "style" },
   { id: "delivery", label: "The guardrails", description: "Where it goes and what it must protect or avoid", types: ["format", "brand", "exclusion", "accessibility"], starter: "format" },
   { id: "references", label: "Visual references", description: "Images that make the direction easier to see", types: ["reference"], starter: "reference" },
 ] as const;
@@ -54,6 +57,7 @@ const FRIENDLY_LABELS: Record<BlockKind, string> = {
   material: "Materials",
   palette: "Color",
   typography: "Type",
+  audio: "Audio",
   format: "Format",
   brand: "Brand behavior",
   exclusion: "General constraint",
@@ -67,6 +71,7 @@ const QUICK_TOOLS: readonly { type: BlockKind; intent: BlockIntent; label?: stri
   { type:"subject", intent:"include" },
   { type:"style", intent:"include" },
   { type:"lighting", intent:"include" },
+  { type:"audio", intent:"include" },
   { type:"subject", intent:"avoid", label:"Avoid", description:"Keep an unwanted subject, mood, color, material, or other reality out." },
 ];
 const textFor = (item: CreativeBlock) => String(item.properties.artifact_markdown ?? item.properties.text ?? item.properties.label ?? "Untitled");
@@ -132,22 +137,24 @@ export class FormaCreativeEditor extends AlternativeStudio {
     this.#uploading = true;
     this.requestUpdate();
     try {
+      const isAudio=Boolean(audioMimeType(file.type));
       let sample;
-      try { sample = await sampleImageFile(file); } catch { sample = undefined; }
+      if(!isAudio)try { sample = await sampleImageFile(file); } catch { sample = undefined; }
+      const localDuration=isAudio?await browserAudioDuration(file):null;
       const form = new FormData();
       form.append("file", file);
       form.append("rightsConfirmed", "true");
       form.append("nonSensitiveConfirmed", "true");
       const response = await this.store.guardedFetch("/api/media", { method: "POST", body: form },"upload this reference image");
-      const media = await response.json() as { key?: string; url?: string; error?: string };
+      const media = await response.json() as { key?: string; url?: string; contentHash?:string;mimeType?:string;durationSeconds?:number;size?:number;error?: string };
       if (!response.ok || !media.url) throw new Error(media.error ?? "That image could not be added");
       const projection = this.store.projection.get();
       const referenceId = crypto.randomUUID();
       const itemId = crypto.randomUUID();
       const appended = await this.store.appendBatch([
-        { type: "ReferenceIngested", payload: { reference_id: referenceId, source_type: "upload", source_ref: media.url, content_hash: media.key, rights_class: "asserted" } },
+        { type: "ReferenceIngested", payload: { reference_id: referenceId, source_type: isAudio?"audio-upload":"upload", source_ref: media.url, content_hash: media.contentHash??media.key,source_mime_type:media.mimeType??file.type, rights_class: "asserted" } },
         { type: "RightsAsserted", payload: { reference_id: referenceId, rights_class: "owned_or_licensed", assertion_method: "explicit-upload-confirmation" } },
-        { type: "BlockCreated", payload: { block_id: itemId, document_id: projection.documentId, type: "reference", handle: `reference/${slug(file.name, itemId)}`, position: `e${String(this.store.head.get() + 1).padStart(6, "0")}`, properties: { reference_id: referenceId, label: file.name, media_url: media.url, subtype: "Mood", weight: .72, authority: "authored", pixel_reference_mode: "context_only", extraction_preferences: DEFAULT_REFERENCE_FINDINGS, extraction_status: sample ? "pending" : "unavailable", created_from: "creative-editor" } } },
+        { type: "BlockCreated", payload: { block_id: itemId, document_id: projection.documentId, type: isAudio?"audio":"reference", handle: `${isAudio?"audio":"reference"}/${slug(file.name, itemId)}`, position: `e${String(this.store.head.get() + 1).padStart(6, "0")}`, properties: { reference_id: referenceId, label: file.name, media_url: media.url,source_mime_type:media.mimeType??file.type,media_type:media.mimeType??file.type,source_content_hash:media.contentHash, subtype:isAudio?"Score":"Mood", weight: .72, authority: "authored",...(isAudio?{audio_role:"score",rights_class:"owned_or_licensed",duration_seconds:media.durationSeconds??localDuration,size_bytes:media.size??file.size,description:"",inform_generation:false,include_in_output:false,allow_provider_audio_transfer:false}:{pixel_reference_mode:"context_only",extraction_preferences:DEFAULT_REFERENCE_FINDINGS,extraction_status:sample?"pending":"unavailable"}),created_from: "creative-editor" } } },
       ]);
       if (appended.length) {
         this.#selectedId = itemId;
@@ -183,6 +190,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
           intent: this.#newIntent,
           authority: "authored",
           created_from: "creative-editor",
+          ...(this.#newType==="audio"?{audio_role:"score",inform_generation:false,include_in_output:false,allow_provider_audio_transfer:false}:{}),
           ...(isNegativeIntent(this.#newIntent) ? { semantic_role: "negative_constraint" } : {}),
         },
       },
@@ -197,12 +205,13 @@ export class FormaCreativeEditor extends AlternativeStudio {
     event.preventDefault();
     if (item.locked) return;
     const data = new FormData(event.currentTarget as HTMLFormElement);
-    const currentDraft = outputInputDraft(item);
+    const audioRecording=item.type==="audio"&&Boolean(item.properties.media_url);
+    const currentDraft = audioRecording?null:outputInputDraft(item);
     const workbench = currentDraft ? (event.currentTarget as HTMLFormElement).querySelector("forma-output-input-editor") : null;
     const rawText = workbench?.draft?.markdown ?? String(data.get("copy") ?? "");
     const text = item.properties.source_artifact_id || item.properties.source_output_id ? rawText : rawText.trim();
     const strength = String(data.get("strength") ?? strengthFor(Number(item.properties.weight ?? .65)));
-    const currentText = outputInputDraft(item)?.markdown ?? textFor(item);
+    const currentText = audioRecording?String(item.properties.description??""):outputInputDraft(item)?.markdown ?? textFor(item);
     const nextType = String(data.get("item-type") ?? item.type);
     const currentIntent = blockIntentFor(item.type, item.properties);
     const nextIntent = String(data.get("item-intent") ?? currentIntent);
@@ -210,13 +219,20 @@ export class FormaCreativeEditor extends AlternativeStudio {
     const currentWeight = Number(item.properties.weight ?? .65);
     const nextWeight = weightFor(strength);
     const changes: EventInput[] = [];
-    if (isBlockKind(nextType) && nextType !== item.type) changes.push({ type: "BlockPropertyEdited", payload: { block_id: item.id, property_path: "type", old_value: item.type, new_value: nextType, source_surface: "creative-editor-role" } });
+    if (isBlockKind(nextType) && nextType !== item.type) {
+      changes.push({ type: "BlockPropertyEdited", payload: { block_id: item.id, property_path: "type", old_value: item.type, new_value: nextType, source_surface: "creative-editor-role" } });
+      if(nextType==="audio"){
+        for(const path of ["inform_generation","include_in_output","allow_provider_audio_transfer"] as const)changes.push({type:"BlockPropertyEdited",payload:{block_id:item.id,property_path:path,old_value:item.properties[path]??null,new_value:false,source_surface:"creative-editor-audio-consent"}});
+        changes.push({type:"BlockPropertyEdited",payload:{block_id:item.id,property_path:"audio_role",old_value:item.properties.audio_role??null,new_value:"score",source_surface:"creative-editor-audio-consent"}});
+      }
+    }
     if (isBlockIntent(nextIntent) && (nextIntent !== currentIntent || (nextType !== item.type && !isBlockIntent(storedIntent)))) changes.push({ type: "BlockPropertyEdited", payload: { block_id: item.id, property_path: "intent", old_value: currentIntent, new_value: nextIntent, source_surface: "creative-editor-intent" } });
     if (currentDraft && workbench?.draft) {
       const authoredChanges = this.store.outputInputEvents(item.id, workbench.draft, "creative-editor");
       if (JSON.stringify(currentDraft) !== JSON.stringify(workbench.draft) && !authoredChanges.length) { this.store.toast(item.properties.source_artifact_kind==="video"?"Unlock every related video scene before saving these changes.":"Unlock every related storyboard frame before saving these changes."); return; }
       changes.push(...authoredChanges);
-    } else if ((text || item.properties.source_artifact_id || item.properties.source_output_id) && text !== currentText) changes.push(...this.store.outputBlockTextEvents(item.id, text, "creative-editor"));
+    } else if(audioRecording&&text!==currentText)changes.push({type:"BlockPropertyEdited",payload:{block_id:item.id,property_path:"description",old_value:currentText,new_value:text,source_surface:"creative-editor-audio"}});
+    else if ((text || item.properties.source_artifact_id || item.properties.source_output_id) && text !== currentText) changes.push(...this.store.outputBlockTextEvents(item.id, text, "creative-editor"));
     if (nextWeight !== currentWeight) changes.push({ type: "BlockWeightSet", payload: { block_id: item.id, weight: nextWeight, previous_weight: currentWeight, source_surface: "creative-editor" } });
     if (!changes.length) {
       this.store.toast("Everything already matches.");
@@ -365,7 +381,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
               ${QUICK_TOOLS.map((tool) => html`<button @click=${() => this.#openCreate(tool.type, tool.intent)}><span>${icon(blockIconName(tool.type))}</span><b>${this.i18n.system(tool.label??FRIENDLY_LABELS[tool.type])}</b><small>${this.i18n.system(tool.description??blockTypeDefinition(tool.type)?.description??"")}</small></button>`)}
             </div>
             <button class="creative-tool-more" @click=${() => this.#openCreate()}>${icon("plus")} More ways to shape the work</button>
-            <form @submit=${(event:SubmitEvent)=>{event.preventDefault();}}><label class="creative-reference-tool">${icon("image")}<span><b>Add an image</b><small>Use a visual reference</small></span><input type="file" accept="image/*" @change=${this.#queueReference}></label></form>
+            <form @submit=${(event:SubmitEvent)=>{event.preventDefault();}}><label class="creative-reference-tool">${icon("image")}<span><b>Add an image</b><small>Use a visual reference</small></span><input type="file" accept="image/*" @change=${this.#queueReference}></label><label class="creative-reference-tool creative-audio-tool">${icon("audio")}<span><b>${this.i18n.t("artifact.audio.label","Audio")}</b><small>${this.i18n.t("audio.reference.private","Private audio reference")}</small></span><input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm" @change=${this.#queueReference}></label></form>
             <footer><b>Not sure where to start?</b><p>Set the goal first. A clear goal makes every later choice easier to judge.</p><button @click=${() => this.#openCreate("direction")}>Set the goal ${icon("arrow")}</button></footer>
           </aside>
 
@@ -407,11 +423,12 @@ export class FormaCreativeEditor extends AlternativeStudio {
             ${selected ? html`<form @submit=${(event: SubmitEvent) => this.#save(event, selected)} @keydown=${(event:KeyboardEvent)=>{if(event.isComposing)return;if(event.key==="Enter"&&(event.metaKey||event.ctrlKey)){event.preventDefault();event.stopPropagation();(event.currentTarget as HTMLFormElement).requestSubmit();}else if(event.key==="Escape"){event.preventDefault();event.stopPropagation();const form=event.currentTarget as HTMLFormElement;form.querySelector("forma-output-input-editor")?.reset();const rich=form.querySelector<HTMLElementTagNameMap["forma-ui-rich-text"]>('forma-ui-rich-text[name="copy"]');if(rich){rich.value=textFor(selected);const textarea=rich.querySelector("textarea");if(textarea)textarea.value=textFor(selected);rich.requestUpdate();}const textarea=form.querySelector<HTMLTextAreaElement>('textarea[name="copy"]');if(textarea)textarea.value=textFor(selected);const type=form.querySelector<HTMLSelectElement>('select[name="item-type"]'),intent=form.querySelector<HTMLSelectElement>('select[name="item-intent"]');if(type)type.value=selected.type;if(intent)intent.value=blockIntentFor(selected.type,selected.properties);for(const radio of form.querySelectorAll<HTMLInputElement>('input[name="strength"]'))radio.checked=radio.value===strengthFor(Number(selected.properties.weight??.65));this.#selectedId=selected.id;this.store.patchUi({focusBlockId:selected.id,editingBlockId:""});this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLButtonElement>(".creative-editor-item.selected .creative-editor-item-main")?.focus({preventScroll:true}));}}}>
               <header><span>${selectedIsExclusion ? this.i18n.system("Guardrail selected") : this.i18n.system("Selected")}</span><h2>${selectedIntent==="include"?this.i18n.system(FRIENDLY_LABELS[selected.type as BlockKind]):this.i18n.system("{intent} {type}",{intent:this.i18n.system(intentCopy(selectedIntent)),type:this.i18n.system(FRIENDLY_LABELS[selected.type as BlockKind]).toLocaleLowerCase(this.i18n.locale)})}</h2><p>${selectedIsExclusion ? this.i18n.system("This is a negative {value} constraint. It tells the preview what must not appear; it never becomes a positive focus.", { value: this.i18n.system(FRIENDLY_LABELS[selected.type as BlockKind]).toLocaleLowerCase(this.i18n.locale) }) : this.i18n.system("Change the role, intent, wording, and influence of this decision.")}</p></header>
               ${selected.type === "reference" && selected.properties.media_url ? html`<forma-reference-image class="creative-inspector-image" .src=${String(selected.properties.media_url)} .alt=${textFor(selected)} .targetId=${selected.id} .referenceId=${String(selected.properties.reference_id??"")} .focalPoint=${selected.properties.focal_point}></forma-reference-image>` : nothing}
+              ${selected.type==="audio"?html`${renderAudioPlayer(String(selected.properties.media_url??""),String(selected.properties.label??selected.handle),this.i18n,{transcript:String(selected.properties.transcript??selected.properties.lyrics??"")})}<fieldset class="audio-permissions" ?disabled=${selected.locked}><legend>${this.i18n.t("artifact.audio.label","Audio")}</legend>${([{"path":"inform_generation","key":"inform"},{"path":"include_in_output","key":"include"},{"path":"allow_provider_audio_transfer","key":"transfer"}] as const).map(({path,key})=>{const hint=`editor-audio-${selected.id}-${key}`;return html`<label class="audio-permission"><input type="checkbox" aria-describedby=${hint} .checked=${selected.properties[path]===true} @change=${(event:Event)=>void this.store.append({type:"BlockPropertyEdited",payload:{block_id:selected.id,property_path:path,old_value:selected.properties[path]===true,new_value:(event.currentTarget as HTMLInputElement).checked,source_surface:"creative-editor"}})}><span><b>${this.i18n.t(`audio.use.${key}.label`,"")}</b><small id=${hint}>${this.i18n.t(`audio.use.${key}.description`,"")}</small></span></label>`;})}</fieldset>`:nothing}
               ${selected.type === "reference" ? html`<forma-reference-pixel-policy .block=${selected} surface="editor" compact></forma-reference-pixel-policy>` : nothing}
-              <label><span>Role in the plan</span><select name="item-type" ?disabled=${selected.locked}>${BLOCK_TYPES.map((item) => html`<option value=${item.type} ?selected=${item.type === selected.type}>${this.i18n.system(FRIENDLY_LABELS[item.type])}</option>`)}</select></label>
+              <label><span>Role in the plan</span><select name="item-type" ?disabled=${selected.locked||selected.type==="audio"&&Boolean(selected.properties.media_url)}>${BLOCK_TYPES.map((item) => html`<option value=${item.type} ?selected=${item.type === selected.type}>${this.i18n.system(FRIENDLY_LABELS[item.type])}</option>`)}</select></label>
               <label><span>Intent</span><select name="item-intent" ?disabled=${selected.locked}>${BLOCK_INTENTS.map((intent) => html`<option value=${intent.id} ?selected=${intent.id === selectedIntent}>${this.i18n.system(intent.label)} · ${this.i18n.system(intent.description)}</option>`)}</select></label>
               <div class="creative-role-intent-summary"><b>${this.i18n.system(intentCopy(selectedIntent))} · ${this.i18n.system(FRIENDLY_LABELS[selected.type as BlockKind])}</b><small>${localizedSpatialScopeLabel(selected.properties.spatial_scope,this.i18n)}</small></div>
-              ${outputInputDraft(selected)?html`<forma-output-input-editor .block=${selected} source="creative-editor"></forma-output-input-editor>`:selected.properties.source_artifact_item_id||selected.properties.source_output_id?html`<forma-ui-rich-text name="copy" .label=${selected.properties.source_artifact_item_id?selected.properties.source_artifact_kind==="video"?this.i18n.system("Video scene direction"):this.i18n.system("Storyboard shot direction"):this.i18n.system("Image direction")} .value=${textFor(selected)} .rows=${7} ?disabled=${selected.locked}></forma-ui-rich-text>`:html`<label><span>${selectedIsExclusion ? this.i18n.system("What must the work avoid?") : this.i18n.system("What should it say?")}</span><textarea name="copy" rows="6" .value=${textFor(selected)} ?disabled=${selected.locked}></textarea></label>`}
+              ${selected.type==="audio"&&selected.properties.media_url?html`<label><span>${this.i18n.t("audio.reference.description","Describe what you hear")}</span><textarea name="copy" rows="6" .value=${String(selected.properties.description??"")} ?disabled=${selected.locked}></textarea></label>`:outputInputDraft(selected)?html`<forma-output-input-editor .block=${selected} source="creative-editor"></forma-output-input-editor>`:selected.properties.source_artifact_item_id||selected.properties.source_output_id?html`<forma-ui-rich-text name="copy" .label=${selected.properties.source_artifact_item_id?selected.properties.source_artifact_kind==="video"?this.i18n.system("Video scene direction"):this.i18n.system("Storyboard shot direction"):this.i18n.system("Image direction")} .value=${textFor(selected)} .rows=${7} ?disabled=${selected.locked}></forma-ui-rich-text>`:html`<label><span>${selectedIsExclusion ? this.i18n.system("What must the work avoid?") : this.i18n.system("What should it say?")}</span><textarea name="copy" rows="6" .value=${textFor(selected)} ?disabled=${selected.locked}></textarea></label>`}
               <fieldset ?disabled=${selected.locked}>
                 <legend>${selectedIsExclusion ? this.i18n.system("How strictly should it be excluded?") : this.i18n.system("How much should it lead?")}</legend>
                 ${(selectedIsExclusion ? [["supporting", "Gentle"], ["balanced", "Standard"], ["lead", "Strict"]] : [["supporting", "Supporting"], ["balanced", "Balanced"], ["lead", "Lead"]]).map(([value, label]) => html`<label><input type="radio" name="strength" value=${value} .checked=${strengthFor(Number(selected.properties.weight ?? .65)) === value}><span>${label}</span></label>`)}
@@ -443,11 +460,11 @@ export class FormaCreativeEditor extends AlternativeStudio {
       ${this.#pendingReference ? html`<dialog class="modal creative-reference-dialog" closedby="any" aria-labelledby="creative-reference-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget && !this.#uploading) this.#cancelReference(); }} @cancel=${(event: Event) => { event.preventDefault(); if (!this.#uploading) this.#cancelReference(); }}>
         <form class="modal-card creative-reference-card" @submit=${(event:SubmitEvent)=>{event.preventDefault();if(this.#rightsConfirmed&&!this.#uploading)void this.#confirmReference();}}>
           <button type="button" class="icon-button modal-close" aria-label="Close" ?disabled=${this.#uploading} @click=${this.#cancelReference}>${icon("close")}</button>
-          <span class="eyebrow">Add a visual reference</span><h2 id="creative-reference-title">Use this image in the plan?</h2>
-          <div class="creative-reference-receipt"><span>${icon("image")}</span><div><b>${this.#pendingReference.name}</b><small>${(this.#pendingReference.size / 1_048_576).toFixed(1)} MB</small></div></div>
-          <p>The editor will prepare color, mood, layout, material, lighting, and spatial cues. You choose which ones become part of the plan.</p>
-          <label class="rights-check"><input type="checkbox" .checked=${this.#rightsConfirmed} @change=${(event: Event) => { this.#rightsConfirmed = (event.target as HTMLInputElement).checked; this.requestUpdate(); }}><span><b>I own this image or have permission to use it.</b><small>In a controlled pilot, I also confirm it contains no sensitive information. This confirmation stays with the image wherever it is reused.</small></span></label>
-          <footer><button type="button" class="button ghost" ?disabled=${this.#uploading} @click=${this.#cancelReference}>Cancel</button><button type="submit" class="button primary" ?disabled=${!this.#rightsConfirmed || this.#uploading}>${this.#uploading ? this.i18n.system("Adding image…") : this.i18n.system("Add image")}</button></footer>
+          <span class="eyebrow">${audioMimeType(this.#pendingReference.type)?this.i18n.t("audio.reference.private","Private audio reference"):this.i18n.system("Add a visual reference")}</span><h2 id="creative-reference-title">${audioMimeType(this.#pendingReference.type)?this.i18n.t("audio.reference.description","Describe what you hear"):this.i18n.system("Use this image in the plan?")}</h2>
+          <div class="creative-reference-receipt"><span>${icon(audioMimeType(this.#pendingReference.type)?"audio":"image")}</span><div><b>${this.#pendingReference.name}</b><small>${(this.#pendingReference.size / 1_048_576).toFixed(1)} MB</small></div></div>
+          <p>${audioMimeType(this.#pendingReference.type)?this.i18n.t("audio.use.inform.description","Use only your written description to shape images, stories, presentations, video, and music."):this.i18n.system("The editor will prepare color, mood, layout, material, lighting, and spatial cues. You choose which ones become part of the plan.")}</p>
+          <label class="rights-check"><input type="checkbox" aria-describedby="creative-reference-rights-hint" .checked=${this.#rightsConfirmed} @change=${(event: Event) => { this.#rightsConfirmed = (event.target as HTMLInputElement).checked; this.requestUpdate(); }}><span><b>${audioMimeType(this.#pendingReference.type)?this.i18n.system("I own this source or have a license that permits this use."):this.i18n.system("I own this image or have permission to use it.")}</b><small id="creative-reference-rights-hint">${audioMimeType(this.#pendingReference.type)?this.i18n.t("audio.upload.rightsNotice","I also confirm this recording contains no sensitive information. Upload remains private; creative influence, accompaniment, and provider transfer each require separate approval."):this.i18n.system("In a controlled pilot, I also confirm it contains no sensitive information. This confirmation stays with the image wherever it is reused.")}</small></span></label>
+          <footer><button type="button" class="button ghost" ?disabled=${this.#uploading} @click=${this.#cancelReference}>Cancel</button><button type="submit" class="button primary" ?disabled=${!this.#rightsConfirmed || this.#uploading}>${audioMimeType(this.#pendingReference.type)?this.#uploading?this.i18n.system("Uploading securely…"):this.i18n.t("artifact.audio.label","Audio"):this.#uploading?this.i18n.system("Adding image…"):this.i18n.system("Add image")}</button></footer>
         </form>
       </dialog>` : nothing}
     `;

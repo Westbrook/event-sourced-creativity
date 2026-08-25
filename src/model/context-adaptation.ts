@@ -1,7 +1,7 @@
 import { combinedContextMemberships, type CombinedContextMembership } from "./combined-context.ts";
 import { promptFactIsActive } from "./prompt-policy.ts";
 
-export type ContextAdapterOutput = "image" | "video" | "story" | "short_story" | "scene" | "slides" | "storyboard";
+export type ContextAdapterOutput = "image" | "video" | "audio" | "story" | "short_story" | "scene" | "slides" | "storyboard";
 export type ContextAdaptationPriority = "required" | "important" | "optional";
 
 /** A provider-independent contract that future adapters can satisfy without sharing provider code. */
@@ -78,11 +78,15 @@ export function requiredContextAdaptationFacts(snapshot: Record<string, unknown>
     const fact = value as Record<string, unknown>;
     const properties = fact.properties && typeof fact.properties === "object" && !Array.isArray(fact.properties) ? fact.properties as Record<string, unknown> : {};
     if (fact.locked !== true && properties.locked !== true && properties.required !== true && properties.authority !== "locked") return [];
-    const meaningfulFields = ["text", "instruction", "description", "value", "label", "exact_text", "colors", "palette", "aspect_ratio", "font_family", "font_weight", "lens", "camera_direction", "camera", "lighting", "brand_name", "motion", "materials", "safe_area", "image_format", "format", "resolution", "accessibility", "contrast", "minimum_contrast", "style", "wardrobe", "subject", "environment", "composition"] as const;
+    const meaningfulFields = ["text", "instruction", "description", "value", "label", "exact_text", "colors", "palette", "aspect_ratio", "font_family", "font_weight", "lens", "camera_direction", "camera", "lighting", "brand_name", "motion", "materials", "safe_area", "image_format", "format", "resolution", "accessibility", "contrast", "minimum_contrast", "style", "wardrobe", "subject", "environment", "composition", "audio_role", "mood", "emotional_arc", "narrative_purpose", "instrumentation", "texture", "soundscape", "tempo_bpm", "vocal_policy", "transcript", "lyrics", "audio_cues"] as const;
     const values = meaningfulFields.flatMap((key) => {
       const candidate = properties[key];
       if (typeof candidate === "string" || typeof candidate === "number" || typeof candidate === "boolean") return [String(candidate)];
-      if (Array.isArray(candidate)) return [candidate.map((item) => typeof item === "object" && item !== null ? JSON.stringify(item) : String(item)).filter(Boolean).join(", ")];
+      if (Array.isArray(candidate)) return [candidate.map((item) => {
+        if (typeof item !== "object" || item === null) return String(item);
+        if (key === "audio_cues") { const cue = item as Record<string, unknown>; return [cue.start_seconds ?? cue.startSeconds, cue.end_seconds ?? cue.endSeconds, cue.target_kind ?? cue.targetKind, cue.label, cue.emotional_intent ?? cue.emotionalIntent].filter((value) => value !== undefined && value !== null && String(value).trim()).join(" · "); }
+        return JSON.stringify(item);
+      }).filter(Boolean).join(", ")];
       if (candidate && typeof candidate === "object") return [JSON.stringify(candidate)];
       return [];
     });

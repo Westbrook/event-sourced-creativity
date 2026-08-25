@@ -1,6 +1,7 @@
 import { blockIntentFor, blockTypeDefinition } from "./block-types.ts";
 import type { DocumentArtifact } from "./document-artifacts.ts";
 import type { CreativeBlock, CreativeEvent, CreativeProjection } from "./events.ts";
+import { audioRightsAllowed } from "./audio.ts";
 
 export type ContextHealthIssue = {
   id: string;
@@ -39,14 +40,15 @@ export function assessCreativeContext(projection: Pick<CreativeProjection, "bloc
   }
 
   const rights = new Set(events.filter((event) => event.type === "RightsAsserted" || event.type === "ReferenceIngested" && ["owned", "owned_or_licensed"].includes(String(event.payload.rights_class ?? ""))).map((event) => String(event.payload.reference_id ?? "")));
+  const audioRights = new Set(events.filter((event) => (event.type === "RightsAsserted" || event.type === "ReferenceIngested") && audioRightsAllowed(event.payload.rights_class)).map((event) => String(event.payload.reference_id ?? "")));
   let verifiedSources = 0;
   for(const decision of blocks.filter((block)=>block.type!=="reference")){
     const expires=Date.parse(String(decision.properties.license_expires_at??decision.properties.rights_expires_at??""));
     if(Number.isFinite(expires)&&expires<=now)issues.push({id:`decision-rights-expired-${decision.id}`,severity:"blocking",label:"Replace expired licensed context",detail:`The approved rights for “${String(decision.properties.label??decision.handle)}” have expired.`,blockIds:[decision.id]});
   }
-  for (const source of byType("reference")) {
+  for (const source of [...byType("reference"),...byType("audio").filter((block)=>Boolean(block.properties.media_url)&&(block.properties.inform_generation===true||block.properties.include_in_output===true||block.properties.allow_provider_audio_transfer===true))]) {
     const referenceId = String(source.properties.reference_id ?? "");
-    if (!referenceId || !rights.has(referenceId)) {
+    if (!referenceId || !(source.type === "audio" ? audioRights : rights).has(referenceId)) {
       issues.push({ id: `source-rights-${source.id}`, severity: "blocking", label: "Verify source rights", detail: `“${String(source.properties.label ?? source.handle)}” does not have a matching rights receipt.`, blockIds: [source.id] });
     } else verifiedSources += 1;
 

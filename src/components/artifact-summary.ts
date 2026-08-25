@@ -22,7 +22,7 @@ export class FormaArtifactSummary extends FormaPresentationalElement {
         ? html`<div class="artifact-summary-frames">${artifact.items.filter((item) => item.mediaUrl).slice(0, 4).map((item) => html`<img src=${item.mediaUrl!} alt=${item.title} loading="lazy" decoding="async" style=${focalPointCss(item.focalPoint)}>` )}</div>`
         : artifact.kind === "slides" && first
           ? html`<forma-presentation-slide .item=${{ title: first.title, body: first.body, notes: first.notes, image_prompt: first.imagePrompt, slide: first.slide }} .presentation=${artifact.presentation} .index=${0} .total=${artifact.itemCount} .compact=${true}></forma-presentation-slide>`
-          : html`<div class="artifact-summary-copy"><span aria-hidden="true">${icon(artifact.kind === "scene" ? "scene" : "story")}</span><p>${artifact.summary}</p></div>`;
+          : html`<div class="artifact-summary-copy"><span aria-hidden="true">${icon(artifact.kind === "audio" ? "audio" : artifact.kind === "scene" ? "scene" : "story")}</span><p>${artifact.summary}</p></div>`;
     const label = this.i18n.t(`artifact.${artifact.kind}.label`, definition.label);
     return html`<div class=${`artifact-summary artifact-summary--${artifact.kind}${this.compact ? " compact" : ""}`} aria-label=${`${label}: \u2068${artifact.title}\u2069`}>${media}</div>`;
   }

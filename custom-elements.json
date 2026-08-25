@@ -1711,7 +1711,7 @@
               "kind": "field",
               "name": "iconName",
               "type": {
-                "text": "\"layers\" | \"document\" | \"palette\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
+                "text": "\"layers\" | \"document\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"spark\"",
               "attribute": "icon-name",
@@ -1759,7 +1759,7 @@
               "name": "icon-name",
               "fieldName": "iconName",
               "type": {
-                "text": "\"layers\" | \"document\" | \"palette\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
+                "text": "\"layers\" | \"document\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"spark\"",
               "description": "Stable, locale-invariant icon identifier."
@@ -2837,7 +2837,7 @@
               "kind": "field",
               "name": "name",
               "type": {
-                "text": "\"layers\" | \"document\" | \"palette\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
+                "text": "\"layers\" | \"document\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"spark\"",
               "attribute": "name",
@@ -2867,7 +2867,7 @@
               "name": "name",
               "fieldName": "name",
               "type": {
-                "text": "\"layers\" | \"document\" | \"palette\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
+                "text": "\"layers\" | \"document\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"spark\"",
               "description": "Stable native form field or technical identifier; never translate machine identifiers."
@@ -2956,7 +2956,7 @@
               "kind": "field",
               "name": "iconName",
               "type": {
-                "text": "\"layers\" | \"document\" | \"palette\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
+                "text": "\"layers\" | \"document\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"dots\"",
               "attribute": "icon-name",
@@ -3033,7 +3033,7 @@
               "name": "icon-name",
               "fieldName": "iconName",
               "type": {
-                "text": "\"layers\" | \"document\" | \"palette\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
+                "text": "\"layers\" | \"document\" | \"palette\" | \"audio\" | \"admin\" | \"arrow\" | \"back\" | \"bold\" | \"branch\" | \"bullets\" | \"check\" | \"clock\" | \"close\" | \"collapse\" | \"compare\" | \"contrast\" | \"copy\" | \"dashboard\" | \"dots\" | \"down\" | \"download\" | \"draw\" | \"edit\" | \"expand\" | \"eye\" | \"families\" | \"flask\" | \"focal-point\" | \"folder\" | \"grid\" | \"heading\" | \"hidden\" | \"home\" | \"image\" | \"info\" | \"italic\" | \"link\" | \"lock\" | \"marquee\" | \"menu\" | \"minus\" | \"next\" | \"numbered\" | \"open\" | \"pan\" | \"pause\" | \"pin\" | \"play\" | \"plus\" | \"previous\" | \"quote\" | \"redo\" | \"replay\" | \"save\" | \"scene\" | \"scope\" | \"search\" | \"select\" | \"selection\" | \"send\" | \"share\" | \"slides\" | \"spark\" | \"step\" | \"story\" | \"storyboard\" | \"swap\" | \"trash\" | \"undo\" | \"unlock\" | \"up\" | \"user\" | \"video\" | \"warning\""
               },
               "default": "\"dots\"",
               "description": "Stable, locale-invariant icon identifier."
@@ -9248,7 +9248,7 @@
                 {
                   "name": "kind",
                   "type": {
-                    "text": "\"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\" | undefined"
+                    "text": "\"audio\" | \"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\" | undefined"
                   }
                 },
                 {
@@ -9326,7 +9326,7 @@
             {
               "name": "document-artifact-queued",
               "type": {
-                "text": "CustomEvent<{ documentId: string; kind: \"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\"; }>"
+                "text": "CustomEvent<{ documentId: string; kind: \"audio\" | \"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\"; }>"
               },
               "description": "Bubbles and crosses component boundaries."
             }

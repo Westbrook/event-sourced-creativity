@@ -110,7 +110,8 @@ test("video creation exposes durable batch and per-frame reference controls",asy
   assert.match(preflight,/providerLimitExceededCount/);
   assert.match(preflight,/image limit/);
   assert.match(policy,/Use in generation/);
-  assert.match(policy,/image and video models/);
+  assert.match(policy,/image, video, and audio models/);
+  assert.match(policy,/image, video, and audio generations/);
   assert.match(styles,/\.video-reference-preflight/);
   assert.match(styles,/\.video-reference-mode-controls/);
 });

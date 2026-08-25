@@ -6,7 +6,7 @@ import { evaluateReplayCoverage } from "../src/model/replay-coverage.ts";
 import { buildNothingToSomethingWorkflow, DEFAULT_REPLAY_WORK_PRODUCTS, REPLAY_OUTPUT_KINDS, replayContextFingerprint, reverseEngineerWorkProduct } from "../src/model/replay-workflows.ts";
 import { SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
 
-const labels = { image: "Visual anchor", short_story: "Narrative", scene: "Screen scene", slides: "Presentation", storyboard: "Shot sequence", video: "Motion treatment" };
+const labels = { image: "Visual anchor", short_story: "Narrative", scene: "Screen scene", slides: "Presentation", storyboard: "Shot sequence", video: "Motion treatment", audio: "Original soundtrack" };
 
 function productsFor(kind, additions = {}) {
   return [kind, ...REPLAY_OUTPUT_KINDS.filter((candidate) => candidate !== kind)].map((candidate, index) => ({
@@ -35,6 +35,16 @@ test("reconstructs every submitted format from its exact reviewed work product",
     assert.equal(JSON.stringify(stream).includes(secret), false, kind);
     assert.equal(stream.some((item) => item.type === "RightsAsserted"), false, kind);
     assert.equal(summarizeIntentTrajectories(stream).unfinished.length, 0, kind);
+    if (kind === "audio") {
+      assert.match(source.payload.media_url, /\.mp3$/);
+      assert.equal(source.payload.media_type, "audio/mpeg");
+      assert.equal(stream.find((item) => item.type === "DocumentArtifactViewed" && item.payload.artifact_kind === "audio")?.payload.viewer_kind, "media");
+      assert.equal(stream.find((item) => item.type === "DocumentArtifactExported" && item.payload.artifact_kind === "audio")?.payload.format, "audio/mpeg");
+      assert.equal(input.payload.type, "audio");
+      assert.equal(input.payload.properties.inform_generation, false);
+      assert.equal(input.payload.properties.include_in_output, false);
+      assert.equal(input.payload.properties.allow_provider_audio_transfer, false);
+    }
   }
 });
 
@@ -58,8 +68,13 @@ test("requires every shared reference permission before any output can run", () 
   assert.ok(rights.sequence < approvedContext.sequence);
   assert.ok(approved.some((item) => item.type === "GenerationCompleted"));
   assert.ok(approved.some((item) => item.type === "DocumentRenderCompleted"));
-  assert.equal(approved.some((item) => item.type === "DocumentRenderCompleted" && item.payload.artifact_kind === "video"), false);
-  assert.ok(approved.some((item) => item.type === "DocumentRenderFailed" && item.payload.video_mock_boundary === true));
+  for (const kind of ["video", "audio"]) {
+    const request = approved.find((item) => item.type === "DocumentRenderRequested" && item.payload.artifact_kind === kind);
+    assert.equal(request.payload.paid_media_confirmed, false);
+    assert.equal(request.payload.approval_required, true);
+    assert.equal(approved.some((item) => item.type === "DocumentRenderCompleted" && item.payload.artifact_kind === kind), false);
+    assert.ok(approved.some((item) => item.type === "DocumentRenderFailed" && item.payload[`${kind}_mock_boundary`] === true));
+  }
 });
 
 test("merges compatible secondary context before formalization and rejects contradictory decisions", () => {
@@ -126,7 +141,7 @@ test("models bounded trusted sharing without admitting public share events or le
   assert.equal(sharing.passed, true);
   assert.equal(created.payload.resource_id, created.payload.document_id);
   assert.equal(created.payload.access, "read-only");
-  assert.equal(created.payload.media_count, 7);
+  assert.equal(created.payload.media_count, 8);
   assert.equal(revoked.payload.share_id, created.payload.share_id);
   assert.ok(revoked.sequence > created.sequence);
   assert.equal(Object.keys(created.payload).some((key) => /token|url|secret/i.test(key)), false);
