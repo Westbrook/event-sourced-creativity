@@ -11515,6 +11515,23 @@
               "attribute": "interactive"
             },
             {
+              "kind": "method",
+              "name": "openImageViewer",
+              "parameters": [
+                {
+                  "name": "opener",
+                  "type": {
+                    "text": "HTMLElement | undefined"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
               "kind": "field",
               "name": "output",
               "type": {
@@ -11530,6 +11547,15 @@
               "default": "false",
               "attribute": "read-only",
               "description": "Whether the native control can be read but not edited."
+            },
+            {
+              "kind": "field",
+              "name": "viewerOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "viewer-only"
             }
           ],
           "attributes": [
@@ -11558,6 +11584,14 @@
               },
               "default": "false",
               "description": "Whether the native control can be read but not edited."
+            },
+            {
+              "name": "viewer-only",
+              "fieldName": "viewerOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false"
             }
           ],
           "events": [

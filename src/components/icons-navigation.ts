@@ -5,8 +5,6 @@ import folder from "@phosphor-icons/core/regular/folder-simple.svg?raw";
 import document from "@phosphor-icons/core/regular/article.svg?raw";
 import layers from "@phosphor-icons/core/regular/stack.svg?raw";
 import families from "@phosphor-icons/core/regular/circles-three.svg?raw";
-import expand from "@phosphor-icons/core/regular/arrows-out-simple.svg?raw";
-import collapse from "@phosphor-icons/core/regular/arrows-in-simple.svg?raw";
 import { registerIcons } from "./icons";
 
-registerIcons({ home, dashboard, grid, folder, document, layers, families, expand, collapse });
+registerIcons({ home, dashboard, grid, folder, document, layers, families });

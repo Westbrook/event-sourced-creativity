@@ -2,6 +2,8 @@ import { html } from "lit";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import arrowSvg from "@phosphor-icons/core/regular/arrow-right.svg?raw";
 import arrowLeftSvg from "@phosphor-icons/core/regular/arrow-left.svg?raw";
+import expandSvg from "@phosphor-icons/core/regular/arrows-out-simple.svg?raw";
+import collapseSvg from "@phosphor-icons/core/regular/arrows-in-simple.svg?raw";
 import checkSvg from "@phosphor-icons/core/regular/check.svg?raw";
 import closeSvg from "@phosphor-icons/core/regular/x.svg?raw";
 import dotsSvg from "@phosphor-icons/core/regular/dots-three.svg?raw";
@@ -55,6 +57,8 @@ export function registerIcons(icons: FormaIconDefinitions): void {
 registerIcons({
   arrow: arrowSvg,
   back: arrowLeftSvg,
+  expand: expandSvg,
+  collapse: collapseSvg,
   check: checkSvg,
   close: closeSvg,
   dots: dotsSvg,

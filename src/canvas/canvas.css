@@ -193,3 +193,147 @@ html[data-canvas-focus] .canvas-board-identity small{display:none}
     max-inline-size: none;
   }
 }
+
+/* Result viewers keep the authored output dominant without changing Canvas permissions. */
+:is(.canvas-artifact-viewer,.canvas-output-viewer) > .modal-card {
+  inline-size: min(calc(100dvi - 1rem),104rem);
+  block-size: calc(100dvb - 1rem);
+  max-block-size: calc(100dvb - 1rem);
+  margin: .5rem auto;
+}
+
+.canvas-artifact-viewer-card > header {
+  min-inline-size: 0;
+  padding-block: .75rem;
+  padding-inline: clamp(.85rem,2.5vi,2rem);
+  padding-inline-end: calc((var(--forma-control-min-size,2.75rem) * 2) + 2rem);
+}
+
+.canvas-output-viewer-card > header {
+  min-inline-size: 0;
+  padding-inline-end: calc((var(--forma-control-min-size,2.75rem) * 2) + 1rem);
+}
+
+.canvas-artifact-viewer-card > header h2,.canvas-output-viewer-card > header h2 {
+  margin-block: .2rem;
+  font-size: clamp(1.15rem,2.2vi,1.7rem);
+  overflow-wrap: anywhere;
+}
+
+.canvas-viewer-focus-toggle {
+  position: absolute;
+  z-index: 2;
+  inset-block-start: 1rem;
+  inset-inline-end: calc(1rem + var(--forma-control-min-size,2.75rem) + .35rem);
+  min-inline-size: var(--forma-control-min-size,2.75rem);
+  min-block-size: var(--forma-control-min-size,2.75rem);
+}
+
+:is(.canvas-artifact-viewer,.canvas-output-viewer) .modal-close {
+  min-inline-size: var(--forma-control-min-size,2.75rem);
+  min-block-size: var(--forma-control-min-size,2.75rem);
+}
+
+:is(.canvas-artifact-viewer-card,.canvas-output-viewer-card) > footer {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+}
+
+.canvas-artifact-viewer-card > footer > div,.canvas-output-viewer-card > footer > div {
+  min-inline-size: 0;
+  flex-wrap: wrap;
+  justify-content: end;
+}
+
+:is(.canvas-artifact-viewer,.canvas-output-viewer)[data-output-focus="true"] > .modal-card {
+  inline-size: 100dvi;
+  block-size: 100dvb;
+  max-block-size: 100dvb;
+  grid-template-rows: auto minmax(0,1fr);
+  margin: 0;
+  padding-block-start: env(safe-area-inset-top,0px);
+  padding-block-end: env(safe-area-inset-bottom,0px);
+  padding-inline-start: var(--forma-safe-inline-start,0px);
+  padding-inline-end: var(--forma-safe-inline-end,0px);
+  border: 0;
+  border-radius: 0;
+}
+
+:is(.canvas-artifact-viewer,.canvas-output-viewer)[data-output-focus="true"] > .modal-card > footer,
+:is(.canvas-artifact-viewer,.canvas-output-viewer)[data-output-focus="true"] > .modal-card > header > p {
+  display: none;
+}
+
+:is(.canvas-artifact-viewer,.canvas-output-viewer)[data-output-focus="true"] > .modal-card > header {
+  padding-block: .4rem;
+  padding-inline-start: .8rem;
+  padding-inline-end: calc((var(--forma-control-min-size,2.75rem) * 2) + 1.35rem);
+}
+
+:is(.canvas-artifact-viewer,.canvas-output-viewer)[data-output-focus="true"] :is(.canvas-viewer-focus-toggle,.modal-close) {
+  inset-block-start: max(.25rem,env(safe-area-inset-top,0px));
+}
+
+.canvas-artifact-viewer[data-output-focus="true"] .presentation-deck-viewport > .presentation-deck-frame {
+  inline-size: min(100cqi,calc(100cqb * 1.7778));
+}
+
+.canvas-artifact-viewer[data-output-focus="true"] .forma-video-reel-player {
+  max-block-size: calc(100dvb - 10rem);
+  object-fit: contain;
+}
+
+.canvas-artifact-viewer[data-output-focus="true"] .canvas-artifact-storyboard {
+  max-inline-size: none;
+}
+
+.canvas-artifact-viewer .canvas-artifact-storyboard img {
+  object-fit: contain;
+  background: var(--fixed-dark,#111613);
+}
+
+.canvas-artifact-viewer .forma-video-reel-player {
+  object-fit: contain;
+}
+
+:is(.canvas-artifact-viewer,.canvas-output-viewer)[data-output-focus="true"] .modal-close {
+  inset-inline-end: max(.5rem,var(--forma-safe-inline-end,0px));
+}
+
+:is(.canvas-artifact-viewer,.canvas-output-viewer)[data-output-focus="true"] .canvas-viewer-focus-toggle {
+  inset-inline-end: calc(max(.5rem,var(--forma-safe-inline-end,0px)) + var(--forma-control-min-size,2.75rem) + .35rem);
+}
+
+@media (max-width: 720px) {
+  :is(.canvas-artifact-viewer-card,.canvas-output-viewer-card) > footer {
+    gap: .45rem;
+  }
+
+  .canvas-artifact-viewer-card > footer > div,.canvas-output-viewer-card > footer > div {
+    max-inline-size: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .canvas-artifact-viewer-card > footer > div > .button,.canvas-output-viewer-card > footer > div > .button {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .canvas-artifact-viewer-card > footer > div > .button.primary,.canvas-output-viewer-card > footer > div > .button.primary {
+    order: -1;
+  }
+
+  .canvas-artifact-viewer .presentation-deck-toolbar {
+    flex-direction: row;
+    gap: .55rem;
+    overflow-x: auto;
+    padding-block: .35rem;
+  }
+
+  .canvas-artifact-viewer .presentation-deck-toolbar > div {
+    flex: none;
+    flex-wrap: nowrap;
+    gap: .4rem;
+  }
+}

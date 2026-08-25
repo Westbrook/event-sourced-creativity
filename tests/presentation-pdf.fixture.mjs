@@ -50,7 +50,11 @@ window.configurePresentationPdfFixture=async(config={})=>{
   document.querySelector("#status").value="Ready";
   await slide.updateComplete;
   await deck.updateComplete;
-  if(viaDeck)await Promise.all(Array.from(deck.querySelectorAll("forma-presentation-slide")).map((item)=>item.updateComplete));
+  if(viaDeck){
+    deck.querySelector(".presentation-deck-view-switch button")?.click();
+    await deck.updateComplete;
+    await Promise.all(Array.from(deck.querySelectorAll("forma-presentation-slide")).map((item)=>item.updateComplete));
+  }
   await document.fonts.ready;
 };
 
