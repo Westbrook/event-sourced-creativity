@@ -27,6 +27,11 @@
   --forma-landscape-rail-width: calc(var(--forma-nav-rail-width) + var(--forma-safe-inline-start));
   --forma-workbench-chrome: 10.5rem;
   --forma-keyboard-offset: 0px;
+  --forma-taskbar-size: clamp(2.75rem, 6vb, 3.5rem);
+  --forma-header-inset-block: clamp(.375rem, 1.25vb, .875rem);
+  --forma-first-object-gap: clamp(.375rem, 1vi, .75rem);
+  --forma-section-gap: clamp(.75rem, 2vb, 1.5rem);
+  --forma-modal-gutter: clamp(.375rem, 1.5vi, .875rem);
 }
 
 :root[dir="rtl"] {
@@ -1552,7 +1557,7 @@ html[data-document-focus] .studio-subpage-body {
 
 @container studio (min-width: 70rem) {
   .studio-grid[data-inspector-open="true"] {
-    grid-template-columns: minmax(15rem, .9fr) minmax(27rem, 1.45fr) minmax(17rem, .85fr);
+    grid-template-columns: minmax(15rem, 17rem) minmax(27rem, 1fr) minmax(17rem, 18rem);
   }
 
   .document-inspector-toggle {
@@ -2191,15 +2196,1173 @@ html[data-document-focus] .studio-subpage-body {
   }
 }
 
+/* Document work is a bounded, content-first workbench; discovery pages keep natural scroll. */
+.application-creative[data-layout-intent="workbench"] {
+  display: flex;
+  block-size: 100dvb;
+  min-block-size: 0;
+  max-block-size: 100dvb;
+  flex-direction: column;
+  overflow: clip;
+}
+
+.application-creative[data-layout-intent="workbench"] > :is(.topbar, .application-task-navigation, .impersonation-banner, .error-banner) {
+  flex: none;
+}
+
+.application-creative[data-layout-intent="workbench"] > #main-content {
+  flex: 1;
+  min-block-size: 0;
+  overflow: clip;
+}
+
+.application-creative[data-layout-intent="workbench"] > #main-content > forma-creative-application,
+.application-creative[data-layout-intent="workbench"] > #main-content > forma-creative-application > forma-workspace {
+  display: block;
+  block-size: 100%;
+  min-block-size: 0;
+}
+
+.workspace-page[data-workbench="document"] {
+  block-size: 100%;
+  min-block-size: 0;
+  min-height: 0;
+  overflow: clip;
+}
+
+.workspace-page[data-workbench="document"] > .studio-main {
+  display: grid;
+  min-block-size: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  padding-block-end: 0;
+}
+
+.workspace-page[data-workbench="document"] > .studio-main > .studio-header-stack {
+  grid-row: 1;
+}
+
+.workspace-page[data-workbench="document"] > .studio-main > .document-workbench-tasks {
+  grid-row: 2;
+}
+
+.workspace-page[data-workbench="document"] > .studio-main > .studio-grid {
+  grid-row: 3;
+}
+
+.workspace-page[data-workbench="document"] .studio-grid {
+  display: grid;
+  min-block-size: 0;
+  overflow: clip;
+}
+
+.workspace-page[data-workbench="document"] .studio-grid > :is(.context-column, .output-column) {
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scroll-padding-block-end: calc(7rem + var(--forma-keyboard-offset));
+}
+
+.workspace-page[data-workbench="document"]:has(> .composer-dock) .studio-grid > :is(.context-column, .output-column, .document-workbench-inspector) {
+  box-sizing: border-box;
+  padding-block-end: calc(7rem + var(--forma-keyboard-offset));
+}
+
+.application-creative .workspace-page[data-workbench="document"]:has(> .composer-dock) > .studio-main {
+  padding-block-end: 0;
+}
+
+@container studio (min-width: 70rem) {
+  .workspace-page[data-workbench="document"] .document-workbench-inspector {
+    min-block-size: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+.workspace-page[data-workbench="document"] .studio-grid > :is(.context-column, .output-column)[hidden] {
+  display: none;
+}
+
+.workspace-page[data-workbench="document"] .page-header--document {
+  min-block-size: var(--forma-hit-target);
+  min-height: 0;
+  padding-block: var(--forma-header-inset-block);
+}
+
+.workspace-page[data-workbench="document"] .page-header--document h1 {
+  margin-block: 0;
+  font-size: clamp(1.125rem, 2.2vi, 1.5rem);
+}
+
+.document-workbench-tasks {
+  display: none;
+  min-inline-size: 0;
+  gap: .25rem;
+  padding-inline: var(--forma-pane-inset);
+  scroll-padding-inline: var(--forma-pane-inset);
+  border-block-end: 1px solid var(--forma-color-border);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.document-workbench-tasks[data-has-reviews="true"] {
+  display: flex;
+}
+
+.document-workbench-tasks > button {
+  flex: 0 0 auto;
+  min-block-size: var(--forma-hit-target);
+  white-space: nowrap;
+}
+
+.document-workbench-tasks > button[aria-pressed="true"] {
+  color: var(--forma-color-text);
+  box-shadow: inset 0 0 0 1px var(--forma-color-accent, currentColor);
+}
+
+.document-workbench-task-count {
+  min-inline-size: 1.25rem;
+  padding-inline: .3125rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  text-align: center;
+}
+
+.document-workbench-review {
+  display: grid;
+  gap: var(--forma-cluster-gap);
+  padding: var(--forma-card-inset);
+}
+
+.document-workbench-review > article {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--forma-cluster-gap);
+}
+
+@container studio (width < 46rem) {
+  .document-workbench-tasks {
+    display: flex;
+  }
+
+  .workspace-page[data-workbench="document"] .studio-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.document-workbench-critical {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--forma-cluster-gap);
+  min-block-size: var(--forma-hit-target);
+  padding-inline: var(--forma-pane-inset);
+}
+
+.document-artifact-failure-digest {
+  margin-block: var(--forma-cluster-gap);
+}
+
+.document-artifact-failure-digest > summary {
+  display: flex;
+  min-block-size: var(--forma-hit-target);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--forma-cluster-gap);
+  padding-inline: var(--forma-row-inset-inline);
+  cursor: pointer;
+}
+
+.document-artifact-recovery {
+  display: flex;
+  min-inline-size: 0;
+  min-block-size: var(--forma-hit-target);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--forma-cluster-gap);
+  margin-block: var(--forma-cluster-gap);
+  padding-inline: var(--forma-row-inset-inline);
+}
+
+.document-artifact-recovery > small {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document {
+  min-block-size: var(--forma-hit-target);
+  flex-direction: row;
+  align-items: center;
+  gap: var(--forma-cluster-gap);
+  padding-block: .125rem;
+}
+
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-copy {
+  min-inline-size: 0;
+  flex: 1 1 auto;
+}
+
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-actions {
+  inline-size: auto;
+  width: auto;
+  max-inline-size: 55%;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .studio-mode-nav,
+.application-creative[data-short-height="true"][data-layout-intent="workbench"] .studio-mode-nav {
+  display: flex;
+  min-block-size: var(--forma-hit-target);
+  max-block-size: max(var(--forma-hit-target), var(--forma-hit-target-coarse));
+  align-items: center;
+  gap: .125rem;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .studio-mode-nav > :is(.studio-mode-families, .studio-mode-links),
+.application-creative[data-short-height="true"][data-layout-intent="workbench"] .studio-mode-nav > :is(.studio-mode-families, .studio-mode-links) {
+  min-inline-size: max-content;
+  flex: 0 0 auto;
+  grid-column: auto;
+  grid-row: auto;
+}
+
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .studio-mode-nav > button,
+.application-creative[data-short-height="true"][data-layout-intent="workbench"] .studio-mode-nav > button {
+  flex: 0 0 var(--forma-hit-target);
+  grid-column: auto;
+  grid-row: auto;
+}
+
+.application-creative[data-layout-intent="workbench"]:not([data-nav-posture="compact"]) .workspace-page[data-workbench="document"] > forma-project-rail {
+  min-block-size: 0;
+  block-size: 100%;
+}
+
+.application-creative[data-layout-intent="workbench"]:not([data-nav-posture="compact"]) .workspace-page[data-workbench="document"] > forma-project-rail > .project-rail {
+  position: relative;
+  inset-block-start: 0;
+  block-size: 100%;
+  height: 100%;
+  max-block-size: 100%;
+  min-block-size: 0;
+}
+
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"]:has(> forma-project-rail > .project-rail.collapsed) {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] > forma-project-rail:has(> .project-rail.collapsed) {
+    position: absolute;
+    z-index: 36;
+    inset-block-start: .125rem;
+    inset-inline-start: .25rem;
+    inline-size: var(--forma-hit-target);
+    block-size: auto;
+    border: 0;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .workspace-page[data-workbench="document"] > forma-project-rail > .project-rail.collapsed {
+    inline-size: var(--forma-hit-target);
+    width: var(--forma-hit-target);
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .project-rail.collapsed .rail-toolbar {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .project-rail.collapsed .rail-toolbar-context {
+    display: none;
+  }
+
+  .application-creative[data-nav-posture="rail"][data-short-height="true"][data-layout-intent="workbench"] .page-header-copy {
+    padding-inline-start: calc(var(--forma-hit-target) + .375rem);
+  }
+
+  .workspace-page[data-workbench="document"] .page-header--document {
+    min-block-size: var(--forma-hit-target);
+    flex-direction: row;
+    align-items: center;
+    gap: .25rem;
+    padding-block: .125rem;
+  }
+}
+
+html[data-document-focus] .application-creative[data-layout-intent="workbench"] > #main-content {
+  padding-block-end: 0;
+}
+
+html[data-document-focus] .application-creative[data-layout-intent="workbench"] > .topbar {
+  display: flex;
+  block-size: var(--forma-taskbar-size);
+  min-block-size: var(--forma-taskbar-size);
+}
+
+html[data-document-focus] .application-creative[data-layout-intent="workbench"] .focus-locale-switcher {
+  display: none;
+}
+
+.document-focus-actor {
+  display: grid;
+  min-inline-size: 0;
+  gap: .1rem;
+  overflow-wrap: anywhere;
+}
+
+.document-focus-actor > small {
+  color: var(--forma-color-text-muted);
+  font-size: max(.75rem, var(--type-caption));
+}
+
+html[data-document-focus] .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] > .topbar > forma-ui-workspace-switcher {
+  display: none;
+}
+
+html[data-document-focus] .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] > .topbar > .top-actions {
+  min-inline-size: 0;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  gap: .125rem;
+}
+
+html[data-document-focus] .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .document-focus-actor,
+html[data-document-focus] .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .document-focus-actor > small {
+  max-inline-size: clamp(3rem, 20vi, 8rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-document-focus] .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .locale-switcher > select {
+  max-inline-size: var(--forma-hit-target);
+}
+
+/* Keep signed-in discovery and specialist surfaces task-first at every measured width. */
+:where(.app-shell, .forma-platform-shell) .page-header--hero,
+.role-dashboard > .page-header--hero {
+  margin-block-end: var(--forma-section-gap);
+  padding-block: clamp(1rem, 3vi, 2rem) clamp(.75rem, 2vi, 1.5rem);
+}
+
+:where(.app-shell, .forma-platform-shell) .page-header--hero h1 {
+  margin-block: .125rem;
+  font-size: clamp(1.45rem, 3vi, 2.35rem);
+}
+
+:where(.app-shell, .forma-platform-shell) .page-header--hero .page-header-copy > p {
+  margin-block-start: .25rem;
+}
+
+.role-dashboard {
+  gap: var(--forma-section-gap);
+  padding-block: var(--forma-section-gap);
+}
+
+.role-dashboard > .page-header--hero {
+  margin-block-end: 0;
+  padding-block: var(--forma-header-inset-block);
+}
+
+.role-metric-card {
+  padding: var(--forma-row-inset-inline);
+}
+
+.role-metric-card > .role-metric-value {
+  font-size: clamp(1.15rem, 3vi, 1.8rem);
+}
+
+.delivery-decision-list article > header > h2 {
+  margin: 0;
+}
+
+.projects-page .projects-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr));
+  gap: clamp(.875rem, 2vi, 1.5rem);
+}
+
+.projects-page .project-card {
+  min-block-size: 0;
+  min-height: 0;
+  padding: clamp(.875rem, 1.5vi, 1.25rem);
+}
+
+.projects-page .project-card-title {
+  min-block-size: 0;
+  min-height: 0;
+  padding-block: clamp(.75rem, 1.5vi, 1.25rem);
+}
+
+.projects-page .project-card-summary {
+  gap: var(--forma-row-inset-inline);
+  padding-block: var(--forma-row-inset-block);
+}
+
+.projects-page .project-card-summary strong {
+  font-size: clamp(1.2rem, 3vi, 1.75rem);
+}
+
+.projects-page .project-card footer {
+  margin-block-start: var(--forma-cluster-gap);
+  padding-block-start: 0;
+}
+
+.library-main .library-body {
+  padding-block-start: var(--forma-section-gap);
+}
+
+.library-main .library-toolbar {
+  margin-block-end: var(--forma-first-object-gap);
+}
+
+.library-main .library-content {
+  gap: clamp(1.25rem, 3vi, 2.5rem);
+}
+
+.library-review-priority {
+  display: flex;
+  min-inline-size: 0;
+  min-block-size: var(--forma-hit-target);
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--forma-cluster-gap);
+  margin-block: var(--forma-first-object-gap);
+  padding-inline: var(--forma-row-inset-inline);
+}
+
+.library-review-priority > b {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.forma-activity-sections,
+.forma-deliver-section {
+  gap: var(--forma-section-gap);
+}
+
+.forma-deliver-summary {
+  gap: var(--forma-cluster-gap);
+  padding-block: var(--forma-row-inset-block);
+}
+
+.forma-deliver-summary > div {
+  padding: var(--forma-card-inset);
+}
+
+.shared-view .shared-hero {
+  padding-block: clamp(.75rem, 3vi, 1.75rem);
+}
+
+.shared-view .shared-hero h1 {
+  margin-block: .125rem;
+  font-size: clamp(1.5rem, 4vi, 2.6rem);
+}
+
+.shared-view .shared-grid {
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, .85fr);
+  gap: var(--forma-section-gap);
+  padding-block: var(--forma-section-gap);
+}
+
+.shared-view .shared-grid > :is(.shared-results, .shared-direction) > h2 {
+  margin: 0 0 var(--forma-first-object-gap);
+  font-size: var(--type-heading);
+}
+
+.shared-output > .shared-presentation-open {
+  justify-self: start;
+  margin-inline: var(--forma-row-inset-inline);
+}
+
+/* Presentation chrome must give the actual 16:9 deliverable the usable viewport. */
+.document-artifact-view[data-artifact-kind="slides"] {
+  --artifact-viewer-edge: clamp(.25rem, .75vi, .5rem);
+}
+
+.document-artifact-view[data-artifact-kind="slides"] .document-artifact-reader-content,
+.canvas-artifact-viewer[data-artifact-kind="slides"] .canvas-artifact-viewer-content--slides {
+  min-block-size: 0;
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+
+:is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] forma-presentation-deck,
+:is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow {
+  block-size: 100%;
+  min-block-size: 0;
+}
+
+:is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar {
+  min-inline-size: 0;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: .375rem;
+  padding-block: .25rem;
+  padding-inline: clamp(.375rem, 1vi, .75rem);
+  overflow-x: auto;
+}
+
+:is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar > div {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: .375rem;
+}
+
+.presentation-deck-tools-toggle {
+  display: none;
+}
+
+.presentation-deck-jump--compact,
+.artifact-viewer-actions-toggle,
+.artifact-viewer-actions-toggle[hidden] {
+  display: none;
+}
+
+:is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow .presentation-deck-stage {
+  min-block-size: 0;
+  gap: .375rem;
+  padding-block: .375rem;
+  padding-inline: clamp(.25rem, .8vi, .625rem);
+}
+
+:is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > :is(.presentation-deck-notes, .presentation-deck-reader) {
+  margin-block: 0;
+}
+
+@media (min-width: 48rem) and (max-width: 75rem) and (orientation: landscape) {
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow .presentation-deck-stage {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 40%);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-viewport {
+    grid-column: 1 / -1;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage > nav {
+    grid-column: 1;
+    grid-row: 2;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting {
+    grid-column: 2;
+    grid-row: 2;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(11rem, max-content);
+    grid-template-columns: none;
+    overflow-x: auto;
+  }
+
+  .shared-presentation-dialog .shared-presentation-stage {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 40%);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .shared-presentation-dialog .shared-presentation-viewport {
+    grid-column: 1 / -1;
+  }
+
+  .shared-presentation-dialog .shared-presentation-stage > nav {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .shared-presentation-dialog .shared-presentation-reader {
+    grid-column: 2;
+    grid-row: 2;
+  }
+}
+
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  :where(.app-shell, .forma-platform-shell) .page-header--hero,
+  .role-dashboard > .page-header--hero {
+    margin-block-end: var(--forma-first-object-gap);
+    padding-block: var(--forma-first-object-gap);
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader,
+  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card,
+  .shared-presentation-dialog > .shared-presentation-card {
+    position: relative;
+    grid-template-rows: var(--forma-hit-target) minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .shared-presentation-dialog > .shared-presentation-card {
+    block-size: calc(100dvb - .5rem);
+    max-block-size: calc(100dvb - .5rem);
+    margin: .25rem auto;
+    padding: .125rem;
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > .artifact-viewer-header,
+  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > header,
+  .shared-presentation-dialog > .shared-presentation-card > header {
+    box-sizing: border-box;
+    block-size: var(--forma-hit-target);
+    min-block-size: var(--forma-hit-target);
+    align-items: center;
+    padding-block: 0;
+  }
+
+  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > header {
+    display: flex;
+    gap: .5rem;
+  }
+
+  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > header > p,
+  .shared-presentation-dialog > .shared-presentation-card > header > div:first-child > span {
+    display: none;
+  }
+
+  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > header h2,
+  .shared-presentation-dialog > .shared-presentation-card > header h2,
+  .document-artifact-view[data-artifact-kind="slides"] .artifact-viewer-identity > h2 {
+    min-inline-size: 0;
+    overflow: hidden;
+    font-size: 1rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer,
+  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer {
+    position: absolute;
+    z-index: 7;
+    inset-block-end: max(.25rem, env(safe-area-inset-bottom, 0px));
+    inset-inline-end: max(.25rem, var(--forma-safe-inline-end));
+    display: flex;
+    max-inline-size: calc(100% - .5rem);
+    flex-direction: row-reverse;
+    gap: .25rem;
+    padding: .125rem;
+    border: 1px solid var(--forma-color-border);
+    border-radius: .5rem;
+    background: var(--forma-color-surface);
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer > span,
+  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer > span,
+  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer[data-actions-open="false"] > div,
+  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer[data-actions-open="false"] > div {
+    display: none;
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer > .artifact-viewer-actions-toggle,
+  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer > .artifact-viewer-actions-toggle {
+    display: inline-flex;
+    min-inline-size: var(--forma-hit-target);
+    min-block-size: var(--forma-hit-target);
+    flex: 0 0 auto;
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer[data-actions-open="true"] > div,
+  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer[data-actions-open="true"] > div {
+    display: flex;
+    max-inline-size: calc(100dvi - 5rem);
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > footer[data-actions-open="true"] > div > .button,
+  .canvas-artifact-viewer[data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer[data-actions-open="true"] > div > .button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow {
+    position: relative;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar {
+    position: absolute;
+    z-index: 4;
+    inset-block-start: .25rem;
+    inset-inline-end: max(.25rem, var(--forma-safe-inline-end));
+    display: flex;
+    min-block-size: var(--forma-hit-target);
+    max-inline-size: calc(100% - .5rem);
+    align-items: center;
+    gap: .25rem;
+    padding: .125rem;
+    border: 1px solid var(--forma-color-border);
+    border-radius: .5rem;
+    background: var(--forma-color-surface);
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar > .presentation-deck-tools-toggle {
+    display: inline-flex;
+    min-inline-size: var(--forma-hit-target);
+    min-block-size: var(--forma-hit-target);
+    flex: 0 0 auto;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar[data-tools-open="false"] > div {
+    display: none;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar[data-tools-open="true"] {
+    inset-inline-start: .25rem;
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-toolbar .presentation-deck-jump--compact {
+    display: inline-flex;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck--slideshow .presentation-deck-stage {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 0;
+    overflow: hidden;
+    padding: 0;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-viewport {
+    grid-area: 1 / 1;
+    inline-size: 100%;
+    block-size: 100%;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage > nav {
+    position: absolute;
+    z-index: 3;
+    inset: 0;
+    display: block;
+    overflow: visible;
+    pointer-events: none;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage > nav > button {
+    position: absolute;
+    inset-block-start: 55%;
+    display: inline-grid;
+    inline-size: var(--forma-hit-target);
+    block-size: var(--forma-hit-target);
+    min-inline-size: var(--forma-hit-target);
+    min-block-size: var(--forma-hit-target);
+    place-items: center;
+    padding: 0;
+    pointer-events: auto;
+    translate: 0 -50%;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage > nav > button:first-child {
+    inset-inline-start: max(.25rem, var(--forma-safe-inline-start));
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage > nav > button:last-child {
+    inset-inline-end: max(.25rem, var(--forma-safe-inline-end));
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage > nav > .presentation-deck-jump,
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-navigation-label {
+    display: none;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-stage > nav > .presentation-deck-position {
+    position: absolute;
+    inset-block-start: .375rem;
+    inset-inline-start: .375rem;
+    min-inline-size: 0;
+    padding: .25rem .375rem;
+    border-radius: .375rem;
+    background: color-mix(in srgb, var(--forma-color-surface) 90%, transparent);
+    font-size: var(--type-caption);
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting {
+    position: absolute;
+    z-index: 5;
+    inset-block-end: max(.25rem, env(safe-area-inset-bottom, 0px));
+    inset-inline-start: max(.25rem, var(--forma-safe-inline-start));
+    display: grid;
+    inline-size: var(--forma-hit-target);
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+    grid-template-columns: minmax(0, 1fr);
+    gap: .25rem;
+    overflow: visible;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > :is(.presentation-deck-notes, .presentation-deck-reader) {
+    inline-size: var(--forma-hit-target);
+    min-inline-size: var(--forma-hit-target);
+    padding: 0;
+    border: 1px solid var(--forma-color-border);
+    border-radius: .375rem;
+    background: var(--forma-color-surface);
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > :is(.presentation-deck-notes, .presentation-deck-reader) > summary {
+    display: grid;
+    inline-size: var(--forma-hit-target);
+    min-block-size: var(--forma-hit-target);
+    place-items: center;
+    padding: 0;
+    font-size: 0;
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > .presentation-deck-notes > summary::before {
+    content: "N";
+    font-size: var(--type-small);
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > .presentation-deck-reader > summary::before {
+    content: "Aa";
+    font-size: var(--type-small);
+  }
+
+  :is(.document-artifact-view, .canvas-artifact-viewer)[data-artifact-kind="slides"] .presentation-deck-supporting > :is(.presentation-deck-notes, .presentation-deck-reader)[open] {
+    position: absolute;
+    inset-block-end: 0;
+    inset-inline-start: 0;
+    inline-size: min(32rem, calc(100dvi - 1rem));
+    max-block-size: min(75dvb, 28rem);
+    overflow: auto;
+    padding: .5rem;
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"] .artifact-viewer-identity {
+    display: flex;
+    min-inline-size: 0;
+    align-items: center;
+    gap: .5rem;
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"] .artifact-viewer-kicker,
+  .document-artifact-view[data-artifact-kind="slides"] .artifact-viewer-identity > h2 {
+    min-inline-size: 0;
+    max-inline-size: 18vi;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"] .artifact-viewer-details {
+    flex: 0 0 auto;
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"] .artifact-viewer-details > summary {
+    max-inline-size: min(18vi, 9rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .document-artifact-view[data-artifact-kind="slides"] > .document-artifact-reader > :is(.artifact-viewer-header, footer) {
+    padding-block: 0;
+  }
+
+  .shared-presentation-dialog .shared-presentation-stage {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 0;
+    padding: 0;
+  }
+
+  .shared-presentation-dialog .shared-presentation-viewport {
+    grid-area: 1 / 1;
+    inline-size: 100%;
+    block-size: 100%;
+  }
+
+  .shared-presentation-dialog .shared-presentation-stage > nav {
+    position: absolute;
+    z-index: 3;
+    inset: 0;
+    display: block;
+    pointer-events: none;
+  }
+
+  .shared-presentation-dialog .shared-presentation-stage > nav > button {
+    position: absolute;
+    inset-block-start: 55%;
+    display: inline-grid;
+    inline-size: var(--forma-hit-target);
+    block-size: var(--forma-hit-target);
+    place-items: center;
+    padding: 0;
+    font-size: 0;
+    pointer-events: auto;
+    translate: 0 -50%;
+  }
+
+  .shared-presentation-dialog .shared-presentation-stage > nav > button:first-child {
+    inset-inline-start: max(.25rem, var(--forma-safe-inline-start));
+  }
+
+  .shared-presentation-dialog .shared-presentation-stage > nav > button:last-child {
+    inset-inline-end: max(.25rem, var(--forma-safe-inline-end));
+  }
+
+  .shared-presentation-dialog .shared-presentation-stage > nav > button:first-child::before,
+  :dir(rtl) .shared-presentation-dialog .shared-presentation-stage > nav > button:last-child::before {
+    content: "←";
+    font-size: var(--type-body);
+  }
+
+  .shared-presentation-dialog .shared-presentation-stage > nav > button:last-child::before,
+  :dir(rtl) .shared-presentation-dialog .shared-presentation-stage > nav > button:first-child::before {
+    content: "→";
+    font-size: var(--type-body);
+  }
+
+  .shared-presentation-dialog .shared-presentation-stage > nav > span {
+    position: absolute;
+    inset-block-start: .375rem;
+    inset-inline-start: .375rem;
+    min-inline-size: 0;
+    padding: .25rem .375rem;
+    border-radius: .375rem;
+    background: color-mix(in srgb, var(--forma-color-surface) 90%, transparent);
+  }
+
+  .shared-presentation-dialog .shared-presentation-reader {
+    position: absolute;
+    z-index: 4;
+    inset-block-end: .25rem;
+    inset-inline-start: max(.25rem, var(--forma-safe-inline-start));
+    inline-size: var(--forma-hit-target);
+    padding: 0;
+  }
+
+  .shared-presentation-dialog .shared-presentation-reader > summary {
+    display: grid;
+    min-inline-size: var(--forma-hit-target);
+    min-block-size: var(--forma-hit-target);
+    place-items: center;
+    font-size: 0;
+  }
+
+  .shared-presentation-dialog .shared-presentation-reader > summary::before {
+    content: "Aa";
+    font-size: var(--type-small);
+  }
+
+  .shared-presentation-dialog .shared-presentation-reader[open] {
+    inline-size: min(32rem, calc(100dvi - 1rem));
+    max-block-size: min(75dvb, 28rem);
+    padding: .5rem;
+  }
+
+  .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] > .document-artifact-reader,
+  .canvas-artifact-viewer[data-output-focus="true"][data-artifact-kind="slides"] > .canvas-artifact-viewer-card,
+  .shared-presentation-dialog[data-output-focus="true"] > .shared-presentation-card {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] > .document-artifact-reader > .artifact-viewer-header,
+  .canvas-artifact-viewer[data-output-focus="true"][data-artifact-kind="slides"] > .canvas-artifact-viewer-card > header,
+  .shared-presentation-dialog[data-output-focus="true"] > .shared-presentation-card > header {
+    position: absolute;
+    z-index: 6;
+    inset-block-start: 0;
+    inset-inline: 0;
+    padding-inline: .25rem;
+    border: 0;
+    background: transparent;
+    pointer-events: none;
+  }
+
+  .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] .artifact-viewer-identity,
+  .canvas-artifact-viewer[data-output-focus="true"][data-artifact-kind="slides"] > .canvas-artifact-viewer-card > header,
+  .shared-presentation-dialog[data-output-focus="true"] > .shared-presentation-card > header > div:first-child {
+    max-inline-size: max(var(--forma-hit-target), calc((100dvi - (100dvb * 1.7778)) / 2 - .5rem));
+    overflow: hidden;
+  }
+
+  .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] .artifact-viewer-kicker > span,
+  .canvas-artifact-viewer[data-output-focus="true"][data-artifact-kind="slides"] > .canvas-artifact-viewer-card > header > .canvas-dialog-step {
+    display: none;
+  }
+
+  .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] .artifact-viewer-identity,
+  .canvas-artifact-viewer[data-output-focus="true"][data-artifact-kind="slides"] > .canvas-artifact-viewer-card > header {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    align-content: center;
+    gap: 0;
+  }
+
+  .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] .artifact-viewer-kicker,
+  .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] .artifact-viewer-kicker > .artifact-review-status,
+  .canvas-artifact-viewer[data-output-focus="true"][data-artifact-kind="slides"] > .canvas-artifact-viewer-card > header > .artifact-review-status {
+    display: block;
+    max-inline-size: 100%;
+    overflow: hidden;
+    font-size: var(--type-caption);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] .artifact-viewer-identity > h2,
+  .canvas-artifact-viewer[data-output-focus="true"][data-artifact-kind="slides"] > .canvas-artifact-viewer-card > header h2 {
+    max-inline-size: 100%;
+    margin: 0;
+    font-size: var(--type-caption);
+  }
+
+  .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] .document-artifact-reader-actions,
+  .shared-presentation-dialog[data-output-focus="true"] .shared-presentation-actions {
+    position: absolute;
+    inset-block-start: .125rem;
+    inset-inline-end: max(.125rem, var(--forma-safe-inline-end));
+    display: grid;
+    grid-auto-flow: row;
+    gap: .125rem;
+    pointer-events: auto;
+  }
+
+  .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] .document-artifact-reader-actions > .button,
+  .shared-presentation-dialog[data-output-focus="true"] .shared-presentation-actions > .button {
+    inline-size: var(--forma-hit-target);
+    min-inline-size: var(--forma-hit-target);
+    padding-inline: 0;
+    overflow: hidden;
+    font-size: var(--type-caption);
+    white-space: nowrap;
+  }
+
+  .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] > .document-artifact-reader > footer,
+  .canvas-artifact-viewer[data-output-focus="true"][data-artifact-kind="slides"] > .canvas-artifact-viewer-card > footer {
+    display: flex;
+  }
+
+  .document-artifact-view[data-output-focus="true"][data-artifact-kind="slides"] .presentation-deck-toolbar {
+    inset-block-start: calc((var(--forma-hit-target) * 3) + .375rem);
+  }
+
+  .canvas-artifact-viewer[data-output-focus="true"][data-artifact-kind="slides"] .canvas-viewer-focus-toggle {
+    inset-block-start: calc(var(--forma-hit-target) + .25rem);
+    inset-inline-end: .25rem;
+  }
+
+  .canvas-artifact-viewer[data-output-focus="true"][data-artifact-kind="slides"] .modal-close {
+    inset-inline-end: .25rem;
+  }
+
+  .canvas-artifact-viewer[data-output-focus="true"][data-artifact-kind="slides"] .presentation-deck-toolbar {
+    inset-block-start: calc((var(--forma-hit-target) * 2) + .375rem);
+  }
+}
+
+.evaluation-tools.page-pad,
+.qualification-evidence.page-pad,
+.delivery-planning.page-pad,
+.adapter-preview.page-pad {
+  padding-block: var(--forma-section-gap);
+}
+
+@media (max-width: 47.99rem) {
+  .shared-view .shared-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-height: 37.5rem) and (orientation: landscape) {
+  .shared-view .shared-hero,
+  .shared-view .shared-grid {
+    padding-block: var(--forma-first-object-gap);
+  }
+}
+
+html[data-document-focus] .workspace-page[data-workbench="document"] .studio-header-stack > .page-header--document {
+  display: flex;
+}
+
+html[data-document-focus] .application-creative[data-layout-intent="workbench"] .composer-dock {
+  inset-block-end: max(env(safe-area-inset-bottom, 0px), var(--forma-keyboard-offset));
+}
+
+.context-block :is(.block-body, .block-heading, .block-heading-copy, .block-heading-state, .block-meta, .block-copy) {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.context-block .block-heading {
+  flex-wrap: wrap;
+}
+
+.context-block .block-heading-copy {
+  flex: 1 1 min(100%, 10rem);
+}
+
+.context-block .block-heading-state {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+}
+
+.context-block .block-meta {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 7.5rem), 1fr));
+  gap: var(--forma-cluster-gap);
+  overflow: visible;
+}
+
+.context-block :is(.block-copy, .block-governed-context, .source-evidence-inspector) {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.context-block .block-copy {
+  white-space: pre-wrap;
+  text-align: start;
+}
+
 @media (min-width: 90rem) {
   .projects-page,
   .canvas-page,
+  .role-dashboard,
+  .delivery-planning,
+  .qualification-evidence,
+  .synthetic-replay,
+  .actual-replay,
+  .adapter-preview,
+  .creator-settings-page,
+  .workspace-settings-page,
+  .forma-activity-sections,
+  .library-block-editor-header,
+  .library-block-editor-layout,
+  .session-grid,
+  .scout-layout,
+  .memory-layout,
+  .system-grid,
+  .design-lab-content,
+  .studio-subpage-body:not(.studio-subpage-body--chat),
+  .shared-grid,
   .projects-grid,
   .canvas-home-grid,
   .canvas-reports-grid,
-  .library-content {
+  .library-content,
+  .library-toolbar,
+  .collection-filter {
     max-inline-size: none;
     max-width: none;
+  }
+
+  .creator-settings-grid,
+  .workspace-settings-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(24rem, 100%), 1fr));
   }
 
   .projects-grid {
@@ -2228,7 +3391,7 @@ html[data-document-focus] .studio-subpage-body {
   }
 
   .studio-grid {
-    grid-template-columns: minmax(18rem, .75fr) minmax(35rem, 1.25fr);
+    grid-template-columns: minmax(17rem, 20rem) minmax(0, 1fr);
   }
 
   .creative-editor,
@@ -2254,8 +3417,15 @@ html[data-document-focus] .studio-subpage-body {
 @media (pointer: coarse) {
   .application-creative > .application-task-navigation .ui-audience-navigation a,
   .rail-collapse-toggle,
-  .studio-mode-nav > button {
+  .studio-mode-nav > button,
+  .document-workbench-tasks > button,
+  .document-artifact-failure-digest > summary,
+  .presentation-deck-tools-toggle {
     min-block-size: var(--forma-hit-target-coarse);
+  }
+
+  .presentation-deck-tools-toggle {
+    min-inline-size: var(--forma-hit-target-coarse);
   }
 
   :is(.asset-focus-trigger, .family-collage, .generated-output-trigger) > span {
@@ -2301,6 +3471,11 @@ html[data-document-focus] .studio-subpage-body {
 
   .application-task-navigation .ui-audience-navigation a[aria-current="page"] {
     border-block-end: 2px solid Highlight;
+  }
+
+  .document-workbench-tasks > button[aria-pressed="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
   }
 }
 

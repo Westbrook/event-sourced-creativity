@@ -97,13 +97,14 @@ export function artifactSourceVersions(artifactId:string,events:CreativeEvent[])
 export function artifactReviewState(artifact: Pick<DocumentArtifact, "id" | "documentId" | "sequence">, blocks: CreativeBlock[], events: CreativeEvent[]): ArtifactReviewState {
   const versions = artifactSourceVersions(artifact.id,events);
   if(!versions)return{status:"unverified",label:"Input revision unavailable",changedBlockIds:[],reviewedAt:null,reviewer:null};
+  const documentBlocks=blocks.filter((block)=>block.documentId===artifact.documentId);
   const changedBlockIds = versions.map((value) => value && typeof value === "object" ? value as Record<string, unknown> : {})
     .filter((version) => {
-      const block = blocks.find((candidate) => candidate.id === String(version.block_id ?? ""));
+      const block = documentBlocks.find((candidate) => candidate.id === String(version.block_id ?? ""));
       return !block || block.removed || block.sourceEvents.length !== Number(version.version ?? 0);
     }).map((version) => String(version.block_id ?? ""));
   const known=new Set(versions.map((version)=>String(version.block_id??"")));
-  for(const block of blocks)if(block.documentId===artifact.documentId&&!block.removed&&!known.has(block.id))changedBlockIds.push(block.id);
+  for(const block of documentBlocks)if(!block.removed&&!known.has(block.id))changedBlockIds.push(block.id);
 
   const review = [...events].reverse().find((event) =>
     ["ArtifactReviewRequested", "ArtifactApproved", "ArtifactChangesRequested", "DocumentArtifactEdited"].includes(event.type)

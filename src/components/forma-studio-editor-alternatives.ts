@@ -72,7 +72,7 @@ export class FormaRealityLayers extends AlternativeStudio {
     const active = projection.blocks.filter((block) => Number(block.properties.weight ?? .5) > 0);
     const activeGroups = new Set(active.map((block) => blockTypeDefinition(block.type)?.group));
     const recommendation = REALITIES.find((reality) => !activeRealityIds.has(reality.id) && !activeGroups.has(blockTypeDefinition(reality.type)?.group)) ?? REALITIES.find((reality) => !activeRealityIds.has(reality.id));
-    const body = html`
+    const readiness = html`
       <section class="view-success-hero layers-success">
         <div class="view-success-copy">
           <span class="eyebrow">Compose by influence</span>
@@ -91,9 +91,9 @@ export class FormaRealityLayers extends AlternativeStudio {
           <p>${recommendation ? this.i18n.system(recommendation.description) : this.i18n.system("Select a decision in the stack and check whether its influence matches its importance.")}</p>
           ${recommendation ? html`<button class="button secondary compact" @click=${() => this.#activate(recommendation, "button")}>Add to preview ${icon("arrow")}</button>` : nothing}
         </aside>
-      </section>
-
-      <div class="reality-editor">
+      </section>`;
+    const body = html`
+      <div class="reality-editor" data-forma-content="primary">
         <aside class="reality-shelf" aria-label="Creative ingredients">
           <header><div><span class="eyebrow">Add to this document</span><h3>Creative ingredients</h3></div><button class="new-layer-button" @click=${() => { this.#creating = true; this.requestUpdate(); }}>${icon("plus")} Create</button></header>
           <nav class="reality-tools" aria-label="Ingredient categories">
@@ -152,6 +152,7 @@ export class FormaRealityLayers extends AlternativeStudio {
           </form>${selected.type === "reference" ? html`<forma-reference-pixel-policy .block=${selected} surface="layers" compact></forma-reference-pixel-policy>` : nothing}<forma-spatial-scope-editor .block=${selected} surface="layers"></forma-spatial-scope-editor>` : html`<div class="layer-empty">Add or select a decision to shape it here.</div>`}
         </aside>
       </div>
+      ${readiness}
 
       ${this.#creating ? html`<dialog class="modal layer-create-dialog" closedby="any" aria-labelledby="new-layer-title" @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) this.#closeCreate(); }} @cancel=${(event: Event) => { event.preventDefault(); this.#closeCreate(); }} @close=${() => { if (this.#creating) { this.#creating = false; this.requestUpdate(); } }}>
         <form class="modal-card layer-create-form" @submit=${this.#createLayer}>
@@ -213,7 +214,7 @@ export class FormaAdaptivePath extends AlternativeStudio {
     const unlocks: Record<DecisionType, string> = {
       direction: "A standard for judging every later choice.", audience: "A real use context for message and tone.", subject: "A concrete scene instead of a generic idea.", environment: "Physical and cultural cues around the subject.", composition: "A clear reading order for the frame.", style: "A shared visual language for craft decisions.", lighting: "Believable atmosphere, depth, and focus.", exclusion: "A boundary that protects the direction during iteration.",
     };
-    const body = html`
+    const readiness = html`
       <section class="view-success-hero adaptive-success">
         <div class="view-success-copy">
           <span class="eyebrow">A path shaped by your intent</span>
@@ -225,20 +226,20 @@ export class FormaAdaptivePath extends AlternativeStudio {
           <small>${current ? this.i18n.system("{label} is the next useful decision.", { label: this.i18n.system(current.label) }) : this.i18n.system("The core path is ready for review or generation.")}</small>
         </div>
         <aside class="next-best-action"><span>What success looks like next</span><b>${current ? this.i18n.system(unlocks[current.type]) : this.i18n.system("Generate, compare, and revise with a clear basis.")}</b><p>${current ? this.i18n.system(current.why) : this.i18n.system("All core decisions are present; supporting decisions still remain visible alongside them.")}</p></aside>
-      </section>
-
+      </section>`;
+    const intent = html`
       <form class="adaptive-intent" @submit=${this.#askForma}>
         <div><label for="adaptive-intent-prompt">Describe the outcome—or the uncertainty slowing you down</label><textarea id="adaptive-intent-prompt" rows="3" placeholder="For example: We need this to feel credible to design leaders, but the current direction is polished without feeling human…" .value=${this.#intentPrompt} @input=${(event: InputEvent) => { this.#intentPrompt = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea><small>Forma can suggest a route through the decisions. Nothing changes until you choose a suggestion.</small></div>
         <button class="button primary" ?disabled=${!this.#intentPrompt.trim() || !this.store.session.get()?.provider.configured || !!this.store.busy.get() || this.store.documentJobActive("structure_adaptive")}>${icon("spark")} ${this.store.documentJobActive("structure_adaptive") ? this.i18n.system("Finding a useful path safely…") : this.i18n.system("Plan my next decisions")}</button>
-      </form>
-
+      </form>`;
+    const suggestions = html`
       ${this.#structure ? html`<section class="adaptive-model-plan">
         <header><div><span class="eyebrow">A suggested route · review before applying</span><h3>${this.#structure.interpretation}</h3></div><button @click=${this.#dismissStructure}>Not now</button></header>
         <div class="adaptive-model-suggestions">${this.#structure.suggested_blocks.map((suggestion) => html`<article><span>${this.i18n.system(blockTypeDefinition(suggestion.type)?.label ?? suggestion.type)} · ${(blockTypeDefinition(suggestion.type)?.subtypes.includes(suggestion.subtype) ? this.i18n.system(suggestion.subtype) : suggestion.subtype)}</span><h4>${suggestion.label}</h4><p>${suggestion.instruction}</p><small><b>Why it helps:</b> ${suggestion.reason}${suggestion.relationship_to ? " " + this.i18n.system("· Builds on {relationship_to}", { relationship_to: suggestion.relationship_to }) : ""}</small><button class="button secondary compact" @click=${() => this.#commit(suggestion.type, suggestion.instruction, suggestion.subtype)}>${projection.blocks.some((block) => block.type === suggestion.type) ? this.i18n.system("Update this decision") : this.i18n.system("Use this suggestion")} ${icon("arrow")}</button></article>`)}</div>
         ${this.#structure.hidden_until_later.length ? html`<footer><b>Not needed yet</b><span>${this.#structure.hidden_until_later.join(" · ")}</span></footer>` : nothing}
-      </section>` : nothing}
-
-      <div class=${`adaptive-workspace adaptive-stage--${stage}`}>
+      </section>` : nothing}`;
+    const body = html`
+      <div class=${`adaptive-workspace adaptive-stage--${stage}`} data-forma-content="primary">
         <nav class="decision-spine" aria-label="Creative decision path"><span class="eyebrow">Your decision path</span>${DECISIONS.map((decision, index) => {
           const block = projection.blocks.find((item) => item.type === decision.type);
           const isActive = current?.type === decision.type;
@@ -263,7 +264,10 @@ export class FormaAdaptivePath extends AlternativeStudio {
           ${supportingBlocks.length ? html`<section class="adaptive-supporting"><header><b>Supporting decisions</b><span>${supportingBlocks.length}</span></header><p>These remain part of the same document even though they do not control the next-question path.</p><ul>${supportingBlocks.map((block) => html`<li><button @click=${() => this.store.setRoute("/")}><span><b>${this.i18n.system(blockTypeDefinition(block.type)?.label ?? block.type)}</b><small>${(typeof block.properties.subtype === "string" && blockTypeDefinition(block.type)?.subtypes.includes(block.properties.subtype) ? this.i18n.system(block.properties.subtype) : String(block.properties.subtype ?? block.handle))}</small></span><em>${layerLabel(block)}</em>${icon("arrow")}</button></li>`)}</ul></section>` : nothing}
           ${projection.outputs.length || progress >= 2 ? html`<section class="emergent-preview"><span class="eyebrow">What has become clearer</span><forma-document-generations view="adaptive" presentation="rail"></forma-document-generations><p>${progress < 6 ? this.i18n.system("Purpose and scene choices are specific enough to expose meaningful tensions.") : this.i18n.system("The document now connects intention, reality, expression, and boundary.")}</p></section>` : nothing}
         </aside>
-      </div>`;
+      </div>
+      ${suggestions}
+      ${intent}
+      ${readiness}`;
     return this.shell("adaptive", "Adaptive path", "Let the document determine which decision deserves attention next—without hiding anything already decided.", body);
   }
 

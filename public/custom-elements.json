@@ -9489,6 +9489,13 @@
               "description": "Bubbles and crosses component boundaries."
             },
             {
+              "name": "document-artifact-open",
+              "type": {
+                "text": "CustomEvent<null>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
               "name": "document-artifact-queued",
               "type": {
                 "text": "CustomEvent<{ documentId: string; kind: \"audio\" | \"scene\" | \"slides\" | \"storyboard\" | \"video\" | \"short_story\"; }>"

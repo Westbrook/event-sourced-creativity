@@ -38,10 +38,10 @@ export abstract class AlternativeStudio extends FormaElement {
           <forma-studio-mode-nav active=${active}></forma-studio-mode-nav>
         </div>
         <div class="studio-subpage-body">
+          ${body}
           <forma-studio-navigator destination=${destination}></forma-studio-navigator>
           ${options.continuity === false ? nothing : html`<forma-document-continuity view=${active}></forma-document-continuity>`}
           ${active === "board" ? html`<forma-document-generations view=${active}></forma-document-generations>` : nothing}
-          ${body}
         </div>
       </div>
       ${options.inspector === false ? nothing : html`<forma-event-inspector></forma-event-inspector>`}
@@ -120,7 +120,7 @@ export class FormaContextBoard extends AlternativeStudio {
     }
     const definition = blockTypeDefinition(this.#type)!;
     const ready = resolvedCore === coreLanes.length;
-    const body = html`
+    const readiness = html`
       <section class="view-success-hero board-success">
         <div class="view-success-copy">
           <span class="eyebrow">Plan at a glance</span>
@@ -139,8 +139,8 @@ export class FormaContextBoard extends AlternativeStudio {
           <p>${(nextLane?this.i18n.system(nextLane.success):undefined) ?? this.i18n.system("All five areas are represented. Look for contradictions, weak influence, or a missing reference.")}</p>
           ${nextLane ? html`<button class="button secondary compact" @click=${() => this.#prepare(nextLane.starter)}>Prepare this decision ${icon("arrow")}</button>` : html`<button class="button secondary compact" @click=${() => this.store.setRoute("/studio/layers")}>Shape influence ${icon("arrow")}</button>`}
         </aside>
-      </section>
-
+      </section>`;
+    const capture = html`
       <section class="board-capture" aria-labelledby="board-capture-title">
         <div>
           <span class="eyebrow">Add one clear decision</span>
@@ -163,9 +163,9 @@ export class FormaContextBoard extends AlternativeStudio {
           </label>
           <button class="button primary" ?disabled=${!this.#text.trim()}>${icon("plus")} Add decision</button>
         </form>
-      </section>
-
-      <div class="context-board">
+      </section>`;
+    const body = html`
+      <div class="context-board" data-forma-content="primary">
         ${BOARD_LANES.map((lane) => {
           const items = blocks.filter((block) => this.#group(block) === lane.id);
           return html`<section class=${`board-lane board-lane--${lane.id}`}>
@@ -181,7 +181,9 @@ export class FormaContextBoard extends AlternativeStudio {
             </div>
           </section>`;
         })}
-      </div>`;
+      </div>
+      ${capture}
+      ${readiness}`;
     return this.shell("board", "Context board", "See what is clear, what is missing, and what deserves attention next.", body);
   }
 }
@@ -283,7 +285,7 @@ export class FormaGuidedBrief extends AlternativeStudio {
     const guidedFormId = `guided-brief-${projection.documentId}`;
     const answered = ALL_BRIEF_FIELDS.filter((field) => (this.#drafts[field.type] ?? "").trim()).length;
     const activeAnswered = section.fields.filter((field) => (this.#drafts[field.type] ?? "").trim()).length;
-    const body = html`
+    const readiness = html`
       <section class="view-success-hero guided-success">
         <div class="view-success-copy">
           <span class="eyebrow">A brief that earns confidence</span>
@@ -301,10 +303,8 @@ export class FormaGuidedBrief extends AlternativeStudio {
           <b>${this.i18n.system(section.outcome)}</b>
           <p>${activeAnswered}/${section.fields.length} answers are ready to save.</p>
         </aside>
-      </section>
-
-      <forma-document-generations view="guided" presentation="compact"></forma-document-generations>
-
+      </section>`;
+    const steps = html`
       <nav class="guided-step-nav" aria-label="Brief sections">
         ${BRIEF_SECTIONS.map((item, index) => {
           const complete = item.fields.every((field) => (this.#drafts[field.type] ?? "").trim());
@@ -312,8 +312,8 @@ export class FormaGuidedBrief extends AlternativeStudio {
             <i>${complete ? icon("check") : index + 1}</i><span><b>${this.i18n.system(item.label)}</b><small>${complete ? this.i18n.system("Ready") : this.i18n.system(item.title)}</small></span>
           </button>`;
         })}
-      </nav>
-
+      </nav>`;
+    const body = html`
       <form id=${guidedFormId} @submit=${this.#saveSection}></form>
       <section class="guided-brief guided-brief--focused">
         <header class="guided-section-header">
@@ -353,6 +353,10 @@ export class FormaGuidedBrief extends AlternativeStudio {
           </span>
         </footer>
       </section>
+
+      ${steps}
+      ${readiness}
+      <forma-document-generations view="guided" presentation="compact"></forma-document-generations>
 
       <section class="whole-document-map" aria-labelledby="guided-whole-document-title">
         <header>

@@ -310,13 +310,15 @@ export function completeRoutePopulation(path: string, retry = 0) {
     let meaningful = family === "projects" || family === "canvas-projects"
       ? Boolean(main?.querySelector(".project-card,forma-ui-empty-state"))
       : Boolean(main && main.querySelectorAll("*").length > 2 && !main.querySelector(".application-loading"));
-    if (surface === "shared-document") meaningful = Boolean(document.querySelector(".shared-view .shared-hero,.shared-view .shared-status h1"));
-    else if (surface === "product-insights") meaningful = Boolean(main?.querySelector("forma-product-insights .role-metric-grid,forma-product-insights [role=alert]"));
+    if (surface==="document-workspace"||pathname==="/"||pathname==="/creative/create"||pathname.startsWith("/creative/create/")) meaningful=Boolean(Array.from(main?.querySelectorAll("[data-forma-content=primary],[data-forma-empty-state]")??[]).some((item)=>!item.closest("[hidden]")));
+    else if(pathname==="/deliver") meaningful=Boolean(main?.querySelector(".forma-deliver-preview,.forma-responsive-empty[data-forma-empty-state]"));
+    else if (surface === "shared-document") meaningful = Boolean(document.querySelector(".shared-view .shared-output,.shared-view [data-forma-empty-state],.shared-view .shared-status h1"));
+    else if (surface === "product-insights") meaningful = Boolean(main?.querySelector("forma-product-insights .role-evidence li,forma-product-insights .role-evidence[data-forma-empty-state],forma-product-insights [role=alert]"));
     else if (surface === "operations-canvas-governance") meaningful = Boolean(main?.querySelector("forma-canvas-governance .canvas-governance-grid,forma-canvas-governance .canvas-governance-error[role=alert]"));
-    else if (surface === "engineering-sync"||surface==="engineering-events") meaningful = Boolean(main?.querySelector("forma-engineering-diagnostics .role-metric-grid,forma-engineering-diagnostics [role=alert]"));
-    else if (surface === "product-replay") meaningful = Boolean(main?.querySelector("forma-synthetic-replay .synthetic-replay-controls,forma-synthetic-replay [role=note]"));
-    else if (surface === "product-actual-replay") meaningful = Boolean(main?.querySelector("forma-actual-replay #actual-saved-heading,forma-actual-replay [role=alert]"));
-    else if (surface === "product-adapters") meaningful = Boolean(main?.querySelector("forma-product-adapter-preview .adapter-preview-form,forma-product-adapter-preview [role=note]"));
+    else if (surface === "engineering-sync"||surface==="engineering-events") meaningful = Boolean(main?.querySelector("forma-engineering-diagnostics .role-evidence li,forma-engineering-diagnostics .role-evidence[data-forma-empty-state],forma-engineering-diagnostics [role=alert]"));
+    else if (surface === "product-replay") meaningful = Boolean(main?.querySelector("forma-synthetic-replay .synthetic-replay-result,forma-synthetic-replay .synthetic-replay-controls select,forma-synthetic-replay [role=note]"));
+    else if (surface === "product-actual-replay") meaningful = Boolean(main?.querySelector("forma-actual-replay .actual-replay-sessions li,forma-actual-replay #actual-saved-heading + p,forma-actual-replay [role=alert]"));
+    else if (surface === "product-adapters") meaningful = Boolean(main?.querySelector("forma-product-adapter-preview .adapter-preview-results,forma-product-adapter-preview .adapter-preview-form select,forma-product-adapter-preview [role=note],forma-product-adapter-preview [role=alert]"));
     else if (surface === "knowledge-focal-points") meaningful = Boolean(main?.querySelector("forma-focal-point-lab .focal-lab-controls") && main.querySelector("forma-focal-point-lab .focal-lab-assets,forma-focal-point-lab .focal-lab-empty"));
     else if (surface === "knowledge-design-system") meaningful = Boolean(main?.querySelector("forma-design-system-lab .design-lab-content forma-component-catalog") && main.querySelector("forma-design-system-lab .design-lab-section"));
     const shell=document.querySelector("forma-shell") as (HTMLElement & {store?:{projection?:{get:()=>{documentId?:string;conditions?:unknown[]}};canvasProjection?:{get:()=>{selectedCanvasId?:string}};content?:{get:()=>Record<string,string>}}})|null;
