@@ -493,6 +493,45 @@ const ownedImageReference = (value: NonNullable<Awaited<ReturnType<typeof readGe
   mode,
 });
 
+const productionReferenceIdentity = (reference: Pick<VideoReference, "referenceId" | "blockId">) => `${reference.referenceId}\u0000${reference.blockId}`;
+
+function prioritizedSceneReferences(scene: ProductionScene, references: VideoReference[]) {
+  const authored = new Set(scene.sourceBlockIds);
+  const targets = new Set(scene.contextGroupIds);
+  const selected = new Set<string>();
+  return scene.referenceIds.flatMap((referenceId) => {
+    const candidates = references.filter((reference) => {
+      if (reference.referenceId !== referenceId || selected.has(productionReferenceIdentity(reference))) return false;
+      const groups = reference.contextGroups ?? [];
+      const matching = groups.some((group) => targets.has(group.id));
+      if (groups.length && targets.size && !matching) return false;
+      if (groups.length && !targets.size && !authored.has(reference.blockId)) return false;
+      return authored.has(reference.blockId) || reference.sequence === scene.narrativeOrder || reference.sequence === null || matching;
+    }).sort((left, right) => {
+      const rank = (reference: VideoReference) => (authored.has(reference.blockId) ? 100 : 0)
+        + (reference.sequence === scene.narrativeOrder ? 40 : 0)
+        + ((reference.contextGroups ?? []).some((group) => targets.has(group.id)) ? 20 : 0)
+        + (reference.sequence === null ? 10 : 0);
+      return rank(right) - rank(left);
+    });
+    const reference = candidates[0];
+    if (!reference) return [];
+    selected.add(productionReferenceIdentity(reference));
+    return [reference];
+  });
+}
+
+function referencesInAuthoredOrder(references: VideoReference[], prioritized: VideoReference[], limit: number) {
+  const eligible = new Set(prioritized.slice(0, limit).map(productionReferenceIdentity));
+  const retained = new Set<string>();
+  return references.filter((reference) => {
+    const identity = productionReferenceIdentity(reference);
+    if (!eligible.has(identity) || retained.has(identity)) return false;
+    retained.add(identity);
+    return true;
+  });
+}
+
 function generatedVideoReference(
   value: NonNullable<Awaited<ReturnType<typeof readGeneratedImageReference>>>,
   artifactId: string,
@@ -577,9 +616,7 @@ export async function renderManagedVideoProduction(
   if (production.scenes.some((scene) => !scene.referenceIds.length) && !anchor) {
     const anchorScene = production.scenes.find((scene) => scene.id === production.anchorSceneId)!;
     await input.progress?.("anchor-generation", `Creating the shared visual anchor from scene ${anchorScene.narrativeOrder}: ${anchorScene.title}.`);
-    const anchorGroups = new Set(anchorScene.contextGroupIds);
-    const prior = input.references.find((reference) => anchorScene.referenceIds.includes(reference.referenceId))
-      ?? input.references.find((reference) => (reference.contextGroups ?? []).some((group) => anchorGroups.has(group.id)));
+    const prior = prioritizedSceneReferences(anchorScene, input.references)[0];
     const reference = prior ? [{ ...prior, source: "locked-study" as const, mode: prior.mode }] satisfies ImageReference[] : [];
     const continuity = providerFacingProductionContinuity(production, anchorScene);
     const format = providerRenderFormat(imageFormatForPreset(input.videoSize === "720x1280" ? "9:16" : "16:9"), "preview");
@@ -628,7 +665,7 @@ export async function renderManagedVideoProduction(
       const scene = sceneById.get(sceneId)!;
       const item = draft.items[scene.narrativeOrder - 1]!;
       const existing = receipts[scene.id];
-      const approved = input.references.filter((reference) => scene.referenceIds.includes(reference.referenceId));
+      const prioritizedApproved = prioritizedSceneReferences(scene, input.references);
       const anchorGroups = anchorReference?.contextGroups ?? [];
       const matchingTarget = Boolean(anchorReference && ((!anchorGroups.length && !scene.contextGroupIds.length) || anchorGroups.length > 0 && anchorGroups.every((group) => scene.contextGroupIds.includes(group.id))));
       const scopedAnchor = anchorReference ? matchingTarget ? anchorReference : {
@@ -640,7 +677,9 @@ export async function renderManagedVideoProduction(
         framePrompt: "Shared visual treatment without subject identity.",
         contextGroups: [],
       } : null;
-      const references = [...approved, ...(scopedAnchor && !approved.some((reference) => reference.referenceId === scopedAnchor.referenceId) ? [scopedAnchor] : [])].slice(0, VIDEO_ADAPTER_CONTRACT.maxReferenceImages);
+      const continuityReference = scopedAnchor && !prioritizedApproved.some((reference) => reference.referenceId === scopedAnchor.referenceId) ? scopedAnchor : null;
+      const selectedApproved = referencesInAuthoredOrder(input.references, prioritizedApproved, VIDEO_ADAPTER_CONTRACT.maxReferenceImages - (continuityReference ? 1 : 0));
+      const references = [...selectedApproved, ...(continuityReference ? [continuityReference] : [])];
       const checkpoint: ProductionSceneReceipt = existing ?? {
         sceneId: scene.id,
         narrativeOrder: scene.narrativeOrder,
@@ -797,9 +836,10 @@ export async function renderManagedStoryboardProduction(
       const inherited = parent?.media_url ? await readGeneratedImageReference(env, ownerId, parent.media_url) : null;
       const parentScene = parent?.scene_id ? sceneById.get(String(parent.scene_id)) : undefined;
       const sameTarget = Boolean(parentScene && ((!parentScene.contextGroupIds.length && !scene.contextGroupIds.length) || parentScene.contextGroupIds.length > 0 && parentScene.contextGroupIds.every((group) => scene.contextGroupIds.includes(group))));
-      const approved: ImageReference[] = (input.references ?? []).filter((reference) => scene.referenceIds.includes(reference.referenceId)).map((reference) => ({ ...reference, source: "uploaded-reference" as const }));
+      const prioritizedApproved = prioritizedSceneReferences(scene, input.references ?? []);
       const inheritedReference = inherited ? ownedImageReference(inherited, "Account-generated storyboard continuity study", sameTarget ? "preserve_subject" : "preserve_style") : null;
-      const references = [...approved, ...(inheritedReference ? [inheritedReference] : [])].slice(0, VIDEO_ADAPTER_CONTRACT.maxReferenceImages);
+      const selectedApproved: ImageReference[] = referencesInAuthoredOrder(input.references ?? [], prioritizedApproved, VIDEO_ADAPTER_CONTRACT.maxReferenceImages - (inheritedReference ? 1 : 0)).map((reference) => ({ ...reference, source: "uploaded-reference" as const }));
+      const references = [...selectedApproved, ...(inheritedReference ? [inheritedReference] : [])];
       const continuity = providerFacingProductionContinuity(production, scene);
       const frameFormat = providerRenderFormat(documentImageFormat(input.snapshot).format, "preview");
       await persist(`Rendering storyboard frame ${scene.narrativeOrder} of ${production.scenes.length}${references.length ? " from the approved production anchor" : ""}.`);
@@ -820,7 +860,7 @@ export async function renderManagedStoryboardProduction(
         providerMediaUrl: image.providerMediaUrl ?? "",
         rights: "account-generated",
       });
-      rendered.set(scene.id, { id: `${artifactId}-frame-${scene.narrativeOrder}`, scene_id: scene.id, sequence: scene.narrativeOrder, title: item.title, media_url: media.url, media_type: media.mimeType, width: image.width, height: image.height, provider: image.provider, provider_request_id: image.providerRequestId, generation_order: production.executionOrder.indexOf(scene.id) + 1, authored_reference_count: approved.length, inherited_reference_count: inheritedReference ? 1 : 0 });
+      rendered.set(scene.id, { id: `${artifactId}-frame-${scene.narrativeOrder}`, scene_id: scene.id, sequence: scene.narrativeOrder, title: item.title, media_url: media.url, media_type: media.mimeType, width: image.width, height: image.height, provider: image.provider, provider_request_id: image.providerRequestId, generation_order: production.executionOrder.indexOf(scene.id) + 1, authored_reference_count: selectedApproved.length, inherited_reference_count: inheritedReference ? 1 : 0 });
       receipts[scene.id] = {
         sceneId: scene.id,
         narrativeOrder: scene.narrativeOrder,
@@ -834,8 +874,8 @@ export async function renderManagedStoryboardProduction(
         costMicrousd: image.costBreakdown.totalMicrousd,
         costBreakdown:image.costBreakdown,
         usage: image.usage,
-        referenceInputs: image.referenceInputs.map((reference, index) => ({ ...reference, role: index < approved.length ? "authored-reference" : "inherited-production-continuity" })),
-        authoredReferenceCount: approved.length,
+        referenceInputs: image.referenceInputs.map((reference, index) => ({ ...reference, role: index < selectedApproved.length ? "authored-reference" : "inherited-production-continuity" })),
+        authoredReferenceCount: selectedApproved.length,
         inheritedReferenceCount: inheritedReference ? 1 : 0,
       };
       Object.assign(usage, addUsage(usage, image.usage));

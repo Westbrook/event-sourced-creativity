@@ -1,0 +1,33 @@
+forma-ui-language-picker {
+  display: inline-flex;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+forma-ui-language-picker > .locale-switcher {
+  display: inline-flex;
+  min-inline-size: 0;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--forma-space-2, .5rem);
+  color: var(--forma-color-text, var(--marketing-ink, #171717));
+  font-size: var(--forma-font-size-supporting, .875rem);
+}
+
+forma-ui-language-picker > .locale-switcher > span { white-space: nowrap; }
+
+forma-ui-language-picker > .locale-switcher > select {
+  min-inline-size: 0;
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  max-inline-size: 10rem;
+  padding-inline: .65rem;
+  color: var(--forma-color-text, var(--marketing-ink, #171717));
+  background: var(--forma-color-surface, var(--marketing-surface, #fff));
+  border: 1px solid var(--forma-color-border-strong, var(--marketing-line, #deded8));
+  border-radius: var(--forma-radius-small, .375rem);
+  font: inherit;
+}
+
+@media (forced-colors: active) {
+  forma-ui-language-picker > .locale-switcher > select { border-color: ButtonText; }
+}

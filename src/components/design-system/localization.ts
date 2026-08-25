@@ -1,17 +1,13 @@
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import { formaSystemMessageId } from "./system-message-id.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./locales/responsive-messages.ts";
+import { FORMA_SUPPORTED_LOCALES } from "./language-options.ts";
+
+export { FORMA_SUPPORTED_LOCALES } from "./language-options.ts";
 
 export type FormaMessageValues = Record<string, string | number>;
 export type FormaMessageCatalog = Readonly<Record<string, string>>;
 export type FormaDirection = "ltr" | "rtl";
-
-export const FORMA_SUPPORTED_LOCALES = [
-  { locale: "en", label: "English", direction: "ltr" },
-  { locale: "fr", label: "Français", direction: "ltr" },
-  { locale: "ar", label: "العربية", direction: "rtl" },
-  { locale: "ja", label: "日本語", direction: "ltr" },
-] as const;
 
 export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   ...FORMA_RESPONSIVE_MESSAGES.en,
@@ -1111,6 +1107,8 @@ export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   "component.forma-ui-icon.title": "Icon",
   "component.forma-ui-kbd.summary": "Present an actual keyboard shortcut as semantic, readable key-cap text.",
   "component.forma-ui-kbd.title": "Keyboard shortcut",
+  "component.forma-ui-language-picker.summary": "Choose an available language by its own name using a visible translated label and a native select.",
+  "component.forma-ui-language-picker.title": "Language picker",
   "component.forma-ui-link.summary": "Navigate with a real link while preserving cancelable application routing.",
   "component.forma-ui-link.title": "Link",
   "component.forma-ui-list-item.summary": "Combine a meaningful leading visual, item heading, richer context, and independent trailing actions.",

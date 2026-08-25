@@ -262,7 +262,19 @@ export function normalizeSlideItem(value: unknown,index=0):DocumentArtifactDraft
 export type SlideCopyIssue={first:string;second:string;firstPath:string;secondPath:string};
 const slideCopyFields=(value:unknown)=>{const item=record(value),slide=record(item.slide),visual=record(slide.visual),quote=record(slide.quote),kind=text(visual.kind);const fields:Array<{path:string;value:string}>=[];const add=(path:string,value:unknown)=>{const copy=text(value);if(copy)fields.push({path,value:copy});};add("title",item.title);add("body",item.body);add("slide.kicker",slide.kicker);if(Array.isArray(slide.bullets))slide.bullets.forEach((bullet,index)=>add(`slide.bullets.${index}`,bullet));add("slide.visual.label",visual.label);if(["hero-type","metric","diagram"].includes(kind))add("slide.visual.value",visual.value);if(quote.text)add("slide.quote.text",quote.text);if(Array.isArray(visual.data))visual.data.forEach((datum,index)=>{const entry=record(datum);add(`slide.visual.data.${index}.label`,entry.label);if(["bars","timeline","scorecard","comparison","matrix","roadmap"].includes(kind))add(`slide.visual.data.${index}.value`,entry.value);});return fields;};
 export function slideCopyIssues(value:unknown):SlideCopyIssue[]{
-  const fields=slideCopyFields(value),issues:SlideCopyIssue[]=[];for(let left=0;left<fields.length;left+=1)for(let right=left+1;right<fields.length;right+=1){const first=fields[left],second=fields[right];if(first&&second&&slideCopyIsNearDuplicate(first.value,second.value))issues.push({first:first.value,second:second.value,firstPath:first.path,secondPath:second.path});}return issues;
+  const fields=slideCopyFields(value),issues:SlideCopyIssue[]=[];
+  const visualData=record(record(record(value).slide).visual).data;
+  for(let left=0;left<fields.length;left+=1)for(let right=left+1;right<fields.length;right+=1){
+    const first=fields[left],second=fields[right];
+    if(!first||!second||!slideCopyIsNearDuplicate(first.value,second.value))continue;
+    const firstDatum=/^slide\.visual\.data\.(\d+)\.value$/u.exec(first.path),secondDatum=/^slide\.visual\.data\.(\d+)\.value$/u.exec(second.path);
+    if(firstDatum&&secondDatum&&firstDatum[1]!==secondDatum[1]&&Array.isArray(visualData)){
+      const firstLabel=contentKey(record(visualData[Number(firstDatum[1])]).label),secondLabel=contentKey(record(visualData[Number(secondDatum[1])]).label),firstValue=contentKey(first.value);
+      if(firstLabel&&secondLabel&&firstLabel!==secondLabel&&firstValue===contentKey(second.value)&&firstValue.length<=32&&firstValue.split(" ").length<=2)continue;
+    }
+    issues.push({first:first.value,second:second.value,firstPath:first.path,secondPath:second.path});
+  }
+  return issues;
 }
 export const slideCopyIsDistinct=(value:unknown)=>slideCopyIssues(value).length===0;
 

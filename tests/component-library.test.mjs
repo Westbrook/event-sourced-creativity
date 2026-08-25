@@ -163,7 +163,10 @@ test("machine-readable attributes, options, defaults, themes, and event details 
 });
 
 test("scoped locale contracts separate translated authored content from invariant machine identifiers", async () => {
-  const localeSource = await read("../src/components/design-system/localization.ts");
+  const [localeSource, languageOptionsSource] = await Promise.all([
+    read("../src/components/design-system/localization.ts"),
+    read("../src/components/design-system/language-options.ts"),
+  ]);
   const locale = declarationByTag.get("forma-ui-locale");
   assert.equal(locale["x-forma"].category, "foundation");
   assert.deepEqual(manifest["x-forma"].i18n.supportedLocales, ["en", "fr", "ar", "ja"]);
@@ -188,7 +191,8 @@ test("scoped locale contracts separate translated authored content from invarian
   assert.match(localeSource, /import\("\.\/locales\/fr"\)/);
   assert.match(localeSource, /import\("\.\/locales\/ar"\)/);
   assert.match(localeSource, /import\("\.\/locales\/ja"\)/);
-  assert.match(localeSource, /\{ locale: "ja", label: "日本語", direction: "ltr" \}/);
+  assert.match(languageOptionsSource, /\{ locale: "ja", label: "日本語", direction: "ltr" \}/);
+  assert.match(localeSource, /export \{ FORMA_SUPPORTED_LOCALES \} from "\.\/language-options\.ts"/);
   assert.match(localeSource, /context-request/);
   assert.match(localeSource, /Intl\.PluralRules/);
   assert.match(localeSource, /Intl\.Segmenter/);
@@ -213,6 +217,83 @@ test("scoped locale contracts separate translated authored content from invarian
   assert.match(globalStyles, /--forma-script-letter-spacing:\s*0/);
   assert.match(catalogSource, /<pre lang="en" dir="ltr">/);
   assert.match(catalogSource, /catalog\.canonicalExample/);
+});
+
+test("one public-safe, documented native language picker is reused by every audience", async () => {
+  const [pickerSource, pickerStyles, languageOptions, marketingSource, creatorSource, platformSource, guestSource, designContract, architectureContract, reference, readme] = await Promise.all([
+    read("../src/components/design-system/language-picker.ts"),
+    read("../src/components/design-system/language-picker.css"),
+    read("../src/components/design-system/language-options.ts"),
+    read("../src/marketing/main.ts"),
+    read("../src/components/forma-shell.ts"),
+    read("../src/components/forma-platform-shell.ts"),
+    read("../src/apps/public-share/entry.ts"),
+    read("../DESIGN.md"),
+    read("../ARCHITECTURE.md"),
+    read("../docs/components.md"),
+    read("../README.md"),
+  ]);
+  const tag = "forma-ui-language-picker";
+  const picker = declarationByTag.get(tag);
+
+  assert.ok(picker, "The canonical public-safe control is published in both component manifests.");
+  assert.equal(picker["x-forma"].category, "molecule");
+  assert.equal(picker["x-forma"].renderRoot, "light");
+  assert.equal(picker["x-forma"].stateful, false);
+  assert.deepEqual(picker.superclass, { name: "HTMLElement", package: "global:" });
+  assert.match(picker.summary, /visible translated label and a native select/);
+  assert.equal(picker.demos[0].url, `/knowledge/design-system#${tag}`);
+
+  for (const name of ["label", "value", "disabled", "busy"]) {
+    const attribute = picker.attributes.find((item) => item.name === name);
+    const member = picker.members.find((item) => item.name === name);
+    assert.ok(attribute, `${name} is documented as an actual reflected attribute.`);
+    assert.equal(attribute.fieldName, name);
+    assert.equal(member.attribute, name);
+    assert.equal(member.reflects, true);
+  }
+
+  const options = picker.members.find((item) => item.name === "options");
+  assert.ok(options);
+  assert.ok(!options.attribute, "Language options remain JavaScript-only records.");
+  assert.match(options.type.text, /value:\s*string/);
+  assert.match(options.type.text, /label:\s*string/);
+  assert.match(options.type.text, /direction:\s*"ltr"\s*\|\s*"rtl"/);
+  assert.deepEqual(picker["x-forma"].i18n.optionTextPaths, ["options[].label"]);
+  assert.deepEqual(picker["x-forma"].i18n.invariantValuePaths, ["options[].value", "value"]);
+  assert.ok(picker["x-forma"].i18n.authorTextAttributes.includes("label"));
+  assert.match(picker.events.find((event) => event.name === "forma-change").type.text, /value:\s*string/);
+  assert.ok(picker.cssProperties.some((property) => property.name === "--forma-control-min-size"));
+
+  assert.match(pickerSource, /class FormaUiLanguagePicker extends HTMLElement/);
+  assert.match(pickerSource, /static observedAttributes\s*=\s*\["label", "value", "disabled", "busy"\]/);
+  assert.match(pickerSource, /option\.lang\s*=\s*choice\.value/);
+  assert.match(pickerSource, /option\.dir\s*=\s*choice\.direction/);
+  assert.match(pickerSource, /bubbles:\s*true[\s\S]*?composed:\s*true/);
+  assert.doesNotMatch(pickerSource, /(?:from\s+["']lit|localization|FormaStore|\/api\/|fetch\()/);
+  assert.doesNotMatch(languageOptions, /HTMLElement|customElements|document\.|from\s+["']lit/);
+  assert.equal([...languageOptions.matchAll(/\{ locale: "(?:en|fr|ar|ja)"/g)].length, 4);
+  assert.match(pickerStyles, /min-block-size:\s*var\(--forma-control-min-size,\s*2\.75rem\)/);
+
+  assert.match(marketingSource, /document\.createElement\("forma-ui-language-picker"\)/);
+  assert.match(marketingSource, /picker\.addEventListener\("forma-change"/);
+  assert.match(marketingSource, /picker\.busy\s*=\s*true/);
+  for (const host of [creatorSource, platformSource, guestSource]) {
+    assert.match(host, /<forma-ui-language-picker\b/);
+    assert.match(host, /@forma-change=/);
+    assert.doesNotMatch(host, /<label class="locale-switcher"><span>/);
+  }
+  assert.match(creatorSource, /<form class="locale-picker-form" @submit=/);
+  assert.match(catalogSource, /case "forma-ui-language-picker": return html`<forma-ui-language-picker/);
+
+  for (const document of [designContract, architectureContract, reference, readme]) {
+    assert.match(document, /(?:reuse|reus)/i);
+    assert.match(document, /(?:manifest|custom-elements\.json)/i);
+  }
+  assert.match(designContract, /Mandatory reuse-first delivery and publication/);
+  assert.match(designContract, /migrate every known duplicate[\s\S]*?same change/);
+  assert.match(architectureContract, /public welcome experience[\s\S]*?exact-token[\s\S]*?guest review/);
+  assert.match(reference, /<forma-ui-language-picker label="Language" value="en">/);
 });
 
 test("human reference and manifest describe the same atomic component taxonomy", () => {

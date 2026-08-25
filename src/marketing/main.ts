@@ -1,4 +1,7 @@
 import english, { type MarketingMessageKey } from "./locales/en";
+import { FORMA_SUPPORTED_LOCALES } from "../components/design-system/language-options";
+import { ensureNativeModalDialog } from "../components/design-system/native-dialog";
+import "../components/design-system/language-picker";
 
 // This public entry deliberately stays independent of Forma's authenticated
 // shell, application-wide catalog, project state, provider adapters, and APIs.
@@ -6,6 +9,7 @@ document.documentElement.dataset.formaExperience = "marketing";
 
 type CreativeDecision = "mood" | "audience" | "boundary" | "source";
 type CreativeStudyFamily = "landscape" | "portrait" | "detail" | "twilight";
+type MarketingPreviewKind = "story" | "scene" | "presentation" | "storyboard";
 type MarketingLocale = "en" | "fr" | "ar" | "ja";
 type MarketingCatalog = Readonly<Record<MarketingMessageKey, string>>;
 
@@ -26,12 +30,7 @@ const DECISION_STUDIES: Record<CreativeDecision, Readonly<{
 };
 
 const STORAGE_KEY = "forma:locale";
-const LANGUAGES = [
-  { locale: "en", label: "English", direction: "ltr" },
-  { locale: "fr", label: "Français", direction: "ltr" },
-  { locale: "ar", label: "العربية", direction: "rtl" },
-  { locale: "ja", label: "日本語", direction: "ltr" },
-] as const;
+const LANGUAGES = FORMA_SUPPORTED_LOCALES;
 const LOADERS = {
   fr: () => import("./locales/fr"),
   ar: () => import("./locales/ar"),
@@ -42,7 +41,7 @@ const requests = new Map<MarketingLocale, Promise<MarketingCatalog>>();
 let messages: MarketingCatalog = english;
 let activeLocale: MarketingLocale = "en";
 let revision = 0;
-let languageSelect: HTMLSelectElement | undefined;
+let languagePicker: HTMLElementTagNameMap["forma-ui-language-picker"] | undefined;
 
 function normalizedLocale(value: string | null | undefined) {
   if (!value) return undefined;
@@ -121,7 +120,10 @@ function updateDocument(locale: MarketingLocale, languageTag: string) {
     document.querySelector<HTMLMetaElement>(selector)?.setAttribute("content", content);
   }
   document.querySelector<HTMLLinkElement>('link[rel="canonical"]')?.setAttribute("href", `/welcome/${locale}`);
-  if (languageSelect) languageSelect.value = locale;
+  if (languagePicker) {
+    languagePicker.value = locale;
+    languagePicker.label = messages.languageLabel;
+  }
   document.dispatchEvent(new CustomEvent("forma-locale-change", { detail: { locale: languageTag, direction }, bubbles: true }));
 }
 
@@ -134,7 +136,7 @@ async function setMarketingLocale(
   try { catalog = await catalogFor(target.locale); }
   catch {
     if (current === revision) {
-      if (languageSelect) languageSelect.value = activeLocale;
+      if (languagePicker) languagePicker.value = activeLocale;
       const status = document.querySelector<HTMLElement>("[data-language-announcement]");
       if (status) status.textContent = messages.languageChangeError;
     }
@@ -165,36 +167,21 @@ function mountLanguagePicker() {
   const container = document.querySelector<HTMLElement>("[data-language-picker]");
   if (!container) return;
 
-  const label = document.createElement("label");
-  label.className = "marketing-screen-reader";
-  label.htmlFor = "marketing-language-select";
-  label.dataset.copy = "languageLabel";
-  label.textContent = messages.languageLabel;
-
-  const select = document.createElement("select");
-  select.id = "marketing-language-select";
-  select.className = "marketing-language__select";
-  for (const language of LANGUAGES) {
-    const option = document.createElement("option");
-    option.value = language.locale;
-    option.lang = language.locale;
-    option.dir = language.direction;
-    option.textContent = language.label;
-    select.add(option);
-  }
-  select.value = activeLocale;
-  select.addEventListener("change", () => {
-    const requested = normalizedLocale(select.value);
+  const picker = document.createElement("forma-ui-language-picker");
+  picker.label = messages.languageLabel;
+  picker.value = activeLocale;
+  picker.addEventListener("forma-change", (event) => {
+    const requested = normalizedLocale((event as CustomEvent<{ value: string }>).detail.value);
     if (!requested) return;
-    select.disabled = true;
-    select.setAttribute("aria-busy", "true");
+    picker.disabled = true;
+    picker.busy = true;
     void setMarketingLocale(requested, { persist: true, announce: true, updateRoute: true }).finally(() => {
-      select.disabled = false;
-      select.removeAttribute("aria-busy");
+      picker.disabled = false;
+      picker.busy = false;
     });
   });
-  languageSelect = select;
-  container.replaceChildren(label, select);
+  languagePicker = picker;
+  container.replaceChildren(picker);
 }
 
 class FormaContextDemo {
@@ -275,6 +262,11 @@ class FormaContextDemo {
       focusValue.textContent = messages[focus.value];
     }
 
+    for (const carried of this.#element.querySelectorAll<HTMLElement>("[data-context-carried]")) {
+      carried.dataset.copy = focus.value;
+      carried.textContent = messages[focus.value];
+    }
+
     if (image) {
       const key = `demoImage${suffix}` as MarketingMessageKey;
       image.dataset.copy = key;
@@ -294,6 +286,391 @@ class FormaContextDemo {
     for (const preview of this.#element.querySelectorAll<HTMLElement>("[data-context-preview]")) {
       preview.dataset.highlighted = "true";
     }
+    this.#element.dataset.contextActive = decision;
+  }
+}
+
+class FormaOutputPreview {
+  #dialog: HTMLDialogElement;
+  #host!: HTMLElement;
+  #heading!: HTMLElement;
+  #close!: HTMLButtonElement;
+  #previous!: HTMLButtonElement;
+  #next!: HTMLButtonElement;
+  #status!: HTMLElement;
+  #navigation!: HTMLElement;
+  #details?: HTMLDetailsElement;
+  #panel?: HTMLElement;
+  #invoker?: HTMLElement;
+  #pages: HTMLElement[] = [];
+  #kind?: MarketingPreviewKind;
+  #index = 0;
+
+  constructor(dialog: HTMLDialogElement) {
+    this.#dialog = dialog;
+    const host = dialog.querySelector<HTMLElement>("[data-preview-host]");
+    const heading = dialog.querySelector<HTMLElement>("#marketing-preview-title");
+    const close = dialog.querySelector<HTMLButtonElement>("[data-preview-close]");
+    const previous = dialog.querySelector<HTMLButtonElement>("[data-preview-previous]");
+    const next = dialog.querySelector<HTMLButtonElement>("[data-preview-next]");
+    const status = dialog.querySelector<HTMLElement>("[data-preview-status]");
+    const navigation = dialog.querySelector<HTMLElement>("[data-preview-navigation]");
+    if (!host || !heading || !close || !previous || !next || !status || !navigation) return;
+    this.#host = host;
+    this.#heading = heading;
+    this.#close = close;
+    this.#previous = previous;
+    this.#next = next;
+    this.#status = status;
+    this.#navigation = navigation;
+    if (typeof dialog.showModal !== "function") return;
+
+    for (const details of document.querySelectorAll<HTMLDetailsElement>("[data-output-preview]")) {
+      const summary = details.querySelector<HTMLElement>("summary");
+      if (!summary || !details.querySelector<HTMLElement>("[data-preview-panel]")) continue;
+      summary.setAttribute("aria-haspopup", "dialog");
+      summary.setAttribute("aria-controls", dialog.id);
+      summary.addEventListener("click", (event) => {
+        event.preventDefault();
+        this.#open(details, summary);
+      });
+    }
+
+    close.addEventListener("click", () => dialog.close());
+    previous.addEventListener("click", () => this.#show(this.#index - 1));
+    next.addEventListener("click", () => this.#show(this.#index + 1));
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    dialog.addEventListener("keydown", (event) => {
+      const rtl = document.documentElement.dir === "rtl";
+      const forward = event.key === (rtl ? "ArrowLeft" : "ArrowRight") || event.key === "PageDown";
+      const backward = event.key === (rtl ? "ArrowRight" : "ArrowLeft") || event.key === "PageUp";
+      if (!forward && !backward && event.key !== "Home" && event.key !== "End") return;
+      event.preventDefault();
+      if (event.key === "Home") this.#show(0);
+      else if (event.key === "End") this.#show(this.#pages.length - 1);
+      else this.#show(this.#index + (forward ? 1 : -1));
+    });
+    dialog.addEventListener("close", () => this.#restore());
+    document.addEventListener("forma-locale-change", () => {
+      if (dialog.open) this.#show(this.#index);
+    });
+  }
+
+  #open(details: HTMLDetailsElement, invoker: HTMLElement) {
+    const kind = details.dataset.outputPreview as MarketingPreviewKind | undefined;
+    const panel = details.querySelector<HTMLElement>("[data-preview-panel]");
+    if (!kind || !["story", "scene", "presentation", "storyboard"].includes(kind) || !panel) return;
+
+    const title: Record<MarketingPreviewKind, MarketingMessageKey> = {
+      story: "formatStory",
+      scene: "formatScene",
+      presentation: "formatPresentation",
+      storyboard: "formatStoryboard",
+    };
+    this.#details = details;
+    this.#panel = panel;
+    this.#invoker = invoker;
+    this.#kind = kind;
+    this.#pages = [...panel.querySelectorAll<HTMLElement>("[data-preview-page]")];
+    this.#heading.dataset.copy = title[kind];
+    this.#heading.textContent = messages[title[kind]];
+    this.#host.replaceChildren(panel);
+    this.#show(0);
+
+    if (!ensureNativeModalDialog(this.#dialog, { fallbackLabel: messages[title[kind]] })) {
+      this.#dialog.removeAttribute("open");
+      this.#restore(false);
+      details.open = true;
+      return;
+    }
+
+    document.documentElement.dataset.marketingPreview = "open";
+    document.dispatchEvent(new CustomEvent("forma-marketing-preview-open", { bubbles: true }));
+    this.#close.focus({ preventScroll: true });
+  }
+
+  #show(index: number) {
+    if (!this.#kind || !this.#pages.length) return;
+    this.#index = Math.max(0, Math.min(index, this.#pages.length - 1));
+    for (const [position, page] of this.#pages.entries()) page.hidden = position !== this.#index;
+    this.#previous.disabled = this.#index === 0;
+    this.#next.disabled = this.#index === this.#pages.length - 1;
+    this.#navigation.hidden = this.#pages.length < 2;
+
+    const key: MarketingMessageKey = this.#kind === "presentation"
+      ? "previewSlideStatus"
+      : this.#kind === "storyboard"
+        ? "previewFrameStatus"
+        : "previewPageStatus";
+    const format = new Intl.NumberFormat(document.documentElement.lang, { useGrouping: false });
+    const current = `\u2068${format.format(this.#index + 1)}\u2069`;
+    const total = `\u2068${format.format(this.#pages.length)}\u2069`;
+    this.#status.textContent = messages[key].replaceAll("{current}", current).replaceAll("{total}", total);
+    this.#host.scrollTop = 0;
+  }
+
+  #restore(announce = true) {
+    if (!this.#details || !this.#panel) return;
+    this.#details.append(this.#panel);
+    this.#details.open = false;
+    for (const page of this.#pages) page.hidden = false;
+    this.#pages = [];
+    delete document.documentElement.dataset.marketingPreview;
+    if (announce) document.dispatchEvent(new CustomEvent("forma-marketing-preview-close", { bubbles: true }));
+    this.#invoker?.focus({ preventScroll: true });
+    this.#details = undefined;
+    this.#panel = undefined;
+    this.#invoker = undefined;
+    this.#kind = undefined;
+  }
+}
+
+class FormaImageViewer {
+  #dialog: HTMLDialogElement;
+  #media!: HTMLElement;
+  #caption!: HTMLElement;
+  #section!: HTMLElement;
+  #close!: HTMLButtonElement;
+  #previous!: HTMLButtonElement;
+  #next!: HTMLButtonElement;
+  #status!: HTMLElement;
+  #pictures: HTMLPictureElement[] = [];
+  #studies = new Map<CreativeStudyFamily, { picture: HTMLPictureElement; width: number; formats: number }>();
+  #group: HTMLPictureElement[] = [];
+  #scope?: HTMLElement;
+  #invoker?: HTMLPictureElement;
+  #index = 0;
+  #ownsPlaybackPause = false;
+
+  constructor(dialog: HTMLDialogElement) {
+    this.#dialog = dialog;
+    const media = dialog.querySelector<HTMLElement>("[data-image-viewer-media]");
+    const caption = dialog.querySelector<HTMLElement>("[data-image-viewer-caption]");
+    const section = dialog.querySelector<HTMLElement>("[data-image-viewer-section]");
+    const close = dialog.querySelector<HTMLButtonElement>("[data-image-viewer-close]");
+    const previous = dialog.querySelector<HTMLButtonElement>("[data-image-viewer-previous]");
+    const next = dialog.querySelector<HTMLButtonElement>("[data-image-viewer-next]");
+    const status = dialog.querySelector<HTMLElement>("[data-image-viewer-status]");
+    if (!media || !caption || !section || !close || !previous || !next || !status || typeof dialog.showModal !== "function") return;
+    this.#media = media;
+    this.#caption = caption;
+    this.#section = section;
+    this.#close = close;
+    this.#previous = previous;
+    this.#next = next;
+    this.#status = status;
+
+    for (const picture of document.querySelectorAll<HTMLPictureElement>("main picture")) {
+      if (!picture.querySelector("img") || picture.closest(".output-motion--playable, a")) continue;
+      const family = this.#family(picture);
+      if (!family) continue;
+      this.#remember(picture, family);
+      this.#pictures.push(picture);
+    }
+
+    for (const picture of this.#pictures) {
+      for (let ancestor: HTMLElement | null = picture; ancestor; ancestor = ancestor.parentElement) {
+        if (ancestor.getAttribute("aria-hidden") === "true") ancestor.removeAttribute("aria-hidden");
+        if (ancestor.matches("main > section, [data-preview-panel]")) break;
+      }
+      picture.dataset.marketingImageTrigger = "true";
+      picture.setAttribute("role", "button");
+      picture.setAttribute("aria-haspopup", "dialog");
+      picture.setAttribute("aria-controls", dialog.id);
+      picture.tabIndex = 0;
+      picture.addEventListener("click", () => this.#open(picture));
+      picture.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        this.#open(picture);
+      });
+    }
+
+    close.addEventListener("click", () => dialog.close());
+    previous.addEventListener("click", () => this.#show(this.#index - 1));
+    next.addEventListener("click", () => this.#show(this.#index + 1));
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    dialog.addEventListener("keydown", (event) => {
+      const rtl = document.documentElement.dir === "rtl";
+      const forward = event.key === (rtl ? "ArrowLeft" : "ArrowRight") || event.key === "PageDown";
+      const backward = event.key === (rtl ? "ArrowRight" : "ArrowLeft") || event.key === "PageUp";
+      if (!forward && !backward && event.key !== "Home" && event.key !== "End") return;
+      event.preventDefault();
+      if (event.key === "Home") this.#show(0);
+      else if (event.key === "End") this.#show(this.#group.length - 1);
+      else this.#show(this.#index + (forward ? 1 : -1));
+    });
+    dialog.addEventListener("close", () => this.#restore());
+    document.addEventListener("forma-locale-change", () => {
+      this.#updateLabels();
+      if (dialog.open) this.#show(this.#index);
+    });
+    for (const choice of document.querySelectorAll<HTMLButtonElement>("[data-context]")) {
+      choice.addEventListener("click", () => this.#updateLabels());
+    }
+    this.#updateLabels();
+  }
+
+  #family(picture: HTMLPictureElement): CreativeStudyFamily | undefined {
+    const image = picture.querySelector<HTMLImageElement>("img");
+    const candidate = image?.getAttribute("src") ?? "";
+    return candidate.match(/quiet-coast-(landscape|portrait|detail|twilight)-/)?.[1] as CreativeStudyFamily | undefined;
+  }
+
+  #remember(picture: HTMLPictureElement, family: CreativeStudyFamily) {
+    const sources = [...picture.querySelectorAll<HTMLSourceElement>("source")];
+    const widths = sources.flatMap((source) => [...(source.getAttribute("srcset") ?? "").matchAll(/(?:^|,)\s*\S+\s+(\d+)w/g)].map(([, width]) => Number(width)));
+    const width = widths.length ? Math.max(...widths) : Number(picture.querySelector("img")?.getAttribute("width") ?? 0);
+    const saved = this.#studies.get(family);
+    if (saved && (saved.width > width || (saved.width === width && saved.formats >= sources.length))) return;
+    this.#studies.set(family, { picture: picture.cloneNode(true) as HTMLPictureElement, width, formats: sources.length });
+  }
+
+  #label(picture: HTMLPictureElement) {
+    const preview = picture.closest<HTMLElement>(".preview-frame, .preview-slide");
+    const previewHeading = preview?.querySelector<HTMLElement>("figcaption h3, .preview-slide__content h3");
+    if (previewHeading?.textContent?.trim()) return previewHeading.textContent.trim();
+
+    const frame = picture.closest<HTMLElement>(".output-frame, .proof-artifact--twilight");
+    const frameHeading = frame?.querySelector<HTMLElement>("figcaption [data-copy], figcaption");
+    if (frameHeading?.textContent?.trim()) return frameHeading.textContent.trim();
+
+    if (picture.hasAttribute("data-context-study-target")) {
+      const selected = picture.closest(".marketing-context")?.querySelector<HTMLElement>("[data-context-focus-value]")?.textContent?.trim();
+      if (selected) return `${messages.campaignImage} · ${selected}`;
+    }
+
+    const family = this.#family(picture);
+    const labels: Record<CreativeStudyFamily, MarketingMessageKey> = {
+      landscape: "proofFrameTwo",
+      portrait: "proofFrameThree",
+      detail: "previewFrameFour",
+      twilight: "proofFrameOne",
+    };
+    return family ? messages[labels[family]] : messages.formatImage;
+  }
+
+  #updateLabels() {
+    for (const picture of this.#pictures) {
+      const label = `\u2068${this.#label(picture)}\u2069`;
+      picture.setAttribute("aria-label", messages.imageViewerOpen.replaceAll("{label}", label));
+    }
+  }
+
+  #collection(picture: HTMLPictureElement) {
+    const panel = picture.closest<HTMLElement>("[data-preview-panel]");
+    const scope = panel ?? picture.closest<HTMLElement>("main > section");
+    if (!scope) return undefined;
+    const available = [...scope.querySelectorAll<HTMLPictureElement>("picture[data-marketing-image-trigger]")].filter((candidate) => {
+      if (panel) return candidate.closest("[data-preview-panel]") === panel;
+      if (candidate.closest("[data-preview-panel]") || candidate.closest("details:not([open])")) return false;
+      const bounds = candidate.getBoundingClientRect();
+      return bounds.width > 0 && bounds.height > 0;
+    });
+    if (panel) return { scope, pictures: available };
+
+    const unique = new Map<CreativeStudyFamily, HTMLPictureElement>();
+    for (const candidate of available) {
+      const family = this.#family(candidate);
+      if (!family) continue;
+      if (!unique.has(family) || candidate === picture) unique.set(family, candidate);
+    }
+    return { scope, pictures: [...unique.values()] };
+  }
+
+  #open(picture: HTMLPictureElement) {
+    const collection = this.#collection(picture);
+    if (!collection?.pictures.length) return;
+    const index = collection.pictures.indexOf(picture);
+    if (index < 0) return;
+
+    this.#scope = collection.scope;
+    this.#group = collection.pictures;
+    this.#invoker = picture;
+    this.#show(index);
+    if (!ensureNativeModalDialog(this.#dialog, { fallbackLabel: messages.imageViewerTitle })) {
+      this.#dialog.removeAttribute("open");
+      this.#media.replaceChildren();
+      this.#group = [];
+      this.#scope = undefined;
+      this.#invoker = undefined;
+      return;
+    }
+
+    this.#ownsPlaybackPause = !document.querySelector<HTMLDialogElement>("[data-marketing-preview-dialog]")?.open;
+    document.documentElement.dataset.marketingLightbox = "open";
+    if (this.#ownsPlaybackPause) document.dispatchEvent(new CustomEvent("forma-marketing-preview-open", { bubbles: true }));
+    this.#close.focus({ preventScroll: true });
+  }
+
+  #show(index: number) {
+    if (!this.#group.length || !this.#scope) return;
+    const count = this.#group.length;
+    this.#index = ((index % count) + count) % count;
+    const selected = this.#group[this.#index];
+    const family = this.#family(selected);
+    const donor = family ? this.#studies.get(family)?.picture : undefined;
+    if (!donor) return;
+
+    const picture = donor.cloneNode(true) as HTMLPictureElement;
+    picture.removeAttribute("class");
+    picture.removeAttribute("style");
+    picture.removeAttribute("data-context-study");
+    picture.removeAttribute("data-context-study-target");
+    picture.removeAttribute("data-preview-family");
+    picture.removeAttribute("aria-hidden");
+    for (const source of picture.querySelectorAll<HTMLSourceElement>("source")) source.setAttribute("sizes", "100vw");
+    const image = picture.querySelector<HTMLImageElement>("img");
+    if (!image) return;
+    const fallback = picture.querySelector<HTMLSourceElement>('source[type="image/webp"]')?.getAttribute("srcset") ?? "";
+    const variants = [...fallback.matchAll(/(?:^|,)\s*(\S+)\s+(\d+)w/g)].map(([, src, width]) => ({ src, width: Number(width) }));
+    const largest = variants.sort((first, second) => second.width - first.width)[0];
+    if (largest) image.src = largest.src;
+    image.loading = "eager";
+    image.decoding = "async";
+    image.fetchPriority = "high";
+    const label = this.#label(selected);
+    image.alt = `${messages.projectName} — ${label}`;
+    this.#media.replaceChildren(picture);
+    this.#caption.textContent = label;
+
+    const panel = this.#scope.dataset.previewPanel;
+    this.#section.textContent = panel === "storyboard"
+      ? messages.formatStoryboard
+      : panel === "presentation"
+        ? messages.formatPresentation
+        : this.#scope.querySelector("h1, h2")?.textContent?.trim() ?? messages.projectName;
+
+    const singleton = count < 2;
+    this.#previous.hidden = singleton;
+    this.#next.hidden = singleton;
+    this.#previous.disabled = singleton;
+    this.#next.disabled = singleton;
+    const rtl = document.documentElement.dir === "rtl";
+    this.#previous.setAttribute("aria-keyshortcuts", rtl ? "ArrowRight" : "ArrowLeft");
+    this.#next.setAttribute("aria-keyshortcuts", rtl ? "ArrowLeft" : "ArrowRight");
+    const format = new Intl.NumberFormat(document.documentElement.lang, { useGrouping: false });
+    const current = `\u2068${format.format(this.#index + 1)}\u2069`;
+    const total = `\u2068${format.format(this.#group.length)}\u2069`;
+    this.#status.textContent = messages.imageViewerStatus.replaceAll("{current}", current).replaceAll("{total}", total);
+  }
+
+  #restore() {
+    if (!this.#invoker) return;
+    const invoker = this.#invoker;
+    const resume = this.#ownsPlaybackPause;
+    this.#media.replaceChildren();
+    this.#group = [];
+    this.#scope = undefined;
+    this.#invoker = undefined;
+    this.#ownsPlaybackPause = false;
+    delete document.documentElement.dataset.marketingLightbox;
+    if (resume) document.dispatchEvent(new CustomEvent("forma-marketing-preview-close", { bubbles: true }));
+    invoker.focus({ preventScroll: true });
   }
 }
 
@@ -304,7 +681,35 @@ void (async () => {
   mountLanguagePicker();
   // Decisions cannot be activated before their translated catalog is ready.
   for (const demo of document.querySelectorAll<HTMLElement>("[data-context-demo]")) new FormaContextDemo(demo);
+  const preview = document.querySelector<HTMLDialogElement>("[data-marketing-preview-dialog]");
+  if (preview) new FormaOutputPreview(preview);
+  const images = document.querySelector<HTMLDialogElement>("[data-marketing-image-dialog]");
+  if (images) new FormaImageViewer(images);
 })();
+
+const ambientPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+const ambientToggle = document.querySelector<HTMLButtonElement>("[data-marketing-motion-toggle]");
+let ambientPaused = false;
+
+if (ambientToggle) {
+  const updateAmbientMotion = () => {
+    const reduced = ambientPreference.matches;
+    const active = !reduced && !ambientPaused;
+    document.documentElement.dataset.marketingMotion = active ? "on" : "off";
+    ambientToggle.hidden = reduced;
+    ambientToggle.setAttribute("aria-pressed", String(ambientPaused));
+    const key: MarketingMessageKey = ambientPaused ? "motionResumeLabel" : "motionPauseLabel";
+    ambientToggle.dataset.copyAria = key;
+    ambientToggle.setAttribute("aria-label", messages[key]);
+  };
+  ambientToggle.addEventListener("click", () => {
+    ambientPaused = !ambientPaused;
+    updateAmbientMotion();
+  });
+  ambientPreference.addEventListener("change", updateAmbientMotion);
+  document.addEventListener("forma-locale-change", updateAmbientMotion);
+  updateAmbientMotion();
+}
 
 const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
 const motionVideo = document.querySelector<HTMLVideoElement>("[data-marketing-video]");
@@ -340,9 +745,11 @@ if ("IntersectionObserver" in window) {
   const videoTarget = motionVideo?.closest<HTMLElement>(".output-piece--video");
   let videoVisible = false;
   let automaticallyPausing = false;
+  let previewActive = false;
+  let resumeAfterPreview = false;
 
   const playMotion = () => {
-    if (!motionVideo || !videoVisible || document.hidden || motionPreference.matches || manuallyPaused) return;
+    if (!motionVideo || !videoVisible || document.hidden || motionPreference.matches || manuallyPaused || previewActive) return;
     motionVideo.muted = true;
     void motionVideo.play().catch(() => { /* The accessible play button remains available if autoplay is blocked. */ });
   };
@@ -368,6 +775,7 @@ if ("IntersectionObserver" in window) {
   const observer = new IntersectionObserver((entries) => {
     for (const entry of entries) {
       if (entry.target === videoTarget) {
+        if (entry.isIntersecting && !motionPreference.matches) entry.target.classList?.add("marketing-visible");
         videoVisible = entry.isIntersecting && entry.intersectionRatio >= .35;
         if (videoVisible) playMotion();
         else pauseMotion();
@@ -385,6 +793,17 @@ if ("IntersectionObserver" in window) {
 
   if (videoTarget && motionVideo) {
     observer.observe(videoTarget);
+    document.addEventListener("forma-marketing-preview-open", () => {
+      resumeAfterPreview = !motionVideo.paused && !motionVideo.ended;
+      previewActive = true;
+      pauseMotion();
+    });
+    document.addEventListener("forma-marketing-preview-close", () => {
+      previewActive = false;
+      if (!resumeAfterPreview) return;
+      resumeAfterPreview = false;
+      playMotion();
+    });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) pauseMotion();
       else playMotion();

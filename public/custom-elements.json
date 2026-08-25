@@ -7063,6 +7063,171 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/design-system/language-picker.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaUiLanguagePicker",
+          "tagName": "forma-ui-language-picker",
+          "customElement": true,
+          "summary": "Choose an available language by its own name using a visible translated label and a native select.",
+          "description": "Choose an available language by its own name using a visible translated label and a native select.",
+          "superclass": {
+            "name": "HTMLElement",
+            "package": "global:"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "busy",
+              "type": {
+                "text": "boolean"
+              },
+              "attribute": "busy",
+              "reflects": true,
+              "description": "Whether an action is currently in progress."
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "attribute": "disabled",
+              "reflects": true,
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "attribute": "label",
+              "reflects": true,
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "kind": "field",
+              "name": "options",
+              "type": {
+                "text": "readonly Readonly<{ value: string; label: string; direction: \"ltr\" | \"rtl\"; }>[]"
+              },
+              "description": "Property-only options with author-localized labels and descriptions and locale-invariant values."
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "attribute": "value",
+              "reflects": true,
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
+            }
+          ],
+          "attributes": [
+            {
+              "name": "busy",
+              "fieldName": "busy",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Whether an action is currently in progress."
+            },
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "name": "label",
+              "fieldName": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "name": "value",
+              "fieldName": "value",
+              "type": {
+                "text": "string"
+              },
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
+            }
+          ],
+          "events": [
+            {
+              "name": "forma-change",
+              "type": {
+                "text": "CustomEvent<{ value: string }>"
+              },
+              "description": "A new option was selected. Bubbles and crosses component boundaries."
+            }
+          ],
+          "cssProperties": [
+            {
+              "name": "--forma-color-border-strong",
+              "syntax": "<color>",
+              "description": "Accessible select boundary."
+            },
+            {
+              "name": "--forma-control-min-size",
+              "syntax": "<length>",
+              "description": "Native select target size."
+            }
+          ],
+          "demos": [
+            {
+              "url": "/knowledge/design-system#forma-ui-language-picker"
+            }
+          ],
+          "x-forma": {
+            "category": "molecule",
+            "renderRoot": "light",
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-language-picker",
+              "authorTextAttributes": [
+                "label"
+              ],
+              "authorOwnedSlots": [],
+              "optionTextPaths": [
+                "options[].label"
+              ],
+              "invariantValuePaths": [
+                "options[].value",
+                "value"
+              ]
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-ui-language-picker",
+          "declaration": {
+            "name": "FormaUiLanguagePicker",
+            "module": "src/components/design-system/language-picker.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaUiLanguagePicker",
+          "declaration": {
+            "name": "FormaUiLanguagePicker",
+            "module": "src/components/design-system/language-picker.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/design-system/layout.ts",
       "declarations": [
         {

@@ -65,6 +65,62 @@ test("shared mandatory extraction respects source authority, disabled decisions,
   assert.match(decisions[0].direction, /#ff00cc.*#00ee77/);
 });
 
+test("canonical creative world, audience, mood, and message remain first-class in every image adapter", () => {
+  const membership = { context_set_id: "rival-world", name: "Rival world", target: "Rival world", role: "scene", application: "isolate", relativity: 1, member_order: 0 };
+  const snapshot = { facts: [
+    { block_id: "world", type: "environment", properties: { text: "EMPTY_INDIGO_CLIFF_SHORELINE" } },
+    { block_id: "feeling", type: "emotion", properties: { text: "QUIETLY_MAGNETIC_RESTORATIVE" } },
+    { block_id: "audience", type: "audience", properties: { text: "SLOW_THOUGHTFUL_TRAVELERS" } },
+    { block_id: "message", type: "message", properties: { text: "FIND_THE_QUIETER_WAY" } },
+    { block_id: "subject", type: "subject", properties: { text: "ONE_SLATE_COTTAGE_AND_AMBER_WINDOW" } },
+    { block_id: "lighting", type: "lighting", properties: { text: "NATURAL_AFTER_SUNSET_BLUE_HOUR" } },
+    { block_id: "scoped-world", type: "environment", properties: { text: "FOREIGN_TARGET_ENVIRONMENT", combined_context_memberships: [membership] } },
+    { block_id: "scoped-mood", type: "emotion", properties: { text: "FOREIGN_TARGET_EMOTION", combined_context_memberships: [membership] } },
+  ] };
+  const expanded = buildIdeogramPrompt(snapshot, { scene: "Preserve the authored coastal campaign." }, "canonical", [], { ideogramCaptionStrategy: "production_director" });
+  assert.equal(expanded.valid, true);
+  assert.match(expanded.prompt, /PRIMARY SUCCESS TEST[^\n]*EMPTY_INDIGO_CLIFF_SHORELINE/);
+  assert.match(expanded.prompt, /SETTING: EMPTY_INDIGO_CLIFF_SHORELINE\./);
+  assert.match(expanded.prompt, /MOOD: QUIETLY_MAGNETIC_RESTORATIVE\./);
+  assert.doesNotMatch(expanded.prompt, /SETTING:[^\n]*FOREIGN_TARGET_ENVIRONMENT/);
+  assert.doesNotMatch(expanded.prompt, /MOOD:[^\n]*FOREIGN_TARGET_EMOTION/);
+
+  const caption = buildIdeogramCaption(snapshot, { scene: "Preserve the authored coastal campaign." }, "canonical", [], { ideogramCaptionStrategy: "balanced" });
+  assert.equal(caption.valid, true);
+  assert.match(caption.caption.style_description.aesthetics, /QUIETLY_MAGNETIC_RESTORATIVE/);
+  assert.match(caption.caption.compositional_deconstruction.background, /EMPTY_INDIGO_CLIFF_SHORELINE/);
+  assert.match(caption.caption.high_level_description, /SLOW_THOUGHTFUL_TRAVELERS/);
+  assert.match(caption.caption.high_level_description, /FIND_THE_QUIETER_WAY/);
+  assert.doesNotMatch(caption.caption.style_description.aesthetics, /FOREIGN_TARGET_EMOTION/);
+  assert.doesNotMatch(caption.caption.compositional_deconstruction.background, /FOREIGN_TARGET_ENVIRONMENT/);
+  for (const id of ["world", "feeling", "audience", "message", "subject", "lighting"]) assert.ok(caption.includedBlockIds.includes(id), id);
+
+  const legacy = { facts: [
+    { block_id: "legacy-setting", type: "setting", properties: { text: "LEGACY_AUTHORED_SETTING" } },
+    { block_id: "legacy-mood", type: "mood", properties: { text: "LEGACY_AUTHORED_MOOD" } },
+  ] };
+  for (const adaptation of [buildIdeogramPrompt(legacy, { scene: "A legacy creative world." }, "canonical", [], {}), buildIdeogramCaption(legacy, { scene: "A legacy creative world." }, "canonical", [], {})]) {
+    assert.match(adaptation.prompt, /LEGACY_AUTHORED_SETTING/);
+    assert.match(adaptation.prompt, /LEGACY_AUTHORED_MOOD/);
+  }
+});
+
+test("video adaptation preserves unlocked authored visual direction and scoped creative decisions", () => {
+  const membership = { context_set_id: "cast-mara", name: "Mara", target: "Mara", role: "character", application: "isolate", relativity: 1, member_order: 0 };
+  const snapshot = { facts: [
+    { block_id: "subject", type: "subject", properties: { text: "ONE_SLATE_COTTAGE" } },
+    { block_id: "light", type: "lighting", properties: { text: "AUTHORIAL_AFTER_SUNSET_LIGHTING" } },
+    { block_id: "palette", type: "palette", properties: { colors: ["#112233", "#F2B56B"] } },
+    { block_id: "style", type: "style", properties: { text: "AUTHORIAL_RESTRAINED_EDITORIAL_STYLE" } },
+    { block_id: "material", type: "material", properties: { materials: ["AUTHORIAL_WEATHERED_SLATE"] } },
+    { block_id: "camera", type: "camera", properties: { camera_direction: "AUTHORIAL_LOW_COASTAL_TRACK" } },
+    { block_id: "scoped-palette", type: "palette", properties: { colors: ["#CC0044"], combined_context_memberships: [membership] } },
+  ] };
+  const video = adaptVideoPrompt("A slow movement along the quiet coast.", videoOptions({ seconds: 4, snapshot }));
+  for (const direction of ["AUTHORIAL_AFTER_SUNSET_LIGHTING", "#112233", "#F2B56B", "AUTHORIAL_RESTRAINED_EDITORIAL_STYLE", "AUTHORIAL_WEATHERED_SLATE", "AUTHORIAL_LOW_COASTAL_TRACK"]) assert.ok(video.prompt.includes(direction), direction);
+  assert.match(video.prompt, /PALETTE for character “Mara”:[^\n]*#CC0044/);
+});
+
 test("mandatory structured direction and complete legal copy are preserved without pre-budget truncation", () => {
   const legal = `${"Preserve every authored legal clause exactly. ".repeat(24)}FINAL_REQUIRED_LEGAL_SENTINEL`;
   const snapshot = { facts: [

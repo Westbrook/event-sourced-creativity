@@ -330,6 +330,44 @@ test("faithfully renders twelve independently authored blocks with exact quotati
   });
 });
 
+test("retains repeated authored zero-valued release controls without submitting a second paid presentation request",async()=>{
+  const snapshot=independentSlideSnapshot();
+  const acceptanceCriteria=" Deliver safety and source integrity first, then event-derived projections, nonblocking coordinator lanes, atomic proposals, complete output orchestration, and page-specific adapters. Measure zero lost turns, zero unauthorized actions, correct selections, bounded context, all 61 route policies, and four-language parity.";
+  snapshot.facts[11].properties.text+=acceptanceCriteria;
+  const output=independentSlideOutput(snapshot);
+  const closing=output.items[11];
+  closing.body=closing.body.replace(acceptanceCriteria,"");
+  closing.slide.layout="matrix";
+  closing.slide.visual={kind:"matrix",label:"Independent release controls",value:"",exact_value:null,display_value:null,unit:null,data:[
+    {label:"Safety and source integrity",value:"first",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
+    {label:"Projection architecture",value:"event-derived",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
+    {label:"Coordinator lanes",value:"nonblocking",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
+    {label:"Change proposals",value:"atomic",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
+    {label:"Route policies",value:"61",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
+    {label:"Language parity",value:"four",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
+    {label:"Lost conversation turns",value:"zero",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
+    {label:"Unauthorized actions",value:"zero",weight:1,exact_value:null,display_value:null,source_ids:["blk_012"]},
+  ]};
+
+  await withProviderResponses([output],async(requests)=>{
+    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-executive-actor","slides",{
+      documentTitle:"Event-Sourced Conversational Experience — Executive Plan",snapshot,
+      options:{itemCount:12,requestedSlideCount:12,presentationStyle:"field-notes",presentationFidelity:"faithful"},
+    });
+
+    assert.equal(requests.length,1,"source-faithful matching measurements must not trigger a second paid provider request");
+    assert.equal(result.output.items[11].slide.visual.data.length,8);
+    assert.deepEqual(result.output.items[11].slide.visual.data.slice(6).map(({label,value})=>({label,value})),[
+      {label:"Lost conversation turns",value:"zero"},
+      {label:"Unauthorized actions",value:"zero"},
+    ]);
+    assert.equal(result.inputReceipt.validation.repair_attempted,false);
+    assert.deepEqual(result.inputReceipt.validation.initial_issues,[]);
+    assert.equal(result.inputReceipt.validation.provider_call_count,1);
+    assert.match(requests[0].request.instructions,/different[^.]*visual\.data[^.]*same[^.]*value|visual\.data[^.]*same[^.]*value/i,"provider instructions must explicitly preserve equal authored values across distinct rows");
+  });
+});
+
 test("preserves the authored audience language when the application interface uses Japanese",async()=>{
   await withProviderResponses([executivePresentation()],async(requests)=>{
     await generateExecutivePresentation({locale:"ja-JP"});

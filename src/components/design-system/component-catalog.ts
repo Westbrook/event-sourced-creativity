@@ -8,6 +8,7 @@ import { componentCatalog, componentLevels, type ComponentCatalogEntry, type Com
 import "../design-primitives";
 import "./atoms";
 import "./forms";
+import "./language-picker";
 import "./navigation";
 import "./feedback";
 import "./layout";
@@ -174,6 +175,7 @@ export class FormaComponentCatalog extends FormaPresentationalElement {
     const choices = this.#catalog().choices;
     switch (entry.tag) {
       case "forma-ui-locale": return html`<form novalidate @submit=${(event:SubmitEvent)=>event.preventDefault()}><forma-ui-locale lang=${this.i18n.locale}><forma-ui-search .label=${this.i18n.t("catalog.searchLabel", "Search components")}></forma-ui-search></forma-ui-locale></form>`;
+      case "forma-ui-language-picker": return html`<forma-ui-language-picker .label=${this.i18n.t("language.label")} .value=${this.i18n.locale.split("-")[0]}></forma-ui-language-picker>`;
       case "forma-ui-theme": return html`<forma-ui-theme radius="soft"><forma-ui-badge .label=${this.i18n.t("sample.scopedTheme", "Scoped theme")} tone="accent"></forma-ui-badge></forma-ui-theme>`;
       case "forma-ui-button": return html`<forma-ui-cluster><forma-ui-button .label=${this.i18n.t("sample.saveDirection", "Save direction")} value="save-direction" icon-name="check" variant="primary"></forma-ui-button><forma-ui-button .label=${this.i18n.t("lab.unavailable", "Not available")} disabled></forma-ui-button></forma-ui-cluster>`;
       case "forma-ui-icon-button": return html`<forma-ui-icon-button icon-name="close" .label=${this.i18n.t("sample.closePreview", "Close preview")} value="close-preview"></forma-ui-icon-button>`;

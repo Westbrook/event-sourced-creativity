@@ -74,9 +74,12 @@ pnpm test
 pnpm cem:check
 ```
 
-The UI is implemented entirely as Lit custom elements. `signal-polyfill` and
-`signal-utils` are isolated behind `FormaStore` because both packages are still
-experimental. React and framework-specific UI runtimes are not dependencies.
+The UI uses documented browser-native custom elements: Lit powers reactive
+application composition, while dependency-free native `HTMLElement` components
+protect isolated public and guest boundaries when shared controls require it.
+`signal-polyfill` and `signal-utils` are isolated behind `FormaStore` because
+both packages are still experimental. React and framework-specific UI runtimes
+are not dependencies.
 
 Design & Knowledge at `/knowledge/design-system` presents the actual
 store-independent foundations, atoms, molecules, organisms, and application
@@ -84,6 +87,14 @@ templates used by production surfaces. It is a review tool, not a second design
 implementation. `/knowledge/patterns` demonstrates entitlement-safe workspace
 switching and audience navigation; `/knowledge/guidance` explains approved
 privacy, accessibility, localization, and architectural boundaries.
+
+The same production component library also owns controls shared with the public
+welcome page and exact-resource guest review. Search the living reference,
+`docs/components.md`, and `custom-elements.json` before adding an interface;
+reuse an existing component, extend the nearest shared primitive, or document
+why a new one is required. Publish its real safe catalog demonstration,
+supported-language documentation, migrated production consumers, generated
+manifests, and regression tests in the same change.
 
 Every application-pattern entry also includes a clearly labeled interactive
 composition assembled from the same production primitives and synthetic sample
@@ -112,6 +123,16 @@ the current device, and stays available before privacy consent and on shared
 documents. Translations load only when their language is selected. Writing
 direction, keyboard navigation, accessible announcements, plural categories,
 numbers, dates, and script-aware typography update together.
+
+`<forma-ui-language-picker>` is the same lightweight native control on the public
+welcome page, creator and internal workspaces, consent flows, and exact-token
+guest review. One public-safe registry owns every native language name and
+writing direction; each surface keeps its own locale loading, persistence,
+navigation, and accessible announcements.
+
+Public welcome previews and authenticated applications likewise share the
+dependency-free native-dialog foundation; application-only localization stays
+in its existing wrapper rather than entering the public route.
 
 Use the non-rendering locale foundation to override the language or regional
 formatting for any composed subtree:

@@ -9,6 +9,7 @@ import { ensureModalDialog } from "./modal-dialog";
 import { beginRoutePopulation, completeRoutePopulation, recordPopulationSource } from "../performance";
 import { FORMA_SUPPORTED_LOCALES, formaLocaleFamily, setFormaLocale } from "./design-system/localization";
 import "./design-system/navigation";
+import "./design-system/language-picker";
 import "./icons-navigation";
 import "./forma-attention-observer";
 
@@ -84,14 +85,14 @@ export class FormaShell extends FormaElement {
   };
   #pop = () => { this.#focusNextRoute=true;this.store.setRoute(`${location.pathname}${location.search}${location.hash}`); };
   #changeLocale = async (event: Event) => {
-    const select = event.currentTarget as HTMLSelectElement;
-    const requested = select.value;
+    const picker = event.currentTarget as HTMLElementTagNameMap["forma-ui-language-picker"];
+    const requested = (event as CustomEvent<{ value: string }>).detail.value;
     const revision = ++this.#localeRequest;
     const result = await setFormaLocale(requested);
     if (revision !== this.#localeRequest) return;
     const resolved = formaLocaleFamily(result.locale);
     if (resolved !== requested) {
-      select.value = resolved;
+      picker.value = resolved;
       this.#localeAnnouncement = this.i18n.t("language.failed", "The selected language could not be loaded. Please try again.");
     } else {
       const choice = FORMA_SUPPORTED_LOCALES.find((item) => item.locale === resolved);
@@ -101,7 +102,7 @@ export class FormaShell extends FormaElement {
   };
 
   #localePicker() {
-    return html`<form class="locale-picker-form" @submit=${(event:SubmitEvent)=>event.preventDefault()}><label class="locale-switcher"><span>${this.i18n.t("language.label")}</span><select .value=${formaLocaleFamily(this.i18n.locale)} @change=${this.#changeLocale}>${FORMA_SUPPORTED_LOCALES.map((locale) => html`<option value=${locale.locale} lang=${locale.locale} dir=${locale.direction} ?selected=${locale.locale === formaLocaleFamily(this.i18n.locale)}>${locale.label}</option>`)}</select></label></form>`;
+    return html`<form class="locale-picker-form" @submit=${(event:SubmitEvent)=>event.preventDefault()}><forma-ui-language-picker .label=${this.i18n.t("language.label")} .value=${formaLocaleFamily(this.i18n.locale)} @forma-change=${this.#changeLocale}></forma-ui-language-picker></form>`;
   }
 
   override connectedCallback() {

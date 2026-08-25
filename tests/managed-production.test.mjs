@@ -61,6 +61,42 @@ const approvedReferences = (sequences) => sequences.map((sequence) => ({
   label: `Approved storyboard image ${sequence}`,
 }));
 
+function saturatedContinuityFixture(format, { scopedAlias = false } = {}) {
+  const snapshot = productionFixture(2, 1);
+  const shared = Array.from({ length: scopedAlias ? 7 : 8 }, (_, index) => ({
+    referenceId: `generic-${index + 1}`,
+    blockId: `generic-${index + 1}`,
+    sequence: null,
+    contextGroupIds: [],
+    label: `General approved study ${index + 1}`,
+  }));
+  const aliases = scopedAlias ? [
+    { referenceId: "shared-resource", blockId: "ivo-alias", sequence: null, contextGroupIds: ["cast-ivo"], label: "Ivo-only shared resource" },
+    { referenceId: "shared-resource", blockId: "mara-alias", sequence: null, contextGroupIds: ["cast-mara"], label: "Mara-only shared resource" },
+  ] : [];
+  const authorized = [...shared, ...aliases, ...approvedReferences([1, 2])];
+  const production = buildManagedProductionPlan(format, snapshot, { references: authorized });
+  const bytes = Uint8Array.from([137, 80, 78, 71]);
+  const references = authorized.map((reference) => ({
+    ...reference,
+    bytes,
+    mimeType: "image/png",
+    mode: "preserve_composition",
+    shotDirection: `Approved direction ${reference.referenceId}`,
+    cameraDirection: "Controlled camera.",
+    framePrompt: `Approved study ${reference.referenceId}`,
+    sourceArtifactId: "approved-board",
+    sourceArtifactItemId: reference.sequence ? `frame-${reference.sequence}` : null,
+    sourceArtifactKind: "storyboard",
+    storyboardTitle: "The midnight observatory",
+    provider: "fal",
+    providerMediaUrl: `https://v3b.fal.media/files/test/${reference.referenceId}.png`,
+    contextGroups: reference.contextGroupIds.map((id) => ({ id, name: id, target: id, role: "character", application: "isolate", relativity: 1 })),
+  }));
+  const draft = { title: "Capped continuity", summary: "Every frame remains connected.", content_markdown: "A continuous world.", presentation: null, items: production.scenes.map((scene) => ({ title: scene.title, body: scene.action, notes: scene.cameraDirection, image_prompt: scene.imagePrompt, context_group_ids: scene.contextGroupIds, slide: null })) };
+  return { snapshot, production, references, draft, bytes };
+}
+
 const EXECUTIVE_SLIDE_TITLES = [
   "Executive opportunity",
   "Six-goal assessment scorecard",
@@ -530,6 +566,29 @@ test("keeps locked global continuity while isolating scoped characters and unrel
   assert.ok(!ivoIds.has("shot-1"));
   assert.deepEqual(mara.context_groups.map((group) => group.id), ["cast-mara"]);
   assert.deepEqual(ivo.context_groups.map((group) => group.id), ["cast-ivo"]);
+});
+
+test("every production shot retains ungrouped audience, emotion, and message without leaking scoped direction", () => {
+  const snapshot = productionFixture(3);
+  snapshot.facts.unshift(
+    { block_id: "global-audience", type: "audience", properties: { text: "GLOBAL_SLOW_TRAVEL_AUDIENCE" } },
+    { block_id: "global-emotion", type: "emotion", properties: { text: "GLOBAL_QUIET_MAGNETIC_FEELING" } },
+    { block_id: "global-message", type: "message", properties: { text: "GLOBAL_FIND_THE_QUIETER_WAY" } },
+    { block_id: "individual-beat", type: "message", locked: true, properties: { subtype: "Narrative beat", text: "ONLY_ONE_AUTHORED_NARRATIVE_MOVEMENT" } },
+    { block_id: "mara-only-emotion", type: "emotion", properties: { text: "MARA_ONLY_RESTORATIVE_MOOD", combined_context_memberships: [membership("cast-mara", "Mara")] } },
+  );
+  for (const fact of snapshot.facts) if (["shot-1", "shot-3"].includes(fact.block_id)) fact.locked = true;
+  for (const format of ["storyboard", "video"]) {
+    const plan = buildManagedProductionPlan(format, snapshot);
+    for (const scene of plan.scenes) {
+      const scoped = productionSceneSnapshot(snapshot, scene);
+      const ids = new Set(scoped.facts.map((fact) => fact.block_id));
+      for (const id of ["global-audience", "global-emotion", "global-message"]) assert.ok(ids.has(id), `${format} scene ${scene.narrativeOrder}: ${id}`);
+      if (!scene.sourceBlockIds.includes("individual-beat")) assert.ok(!ids.has("individual-beat"), `${format} scene ${scene.narrativeOrder} leaked another narrative beat`);
+      for (const shot of ["shot-1", "shot-3"]) if (!scene.sourceBlockIds.includes(shot)) assert.ok(!ids.has(shot), `${format} scene ${scene.narrativeOrder} leaked locked ${shot}`);
+      if (!scene.contextGroupIds.includes("cast-mara")) assert.ok(!ids.has("mara-only-emotion"), `${format} scene ${scene.narrativeOrder} leaked Mara's mood`);
+    }
+  }
 });
 
 test("independent approved scene references are parallelized without exceeding provider reference limits", () => {
@@ -1348,6 +1407,51 @@ test("managed storyboards checkpoint exact completed-frame costs and scoped refe
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("saturated storyboard references retain the highest-ranked authored image and an honest scoped continuity anchor", async () => {
+  const { snapshot, production, references, draft } = saturatedContinuityFixture("storyboard", { scopedAlias: true });
+  const media = new Map();
+  let imageRequests = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    if (String(input).endsWith("/moderations")) return Response.json({ id: "moderation-pass", model: "omni-moderation-latest", results: [{ flagged: false, categories: {}, category_scores: {} }] });
+    imageRequests += 1;
+    return Response.json({ data: [{ b64_json: btoa("image-bytes") }], usage: { input_tokens: 120, output_tokens: 80, total_tokens: 200 } });
+  };
+  const env = { OPENAI_API_KEY: "test-only", OPENAI_IMAGE_MODEL: "gpt-image-2", MEDIA: {
+    put: async (key, value, options) => media.set(key, { bytes: new Uint8Array(value), options }),
+    get: async (key) => { const value = media.get(key); return value ? { body: value.bytes, customMetadata: value.options.customMetadata, writeHttpMetadata: (headers) => headers.set("content-type", value.options.httpMetadata.contentType) } : null; },
+  } };
+  try {
+    for (const scene of production.scenes) {
+      assert.equal(scene.referenceIds.length, 9);
+      assert.equal(scene.referenceIds[0], `reference-${scene.narrativeOrder}`, "The authored shot must outrank caller-first generic studies.");
+    }
+    const result = await renderManagedStoryboardProduction(env, "owner", "saturated-board", draft, production, { snapshot, references });
+    assert.equal(imageRequests, 2);
+    const first = result.receipts.find((receipt) => receipt.sceneId === production.anchorSceneId);
+    const inherited = result.receipts.find((receipt) => receipt.sceneId !== production.anchorSceneId);
+    assert.equal(first.authoredReferenceCount, 9, "A first frame without inherited continuity retains all nine authorized references.");
+    assert.equal(first.inheritedReferenceCount, 0);
+    assert.equal(first.referenceInputs.length, 9);
+    assert.equal(inherited.authoredReferenceCount, 8);
+    assert.equal(inherited.inheritedReferenceCount, 1);
+    assert.equal(inherited.referenceInputs.length, 9);
+    assert.equal(inherited.referenceInputs.filter((reference) => reference.role === "authored-reference").length, 8);
+    assert.equal(inherited.referenceInputs.filter((reference) => reference.role === "inherited-production-continuity").length, 1);
+    assert.ok(inherited.referenceInputs.some((reference) => reference.referenceId === `reference-${inherited.narrativeOrder}`));
+    for (const receipt of result.receipts) {
+      const expected = receipt.narrativeOrder % 2 ? "mara-alias" : "ivo-alias";
+      const forbidden = receipt.narrativeOrder % 2 ? "ivo-alias" : "mara-alias";
+      assert.ok(receipt.referenceInputs.some((reference) => reference.blockId === expected), "An allowed duplicate resource must remain bound to its authored block.");
+      assert.ok(!receipt.referenceInputs.some((reference) => reference.blockId === forbidden), "A same-id reference from another target must never enter this scene.");
+    }
+    assert.equal(inherited.referenceInputs.find((reference) => reference.role === "inherited-production-continuity").mode, "preserve_style", "Continuity across unrelated characters must never preserve the prior subject.");
+    const returned = result.items.find((item) => item.scene_id === inherited.sceneId);
+    assert.equal(returned.authored_reference_count, 8);
+    assert.equal(returned.inherited_reference_count, 1);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("managed film rendering submits the chosen anchor first and assembles only an honest ordered scene reel", async () => {
   const snapshot = productionFixture(3, 2);
   const authorized = approvedReferences([1, 2, 3]);
@@ -1422,5 +1526,143 @@ test("managed film rendering submits the chosen anchor first and assembles only 
     assert.equal(requests.length, 3, "a previously accepted paid scene cannot be submitted to the provider again");
     assert.equal(resumed.videoCostMicrousd, 0, "scene charges settled by the interrupted attempt cannot be debited twice");
     assert.equal(resumed.items.length, 3);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("new video continuity anchors render only the selected target's reference pixels when resource IDs overlap", async () => {
+  const snapshot = productionFixture(3, 1);
+  const unrelatedShot = snapshot.facts.find((fact) => fact.block_id === "shot-3");
+  Object.assign(unrelatedShot.properties, {
+    text: "Zara discovers a second, unreferenced observatory.",
+    storyboard_shot_direction: "Zara discovers a second, unreferenced observatory.",
+    storyboard_frame_prompt: "Zara in an unreferenced observatory.",
+    combined_context_memberships: [membership("cast-zara", "Zara", 3)],
+  });
+  snapshot.facts.push({
+    block_id: "zara",
+    type: "subject",
+    locked: true,
+    properties: { text: "Zara keeps her amber scarf.", combined_context_memberships: [membership("cast-zara", "Zara")] },
+  });
+  const authorized = [
+    { referenceId: "shared-resource", blockId: "ivo-alias", sequence: null, contextGroupIds: ["cast-ivo"], label: "Ivo-only shared resource" },
+    { referenceId: "shared-resource", blockId: "mara-alias", sequence: null, contextGroupIds: ["cast-mara"], label: "Mara-only shared resource" },
+  ];
+  const production = buildManagedProductionPlan("video", snapshot, { references: authorized });
+  const anchorScene = production.scenes.find((scene) => scene.id === production.anchorSceneId);
+  assert.ok(anchorScene.contextGroupIds.includes("cast-mara"), "The climax supplies the Mara-scoped anchor.");
+  assert.ok(!anchorScene.contextGroupIds.includes("cast-ivo"), `An unrelated character must never enter the anchor scene's eligible targets: ${JSON.stringify(anchorScene.contextGroupIds)}.`);
+  assert.ok(production.scenes.some((scene) => !scene.referenceIds.length), "An unreferenced scene must request a generated continuity anchor.");
+  const references = authorized.map((reference) => ({
+    ...reference,
+    bytes: Uint8Array.from([137, 80, 78, 71, reference.blockId === "mara-alias" ? 77 : 73]),
+    mimeType: "image/png",
+    mode: "preserve_subject",
+    shotDirection: `Approved ${reference.label}`,
+    cameraDirection: "Controlled tracking.",
+    framePrompt: reference.label,
+    sourceArtifactId: "approved-board",
+    sourceArtifactItemId: null,
+    sourceArtifactKind: "storyboard",
+    storyboardTitle: "The midnight observatory",
+    contextGroups: reference.contextGroupIds.map((id) => ({ id, name: id, target: id, role: "character", application: "isolate", relativity: 1 })),
+  }));
+  const draft = {
+    title: "Isolated continuity",
+    summary: "Each character keeps their own visual identity.",
+    content_markdown: "A continuous, target-scoped world.",
+    presentation: null,
+    items: production.scenes.map((scene) => ({ title: scene.title, body: scene.action, notes: scene.cameraDirection, image_prompt: scene.imagePrompt, context_group_ids: scene.contextGroupIds, slide: null })),
+  };
+  const stored = [];
+  const imageInputs = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url.endsWith("/moderations")) return Response.json({ id: "moderation-pass", model: "omni-moderation-latest", results: [{ flagged: false, categories: {}, category_scores: {} }] });
+    if (url.endsWith("/images/edits")) {
+      assert.ok(init.body instanceof FormData);
+      for (const image of init.body.getAll("image[]")) imageInputs.push(new Uint8Array(await image.arrayBuffer()));
+      return Response.json({ data: [{ b64_json: btoa("anchor-image") }], usage: { input_tokens: 120, output_tokens: 80, total_tokens: 200 } });
+    }
+    throw new Error(`Unexpected provider request: ${url}`);
+  };
+  const env = {
+    OPENAI_API_KEY: "test-only",
+    OPENAI_IMAGE_MODEL: "gpt-image-2",
+    FAL_KEY: "test-only",
+    FORMA_VIDEO_PROVIDER: "fal",
+    MEDIA: { put: async (key, value, options) => stored.push({ key, bytes: new Uint8Array(value), options }) },
+  };
+  try {
+    await assert.rejects(renderManagedVideoProduction(env, "owner", "isolated-film", draft, production, {
+      snapshot,
+      references,
+      videoSize: "1280x720",
+      audioMode: "silent",
+      progress: async (_stage, message) => {
+        if (message.startsWith("The reusable production anchor")) throw new Error("anchor-provenance-checked");
+      },
+    }), /anchor-provenance-checked/);
+    assert.equal(imageInputs.length, 1, "The generated anchor must receive exactly one authorized reference.");
+    assert.deepEqual([...imageInputs[0]], [137, 80, 78, 71, 77], "Mara's pixels, never the caller-first Ivo alias, define the shared anchor.");
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].options.customMetadata.ownerId, "owner");
+    assert.equal(stored[0].options.customMetadata.artifactRole, "production-continuity-anchor");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("saturated video references reserve the scoped continuity anchor without discarding the highest-ranked authored shot", async () => {
+  const { snapshot, production, references, draft, bytes } = saturatedContinuityFixture("video", { scopedAlias: true });
+  const media = new Map([["owner/continuity-anchor.jpg", {
+    bytes,
+    options: { httpMetadata: { contentType: "image/jpeg" }, customMetadata: { ownerId: "owner", provider: "fal", providerModel: "fal-test", providerMediaUrl: "https://v3b.fal.media/files/test/owned-anchor.png" } },
+  }]]);
+  const requests = [];
+  let providerRequest = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url.endsWith(".png")) return new Response(bytes, { headers: { "content-type": "image/png" } });
+    if (init.method === "POST") {
+      requests.push(JSON.parse(String(init.body)));
+      providerRequest += 1;
+      return Response.json({ request_id: `fal-capped-${providerRequest}`, status: "IN_QUEUE" });
+    }
+    const match = /\/requests\/(fal-capped-\d+)/.exec(url);
+    if (url.includes("/status")) return Response.json({ request_id: match?.[1], status: "COMPLETED" });
+    if (match) return Response.json({ video: { url: `https://v3b.fal.media/files/test/${match[1]}.mp4`, content_type: "video/mp4" } });
+    if (url.endsWith(".mp4")) return new Response(Uint8Array.from([0, 1, 2, 3]), { headers: { "content-type": "video/mp4" } });
+    throw new Error(`Unexpected provider request: ${url}`);
+  };
+  const env = { FAL_KEY: "test-only", FORMA_VIDEO_PROVIDER: "fal", MEDIA: {
+    put: async (key, value, options) => media.set(key, { bytes: new Uint8Array(value), options }),
+    get: async (key) => { const value = media.get(key); return value ? { body: value.bytes, customMetadata: value.options.customMetadata, writeHttpMetadata: (headers) => headers.set("content-type", value.options.httpMetadata.contentType) } : null; },
+  } };
+  try {
+    const anchorScene = production.scenes.find((scene) => scene.id === production.anchorSceneId);
+    const result = await renderManagedVideoProduction(env, "owner", "saturated-film", draft, production, {
+      snapshot,
+      references,
+      videoSize: "1280x720",
+      audioMode: "silent",
+      existingAnchor: { mediaUrl: "/api/media/owner%2Fcontinuity-anchor.jpg", sceneId: anchorScene.id, contextGroupIds: anchorScene.contextGroupIds, source: "account-generated", rights: "account-generated" },
+      prepaidAnchor: true,
+    });
+    assert.equal(requests.length, 2);
+    for (const receipt of result.receipts) {
+      assert.equal(receipt.referenceIds.length, 9);
+      assert.ok(receipt.referenceIds.includes(`reference-${receipt.narrativeOrder}`), "The scene-specific authored reference must survive the cap.");
+      assert.ok(receipt.referenceIds.includes("production-anchor:saturated-film"), "The owned continuity reference must occupy its reserved slot.");
+      assert.equal(receipt.videoInputReceipt.reference_inputs.length, 9);
+      assert.equal(receipt.referenceIds.filter((id) => id === "production-anchor:saturated-film").length, 1);
+      const expected = receipt.narrativeOrder % 2 ? "mara-alias" : "ivo-alias";
+      const forbidden = receipt.narrativeOrder % 2 ? "ivo-alias" : "mara-alias";
+      assert.ok(receipt.videoInputReceipt.reference_inputs.some((reference) => reference.block_id === expected));
+      assert.ok(!receipt.videoInputReceipt.reference_inputs.some((reference) => reference.block_id === forbidden), "A duplicate resource ID must not bypass authored target isolation.");
+    }
+    const unrelated = result.receipts.find((receipt) => receipt.sceneId !== production.anchorSceneId);
+    const inherited = unrelated.videoInputReceipt.reference_inputs.find((reference) => reference.reference_id === "production-anchor:saturated-film" || reference.referenceId === "production-anchor:saturated-film");
+    assert.equal(inherited.mode, "preserve_style", "An unrelated character can inherit only treatment, never the previous subject.");
   } finally { globalThis.fetch = originalFetch; }
 });

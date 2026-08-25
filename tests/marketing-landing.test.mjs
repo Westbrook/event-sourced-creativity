@@ -27,7 +27,7 @@ test("marketing has an independent, truthful, fully readable public document", a
   assert.ok([...html.matchAll(/href="\/projects"/g)].length >= 3);
   assert.match(html, /Illustrative project/);
   assert.match(html, /Fictional project featuring original generated imagery\. Exploring this example does not start a new generation\./);
-  for (const format of ["Image", "Story", "Scene", "Presentation", "Storyboard", "Video scenes"]) {
+  for (const format of ["Image", "Story", "Scene", "Presentation", "Storyboard", "Video scenes", "Audio"]) {
     assert.match(html, new RegExp(`>${format}<`), format);
   }
   for (const section of ["how-it-works", "for-teams", "main-content"]) {
@@ -131,7 +131,7 @@ test("the real campaign scene uses one lazy, fingerprinted video and an accessib
   const videoPath = contents.match(/\bsrc="(\/assets\/marketing\/quiet-coast-scene-4s\.([a-f0-9]{12})\.mp4)"\s+type="video\/mp4"/);
   const posterPath = video.match(/\bposter="(\/assets\/marketing\/quiet-coast-scene-poster-960\.([a-f0-9]{12})\.jpg)"/);
   assert.ok(videoPath, "The public MP4 must have an immutable content fingerprint.");
-  assert.ok(posterPath, "The genuine first-frame poster must have an immutable content fingerprint.");
+  assert.ok(posterPath, "The genuine cottage-frame video poster must have an immutable content fingerprint.");
   for (const [match, budget] of [[videoPath, 350_000], [posterPath, 30_000]]) {
     const bytes = await readFile(new URL("../public" + match[1], import.meta.url));
     assert.equal(createHash("sha256").update(bytes).digest("hex").slice(0, 12), match[2]);
@@ -152,6 +152,48 @@ test("the real campaign scene uses one lazy, fingerprinted video and an accessib
   assert.match(styles, /\.output-motion:hover \.output-motion__toggle,\s*\.output-motion:focus-within \.output-motion__toggle,\s*\.output-motion__toggle:focus-visible\s*\{\s*opacity:\s*1;\s*pointer-events:\s*auto/);
   assert.match(styles, /@media \(hover:\s*none\),\s*\(pointer:\s*coarse\)\s*\{[^}]*\.output-motion__toggle\s*\{\s*opacity:\s*1;\s*pointer-events:\s*auto/s);
   assert.match(styles, /\.output-motion__toggle\[hidden\]\s*\{\s*display:\s*none/);
+});
+
+test("the coherent campaign stays discoverable, touch-safe, and truthful across device postures", async () => {
+  const [html, enhancement, styles, pickerStyles] = await Promise.all([
+    source("marketing.html"),
+    source("src/marketing/main.ts"),
+    source("src/marketing/marketing.css"),
+    source("src/components/design-system/language-picker.css"),
+  ]);
+
+  assert.match(html, /class="marketing-text-link" href="#idea-takes-shape"/);
+  assert.match(html, /class="marketing-section marketing-proof" id="idea-takes-shape"/);
+  assert.match(html, /class="marketing-navigation__motion" href="#motion-study"/);
+  assert.match(html, /class="marketing-button marketing-exhibit__action" href="\/projects" data-copy="openForma"/);
+
+  const poster = html.match(/<video[^>]*poster="([^"]+)"/)?.[1];
+  assert.equal(poster, "/assets/marketing/quiet-coast-scene-poster-960.616859215dd3.jpg");
+  assert.match(html, new RegExp(`proof-artifact--motion"[^>]*>[\\s\\S]*?<img src="${poster.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
+
+  assert.match(enhancement, /from "\.\.\/components\/design-system\/language-options"/);
+  assert.match(enhancement, /import "\.\.\/components\/design-system\/language-picker"/);
+  assert.match(enhancement, /document\.createElement\("forma-ui-language-picker"\)/);
+  assert.match(enhancement, /languagePicker\.label\s*=\s*messages\.languageLabel/);
+  assert.match(html, /<details class="marketing-language__fallback">[\s\S]*?href="\/welcome\/ar"/);
+  assert.match(pickerStyles, /min-block-size:\s*var\(--forma-control-min-size,\s*2\.75rem\)/);
+
+  assert.match(styles, /--marketing-line-strong:\s*light-dark\(#8a8a84,\s*#777873\)/);
+  assert.match(styles, /--forma-color-border-strong:\s*var\(--marketing-line-strong\)/);
+  assert.match(styles, /\.marketing-navigation a\s*\{[^}]*min-inline-size:\s*2\.75rem[^}]*min-block-size:\s*2\.75rem/s);
+  assert.match(styles, /\.proof-artifact--image\s*>\s*figcaption\s*\{[^}]*inset-block-start:[^}]*inset-inline-start:[^}]*background:/s);
+  assert.match(styles, /\.proof-artifact--motion\s*>\s*span\s*\{[^}]*font-size:\s*\.75rem/s);
+  assert.match(styles, /env\(safe-area-inset-left,\s*0px\)/);
+  assert.match(styles, /env\(safe-area-inset-right,\s*0px\)/);
+  assert.match(styles, /env\(safe-area-inset-bottom,\s*0px\)/);
+  assert.match(styles, /@media \(min-width:\s*761px\) and \(max-height:\s*820px\)/);
+  assert.match(styles, /@media \(min-width:\s*761px\) and \(max-width:\s*960px\)/);
+  assert.match(styles, /@media \(max-width:\s*600px\)/);
+  assert.match(styles, /@media \(min-width:\s*560px\) and \(max-height:\s*480px\)/);
+  assert.match(styles, /\.output-gallery\s*\{[^}]*grid-auto-flow:\s*dense/s);
+  assert.match(styles, /\.marketing-formats\s*>\s*p\s*\{[^}]*min-inline-size:\s*0[^}]*max-inline-size:\s*100%[^}]*flex:\s*1\s+1\s+100%/s);
+  assert.match(styles, /\.context-demo__choices\s*\{[^}]*grid-auto-flow:\s*column[^}]*scroll-snap-type:\s*inline mandatory/s);
+  assert.match(styles, /\.proof-world__canvas\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s);
 });
 
 test("viewport looping and the centered control honor visitor intent, visibility, and reduced motion", async () => {
@@ -182,7 +224,7 @@ test("viewport looping and the centered control honor visitor intent, visibility
       preference.emit("change");
     };
 
-    const target = {};
+    const target = { classes: [], classList: { add(name) { target.classes.push(name); } } };
     const revealed = [];
     const section = { classList: { add(name) { revealed.push(name); } } };
     const video = events({
@@ -258,6 +300,7 @@ test("viewport looping and the centered control honor visitor intent, visibility
 
   normal.observer.intersect(normal.target, .2);
   assert.equal(normal.video.playCalls, 0, "A barely visible card must not start playback.");
+  assert.ok(normal.target.classes.includes("marketing-visible"), "The featured video itself receives its intended entrance choreography.");
   normal.observer.intersect(normal.target, .5);
   assert.equal(normal.video.playCalls, 1, "A meaningfully visible card starts playback.");
   assert.equal(normal.video.muted, true);
@@ -304,6 +347,20 @@ test("viewport looping and the centered control honor visitor intent, visibility
   assert.equal(reduced.video.playCalls, 0);
   reduced.toggle.emit("click");
   assert.equal(reduced.video.playCalls, 1, "Manual playback remains available with reduced motion.");
+
+  const preview = harness();
+  preview.observer.intersect(preview.target, .8);
+  assert.equal(preview.video.playCalls, 1);
+  preview.document.emit("forma-marketing-preview-open");
+  assert.equal(preview.video.pauseCalls, 1, "An open full-length preview pauses the underlying video.");
+  preview.observer.intersect(preview.target, .9);
+  assert.equal(preview.video.playCalls, 1, "Background playback stays paused while a preview is open.");
+  preview.document.emit("forma-marketing-preview-close");
+  assert.equal(preview.video.playCalls, 2, "A previously playing video resumes after its preview closes.");
+  preview.toggle.emit("click");
+  preview.document.emit("forma-marketing-preview-open");
+  preview.document.emit("forma-marketing-preview-close");
+  assert.equal(preview.video.playCalls, 2, "Closing a preview never overrides a visitor's explicit pause.");
 
   const unsupported = harness({ supported: false });
   assert.equal(unsupported.video.controls, false);
@@ -371,6 +428,598 @@ test("four creative decisions each inspect their own context-faithful image stud
   assert.match(styles, /@media \(prefers-reduced-motion: no-preference\)[\s\S]*?\.context-outcome__art \.coast-art__generated > img\s*\{\s*transition:/);
 });
 
+test("continuous ambient page motion is optional, localized, and completely pausable", async () => {
+  const enhancement = await source("src/marketing/main.ts");
+  const beginning = enhancement.indexOf('const ambientPreference = window.matchMedia("(prefers-reduced-motion: reduce)");');
+  const ending = enhancement.indexOf('const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");');
+  assert.ok(beginning >= 0 && ending > beginning, "Ambient motion should remain isolated from video playback.");
+  const behavior = stripTypeScriptTypes(enhancement.slice(beginning, ending));
+  const listeners = new Map();
+  const preference = { matches: false, addEventListener(type, listener) { listeners.set(`preference:${type}`, listener); } };
+  const attributes = new Map();
+  const toggle = { hidden: true, dataset: {}, setAttribute(name, value) { attributes.set(name, value); }, addEventListener(type, listener) { listeners.set(`toggle:${type}`, listener); } };
+  const document = { documentElement: { dataset: {} }, querySelector(selector) { return selector === "[data-marketing-motion-toggle]" ? toggle : null; }, addEventListener(type, listener) { listeners.set(`document:${type}`, listener); } };
+  const messages = { motionPauseLabel: "Pause page motion", motionResumeLabel: "Resume page motion" };
+  runInNewContext(behavior, { document, window: { matchMedia() { return preference; } }, messages });
+  assert.equal(document.documentElement.dataset.marketingMotion, "on");
+  assert.equal(toggle.hidden, false);
+  assert.equal(attributes.get("aria-label"), "Pause page motion");
+  listeners.get("toggle:click")();
+  assert.equal(document.documentElement.dataset.marketingMotion, "off");
+  assert.equal(attributes.get("aria-pressed"), "true");
+  assert.equal(attributes.get("aria-label"), "Resume page motion");
+  messages.motionResumeLabel = "Reprendre les animations de la page";
+  listeners.get("document:forma-locale-change")();
+  assert.equal(attributes.get("aria-label"), messages.motionResumeLabel);
+  preference.matches = true;
+  listeners.get("preference:change")();
+  assert.equal(toggle.hidden, true);
+  assert.equal(document.documentElement.dataset.marketingMotion, "off");
+});
+
+test("one authored coastal world is visually carried through a kinetic, truthful seven-format premiere", async () => {
+  const [html, enhancement, styles] = await Promise.all([
+    source("marketing.html"),
+    source("src/marketing/main.ts"),
+    source("src/marketing/marketing.css"),
+  ]);
+  assert.ok([...html.matchAll(/<img\b/g)].length >= 24, "The landing should demonstrate its creative world with actual reusable image assets.");
+  assert.match(html, /class="hero-artifact hero-artifact--landscape"/);
+  assert.match(html, /class="hero-artifact hero-artifact--detail"/);
+  assert.match(html, /class="hero-artifact hero-artifact--story"/);
+  assert.match(html, /class="marketing-section marketing-proof"/);
+  assert.equal([...html.matchAll(/class="proof-world__decision"/g)].length, 4, "Four concrete authored decisions must visibly govern the example.");
+  for (const format of ["image", "story", "scene", "slide", "frames", "motion"]) assert.match(html, new RegExp(`proof-artifact--${format}`), format);
+  assert.match(html, /href="#motion-study"/);
+  assert.match(html, /class="output-piece output-piece--video" id="motion-study"/);
+  assert.match(html, /<div class="output-gallery"[^>]*>\s*<article class="output-piece output-piece--video"/);
+  assert.match(html, /data-copy="proofVideoBadge">Video scene made in Forma/);
+  assert.match(html, /data-copy="proofImageBadge">Original generated image study/);
+  assert.equal([...html.matchAll(/class="output-frame"/g)].length, 3);
+  for (const frame of ["01", "02", "03"]) assert.match(html, new RegExp(`<span dir="ltr">${frame}</span>`));
+  assert.ok([...html.matchAll(/data-context-preview=/g)].length >= 4, "A chosen decision must affect multiple kinds of existing output.");
+  assert.ok([...html.matchAll(/data-context-carried/g)].length >= 2);
+  assert.match(enhancement, /carried\.dataset\.copy\s*=\s*focus\.value/);
+  assert.match(enhancement, /carried\.textContent\s*=\s*messages\[focus\.value\]/);
+  assert.match(html, /class="team-canvas__workflow"/);
+  assert.doesNotMatch(html, /She arrived|She had come|last ferry/i);
+  assert.match(styles, /\.output-gallery\s*\{[^}]*grid-template-columns:\s*repeat\(12,\s*minmax\(0,\s*1fr\)\)/s);
+  assert.match(styles, /\.output-piece--video\s*\{\s*grid-column:\s*span 7/);
+  assert.match(styles, /@keyframes marketing-scene-enter/);
+  assert.match(styles, /@keyframes marketing-piece-enter/);
+  assert.match(styles, /@keyframes marketing-drift/);
+  assert.match(styles, /html\[data-marketing-motion="on"\][^{]*\{[^}]*\binfinite\b/s);
+  assert.match(html, /data-marketing-motion-toggle hidden/);
+  assert.match(styles, /html\[dir="rtl"\]\s*\{\s*--marketing-flow:\s*-1/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?animation:\s*none\s*!important;\s*transition:\s*none\s*!important/);
+});
+
+test("original music is a truthful seventh private-by-default format without invented recording or playback", async () => {
+  const [html, styles, english] = await Promise.all([
+    source("marketing.html"),
+    source("src/marketing/marketing.css"),
+    import("../src/marketing/locales/en.ts").then((catalog) => catalog.default),
+  ]);
+  const formats = html.match(/<section class="marketing-formats"[\s\S]*?<\/section>/)?.[0] ?? "";
+  const cards = [...html.matchAll(/<article class="output-piece output-piece--([a-z]+)"/g)].map(([, format]) => format);
+  const audio = html.match(/<article class="output-piece output-piece--audio"[^>]*>([\s\S]*?)<\/article>/)?.[1] ?? "";
+
+  assert.equal([...formats.matchAll(/<li\b/g)].length, 7, "The public format rail must contain every supported output exactly once.");
+  for (const key of ["formatImage", "formatStory", "formatScene", "formatPresentation", "formatStoryboard", "formatVideo", "formatAudio"]) {
+    assert.match(formats, new RegExp(`data-copy="${key}"`), key);
+  }
+  assert.deepEqual(cards, ["video", "image", "storyboard", "story", "scene", "presentation", "audio"]);
+  for (const key of ["formatAudio", "audioDirectionLabel", "outputAudioTitle", "outputAudioDirection", "outputAudioDetail", "outputAudioDisclaimer"]) {
+    assert.match(audio, new RegExp(`data-copy="${key}"`), `The sound-direction example needs ${key}.`);
+  }
+  assert.match(audio, /Illustrative score direction · no audio is playing/);
+  assert.doesNotMatch(audio, /<(?:audio|button|input|progress|svg)\b|aria-(?:pressed|valuenow)|\b(?:autoplay|controls|waveform)\b|\b\d{1,2}:\d{2}\b|made in Forma/i,
+    "Without a real licensed recording, the example cannot invent audio, playback, progress, waveforms, or generation provenance.");
+  assert.doesNotMatch(html, /<audio\b/i, "A public audio player requires an authentic authorized audio file.");
+  assert.match(html, /<video\b[^>]*\bmuted\b[^>]*\bpreload="none"/);
+
+  assert.match(english.pageDescription, /private recordings[\s\S]*original music/i);
+  assert.match(english.heroIntroduction, /private recordings[\s\S]*original music/i);
+  assert.match(english.contextIntroduction, /private recording/i);
+  assert.match(english.processCollectBody, /upload owned or licensed recordings privately[\s\S]*listening notes/i);
+  assert.match(english.processCreateBody, /original music[\s\S]*generated tracks[\s\S]*private[\s\S]*separate soundtrack/i);
+  assert.match(english.previewSlideFiveBody, /direction for an original coastal score/i);
+  assert.doesNotMatch([english.exhibitTitle, english.galleryLabel, english.proofContextState].join(" "), /\bsix\b/i,
+    "Format headings and gallery labels cannot continue to describe six outputs.");
+  assert.match(english.audioPermissionsIntroduction, /independent[\s\S]*off by default/i);
+  assert.match(english.audioPermissionInformBody, /written listening notes[\s\S]*never receive the recording/i);
+  assert.match(english.audioPermissionIncludeBody, /video, storyboard, or presentation[\s\S]*separately[\s\S]*not embedded/i);
+  assert.match(english.audioPermissionTransferBody, /rights-cleared[\s\S]*independently authorize[\s\S]*explicitly select[\s\S]*interpret/i);
+  assert.match(english.audioPermissionsReset, /private reference[\s\S]*permissions start off again/i);
+  for (const key of ["audioPermissionInformTitle", "audioPermissionInformBody", "audioPermissionIncludeTitle", "audioPermissionIncludeBody", "audioPermissionTransferTitle", "audioPermissionTransferBody"]) {
+    assert.match(html, new RegExp(`data-copy="${key}"`), `The separate recording permission ${key} must be visible.`);
+  }
+
+  assert.match(styles, /\.output-piece--audio\s*\{\s*grid-column:\s*1\s*\/\s*-1/);
+  assert.match(styles, /\.output-audio\s*\{[^}]*min-block-size:[^}]*aspect-ratio:\s*auto/s);
+  assert.match(styles, /@media \(min-width:\s*761px\) and \(max-width:\s*1100px\)[\s\S]*?\.output-piece--audio\s*\{\s*grid-column:\s*1\s*\/\s*-1/s);
+  assert.match(styles, /@media \(max-width:\s*760px\)[\s\S]*?\.output-piece--audio\s*\{\s*grid-column:\s*auto/s);
+});
+
+test("four complete creative outputs reuse one accessible, localized public preview foundation", async () => {
+  const [html, enhancement, styles] = await Promise.all([
+    source("marketing.html"),
+    source("src/marketing/main.ts"),
+    source("src/marketing/marketing.css"),
+  ]);
+  const english = (await import("../src/marketing/locales/en.ts")).default;
+  const pages = { story: 3, scene: 2, presentation: 5, storyboard: 6 };
+
+  for (const [kind, count] of Object.entries(pages)) {
+    assert.match(html, new RegExp(`<details class="output-preview" data-output-preview="${kind}">`), `${kind} must work without JavaScript.`);
+    assert.match(html, new RegExp(`<summary[^>]+data-copy-aria="preview${kind[0].toUpperCase() + kind.slice(1)}Action"`), `${kind} needs a translated, accessible launch action.`);
+    assert.equal([...html.matchAll(new RegExp(`data-preview-page="${kind}"`, "g"))].length, count, `${kind} page count`);
+  }
+
+  const story = ["One", "Two", "Three", "Four", "Five", "Six"].map((ordinal) => english[`previewStoryParagraph${ordinal}`]).join(" ");
+  assert.ok(story.trim().split(/\s+/).length >= 350, "The short story must be a genuinely complete reading experience.");
+  for (const ordinal of ["One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight"]) {
+    assert.match(html, new RegExp(`data-copy="previewSceneBeat${ordinal}"`), `screenplay beat ${ordinal}`);
+  }
+  assert.deepEqual(new Set([...html.matchAll(/data-preview-family="([^"]+)"/g)].map(([, family]) => family)), new Set(["twilight", "landscape", "portrait", "detail"]));
+  assert.match(html, /Six editorial frames assembled from four existing image studies\. No new images were generated\./);
+  assert.equal([...html.matchAll(/<dialog class="marketing-preview-dialog"/g)].length, 1, "All four previews must share one native dialog.");
+  assert.match(html, /aria-labelledby="marketing-preview-title" closedby="any"/);
+  assert.match(html, /role="status" aria-live="polite" aria-atomic="true" data-preview-status/);
+
+  assert.match(enhancement, /import \{ ensureNativeModalDialog \} from "\.\.\/components\/design-system\/native-dialog"/);
+  assert.match(enhancement, /new Intl\.NumberFormat\(document\.documentElement\.lang, \{ useGrouping: false \}\)/);
+  assert.match(enhancement, /document\.documentElement\.dir === "rtl"/);
+  assert.match(enhancement, /\.replaceAll\("\{current\}", current\)\.replaceAll\("\{total\}", total\)/);
+  assert.match(enhancement, /this\.#details\.append\(this\.#panel\)/);
+  assert.match(enhancement, /for \(const page of this\.#pages\) page\.hidden = false/);
+  assert.match(enhancement, /dialog\.addEventListener\("close", \(\) => this\.#restore\(\)\)/);
+  assert.match(enhancement, /this\.#invoker\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.doesNotMatch(enhancement, /fetch\(|navigator\.sendBeacon|\/api\/media|\/api\/session/);
+
+  assert.match(styles, /\.hero-artifact > picture\s*\{[^}]*overflow:\s*clip[^}]*border-radius:\s*\.25rem/s);
+  assert.match(styles, /\.hero-artifact > picture > img\s*\{\s*border-radius:\s*inherit/);
+  assert.match(styles, /\[data-preview-page\]\[hidden\],[\s\S]*?display:\s*none\s*!important/);
+  assert.match(styles, /\.marketing-preview-dialog__close,[\s\S]*?min-inline-size:\s*2\.75rem;\s*min-block-size:\s*2\.75rem/);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*?\.marketing-preview-dialog\s*\{[^}]*block-size:\s*100dvh/);
+  assert.match(styles, /\.marketing-preview-dialog__header,\s*\.marketing-preview-dialog__body,\s*\.marketing-preview-dialog__footer\s*\{[^}]*padding-left:\s*max\([^}]*env\(safe-area-inset-left,\s*0px\)[^}]*padding-right:\s*max\([^}]*env\(safe-area-inset-right,\s*0px\)/s);
+});
+
+test("full public previews preserve native modal paging, locale changes, focus, and readable fallbacks", async () => {
+  const enhancement = await source("src/marketing/main.ts");
+  const first = enhancement.indexOf("class FormaOutputPreview {");
+  const last = enhancement.indexOf("\nvoid (async () =>", first);
+  assert.ok(first >= 0 && last > first, "The public preview controller must remain independently testable.");
+  const behavior = stripTypeScriptTypes(enhancement.slice(first, last)) + "\nglobalThis.Preview = FormaOutputPreview;";
+  const english = (await import("../src/marketing/locales/en.ts")).default;
+
+  class Element {
+    constructor(properties = {}) {
+      Object.assign(this, { dataset: {}, hidden: false, disabled: false, children: [], listeners: new Map(), attributes: new Map(), focused: 0, scrollTop: 72 }, properties);
+    }
+    addEventListener(type, listener) { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); }
+    setAttribute(name, value) { this.attributes.set(name, String(value)); }
+    removeAttribute(name) { this.attributes.delete(name); if (name === "open") this.open = false; }
+    querySelector(selector) { return this.lookup?.[selector] ?? null; }
+    querySelectorAll(selector) { return selector === "[data-preview-page]" ? this.pages ?? [] : []; }
+    replaceChildren(...children) {
+      this.children = children;
+      for (const child of children) {
+        if (child.parent) child.parent.children = child.parent.children.filter((sibling) => sibling !== child);
+        child.parent = this;
+      }
+    }
+    append(child) { this.children.push(child); child.parent = this; }
+    focus() { this.focused += 1; }
+    emit(type, properties = {}) {
+      const event = { type, target: this, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...properties };
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+      return event;
+    }
+  }
+
+  function harness({ fail = false, unsupported = false } = {}) {
+    const announced = [];
+    const rows = Object.entries({ story: 3, scene: 2, presentation: 5, storyboard: 6 }).map(([kind, count]) => {
+      const summary = new Element();
+      const panel = new Element({ dataset: { previewPanel: kind }, pages: Array.from({ length: count }, () => new Element()) });
+      const details = new Element({ dataset: { outputPreview: kind }, open: false, children: [summary, panel] });
+      summary.parent = details;
+      panel.parent = details;
+      details.querySelector = (selector) => selector === "summary" ? summary : selector === "[data-preview-panel]" && panel.parent === details ? panel : null;
+      return { kind, summary, panel, details };
+    });
+    const host = new Element();
+    const heading = new Element();
+    const close = new Element();
+    const previous = new Element();
+    const next = new Element();
+    const status = new Element();
+    const navigation = new Element();
+    const dialog = new Element({
+      id: "marketing-preview",
+      open: false,
+      lookup: {
+        "[data-preview-host]": host,
+        "#marketing-preview-title": heading,
+        "[data-preview-close]": close,
+        "[data-preview-previous]": previous,
+        "[data-preview-next]": next,
+        "[data-preview-status]": status,
+        "[data-preview-navigation]": navigation,
+      },
+    });
+    if (!unsupported) dialog.showModal = () => { dialog.open = true; };
+    dialog.close = () => { dialog.open = false; dialog.emit("close"); };
+    const document = new Element({ documentElement: { lang: "en", dir: "ltr", dataset: {} } });
+    document.querySelectorAll = (selector) => selector === "[data-output-preview]" ? rows.map((row) => row.details) : [];
+    document.dispatchEvent = (event) => { announced.push(event.type); document.emit(event.type, { detail: event.detail }); };
+    const messages = { ...english };
+    const context = {
+      document,
+      messages,
+      Intl,
+      CustomEvent,
+      ensureNativeModalDialog(element) {
+        if (fail) { element.open = true; return false; }
+        element.showModal();
+        return true;
+      },
+    };
+    runInNewContext(behavior, context);
+    new context.Preview(dialog);
+    return { rows, host, close, previous, next, status, dialog, document, messages, announced };
+  }
+
+  const active = harness();
+  const storyboard = active.rows.find(({ kind }) => kind === "storyboard");
+  assert.equal(storyboard.summary.attributes.get("aria-haspopup"), "dialog");
+  assert.equal(storyboard.summary.emit("click").defaultPrevented, true);
+  assert.equal(active.dialog.open, true);
+  assert.equal(active.document.documentElement.dataset.marketingPreview, "open");
+  assert.equal(storyboard.panel.parent, active.host);
+  assert.equal(storyboard.panel.pages.filter((page) => !page.hidden).length, 1);
+  assert.equal(active.previous.disabled, true);
+  assert.match(active.status.textContent, /Frame \u20681\u2069 of \u20686\u2069/);
+  assert.equal(active.close.focused, 1);
+
+  active.next.emit("click");
+  assert.match(active.status.textContent, /\u20682\u2069/);
+  active.dialog.emit("keydown", { key: "End" });
+  assert.equal(active.next.disabled, true);
+  active.document.documentElement.dir = "rtl";
+  active.dialog.emit("keydown", { key: "ArrowRight" });
+  assert.match(active.status.textContent, /\u20685\u2069/, "Arabic directional navigation must reverse correctly.");
+  active.messages.previewFrameStatus = "合計{total}、現在{current}";
+  active.document.documentElement.lang = "ja";
+  active.document.emit("forma-locale-change");
+  assert.match(active.status.textContent, /合計\u20686\u2069、現在\u20685\u2069/, "Translated placeholder order must remain authoritative.");
+
+  active.dialog.close();
+  assert.equal(storyboard.panel.parent, storyboard.details);
+  assert.ok(storyboard.panel.pages.every((page) => !page.hidden));
+  assert.equal(storyboard.summary.focused, 1);
+  assert.equal(active.document.documentElement.dataset.marketingPreview, undefined);
+  assert.deepEqual(active.announced, ["forma-marketing-preview-open", "forma-marketing-preview-close"]);
+
+  const broken = harness({ fail: true });
+  const fallback = broken.rows[0];
+  fallback.summary.emit("click");
+  assert.equal(broken.dialog.open, false);
+  assert.equal(fallback.details.open, true, "A failed top-layer transition must leave the native disclosure readable.");
+  assert.equal(fallback.panel.parent, fallback.details);
+  assert.ok(fallback.panel.pages.every((page) => !page.hidden));
+  assert.equal(broken.announced.length, 0);
+
+  const unsupported = harness({ unsupported: true });
+  assert.equal(unsupported.rows[0].summary.attributes.has("aria-haspopup"), false, "Legacy browsers retain an honest native disclosure.");
+});
+
+test("campaign photographs share an accessible, localized, high-resolution section-scoped fullscreen viewer", async () => {
+  const [html, enhancement, styles] = await Promise.all([
+    source("marketing.html"),
+    source("src/marketing/main.ts"),
+    source("src/marketing/marketing.css"),
+  ]);
+  assert.equal([...html.matchAll(/<dialog class="marketing-image-dialog"/g)].length, 1, "All landing-page studies must share one native image viewer.");
+  assert.match(html, /id="marketing-image" aria-labelledby="marketing-image-title" closedby="any" data-marketing-image-dialog/);
+  assert.match(html, /data-copy="imageViewerTitle">Image preview/);
+  assert.match(html, /data-copy-aria="imageViewerPrevious" data-image-viewer-previous/);
+  assert.match(html, /data-copy-aria="imageViewerNext" data-image-viewer-next/);
+  assert.match(html, /role="status" aria-live="polite" aria-atomic="true" data-image-viewer-status/);
+  assert.match(html, /<div class="marketing-image-dialog__media" data-image-viewer-media><\/div>/);
+  assert.doesNotMatch(html, /\{label\}|\{current\}|\{total\}/, "Public SSR must never expose unfilled localization placeholders.");
+
+  assert.match(enhancement, /class FormaImageViewer/);
+  assert.match(enhancement, /document\.querySelectorAll<HTMLPictureElement>\("main picture"\)/);
+  assert.match(enhancement, /picture\.closest\("\.output-motion--playable, a"\)/);
+  assert.match(enhancement, /picture\.setAttribute\("role", "button"\)/);
+  assert.match(enhancement, /picture\.tabIndex = 0/);
+  assert.match(enhancement, /ancestor\.getAttribute\("aria-hidden"\) === "true"\) ancestor\.removeAttribute\("aria-hidden"\)/);
+  assert.match(enhancement, /picture\.closest<HTMLElement>\("\[data-preview-panel\]"\)/);
+  assert.match(enhancement, /picture\.closest<HTMLElement>\("main > section"\)/);
+  assert.match(enhancement, /candidate\.closest\("\[data-preview-panel\]"\) \|\| candidate\.closest\("details:not\(\[open\]\)"\)/);
+  assert.match(enhancement, /new Map<CreativeStudyFamily, HTMLPictureElement>\(\)/);
+  assert.match(enhancement, /candidate === picture\) unique\.set\(family, candidate\)/);
+  assert.match(enhancement, /picture\.removeAttribute\("class"\)/);
+  assert.match(enhancement, /source\.setAttribute\("sizes", "100vw"\)/);
+  assert.match(enhancement, /image\.alt = `\$\{messages\.projectName\} — \$\{label\}`/);
+  assert.match(enhancement, /this\.#ownsPlaybackPause = !document\.querySelector<HTMLDialogElement>\("\[data-marketing-preview-dialog\]"\)\?\.open/);
+  assert.match(enhancement, /document\.documentElement\.dataset\.marketingLightbox = "open"/);
+  assert.match(enhancement, /messages\.imageViewerOpen\.replaceAll\("\{label\}", label\)/);
+  assert.match(enhancement, /messages\.imageViewerStatus\.replaceAll\("\{current\}", current\)\.replaceAll\("\{total\}", total\)/);
+  assert.doesNotMatch(enhancement, /fetch\(|navigator\.sendBeacon|\/api\/media|\/api\/session/);
+
+  assert.match(styles, /\.marketing-image-dialog\s*\{[^}]*inline-size:\s*100vw[^}]*block-size:\s*100dvh/s);
+  assert.match(styles, /\.marketing-image-dialog__media > picture > img\s*\{[^}]*object-fit:\s*contain/s);
+  assert.match(styles, /\.marketing-image-dialog__media > picture\s*\{[^}]*display:\s*block[^}]*block-size:\s*100%/s);
+  assert.match(styles, /\.marketing-image-dialog__close,\s*\.marketing-image-dialog__step\s*\{[^}]*min-inline-size:\s*2\.75rem[^}]*min-block-size:\s*2\.75rem/s);
+  assert.match(styles, /\.marketing-image-dialog__header\s*\{[^}]*env\(safe-area-inset-top,[^}]*env\(safe-area-inset-left,[^}]*env\(safe-area-inset-right,/s);
+  assert.match(styles, /\.marketing-image-dialog__footer\s*\{[^}]*env\(safe-area-inset-bottom,[^}]*env\(safe-area-inset-left,[^}]*env\(safe-area-inset-right,/s);
+  assert.match(styles, /@media \(max-width: 600px\)[\s\S]*?\.proof-artifact--frames\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s);
+  assert.match(styles, /@media \(max-height: 480px\)[\s\S]*?\.marketing-image-dialog__header\s*\{[^}]*min-block-size:\s*3\.25rem/s);
+
+  const english = (await import("../src/marketing/locales/en.ts")).default;
+  for (const locale of ["en", "fr", "ar", "ja"]) {
+    const catalog = (await import(`../src/marketing/locales/${locale}.ts`)).default;
+    for (const key of ["imageViewerOpen", "imageViewerTitle", "imageViewerPrevious", "imageViewerNext", "imageViewerStatus"]) {
+      assert.ok(catalog[key]?.trim(), `${locale}.${key} must be fully localized.`);
+      if (locale !== "en") assert.notEqual(catalog[key], english[key], `${locale}.${key} must not silently fall back to English.`);
+    }
+    assert.match(catalog.imageViewerOpen, /\{label\}/, `${locale} image action must describe its actual study.`);
+    assert.match(catalog.imageViewerStatus, /\{current\}/, `${locale} image count needs the current position.`);
+    assert.match(catalog.imageViewerStatus, /\{total\}/, `${locale} image count needs the section total.`);
+  }
+  const japanese = (await import("../src/marketing/locales/ja.ts")).default;
+  assert.ok(japanese.imageViewerStatus.indexOf("{total}") < japanese.imageViewerStatus.indexOf("{current}"));
+});
+
+test("fullscreen campaign image galleries preserve section scope, high-resolution sources, nested dialogs, and visitor intent", async () => {
+  const enhancement = await source("src/marketing/main.ts");
+  const first = enhancement.indexOf("class FormaImageViewer {");
+  const last = enhancement.indexOf("\nvoid (async () =>", first);
+  assert.ok(first >= 0 && last > first);
+  const behavior = stripTypeScriptTypes(enhancement.slice(first, last)) + "\nglobalThis.Viewer = FormaImageViewer;";
+  const english = (await import("../src/marketing/locales/en.ts")).default;
+
+  class Element {
+    constructor(properties = {}) { Object.assign(this, { dataset: {}, attributes: new Map(), listeners: new Map(), children: [], hidden: false, disabled: false, focused: 0, textContent: "", parentElement: null }, properties); }
+    addEventListener(type, listener) { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); }
+    emit(type, properties = {}) { const event = { type, target: this, key: "", defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...properties }; for (const listener of this.listeners.get(type) ?? []) listener(event); return event; }
+    setAttribute(name, value) { this.attributes.set(name, String(value)); }
+    getAttribute(name) { return this.attributes.get(name) ?? null; }
+    hasAttribute(name) { return this.attributes.has(name); }
+    removeAttribute(name) { this.attributes.delete(name); if (name === "open") this.open = false; }
+    matches(selector) { return selector === "main > section, [data-preview-panel]" && (this.isSection || this.isPanel); }
+    querySelector(selector) { return this.lookup?.[selector] ?? null; }
+    querySelectorAll() { return []; }
+    replaceChildren(...children) { this.children = children; for (const child of children) child.parentElement = this; }
+    focus() { this.focused += 1; }
+  }
+
+  class Source extends Element {
+    constructor(type, candidates) { super(); this.setAttribute("type", type); this.setAttribute("srcset", candidates); }
+    cloneNode() { return new Source(this.getAttribute("type"), this.getAttribute("srcset")); }
+  }
+
+  class Picture extends Element {
+    constructor({ family, width = 480, rich = false, section, panel, heading, excluded = false, hidden = false, visible = true }) {
+      super({ family, section, panel, excluded, visible });
+      this.setAttribute("class", "stale-absolute-layout");
+      this.setAttribute("style", "position:absolute");
+      this.image = new Element();
+      this.image.setAttribute("src", `/assets/marketing/quiet-coast-${family}-480.hash.webp`);
+      this.image.setAttribute("width", String(width));
+      this.image.setAttribute("height", "800");
+      const candidates = rich
+        ? `/assets/marketing/quiet-coast-${family}-480.hash.FORMAT 480w, /assets/marketing/quiet-coast-${family}-${width}.hash.FORMAT ${width}w`
+        : `/assets/marketing/quiet-coast-${family}-480.hash.FORMAT 480w`;
+      this.sources = [new Source("image/avif", candidates.replaceAll("FORMAT", "avif")), new Source("image/webp", candidates.replaceAll("FORMAT", "webp"))];
+      this.frame = heading ? new Element({ lookup: {
+        "figcaption h3, .preview-slide__content h3": new Element({ textContent: heading }),
+        "figcaption [data-copy], figcaption": new Element({ textContent: heading }),
+      } }) : null;
+      this.parentElement = hidden ? new Element({ parentElement: panel ?? section }) : panel ?? section;
+      if (hidden) this.parentElement.setAttribute("aria-hidden", "true");
+      section?.pictures.push(this);
+      panel?.pictures.push(this);
+    }
+    querySelector(selector) {
+      if (selector === "img") return this.image;
+      if (selector.startsWith("source[")) return this.sources.find((source) => source.getAttribute("type") === "image/webp") ?? null;
+      return null;
+    }
+    querySelectorAll(selector) { return selector === "source" ? this.sources : []; }
+    closest(selector) {
+      if (selector === ".output-motion--playable, a") return this.excluded ? new Element() : null;
+      if (selector === "[data-preview-panel]") return this.panel ?? null;
+      if (selector === "main > section") return this.section ?? null;
+      if (selector === "details:not([open])") return this.panel && !this.panel.active ? new Element() : null;
+      if (selector === ".preview-frame, .preview-slide" || selector === ".output-frame, .proof-artifact--twilight") return this.frame;
+      if (selector === ".marketing-context") return this.section?.isContext ? this.section : null;
+      return null;
+    }
+    getBoundingClientRect() { return this.visible ? { width: 80, height: 72 } : { width: 0, height: 0 }; }
+    cloneNode() {
+      const clone = new Picture({ family: this.family, width: Number(this.image.getAttribute("width")) });
+      clone.attributes = new Map(this.attributes);
+      clone.image = new Element();
+      clone.image.attributes = new Map(this.image.attributes);
+      clone.sources = this.sources.map((source) => source.cloneNode());
+      clone.parentElement = null;
+      return clone;
+    }
+  }
+
+  function scope(name, { panel = false, context = false } = {}) {
+    const element = new Element({
+      isSection: !panel,
+      isPanel: panel,
+      isContext: context,
+      pictures: [],
+      dataset: panel ? { previewPanel: name } : {},
+      heading: new Element({ textContent: name }),
+      focus: new Element({ textContent: "Original mood" }),
+    });
+    element.querySelectorAll = (selector) => selector === "picture[data-marketing-image-trigger]" ? element.pictures.filter((picture) => picture.dataset.marketingImageTrigger === "true") : [];
+    element.querySelector = (selector) => selector === "h1, h2" ? element.heading : selector === "[data-context-focus-value]" ? element.focus : null;
+    return element;
+  }
+
+  function harness({ previewOpen = false, fail = false, unsupported = false } = {}) {
+    const proof = scope("One direction");
+    const context = scope("Whole idea", { context: true });
+    const panel = scope("storyboard", { panel: true });
+    const presentation = scope("presentation", { panel: true });
+    const poor = new Picture({ family: "landscape", section: proof, hidden: true });
+    const rich = new Picture({ family: "landscape", width: 1200, rich: true, section: proof, heading: "Better landscape" });
+    const twilight = new Picture({ family: "twilight", width: 1200, rich: true, section: proof });
+    const excluded = new Picture({ family: "detail", section: proof, excluded: true });
+    const target = new Picture({ family: "landscape", section: context });
+    target.setAttribute("data-context-study-target", "");
+    const strip = new Picture({ family: "portrait", width: 1024, rich: true, section: context });
+    const six = ["twilight", "landscape", "portrait", "detail", "portrait", "landscape"].map((family, index) => new Picture({ family, width: family === "detail" ? 768 : family === "portrait" ? 1024 : 1200, rich: true, section: proof, panel, heading: `Shot ${index + 1}` }));
+    const five = ["landscape", "twilight", "portrait", "detail", "landscape"].map((family, index) => new Picture({ family, width: family === "detail" ? 768 : family === "portrait" ? 1024 : 1200, rich: true, section: proof, panel: presentation, heading: `Slide ${index + 1}` }));
+    const media = new Element();
+    const caption = new Element();
+    const section = new Element();
+    const close = new Element();
+    const previous = new Element();
+    const next = new Element();
+    const status = new Element();
+    const dialog = new Element({ id: "marketing-image", open: false, lookup: {
+      "[data-image-viewer-media]": media,
+      "[data-image-viewer-caption]": caption,
+      "[data-image-viewer-section]": section,
+      "[data-image-viewer-close]": close,
+      "[data-image-viewer-previous]": previous,
+      "[data-image-viewer-next]": next,
+      "[data-image-viewer-status]": status,
+    } });
+    if (!unsupported) dialog.showModal = () => { dialog.open = true; };
+    dialog.close = () => { dialog.open = false; dialog.emit("close"); };
+    const choice = new Element();
+    const announced = [];
+    const preview = new Element({ open: previewOpen });
+    const pictures = [poor, rich, twilight, excluded, target, strip, ...six, ...five];
+    const document = new Element({ documentElement: { lang: "en", dir: "ltr", dataset: previewOpen ? { marketingPreview: "open" } : {} } });
+    document.querySelectorAll = (selector) => selector === "main picture" ? pictures : selector === "[data-context]" ? [choice] : [];
+    document.querySelector = (selector) => selector === "[data-marketing-preview-dialog]" ? preview : null;
+    document.dispatchEvent = (event) => { announced.push(event.type); document.emit(event.type); };
+    const messages = { ...english };
+    const contextVm = { document, messages, Intl, CustomEvent, ensureNativeModalDialog(element) {
+      if (fail) { element.open = true; return false; }
+      element.showModal();
+      return true;
+    } };
+    runInNewContext(behavior, contextVm);
+    new contextVm.Viewer(dialog);
+    return { proof, context, panel, presentation, poor, rich, twilight, excluded, target, strip, six, five, media, caption, section, close, previous, next, status, dialog, choice, announced, preview, document, messages };
+  }
+
+  const active = harness();
+  assert.equal(active.poor.parentElement.getAttribute("aria-hidden"), null, "Focusable studies cannot remain inside an aria-hidden ancestor.");
+  assert.equal(active.poor.getAttribute("role"), "button");
+  assert.equal(active.excluded.dataset.marketingImageTrigger, undefined, "Existing video links and playback controls remain authoritative.");
+  active.rich.emit("click");
+  assert.equal(active.dialog.open, true);
+  assert.equal(active.document.documentElement.dataset.marketingLightbox, "open");
+  assert.match(active.status.textContent, /Image \u20681\u2069 of \u20682\u2069/, "Section families deduplicate while keeping the clicked representative.");
+  assert.deepEqual(active.announced, ["forma-marketing-preview-open"]);
+  assert.equal(active.media.children[0].getAttribute("class"), null, "Absolute campaign layout classes must not enter the viewer.");
+  assert.equal(active.media.children[0].getAttribute("style"), null);
+  assert.ok(active.media.children[0].sources.every((source) => source.getAttribute("sizes") === "100vw"));
+  assert.match(active.media.children[0].image.src, /landscape-1200/, "A low-resolution thumbnail must resolve its highest authorized original.");
+  assert.equal(active.media.children[0].image.loading, "eager");
+  assert.equal(active.close.focused, 1);
+  assert.equal(active.previous.disabled, false, "Multi-image galleries can always move backward.");
+  assert.equal(active.next.disabled, false, "Multi-image galleries can always move forward.");
+  active.previous.emit("click");
+  assert.match(active.status.textContent, /Image \u20682\u2069 of \u20682\u2069/, "The previous control wraps from the first image to the last.");
+  active.next.emit("click");
+  assert.match(active.status.textContent, /Image \u20681\u2069 of \u20682\u2069/, "The next control wraps from the last image to the first.");
+  active.dialog.emit("keydown", { key: "ArrowLeft" });
+  assert.match(active.status.textContent, /Image \u20682\u2069 of \u20682\u2069/, "The left arrow wraps backward within its own section.");
+  active.dialog.emit("keydown", { key: "ArrowRight" });
+  assert.match(active.status.textContent, /Image \u20681\u2069 of \u20682\u2069/, "The right arrow wraps forward within its own section.");
+  active.dialog.emit("keydown", { key: "End" });
+  assert.match(active.status.textContent, /Image \u20682\u2069 of \u20682\u2069/, "End remains an absolute jump to the last image.");
+  assert.equal(active.next.disabled, false, "The final image retains its forward control for wrapping.");
+  active.dialog.emit("keydown", { key: "PageDown" });
+  assert.match(active.status.textContent, /Image \u20681\u2069 of \u20682\u2069/, "PageDown also wraps forward.");
+  active.dialog.emit("keydown", { key: "PageUp" });
+  assert.match(active.status.textContent, /Image \u20682\u2069 of \u20682\u2069/, "PageUp also wraps backward.");
+  active.dialog.emit("keydown", { key: "Home" });
+  assert.match(active.status.textContent, /Image \u20681\u2069 of \u20682\u2069/, "Home remains an absolute jump to the first image.");
+  active.document.documentElement.dir = "rtl";
+  active.dialog.emit("keydown", { key: "ArrowRight" });
+  assert.match(active.status.textContent, /Image \u20682\u2069 of \u20682\u2069/, "RTL right-arrow navigation wraps backward without reversing authored order.");
+  active.dialog.emit("keydown", { key: "ArrowLeft" });
+  assert.match(active.status.textContent, /Image \u20681\u2069 of \u20682\u2069/, "RTL left-arrow navigation wraps forward without reversing authored order.");
+  assert.equal(active.previous.disabled, false);
+  active.messages.imageViewerStatus = "合計{total}、現在{current}";
+  active.document.documentElement.lang = "ja";
+  active.document.emit("forma-locale-change");
+  assert.match(active.status.textContent, /合計\u20682\u2069、現在\u20681\u2069/);
+  active.dialog.close();
+  assert.deepEqual(active.announced, ["forma-marketing-preview-open", "forma-marketing-preview-close"]);
+  assert.equal(active.rich.focused, 1);
+  assert.equal(active.document.documentElement.dataset.marketingLightbox, undefined);
+
+  const nested = harness({ previewOpen: true });
+  nested.panel.active = true;
+  nested.six[3].emit("click");
+  assert.match(nested.status.textContent, /Image \u20684\u2069 of \u20686\u2069/, "Six intentional editorial storyboard frames remain distinct.");
+  assert.equal(nested.announced.length, 0, "A nested viewer cannot resume or re-pause video owned by its parent modal.");
+  assert.equal(nested.section.textContent, "Storyboard");
+  nested.dialog.emit("keydown", { key: "End" });
+  nested.dialog.emit("keydown", { key: "ArrowRight" });
+  assert.match(nested.status.textContent, /Image \u20681\u2069 of \u20686\u2069/, "Storyboard image galleries wrap without entering another section.");
+  nested.dialog.emit("keydown", { key: "ArrowLeft" });
+  assert.match(nested.status.textContent, /Image \u20686\u2069 of \u20686\u2069/, "Storyboard image galleries wrap backward without entering another section.");
+  assert.equal(nested.section.textContent, "Storyboard");
+  nested.dialog.close();
+  assert.equal(nested.document.documentElement.dataset.marketingPreview, "open", "The original output reader remains open and scroll-locked.");
+  assert.equal(nested.six[3].focused, 1);
+  nested.presentation.active = true;
+  nested.five[4].emit("click");
+  assert.match(nested.status.textContent, /Image \u20685\u2069 of \u20685\u2069/, "All five presentation slides remain in their own group.");
+  nested.next.emit("click");
+  assert.match(nested.status.textContent, /Image \u20681\u2069 of \u20685\u2069/, "Presentation image galleries wrap forward without entering the storyboard.");
+  nested.previous.emit("click");
+  assert.match(nested.status.textContent, /Image \u20685\u2069 of \u20685\u2069/, "Presentation image galleries wrap backward without entering the storyboard.");
+  assert.equal(nested.section.textContent, "Presentation");
+  nested.dialog.close();
+
+  const singleton = harness();
+  singleton.proof.pictures = [singleton.rich];
+  singleton.rich.emit("click");
+  assert.equal(singleton.previous.hidden, true, "A single-image section never presents redundant gallery controls.");
+  assert.equal(singleton.previous.disabled, true);
+  assert.equal(singleton.next.hidden, true);
+  assert.equal(singleton.next.disabled, true);
+  singleton.dialog.emit("keydown", { key: "ArrowRight" });
+  assert.match(singleton.status.textContent, /Image \u20681\u2069 of \u20681\u2069/, "Single-image keyboard navigation remains stable.");
+  singleton.dialog.close();
+
+  const changing = harness();
+  changing.target.image.setAttribute("src", "/assets/marketing/quiet-coast-twilight-768.hash.webp");
+  changing.context.focus.textContent = "After sunset";
+  changing.choice.emit("click");
+  assert.match(changing.target.getAttribute("aria-label"), /After sunset/, "Labels track the currently selected, translated creative context.");
+  changing.target.emit("keydown", { key: "Enter" });
+  assert.match(changing.media.children[0].image.src, /twilight-1200/, "Context changes resolve the newly selected study, not a stale startup thumbnail.");
+  changing.dialog.close();
+
+  const broken = harness({ fail: true });
+  broken.poor.emit("click");
+  assert.equal(broken.dialog.open, false);
+  assert.equal(broken.media.children.length, 0);
+  assert.equal(broken.announced.length, 0);
+  const unsupported = harness({ unsupported: true });
+  assert.equal(unsupported.poor.dataset.marketingImageTrigger, undefined, "Browsers without a modal top layer retain the unmodified inline artwork.");
+});
+
 test("public marketing requests bypass accounts, databases, and application bootstrap", async () => {
   const worker = (await import("../dist/server/index.js")).default;
   const accesses = [];
@@ -429,9 +1078,9 @@ test("Arabic and Japanese marketing typography preserves canonical script leadin
   for (const locale of ["ar", "ja"]) {
     for (const selector of [
       ".marketing-hero h1", ".marketing-section__heading h2", ".marketing-finale h2",
-      ".context-demo__project h3", ".output-piece__caption h3", ".output-slide > strong",
+      ".context-demo__project h3", ".output-piece__caption h3", ".output-slide > strong", ".output-audio > strong",
       ".process-list h3", ".team-principles h3", ".output-paper > p", ".output-piece__caption p",
-      ".context-demo__disclaimer", ".marketing-trust__disclosure", ".team-principles p",
+      ".output-audio > p", ".context-demo__disclaimer", ".marketing-trust__disclosure", ".team-principles p",
     ]) {
       assert.ok(styles.includes(`html:lang(${locale}) ${selector}`), `${locale} must cover ${selector}`);
     }
@@ -463,7 +1112,7 @@ test("all four marketing catalogs completely translate markup, metadata, decisio
   const required = [
     ...markup,
     "pageTitle", "pageDescription", "socialTitle", "socialDescription",
-    "languageLabel", "languageChangeError", "languageChanged", "videoPlayLabel", "videoPauseLabel",
+    "languageLabel", "languageChangeError", "languageChanged", "videoPlayLabel", "videoPauseLabel", "motionPauseLabel", "motionResumeLabel",
     ...["Mood", "Audience", "Boundary", "Source"].flatMap((decision) => [
       `demoImage${decision}`, `demoStory${decision}`, `demoAnnouncement${decision}`,
     ]),
@@ -525,7 +1174,7 @@ test("localized marketing routes are translated before JavaScript and never touc
     assert.ok(body.includes(`property="og:title" content="${escape(catalog.socialTitle)}"`), `${locale} localized Open Graph title`);
     assert.ok(body.includes(`name="twitter:description" content="${escape(catalog.socialDescription)}"`), `${locale} localized X description`);
     assert.ok(body.includes(`rel="canonical" href="/welcome/${locale}"`), `${locale} canonical route`);
-    for (const key of ["heroTitle", "openForma", "demoDisclaimer", "demoStudyEyebrow", "demoHelper", "trustDisclosure", "demoImageMood", "demoStoryMood"]) {
+    for (const key of ["heroTitle", "heroIntroduction", "contextIntroduction", "processCollectBody", "processCreateBody", "trustIntroduction", "formatAudio", "openForma", "demoDisclaimer", "demoStudyEyebrow", "demoHelper", "trustDisclosure", "demoImageMood", "demoStoryMood", "imageViewerTitle", "imageViewerPrevious", "imageViewerNext", ...Object.keys(catalog).filter((candidate) => candidate.startsWith("audio") || candidate.startsWith("outputAudio")), ...Object.keys(catalog).filter((candidate) => candidate.startsWith("proof")), ...Object.keys(catalog).filter((candidate) => candidate.startsWith("preview") && !candidate.endsWith("Status"))]) {
       assert.ok(body.includes(escape(catalog[key])), `${locale} server-rendered ${key}`);
     }
     assert.ok(body.includes(`aria-label="${escape(catalog.navigationLabel)}"`), `${locale} localized accessible navigation`);
@@ -574,6 +1223,20 @@ test("production marketing assets stay isolated from authenticated application e
   assert.ok(scriptGzip < 35_000, `Marketing JavaScript is ${scriptGzip} bytes gzip.`);
   assert.doesNotMatch(script, /FormaStore|api\/session|protected-assets/);
 
+  const publicImports = new Set();
+  const inspectImport = async (key) => {
+    if (publicImports.has(key)) return;
+    publicImports.add(key);
+    const imported = manifest[key];
+    assert.ok(imported?.file, `Marketing dependency ${key} must exist in the public build manifest.`);
+    assert.match(imported.file, /^assets\//, `${key} must never enter a protected application route.`);
+    const contents = await source(`dist/client/${imported.file}`);
+    assert.doesNotMatch(contents, /FormaStore|api\/session|protected-assets/, `${key} must stay independent of private state.`);
+    await Promise.all((imported.imports ?? []).map(inspectImport));
+  };
+  await Promise.all((entry.imports ?? []).map(inspectImport));
+  assert.ok([...publicImports].some((key) => key.includes("language-picker")), "The same tiny design-system picker must power the public build.");
+
   const styles = entry.css ?? [];
   assert.ok(styles.length, "The marketing route must own its production stylesheet.");
   for (const stylesheet of styles) {
@@ -595,7 +1258,7 @@ test("production marketing assets stay isolated from authenticated application e
   const video = publicHtml.match(/\/assets\/marketing\/quiet-coast-scene-4s\.([a-f0-9]{12})\.mp4/);
   const poster = publicHtml.match(/\/assets\/marketing\/quiet-coast-scene-poster-960\.([a-f0-9]{12})\.jpg/);
   assert.ok(video, "Production marketing must include the genuine Forma-generated video.");
-  assert.ok(poster, "Production marketing must include the genuine first-frame poster.");
+  assert.ok(poster, "Production marketing must include the genuine cottage-frame video poster.");
   assert.match(publicHtml, /\bdata-marketing-video-toggle\b/);
   for (const [asset, budget] of [[video, 350_000], [poster, 30_000]]) {
     const bytes = await readFile(new URL("../dist/client" + asset[0], import.meta.url));

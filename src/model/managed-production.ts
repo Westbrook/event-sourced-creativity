@@ -8,6 +8,21 @@ import { VIDEO_ADAPTER_CONTRACT, type VideoDurationSeconds } from "./video-adapt
 export type ProductionMode = "manual" | "managed";
 export type ProductionFormat = DocumentArtifactKind | "image";
 
+export type ArtifactProductionSelection = {
+  kind: DocumentArtifactKind;
+  mode: ProductionMode;
+  storyboardManagedDefault: boolean;
+  storyboardManualOptOut: boolean;
+};
+
+/** Automatically improve storyboard continuity without changing another format's paid behavior. */
+export function selectArtifactProductionKind(selection: ArtifactProductionSelection, kind: DocumentArtifactKind): ArtifactProductionSelection {
+  if (selection.kind === kind) return selection;
+  const mode = selection.kind === "storyboard" && selection.storyboardManagedDefault ? "manual" : selection.mode;
+  const storyboardManagedDefault = kind === "storyboard" && mode === "manual" && !selection.storyboardManualOptOut;
+  return { kind, mode: storyboardManagedDefault ? "managed" : mode, storyboardManagedDefault, storyboardManualOptOut: selection.storyboardManualOptOut };
+}
+
 export type ProductionSpecialist = {
   id: string;
   label: string;
@@ -726,11 +741,14 @@ export function productionSceneSnapshot(snapshot: Record<string, unknown>, scene
     const structuredItems = Array.isArray(asRecord(properties.artifact_structure).items) ? asRecord(properties.artifact_structure).items as unknown[] : [];
     if (structuredItems.length && scene.sourceArtifactItemIds?.length && !structuredItems.some((item) => scene.sourceArtifactItemIds!.includes(clean(asRecord(item).source_artifact_item_id ?? asRecord(item).id)))) return false;
     if (memberships.length && !memberships.some((membership) => groups.has(membership.contextSetId))) return false;
-    if (ids.has(blockId) || requiredIds.has(blockId)) return true;
-    if (Number(properties.storyboard_frame_index ?? properties.storyboard_sequence ?? 0) > 0) return false;
     const type = clean(fact.type || fact.role);
+    if (ids.has(blockId)) return true;
+    const narrativeBeat = type === "message" && /^narrative[\s_-]+beat$/i.test(clean(properties.subtype));
+    if (narrativeBeat || Number(properties.storyboard_frame_index ?? properties.storyboard_sequence ?? properties.video_scene_index ?? properties.narrative_order ?? 0) > 0) return false;
+    if (requiredIds.has(blockId)) return true;
     const negative = isNegativeProductionFact(fact);
-    return negative || continuityTypes.has(type) || type === "direction" || type === "accessibility";
+    const globalIntent = type === "audience" || type === "emotion" || type === "message";
+    return negative || continuityTypes.has(type) || type === "direction" || type === "accessibility" || !memberships.length && globalIntent;
   }).map((fact) => {
     const properties = asRecord(fact.properties);
     const structure = asRecord(properties.artifact_structure);

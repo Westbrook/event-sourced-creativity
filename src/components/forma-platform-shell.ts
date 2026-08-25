@@ -2,10 +2,11 @@ import { html, nothing } from "lit";
 import { applicationAccessible, applicationDefinition, applicationIdFromRoute, APPLICATIONS, authorizedApplicationHome, navigationItemAccessible, navigationItemActive } from "../platform/applications";
 import { platformSession } from "../platform/session-controller";
 import { loadRouteComponent } from "../route-loader";
-import { FORMA_SUPPORTED_LOCALES, formaLocaleFamily, setFormaLocale } from "./design-system/localization";
+import { formaLocaleFamily, setFormaLocale } from "./design-system/localization";
 import { FormaPresentationalElement } from "./presentational-element";
 import { beginRoutePopulation,completeRoutePopulation,recordPopulationSource } from "../performance";
 import "./design-system/navigation";
+import "./design-system/language-picker";
 
 /** Internal task surfaces never import, initialize, observe, or hydrate creator work. */
 export class FormaPlatformShell extends FormaPresentationalElement {
@@ -103,7 +104,7 @@ export class FormaPlatformShell extends FormaPresentationalElement {
       <a class="skip-link" href="#main-content">${this.i18n.t("shell.skip")}</a>
       <header class="topbar platform-topbar"><a class="brand" href="/projects">Forma</a><div class="platform-context"><strong>${currentLabel}</strong><span>${this.i18n.t(`shell.description.${applicationId}`, application.description)}</span></div>
         <forma-ui-workspace-switcher .label=${this.i18n.t("navigation.availableWorkspaces", "Available workspaces")} .value=${applicationId} .destinations=${workspaces} @forma-navigate=${(event: CustomEvent<{ value: string; href: string }>) => this.#navigate(event, event.detail.href)}></forma-ui-workspace-switcher>
-        <label class="locale-switcher"><span>${this.i18n.t("language.label")}</span><select .value=${formaLocaleFamily(this.i18n.locale)} @change=${async (event: Event) => { await setFormaLocale((event.target as HTMLSelectElement).value); this.#updateTitle(); this.#announcement=document.title.replace(/\s— Forma$/,""); this.requestUpdate(); }}>${FORMA_SUPPORTED_LOCALES.map((locale) => html`<option value=${locale.locale} lang=${locale.locale} dir=${locale.direction}>${locale.label}</option>`)}</select></label>
+        <forma-ui-language-picker .label=${this.i18n.t("language.label")} .value=${formaLocaleFamily(this.i18n.locale)} @forma-change=${async (event: CustomEvent<{ value: string }>) => { await setFormaLocale(event.detail.value); this.#updateTitle(); this.#announcement=document.title.replace(/\s— Forma$/,""); this.requestUpdate(); }}></forma-ui-language-picker>
         <a class="button secondary compact" href="/settings">${this.i18n.t("shell.navigation.settings", "Settings")}</a>
       </header>
       <forma-ui-audience-navigation class="platform-navigation" .label=${currentLabel} .value=${activeTask} .destinations=${destinations} @forma-navigate=${(event: CustomEvent<{ value: string; href: string }>) => this.#navigate(event, event.detail.href)}></forma-ui-audience-navigation>

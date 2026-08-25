@@ -52,6 +52,7 @@ Typography, color, spacing, control height, border treatment, and language shoul
 - Similar hierarchy should look similar even when the underlying data differs.
 - The same action should use the same label and emphasis wherever it appears.
 - Administrative surfaces may be denser, but they remain part of the same visual system.
+- Public welcome pages, exact-resource guest review, and authenticated workspaces belong to that same system; an audience boundary never justifies a second implementation of the same control.
 
 ### 5. Motion must preserve layout
 
@@ -394,6 +395,10 @@ Use a card only when the item is independently actionable or movable. Otherwise 
 - All applications must call the same native-modal foundation. That shared
   contract names the dialog from its real heading, handles declarative `open`,
   and is protected against route-specific reimplementations by regression tests.
+- The shared native-dialog foundation must remain safe for public marketing,
+  guest review, and authenticated applications: no Lit, account state,
+  provider adapters, network calls, or application-wide localization imports.
+  Hosts supply their own translated fallback label and own focus restoration.
 - Never use `window.prompt()`, `alert()`, or a blocking native confirmation for
   product interactions. Reuse accessible, themed dialog behavior instead.
 
@@ -451,6 +456,41 @@ inventory. Keep both generated manifests current with `pnpm cem`, and require
 `pnpm cem:check` when component contracts change so documentation, tooling,
 and independent application consumers discover the same reusable elements,
 actual named/default content slots, theme tokens, and render-root boundaries.
+
+### Mandatory reuse-first delivery and publication
+
+Before designing or implementing any interface, inspect this contract, the
+living `/knowledge/design-system` reference, `docs/components.md`, and the
+generated `custom-elements.json`. Reuse an existing production component when
+its semantics and interaction fit. If its contract is close, extend the shared
+component without regressing existing consumers. Introduce a new component only
+when the nearest existing primitive cannot meet a documented accessibility,
+semantic, boundary-isolation, or performance requirement.
+
+A pattern appearing on more than one surface **must** be promoted to the
+lowest appropriate shared design-system layer; migrate every known duplicate
+consumer in the same change. Publishing that work is part of its definition of
+done, never optional follow-up. Ship these together:
+
+- The actual store-independent component, its shared token-driven styles, and
+  production consumers, including public and guest surfaces when applicable.
+- A real, safe, isolated live example and searchable entry in Design &
+  Knowledge, with component title and summary translated for every supported
+  language.
+- Human-readable usage guidance and accurate machine-readable attributes,
+  property-only options, semantic events, inherited theme tokens, writing
+  direction, stable machine values, and actual rendering boundary.
+- Matching regenerated root and public Custom Elements Manifests, plus
+  regression coverage for reuse, accessibility, localization, architectural
+  isolation, and the relevant delivery budgets; run both `pnpm cem` and
+  `pnpm cem:check`.
+
+Public-safe shared controls must not import authenticated shells, application
+state, provider adapters, private catalogs, or unnecessary frameworks. A tiny
+framework-free, light-DOM custom element is the approved exception to the Lit
+default when it preserves a public route's isolation and transfer budget. Any
+temporary exception to reuse or publication must document an owner, reason,
+expiration, and concrete migration plan before review approval.
 
 ## Just-in-time, intent-reactive delivery
 
@@ -512,7 +552,10 @@ Interface language should be direct, human, and compact.
 
 ## Implementation invariants
 
-- Use Lit custom elements and shared design tokens.
+- Use Lit custom elements and shared design tokens; use a dependency-free,
+  native light-DOM custom element only for a documented public-safe boundary
+  where importing Lit or application localization would violate isolation or
+  performance.
 - Keep the root font size user-owned and use `rem` for typography.
 - No text below 10px.
 - No imbalanced border on a rounded element.
@@ -532,6 +575,9 @@ Before a surface is complete, verify:
 - Conceptual sections are separated primarily by space, not nested containers.
 - Images are as large as the task reasonably allows.
 - Forms follow the shared label/control/help pattern.
+- Every repeated control comes from its documented design-system implementation;
+  the real catalog example, all supported-language descriptions, and both
+  generated Custom Elements Manifests match what production actually ships.
 - Advanced or secondary regions can give space back when collapsed.
 - Hover and focus do not cause layout shifts.
 - Typography, color, weight, radius, and action hierarchy match the rest of the product.

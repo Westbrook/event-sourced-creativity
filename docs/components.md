@@ -1,10 +1,21 @@
 # Forma components and audience-navigation patterns
 
 Forma's design system is one shared production implementation for six focused
-application surfaces. The living reference is `/knowledge/design-system`;
+application surfaces, the public welcome page, and exact-resource guest review.
+The living reference is `/knowledge/design-system`;
 `/knowledge/patterns` presents audience and navigation compositions;
 `/knowledge/guidance` publishes privacy, accessibility, and localization rules.
 Every example is fictional and store-independent.
+
+Before creating an interface, inspect the live reference, this guide,
+`DESIGN.md`, and `custom-elements.json`. Reuse an exact production component
+first, extend the closest shared contract second, and create a new component
+only when its documented semantics, accessibility, public isolation, or transfer
+budget make the existing choices unsuitable. Promote repeated controls to the
+shared design system and migrate every known consumer in the same change.
+Implementation, a genuine safe catalog example, translated catalog copy,
+human-readable guidance, both generated Custom Elements Manifests, and
+regression coverage ship atomically; no page-specific duplicate is complete.
 
 ## Audience-owned application surfaces
 
@@ -73,6 +84,51 @@ indicator selected. Selecting a project, following a collection, or pressing
 the Forma brand never silently exits the current workspace. Only genuine
 document-editing handoffs cross to Creator, with an explicit localized visible
 label and accessible name naming **Creator Workspace**.
+
+## Shared language selection
+
+`<forma-ui-language-picker>` is the single native, light-DOM language control
+used by the public welcome page, Creator Workspace and consent flows, internal
+application shells, and exact-token guest review. Its shared pure language
+registry contains English, Français, العربية, and 日本語 exactly once; every
+option carries its own `lang` and writing direction.
+
+```html
+<forma-ui-language-picker label="Language" value="en"></forma-ui-language-picker>
+```
+
+The translated `label`, stable locale-code `value`, `disabled`, and `busy`
+attributes reflect their JavaScript properties. Property-only `.options`
+accepts `{ value, label, direction }` records; option labels are authored
+language names and option values remain untranslated machine identifiers. A
+real visible `<label>` wraps the native 44px-minimum `<select>`; constrained
+headers may visually hide the label while preserving its accessible name.
+Selecting a language emits bubbling, composed
+`forma-change: CustomEvent<{ value: string }>`. Consumers own their existing
+locale loading, request concurrency, persistence, route updates, error
+recovery, and live announcements. The public page preserves navigable language
+links when JavaScript is unavailable.
+
+The component and its canonical options import no Lit runtime, application
+translation catalog, account state, provider adapter, or private API. The
+reference at `/knowledge/design-system#forma-ui-language-picker` renders the
+actual isolated implementation without changing the workspace language.
+
+## Shared native dialog foundation
+
+`ensureNativeModalDialog` in `src/components/design-system/native-dialog.ts`
+promotes a real `<dialog>` into the browser's native top layer, keeps the
+background inert, derives its accessible name from the actual heading, and
+accepts a caller-translated `fallbackLabel` when a heading is absent. It has no
+Lit, localization, account, provider, or network dependencies, so the public
+welcome experience and authenticated applications use the same modal
+semantics without sharing private application code.
+
+Authenticated surfaces continue to call `ensureModalDialog`; that wrapper
+delegates to the shared foundation and provides the current application
+language. Public surfaces call the foundation directly with their own
+translated labels. Every dismissible host retains explicit close controls,
+backdrop and Escape behavior, focus restoration, and reduced-motion support.
 
 ## Navigation destination and event contracts
 
@@ -311,6 +367,11 @@ property-only `.destinations`, actual `forma-navigate`, localized
 `destinations[].label`/`.description`, invariant
 `destinations[].value`/`.href`, and a canonical
 `/knowledge/design-system#<element-name>` demonstration URL.
+
+These manifests also power live API disclosures, component discovery, external
+tooling, and independent consumer contracts; new reusable work is not published
+until every corresponding surface, translated live catalog entry, semantic
+contract, and generated manifest agrees.
 
 `DESIGN.md` owns visual and interaction policy; `ARCHITECTURE.md` owns
 authorization, application boundaries, and protected delivery contracts.

@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { applySlideStylePreset, defaultSlidePresentation, documentArtifactValidationIssues, DOCUMENT_ARTIFACT_KINDS, normalizeSlideDeckItems, normalizeSlidePresentation, normalizeSlideVisual, parseDocumentArtifactContent, resolveDocumentArtifactContextGroups, SLIDE_LAYOUTS, SLIDE_STYLE_PRESETS, SLIDE_VISUAL_KINDS, slideCopyIsDistinct, slideCopyIsNearDuplicate, slideCopyIssues, slideDeckCopyIsDistinct, slideDeckCopyIssues, slidePrecisionIssues, slideSourceIds, slideVisualIsComplete } from "../src/model/document-artifacts.ts";
 import { isVideoDurationSeconds, normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT, VIDEO_DURATION_SECONDS } from "../src/model/video-adapter.ts";
 import { buildPresentationSourceContract } from "../src/model/presentation-source.ts";
+import { selectArtifactProductionKind } from "../src/model/managed-production.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { buildComprehensiveScenario, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
 import { evaluateReplayCoverage } from "../src/model/replay-coverage.ts";
@@ -86,6 +87,33 @@ test("treats punctuation, line breaks, quote fragments, and close restatements a
   const rawItem={title:"A warning",body:quote,notes:"Explain the exchange.",image_prompt:"A quiet discovery.",slide:{layout:"split",kicker:"Discovery",bullets:[echo,"The map changes their next move"],visual:{kind:"metric",label:"Trust changes",value:"One disclosed secret",data:[]}}};
   const issues=slideCopyIssues(rawItem);assert.equal(slideCopyIsDistinct(rawItem),false);assert.equal(issues.some((issue)=>issue.firstPath==="body"&&issue.secondPath==="slide.bullets.0"),true);
   const content=parseDocumentArtifactContent(JSON.stringify({title:"Deck",summary:"An edited presentation",content_markdown:"# Deck",presentation,items:[rawItem]}));const item=content?.items[0];assert.ok(item?.slide);assert.equal(item.body,quote);assert.deepEqual(item.slide.bullets,["The map changes their next move"]);assert.equal(slideCopyIsDistinct(item),true);
+});
+
+test("preserves repeated source-authored status values across independently labeled visual rows",()=>{
+  const data=[
+    {label:"Lost conversation turns",value:"zero",weight:1},
+    {label:"Unauthorized actions",value:"zero",weight:1},
+    {label:"Identity enforcement",value:"on track",weight:1},
+    {label:"Deletion safeguards",value:"on track",weight:1},
+    {label:"Invalid access grants",value:"none",weight:1},
+    {label:"Unapproved provider charges",value:"none",weight:1},
+  ];
+  const item={title:"Independent release readiness",body:"Every safety boundary remains independently measurable.",notes:"Preserve the exact authored values.",image_prompt:"Editable release-readiness matrix.",context_group_ids:[],slide:{layout:"matrix",kicker:"Measured controls",bullets:[],visual:{kind:"matrix",label:"Production acceptance criteria",value:"",data}}};
+  const output=parseDocumentArtifactContent(JSON.stringify({title:"Executive release plan",summary:"Every acceptance criterion remains faithfully represented.",content_markdown:"# Executive release plan",presentation,items:[item]}));
+  assert.deepEqual(output?.items[0]?.slide?.visual.data.map(({label,value})=>({label,value})),data.map(({label,value})=>({label,value})));
+  assert.deepEqual(slideCopyIssues(output?.items[0]),[]);
+  assert.deepEqual(documentArtifactValidationIssues("slides",output,{itemCount:1}),[]);
+
+  const duplicatedRows={...item,slide:{...item.slide,visual:{...item.slide.visual,data:[data[0],{...data[0]}]}}};
+  assert.equal(slideCopyIssues(duplicatedRows).some((issue)=>issue.firstPath.endsWith(".label")&&issue.secondPath.endsWith(".label")),true,"identical data rows remain duplicated");
+  assert.equal(slideCopyIssues(duplicatedRows).some((issue)=>issue.firstPath.endsWith(".value")&&issue.secondPath.endsWith(".value")),true,"identical labels do not excuse repeated row values");
+
+  const repeatedExplanation="Every customer control remains continuously verified";
+  const duplicatedDescriptions={...item,slide:{...item.slide,visual:{...item.slide.visual,data:[{label:"Identity enforcement",value:repeatedExplanation,weight:1},{label:"Deletion safeguards",value:repeatedExplanation,weight:1}]}}};
+  assert.equal(slideCopyIssues(duplicatedDescriptions).some((issue)=>issue.firstPath.endsWith(".value")&&issue.secondPath.endsWith(".value")),true,"substantive duplicated narrative is still rejected");
+
+  const duplicatedProse={...item,body:"A repeated executive claim",slide:{...item.slide,bullets:["A repeated executive claim"]}};
+  assert.equal(slideCopyIssues(duplicatedProse).some((issue)=>issue.firstPath==="body"&&issue.secondPath==="slide.bullets.0"),true,"ordinary narrative duplication remains rejected");
 });
 
 test("normalizes repeated narrative copy across the complete slide deck",()=>{
@@ -177,6 +205,38 @@ test("repairs an incomplete provider slide plan once and retains exact validatio
   globalThis.fetch=async(_input,init={})=>{const request=JSON.parse(String(init.body));requests.push(request);const output=requests.length===1?incomplete:repaired;return Response.json({id:`response-${requests.length}`,model:"gpt-test",output_text:JSON.stringify(output),usage:{input_tokens:100,output_tokens:50,total_tokens:150}});};
   try{const result=await generateDocumentArtifact({OPENAI_API_KEY:"test",OPENAI_MODEL:"gpt-test"},"user-1","slides",{documentTitle:"Field study",snapshot:{facts:[],relationships:[]},options:{itemCount:1,locale:"ja-JP"}});assert.equal(requests.length,2);for(const request of requests){assert.match(request.instructions,/selected language \(ja-JP\)/);assert.match(request.instructions,/Preserve the original language and exact text of user-authored document titles/);assert.equal(JSON.parse(request.input).document_title,"Field study");}assert.equal(requests[1].text.format.name,"document_slides_repair");assert.equal(result.output.items[0]?.title,"Protect the opening");assert.equal(result.inputReceipt.validation.repair_attempted,true);assert.ok(result.inputReceipt.validation.initial_issues.some((issue)=>issue.code==="missing_title"));assert.deepEqual(result.inputReceipt.validation.repair_issues,[]);assert.deepEqual(result.usage,{inputTokens:200,outputTokens:100,totalTokens:300});}
   finally{globalThis.fetch=originalFetch;}
+});
+
+test("first-time storyboards prefer coherent production without silently changing video cost or manual choice",async()=>{
+  const initial={kind:"short_story",mode:"manual",storyboardManagedDefault:false,storyboardManualOptOut:false};
+  const storyboard=selectArtifactProductionKind(initial,"storyboard");
+  assert.deepEqual(storyboard,{kind:"storyboard",mode:"managed",storyboardManagedDefault:true,storyboardManualOptOut:false});
+  assert.equal(selectArtifactProductionKind(storyboard,"storyboard"),storyboard,"Opening the same storyboard must not override an existing choice.");
+  const manualStoryboard={...storyboard,mode:"manual",storyboardManagedDefault:false,storyboardManualOptOut:true};
+  assert.deepEqual(selectArtifactProductionKind(manualStoryboard,"storyboard"),manualStoryboard,"An explicit manual opt-out survives reopening the same storyboard.");
+  for(const intermediate of ["video","slides","scene"]){
+    const other=selectArtifactProductionKind(manualStoryboard,intermediate);
+    assert.deepEqual(other,{kind:intermediate,mode:"manual",storyboardManagedDefault:false,storyboardManualOptOut:true});
+    assert.deepEqual(selectArtifactProductionKind(other,"storyboard"),manualStoryboard,"An explicit manual opt-out survives leaving the storyboard and returning.");
+  }
+  assert.deepEqual(selectArtifactProductionKind(storyboard,"video"),{kind:"video",mode:"manual",storyboardManagedDefault:false,storyboardManualOptOut:false},"An automatic storyboard preference must never multiply paid video scenes.");
+  assert.deepEqual(selectArtifactProductionKind(storyboard,"slides"),{kind:"slides",mode:"manual",storyboardManagedDefault:false,storyboardManualOptOut:false},"An automatic storyboard preference must not change another format's default.");
+  for(const kind of ["video","slides","scene"])assert.deepEqual(selectArtifactProductionKind(initial,kind),{kind,mode:"manual",storyboardManagedDefault:false,storyboardManualOptOut:false});
+  assert.deepEqual(selectArtifactProductionKind({...storyboard,storyboardManagedDefault:false},"video"),{kind:"video",mode:"managed",storyboardManagedDefault:false,storyboardManualOptOut:false},"An intentional managed workflow remains the user's decision.");
+
+  const component=await readFile(new URL("../src/components/document-artifacts.ts",import.meta.url),"utf8");
+  assert.match(component,/#productionMode:ProductionMode="manual";#storyboardManagedDefault=false;#storyboardManualOptOut=false/);
+  assert.match(component,/#selectArtifactKind\(kind:DocumentArtifactKind\)\{const selected=selectArtifactProductionKind/);
+  assert.match(component,/openRender\([^)]*\)\{[^}]*if\(kind\)this\.#selectArtifactKind\(kind\)/);
+  assert.match(component,/name="artifact-kind"[^\n]*@change=\$\{\(\)=>\{this\.#selectArtifactKind\(kind\)/);
+  assert.match(component,/value="manual"[^\n]*@change=\$\{\(\)=>\{this\.#productionMode="manual";(?:this\.#sendSoundtrackToVideoProvider=false;)?this\.#storyboardManagedDefault=false/);
+  assert.match(component,/value="manual"[^\n]*@change=\$\{\(\)=>\{this\.#productionMode="manual";this\.#sendSoundtrackToVideoProvider=false;/,"switching to manual production must revoke soundtrack-provider transfer consent");
+  assert.match(component,/value="managed"[^\n]*@change=\$\{\(\)=>\{this\.#productionMode="managed";this\.#sendSoundtrackToVideoProvider=false;/,"switching to managed production must revoke soundtrack-provider transfer consent");
+  assert.match(component,/if\(this\.#kind==="storyboard"\)this\.#storyboardManualOptOut=true/);
+  assert.match(component,/if\(this\.#kind==="storyboard"\)this\.#storyboardManualOptOut=false/);
+  assert.match(component,/Production cost and provider disclosure/);
+  assert.match(component,/authorized source image(?:s)? may be used as scoped frame references; completed frames can guide later images/);
+  assert.match(component,/paidMediaConfirmed:paid&&this\.#confirmed/);
 });
 
 test("keeps text, structured slides, storyboard, and video rendering behind durable server jobs",async()=>{

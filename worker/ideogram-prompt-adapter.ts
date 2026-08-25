@@ -56,6 +56,7 @@ const quoteText=(value:string)=>value.match(/[“"]([^”"]{1,160})[”"]/)?.[1]
 const sentence=(label:string,value:string)=>value?`${label}: ${value.replace(/[.]+$/g,"")}.`:"";
 const unique=(items:string[])=>[...new Set(items.map((item)=>clean(item)).filter(Boolean))];
 const joinedFacts=(facts:CreativeFact[],type:string)=>unique(facts.filter((fact)=>factType(fact)===type&&!scopeLabel(fact)&&!isAvoid(fact)).map(factText)).join("; ");
+const joinedGlobalFacts=(facts:CreativeFact[],...types:string[])=>unique(facts.filter((fact)=>types.includes(factType(fact))&&!scopeLabel(fact)&&!isAvoid(fact)&&!combinedContextMemberships(factProperties(fact)).length).map(factText)).join("; ");
 const joinedFactValues=(facts:CreativeFact[])=>unique(facts.map(factText)).join("; ");
 
 const literalStrategies=new Set<NonNullable<CreativeImageOptions["ideogramCaptionStrategy"]>>(["composition_lock","semantic_checklist","constraint_first","compact_literal","literal_contract","production_director","shot_plan","clean_editorial"]);
@@ -156,9 +157,9 @@ export function buildIdeogramPrompt(
   const scoped=positive.filter((fact)=>scopeLabel(fact)&&factType(fact)!=="format");const typography=positive.filter((fact)=>factType(fact)==="typography");const subjectFacts=positive.filter((fact)=>factType(fact)==="subject");
   const scene=clean(direction.scene,900);const exactText=typography.map((fact)=>quoteText(factText(fact))).find(Boolean)??"";
   const typographyRequired=typography.some((fact)=>factIntent(fact)==="include"||factWeight(fact)>=.7)||/(typograph|display text|lettering|key art)/i.test(scene);
-  const primarySubject=unique(subjectFacts.flatMap((fact)=>{const memberships=combinedContextMemberships(factProperties(fact));return memberships.length?memberships.map((membership)=>`${membership.role.replaceAll("_"," ")} “${membership.target}”: ${factText(fact)}`):[factText(fact)];})).join("; "),setting=joinedFacts(facts,"setting"),composition=joinedFacts(facts,"composition"),material=joinedFacts(facts,"material");const benignStoryContextApplied=Boolean(typographyRequired&&exactText);
+  const primarySubject=unique(subjectFacts.flatMap((fact)=>{const memberships=combinedContextMemberships(factProperties(fact));return memberships.length?memberships.map((membership)=>`${membership.role.replaceAll("_"," ")} “${membership.target}”: ${factText(fact)}`):[factText(fact)];})).join("; "),setting=joinedGlobalFacts(facts,"environment","setting"),mood=joinedGlobalFacts(facts,"emotion","mood"),composition=joinedFacts(facts,"composition"),material=joinedFacts(facts,"material");const benignStoryContextApplied=Boolean(typographyRequired&&exactText);
   const ratio=clean(options.size??"",40).replace("x"," × ");const paletteFacts=positive.filter((fact)=>factType(fact)==="palette"),ungroupedPaletteFacts=paletteFacts.filter((fact)=>!combinedContextMemberships(factProperties(fact)).length&&!scopeLabel(fact)),palette=!paletteFacts.length?(Array.isArray(direction.palette)?direction.palette.map((item)=>clean(item,80)).filter(Boolean).join(", "):clean(direction.palette,400)):"";
-  const primaryTypes=new Set(["direction","subject","setting","composition","mood","palette","material","lighting","style","typography","format"]);
+  const primaryTypes=new Set(["direction","subject","environment","setting","composition","emotion","mood","palette","material","lighting","style","typography","format"]);
   const additional=unique(positive.filter((fact)=>!primaryTypes.has(factType(fact))&&!scopeLabel(fact)&&!combinedContextMemberships(factProperties(fact)).length).map((fact)=>`${factType(fact)||"requirement"}: ${factText(fact)}`));
   const factsById=new Map(facts.map((fact)=>[clean(fact.block_id,160),fact]));
   const groupLines=combinedContextGroups(snapshot).map((group)=>{const members=group.members.filter((member)=>!factsById.has(member.blockId)||!isAvoid(factsById.get(member.blockId)!));return`COMBINED CONTEXT — ${group.role.replaceAll("_"," ")} “${clean(group.target,120)}”: Keep ${members.map((member)=>`${clean(member.role,45)} “${clean(factsById.has(member.blockId)?factText(factsById.get(member.blockId)!):member.label,220)}”`).join("; ")} together only on this target; ${clean(group.application,45).replaceAll("_"," ")}; do not transfer their attributes to unrelated subjects.`;});
@@ -209,7 +210,7 @@ export function buildIdeogramPrompt(
     ...groupLines,
     ...scopedExclusionLines,
     ...mandatoryLines,
-    !compact?sentence("MOOD",joinedFacts(facts,"mood")):"",
+    !compact?sentence("MOOD",mood):"",
     sentence("PALETTE",joinedFactValues(ungroupedPaletteFacts)||palette),
     material?`MATERIALS — VISIBLE AND DISTINCT: ${material}. Show every named material on an appropriate authored object; do not collapse materials into color alone.`:"",
     director&&focus==="material"?"SUBJECT SCALE: Use a medium or medium-wide view. The principal people, action, and judging surfaces together occupy roughly 55–75% of the square. Avoid distant figures, excessive empty darkness, or an environment-dominated establishing shot.":"",

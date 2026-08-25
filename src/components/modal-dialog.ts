@@ -1,26 +1,15 @@
+import { ensureNativeModalDialog } from "./design-system/native-dialog";
+
 /**
  * Promote declaratively rendered dialogs into the browser's native top layer.
  * Removing `open` instead of calling close() avoids firing application-specific
  * dismissal handlers before showModal() establishes inert background content.
  */
 export function ensureModalDialog(dialog: HTMLDialogElement | null | undefined) {
-  if (!dialog || typeof dialog.showModal !== "function") return false;
-  try {
-    if (!dialog.hasAttribute("aria-label") && !dialog.hasAttribute("aria-labelledby")) {
-      const heading = dialog.querySelector<HTMLElement>("h1,h2,h3,[role='heading']");
-      if (heading) {
-        if (!heading.id) heading.id = `dialog-title-${crypto.randomUUID()}`;
-        dialog.setAttribute("aria-labelledby", heading.id);
-      } else dialog.setAttribute("aria-label", currentFormaLocale().messages["dialog.heading"] ?? "Dialog");
-    }
-    if (dialog.matches(":modal")) return true;
-    if (dialog.open) dialog.removeAttribute("open");
-    dialog.showModal();
-    return true;
-  } catch {
-    dialog.setAttribute("open", "");
-    return false;
-  }
+  if (!dialog) return false;
+  return ensureNativeModalDialog(dialog, {
+    fallbackLabel: currentFormaLocale().messages["dialog.heading"] ?? "Dialog",
+  });
 }
 
 export type TextDialogOptions = {

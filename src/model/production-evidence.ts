@@ -43,6 +43,76 @@ const measured = (score: number, evidenceRefs: string[], detail: string): Produc
   details: [detail],
 });
 const normalize = (value: unknown) => String(value ?? "").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+const forbiddenArticles = new Set(["a", "an", "the", "de", "du", "des", "le", "la", "les", "l", "d", "un", "une", "au", "aux"]);
+const forbiddenStopWords = new Set(["or", "and", "never", "no", "not", "do", "does", "must", "avoid", "avoids", "avoided", "avoiding", "exclude", "excludes", "excluded", "excluding", "forbid", "forbidden", "prohibit", "prohibited", "introduce", "show", "include", "appear", "may", "together", "both", "ou", "et", "ni", "ne", "n", "pas", "jamais", "sans", "aucun", "aucune", "non", "éviter", "évite", "exclure", "exclut", "interdit", "interdite", "montrer", "introduire", "ensemble", "أو", "او", "لا", "بلا", "بدون", "دون", "من", "ليس", "ليست", "غير", "عدم", "ممنوع", "تجنب", "استبعاد", "تظهر", "يظهر", "معا"]);
+const forbiddenJapanese = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+const forbiddenArabic = /^\p{Script=Arabic}+$/u;
+
+function forbiddenWords(value: string) {
+  return value.normalize("NFKC").replace(/[\u064b-\u065f\u0670\u0640]/gu, "").replace(/[’‘ʼ＇]/gu, "'").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(/\s+/u).filter(Boolean).map((token) => {
+    if (!forbiddenArabic.test(token)) return token;
+    if (/^و(?:ال|لا|بلا|بدون|دون)/u.test(token)) token = token.slice(1);
+    return token.startsWith("ال") && token.length > 3 ? token.slice(2) : token;
+  });
+}
+
+const forbiddenSearch = (value: string) => forbiddenWords(value).filter((token) => !forbiddenArticles.has(token)).join(" ");
+const forbiddenSeparators = /[,;·،؛、，・]|(?:\s+(?:or|and|ou|et|ni|أو|او|و|ولا)\s+)|(?:\s+و(?=ال\p{Script=Arabic}))|または|もしくは|あるいは|や|(?<=[\p{Script=Han}\p{Script=Katakana}ー])と(?=[\p{Script=Han}\p{Script=Katakana}])/giu;
+const forbiddenDenial = /(?:^|\s)(?:no|without|never|not|avoid(?:s|ed|ing)?|exclud(?:e|es|ed|ing)|forbid(?:s|den)?|prohibit(?:s|ed|ing)?|sans|aucun(?:e|s)?|pas|jamais|ni|non|ne|éviter|évite|exclure|exclut|interdit(?:e|s)?|لا|بلا|بدون|دون|ليس|ليست|غير|عدم|ممنوع|تجنب|استبعاد)(?=\s|$)/iu;
+const forbiddenJapaneseDenial = /(?:描写しない|登場させない|登場しない|表示しない|使用しない|採用しない|配置しない|表現しない|描かない|映さない|写さない|見せない|使わない|用いない|入れない|置かない|含まない|含めない|出さない|いない|ありません|ない|なし|なく|禁止|除外|避ける)(?:\s|$)/u;
+const forbiddenJapaneseSuffix = /(?:[=＝]|を|は|が|も|の|に|で)?(?:描写しない|登場させない|登場しない|表示しない|使用しない|採用しない|配置しない|表現しない|描かない|映さない|写さない|見せない|使わない|用いない|入れない|置かない|含まない|含めない|出さない|いない|ありません|ない|なし|なく|禁止|除外|避ける)\s*$/u;
+const forbiddenJapaneseSegmenter = typeof Intl.Segmenter === "function" ? new Intl.Segmenter("ja", { granularity: "word" }) : undefined;
+
+function withoutForbiddenJapaneseParticle(value: string) {
+  if (!forbiddenJapanese.test(value)) return value;
+  if (forbiddenJapaneseSegmenter) {
+    const last = [...forbiddenJapaneseSegmenter.segment(value)].at(-1);
+    return last && /^(?:も|は|が|を)$/u.test(last.segment) && last.index > 0 ? value.slice(0, last.index) : value;
+  }
+  return /子ども$/u.test(value) ? value : value.replace(/[もはがを]$/u, "");
+}
+
+const forbiddenAffirmation = /(?:^|\s)(?:appear(?:s|ed|ing)?|approach(?:es|ed|ing)?|arriv(?:e|es|ed|ing)|gather(?:s|ed|ing)?|stand(?:s|ing)?|show(?:s|ed|ing)?|feature(?:s|d)?|contain(?:s|ed|ing)?|include(?:s|d)?|introduc(?:e|es|ed|ing)|depict(?:s|ed|ing)?|overlook(?:s|ed|ing)?|fill(?:s|ed|ing)?|domine|longe|apparaît|apparait|apparaissent|approche|arrive|montre|contient|présente|تتجمع|تقترب|تطل|تظهر|يظهر)(?=\s|$)|建っている|走る|見下ろす|集まる|現れる|登場する/iu;
+const forbiddenContrast = /\b(?:but|however|yet|except|mais|pourtant|cependant|toutefois|sauf)\b|(?:^|\s)(?:لكن|ولكن|إلا)(?=\s|$)|しかし|ただし|けれど(?:も)?|でも/giu;
+const forbiddenTogether = /\b(?:together|both|ensemble)\b|à\s+la\s+fois|مع(?:ً?ا)|一緒|両方|同時/iu;
+
+function containsProhibitedAlternative(claim: string, value: string) {
+  const alternatives = [...new Set(claim.split(forbiddenSeparators).map((part) => {
+    const unwrapped = withoutForbiddenJapaneseParticle(part.replace(/[。！？.!?]+$/u, "").replace(forbiddenJapaneseSuffix, ""));
+    return forbiddenWords(unwrapped).filter((token) => !forbiddenArticles.has(token) && !forbiddenStopWords.has(token) && (token.length > 2 || forbiddenJapanese.test(token))).join(" ");
+  }).filter(Boolean))];
+  const conjunctive = forbiddenTogether.test(claim);
+  for (const sentence of value.replace(/ないが/gu, "ない。しかし").split(/[.!?。！？؟؛;；\n]/u)) {
+    for (const scope of sentence.split(forbiddenContrast)) {
+      let inheritedDenial = false;
+      let matches = new Set<number>();
+      const scoped = forbiddenSearch(scope);
+      const japaneseListDenied = forbiddenJapanese.test(scope) && forbiddenJapaneseDenial.test(scoped) && !forbiddenAffirmation.test(scoped);
+      for (const [index, raw] of scope.split(/[,،，、]/u).entries()) {
+        const passage = forbiddenSearch(raw);
+        const deniedHere = forbiddenDenial.test(passage);
+        if (index && forbiddenAffirmation.test(passage) && !deniedHere) { inheritedDenial = false; matches = new Set<number>(); }
+        for (const [alternativeIndex, alternative] of alternatives.entries()) {
+          const japanese = forbiddenJapanese.test(alternative);
+          const searchable = japanese ? passage : ` ${passage} `;
+          const expected = japanese ? alternative : ` ${alternative} `;
+          let position = searchable.indexOf(expected);
+          while (position >= 0) {
+            const denied = inheritedDenial || japaneseListDenied || forbiddenDenial.test(searchable.slice(0, position)) || japanese && forbiddenJapaneseDenial.test(searchable.slice(position + expected.length));
+            if (!denied) {
+              if (!conjunctive) return true;
+              matches.add(alternativeIndex);
+              if (matches.size === alternatives.length) return true;
+            }
+            position = searchable.indexOf(expected, position + expected.length);
+          }
+        }
+        if (deniedHere || japaneseListDenied) inheritedDenial = true;
+      }
+    }
+  }
+  return false;
+}
 
 export function collectProductionEvidence(
   plan: ManagedProductionPlan,
@@ -107,10 +177,12 @@ export function collectProductionEvidence(
   });
   const completeAuthoredCoverage = authored.length ? represented.length / authored.length : 1;
   const missingRequired = authored.filter((claim) => claim.required && !represented.includes(claim));
-  const forbiddenStopWords = new Set(["a", "an", "the", "or", "and", "never", "no", "not", "do", "does", "must", "avoid", "exclude", "forbid", "prohibit", "introduce", "show", "include", "appear", "may"]);
   const prohibited = hasDraft && !isImage && !isVideo && !isAudio ? plan.claims.filter((claim) => claim.negative).filter((claim) => {
-    const tokens = normalize(claim.text).split(" ").filter((token) => token.length > 2 && !forbiddenStopWords.has(token));
-    return tokens.length > 0 && tokens.every((token) => (` ${normalizedOutput} `).includes(` ${token} `));
+    const values = claim.contextGroupIds.length
+      ? (input.draft?.items ?? []).filter((item) => (item.context_group_ids ?? []).some((id) => claim.contextGroupIds.includes(id)))
+        .map((item) => visibleItemValues(item).filter(Boolean).join(". "))
+      : [outputText];
+    return values.some((value) => containsProhibitedAlternative(claim.text, value));
   }) : [];
   const visualCoverage = plan.scenes.length ? [...uniqueCompleted].filter((id) => expectedSceneIds.has(id)).length / plan.scenes.length : 1;
   const narrativeDuplicates = nearDuplicatePairs.length;

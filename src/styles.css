@@ -185,9 +185,6 @@ code, pre, kbd { font-family: var(--mono); }
 .application-context b { flex: none; font-size: var(--type-small); }
 .application-context span { min-width: 0; overflow: hidden; color: var(--muted); font-size: var(--type-caption); text-overflow: ellipsis; white-space: nowrap; }
 .top-actions { display: flex; min-inline-size: 0; align-items: center; gap: 8px; margin-inline-start: auto; }
-.locale-switcher { display: inline-flex; min-inline-size: 0; flex: 0 1 auto; align-items: center; gap: var(--forma-space-2, .5rem); color: var(--forma-color-text, var(--ink)); font-size: var(--forma-font-size-supporting, .875rem); }
-.locale-switcher > span { white-space: nowrap; }
-.locale-switcher > select { min-inline-size: 0; min-block-size: var(--forma-control-min-size, 2.75rem); max-inline-size: 10rem; padding-inline: .65rem; color: var(--forma-color-text, var(--ink)); background: var(--forma-color-surface, var(--panel)); border: 1px solid var(--forma-color-border-strong, var(--line-strong)); border-radius: var(--forma-radius-small, .375rem); }
 .shared-locale-switcher { display: flex; justify-content: end; padding: var(--forma-space-3, .75rem) var(--page-gutter); }
 .focus-locale-switcher { position: fixed; z-index: 33; inset-block-start: 3.5rem; inset-inline-end: .5rem; padding: .125rem .375rem; background: var(--forma-color-surface, var(--panel)); border: 1px solid var(--forma-color-border, var(--line)); border-radius: var(--forma-radius-small, .375rem); }
 .consent-locale-switcher { display: flex; justify-content: end; margin-block-end: var(--forma-space-3, .75rem); }
@@ -1160,9 +1157,9 @@ forma-output-visual { position: absolute; inset: 0; display: grid; min-width: 0;
   .global-nav { min-width: 0; flex: 1; overflow-x: auto; }
   .global-nav a { min-width: max-content; padding: 0 7px; }
   .top-actions { margin-inline-start: 0; }
-  .locale-switcher { gap: .375rem; }
+  forma-ui-language-picker > .locale-switcher { gap: .375rem; }
   .top-actions .locale-switcher > span, .focus-locale-switcher .locale-switcher > span { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-  .locale-switcher > select { max-inline-size: 7.25rem; padding-inline: .4rem; }
+  forma-ui-language-picker > .locale-switcher > select { max-inline-size: 7.25rem; padding-inline: .4rem; }
   .focus-locale-switcher { inset-inline-end: .25rem; }
   .account-popover { --account-popover-top: 49px; inset-inline-end: 10px; }
   .creator-settings-grid { grid-template-columns: minmax(0,1fr); }

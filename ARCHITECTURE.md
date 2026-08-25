@@ -264,8 +264,33 @@ implementation across foundations, atoms, molecules, organisms, and templates.
 authorized task navigation, and Creator-versus-Canvas continuity;
 `/knowledge/guidance` publishes approved privacy and interaction rules. The
 same primitives render creator tasks, internal application shells, reporting,
-and operational access management. Every dialog enters the browser top layer
-through one accessible, independently testable modal contract.
+operational access management, the public welcome experience, and exact-token
+guest review. Repeated controls are architectural dependencies of the shared
+design system, not independently recreated audience-specific markup. Search the
+live catalog and Custom Elements Manifest before introducing an interface;
+reuse an existing contract, extend the nearest shared contract, or document why
+a genuinely new primitive is necessary. Promote repeated patterns and migrate
+all existing public, guest, and application consumers together. Publish the
+actual safe live demonstration, every supported-language catalog description,
+human documentation, accurate semantic event/property/token contracts, both
+generated manifests, and regression coverage in the same change.
+
+Public-safe modules must remain independently importable without Lit,
+application-wide translation catalogs, authenticated state, provider adapters,
+network side effects, or protected assets. Canonical language-option records
+live in a pure, DOM-free module usable by browser, worker, and Node consumers;
+the native light-DOM `<forma-ui-language-picker>` imports that registry without
+importing application localization. Its hosts alone own locale loading,
+persistence, routing, announcements, and authorization boundaries. This narrow
+framework-free custom-element exception preserves public-route performance
+while exposing the same documented production control everywhere.
+
+Every dialog enters the browser top layer through one accessible,
+independently testable modal contract. The dependency-free
+`src/components/design-system/native-dialog.ts` foundation is safe for the
+public welcome route; the existing application-level `modal-dialog.ts` wrapper
+adds authenticated-surface localization without making that catalog an
+architectural dependency of public or guest experiences.
 
 `src/components/design-system/` groups independently importable atom, form,
 navigation, feedback, and layout families behind one small shared contract. UI
@@ -306,6 +331,9 @@ isolated application-pattern demonstrations. Slot declarations are checked
 bidirectionally against actual rendered templates; light-DOM elements cannot
 advertise fictional slots or `::part` surfaces.
 `pnpm cem:check` detects documentation drift without changing files.
+Treat a failing check, an undocumented repeated control, a fictional component
+preview, or a public/private dependency leak as a release blocker rather than
+postponed design-system maintenance.
 
 CSS uses preference-reactive semantic tokens, browser-controlled font sizing,
 stable focus and hover geometry, reduced-motion/transparency accommodations,

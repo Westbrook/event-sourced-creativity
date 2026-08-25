@@ -298,8 +298,9 @@ test("creation, sharing, project editing, and image inspection remain complete a
 });
 
 test("one modal foundation gives every Canvas, output, and Laboratory dialog an accessible name and a true top-layer position", async () => {
-  const [modal, shell, ...surfaces] = await Promise.all([
+  const [modal, foundation, shell, ...surfaces] = await Promise.all([
     readFile(new URL("../src/components/modal-dialog.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/design-system/native-dialog.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/forma-shell.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/canvas/canvas-application.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/collection-tree.ts", import.meta.url), "utf8"),
@@ -321,8 +322,10 @@ test("one modal foundation gives every Canvas, output, and Laboratory dialog an 
     readFile(new URL("../src/components/spatial-scope-editor.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/components/studio-navigation.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(modal, /dialog\.setAttribute\("aria-labelledby", heading\.id\)/);
-  assert.match(modal, /dialog\.showModal\(\)/);
+  assert.match(foundation, /dialog\.setAttribute\("aria-labelledby", heading\.id\)/);
+  assert.match(foundation, /dialog\.showModal\(\)/);
+  assert.doesNotMatch(foundation, /from ["']|state\/store|currentFormaLocale|FormaStore/);
+  assert.match(modal, /ensureNativeModalDialog\(dialog,/);
   for (const source of [shell, ...surfaces]) {
     assert.match(source, /ensureModalDialog/);
     assert.doesNotMatch(source, /\.showModal\(/);
