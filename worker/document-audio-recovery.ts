@@ -303,7 +303,11 @@ export async function recoverOriginalSourceAudio(env: WorkerEnv, user: PilotUser
       phase = "retrieving-original-recording";
       const prepared: CreativeAudioPreparedReceipt = { provider: "fal", model, submittedPrompt: String(audioInput.submitted_prompt), parameters: record(audioInput.parameters), imageReference: null, sourceAudioTreatment: "none", audioWaveformSubmitted: false };
       const audio = await recoverAcceptedAudio(env, { providerJobId: providerId, providerModel: model, providerStatusUrl: String(queue.status_url), providerResponseUrl: String(queue.response_url), providerCancelUrl: String(queue.cancel_url), retainedReceipt: prepared, profile, signal: control.signal,
-        onStage: async (stage, message) => { await authorize(); await control.progress(stage, message); } });
+        onStage: async (stage, message) => {
+          if (stage === "finalizing") phase = "retrieving-original-result";
+          else if (stage === "downloading") phase = "downloading-original-recording";
+          await authorize(); await control.progress(stage, message);
+        } });
       requireEvidence(audio.costMicrousd === audioCost, "provider_original_charge_mismatch");
       phase = "rechecking-current-authority";
       await validateCurrent();
@@ -389,7 +393,8 @@ export async function recoverOriginalSourceAudio(env: WorkerEnv, user: PilotUser
     const reason = error instanceof RecoveryUnavailable ? error.message : error instanceof ProviderRequestError ? error.detail.code : error instanceof Error && "code" in error ? String(error.code) : "provider_or_storage_verification_failed";
     // Operational identifiers only: never log source text, prompts, credentials,
     // media URLs, private envelopes, or raw provider/database error messages.
-    console.error("audio_original_source_recovery_unavailable", { jobId: row.job_id, phase, reason });
+    console.error("audio_original_source_recovery_unavailable", { jobId: row.job_id, phase, reason,
+      ...(error instanceof ProviderRequestError ? { providerHttpStatus: error.detail.httpStatus, providerFailureCategory: error.detail.category, providerFailureAction: error.detail.action } : {}) });
     return unavailable(reason);
   }
 }

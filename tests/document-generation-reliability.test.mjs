@@ -373,6 +373,23 @@ test("original-source audio recovery retains the selected repaired planner throu
   }finally{fixture.restore();}
 });
 
+test("original-source audio recovery reports a provider retrieval refusal without logging its private body",async()=>{
+  const fixture=await originalSourceAudioFixture(),previousFetch=globalThis.fetch,previousError=console.error,logged=[];
+  try{
+    const reservations=fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all();
+    globalThis.fetch=async(value,init)=>String(value).endsWith("/original-source-paid-audio/status?logs=1")?Response.json({detail:"private-provider-body-never-log"},{status:404}):previousFetch(value,init);
+    console.error=(...args)=>logged.push(args);
+    const response=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});
+    assert.equal(response.status,409);
+    const diagnostic=logged.find(args=>args[0]==="audio_original_source_recovery_unavailable")?.[1];assert.ok(diagnostic);
+    assert.equal(diagnostic.phase,"retrieving-original-recording");assert.equal(diagnostic.providerHttpStatus,404);
+    assert.equal(JSON.stringify(logged).includes("private-provider-body-never-log"),false);
+    assert.equal(JSON.stringify(logged).includes(fixture.original.audioInputReceipt.submitted_prompt),false);
+    assert.equal(fixture.stored.length,0);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),reservations);
+  }finally{console.error=previousError;fixture.restore();}
+});
+
 test("original-source audio recovery guidance never substitutes a hint for confirmed provider identity",()=>{
   const detail={code:"context_source_version_mismatch",category:"provider",scope:"request",action:"edit_request",message:"Source changed",retryable:false,retryAfterMs:null,requestId:null,httpStatus:409};
   const base={kind:"render_document",status:"failed",stage:"failed",result:{artifactKind:"audio",audioProviderSubmission:"confirmed",providerJobId:"original-audio-id"},errorDetail:detail};
