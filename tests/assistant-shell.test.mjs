@@ -79,6 +79,11 @@ test("the visible assistant exposes governed model choice, explicit premium appr
   assert.match(host, /task\.status === "queued" \|\| task\.status === "running" \|\| task\.status === "reconciling"/u);
   assert.match(host, /@forma-assistant-task=/u);
   assert.match(policy, /assistantPremiumUsers/u);
+  assert.match(panel,/assistant\.coverage\.visible/u,"on-screen context is honestly distinguished from provider-visible evidence");
+  assert.match(panel,/assistant\.coverage\.readable/u);
+  assert.match(panel,/assistant\.coverage\.withheld/u);
+  assert.match(panel,/assistant\.coverage\.protectedOverflow/u);
+  assert.match(panel,/item\.providerEligible&&\(!item\.immutable\|\|item\.providerVisibility==="governed"\)/u);
 });
 
 test("the assistant keeps all four locales and exact interpolation placeholders aligned", () => {

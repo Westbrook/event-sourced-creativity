@@ -19,6 +19,22 @@ const roleRank: Record<PilotRole, number> = { viewer: 0, agent: 1, creator: 2, a
 const intEnv = (value: string | undefined, fallback: number) => { const parsed = Number(value); return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback; };
 const moneyEnv = (value: string | undefined, fallbackUsd: number) => { const parsed = Number(value); return Math.round((Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackUsd) * MICRO_USD_PER_USD); };
 
+/** Free creative guidance is available only to a live named participant in the exact active organization. */
+export async function assistantPilotEntitled(env:WorkerEnv,userId:string,organizationId:string){
+  if(!userId||!organizationId)return false;
+  const now=new Date().toISOString();
+  const admitted=await env.DB.prepare(`SELECT 1 AS authorized FROM pilot_cohorts cohort
+    JOIN organizations organization ON organization.organization_id=cohort.organization_id AND organization.status='active'
+    JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
+    JOIN organization_memberships member ON member.organization_id=cohort.organization_id AND member.user_id=participant.user_id
+      AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
+    JOIN users identity ON identity.user_id=participant.user_id AND identity.consent_version=?
+    WHERE cohort.organization_id=? AND cohort.status='active' AND cohort.starts_at<=? AND cohort.ends_at>=?
+      AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL AND participant.role!='reviewer' LIMIT 1`)
+    .bind(POLICY_VERSION,organizationId,now,now,userId).first();
+  return Boolean(admitted);
+}
+
 function decodeName(request: Request) {
   const encoded = request.headers.get("oai-authenticated-user-full-name");
   if (!encoded || request.headers.get("oai-authenticated-user-full-name-encoding") !== "percent-encoded-utf-8") return "";
@@ -29,9 +45,9 @@ function identityFromRequest(request: Request) {
   const url = new URL(request.url);
   const oaiId = request.headers.get("oai-authenticated-user-id");
   const oaiEmail = request.headers.get("oai-authenticated-user-email");
-  const accessEmail = request.headers.get("cf-access-authenticated-user-email");
   if (oaiId && oaiEmail) return { userId: oaiId, email: oaiEmail.toLowerCase(), displayName: decodeName(request) || oaiEmail.split("@")[0], source: "openai-workspace" };
-  if (accessEmail) return { userId: `access:${accessEmail.toLowerCase()}`, email: accessEmail.toLowerCase(), displayName: accessEmail.split("@")[0], source: "cloudflare-access" };
+  // A bare cf-access-authenticated-user-email header is not a verified identity assertion.
+  // Hosted Sites authenticates visitors through its trusted OpenAI identity headers.
   if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return { userId: "dev-local-creative", email: "creative@local.forma", displayName: "Local creative", source: "local-development" };
   return null;
 }
@@ -793,6 +809,8 @@ async function resolveCostReservation(env: WorkerEnv, userId: string, reservatio
 
 /** Single-consumer provider execution prevents two requests from spending the same active reservation. */
 export async function claimCostBudgetReservation(env: WorkerEnv, userId: string, reservationId: string) {
+  const reservation=await costBudgetReservation(env,userId,reservationId);
+  if(!reservation||reservation.status!=="active")return false;
   const fixed=await env.DB.prepare("SELECT cohort_id,organization_id FROM pilot_cost_reservation_scopes WHERE reservation_id=? AND actor_user_id=?")
     .bind(reservationId,userId).first<{cohort_id:string;organization_id:string}>();
   const now=new Date().toISOString();
@@ -845,9 +863,29 @@ export async function claimCostBudgetReservation(env: WorkerEnv, userId: string,
               AND unmanaged_participant.status='active' AND unmanaged_participant.revoked_at IS NULL))
         )
     )`;
+  const projectCustody=reservation.workspace_id==="forma"?"":` AND EXISTS(SELECT 1 FROM project_budget_reservation_scopes scoped
+      JOIN organization_projects project ON project.project_access_id=scoped.project_access_id
+        AND project.organization_id=scoped.organization_id AND project.status='active'
+      JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
+      JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id
+        AND migration.organization_id=project.organization_id AND migration.status='active'
+      JOIN users identity ON identity.user_id=cost_budget_reservations.owner_id AND identity.consent_version=?
+      JOIN organization_memberships member ON member.organization_id=project.organization_id
+        AND member.user_id=cost_budget_reservations.owner_id AND member.status='active'
+        AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
+      JOIN organization_memberships owner ON owner.organization_id=project.organization_id
+        AND owner.user_id=project.owner_user_id AND owner.status='active'
+        AND owner.accepted_at IS NOT NULL AND owner.revoked_at IS NULL
+      LEFT JOIN project_memberships project_member ON project_member.project_access_id=project.project_access_id
+        AND project_member.organization_id=project.organization_id AND project_member.user_id=cost_budget_reservations.owner_id
+        AND project_member.status='active' AND project_member.revoked_at IS NULL
+      WHERE scoped.reservation_kind='usd' AND scoped.reservation_id=cost_budget_reservations.reservation_id
+        AND scoped.organization_id=cost_budget_reservations.workspace_id
+        AND scoped.actor_user_id=cost_budget_reservations.owner_id
+        AND(project.owner_user_id=cost_budget_reservations.owner_id OR project_member.role IN('owner','editor')))`;
   const claimed=await env.DB.prepare(`UPDATE cost_budget_reservations SET status='executing',updated_at=?
-    WHERE reservation_id=? AND owner_id=? AND status='active'${restriction}`)
-    .bind(now,reservationId,userId,...(fixed?[fixed.cohort_id,fixed.organization_id,now,now,POLICY_VERSION]:[])).run();
+    WHERE reservation_id=? AND owner_id=? AND status='active'${restriction}${projectCustody}`)
+    .bind(now,reservationId,userId,...(fixed?[fixed.cohort_id,fixed.organization_id,now,now,POLICY_VERSION]:[]),...(reservation.workspace_id!=="forma"?[POLICY_VERSION]:[])).run();
   if(Number(claimed.meta.changes??0)===1)return true;
   await settleCostBudget(env,userId,reservationId,0,{activeOnly:true});
   return false;
@@ -1055,7 +1093,9 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
   const assistantModels=assistantProviderAllowed?[...new Set(assistantModelAllowlist)]
     .filter((model)=>model!=="gpt-5.6-sol"||principal.role==="admin"&&assistantPremiumUsers.has(principal.userId))
     .map((id)=>({id,maximumMicrousd:assistantModelCostMicrousd(id,10_400,1_600),premiumApprovalRequired:id==="gpt-5.6-sol"})):[];
-  const assistant=assistantTesters.has(principal.userId)&&!auth.impersonation&&(audience==="creative"||audience==="canvas")
+  const pilotAssistant=Boolean(selected.context&&hasCapability(principal,"project.author",{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId})
+    &&await assistantPilotEntitled(env,principal.userId,selected.context.organizationId));
+  const assistant=(assistantTesters.has(principal.userId)||pilotAssistant)&&!auth.impersonation&&(audience==="creative"||audience==="canvas")
     ?{enabled:true as const,phase:assistantEditors.has(principal.userId)?"actions" as const:"read-only" as const,capabilities:["project.assistant.read",...(!selected.context||hasCapability(principal,"project.author",{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId})?["project.assistant.propose"]:[])],...(assistantModels.length?{models:assistantModels}:{})}
     :null;
   const visibleBudgets=privileged||canReadTenantUsage?accountBudgets:{budgets:{...accountBudgets.budgets,workspace:{...accountBudgets.budgets.user}},costBudgets:{...accountBudgets.costBudgets,workspace:{...accountBudgets.costBudgets.user}}};

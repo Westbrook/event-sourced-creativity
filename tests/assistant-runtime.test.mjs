@@ -18,7 +18,7 @@ function database() {
   const sqlite = new DatabaseSync(":memory:");
   const controls = { failAssistantTurnInsert: false, failAssistantActionCommit: false, failAssistantBillingAudit: false,
     failAssistantBillingCostSettlement: false, failPlatformAssistantCommit: false, forbidCreatorContentReads: false,
-    failPlatformPrivacyErase: false, beforePlatformCommit: null, skipAssistantTaskClaimOnce: false, lastDatabaseError: "" };
+    failPlatformPrivacyErase: false, beforePlatformCommit: null, beforeDeletionClaim: null, skipAssistantTaskClaimOnce: false, lastDatabaseError: "" };
   class Statement {
     constructor(sql, values = []) { this.sql = sql; this.values = values; }
     bind(...values) { assert.ok(values.length <= 100); return new Statement(this.sql, values); }
@@ -47,6 +47,11 @@ function database() {
         const beforeCommit = controls.beforePlatformCommit;
         controls.beforePlatformCommit = null;
         beforeCommit();
+      }
+      if(controls.beforeDeletionClaim&&/^\s*INSERT INTO organization_deletion_jobs\b/iu.test(this.sql)){
+        const beforeClaim=controls.beforeDeletionClaim;
+        controls.beforeDeletionClaim=null;
+        beforeClaim();
       }
       if (controls.failPlatformPrivacyErase && /^\s*UPDATE platform_assistant_private_content SET content='',redacted_at=\?/iu.test(this.sql)) {
         controls.failPlatformPrivacyErase = false;
@@ -191,6 +196,288 @@ test("assistant is default-off and only the exact server-issued internal audienc
   assert.deepEqual(session.assistant, { enabled: true, phase: "read-only", capabilities: ["project.assistant.read", "project.assistant.propose"] });
   const other = { "oai-authenticated-user-id": "another-user", "oai-authenticated-user-email": "another-user@example.test" };
   assert.equal((await enabled.request(endpoint(), { headers: other })).status, 404);
+});
+
+test("an active named controlled-pilot creator receives free scoped guidance without paid or authoring entitlements",async()=>{
+  const state=await sharedProjectFixture();
+  state.env.FORMA_ASSISTANT_INTERNAL_USER_IDS="dev-local-creative,assistant-viewer";
+  const now=new Date().toISOString(),past=new Date(Date.now()-60_000).toISOString(),future=new Date(Date.now()+60_000).toISOString();
+  state.sqlite.prepare("INSERT INTO pilot_cohorts(cohort_id,organization_id,status,starts_at,ends_at,created_by_user_id,created_at,updated_at) VALUES(?,?,'active',?,?,?,?,?)")
+    .run("strict-named-cohort",state.organizationId,past,future,"assistant-owner",now,now);
+  state.sqlite.prepare("INSERT INTO pilot_participants(participant_id,cohort_id,organization_id,email_normalized,user_id,role,status,invited_by_user_id,created_at,revoked_at) VALUES(?,?,?,?,?,'member','active',?,?,NULL)")
+    .run("strict-named-participant","strict-named-cohort",state.organizationId,"assistant-owner@example.test","assistant-owner","assistant-owner",now);
+  const sessionResponse=await state.request("/api/session",{headers:state.owner});
+  assert.equal(sessionResponse.status,200,JSON.stringify(await sessionResponse.clone().json()));
+  const session=await sessionResponse.json();
+  assert.equal(session.assistant.enabled,true);
+  assert.equal(session.assistant.phase,"read-only","cohort admission never grants independent write authority");
+  assert.equal(session.assistant.models,undefined,"cohort admission never grants paid provider access");
+  const guidance=await state.request(endpoint(),json({turnId:crypto.randomUUID(),message:"What can I do with this project?"},state.owner));
+  assert.equal(guidance.status,201,JSON.stringify(await guidance.clone().json()));
+  assert.equal((await guidance.json()).task,undefined,"named participants receive free in-product guidance only");
+  state.sqlite.prepare("UPDATE pilot_cohorts SET status='paused',updated_at=? WHERE cohort_id=?").run(new Date().toISOString(),"strict-named-cohort");
+  const revoked=await state.request(endpoint(),{headers:state.owner});
+  assert.ok([403,404].includes(revoked.status),`paused participants lose assistance immediately: ${revoked.status}`);
+});
+
+test("hosted identity rejects unverified Access email and every cross-origin API mutation fails closed", async () => {
+  const state = await fixture();
+  const usersBefore = state.sqlite.prepare("SELECT COUNT(*) AS count FROM users").get().count;
+  const forged = await worker.fetch(new Request("https://forma.example/api/session", {
+    headers: { "cf-access-authenticated-user-email": "unverified@example.test" },
+  }), state.env, { waitUntil() {} });
+  assert.equal(forged.status, 401);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM users").get().count, usersBefore);
+
+  const originalConsent = state.sqlite.prepare("SELECT consent_version FROM users WHERE user_id=?").get("dev-local-creative").consent_version;
+  const denied = await state.request("/api/session", {
+    ...json({ action: "accept_terms", ownershipConfirmed: true, providerProcessingConfirmed: true }),
+    headers: { "content-type": "application/json", origin: "https://another-origin.invalid" },
+  });
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).error, "same_origin_required");
+  assert.equal(state.sqlite.prepare("SELECT consent_version FROM users WHERE user_id=?").get("dev-local-creative").consent_version, originalConsent);
+
+  const assistant = await state.request(endpoint(), {
+    ...json({ turnId: crypto.randomUUID(), message: "Change the approved direction" }),
+    headers: { "content-type": "application/json", origin: "https://another-origin.invalid" },
+  });
+  assert.equal(assistant.status, 403);
+  assert.equal((await assistant.json()).error, "same_origin_required");
+});
+
+test("shared context rejects stale same-field edits while preserving independent collaborative changes",async()=>{
+  const state=await sharedProjectFixture();
+  const current=await(await state.request("/api/events?after=0&limit=2000&content=0",{headers:state.owner})).json();
+  const blockId=crypto.randomUUID();
+  const creation=await state.request("/api/events",json({action:"append",event:{type:"BlockCreated",payload:{project_id:"project-atmosphere",
+    document_id:"doc-atmosphere",block_id:blockId,type:"direction",handle:"Shared controlled decision",position:"strict-a0",properties:{}}},expectedSequence:current.head},state.owner));
+  assert.equal(creation.status,200,JSON.stringify(await creation.clone().json()));
+  const created=await creation.json();
+  const payload={project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:blockId,
+    property_path:"strict_collaboration_note",old_value:null,new_value:"First editor preserved"};
+  const first=await state.request("/api/events",json({action:"append",event:{type:"BlockPropertyEdited",payload},expectedSequence:created.head},state.owner));
+  assert.equal(first.status,200,JSON.stringify(await first.clone().json()));
+  const accepted=await first.json();
+  const stale=await state.request("/api/events",json({action:"append",event:{type:"BlockPropertyEdited",payload:{...payload,new_value:"Second editor must not overwrite"}},expectedSequence:accepted.head},state.owner));
+  assert.equal(stale.status,409,JSON.stringify(await stale.clone().json()));
+  assert.equal((await stale.json()).error,"context_value_conflict");
+  const independent=await state.request("/api/events",json({action:"append",event:{type:"BlockPropertyEdited",payload:{...payload,property_path:"independent_editor_note",old_value:null,new_value:"Independent decision preserved"}},expectedSequence:accepted.head},state.owner));
+  assert.equal(independent.status,200,JSON.stringify(await independent.clone().json()));
+  const independentResult=await independent.json();
+  const defaults=await state.request("/api/events",json({action:"batch",events:[
+    {type:"BlockPropertyEdited",payload:{...payload,property_path:"intent",old_value:"include",new_value:"avoid"}},
+    {type:"BlockWeightSet",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:blockId,previous_weight:.5,weight:.8}},
+  ],expectedSequence:independentResult.head},state.owner));
+  assert.equal(defaults.status,200,JSON.stringify(await defaults.clone().json()),"the first edit of effective UI defaults succeeds when no durable value existed");
+  const updates=state.sqlite.prepare("SELECT event.payload,secret.private_json FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE event.type='BlockPropertyEdited'").all()
+    .map((event)=>({...JSON.parse(event.payload),...JSON.parse(event.private_json??"{}") })).filter((event)=>event.block_id===payload.block_id);
+  assert.equal(updates.some((event)=>event.new_value==="First editor preserved"),true);
+  assert.equal(updates.some((event)=>event.new_value==="Second editor must not overwrite"),false);
+  assert.equal(updates.some((event)=>event.new_value==="Independent decision preserved"),true);
+});
+
+test("older unread review assignments remain visible ahead of newer acknowledged notices",async()=>{
+  const state=await sharedProjectFixture();
+  const insert=state.sqlite.prepare("INSERT INTO project_notifications(notification_id,project_access_id,organization_id,project_id,recipient_user_id,event_id,kind,artifact_id,document_id,message,created_at,expires_at,read_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  const expires=new Date(Date.now()+86_400_000).toISOString();
+  for(let index=0;index<111;index+=1){
+    const created=new Date(Date.now()-60_000+index*100).toISOString();
+    insert.run(`strict-notification-${index}`,state.projectAccessId,state.organizationId,"project-atmosphere","assistant-owner",`strict-event-${index}`,
+      index<56?"review_requested":"output_ready",null,"doc-atmosphere",index<56?"Independent review still needed":"Previously read update",created,expires,index<56?null:created);
+  }
+  const response=await state.request("/api/project-notifications",{headers:state.owner});
+  assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+  const notifications=await response.json();
+  assert.equal(notifications.notifications.length,111,"every bounded recipient notice remains reachable without a hidden unimplemented second page");
+  assert.equal(notifications.notifications[0].kind,"review_requested","the oldest unread assignment cannot be buried under recent read notices");
+  assert.equal(notifications.notifications.filter((notice)=>notice.readAt===null).length,56,"more than fifty independent review assignments remain visible");
+  assert.equal(notifications.unreadCount,56);
+  assert.equal(notifications.totalCount,111);
+});
+
+test("notification retention preserves each recipient's oldest unread work without quadratic cross-recipient cleanup",async()=>{
+  const state=await sharedProjectFixture();
+  const insert=state.sqlite.prepare("INSERT INTO project_notifications(notification_id,project_access_id,organization_id,project_id,recipient_user_id,event_id,kind,artifact_id,document_id,message,created_at,expires_at,read_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  const expires=new Date(Date.now()+86_400_000).toISOString();
+  for(const recipient of ["assistant-owner","assistant-viewer"])for(let index=0;index<1_001;index+=1){
+    const created=new Date(Date.now()-120_000+index).toISOString();
+    insert.run(`bounded-${recipient}-${index}`,state.projectAccessId,state.organizationId,"project-atmosphere",recipient,`bounded-${recipient}-event-${index}`,
+      index===0?"review_requested":"output_ready",null,"doc-atmosphere",index===0?"Preserve the oldest unread review":"Previously acknowledged update",created,expires,index===0?null:created);
+  }
+  const changed=await state.request("/api/events",json({action:"append",event:{type:"BlockCreated",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",
+    block_id:"notification-retention-decision",type:"direction",handle:"direction/retention",position:"z999",properties:{text:"Retain each person's independent review."}}}},state.owner));
+  assert.equal(changed.status,200,JSON.stringify(await changed.clone().json()));
+  for(const recipient of ["assistant-owner","assistant-viewer"]){
+    const count=state.sqlite.prepare("SELECT COUNT(*) AS count FROM project_notifications WHERE project_access_id=? AND recipient_user_id=?")
+      .get(state.projectAccessId,recipient).count;
+    assert.equal(count,1_000,recipient);
+    const preserved=state.sqlite.prepare("SELECT read_at FROM project_notifications WHERE notification_id=?").get(`bounded-${recipient}-0`);
+    assert.ok(preserved,`${recipient}'s oldest actionable assignment survives newer acknowledged traffic`);
+    assert.equal(preserved.read_at,null);
+  }
+});
+
+test("organization usage exposes buyer-safe measured outcomes without another tenant's work or actor identities",async()=>{
+  const state=await sharedProjectFixture();
+  const now=new Date().toISOString(),earlier=new Date(Date.now()-30*60_000).toISOString();
+  const insert=state.sqlite.prepare("INSERT INTO project_review_tasks(task_id,project_access_id,organization_id,project_id,artifact_id,document_id,request_event_id,requested_by_user_id,assigned_user_id,artifact_revision,content_sha256,status,created_at,resolved_at,resolved_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,'approved',?,?,?)");
+  insert.run("strict-approved",state.projectAccessId,state.organizationId,"project-atmosphere","strict-deliverable","doc-atmosphere","strict-request","assistant-owner","assistant-viewer",0,"safe-digest",earlier,now,"assistant-viewer");
+  insert.run("foreign-approved","foreign-project-access","foreign-organization","foreign-project","private-foreign-deliverable","foreign-document","foreign-request","foreign-owner","foreign-reviewer",0,"foreign-digest",earlier,now,"foreign-reviewer");
+  const usage=await state.request(`/api/workspaces/${state.organizationId}/usage`,{headers:state.owner});
+  assert.equal(usage.status,200,JSON.stringify(await usage.clone().json()));
+  const report=await usage.json();
+  assert.equal(report.outcomes.approvedDeliverables,1);
+  assert.equal(report.outcomes.averageReviewMinutes,30);
+  assert.equal(report.outcomes.pendingReviews,0);
+  assert.equal(report.outcomes.settledCostPerApprovedDeliverableMicrousd,0);
+  assert.doesNotMatch(JSON.stringify(report.outcomes),/foreign|assistant-owner|assistant-viewer|strict-deliverable/,"aggregate outcomes never expose people, private content, or other tenants");
+});
+
+test("managed organization context requires a distinct live administrator and rejects source changes before approval",async()=>{
+  const state=await sharedProjectFixture();
+  state.sqlite.prepare("UPDATE organization_memberships SET role='administrator' WHERE organization_id=? AND user_id=?")
+    .run(state.organizationId,"assistant-viewer");
+  state.sqlite.prepare("UPDATE project_memberships SET role='editor' WHERE project_access_id=? AND user_id=?")
+    .run(state.projectAccessId,"assistant-viewer");
+  const blockId=crypto.randomUUID();
+  const created=await state.request("/api/events",json({action:"append",event:{type:"BlockCreated",payload:{project_id:"project-atmosphere",
+    document_id:"doc-atmosphere",block_id:blockId,type:"direction",handle:"Approved controlled direction",position:"managed-a0",properties:{text:"Approved controlled context"}}}},state.owner));
+  assert.equal(created.status,200,JSON.stringify(await created.clone().json()));
+  const now=new Date().toISOString(),past=new Date(Date.now()-60_000).toISOString(),future=new Date(Date.now()+86_400_000).toISOString();
+  state.sqlite.prepare("INSERT INTO pilot_cohorts(cohort_id,organization_id,status,starts_at,ends_at,created_by_user_id,created_at,updated_at) VALUES(?,?,'active',?,?,?,?,?)")
+    .run("managed-package-cohort",state.organizationId,past,future,"assistant-owner",now,now);
+  const participants=state.sqlite.prepare("INSERT INTO pilot_participants(participant_id,cohort_id,organization_id,email_normalized,user_id,role,status,invited_by_user_id,created_at,revoked_at) VALUES(?,?,?,?,?,'member','active',?,?,NULL)");
+  for(const actor of ["assistant-owner","assistant-viewer"])participants.run(`managed-${actor}`,"managed-package-cohort",state.organizationId,`${actor}@example.test`,actor,"assistant-owner",now);
+  const destination=`/api/workspaces/${state.organizationId}/context-packages`;
+  const body={name:"Controlled pilot messaging",sourceProjectAccessId:state.projectAccessId,documentId:"doc-atmosphere",blockIds:[blockId]};
+  const drafted=await state.request(destination,json(body,state.owner));
+  assert.equal(drafted.status,201,JSON.stringify(await drafted.clone().json()));
+  const version=await drafted.json();
+  const publish=`${destination}/${version.packageId}/versions/${version.versionId}/publish`;
+  const self=await state.request(publish,{method:"POST",headers:state.owner});
+  assert.equal(self.status,403,JSON.stringify(await self.clone().json()));
+  assert.equal((await self.json()).error,"independent_context_approver_required");
+  state.sqlite.prepare("UPDATE pilot_cohorts SET status='paused' WHERE cohort_id=?").run("managed-package-cohort");
+  const pausedSelf=await state.request(publish,{method:"POST",headers:state.owner});
+  assert.equal(pausedSelf.status,403,JSON.stringify(await pausedSelf.clone().json()));
+  assert.equal((await pausedSelf.json()).error,"independent_context_approver_required","pausing a governed cohort never enables author self-approval");
+  const authorCatalog=await(await state.request(destination,{headers:state.owner})).json();
+  const reviewerCatalog=await(await state.request(destination,{headers:state.viewer})).json();
+  assert.equal(authorCatalog.packages[0].versionStatus,"draft");
+  assert.equal(authorCatalog.packages[0].versionId,null);
+  assert.equal(authorCatalog.packages[0].pendingDraftVersionId,version.versionId);
+  assert.equal(authorCatalog.packages[0].canApprove,false);
+  assert.equal(reviewerCatalog.packages[0].versionStatus,"draft");
+  assert.equal(reviewerCatalog.packages[0].canApprove,true,"an independently entitled administrator can find the pending draft");
+  assert.equal(reviewerCatalog.packages[0].draftPreview[0].text,"Approved controlled context","an independent reviewer can inspect the exact proposed decision before approving");
+  const approved=await state.request(publish,{method:"POST",headers:state.viewer});
+  assert.equal(approved.status,200,JSON.stringify(await approved.clone().json()));
+  const immutable=state.sqlite.prepare("SELECT created_by_user_id,approved_by_user_id,status FROM organization_context_package_versions WHERE version_id=?").get(version.versionId);
+  assert.equal(immutable.created_by_user_id,"assistant-owner");
+  assert.equal(immutable.approved_by_user_id,"assistant-viewer");
+  assert.equal(immutable.status,"published");
+
+  const second=await state.request(`${destination}/${version.packageId}/versions`,json(body,state.owner));
+  assert.equal(second.status,201,JSON.stringify(await second.clone().json()));
+  const draft=await second.json();
+  const both=await(await state.request(destination,{headers:state.viewer})).json();
+  assert.equal(both.packages[0].versionId,version.versionId,"a pending update never displaces the currently usable published context");
+  assert.equal(both.packages[0].pendingDraftVersionId,draft.versionId,"the next version remains independently reviewable");
+  const changed=await state.request("/api/events",json({action:"append",event:{type:"BlockPropertyEdited",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:blockId,property_path:"text",old_value:"Approved controlled context",new_value:"Changed after independent capture"}}},state.owner));
+  assert.equal(changed.status,200,JSON.stringify(await changed.clone().json()));
+  const stale=await state.request(`${destination}/${version.packageId}/versions/${draft.versionId}/publish`,{method:"POST",headers:state.viewer});
+  assert.equal(stale.status,409,JSON.stringify(await stale.clone().json()));
+  assert.equal((await stale.json()).error,"context_package_source_changed");
+  state.sqlite.prepare("UPDATE pilot_cohorts SET status='closed' WHERE cohort_id=?").run("managed-package-cohort");
+  const closedSelf=await state.request(`${destination}/${version.packageId}/versions/${draft.versionId}/publish`,{method:"POST",headers:state.owner});
+  assert.equal(closedSelf.status,403,"closing a cohort never disables its existing organizational dual-control obligations");
+});
+
+test("a two-person controlled pilot supports informed source-project Viewer approval without granting authorship",async()=>{
+  const state=await sharedProjectFixture();
+  const membership=state.sqlite.prepare("SELECT membership_id FROM project_memberships WHERE project_access_id=? AND user_id=?")
+    .get(state.projectAccessId,"assistant-viewer").membership_id;
+  const granted=await state.request(`/api/workspaces/${state.organizationId}/projects/${state.projectAccessId}/members/${membership}`,{
+    method:"PATCH",headers:{...state.owner,"content-type":"application/json"},body:JSON.stringify({reviewAccess:true}),
+  });
+  assert.equal(granted.status,200,JSON.stringify(await granted.clone().json()));
+  const root=crypto.randomUUID(),related=crypto.randomUUID(),exact="Revenue  growth\nnever fabricate proof";
+  const longDecision=`${"Verified contractual context ".repeat(20)}CRITICAL TAIL AFTER FOUR HUNDRED CHARACTERS`;
+  const authored=await state.request("/api/events",json({action:"batch",events:[
+    {type:"BlockCreated",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:root,type:"direction",handle:"Protected contractual restriction",position:"governed-a",properties:{text:longDecision,intent:"prohibit",weight:.8,exact_text:exact,exact_placements:["opening","closing"],protected_phrases:[{text:exact,placement:"opening_and_closing"}]}}},
+    {type:"BlockCreated",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:related,type:"message",handle:"Related authored obligation",position:"governed-b",properties:{text:"Related obligation",active:false,weight:.8}}},
+    {type:"BlockRelationAdded",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",relation_id:crypto.randomUUID(),from_block_id:root,to_block_id:related,kind:"context_contains",properties:{}}},
+  ]},state.owner));
+  assert.equal(authored.status,200,JSON.stringify(await authored.clone().json()));
+  const configured=await state.request(`/api/workspaces/${state.organizationId}/pilot`,json({maxParticipants:2,participantCapMicrousd:1000000,organizationCapMicrousd:2000000},state.owner));
+  assert.equal(configured.status,201,JSON.stringify(await configured.clone().json()));
+  const enrolled=await state.request(`/api/workspaces/${state.organizationId}/pilot/participants`,json({email:"assistant-viewer@example.test",role:"reviewer"},state.owner));
+  assert.equal(enrolled.status,201,JSON.stringify(await enrolled.clone().json()));
+  const reviewerSession=await(await state.request("/api/session",{headers:state.viewer})).json();
+  assert.equal(reviewerSession.projectContext.role,"viewer");
+  assert.ok(reviewerSession.capabilities.includes("project.review.approve"));
+  assert.ok(!reviewerSession.capabilities.includes("workspace.policy.manage"));
+  assert.ok(!reviewerSession.capabilities.includes("project.author"));
+
+  const destination=`/api/workspaces/${state.organizationId}/context-packages`;
+  const body={name:"Precisely reviewed creative decisions",sourceProjectAccessId:state.projectAccessId,documentId:"doc-atmosphere",blockIds:[root]};
+  const draftResponse=await state.request(destination,json(body,state.owner));
+  assert.equal(draftResponse.status,201,JSON.stringify(await draftResponse.clone().json()));
+  const draft=await draftResponse.json(),publish=`${destination}/${draft.packageId}/versions/${draft.versionId}/publish`;
+  const author=await(await state.request(destination,{headers:state.owner})).json();
+  assert.equal(author.packages[0].pendingDraftVersionId,draft.versionId);
+  assert.equal(author.packages[0].canApprove,false,"the author retains durable pending visibility but cannot approve their own context");
+  const reviewer=await(await state.request(destination,{headers:state.viewer})).json();
+  const proposed=reviewer.packages[0];
+  assert.equal(proposed.versionId,null,"a first draft remains visible before any published version exists");
+  assert.equal(proposed.pendingDraftVersionId,draft.versionId);
+  assert.equal(proposed.canApprove,true,"the exact viewer's project-scoped review grant is sufficient for independent approval");
+  const protectedDecision=proposed.draftPreview.find((decision)=>decision.handle==="Protected contractual restriction");
+  assert.equal(protectedDecision.text,longDecision,"independent reviewers receive complete bounded text, including its legally material tail");
+  assert.ok(protectedDecision.text.length>400);
+  assert.equal(protectedDecision.intent,"prohibit");
+  assert.equal(protectedDecision.active,true);
+  assert.equal(protectedDecision.exactText,exact);
+  assert.deepEqual(protectedDecision.exactPlacements,["opening","closing"]);
+  assert.deepEqual(protectedDecision.protectedPhrases,[{text:exact,placement:"opening_and_closing"}]);
+  assert.deepEqual(protectedDecision.relations,[{kind:"context_contains",targetHandle:"Related authored obligation"}]);
+  assert.equal(proposed.draftPreview.find((decision)=>decision.handle==="Related authored obligation").active,false);
+  const denied=await state.request(destination,json(body,state.viewer));
+  assert.equal(denied.status,403,"review authority never becomes package authorship or workspace administration");
+  const approved=await state.request(publish,{method:"POST",headers:state.viewer});
+  assert.equal(approved.status,200,JSON.stringify(await approved.clone().json()));
+  assert.equal(state.sqlite.prepare("SELECT created_by_user_id,approved_by_user_id FROM organization_context_package_versions WHERE version_id=?")
+    .get(draft.versionId).approved_by_user_id,"assistant-viewer");
+  const adopted=await state.request(`${destination}/${draft.packageId}/adopt`,json({projectAccessId:state.projectAccessId,documentId:"doc-atmosphere",versionId:draft.versionId,updateMode:"pinned"},state.owner));
+  assert.equal(adopted.status,201,JSON.stringify(await adopted.clone().json()));
+  assert.equal(state.sqlite.prepare("SELECT role FROM project_memberships WHERE project_access_id=? AND user_id=?")
+    .get(state.projectAccessId,"assistant-viewer").role,"viewer","approving organizational context never upgrades the reviewer to editor");
+});
+
+test("server-owned package adoption supports more than fifty guarded events without expanding ordinary user batches",async()=>{
+  const state=await sharedProjectFixture();
+  const ids=Array.from({length:26},()=>crypto.randomUUID());
+  const authored=ids.flatMap((id,index)=>[
+    {type:"BlockCreated",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:id,type:"direction",handle:`Locked reusable decision ${index+1}`,position:`strict-${String(index).padStart(3,"0")}`,properties:{text:`Protected licensed-free decision ${index+1}`}}},
+    {type:"BlockLocked",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:id}},
+  ]);
+  const tooMany=await state.request("/api/events",json({action:"batch",events:authored.slice(0,51)},state.owner));
+  assert.equal(tooMany.status,400);
+  assert.equal((await tooMany.json()).error,"invalid_project_event_batch");
+  for(const chunk of [authored.slice(0,26),authored.slice(26)]){
+    const saved=await state.request("/api/events",json({action:"batch",events:chunk},state.owner));
+    assert.equal(saved.status,200,JSON.stringify(await saved.clone().json()));
+  }
+  const endpoint=`/api/workspaces/${state.organizationId}/context-packages`;
+  const drafted=await state.request(endpoint,json({name:"Twenty-six independently protected decisions",sourceProjectAccessId:state.projectAccessId,documentId:"doc-atmosphere",blockIds:ids},state.owner));
+  assert.equal(drafted.status,201,JSON.stringify(await drafted.clone().json()));
+  const version=await drafted.json();
+  assert.equal((await state.request(`${endpoint}/${version.packageId}/versions/${version.versionId}/publish`,{method:"POST",headers:state.owner})).status,200);
+  const adopted=await state.request(`${endpoint}/${version.packageId}/adopt`,json({projectAccessId:state.projectAccessId,documentId:"doc-atmosphere",versionId:version.versionId,updateMode:"pinned"},state.owner));
+  assert.equal(adopted.status,201,JSON.stringify(await adopted.clone().json()));
+  const saved=await adopted.json();
+  assert.equal(saved.appended.length,52,"twenty-six creates and twenty-six locks commit as one server-owned governed adoption");
 });
 
 test("privileged assistants are default-off, separately session-scoped, consent-gated, and never reuse the Creator endpoint", async () => {
@@ -662,6 +949,45 @@ test("shared pending changes remain private and viewers cannot acquire authoring
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_action_proposals WHERE project_access_id=?").get(projectAccessId).count, 1);
 });
 
+test("paid specialists never dispatch missing or revoked rights, incomplete protected wording, or unsupported document synthesis",async()=>{
+  const scope={project_id:"project-atmosphere",document_id:"doc-atmosphere"};
+  const source=(referenceId)=>["BlockCreated",{...scope,block_id:`source-${referenceId}`,type:"reference",handle:`reference/${referenceId}`,
+    position:"z901",properties:{text:"Licensed source must remain protected.",reference_id:referenceId,rights_class:"owned_or_licensed",weight:.8}}];
+  const cases=[
+    {name:"missing source-rights receipt",events:[source("missing-receipt")],reason:"rights"},
+    {name:"revoked source-rights receipt",events:[source("revoked-receipt"),["RightsAsserted",{...scope,reference_id:"revoked-receipt",rights_class:"revoked"}]],reason:"rights"},
+    {name:"expired source-rights boundary",events:[["BlockCreated",{...scope,block_id:"expired-message",type:"message",handle:"message/expired",position:"z902",
+      properties:{text:"Expired campaign claim",rights_expires_at:new Date(Date.now()-60_000).toISOString(),weight:.8}}]],reason:"rights"},
+    {name:"truncated mandatory exact wording",events:[["BlockCreated",{...scope,block_id:"required-long",type:"message",handle:"message/exact",position:"z903",
+      properties:{text:"必".repeat(340),exact_text:"必".repeat(340),weight:.8}}]],reason:"protected"},
+    {name:"protected multilingual context exceeds its safe payload budget",events:Array.from({length:16},(_,index)=>["BlockCreated",{
+      ...scope,block_id:`required-${index}`,type:"exclusion",handle:`exclusion/required-${index}`,position:`z${String(index).padStart(3,"0")}`,
+      properties:{text:"必".repeat(320),intent:"prohibit",weight:.8},
+    }]),reason:"coverage"},
+    {name:"unsupported cross-document synthesis",events:[],message:"Compare the context across documents",reason:"scope"},
+  ];
+  const originalFetch=globalThis.fetch;
+  let calls=0;
+  globalThis.fetch=async()=>{calls+=1;throw new Error("unsafe assistant context must never reach a paid provider");};
+  try{
+    for(const scenario of cases){
+      const state=await fixture({provider:true});
+      appendFixtureEvents(state.sqlite,"creative:dev-local-creative",scenario.events);
+      const response=await state.request(endpoint(),json({turnId:crypto.randomUUID(),message:scenario.message??"Explain the approved creative context"}));
+      assert.equal(response.status,201,`${scenario.name}: ${JSON.stringify(await response.clone().json())}`);
+      const result=await response.json();
+      assert.equal(result.task,undefined,`${scenario.name} never creates a chargeable specialist task`);
+      if(scenario.reason==="rights")assert.ok(result.context.totals.unsafeRightsDecisions>0,scenario.name);
+      if(scenario.reason==="protected")assert.ok(result.context.totals.truncatedProtectedDecisions>0,scenario.name);
+      if(scenario.reason==="coverage")assert.ok(result.context.decisionAtoms.filter((decision)=>decision.providerEligible&&decision.protected).length
+        <result.context.totals.protectedDecisions,scenario.name);
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_specialist_tasks").get().count,0,scenario.name);
+      await state.drainBackground();
+      assert.equal(calls,0,scenario.name);
+    }
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test("Luna specialist runs asynchronously against bounded page-aware views and settles exact usage", async () => {
   const state = await fixture({ provider: true });
   const originalFetch = globalThis.fetch;
@@ -842,7 +1168,7 @@ test("definitive provider rejections visibly fail and release both reserved budg
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test("ambiguous provider submission remains reviewable until an authorized administrator explicitly reconciles it", async () => {
+test("ambiguous provider submission remains reserved and cannot be self-reconciled by its administrator", async () => {
   const state = await fixture({ provider: true });
   const originalFetch = globalThis.fetch;
   let submissions = 0;
@@ -858,12 +1184,13 @@ test("ambiguous provider submission remains reviewable until an authorized admin
     assert.equal((await state.request(taskEndpoint(task.id, "cancel"), { method: "POST" })).status, 409);
     assert.equal((await state.request(taskEndpoint(task.id, "reconcile"), { method: "POST" })).status, 400);
     assert.equal((await state.request(taskEndpoint(task.id, "reconcile"), json({ confirmedNoProviderCharge: false }))).status, 400);
-    const reconciled = await state.request(taskEndpoint(task.id, "reconcile"), json({ confirmedNoProviderCharge: true }));
-    assert.equal(reconciled.status, 200, JSON.stringify(await reconciled.clone().json()));
-    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status, "reconciled");
-    assert.equal(state.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_microusd, 0);
-    assert.equal(state.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_tokens, 0);
-    assert.equal((await (await state.request(taskEndpoint(task.id, "reconcile"), json({ confirmedNoProviderCharge: true }))).json()).idempotent, true);
+    const denied = await state.request(taskEndpoint(task.id, "reconcile"), json({ confirmedNoProviderCharge: true }));
+    assert.equal(denied.status, 403, JSON.stringify(await denied.clone().json()));
+    assert.equal((await denied.json()).error, "assistant_independent_reviewer_required");
+    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status, "needs-review");
+    assert.equal(state.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_microusd, 4000);
+    assert.equal(state.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_tokens, 12_000);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_billing_reconciliations WHERE task_id=?").get(task.id).count, 0);
     assert.equal(submissions, 1, "an uncertain paid request must never be submitted to its provider twice");
   } finally { globalThis.fetch = originalFetch; }
 });
@@ -959,6 +1286,115 @@ test("an exact authorized organization administrator can reconcile a different s
     assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM organization_audit_events WHERE action='AssistantProviderChargeReconciled' AND resource_id=?").get(task.id).count, 1);
     assert.equal(submissions, 1, "administrative reconciliation must never retry an ambiguous paid submission");
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test("tenant deletion refuses an independently unresolved organization-scoped assistant submission",async()=>{
+  const state=await sharedProjectFixture({provider:true});
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>{throw new TypeError("provider completion could not be confirmed");};
+  try{
+    const started=await state.request(endpoint(),json({turnId:crypto.randomUUID(),message:"Explain the approved source context"},state.owner));
+    assert.equal(started.status,201,JSON.stringify(await started.clone().json()));
+    const task=(await started.json()).task;
+    await state.drainBackground();
+    const removed=await state.request(`/api/workspaces/${state.organizationId}/deletion`,json({confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA",organizationId:state.organizationId},state.owner));
+    assert.equal(removed.status,409,JSON.stringify(await removed.clone().json()));
+    const response=await removed.json();
+    assert.equal(response.error,"provider_submission_in_flight");
+    assert.equal(response.assistantTasks[0].taskId,task.id);
+    assert.equal(state.sqlite.prepare("SELECT status FROM organizations WHERE organization_id=?").get(state.organizationId).status,"active");
+    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"needs-review");
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("tenant deletion preserves unresolved scoped video recovery and any executing image reservation",async()=>{
+  for(const scenario of ["video","image"]){
+    const state=await sharedProjectFixture();
+    const now=new Date().toISOString();
+    if(scenario==="video"){
+      state.sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,attempt_count,requested_at,expires_at,updated_at) VALUES(?,?,?,?,?,'running',?,?,?, ?,?,1,?,?,?)")
+        .run("strict-unresolved-video","assistant-owner","creative:assistant-owner","doc-atmosphere","render_document","project","strict-video-attempt",1,
+          JSON.stringify({artifactKind:"video"}),JSON.stringify({providerJobId:"private-provider-video",productionSceneReceipts:{one:{status:"submitted"}}}),now,new Date(Date.now()+86_400_000).toISOString(),now);
+      const anchor=crypto.randomUUID(),sequence=Number(state.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get("creative:assistant-owner").head)+1;
+      state.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,NULL,NULL,1,?,?)")
+        .run(anchor,"creative:assistant-owner",sequence,now,now,"user:assistant-owner","strict-video","strict-video-attempt","ProjectDocumentJobQueued",
+          JSON.stringify({job_id:"strict-unresolved-video",organization_id:state.organizationId,project_access_id:state.projectAccessId,actor_user_id:"assistant-owner"}));
+      state.sqlite.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) VALUES(?,'job',?,?,?,?,'actor_private',?,?,?)")
+        .run(state.projectAccessId,"strict-unresolved-video",state.organizationId,"project-atmosphere","assistant-owner",anchor,"assistant-owner",now);
+      const canceled=await state.request("/api/document-jobs/strict-unresolved-video/cancel",{method:"POST",headers:state.owner});
+      assert.equal(canceled.status,409,JSON.stringify(await canceled.clone().json()));
+      assert.equal((await canceled.json()).error,"provider_submission_in_flight","direct cancellation cannot erase recoverable paid video evidence");
+    }else{
+      state.sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,attempt_count,requested_at,expires_at,updated_at) VALUES(?,?,?,?,?,'running',?,?,?, ?,?,1,?,?,?)")
+        .run("strict-running-image","assistant-owner","creative:assistant-owner","doc-atmosphere","generate","project","strict-image-attempt",1,
+          JSON.stringify({}),JSON.stringify({}),now,new Date(Date.now()+86_400_000).toISOString(),now);
+      const anchor=crypto.randomUUID(),sequence=Number(state.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get("creative:assistant-owner").head)+1;
+      state.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,NULL,NULL,1,?,?)")
+        .run(anchor,"creative:assistant-owner",sequence,now,now,"user:assistant-owner","strict-image","strict-image-attempt","ProjectDocumentJobQueued",
+          JSON.stringify({job_id:"strict-running-image",organization_id:state.organizationId,project_access_id:state.projectAccessId,actor_user_id:"assistant-owner"}));
+      state.sqlite.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) VALUES(?,'job',?,?,?,?,'actor_private',?,?,?)")
+        .run(state.projectAccessId,"strict-running-image",state.organizationId,"project-atmosphere","assistant-owner",anchor,"assistant-owner",now);
+      state.sqlite.prepare("INSERT INTO cost_budget_reservations(reservation_id,owner_id,workspace_id,stream_id,correlation_id,operation,period,reserved_microusd,used_microusd,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,0,'executing',?,?)")
+        .run("strict-executing-image","assistant-owner",state.organizationId,"creative:assistant-owner","strict-image-attempt","generate",now.slice(0,7),25_000,now,now);
+      state.sqlite.prepare("INSERT INTO project_budget_reservation_scopes(reservation_kind,reservation_id,organization_id,project_access_id,actor_user_id,workspace_scope_id,created_at) VALUES('usd',?,?,?,?,?,?)")
+        .run("strict-executing-image",state.organizationId,state.projectAccessId,"assistant-owner",state.organizationId,now);
+      const canceled=await state.request("/api/document-jobs/strict-running-image/cancel",{method:"POST",headers:state.owner});
+      assert.equal(canceled.status,409,JSON.stringify(await canceled.clone().json()));
+      assert.equal((await canceled.json()).error,"provider_submission_in_flight","direct cancellation cannot erase an executing image reservation");
+      assert.equal(state.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get("strict-running-image").status,"running");
+      assert.equal(state.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get("strict-executing-image").status,"executing");
+    }
+    const removed=await state.request(`/api/workspaces/${state.organizationId}/deletion`,json({confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA",organizationId:state.organizationId},state.owner));
+    assert.equal(removed.status,409,`${scenario}: ${JSON.stringify(await removed.clone().json())}`);
+    const blocked=await removed.json();
+    assert.equal(blocked.error,"provider_submission_in_flight",scenario);
+    assert.equal(scenario==="video"?blocked.documentJobs[0].jobId:blocked.costReservations[0].reservationId,
+      scenario==="video"?"strict-unresolved-video":"strict-executing-image",scenario);
+    assert.equal(state.sqlite.prepare("SELECT status FROM organizations WHERE organization_id=?").get(state.organizationId).status,"active",scenario);
+  }
+});
+
+test("tenant deletion atomically rejects a provider submission that races its final destructive claim",async()=>{
+  const state=await sharedProjectFixture({provider:true});
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>{throw new Error("the deletion race fixture must not contact a provider");};
+  try{
+    state.controls.skipAssistantTaskClaimOnce=true;
+    const started=await state.request(endpoint(),json({turnId:crypto.randomUUID(),message:"Explain the approved source context"},state.owner));
+    assert.equal(started.status,201,JSON.stringify(await started.clone().json()));
+    const task=(await started.json()).task;
+    await state.drainBackground();
+    state.controls.beforeDeletionClaim=()=>state.sqlite.prepare("UPDATE assistant_specialist_tasks SET status='running',provider_submitted=1 WHERE task_id=?")
+      .run(task.id);
+    const removed=await state.request(`/api/workspaces/${state.organizationId}/deletion`,json({confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA",organizationId:state.organizationId},state.owner));
+    assert.equal(removed.status,409,JSON.stringify(await removed.clone().json()));
+    assert.equal((await removed.json()).error,"provider_submission_in_flight");
+    assert.equal(state.sqlite.prepare("SELECT status FROM organizations WHERE organization_id=?").get(state.organizationId).status,"active");
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM organization_deletion_jobs WHERE organization_id=?").get(state.organizationId).count,0);
+    assert.equal(state.sqlite.prepare("SELECT status,provider_submitted FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).provider_submitted,1);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("tenant deletion cancels never-submitted assistant work and erases its mutable organization records",async()=>{
+  const state=await sharedProjectFixture({provider:true,actions:true});
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>{throw new Error("a never-submitted task must not call a provider");};
+  try{
+    state.controls.skipAssistantTaskClaimOnce=true;
+    const started=await state.request(endpoint(),json({turnId:crypto.randomUUID(),message:"Explain the approved source context"},state.owner));
+    assert.equal(started.status,201,JSON.stringify(await started.clone().json()));
+    const task=(await started.json()).task;
+    await state.drainBackground();
+    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"queued");
+    const removed=await state.request(`/api/workspaces/${state.organizationId}/deletion`,json({confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA",organizationId:state.organizationId},state.owner));
+    assert.equal(removed.status,200,JSON.stringify(await removed.clone().json()));
+    assert.equal((await removed.json()).status,"completed");
+    for(const table of ["assistant_turns","assistant_action_proposals","assistant_specialist_tasks"]){
+      assert.equal(state.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE organization_id=?`).get(state.organizationId).count,0,table);
+    }
+    assert.equal(state.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("assistant-owner").reserved_microusd,0);
+    assert.equal(state.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("assistant-owner").reserved_tokens,0);
+  }finally{globalThis.fetch=originalFetch;}
 });
 
 test("a successful-looking provider response without an authoritative usage receipt never masquerades as free", async () => {

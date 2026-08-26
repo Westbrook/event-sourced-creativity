@@ -3,7 +3,7 @@ import { assistantSurfaceForRoute } from "../model/assistant-route-policy.ts";
 import type { AssistantContext } from "../model/conversation-context.ts";
 import { applicationDefinition, navigationItemActive } from "../platform/applications.ts";
 import { platformSession } from "../platform/session-controller.ts";
-import type { AssistantDisplayedMessage, AssistantDisplayedProposal } from "./design-system/assistant-panel.ts";
+import type { AssistantDisplayedMessage, AssistantDisplayedProposal, FormaAssistantPanel } from "./design-system/assistant-panel.ts";
 import "./design-system/assistant-panel.ts";
 import { FormaPresentationalElement } from "./presentational-element.ts";
 
@@ -120,7 +120,10 @@ export class FormaPlatformAssistant extends FormaPresentationalElement {
       this.#messages = [...this.#messages, { id: `${turnId}:assistant`, role: "assistant", key: payload.turn.reply.key, values: payload.turn.reply.values }];
       if (payload.turn.proposal) this.#proposals = [...this.#proposals, payload.turn.proposal];
     } catch {
-      if (scope === this.#scope()) this.#messages = [...this.#messages, { id: `${turnId}:error`, role: "assistant", key: "assistant.unavailable" }];
+      if (scope === this.#scope()) {
+        this.#messages = [...this.#messages, { id: `${turnId}:error`, role: "assistant", key: "assistant.unavailable" }];
+        this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.restoreDraft(message);
+      }
     } finally { this.#pending.delete(turnId); this.requestUpdate(); }
   }
 

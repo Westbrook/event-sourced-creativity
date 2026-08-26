@@ -79,6 +79,28 @@ test("approved audio creation never enables listening, output inclusion, or prov
   assert.equal(event.payload.properties.allow_provider_audio_transfer, false);
 });
 
+test("an assistant cannot invert an exclusion into an inclusion",()=>{
+  const identifiers={blockId:"protected",relationId:"relation",turnId:"turn"};
+  assert.deepEqual(assistantActionEvents({kind:"context.create",blockType:"exclusion",text:"Never disclose customer information",intent:"include"},context,identifiers),[]);
+  for(const intent of ["avoid","prohibit"]){
+    const [accepted]=assistantActionEvents({kind:"context.create",blockType:"exclusion",text:"Never disclose customer information",intent},context,identifiers);
+    assert.equal(accepted.payload.properties.intent,intent);
+  }
+});
+
+test("unlocked exact wording and prohibitions remain read-only to assistant proposals and forged actions",()=>{
+  const guarded={...context,decisionAtoms:[
+    {id:"exact-message",type:"message",text:"Revenue  growth\nwithout alteration",locked:false,immutable:false,protected:true},
+    {id:"hard-boundary",type:"exclusion",text:"Never disclose contractual pricing",locked:false,immutable:false,protected:true,intent:"prohibit"},
+  ]};
+  const identifiers={blockId:"new",relationId:"relation",turnId:"turn"};
+  assert.deepEqual(normalizeAssistantActions("Change the message to a weaker promise",guarded),[]);
+  assert.deepEqual(normalizeAssistantActions("Remove exclusion",guarded),[]);
+  assert.deepEqual(assistantActionEvents({kind:"context.edit",targetBlockId:"exact-message",text:"Compromised wording"},guarded,identifiers),[]);
+  assert.deepEqual(assistantActionEvents({kind:"context.remove",targetBlockId:"hard-boundary"},guarded,identifiers),[]);
+  assert.deepEqual(assistantActionEvents({kind:"context.relation.add",fromBlockId:"exact-message",toBlockId:"hard-boundary",relationKind:"context_contains"},guarded,identifiers),[]);
+});
+
 test("relationships use exact editable endpoints and remove only an existing server-owned edge", () => {
   const editable = { ...context, decisionAtoms: [...context.decisionAtoms, { id: "palette-a", type: "palette", text: "Ocean cobalt", locked: false, immutable: false }] };
   const [added] = normalizeAssistantActions("Connect direction-a to palette-a", editable);

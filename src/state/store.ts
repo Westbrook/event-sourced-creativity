@@ -65,7 +65,7 @@ export type ShareRecord = { shareId: string; token?: string; resourceKind?: stri
 export type CapturedAuthorizationScope = { key:string; shared:boolean };
 export type ActivityIssueNote={id:string;body:string;createdAt:string;expiresAt:string};
 export type ProjectNotification={id:string;kind:string;artifactId:string|null;documentId:string|null;message:string;createdAt:string;readAt:string|null};
-export type OrganizationContextPackage={id:string;name:string;description:string;status:string;versionId:string|null;version:number|null;contentSha256:string|null;publishedAt:string|null;publishedByUserId:string|null;blockCount:number;bindingCount:number;createdAt:string;updatedAt:string};
+export type OrganizationContextPackage={id:string;name:string;description:string;status:string;versionId:string|null;version:number|null;versionStatus?:string|null;createdByUserId?:string|null;pendingDraftVersionId?:string|null;pendingDraftVersion?:number|null;pendingDraftContentSha256?:string|null;canApprove?:boolean;draftPreview?:Array<{handle:string;type:string;text:string;locked:boolean;intent:string;active:boolean;exactText:string|null;exactPlacements:string[];protectedPhrases:Array<{text:string;placement:string|null}>;relations:Array<{kind:string;targetHandle:string}>;sourceName:string|null;rightsExpiresAt:string|null}>;contentSha256:string|null;publishedAt:string|null;publishedByUserId:string|null;blockCount:number;bindingCount:number;createdAt:string;updatedAt:string};
 export type OrganizationContextBinding={id:string;organizationId:string;projectAccessId:string;documentId:string;packageId:string;versionId:string;pendingVersionId:string|null;updateMode:"pinned"|"follow-approved";status:string};
 export type OrganizationContextVersion={id:string;version:number;sourceProjectAccessId:string;sourceDocumentId:string;blocks:Array<{sourceBlockId:string;type:string;handle:string;contentSha256:string;locked:boolean;source?:{contentSha256:string;originalName:string}}>;relations:Array<{fromSourceBlockId:string;toSourceBlockId:string;kind:string;properties?:Record<string,unknown>}>};
 export type AssignedReviewTask={id:string;organizationId:string;organizationName:string;projectAccessId:string;projectId:string;projectName:string;documentId:string;documentTitle:string;artifactId:string;artifactTitle:string;artifactKind:string;revision:number;contentSha256:string;status:string;dueAt:string|null;createdAt:string;requestedByUserId:string;requestedByName:string};
@@ -961,7 +961,7 @@ export class FormaStore {
     if(!session||!context||!projection.documentId||!packageId&&!name.trim())return false;
     if(!Array.isArray(blockIds)){this.toast("Explicitly choose every context decision and original source before publishing.");return false;}
     const selection=blockIds;
-    if(!selection.length||selection.length>20){this.toast("Select between 1 and 20 context decisions for this organization package.");return false;}
+    if(!selection.length||selection.length>128){this.toast(this.#systemNotice("Select between 1 and {value} context decisions for this organization package.",{value:128}));return false;}
     const authorization=this.#authorizationScope(session);
     try{
       const base=`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages`;
@@ -975,6 +975,11 @@ export class FormaStore {
       const published=await this.guardedFetch(`${base}/${encodeURIComponent(savedPackageId)}/versions/${encodeURIComponent(body.versionId)}/publish`,{method:"POST"},"publish this exact immutable organization context version");
       this.#assertAuthorizationScope(authorization);
       const result=await published.json() as {error?:string;version?:number};
+      if(!published.ok&&result.error==="independent_context_approver_required"){
+        await this.syncOrganizationContextPackages();
+        this.toast(this.#systemNotice("Awaiting approval"));
+        return true;
+      }
       if(!published.ok)throw new Error(result.error??"The organization context version could not be published.");
       await this.syncOrganizationContextPackages();
       this.toast(this.#systemNotice("Organization context version {version} was published. Following documents must explicitly accept the update.",{version:result.version??body.version??1}));
@@ -983,6 +988,19 @@ export class FormaStore {
   }
   async createOrganizationContextPackage(name:string,description="",blockIds?:string[],sourceRightsConfirmed=false,sourceNonSensitiveConfirmed=false){return this.#publishOrganizationContext(name,description,"",blockIds,sourceRightsConfirmed,sourceNonSensitiveConfirmed);}
   async publishOrganizationContextPackageVersion(packageId:string,blockIds?:string[],sourceRightsConfirmed=false,sourceNonSensitiveConfirmed=false){return this.#publishOrganizationContext("","",packageId,blockIds,sourceRightsConfirmed,sourceNonSensitiveConfirmed);}
+  async approveOrganizationContextPackage(packageId:string,versionId:string,organizationId=this.session.get()?.projectContext?.organizationId??""){
+    const session=this.session.get();if(!session||!organizationId||!packageId||!versionId)return false;
+    const authorization=this.#authorizationScope(session);
+    try{
+      const response=await this.guardedFetch(`/api/workspaces/${encodeURIComponent(organizationId)}/context-packages/${encodeURIComponent(packageId)}/versions/${encodeURIComponent(versionId)}/publish`,{method:"POST"},"independently approve and publish these exact organization-owned decisions");
+      this.#assertAuthorizationScope(authorization);
+      const body=await response.json() as {error?:string;message?:string;version?:number};
+      if(!response.ok)throw new Error(body.message??body.error??"Organization context could not be published.");
+      if(session.projectContext?.organizationId===organizationId)await this.syncOrganizationContextPackages();
+      this.toast(this.#systemNotice("Organization context version {version} was published. Following documents must explicitly accept the update.",{version:body.version??1}));
+      return true;
+    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Organization context could not be published.");return false;}
+  }
   async adoptOrganizationContextPackage(packageId:string,versionId:string,mode:"pinned"|"follow-approved"="pinned"){const session=this.session.get(),context=session?.projectContext,projection=this.projection.get();if(!session||!context||!projection.documentId)return false;const authorization=this.#authorizationScope(session);try{const response=await this.guardedFetch(`/api/workspaces/${encodeURIComponent(context.organizationId)}/context-packages/${encodeURIComponent(packageId)}/adopt`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({projectAccessId:context.projectAccessId,documentId:projection.documentId,versionId,updateMode:mode,expectedProjectHead:this.head.get()})},"adopt this approved organization context into the current document");this.#assertAuthorizationScope(authorization);const body=await response.json() as {error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok)throw new Error(body.error??"Organization context could not be added.");await this.#refreshEvents();await this.syncOrganizationContextPackages();this.toast(mode==="pinned"?"The approved context version is pinned to this document.":"Approved context was added. Future changes always require your acceptance.");return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Organization context could not be added.");return false;}}
   async acceptOrganizationContextPackageUpdate(packageId:string,bindingId:string,versionId:string){
     const session=this.session.get(),context=session?.projectContext;
@@ -1135,7 +1153,7 @@ export class FormaStore {
     try {
       let response:Response;let body:{ appended?: CreativeEvent[]; rejected?: Array<{ index?: number; type?: string; reason: string }>; head?: number; error?: string }={};
       const attempts=options.expected===undefined?Math.max(1,Math.min(6,options.rebaseAttempts??2)):1;
-      for(let attempt=0;attempt<attempts;attempt+=1){response=await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: events.length > 1 ? "batch" : "append", event: events[0], events, expectedSequence: options.expected ?? this.head.get(), clientId: "web:lit" }) },events.length>1?`apply ${events.length} document changes`:`record ${events[0]?.type??"this change"}`);this.#assertAuthorizationScope(authorization);body=await response.json() as typeof body;this.#assertAuthorizationScope(authorization);if(response.status===409&&body.error==="stale_sequence"&&options.expected===undefined&&attempt<attempts-1){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);continue;}if(!response.ok)throw new Error(body.error==="stale_sequence"?"The document changed elsewhere. Its latest state is now loaded; try that change again.":body.error??"Append rejected");break;}
+      for(let attempt=0;attempt<attempts;attempt+=1){response=await this.guardedFetch("/api/events", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: events.length > 1 ? "batch" : "append", event: events[0], events, expectedSequence: options.expected ?? this.head.get(), clientId: "web:lit" }) },events.length>1?`apply ${events.length} document changes`:`record ${events[0]?.type??"this change"}`);this.#assertAuthorizationScope(authorization);body=await response.json() as typeof body;this.#assertAuthorizationScope(authorization);if(response.status===409&&body.error==="stale_sequence"&&options.expected===undefined&&attempt<attempts-1){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);continue;}if(response.status===409&&body.error==="context_value_conflict"){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);throw new Error("Another collaborator changed this exact decision. Your change was not saved; review the latest value and try again.");}if(!response.ok)throw new Error(body.error==="stale_sequence"?"The document changed elsewhere. Its latest state is now loaded; try that change again.":body.error??"Append rejected");break;}
       this.#assertAuthorizationScope(authorization);
       const appended = body.appended ?? [];
       this.events.set([...this.events.get(), ...appended]); this.head.set(body.head ?? this.head.get()); this.#publishAppended(appended);

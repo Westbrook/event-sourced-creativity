@@ -63,10 +63,16 @@ const assistantResponseSchema = {
 };
 
 /** Explicitly select safe, current, event-derived views; never stream arbitrary histories or media. */
+function providerDecisionAliases(context:AssistantContext){
+  const eligible=context.decisionAtoms.filter((item)=>item.providerEligible&&(!item.immutable||item.providerVisibility==="governed")
+    &&item.type!=="reference"&&item.providerVisibility!=="restricted");
+  return new Map(eligible.map((item,index)=>[item.id,`decision_${index+1}`]));
+}
+
 export function providerFacingAssistantViews(context: AssistantContext, message: string) {
-  const blocks = context.decisionAtoms.filter((item) => item.providerEligible && !item.immutable)
-    .map((item) => ({ id: item.id, type: item.type, text: item.text, intent: item.intent, locked: item.locked }));
-  const visible = new Set(blocks.map((block) => block.id));
+  const aliases=providerDecisionAliases(context);
+  const blocks=context.decisionAtoms.filter((item)=>aliases.has(item.id))
+    .map((item)=>({id:aliases.get(item.id)!,type:item.type,text:item.text,intent:item.intent,locked:item.locked||item.immutable||Boolean(item.protected),read_only:item.immutable||Boolean(item.protected)}));
   return providerFacingCreativeContext({
     page: context.surface.page,
     page_family: context.surface.canonicalFamily,
@@ -76,8 +82,9 @@ export function providerFacingAssistantViews(context: AssistantContext, message:
     recent_actions: context.recentActions.map((action) => ({ type: action.type })),
     recent_conversation: context.recentTurns.slice(-ASSISTANT_CONTEXT_LIMITS.turns).map((turn) => ({ role: turn.role, text: turn.text })),
     blocks,
-    relationships: context.relationships.filter((relation) => visible.has(relation.from) && visible.has(relation.to))
-      .map((relation) => ({ from: relation.from, to: relation.to, kind: relation.kind })),
+    relationships: context.relationships.filter((relation) => aliases.has(relation.from) && aliases.has(relation.to))
+      .map((relation) => ({ from: aliases.get(relation.from)!, to: aliases.get(relation.to)!, kind: relation.kind })),
+    context_coverage:{included_decisions:blocks.length,total_decisions:context.totals?.decisions??context.decisionAtoms.length,truncated:Boolean(context.truncated)},
     unfinished_work: context.unfinishedIntents.map((intent) => ({ kind: intent.kind, status: intent.status, next_action: intent.nextAction })),
     available_formats: context.availableOutputKinds,
     available_results: context.availableOutputs.map((output) => ({ kind: output.kind, title: output.title, status: output.status })),
@@ -96,6 +103,7 @@ export async function requestAssistantProvider(env: WorkerEnv, actorUserId: stri
   context: AssistantContext;
   message: string;
   locale: string;
+  maximumInputTokens: number;
   maximumOutputTokens: number;
 }): Promise<AssistantProviderResult> {
   if (!env.OPENAI_API_KEY) throw new Error("assistant_provider_unavailable");
@@ -131,7 +139,7 @@ export async function requestAssistantProvider(env: WorkerEnv, actorUserId: stri
   const totalTokens = Number(body.usage?.total_tokens);
   if (typeof body.id !== "string" || !body.id.trim() || body.id.length > 160 || typeof body.model !== "string" || !body.model.trim()
     || !Number.isSafeInteger(inputTokens) || !Number.isSafeInteger(outputTokens) || !Number.isSafeInteger(totalTokens)
-    || inputTokens <= 0 || outputTokens <= 0 || outputTokens > input.maximumOutputTokens || totalTokens !== inputTokens + outputTokens) {
+    || inputTokens <= 0 || inputTokens>input.maximumInputTokens||outputTokens <= 0 || outputTokens > input.maximumOutputTokens || totalTokens !== inputTokens + outputTokens) {
     throw new Error("assistant_provider_usage_unverified");
   }
   const text = typeof body.output_text === "string" ? body.output_text
@@ -142,11 +150,20 @@ export async function requestAssistantProvider(env: WorkerEnv, actorUserId: stri
   if (typeof decoded.reply !== "string" || !decoded.reply.trim() || decoded.reply.length > 2400 || !Array.isArray(decoded.actions) || decoded.actions.length > 12) {
     throw new Error("assistant_provider_invalid_response");
   }
+  const aliases=new Map([...providerDecisionAliases(input.context)].map(([actual,alias])=>[alias,actual]));
+  const actions=decoded.actions.map((candidate)=>{
+    if(!candidate||typeof candidate!=="object"||Array.isArray(candidate))return candidate;
+    const action={...(candidate as Record<string,unknown>)};
+    for(const key of ["target_block_id","from_block_id","to_block_id"] as const){
+      if(typeof action[key]==="string")action[key]=aliases.get(action[key] as string)??null;
+    }
+    return action;
+  });
   return {
     responseId: body.id,
     model: body.model,
     reply: decoded.reply,
-    actions: decoded.actions as ProviderAction[],
+    actions: actions as ProviderAction[],
     usage: {
       inputTokens,
       outputTokens,

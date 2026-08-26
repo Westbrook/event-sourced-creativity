@@ -66,7 +66,7 @@ const messages: Record<string, string> = {
   "projects.libraryDescription": "このプロジェクトにある再利用可能なアイデア、画像、ストーリー、シーン、プレゼンテーション、ストーリーボード、動画をすべて確認できます。",
   "projects.newReusableBlock": "新しい再利用可能なブロック",
   "projects.importDocument": "ドキュメントとしてインポート",
-  "projects.exportProject": "このプロジェクトをエクスポート",
+  "projects.exportProject": "プロジェクトのイベント履歴をエクスポート",
   "projects.searchLibrary": "プロジェクトライブラリを検索",
   "projects.searchAllWork": "プロジェクト内のすべての作業を検索",
   "projects.libraryContent": "ライブラリのコンテンツ",

@@ -187,5 +187,19 @@ test("project creation refuses unlicensed passages and keeps every intake contro
   assert.match(source, /textarea rows="4" maxlength="12000"/);
   assert.match(source, /this\.i18n\.system\("Exact value"\)/);
   assert.match(source, /max-length="500" \.value=\$\{this\.#protectedPhrase\}/);
-  assert.match(source, /\?disabled=\$\{!this\.#name\.trim\(\)\|\|Boolean\(this\.#source\.trim\(\)&&!this\.#sourceRights\)\}/);
+  assert.match(source, /\?disabled=\$\{this\.#submitting\|\|!this\.#name\.trim\(\)\|\|Boolean\(this\.#source\.trim\(\)&&!this\.#sourceRights\)\}/);
+  assert.match(source,/if\(this\.#submitting\)return;/,"concurrent submissions cannot create duplicate projects");
+  assert.match(source,/#openCreate\(\)\{this\.#creating=true;this\.requestUpdate\(\)/,"reopening the dialog preserves its in-memory authored draft");
+  assert.match(source,/if\(appended\.length\)\{this\.#submitting=false;this\.#clearDraft\(\)/,"licensed project briefs are cleared only after confirmed persistence");
+});
+
+test("the visible organization-package selection limit and the actual authoring guard both support 128 decisions",async()=>{
+  const [store,library]=await Promise.all([
+    readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/components/forma-library.ts",import.meta.url),"utf8"),
+  ]);
+  assert.match(store,/selection\.length>128/,"a legitimate 21st through 128th selected decision reaches the server");
+  assert.doesNotMatch(store,/selection\.length>20/,"the former undisclosed 20-decision authoring ceiling never returns");
+  assert.match(library,/workspace\.context\.selectionLimit","",\{count:this\.i18n\.number\(128\)\}/,
+    "authors see the same localized limit that the creator and server actually enforce");
 });

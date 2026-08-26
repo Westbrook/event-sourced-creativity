@@ -97,7 +97,7 @@ export function normalizeAssistantActions(message: string, context: AssistantCon
         return { decision, position };
       }).filter((entry) => entry.position >= 0).sort((left, right) => left.position - right.position).map((entry) => entry.decision);
       const [from, to] = targets;
-      if (targets.length === 2 && from && to && !from.locked && !from.immutable && !to.locked && !to.immutable) {
+      if (targets.length === 2 && from && to && !from.locked && !from.immutable && !from.protected && !to.locked && !to.immutable && !to.protected) {
         const existing = context.relationships?.find((relation) => relation.from === from.id && relation.to === to.id);
         if (UNRELATE_INTENT.test(part)) {
           if (existing) actions.push({ kind: "context.relation.remove", fromBlockId: from.id, toBlockId: to.id, relationKind: existing.kind });
@@ -110,11 +110,11 @@ export function normalizeAssistantActions(message: string, context: AssistantCon
     const target = targetFor(part, context.decisionAtoms);
     const explicitCreation = /^\s*(?:add|create|include|set|use|ajoute|ajouter|crée|créer)\b|^(?:أضف|أنشئ|追加|作成)/iu.test(part);
     if (!explicitCreation && REMOVE_INTENT.test(part) && target) {
-      if (!target.locked && !target.immutable) actions.push({ kind: "context.remove", targetBlockId: target.id });
+      if (!target.locked && !target.immutable && !target.protected) actions.push({ kind: "context.remove", targetBlockId: target.id });
       continue;
     }
     if (!explicitCreation && EDIT_INTENT.test(part) && target) {
-      if (!target.locked && !target.immutable) actions.push({ kind: "context.edit", targetBlockId: target.id, text: part.slice(0, 600) });
+      if (!target.locked && !target.immutable && !target.protected) actions.push({ kind: "context.edit", targetBlockId: target.id, text: part.slice(0, 600) });
       continue;
     }
     const blockType = inferAssistantBlockType(part);
@@ -133,7 +133,8 @@ export function assistantActionEvents(action: AssistantContextAction, context: A
   const source = { project_id: projectId, document_id: documentId, source_surface: "assistant", source_chat_turn_id: identifiers.turnId };
   const target = (id: string) => context.decisionAtoms.find((decision) => decision.id === id);
   if (action.kind === "context.create") {
-    if (!isBlockKind(action.blockType) || action.blockType === "reference" || !action.text.trim()) return [];
+    if (!isBlockKind(action.blockType) || action.blockType === "reference" || !action.text.trim()
+      || action.blockType === "exclusion" && !["avoid", "prohibit"].includes(action.intent)) return [];
     const definition = blockTypeDefinition(action.blockType);
     const subtype = definition?.subtypes[0] ?? "General";
     const properties: Record<string, unknown> = {
@@ -144,16 +145,16 @@ export function assistantActionEvents(action: AssistantContextAction, context: A
   }
   if (action.kind === "context.edit") {
     const block = target(action.targetBlockId);
-    if (!block || block.locked || block.immutable || !action.text.trim()) return [];
+    if (!block || block.locked || block.immutable || block.protected || !action.text.trim()) return [];
     return [{ type: "BlockPropertyEdited", payload: { ...source, block_id: block.id, property_path: "text", old_value: block.text, new_value: action.text.trim() } }];
   }
   if (action.kind === "context.remove") {
     const block = target(action.targetBlockId);
-    if (!block || block.locked || block.immutable) return [];
+    if (!block || block.locked || block.immutable || block.protected) return [];
     return [{ type: "BlockRemoved", payload: { ...source, block_id: block.id, reason: "explicitly-approved-assistant-proposal" } }];
   }
   const from = target(action.fromBlockId), to = target(action.toBlockId);
-  if (!from || !to || from.id === to.id || from.locked || to.locked || from.immutable || to.immutable || !isContextCompositionRelation(action.relationKind)) return [];
+  if (!from || !to || from.id === to.id || from.locked || to.locked || from.immutable || to.immutable || from.protected || to.protected || !isContextCompositionRelation(action.relationKind)) return [];
   if (action.kind === "context.relation.add") {
     if (context.relationships.some((relation) => relation.from === from.id && relation.to === to.id && relation.kind === action.relationKind)) return [];
     const pending = [to.id], visited = new Set<string>();

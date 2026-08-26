@@ -412,13 +412,39 @@ export async function handleWorkspaces(request: Request, env: WorkerEnv, path: s
   if(path.length===2&&path[1]==="usage"&&request.method==="GET"){
     if(!hasCapability(actor,"workspace.usage.read",scope))return workspaceDenied();
     const current=period();
-    const [policies,cost,tokens,reservations]=await env.DB.batch([
+    const monthStart=`${current}-01T00:00:00.000Z`;
+    const [policies,cost,tokens,reservations,activity,reviews,reuse]=await env.DB.batch([
       env.DB.prepare("SELECT token_limit,microusd_limit,updated_at FROM budget_scope_policies WHERE scope='workspace' AND scope_id=? AND organization_id=?").bind(organizationId,organizationId),
       env.DB.prepare("SELECT used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters WHERE scope='workspace' AND scope_id=? AND period=?").bind(organizationId,current),
       env.DB.prepare("SELECT used_tokens,reserved_tokens,hard_limit_tokens FROM budget_counters WHERE scope='workspace' AND scope_id=? AND period=?").bind(organizationId,current),
       env.DB.prepare("SELECT status,COUNT(*) AS count,COALESCE(SUM(used_microusd),0) AS used_microusd,COALESCE(SUM(reserved_microusd),0) AS reserved_microusd FROM cost_budget_reservations WHERE workspace_id=? AND period=? GROUP BY status").bind(organizationId,current),
+      env.DB.prepare(`SELECT COUNT(DISTINCT CASE WHEN event.actor='user:'||scoped.actor_user_id
+          AND event.type IN('BlockCreated','BlockPropertyEdited','BlockRenamed','DocumentRenderRequested','DocumentArtifactEdited','ArtifactReviewRequested','ArtifactApproved')
+          AND COALESCE(json_extract(event.payload,'$.simulation'),0)!=1 THEN scoped.actor_user_id END) AS activated_creators,
+        COUNT(DISTINCT CASE WHEN event.type='DocumentArtifactExported' AND EXISTS(SELECT 1 FROM project_review_tasks approval
+          WHERE approval.organization_id=scoped.organization_id AND approval.project_access_id=scoped.project_access_id
+            AND approval.artifact_id=json_extract(event.payload,'$.artifact_id') AND approval.status='approved'
+            AND approval.artifact_revision=COALESCE(CAST(json_extract(event.payload,'$.artifact_revision') AS INTEGER),-1)
+            AND approval.content_sha256=COALESCE(CAST(json_extract(event.payload,'$.content_sha256') AS TEXT),''))
+          THEN scoped.project_access_id||':'||json_extract(event.payload,'$.artifact_id') END) AS released_approved_deliverables
+        FROM project_event_scopes scoped JOIN events event ON event.event_id=scoped.event_id
+        WHERE scoped.organization_id=? AND scoped.created_at>=?`).bind(organizationId,monthStart),
+      env.DB.prepare(`SELECT COUNT(DISTINCT CASE WHEN status='approved' AND resolved_at>=? THEN project_access_id||':'||artifact_id END) AS approved_deliverables,
+        SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending_reviews,
+        AVG(CASE WHEN status='approved' AND resolved_at>=? THEN(julianday(resolved_at)-julianday(created_at))*1440 END) AS average_review_minutes
+        FROM project_review_tasks WHERE organization_id=?`).bind(monthStart,monthStart,organizationId),
+      env.DB.prepare("SELECT COUNT(*) AS adopted_context_packages FROM project_context_package_bindings WHERE organization_id=? AND status='active'")
+        .bind(organizationId),
     ]);
-    return Response.json({organization:membership,period:current,policy:policies.results[0]??null,cost:cost.results[0]??null,tokens:tokens.results[0]??null,reservations:reservations.results});
+    const used=Number((cost.results[0] as Record<string,unknown>|undefined)?.used_microusd??0);
+    const review=(reviews.results[0]??{}) as Record<string,unknown>,events=(activity.results[0]??{}) as Record<string,unknown>;
+    const approved=Number(review.approved_deliverables??0);
+    const outcomes={activatedCreators:Number(events.activated_creators??0),approvedDeliverables:approved,
+      releasedApprovedDeliverables:Number(events.released_approved_deliverables??0),pendingReviews:Number(review.pending_reviews??0),
+      adoptedContextPackages:Number((reuse.results[0] as Record<string,unknown>|undefined)?.adopted_context_packages??0),
+      averageReviewMinutes:review.average_review_minutes===null||review.average_review_minutes===undefined?null:Math.round(Number(review.average_review_minutes)),
+      settledCostPerApprovedDeliverableMicrousd:approved?Math.round(used/approved):null};
+    return Response.json({organization:membership,period:current,policy:policies.results[0]??null,cost:cost.results[0]??null,tokens:tokens.results[0]??null,reservations:reservations.results,outcomes});
   }
 
   if(path.length===2&&path[1]==="policy"&&(request.method==="GET"||request.method==="PATCH")){

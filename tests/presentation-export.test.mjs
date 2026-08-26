@@ -69,7 +69,7 @@ test("the unified compatible presentation export and import instructions are ful
   }
 });
 
-test("one accessible, auto-dismiss export menu contains only PDF and the shared editable presentation", async () => {
+test("one accessible export menu separates audience-safe delivery from explicitly labeled private presenter copies", async () => {
   const [deck, styles, visualHarness] = await Promise.all([
     readFile(new URL("../src/components/presentation-deck.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
@@ -83,6 +83,11 @@ test("one accessible, auto-dismiss export menu contains only PDF and the shared 
   assert.match(deck, /menu\.hidePopover\(\);this\.querySelector<HTMLButtonElement>\("\.presentation-deck-export"\)\?\.focus\(\{preventScroll:true\}\)/u);
   assert.match(deck, /#exportFromMenu\("pdf",items,presentation\)/u);
   assert.match(deck, /#exportFromMenu\("powerpoint",items,presentation\)/u);
+  assert.match(deck, /#exportFromMenu\("powerpoint-presenter",items,presentation\)/u);
+  assert.match(deck, /#presenterExportAllowed\(artifact\)\?html/u,"only the authorized generating creator receives a private-copy control");
+  assert.match(deck, /#downloadPowerPointVariant\(items,presentation,false\)/u,"ordinary presentation downloads are audience-safe");
+  assert.match(deck, /#downloadPowerPointVariant\(items,presentation,true\)/u,"presenter copies require a separate explicit choice");
+  assert.match(deck, /presenter_notes_included:includePresenterNotes/u,"release receipts disclose which privacy variant was exported");
   assert.ok(deck.indexOf('#exportFromMenu("pdf",items,presentation)') < deck.indexOf('#exportFromMenu("powerpoint",items,presentation)'));
   assert.match(deck, /this\.i18n\.system\("Export"\)/u);
   assert.match(deck, /this\.i18n\.system\("Download PDF"\)/u);

@@ -2,7 +2,7 @@ import { html, nothing } from "lit";
 import { assistantSurfaceForRoute } from "../model/assistant-route-policy.ts";
 import type { AssistantContext } from "../model/conversation-context.ts";
 import { FormaElement } from "./forma-element.ts";
-import type { AssistantDisplayedMessage, AssistantDisplayedProposal, AssistantDisplayedTask } from "./design-system/assistant-panel.ts";
+import type { AssistantDisplayedMessage, AssistantDisplayedProposal, AssistantDisplayedTask, FormaAssistantPanel } from "./design-system/assistant-panel.ts";
 import "./design-system/assistant-panel.ts";
 
 type AssistantServerTurn = {
@@ -118,7 +118,10 @@ export class FormaCreativeAssistant extends FormaElement {
         this.#activeTasks.add(payload.task.id);
       }
     } catch {
-      if (scope === this.#scope()) this.#messages = [...this.#messages, { id: `${turnId}:error`, role: "assistant", key: "assistant.unavailable" }];
+      if (scope === this.#scope()) {
+        this.#messages = [...this.#messages, { id: `${turnId}:error`, role: "assistant", key: "assistant.unavailable" }];
+        this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.restoreDraft(message);
+      }
     } finally {
       this.#pending.delete(turnId);
       this.requestUpdate();
@@ -210,7 +213,7 @@ export class FormaCreativeAssistant extends FormaElement {
     }
     return html`<forma-assistant-panel .open=${this.#open} .context=${this.#context} .messages=${this.#messages} .proposals=${this.#proposals}
       .tasks=${this.#tasks} .models=${session.assistant.models ?? []}
-      .canReconcile=${session.user.role === "admin" && Boolean(session.capabilities?.includes("platform.provider.configure"))}
+      .canReconcile=${false}
       .pending=${this.#pending.size + this.#activeTasks.size} .readOnly=${Boolean(session.projectContext && !session.projectContext.permissions.includes("project.author"))}
       @forma-assistant-toggle=${(event: CustomEvent<{ open: boolean }>) => { this.#open = event.detail.open; this.requestUpdate(); if (this.#open) void this.#load(); }}
       @forma-assistant-message=${(event: CustomEvent<{ message: string; model?: string; premiumApproval?: boolean }>) => { void this.#send(event.detail); }}

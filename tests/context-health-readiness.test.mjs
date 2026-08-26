@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assessCreativeContext } from "../src/model/context-health.ts";
+import { artifactReviewState, assessCreativeContext } from "../src/model/context-health.ts";
 
 const block = (type, text, properties = {}) => ({
   id: properties.block_id ?? `block-${type}`,
@@ -68,6 +68,50 @@ test("an otherwise complete presentation brief is not ready until its central Me
   assert.equal(complete.state, "ready");
   assert.deepEqual(complete.issues, []);
   assert.equal(complete.verifiedSources, 1);
+});
+
+test("revoked, malformed, expired, and unreadable licensed sources never become verified grounding", () => {
+  const base = wizardContext().filter((item) => item.type !== "reference");
+  base.push(block("message", "Only the approved source may shape this exact presentation."));
+  for (const properties of [
+    { rights_revoked: true },
+    { rights_class: "revoked" },
+    { rights_expires_at: "not-a-date" },
+    { source_expires_at: "not-a-date", license_expires_at: "2020-01-01T00:00:00.000Z" },
+    { source_expires_at: "2099-01-01T00:00:00.000Z", license_expires_at: "2020-01-01T00:00:00.000Z" },
+  ]) {
+    const source = { ...ownedReference, properties: { ...ownedReference.properties, ...properties } };
+    const report = assessCreativeContext({ blocks: [...base, source] }, rights, Date.parse("2026-08-25T12:00:00.000Z"));
+    assert.equal(report.verifiedSources, 0, JSON.stringify(properties));
+    assert.ok(report.issues.some((issue) => issue.severity === "blocking"), JSON.stringify(properties));
+  }
+
+  const unreadable = { ...ownedReference, properties: { ...ownedReference.properties, text: "", source_mime_type: "application/pdf", extraction_status: "unavailable" } };
+  const report = assessCreativeContext({ blocks: [...base, unreadable] }, rights);
+  assert.equal(report.verifiedSources, 0);
+  assert.equal(report.issues.find((issue) => issue.id === `source-excerpt-${ownedReference.id}`)?.severity, "blocking");
+
+  const withdrawn=[...rights,{...rights[0],eventId:"rights-withdrawn",sequence:2,payload:{reference_id:"reference-owned",rights_class:"revoked"}}];
+  const revokedAssertion=assessCreativeContext({blocks:[...base,ownedReference]},withdrawn);
+  assert.equal(revokedAssertion.verifiedSources,0);
+  assert.ok(revokedAssertion.issues.some((issue)=>issue.id===`source-rights-${ownedReference.id}`));
+});
+
+test("a later revoked source-rights receipt immediately invalidates an already approved deliverable",()=>{
+  const completed={...rights[0],eventId:"approved-deliverable",sequence:2,type:"DocumentRenderCompleted",payload:{
+    document_id:"document-pitch",artifact_id:"approved-artifact",source_block_versions:[{block_id:ownedReference.id,version:ownedReference.sourceEvents.length}],
+  }};
+  const approved={...rights[0],eventId:"independent-approval",sequence:3,type:"ArtifactApproved",actor:"user:independent-reviewer",payload:{
+    document_id:"document-pitch",artifact_id:"approved-artifact",
+  }};
+  const artifact={id:"approved-artifact",documentId:"document-pitch",sequence:2};
+  assert.equal(artifactReviewState(artifact,[ownedReference],[rights[0],completed,approved]).status,"approved");
+  const withdrawn={...rights[0],eventId:"rights-withdrawn-after-approval",sequence:4,payload:{reference_id:"reference-owned",rights_class:"revoked"}};
+  const state=artifactReviewState(artifact,[ownedReference],[rights[0],completed,approved,withdrawn]);
+  assert.equal(state.status,"stale");
+  assert.deepEqual(state.changedBlockIds,[ownedReference.id]);
+  const expired={...ownedReference,properties:{...ownedReference.properties,rights_expires_at:"2020-01-01T00:00:00.000Z"}};
+  assert.equal(artifactReviewState(artifact,[expired],[rights[0],completed,approved]).status,"stale");
 });
 
 test("narrative output intent requires a Message while image, ambient video, and instrumental audio remain compatible", () => {

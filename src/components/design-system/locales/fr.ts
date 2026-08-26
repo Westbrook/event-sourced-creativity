@@ -66,7 +66,7 @@ const messages: Record<string, string> = {
   "projects.libraryDescription":"Retrouvez toutes les idées réutilisables, images, histoires, scènes, présentations, storyboards et vidéos de ce projet.",
   "projects.newReusableBlock":"Nouveau bloc réutilisable",
   "projects.importDocument":"Importer comme document",
-  "projects.exportProject":"Exporter ce projet",
+  "projects.exportProject":"Exporter l’archive des événements du projet",
   "projects.searchLibrary":"Rechercher dans la bibliothèque du projet",
   "projects.searchAllWork":"Rechercher dans tout le projet",
   "projects.libraryContent":"Contenu de la bibliothèque",

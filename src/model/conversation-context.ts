@@ -5,6 +5,7 @@ import { blockIntentFor } from "./block-types.ts";
 import type { CreativeBlock, CreativeEvent, CreativeProjection } from "./events.ts";
 import { unfinishedIntentTrajectories } from "./intent-trajectories.ts";
 import { promptFactIsActive } from "./prompt-policy.ts";
+import { creativeContextRightsIssue } from "./context-health.ts";
 
 export const ASSISTANT_CONTEXT_LIMITS = {
   turns: 6,
@@ -23,7 +24,7 @@ export const ASSISTANT_CONTEXT_LIMITS = {
 export const ASSISTANT_OUTPUT_KINDS = ["image", "short_story", "scene", "slides", "storyboard", "video", "audio"] as const;
 
 export type AssistantConversationTurn = { id: string; role: "user" | "assistant"; text: string; sequence: number };
-export type AssistantDecisionAtom = { id: string; type: string; text: string; intent: string; locked: boolean; focused: boolean; version: number; immutable: boolean; providerEligible: boolean };
+export type AssistantDecisionAtom = { id: string; type: string; text: string; intent: string; locked: boolean; focused: boolean; version: number; immutable: boolean; providerEligible: boolean; protected?:boolean; providerVisibility?:"editable"|"governed"|"restricted" };
 export type AssistantSelectedItem = { id: string; kind: string; sourceId: string; title: string; documentId: string | null };
 export type AssistantRecentAction = { id: string; type: string; sequence: number; documentId: string | null };
 export type AssistantOutputSummary = { id: string; kind: string; title: string; documentId: string; status: string };
@@ -41,7 +42,7 @@ export type AssistantContext = {
   availableOutputs: AssistantOutputSummary[];
   availableOutputKinds: readonly string[];
   platformSignals?: Array<{ kind: string; status: string; count: number }>;
-  totals: { decisions: number; outputs: number; outputsByKind: Record<string, number> };
+  totals: { decisions: number; outputs: number; outputsByKind: Record<string, number>; protectedDecisions?:number; unsafeRightsDecisions?:number; truncatedProtectedDecisions?:number };
   capabilities: readonly FormaCapability[];
   playbook: readonly string[];
   evidence: { head: number; eventIds: string[] };
@@ -66,8 +67,13 @@ type AssistantContextInput = {
 
 const clip = (value: unknown, max: number) => String(value ?? "").replace(/\s+/gu, " ").trim().slice(0, max);
 const actorMatches = (event: CreativeEvent, actorUserId: string) => event.actor === "user" || event.actor === `user:${actorUserId}`;
-const protectedDecision = (block: CreativeBlock) => block.locked || block.type === "exclusion" || blockIntentFor(block.type, block.properties) === "prohibit";
-const displayText = (block: CreativeBlock) => clip(block.properties.text ?? block.properties.label ?? block.handle, ASSISTANT_CONTEXT_LIMITS.decisionChars);
+export const protectedAssistantDecision = (block: CreativeBlock) => block.locked || block.type === "exclusion" || blockIntentFor(block.type, block.properties) === "prohibit"
+  ||Boolean(String(block.properties.exact_text??"").trim())
+  ||Array.isArray(block.properties.protected_phrases)&&block.properties.protected_phrases.some((phrase)=>typeof phrase==="string"?Boolean(phrase.trim()):Boolean(phrase&&typeof phrase==="object"&&String((phrase as Record<string,unknown>).text??"").trim()))
+  ||Array.isArray(block.properties.exact_placements)&&block.properties.exact_placements.length>0;
+const displayText = (block: CreativeBlock) => protectedAssistantDecision(block)
+  ?String(block.properties.text??block.properties.label??block.handle).trim().slice(0,ASSISTANT_CONTEXT_LIMITS.decisionChars)
+  :clip(block.properties.text??block.properties.label??block.handle,ASSISTANT_CONTEXT_LIMITS.decisionChars);
 const eventDocument = (event: CreativeEvent) => String(event.payload.document_id ?? "") || null;
 
 /** Compile small, explicitly scoped views. Never forward payload maps, media URLs, or raw streams. */
@@ -107,25 +113,34 @@ export function compileAssistantContext(input: AssistantContextInput): Assistant
       ? input.projection.libraryBlocks.filter((block) => !block.removed && block.projectId === authorizedProjectId && block.id === surface.focusedBlockId)
       : [];
   const prioritizedBlocks = [...scopedBlocks].sort((left, right) =>
-    Number(protectedDecision(right)) - Number(protectedDecision(left))
+    Number(promptFactIsActive(right)&&protectedAssistantDecision(right))-Number(promptFactIsActive(left)&&protectedAssistantDecision(left))
+      ||Number(promptFactIsActive(right))-Number(promptFactIsActive(left))
       || Number(right.id === focusedBlockId) - Number(left.id === focusedBlockId)
       || right.sourceEvents.length - left.sourceEvents.length,
   );
+  const activeRightsIssue=(block:CreativeBlock)=>{
+    if(creativeContextRightsIssue(block.properties))return true;
+    const referenceId=String(block.properties.reference_id??"");
+    if(!referenceId)return false;
+    const latest=[...visibleEvents].reverse().find((event)=>["RightsAsserted","ReferenceIngested"].includes(event.type)
+      &&String(event.payload.reference_id??"")===referenceId);
+    return !latest||!(["owned","owned_or_licensed","account-generated"].includes(String(latest.payload.rights_class??"")));
+  };
   const outputOwnedBlockIds = new Set(input.projection.libraryBlockRelations
     .filter((relation) => !relation.removed && relation.kind === "artifact_contains")
     .flatMap((relation) => [relation.fromBlockId, relation.toBlockId]));
-  const decisionAtoms = prioritizedBlocks.slice(0, ASSISTANT_CONTEXT_LIMITS.decisions).map((block) => ({
-    id: block.id,
-    type: block.type,
-    text: displayText(block),
-    intent: blockIntentFor(block.type, block.properties),
-    locked: block.locked,
-    focused: block.id === focusedBlockId,
-    version: block.sourceEvents.length,
-    immutable: Boolean(block.properties.source_evidence_hash || block.properties.organization_context_package_binding_id || block.properties.organization_context_package_id
-      || block.properties.source_artifact_id || block.properties.source_artifact_item_id || block.properties.context_set_root_id || outputOwnedBlockIds.has(block.id)),
-    providerEligible: promptFactIsActive(block),
-  }));
+  const decisionAtoms = prioritizedBlocks.slice(0, ASSISTANT_CONTEXT_LIMITS.decisions).map((block) => {
+    const governed=Boolean(block.properties.organization_context_package_binding_id||block.properties.organization_context_package_id);
+    const immutable=Boolean(block.properties.source_evidence_hash||governed||block.properties.source_artifact_id
+      ||block.properties.source_artifact_item_id||block.properties.context_set_root_id||outputOwnedBlockIds.has(block.id));
+    const providerVisibility:AssistantDecisionAtom["providerVisibility"]=block.type==="reference"||block.type==="audio"&&immutable
+      ?"restricted":governed?"governed":immutable?"restricted":"editable";
+    return{
+      id:block.id,type:block.type,text:displayText(block),intent:blockIntentFor(block.type,block.properties),locked:block.locked,protected:protectedAssistantDecision(block),
+      focused:block.id===focusedBlockId,version:block.sourceEvents.length,immutable,
+      providerEligible:promptFactIsActive(block)&&!activeRightsIssue(block),providerVisibility,
+    };
+  });
   const visibleBlockIds = new Set(decisionAtoms.map((block) => block.id));
   const relationships = (authorizedDocumentId ? input.projection.blockRelations : input.projection.libraryBlockRelations)
     .filter((relation) => !relation.removed && visibleBlockIds.has(relation.fromBlockId) && visibleBlockIds.has(relation.toBlockId))
@@ -179,6 +194,9 @@ export function compileAssistantContext(input: AssistantContextInput): Assistant
     availableOutputKinds: ASSISTANT_OUTPUT_KINDS,
     totals: {
       decisions: scopedBlocks.length,
+      protectedDecisions:scopedBlocks.filter((block)=>promptFactIsActive(block)&&protectedAssistantDecision(block)).length,
+      unsafeRightsDecisions:scopedBlocks.filter((block)=>promptFactIsActive(block)&&activeRightsIssue(block)).length,
+      truncatedProtectedDecisions:scopedBlocks.filter((block)=>promptFactIsActive(block)&&protectedAssistantDecision(block)&&String(block.properties.text??block.properties.label??block.handle).trim().length>ASSISTANT_CONTEXT_LIMITS.decisionChars).length,
       outputs: artifacts.length + images.length,
       outputsByKind: Object.fromEntries(ASSISTANT_OUTPUT_KINDS.map((kind) => [kind, [...artifacts, ...images].filter((output) => output.kind === kind).length])),
     },
@@ -188,12 +206,18 @@ export function compileAssistantContext(input: AssistantContextInput): Assistant
     truncated: scopedBlocks.length > decisionAtoms.length || visibleEvents.length > recentActions.length + recentTurns.length,
   };
 
+  return boundAssistantContext(context);
+}
+
+/** Apply the byte boundary again whenever authoritative private conversation history is hydrated. */
+export function boundAssistantContext(context:AssistantContext){
   // The history may grow without ever growing the provider-facing context.
   while (new TextEncoder().encode(JSON.stringify(context)).byteLength > ASSISTANT_CONTEXT_LIMITS.maxBytes) {
-    if (context.recentTurns.length > 1) context.recentTurns.shift();
-    else if (context.recentActions.length > 1) context.recentActions.shift();
-    else if (context.decisionAtoms.length > 1 && !context.decisionAtoms.at(-1)?.locked && context.decisionAtoms.at(-1)?.intent !== "prohibit") context.decisionAtoms.pop();
+    if (context.recentTurns.length) context.recentTurns.shift();
+    else if (context.recentActions.length) context.recentActions.shift();
+    else if (context.decisionAtoms.length > 1 && !context.decisionAtoms.at(-1)?.protected && !context.decisionAtoms.at(-1)?.locked && context.decisionAtoms.at(-1)?.intent !== "prohibit")context.decisionAtoms.pop();
     else if (context.availableOutputs.length) context.availableOutputs.pop();
+    else if(context.decisionAtoms.length){const removed=context.decisionAtoms.pop();context.relationships=context.relationships.filter((relation)=>relation.from!==removed?.id&&relation.to!==removed?.id);}
     else break;
     context.truncated = true;
   }

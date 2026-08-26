@@ -185,8 +185,12 @@ export const PROJECT_NOTIFICATION_TRIGGER_SQL = `CREATE TRIGGER IF NOT EXISTS pr
         (SELECT COUNT(*) FROM project_notifications notification WHERE notification.project_access_id=NEW.project_access_id AND notification.event_id=NEW.event_id),
         NEW.created_at,NEW.created_at
       FROM events change WHERE change.event_id=NEW.event_id;
-    DELETE FROM project_notifications WHERE project_access_id=NEW.project_access_id AND (expires_at<=NEW.created_at OR notification_id NOT IN(
-      SELECT notification_id FROM project_notifications WHERE project_access_id=NEW.project_access_id ORDER BY created_at DESC,notification_id DESC LIMIT 1000
+    DELETE FROM project_notifications WHERE project_access_id=NEW.project_access_id AND (expires_at<=NEW.created_at OR notification_id IN(
+      SELECT ranked.notification_id FROM(
+        SELECT retained.notification_id,ROW_NUMBER() OVER(PARTITION BY retained.recipient_user_id
+          ORDER BY(retained.read_at IS NULL) DESC,retained.created_at DESC,retained.notification_id DESC) AS recipient_rank
+        FROM project_notifications retained WHERE retained.project_access_id=NEW.project_access_id
+      ) ranked WHERE ranked.recipient_rank>1000
     ));
   END`;
 

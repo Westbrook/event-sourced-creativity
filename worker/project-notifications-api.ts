@@ -15,10 +15,15 @@ export async function handleProjectNotifications(request: Request, env: WorkerEn
   }
   const now = new Date().toISOString();
   if (request.method === "GET") {
-    const rows = await env.DB.prepare(`SELECT notification_id,kind,artifact_id,document_id,message,created_at,read_at
+    const scope=[project.projectAccessId,project.organizationId,project.projectId,principal.user.userId,now] as const;
+    const [rows,counts]=await Promise.all([env.DB.prepare(`SELECT notification_id,kind,artifact_id,document_id,message,created_at,read_at
       FROM project_notifications WHERE project_access_id=? AND organization_id=? AND project_id=? AND recipient_user_id=? AND expires_at>?
-      ORDER BY created_at DESC,notification_id DESC LIMIT 50`).bind(project.projectAccessId, project.organizationId, project.projectId, principal.user.userId, now).all<Record<string, unknown>>();
-    return Response.json({ notifications: rows.results.map((row) => ({ id: String(row.notification_id), kind: String(row.kind), artifactId: row.artifact_id ? String(row.artifact_id) : null, documentId: row.document_id ? String(row.document_id) : null, message: String(row.message), createdAt: String(row.created_at), readAt: row.read_at ? String(row.read_at) : null })) }, { headers: { "cache-control": "private, no-store" } });
+      ORDER BY(read_at IS NULL) DESC,created_at DESC,notification_id DESC LIMIT 1000`).bind(...scope).all<Record<string, unknown>>(),
+      env.DB.prepare(`SELECT COUNT(*) AS total_count,COALESCE(SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END),0) AS unread_count
+        FROM project_notifications WHERE project_access_id=? AND organization_id=? AND project_id=? AND recipient_user_id=? AND expires_at>?`)
+        .bind(...scope).first<{total_count:number;unread_count:number}>()]);
+    return Response.json({ notifications: rows.results.map((row) => ({ id: String(row.notification_id), kind: String(row.kind), artifactId: row.artifact_id ? String(row.artifact_id) : null, documentId: row.document_id ? String(row.document_id) : null, message: String(row.message), createdAt: String(row.created_at), readAt: row.read_at ? String(row.read_at) : null })),
+      totalCount:Number(counts?.total_count??0),unreadCount:Number(counts?.unread_count??0) }, { headers: { "cache-control": "private, no-store" } });
   }
   if (request.method !== "PATCH") return new Response("Method not allowed", { status: 405 });
   const consent = requireConsent(principal.user);

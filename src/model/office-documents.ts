@@ -66,9 +66,20 @@ const appProperties=(presentation=false)=>`${XML}<Properties xmlns="http://schem
 const rootRelationships=(target:string)=>relationships([relationship("rId1","officeDocument",target),`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>`,relationship("rId3","extended-properties","docProps/app.xml")]);
 const baseTypes=(items:string[])=>`${XML}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${override("docProps/core.xml","application/vnd.openxmlformats-package.core-properties+xml")}${override("docProps/app.xml","application/vnd.openxmlformats-officedocument.extended-properties+xml")}${items.join("")}</Types>`;
 
-function wordRuns(value:string,locale:string,rtl:boolean){
-  const tokens=value.split(/(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`)/g).filter(Boolean);
+function wordRuns(value:string,locale:string,rtl:boolean,hyperlinks:Array<{id:string;target:string}>=[]):string{
+  const tokens=value.split(/(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)]+\))/g).filter(Boolean);
   return tokens.map((token)=>{
+    const linked=token.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/i);
+    if(linked){
+      try{
+        const target=new URL(linked[2]!);
+        if(target.protocol==="https:"||target.protocol==="http:"){
+          const id=`rId${hyperlinks.length+3}`;
+          hyperlinks.push({id,target:target.href});
+          return`<w:hyperlink r:id="${id}">${wordRuns(linked[1]!,locale,rtl)}</w:hyperlink>`;
+        }
+      }catch{/* malformed targets remain ordinary authored text */}
+    }
     const bold=token.startsWith("**")&&token.endsWith("**")||token.startsWith("__")&&token.endsWith("__");
     const code=token.startsWith("`")&&token.endsWith("`");
     const text=bold?token.slice(2,-2):code?token.slice(1,-1):token;
@@ -78,18 +89,35 @@ function wordRuns(value:string,locale:string,rtl:boolean){
   }).join("")||"<w:r><w:t/></w:r>";
 }
 
-/** Emit real editable Word paragraphs, headings, lists, and text runs. */
+/** Emit real editable Word paragraphs, headings, lists, native tables, and safe external hyperlinks. */
 export function createWordDocument(markdown:string,options:{title?:string;language?:string;direction?:"ltr"|"rtl"}&OfficeLocalization={}):Uint8Array{
   const title=options.title?.trim()||options.translate?.("Forma document")||"Forma document";
   const locale=language(options.language),rtl=options.direction==="rtl",japanese=/^ja(?:-|$)/i.test(locale);
-  const paragraphs:string[]=[];
-  if(!/^#\s+/.test(markdown.trimStart()))paragraphs.push(`<w:p><w:pPr><w:pStyle w:val="Title"/>${rtl?"<w:bidi/>":""}</w:pPr>${wordRuns(title,locale,rtl)}</w:p>`);
-  for(const raw of markdown.replace(/\r\n?/g,"\n").split("\n")){
+  const paragraphs:string[]=[],hyperlinks:Array<{id:string;target:string}>=[];
+  if(!/^#\s+/.test(markdown.trimStart()))paragraphs.push(`<w:p><w:pPr><w:pStyle w:val="Title"/>${rtl?"<w:bidi/>":""}</w:pPr>${wordRuns(title,locale,rtl,hyperlinks)}</w:p>`);
+  const lines=markdown.replace(/\r\n?/g,"\n").split("\n");
+  const tableCells=(line:string)=>line.trim().replace(/^\|/u,"").replace(/\|$/u,"").split("|").map((cell)=>cell.trim());
+  for(let index=0;index<lines.length;index+=1){
+    const raw=lines[index]!;
+    const headings=tableCells(raw),divider=lines[index+1]?tableCells(lines[index+1]!):[];
+    if(raw.includes("|")&&headings.length>1&&divider.length===headings.length&&divider.every((cell)=>/^:?-{3,}:?$/u.test(cell))){
+      const rows=[headings];
+      index+=1;
+      while(lines[index+1]?.includes("|")){
+        const cells=tableCells(lines[index+1]!);
+        if(cells.length!==headings.length)break;
+        rows.push(cells);
+        index+=1;
+      }
+      const body=rows.map((cells,rowIndex)=>`<w:tr>${rowIndex===0?"<w:trPr><w:tblHeader/></w:trPr>":""}${cells.map((cell)=>`<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr><w:p>${rtl?"<w:pPr><w:bidi/></w:pPr>":""}${wordRuns(rowIndex===0?`**${cell}**`:cell,locale,rtl,hyperlinks)}</w:p></w:tc>`).join("")}</w:tr>`).join("");
+      paragraphs.push(`<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblLook w:val="04A0" w:firstRow="1"/></w:tblPr><w:tblGrid>${headings.map(()=>'<w:gridCol w:w="2400"/>').join("")}</w:tblGrid>${body}</w:tbl>`);
+      continue;
+    }
     const heading=raw.match(/^\s*(#{1,3})\s+(.+)$/),bullet=raw.match(/^\s*[-*+]\s+(.+)$/),ordered=raw.match(/^\s*\d+[.)]\s+(.+)$/),quote=raw.match(/^\s*>\s?(.*)$/);
     const value=heading?.[2]??bullet?.[1]??ordered?.[1]??quote?.[1]??raw;
     const style=heading?`<w:pStyle w:val="Heading${heading[1]!.length}"/>`:bullet||ordered?`<w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="${ordered?2:1}"/></w:numPr>`:quote?'<w:pStyle w:val="Quote"/>':"";
     const properties=`${style}${rtl?"<w:bidi/>":""}`;
-    paragraphs.push(`<w:p>${properties?`<w:pPr>${properties}</w:pPr>`:""}${wordRuns(value,locale,rtl)}</w:p>`);
+    paragraphs.push(`<w:p>${properties?`<w:pPr>${properties}</w:pPr>`:""}${wordRuns(value,locale,rtl,hyperlinks)}</w:p>`);
   }
   const document=`${XML}<w:document xmlns:w="${W}" xmlns:r="${R}"><w:body>${paragraphs.join("")}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/></w:sectPr></w:body></w:document>`;
   const styles=`${XML}<w:styles xmlns:w="${W}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Aptos" w:hAnsi="Aptos"${japanese?' w:eastAsia="Yu Gothic"':""}/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="140"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="56"/></w:rPr></w:style>${[1,2,3].map((level)=>`<w:style w:type="paragraph" w:styleId="Heading${level}"><w:name w:val="heading ${level}"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="${40-level*4}"/></w:rPr></w:style>`).join("")}<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/></w:style><w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="480"/></w:pPr><w:rPr><w:i/></w:rPr></w:style></w:styles>`;
@@ -99,7 +127,7 @@ export function createWordDocument(markdown:string,options:{title?:string;langua
     {name:"_rels/.rels",content:rootRelationships("word/document.xml")},
     {name:"docProps/core.xml",content:coreProperties(title)},{name:"docProps/app.xml",content:appProperties()},
     {name:"word/document.xml",content:document},{name:"word/styles.xml",content:styles},{name:"word/numbering.xml",content:numbering},
-    {name:"word/_rels/document.xml.rels",content:relationships([relationship("rId1","styles","styles.xml"),relationship("rId2","numbering","numbering.xml")])},
+    {name:"word/_rels/document.xml.rels",content:relationships([relationship("rId1","styles","styles.xml"),relationship("rId2","numbering","numbering.xml"),...hyperlinks.map(({id,target})=>`<Relationship Id="${id}" Type="${R}/hyperlink" Target="${escapeXml(target)}" TargetMode="External"/>`)])},
   ]);
 }
 

@@ -478,6 +478,46 @@ test("cancellation preserves a provider receipt checkpointed immediately before 
   await worker.drainBackground();
 });
 
+test("cancellation atomically freezes a submitted video when its provider identity races the terminal checkpoint",async()=>{
+  for(const [label,anchor] of [["missing",undefined],["null",null],["false",false],["empty",""],["array",[]]]){
+    const worker=await integratedProductionWorker();
+    const jobId=`cancel-racing-unattributed-video-${label}`;
+    const fixture=await integratedInterruptedRender(worker,{jobId,paidProvider:false,plannerUsage:false,cachedPlan:false,stale:false});
+    const updatedCheckpoint={...fixture.checkpoint,...(anchor===undefined?{}:{productionAnchor:anchor}),
+      generationReceipt:{provider_request_status:"submitted",source_transmission_status:"transmitted",settled_cost_microusd:null,reservation_status:"executing"}};
+    const originalPrepare=worker.environment.DB.prepare.bind(worker.environment.DB);
+    let checkpointInjected=false;
+    worker.environment.DB.prepare=(sql)=>{
+      const statement=originalPrepare(sql);
+      if(!sql.startsWith("UPDATE document_jobs SET status=?,result_json=json_patch"))return statement;
+      const originalBind=statement.bind.bind(statement);
+      statement.bind=(...values)=>{
+        const bound=originalBind(...values);
+        const originalRun=bound.run.bind(bound);
+        bound.run=async()=>{
+          if(!checkpointInjected){
+            worker.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify(updatedCheckpoint),jobId);
+            checkpointInjected=true;
+          }
+          return originalRun();
+        };
+        return bound;
+      };
+      return statement;
+    };
+
+    const response=await worker.request(`/api/document-jobs/${jobId}/cancel`,{method:"POST"});
+    assert.equal(response.status,409,`${label}: ${JSON.stringify(await response.clone().json())}`);
+    assert.equal((await response.json()).error,"provider_submission_in_flight",label);
+    assert.equal(checkpointInjected,true,`${label}: the uncertain receipt appeared after ordinary preflight and before the authoritative SQL update`);
+    const retained=worker.sqlite.prepare("SELECT status,result_json FROM document_jobs WHERE job_id=?").get(jobId);
+    assert.equal(retained.status,"running",label);
+    assert.equal(JSON.parse(retained.result_json).generationReceipt.provider_request_status,"submitted",label);
+    assert.equal(worker.sqlite.prepare("SELECT status FROM budget_reservations WHERE reservation_id=?").get(fixture.token.reservationId).status,"active",label);
+    assert.equal(worker.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(fixture.cost.reservationId).status,"executing",label);
+  }
+});
+
 for(const missingCostReservation of [false,true]){
   test(`manual provider recovery ${missingCostReservation?"does not forgive an unaccounted provider charge":"reuses only genuinely settled provider charges"}`,async()=>{
     const worker=await integratedProductionWorker();

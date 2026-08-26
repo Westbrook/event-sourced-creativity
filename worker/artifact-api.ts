@@ -43,7 +43,7 @@ async function trustedPresentationRevisionSourceContract(
 ):Promise<PresentationSourceContract|undefined>{
   const receiptId=typeof completedPayload.input_ref==="string"?completedPayload.input_ref:"";
   const generatingUserId=String(completedPayload.requested_by_user_id??project?.ownerUserId??actorUserId);
-  if(!receiptId||generatingUserId!==actorUserId)return undefined;
+  if(!receiptId||!project&&generatingUserId!==actorUserId)return undefined;
   const containment=project
     ? ` AND EXISTS(SELECT 1 FROM project_resource_scopes artifact
           JOIN project_resource_scopes evidence ON evidence.project_access_id=artifact.project_access_id
@@ -60,7 +60,7 @@ async function trustedPresentationRevisionSourceContract(
     : " AND NOT EXISTS(SELECT 1 FROM project_resource_scopes evidence WHERE evidence.resource_kind='content' AND evidence.resource_id=private_content.content_id)";
   const retained=await env.DB.prepare(`SELECT content FROM private_content
       WHERE content_id=? AND owner_id=? AND kind='document-artifact-input' AND redacted_at IS NULL AND expires_at>?${containment}`)
-    .bind(receiptId,actorUserId,now,...(project?[actorUserId,actorUserId,project.projectAccessId,project.organizationId,project.projectId,project.ownerUserId,artifactId]:[]))
+    .bind(receiptId,generatingUserId,now,...(project?[generatingUserId,generatingUserId,project.projectAccessId,project.organizationId,project.projectId,project.ownerUserId,artifactId]:[]))
     .first<{content:string}>();
   if(!retained)return undefined;
   let receipt:Record<string,unknown>;

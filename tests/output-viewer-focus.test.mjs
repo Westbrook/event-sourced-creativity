@@ -137,8 +137,10 @@ test("reading mode presents audience delivery first and requires deliberate disc
   assert.match(deck,/<details class="presentation-deck-evidence presentation-deck-reader"><summary>Authorized source evidence<\/summary>/,"complete private evidence is inspectable only after its closed disclosure is opened");
   assert.match(deck,/<details class="presentation-deck-notes"><summary>Speaker notes<\/summary><p dir="auto">\$\{item\.notes\}<\/p><\/details>/,"speaker notes are never automatically exposed by an adaptive reading fallback");
   assert.doesNotMatch(deck,/<details class="presentation-deck-(?:evidence|notes)"[^>]*\bopen\b/,"private evidence and notes start closed");
-  assert.match(deck,/includePresenterNotes:productionOwner/,"exported presenter notes require a positive, authorized production-owner determination");
-  assert.match(deck,/productionOwner=Boolean\(session&&!session\.impersonation&&artifact&&\(!session\.projectContext\|\|String\(completed\?\.payload\.requested_by_user_id\?\?renderedBy\)===session\.user\.userId\)\)/,"reviewers, missing principals, impersonating sessions, and other project members cannot receive presenter notes");
+  assert.match(deck,/#downloadPowerPoint\([^)]*\)\{return this\.#downloadPowerPointVariant\(items,presentation,false\);\}/,"ordinary PowerPoint downloads are audience-safe and never include presenter notes");
+  assert.match(deck,/#downloadPresenterPowerPoint\([^)]*\)\{return this\.#downloadPowerPointVariant\(items,presentation,true\);\}/,"presenter notes require a separately chosen, explicitly private export");
+  assert.match(deck,/if\(includePresenterNotes&&!this\.#presenterExportAllowed\(artifact\)\)return/,"private notes are refused without the exact producer's authorization");
+  assert.match(deck,/return Boolean\(session&&!session\.impersonation&&\(!session\.projectContext\|\|String\(completed\?\.payload\.requested_by_user_id\?\?renderedBy\)===session\.user\.userId\)\)/,"reviewers, missing principals, impersonating sessions, and other project members cannot receive presenter notes");
 });
 
 test("review, production disclosure, private inputs, and exact export gates remain available without occupying the initial stage", () => {

@@ -61,6 +61,20 @@ const allowedProtectedPlacement = (value: unknown) => value === "opening"
   || value === "closing"
   || value === "opening_and_closing";
 
+/** Every declared license boundary is authoritative; malformed metadata never widens rights. */
+export function creativeContextRightsIssue(properties: Record<string, unknown>, now = Date.now()): "revoked" | "invalid" | "expired" | null {
+  if (properties.rights_revoked === true || properties.source_rights_revoked === true
+    || ["revoked", "denied", "unlicensed"].includes(String(properties.rights_class ?? "").trim().toLowerCase())
+    || ["revoked", "denied"].includes(String(properties.rights_status ?? "").trim().toLowerCase())) return "revoked";
+  for (const field of ["source_expires_at", "license_expires_at", "rights_expires_at"] as const) {
+    const value = properties[field];
+    if (value === undefined || value === null || value === "") continue;
+    if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return "invalid";
+    if (Date.parse(value) <= now) return "expired";
+  }
+  return null;
+}
+
 /** Actionable readiness is derived from durable evidence, never a decorative score. */
 export function assessCreativeContext(projection: Pick<CreativeProjection, "blocks">, events: CreativeEvent[], now = Date.now()): ContextHealthReport {
   const blocks = projection.blocks.filter((block) => !block.removed && Number(block.properties.weight ?? .5) > 0);
@@ -129,25 +143,35 @@ export function assessCreativeContext(projection: Pick<CreativeProjection, "bloc
   if (invalidProtectedPlacement.size) issues.push({ id: "invalid-protected-message-placement", severity: "warning", label: "Choose a valid protected-message placement", detail: "Protected wording can be required on the opening slide, the closing slide, or both.", blockIds: [...invalidProtectedPlacement] });
   if (ungroundedProtectedMessage.size) issues.push({ id: "protected-message-not-in-context", severity: "warning", label: "Include protected wording in the message", detail: "The exact protected wording must also appear verbatim in its authored Message so every approved output can preserve it.", blockIds: [...ungroundedProtectedMessage] });
 
-  const rights = new Set(events.filter((event) => event.type === "RightsAsserted" || event.type === "ReferenceIngested" && ["owned", "owned_or_licensed", "account-generated"].includes(String(event.payload.rights_class ?? ""))).map((event) => String(event.payload.reference_id ?? "")));
-  const audioRights = new Set(events.filter((event) => (event.type === "RightsAsserted" || event.type === "ReferenceIngested") && audioRightsAllowed(event.payload.rights_class)).map((event) => String(event.payload.reference_id ?? "")));
+  const rights=new Set<string>(),audioRights=new Set<string>();
+  for(const event of events){
+    if(event.type!=="RightsAsserted"&&event.type!=="ReferenceIngested")continue;
+    const id=String(event.payload.reference_id??"");
+    if(!id)continue;
+    const classification=String(event.payload.rights_class??"");
+    if(["owned","owned_or_licensed","account-generated"].includes(classification))rights.add(id);else rights.delete(id);
+    if(audioRightsAllowed(classification))audioRights.add(id);else audioRights.delete(id);
+  }
   let verifiedSources = 0;
   for(const decision of blocks.filter((block)=>block.type!=="reference")){
-    const expires=Date.parse(String(decision.properties.license_expires_at??decision.properties.rights_expires_at??""));
-    if(Number.isFinite(expires)&&expires<=now)issues.push({id:`decision-rights-expired-${decision.id}`,severity:"blocking",label:"Replace expired licensed context",detail:`The approved rights for “${String(decision.properties.label??decision.handle)}” have expired.`,blockIds:[decision.id]});
+    const rightsIssue=creativeContextRightsIssue(decision.properties,now);
+    if(rightsIssue)issues.push({id:`decision-rights-${rightsIssue}-${decision.id}`,severity:"blocking",label:"Replace expired licensed context",detail:`The approved rights for “${String(decision.properties.label??decision.handle)}” are ${rightsIssue}.`,blockIds:[decision.id]});
   }
   for (const source of [...byType("reference"),...byType("audio").filter((block)=>Boolean(block.properties.media_url)&&(block.properties.inform_generation===true||block.properties.include_in_output===true||block.properties.allow_provider_audio_transfer===true))]) {
     const referenceId = String(source.properties.reference_id ?? "");
-    if (!referenceId || !(source.type === "audio" ? audioRights : rights).has(referenceId)) {
+    const rightsIssue=creativeContextRightsIssue(source.properties,now);
+    const verifiedReceipt=Boolean(referenceId&&(source.type === "audio" ? audioRights : rights).has(referenceId));
+    const authorizedRights=verifiedReceipt&&!rightsIssue;
+    if (!verifiedReceipt) {
       issues.push({ id: `source-rights-${source.id}`, severity: "blocking", label: "Verify source rights", detail: `“${String(source.properties.label ?? source.handle)}” does not have a matching rights receipt.`, blockIds: [source.id] });
-    } else verifiedSources += 1;
-
-    const expires = Date.parse(String(source.properties.source_expires_at ?? source.properties.license_expires_at ?? source.properties.rights_expires_at ?? ""));
-    if (Number.isFinite(expires) && expires <= now) issues.push({ id: `source-expired-${source.id}`, severity: "blocking", label: "Replace an expired source", detail: `The rights or freshness window for “${String(source.properties.label ?? source.handle)}” has expired.`, blockIds: [source.id] });
-    const mime = String(source.properties.source_mime_type ?? "").toLowerCase();
-    if ((mime === "application/pdf" || mime.includes("officedocument")) && !String(source.properties.text ?? "").trim()) {
-      issues.push({ id: `source-excerpt-${source.id}`, severity: "warning", label: "Add a readable source excerpt", detail: String(source.properties.extraction_message ?? "This document is safely attached, but its text could not be extracted into generation context."), blockIds: [source.id] });
     }
+
+    if(rightsIssue)issues.push({ id: `source-${rightsIssue}-${source.id}`, severity: "blocking", label: "Replace an expired source", detail: `The rights or freshness window for “${String(source.properties.label ?? source.handle)}” is ${rightsIssue}.`, blockIds: [source.id] });
+    const mime = String(source.properties.source_mime_type ?? "").toLowerCase();
+    const documentSource=mime === "application/pdf" || mime.includes("officedocument");
+    const grounded=!documentSource||(Boolean(String(source.properties.text ?? "").trim())&&source.properties.extraction_status!=="unavailable");
+    if(!grounded)issues.push({ id: `source-excerpt-${source.id}`, severity: "blocking", label: "Add a readable source excerpt", detail: String(source.properties.extraction_message ?? "This document is safely attached, but its text could not be extracted into generation context."), blockIds: [source.id] });
+    if(authorizedRights&&grounded)verifiedSources+=1;
   }
 
   if (!byType("reference").length) issues.push({ id: "missing-evidence", severity: "suggestion", label: "Attach grounding evidence", detail: "Add a licensed source document, pasted excerpt, or image when evidence is important.", blockIds: [] });
@@ -197,7 +221,14 @@ function artifactReviewStateFromSources(artifact: Pick<DocumentArtifact, "id" | 
   const changedBlockIds = versions.map((value) => value && typeof value === "object" ? value as Record<string, unknown> : {})
     .filter((version) => {
       const block = documentBlocks.find((candidate) => candidate.id === String(version.block_id ?? ""));
-      return !block || block.removed || block.sourceEvents.length !== Number(version.version ?? 0);
+      if(!block||block.removed||block.sourceEvents.length!==Number(version.version??0))return true;
+      const properties=block.properties??{};
+      if(creativeContextRightsIssue(properties))return true;
+      const referenceId=String(properties.reference_id??"");
+      if(!referenceId)return false;
+      const latest=[...events].reverse().find((event)=>["RightsAsserted","ReferenceIngested"].includes(event.type)
+        &&String(event.payload.reference_id??"")===referenceId);
+      return Boolean(latest&&!(["owned","owned_or_licensed","account-generated"].includes(String(latest.payload.rights_class??""))));
     }).map((version) => String(version.block_id ?? ""));
   const known=new Set(versions.map((version)=>String(version.block_id??"")));
   for(const block of documentBlocks)if(!block.removed&&!known.has(block.id))changedBlockIds.push(block.id);

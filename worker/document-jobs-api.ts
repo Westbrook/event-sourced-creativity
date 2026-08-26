@@ -36,6 +36,7 @@ import { authoritativeCreativeContext, authoritativePresentationRecoveryContext,
 import { managedPilotSourceClassificationValid } from "./media-api";
 import { ProductionWorkflowContextError, resolveProductionWorkflowContext } from "./production-workflow";
 import { assessStoredPresentationCandidate, MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES, PRESENTATION_ADAPTER_VERSION } from "./openai-adapter";
+import { governedPackageSourceRightsCurrent } from "./context-package-rights";
 import { combinedSceneSnapshot } from "./managed-production";
 import { standingConstraints } from "../src/model/taste";
 import { productionWorkflowSourceIdentity, type ProductionWorkflowSource } from "../src/model/production-workflow";
@@ -165,6 +166,23 @@ function unresolvedStoryboardSubmission(row:Pick<DocumentJobRow,"kind"|"request_
   if(row.kind!=="render_document"||parseRequest(row).artifactKind!=="storyboard")return false;
   const checkpoint=parseResult(row);
   return checkpoint.storyboardProviderSubmission==="pending"||checkpoint.storyboardProviderSubmission==="confirmed";
+}
+
+function unresolvedVideoSubmission(row:Pick<DocumentJobRow,"kind"|"request_json"|"result_json">){
+  if(row.kind!=="render_document"||parseRequest(row).artifactKind!=="video")return false;
+  const checkpoint=parseResult(row);
+  const receipt=checkpoint.generationReceipt&&typeof checkpoint.generationReceipt==="object"?checkpoint.generationReceipt as Record<string,unknown>:{};
+  const scenes=Object.values(checkpoint.productionSceneReceipts&&typeof checkpoint.productionSceneReceipts==="object"?checkpoint.productionSceneReceipts as Record<string,Record<string,unknown>>:{});
+  const anchor=checkpoint.productionAnchor&&typeof checkpoint.productionAnchor==="object"&&!Array.isArray(checkpoint.productionAnchor)
+    ?checkpoint.productionAnchor as Record<string,unknown>:null;
+  const submitted=scenes.filter((scene)=>["submitted","completed"].includes(String(scene.status??"")));
+  const status=String(receipt.provider_request_status??"");
+  if(status==="submission_unknown")return true;
+  if(!checkpoint.providerJobId&&!anchor&&status!=="submitted"&&!submitted.length)return false;
+  if(!String(checkpoint.reservationId??"")||!String(checkpoint.costReservationId??""))return true;
+  if(status==="submitted"&&!checkpoint.providerJobId&&!anchor&&!submitted.length)return true;
+  return submitted.some((scene)=>!String(scene.providerJobId??"")
+    ||Number(scene.durationSeconds??0)<=0&&Number(scene.costMicrousd??0)<=0);
 }
 
 function trustedStoryboardSafeRecovery(checkpoint:Record<string,unknown>){
@@ -1383,20 +1401,34 @@ async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
 async function stopGenerationJob(env: WorkerEnv, user: PilotUser, target: DocumentJobRow, force: boolean) {
   if (target.kind !== "preview" && target.kind !== "generate" && target.kind !== "prompt_fan" && target.kind !== "render_document") return { error: "generation_job_required", status: 409 } as const;
   if (target.status === "committing") return { error: "job_finalizing", status: 409 } as const;
-  if(unresolvedPresentationSubmission(target)||unresolvedAudioSubmission(target)||unresolvedStoryboardSubmission(target))return{error:"provider_submission_in_flight",status:409} as const;
+  if(unresolvedPresentationSubmission(target)||unresolvedAudioSubmission(target)||unresolvedStoryboardSubmission(target)||unresolvedVideoSubmission(target))return{error:"provider_submission_in_flight",status:409} as const;
   if (documentJobTerminal(target)) return { job: target } as const;
   const request = parseRequest(target); const childIds = target.kind === "prompt_fan" && Array.isArray(request.childJobIds) ? request.childJobIds.map(String).filter(Boolean) : [];
   const children = (await Promise.all(childIds.map((id) => readJob(env, user.userId, id)))).filter((row): row is DocumentJobRow => Boolean(row));
   if (children.some((row) => row.status === "committing")) return { error: "job_finalizing", status: 409 } as const;
   const targets = target.kind === "prompt_fan" ? [...children, target] : [target]; const stopped: DocumentJobRow[] = [];
+  for(const row of targets){
+    if(row.status!=="queued"&&row.status!=="running"||row.kind==="render_document")continue;
+    const executing=await env.DB.prepare("SELECT 1 AS executing FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status='executing' LIMIT 1")
+      .bind(user.billingUserId??user.userId,row.stream_id,row.correlation_id).first();
+    if(executing)return{error:"provider_submission_in_flight",status:409} as const;
+  }
   for (const row of targets) {
     if (row.status !== "queued" && row.status !== "running") continue;
+    if(row.kind!=="render_document"){
+      const executing=await env.DB.prepare("SELECT 1 AS executing FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status='executing' LIMIT 1")
+        .bind(user.billingUserId??user.userId,row.stream_id,row.correlation_id).first();
+      if(executing)return{error:"provider_submission_in_flight",status:409} as const;
+    }
     const completedAt = new Date().toISOString();
     const errorDetail: DocumentJobError = { code: force ? "force_failed_by_admin" : "canceled_by_user", category: "canceled", scope: "request", action: "none", message: force ? "An administrator force-failed this generation." : "The user stopped this generation.", retryable: true, retryAfterMs: null, requestId: null, httpStatus: null };
     const result = { errorDetail, stage: force ? "failed" : "canceled", progressMessage: errorDetail.message };
-    const updated = await env.DB.prepare("UPDATE document_jobs SET status=?,result_json=json_patch(COALESCE(result_json,'{}'),?),error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=?,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=? AND status IN ('queued','running') AND NOT (kind='render_document' AND (COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.presentationProviderSubmission'),'')='pending' OR COALESCE(json_extract(request_json,'$.artifactKind'),'')='audio' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.audioProviderSubmission'),'')='pending' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.providerJobId'),'')='' OR COALESCE(json_extract(request_json,'$.artifactKind'),'')='storyboard' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.storyboardProviderSubmission'),'') IN ('pending','confirmed')))")
-      .bind(force ? "failed" : "canceled", JSON.stringify(result), errorDetail.code, completedAt, force ? null : completedAt, completedAt, row.job_id, user.userId, row.correlation_id).run();
-    if(Number(updated.meta.changes??0)!==1){const retained=await readJob(env,user.userId,row.job_id);if(retained&&(unresolvedPresentationSubmission(retained)||unresolvedAudioSubmission(retained)||unresolvedStoryboardSubmission(retained)))return{error:"provider_submission_in_flight",status:409} as const;continue;}
+    const updated = await env.DB.prepare("UPDATE document_jobs SET status=?,result_json=json_patch(COALESCE(result_json,'{}'),?),error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=?,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=? AND status IN ('queued','running') AND(kind='render_document' OR NOT EXISTS(SELECT 1 FROM cost_budget_reservations execution WHERE execution.owner_id=? AND execution.stream_id=document_jobs.stream_id AND execution.correlation_id=document_jobs.correlation_id AND execution.status='executing')) AND NOT (kind='render_document' AND (COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.presentationProviderSubmission'),'')='pending' OR COALESCE(json_extract(request_json,'$.artifactKind'),'')='audio' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.audioProviderSubmission'),'')='pending' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.providerJobId'),'')='' OR COALESCE(json_extract(request_json,'$.artifactKind'),'')='storyboard' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.storyboardProviderSubmission'),'') IN ('pending','confirmed') OR COALESCE(json_extract(request_json,'$.artifactKind'),'')='video' AND(COALESCE(json_extract(COALESCE(result_json,'{}'),'$.generationReceipt.provider_request_status'),'')='submission_unknown' OR COALESCE(json_extract(COALESCE(result_json,'{}'),'$.generationReceipt.provider_request_status'),'')='submitted' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.providerJobId'),'')='' AND COALESCE(json_type(COALESCE(result_json,'{}'),'$.productionAnchor'),'')!='object' AND NOT EXISTS(SELECT 1 FROM json_each(COALESCE(result_json,'{}'),'$.productionSceneReceipts') scene WHERE json_extract(scene.value,'$.status') IN('submitted','completed')) OR(COALESCE(json_extract(COALESCE(result_json,'{}'),'$.providerJobId'),'')!='' OR COALESCE(json_type(COALESCE(result_json,'{}'),'$.productionAnchor'),'')='object' OR COALESCE(json_extract(COALESCE(result_json,'{}'),'$.generationReceipt.provider_request_status'),'')='submitted' OR EXISTS(SELECT 1 FROM json_each(COALESCE(result_json,'{}'),'$.productionSceneReceipts') scene WHERE json_extract(scene.value,'$.status') IN('submitted','completed'))) AND(COALESCE(json_extract(COALESCE(result_json,'{}'),'$.reservationId'),'')='' OR COALESCE(json_extract(COALESCE(result_json,'{}'),'$.costReservationId'),'')='' OR EXISTS(SELECT 1 FROM json_each(COALESCE(result_json,'{}'),'$.productionSceneReceipts') scene WHERE json_extract(scene.value,'$.status') IN('submitted','completed') AND(COALESCE(json_extract(scene.value,'$.providerJobId'),'')='' OR COALESCE(CAST(json_extract(scene.value,'$.durationSeconds') AS REAL),0)<=0 AND COALESCE(CAST(json_extract(scene.value,'$.costMicrousd') AS REAL),0)<=0))))))")
+      .bind(force ? "failed" : "canceled", JSON.stringify(result), errorDetail.code, completedAt, force ? null : completedAt, completedAt, row.job_id, user.userId, row.correlation_id,user.billingUserId??user.userId).run();
+    if(Number(updated.meta.changes??0)!==1){const retained=await readJob(env,user.userId,row.job_id);
+      const raced=row.kind!=="render_document"?await env.DB.prepare("SELECT 1 AS executing FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status='executing' LIMIT 1")
+        .bind(user.billingUserId??user.userId,row.stream_id,row.correlation_id).first():null;
+      if(raced||retained&&(unresolvedPresentationSubmission(retained)||unresolvedAudioSubmission(retained)||unresolvedStoryboardSubmission(retained)||unresolvedVideoSubmission(retained)))return{error:"provider_submission_in_flight",status:409} as const;continue;}
     stopped.push(row);
     const reason=force?"generation_force_failed":"generation_canceled";
     const terminal=await readJob(env,user.userId,row.job_id);
@@ -1429,6 +1461,17 @@ async function stopGenerationJob(env: WorkerEnv, user: PilotUser, target: Docume
 }
 
 /** Revoke actor-owned project jobs without granting their private inputs to the operator. */
+export async function projectProviderSubmissionBlockers(env:WorkerEnv,organizationId:string){
+  const rows=await env.DB.prepare(`SELECT job.job_id,job.kind,job.request_json,job.result_json FROM project_resource_scopes resource
+    JOIN document_jobs job ON job.job_id=resource.resource_id AND job.owner_id=resource.actor_user_id
+    WHERE resource.resource_kind='job' AND resource.organization_id=?
+      AND job.status IN('queued','running','committing','failed','partial') ORDER BY job.requested_at,job.job_id LIMIT 500`)
+    .bind(organizationId).all<Pick<DocumentJobRow,"job_id"|"kind"|"request_json"|"result_json">>();
+  return rows.results.filter((row)=>unresolvedPresentationSubmission(row)||unresolvedAudioSubmission(row)||unresolvedStoryboardSubmission(row)||unresolvedVideoSubmission(row))
+    .map((row)=>({jobId:row.job_id,kind:row.kind}));
+}
+
+/** Revoke actor-owned project jobs without granting their private inputs to the operator. */
 export async function cancelProjectActorJobs(env:WorkerEnv,operator:PilotUser,scope:{organizationId:string;projectAccessId?:string;actorUserId?:string;ownerUserId?:string}){
   const clauses=["resource.resource_kind='job'","resource.organization_id=?","job.status IN('queued','running')"];
   const bindings:string[]=[scope.organizationId];
@@ -1438,10 +1481,16 @@ export async function cancelProjectActorJobs(env:WorkerEnv,operator:PilotUser,sc
   const jobs=await env.DB.prepare(`SELECT job.*,resource.project_access_id,resource.organization_id,resource.project_id,resource.owner_user_id FROM project_resource_scopes resource JOIN document_jobs job ON job.job_id=resource.resource_id AND job.owner_id=resource.actor_user_id AND job.stream_id='creative:'||resource.owner_user_id WHERE ${clauses.join(" AND ")} ORDER BY job.requested_at,job.job_id LIMIT 500`)
     .bind(...bindings).all<DocumentJobRow&{project_access_id:string;organization_id:string;project_id:string;owner_user_id:string}>();
   for(const row of jobs.results){
+    if(unresolvedPresentationSubmission(row)||unresolvedAudioSubmission(row)||unresolvedStoryboardSubmission(row)||unresolvedVideoSubmission(row))continue;
+    if(row.kind!=="render_document"){
+      const executing=await env.DB.prepare("SELECT 1 AS executing FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status='executing' LIMIT 1")
+        .bind(row.owner_id,row.stream_id,row.correlation_id).first();
+      if(executing)continue;
+    }
     const now=new Date().toISOString();
     const message="The project permission required for this operation was revoked.";
     const result={errorDetail:{code:"project_access_revoked",category:"canceled",scope:"request",action:"none",message,retryable:false,retryAfterMs:null,requestId:null,httpStatus:null},stage:"canceled",progressMessage:message};
-    const changed=await env.DB.prepare("UPDATE document_jobs SET status='canceled',result_json=json_patch(COALESCE(result_json,'{}'),?),error_message='project_access_revoked',completed_at=?,lease_expires_at=NULL,notified_at=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status IN('queued','running')")
+    const changed=await env.DB.prepare("UPDATE document_jobs SET status='canceled',result_json=json_patch(COALESCE(result_json,'{}'),?),error_message='project_access_revoked',completed_at=?,lease_expires_at=NULL,notified_at=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status IN('queued','running') AND(kind='render_document' OR NOT EXISTS(SELECT 1 FROM cost_budget_reservations execution WHERE execution.owner_id=document_jobs.owner_id AND execution.stream_id=document_jobs.stream_id AND execution.correlation_id=document_jobs.correlation_id AND execution.status='executing'))")
       .bind(JSON.stringify(result),now,now,now,row.job_id,row.owner_id,row.stream_id,row.correlation_id).run();
     if(Number(changed.meta.changes??0)!==1)continue;
     const actor:PilotUser={...operator,userId:row.owner_id,billingUserId:row.owner_id,streamId:row.stream_id,projectExecution:{organizationId:row.organization_id,projectAccessId:row.project_access_id,projectId:row.project_id,ownerUserId:row.owner_user_id,actorUserId:row.owner_id}};
@@ -2016,6 +2065,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const documentId = String(input.documentId ?? projection.documentId); const documentRecord = projection.documents.find((document) => document.id === documentId);
   if (!documentRecord) return Response.json({ error: "document_not_found" }, { status: 404 });
   if(project&&documentRecord.projectId!==project.projectId)return Response.json({error:"document_not_found"},{status:404});
+  if(project&&!await governedPackageSourceRightsCurrent(env,project.organizationId,projection.blocks))
+    return Response.json({error:"context_source_rights_expired",message:"The original rights for an adopted organizational source are no longer valid."},{status:409});
   let workflowPlanningSnapshot:Record<string,unknown>|undefined;
   if(kind==="preview"||kind==="generate"||kind==="prompt_fan"||kind==="render_document"){
     try{
@@ -2098,6 +2149,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const scopes=user.projectExecution?[{organizationId:user.projectExecution.organizationId,projectAccessId:user.projectExecution.projectAccessId,actorUserId:user.projectExecution.actorUserId}]:!user.fictional&&billingUserId===user.userId?await ownerDocumentBudgetScopes(env,user.userId,documentId,documentRecord.projectId):[];
     if(scopes.length>1)return Response.json({error:"ambiguous_project_budget_scope"},{status:409});
     if(scopes[0]){
+      if(!project&&!await governedPackageSourceRightsCurrent(env,scopes[0].organizationId,projection.blocks))
+        return Response.json({error:"context_source_rights_expired",message:"The original rights for an adopted organizational source are no longer valid."},{status:409});
       projectRetentionDays=(await env.DB.prepare("SELECT transient_days FROM organization_retention_policies WHERE organization_id=?").bind(scopes[0].organizationId).first<{transient_days:number}>())?.transient_days??null;
       projectContentScope??={organizationId:scopes[0].organizationId,projectAccessId:scopes[0].projectAccessId,projectId:documentRecord.projectId,ownerUserId:user.userId,actorUserId:user.userId};
     }

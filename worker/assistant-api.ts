@@ -6,12 +6,13 @@ import { assistantSurfaceForRoute, type AssistantSurface } from "../src/model/as
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
 import { assistantActionEvents, normalizeAssistantActions, type AssistantContextAction } from "../src/model/assistant-proposals.ts";
 import { validateContextCompositionGraph } from "../src/model/combined-context.ts";
-import { ASSISTANT_CONTEXT_LIMITS, compileAssistantContext, type AssistantContext } from "../src/model/conversation-context.ts";
+import { ASSISTANT_CONTEXT_LIMITS, boundAssistantContext, compileAssistantContext, protectedAssistantDecision, type AssistantContext } from "../src/model/conversation-context.ts";
 import { foldEvents, type CreativeEvent, type EventInput } from "../src/model/events.ts";
 import { outputBlockRemovalEvents, outputBlockTextEditEvents } from "../src/model/output-authoring.ts";
 import type { FormaCapability } from "../src/platform/capabilities.ts";
 import { readCanvasGovernance } from "./canvas-governance-policy.ts";
 import {
+  assistantPilotEntitled,
   claimCostBudgetReservation,
   hasCapability,
   pilotExecutionAllowance,
@@ -28,6 +29,7 @@ import {
   type PilotUser,
 } from "./pilot-policy.ts";
 import { AssistantProviderRejectedError, requestAssistantProvider, type AssistantProviderResult } from "./assistant-provider.ts";
+import { governedPackageSourceRightsCurrent } from "./context-package-rights.ts";
 import { appendProjectEvents, readProjectAssistantEventView, readProjectEventPage, readProjectRequestContext, type ProjectRequestContext } from "./project-access.ts";
 import { priceTextUsageBreakdownMicrousd } from "./replay-cost.ts";
 import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, serializeEvent, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
@@ -250,7 +252,14 @@ async function authorizeAssistant(request: Request, env: WorkerEnv): Promise<{ a
   const auth = await requireUser(request, env, "viewer", { account: "principal" });
   if (auth.response || !auth.user) return { authorized: null, response: auth.response ?? json({ error: "authentication_required" }, 401) };
   const principal = auth.user;
-  if (!assistantTesters(env).has(principal.userId)) return { authorized: null, response: json({ error: "assistant_unavailable" }, 404) };
+  const internalTester=assistantTesters(env).has(principal.userId);
+  const admittedProject=internalTester?null:await readProjectRequestContext(request,env,principal);
+  if(!internalTester){
+    if(admittedProject?.response)return{authorized:null,response:admittedProject.response};
+    const admission=admittedProject?.context;
+    if(!admission||!hasCapability(principal,"project.author",{organizationId:admission.organizationId,projectAccessId:admission.projectAccessId})
+      ||!await assistantPilotEntitled(env,principal.userId,admission.organizationId))return{authorized:null,response:json({error:"assistant_unavailable"},404)};
+  }
   const consent = requireConsent(principal);
   if (consent) return { authorized: null, response: consent };
   const url = new URL(request.url);
@@ -258,7 +267,7 @@ async function authorizeAssistant(request: Request, env: WorkerEnv): Promise<{ a
   if (!route.startsWith("/") || route.startsWith("//")) return { authorized: null, response: json({ error: "assistant_route_invalid" }, 400) };
   const surface = assistantSurfaceForRoute(route);
   if (!surface.available || surface.host !== "creator") return { authorized: null, response: json({ error: "assistant_surface_denied" }, 403) };
-  const selected = await readProjectRequestContext(request, env, principal);
+  const selected = admittedProject??await readProjectRequestContext(request, env, principal);
   if (selected.response) return { authorized: null, response: selected.response };
   const project = selected.context;
   const scope = project ? { organizationId: project.organizationId, projectAccessId: project.projectAccessId } : undefined;
@@ -356,7 +365,7 @@ function prepareTypedAssistantActions(actions: AssistantContextAction[], context
   return actions.map((action) => {
     const targetIds = action.kind === "context.edit" || action.kind === "context.remove" ? [action.targetBlockId]
       : action.kind === "context.relation.add" || action.kind === "context.relation.remove" ? [action.fromBlockId, action.toBlockId] : [];
-    const protectedIds = context.decisionAtoms.filter((item) => item.locked || item.immutable || item.intent === "prohibit").map((item) => item.id);
+    const protectedIds = context.decisionAtoms.filter((item) => item.protected || item.locked || item.immutable || item.intent === "prohibit").map((item) => item.id);
     const ids = new Set([...targetIds, ...protectedIds]);
     const sourceVersions = context.decisionAtoms.filter((item) => ids.has(item.id)).map((item) => ({ blockId: item.id, version: item.version }));
     return { id: uuidV7(), turnId, action, key: actionKey(action), summary: actionSummary(action, context), sourceVersions };
@@ -466,12 +475,14 @@ async function assistantContext(request: Request, env: WorkerEnv, actor: Authori
     projectId: actor.projectId,
     selectedItemIds: new URL(request.url).searchParams.getAll("selected"),
   });
+  if(actor.project&&!await governedPackageSourceRightsCurrent(env,actor.project.organizationId,projection.blocks))
+    context.totals.unsafeRightsDecisions=Math.max(1,Number(context.totals.unsafeRightsDecisions??0));
   const turns = await recentAssistantTurns(env, actor);
   context.recentTurns = turns.slice(-Math.floor(ASSISTANT_CONTEXT_LIMITS.turns / 2)).flatMap((turn, index) => [
     { id: `${turn.id}:user`, role: "user" as const, text: turn.user.slice(0, ASSISTANT_CONTEXT_LIMITS.turnChars), sequence: index * 2 },
     { id: `${turn.id}:assistant`, role: "assistant" as const, text: String(turn.reply.text ?? turn.reply.key ?? ""), sequence: index * 2 + 1 },
   ]);
-  return { context, turns };
+  return { context:boundAssistantContext(context), turns };
 }
 
 async function commitAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, input: {
@@ -684,7 +695,8 @@ function validAssistantAction(value: unknown, expectedKind: string): AssistantCo
   const exact = (keys: string[]) => Object.keys(candidate).every((key) => keys.includes(key));
   if (candidate.kind === "context.create") {
     if (!exact(["kind", "blockType", "text", "intent"]) || typeof candidate.blockType !== "string" || typeof candidate.text !== "string"
-      || !candidate.text.trim() || candidate.text.length > 600 || !["include", "avoid", "prohibit"].includes(String(candidate.intent))) return null;
+      || !candidate.text.trim() || candidate.text.length > 600 || !["include", "avoid", "prohibit"].includes(String(candidate.intent))
+      || candidate.blockType === "exclusion" && !["avoid", "prohibit"].includes(String(candidate.intent))) return null;
   } else if (candidate.kind === "context.edit") {
     if (!exact(["kind", "targetBlockId", "text"]) || typeof candidate.targetBlockId !== "string" || typeof candidate.text !== "string"
       || !candidate.targetBlockId || !candidate.text.trim() || candidate.text.length > 600) return null;
@@ -834,7 +846,7 @@ function authoritativeAssistantEvents(action: AssistantContextAction, context: A
   if (action.kind === "context.edit" || action.kind === "context.remove") {
     const target = projection.libraryBlocks.find((block) => block.id === action.targetBlockId && !block.removed
       && block.projectId === context.scope.projectId && block.documentId === context.scope.documentId);
-    if (!target || target.locked || target.properties.source_evidence_hash || target.properties.organization_context_package_binding_id
+    if (!target || protectedAssistantDecision(target) || target.properties.source_evidence_hash || target.properties.organization_context_package_binding_id
       || target.properties.organization_context_package_id || target.properties.source_artifact_id || target.properties.source_artifact_item_id
       || target.properties.context_set_root_id || projection.libraryBlockRelations.some((relation) => !relation.removed && relation.kind === "artifact_contains"
         && (relation.fromBlockId === target.id || relation.toBlockId === target.id))) return { events: [], error: "assistant_proposal_invalid" };
@@ -1081,6 +1093,7 @@ async function runAssistantSpecialist(request: Request, env: WorkerEnv, taskId: 
       context: current.context,
       message: turn.user,
       locale: task.locale,
+      maximumInputTokens:task.maximum_input_tokens,
       maximumOutputTokens: task.maximum_output_tokens,
     });
     const pricedModel = ASSISTANT_MODELS.includes(result.model as AssistantModel) ? result.model : task.selected_model;
@@ -1185,19 +1198,9 @@ export async function handleAssistantTask(request: Request, env: WorkerEnv, task
   if (!task) return json({ error: "assistant_task_not_found" }, 404);
   if (task.permission_epoch !== actor.principal.access.permissionEpoch) return json({ error: "assistant_authorization_changed" }, 403);
   if (operation === "reconcile") {
-    if (actor.principal.role !== "admin" || !hasCapability(actor.principal, "platform.provider.configure")) return json({ error: "assistant_reconciliation_denied" }, 403);
-    if (task.status === "reconciled") return json({ taskId, status: "reconciled", idempotent: true });
-    if (!["needs-review", "reconciling"].includes(task.status)) return json({ error: "assistant_task_reconciliation_unavailable" }, 409);
-    const started = new Date().toISOString();
-    const owned = await env.DB.prepare("UPDATE assistant_specialist_tasks SET status='reconciling',updated_at=? WHERE task_id=? AND actor_user_id=? AND scope_key=? AND status IN('needs-review','reconciling')")
-      .bind(started, taskId, actor.principal.userId, assistantScopeKey(actor)).run();
-    if (Number(owned.meta.changes ?? 0) !== 1) return json({ error: "assistant_task_reconciliation_unavailable" }, 409);
-    await releaseCostBudget(env, actor.principal.userId, task.cost_reservation_id);
-    await releaseBudget(env, actor.principal.userId, task.token_reservation_id, { reason: "assistant_verified_no_provider_charge" });
-    const ended = new Date().toISOString();
-    await env.DB.prepare("UPDATE assistant_specialist_tasks SET status='reconciled',error_code=NULL,updated_at=?,completed_at=? WHERE task_id=? AND actor_user_id=? AND scope_key=? AND status='reconciling'")
-      .bind(ended, ended, taskId, actor.principal.userId, assistantScopeKey(actor)).run();
-    return json({ taskId, status: "reconciled" });
+    // The task-owner route can never provide the independent reviewer required for
+    // an ambiguous paid submission, even when that owner is a platform admin.
+    return json({ error: "assistant_independent_reviewer_required" }, 403);
   }
   if (task.status === "canceled") return json({ taskId, status: "canceled", idempotent: true });
   if (task.status !== "queued") return json({ error: "assistant_task_already_started" }, 409);
@@ -1336,7 +1339,12 @@ export async function handleAssistant(request: Request, env: WorkerEnv, executio
   const proposal = actionProposals[0] ?? proposalFor(state.context, turnId, actor.canPropose);
   let task: PreparedAssistantTask | null = null;
   try {
-    task = await prepareAssistantTask(env, actor, { turnId, message, actions, locale: body.locale, model: body.model, premiumApproval: body.premiumApproval });
+    const visibleProtected=state.context.decisionAtoms.filter((decision)=>decision.providerEligible&&(decision.protected||decision.locked||decision.type==="exclusion"||decision.intent==="prohibit")).length;
+    const protectedComplete=visibleProtected>=Number(state.context.totals.protectedDecisions??visibleProtected);
+    const safeRights=Number(state.context.totals.unsafeRightsDecisions??0)===0;
+    const completeProtectedText=Number(state.context.totals.truncatedProtectedDecisions??0)===0;
+    const synthesisAvailable=assistantTaskKind(message,actions)!=="cross-document-synthesis";
+    if(protectedComplete&&completeProtectedText&&safeRights&&synthesisAvailable)task=await prepareAssistantTask(env,actor,{turnId,message,actions,locale:body.locale,model:body.model,premiumApproval:body.premiumApproval});
   } catch { /* Account, policy, or provider unavailability never blocks zero-cost page guidance. */ }
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {

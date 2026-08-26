@@ -215,7 +215,11 @@ export function authoritativeCreativeContext(events: CreativeEvent[], request: C
   const blocking=governance.issues.filter((issue)=>issue.severity==="blocking");
   if(blocking.length){
     const issue=blocking[0]!;
-    throw new ContextIntegrityError(issue.id.startsWith("source-rights-")?"context_source_rights_required":issue.id.startsWith("source-expired-")?"context_source_rights_expired":"context_decisions_contradict",`${issue.label}: ${issue.detail}`);
+    const code=issue.id.startsWith("source-excerpt-")?"context_source_evidence_unavailable"
+      :issue.id.startsWith("source-expired-")||issue.id.startsWith("source-invalid-")||issue.id.startsWith("source-revoked-")
+        ||issue.id.startsWith("decision-rights-")?"context_source_rights_expired"
+        :issue.id.startsWith("source-rights-")?"context_source_rights_required":"context_decisions_contradict";
+    throw new ContextIntegrityError(code,`${issue.label}: ${issue.detail}`);
   }
 
   return {

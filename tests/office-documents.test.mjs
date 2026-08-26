@@ -81,6 +81,22 @@ test("editable Word exports round-trip real paragraphs, headings, lists, and saf
   verifyOfficeArchive(bytes);
 });
 
+test("professional Word exports preserve native editable tables and independently scoped safe hyperlinks",()=>{
+  const markdown=["# Approved launch plan","", "| Owner | Evidence |", "| :--- | ---: |",
+    "| Product | [Approved source](https://example.test/evidence?from=forma&approved=yes) |",
+    "| Security | [Reject unsafe](javascript:alert(1)) |", "", "See [final review](http://example.test/review)."].join("\n");
+  const parts=verifyOfficeArchive(createWordDocument(markdown,{title:"Launch plan"}));
+  const document=parts.get("word/document.xml"),relationships=parts.get("word/_rels/document.xml.rels");
+  assert.match(document,/<w:tbl><w:tblPr>/,"Markdown tables become actual editable Word tables");
+  assert.equal([...document.matchAll(/<w:tr>/g)].length,3,"header and every approved data row remain present");
+  assert.match(document,/<w:tblHeader\/>/,"the table retains a real repeatable Word header row");
+  assert.match(document,/<w:hyperlink r:id="rId3">/,"table evidence is an editable clickable link");
+  assert.match(document,/<w:hyperlink r:id="rId4">/,"ordinary paragraph links remain independently clickable");
+  assert.match(relationships,/Target="https:\/\/example\.test\/evidence\?from=forma&amp;approved=yes" TargetMode="External"/);
+  assert.match(relationships,/Target="http:\/\/example\.test\/review" TargetMode="External"/);
+  assert.doesNotMatch(relationships,/javascript:/,"untrusted protocols never become live Office relationships");
+});
+
 test("authorized presenter PowerPoint exports round-trip slides and explicitly include private notes",async()=>{
   const items=[
     {title:"Decision one",body:"Explain the real project boundary.",notes:"Say the private speaker context & <notes>.",image_prompt:"",slide:{layout:"cover",kicker:"Pilot",bullets:["Named participants","Fixed total spend"],visual:{kind:"metric",label:"Controlled cohort",value:"10 people",data:[]}}},

@@ -68,6 +68,10 @@ async function authorizeApplication(request: Request, env: WorkerEnv, applicatio
 
 async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const url=new URL(request.url);
+    if(url.pathname.startsWith("/api/")&&!['GET','HEAD','OPTIONS'].includes(request.method)){
+      const origin=request.headers.get("origin");
+      if(origin&&origin!==url.origin)return Response.json({error:"same_origin_required"},{status:403,headers:{"cache-control":"private, no-store"}});
+    }
     const marketingRoute=parseMarketingRoute(url.pathname);
     if(marketingRoute){
       if(request.method!=="GET"&&request.method!=="HEAD")return new Response(null,{status:405,headers:{allow:"GET, HEAD"}});
@@ -173,7 +177,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
         const denied=await authorizeApplication(request,env,route.application,url.pathname);
         if(denied)return denied;
         const entryUrl=new URL(route.entryPath,url);
-        const trustedIdentity=Boolean(request.headers.get("oai-authenticated-user-id")&&request.headers.get("oai-authenticated-user-email")||request.headers.get("cf-access-authenticated-user-email")||url.hostname==="localhost"||url.hostname==="127.0.0.1");
+        const trustedIdentity=Boolean(request.headers.get("oai-authenticated-user-id")&&request.headers.get("oai-authenticated-user-email")||url.hostname==="localhost"||url.hostname==="127.0.0.1");
         const personalize=request.method==="GET"&&!url.pathname.startsWith("/share")&&trustedIdentity;
         const authenticatedStarted=performance.now();
         const authenticated=personalize?handleSession(request,env,context).catch(()=>null):null;

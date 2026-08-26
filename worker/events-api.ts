@@ -26,6 +26,7 @@ import { readCanvasGovernance } from "./canvas-governance-policy";
 import { LIVE_REPLAY_PRICING_VERSION, hasKnownTextModelPricing, priceTextUsageBreakdownMicrousd, type ProviderCostBreakdown } from "./replay-cost";
 import { audioProviderSubmissionState, interruptedDocumentJobUsage, recordedDocumentPlannerUsage, remainingDocumentPlannerCost, validatedStoryboardSafeRecovery } from "./document-job-reservations";
 import { observeProviderFailure, observeProviderSuccess } from "./generation-readiness";
+import { governedPackageSourceRightsCurrent } from "./context-package-rights";
 import { documentArtifactValidationIssues, isDocumentArtifactKind, isSlideStylePresetId, parseDocumentArtifactContent, type DocumentArtifactKind, type SlideStylePresetId } from "../src/model/document-artifacts";
 import { combinedContextGroups, combinedContextMemberships, isContextCompositionRelation, validateContextCompositionGraph } from "../src/model/combined-context";
 import { outputBlockRemovalEvents, outputBlockTextEditEvents } from "../src/model/output-authoring";
@@ -542,6 +543,8 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       const document=projection.documents.find((candidate)=>candidate.id===(documentId||projection.documentId));
       if(!document)return Response.json({error:"document_not_found"},{status:404});
       if(executionScope&&document.projectId!==executionScope.projectId)return Response.json({error:"document_not_found"},{status:404});
+      if(executionScope&&!await governedPackageSourceRightsCurrent(env,executionScope.organizationId,projection.blocks))
+        return Response.json({error:"context_source_rights_expired",message:"The original rights for an adopted organizational source are no longer valid."},{status:409});
       documentId=document.id;projectId=document.projectId;body.documentId=documentId;
       if(body.action==="preview"||body.action==="generate"||body.action==="render_document"){
         try{
@@ -571,7 +574,12 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
     const budgetScopes=paidOperation&&executionScope?[{organizationId:executionScope.organizationId,projectAccessId:executionScope.projectAccessId,actorUserId:executionScope.actorUserId}]:paidOperation&&!auth.user.fictional&&billingOwnerId===ownerId?await ownerDocumentBudgetScopes(env,ownerId,documentId,projectId):[];
     if(budgetScopes.length>1)return Response.json({error:"ambiguous_project_budget_scope"},{status:409});
     const projectBudgetScope=budgetScopes[0];
-    if(!executionScope&&projectBudgetScope)executionScope={organizationId:projectBudgetScope.organizationId,projectAccessId:projectBudgetScope.projectAccessId,projectId,ownerUserId:ownerId,actorUserId:ownerId};
+    if(!executionScope&&projectBudgetScope){
+      executionScope={organizationId:projectBudgetScope.organizationId,projectAccessId:projectBudgetScope.projectAccessId,projectId,ownerUserId:ownerId,actorUserId:ownerId};
+      const governedProjection=foldEvents(paidSourceEvents!,Number.POSITIVE_INFINITY,documentId,projectId);
+      if(!await governedPackageSourceRightsCurrent(env,executionScope.organizationId,governedProjection.blocks))
+        return Response.json({error:"context_source_rights_expired",message:"The original rights for an adopted organizational source are no longer valid."},{status:409});
+    }
     const pilotAllowance=paidOperation?await pilotExecutionAllowance(env,billingOwnerId,projectBudgetScope):null;
     if(pilotAllowance&&!pilotAllowance.allowed)return Response.json({error:"active_pilot_participation_required"},{status:403});
     if(pilotAllowance?.pilot&&paidSourceEvents){

@@ -74,7 +74,7 @@ export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   "projects.libraryDescription":"Find every reusable idea, finished image, story, scene, presentation, storyboard, and video in this project.",
   "projects.newReusableBlock":"New reusable block",
   "projects.importDocument":"Import as document",
-  "projects.exportProject":"Export this project",
+  "projects.exportProject":"Export project event archive",
   "projects.searchLibrary":"Search project library",
   "projects.searchAllWork":"Search all project work",
   "projects.libraryContent":"Library content",

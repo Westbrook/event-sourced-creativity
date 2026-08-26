@@ -66,7 +66,7 @@ const messages: Record<string, string> = {
   "projects.libraryDescription":"اعثر على كل فكرة قابلة لإعادة الاستخدام وصورة وقصة ومشهد وعرض تقديمي ولوحة قصصية وفيديو في هذا المشروع.",
   "projects.newReusableBlock":"عنصر جديد قابل لإعادة الاستخدام",
   "projects.importDocument":"استيراد كمستند",
-  "projects.exportProject":"تصدير هذا المشروع",
+  "projects.exportProject":"تصدير أرشيف أحداث المشروع",
   "projects.searchLibrary":"البحث في مكتبة المشروع",
   "projects.searchAllWork":"البحث في جميع أعمال المشروع",
   "projects.libraryContent":"محتوى المكتبة",

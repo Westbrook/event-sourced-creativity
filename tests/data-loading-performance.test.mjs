@@ -2902,6 +2902,57 @@ test("organization-owned packages preserve independently licensed source bytes, 
   database.reset();const weaken=await request("/api/events",json(targetScope,{action:"append",event:{type:"BlockPropertyEdited",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:protectedDecision.id,property_path:"text",old_value:protectedDecision.properties.text??null,new_value:"Weaken approved organization policy"}}}));assert.equal(weaken.status,403,JSON.stringify({body:await weaken.clone().json(),block:protectedDecision.id,destination,checks:database.calls.filter((call)=>call.sql.includes("member.target_block_id")),membership:database.sqlite.prepare("SELECT member.binding_id,member.target_block_id,binding.project_access_id,binding.organization_id,binding.status FROM project_context_package_members member JOIN project_context_package_bindings binding ON binding.binding_id=member.binding_id WHERE member.target_block_id=?").get(protectedDecision.id)}));assert.equal((await weaken.json()).error,"organization_context_package_decision_immutable");assert.equal(database.writeCount(),0,"approved organizational decisions cannot be weakened through ordinary author edits");
   database.reset();const personalBypass=await request("/api/events",json(colleague,{action:"append",event:{type:"BlockPropertyEdited",payload:{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:protectedDecision.id,property_path:"text",old_value:protectedDecision.properties.text??null,new_value:"Personal-session governance bypass"}}}));assert.equal(personalBypass.status,403,JSON.stringify(await personalBypass.clone().json()));assert.equal((await personalBypass.json()).error,"organization_context_package_decision_immutable");assert.equal(database.writeCount(),0,"removing the shared-project cookie cannot weaken organization-governed decisions through the owner's personal stream");
   database.reset();const extractionBypass=await request("/api/events",json(colleague,{action:"extract_reference",documentId:"doc-atmosphere",blockId:addedSource.id,referenceId:addedSource.properties.reference_id,sample:{gridWidth:1,gridHeight:1,pixels:[255,255,255,255]}}));assert.equal(extractionBypass.status,403);assert.equal((await extractionBypass.json()).error,"organization_context_package_decision_immutable");assert.equal(database.writeCount(),0,"background extraction cannot mutate approved package source evidence from a personal session");
+
+  const issued=await request("/api/shares",json(targetScope,{resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere"}));
+  assert.equal(issued.status,200,JSON.stringify(await issued.clone().json()));
+  const publicToken=(await issued.json()).share.token,publicPath=`/api/shared/${encodeURIComponent(publicToken)}`;
+  assert.equal((await request(publicPath)).status,200,"an existing governed review link is usable while the original upstream license is valid");
+  const mediaKey=decodeURIComponent(addedSource.properties.media_url.slice("/api/media/".length));
+  const publicMedia=`${publicPath}/media/${encodeURIComponent(mediaKey)}`;
+  const visibleMedia=await request(publicMedia);
+  assert.equal(visibleMedia.status,200,JSON.stringify({key:mediaKey,status:visibleMedia.status}));
+
+  const revoked=await request("/api/events",json(sourceScope,{action:"append",event:{type:"RightsAsserted",payload:{
+    project_id:"project-atmosphere",document_id:"doc-atmosphere",reference_id:replacementReference,rights_class:"revoked",assertion_method:"license-withdrawn",
+  }}}));
+  assert.equal(revoked.status,200,JSON.stringify(await revoked.clone().json()));
+  const countBefore=objects.size,bindingCount=database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_context_package_bindings").get().count;
+  const detail=await request(`/api/workspaces/${organizationId}/context-packages/${plainDraft.packageId}/versions/${addedSourceVersion.versionId}`,{headers:colleague});
+  assert.equal(detail.status,404,"published immutable versions with subsequently revoked original rights cannot be loaded");
+  const forbiddenAdoption=await request(`/api/workspaces/${organizationId}/context-packages/${plainDraft.packageId}/adopt`,json(colleague,{
+    projectAccessId:destination,documentId:"doc-atmosphere",versionId:addedSourceVersion.versionId,updateMode:"pinned",
+  }));
+  assert.equal(forbiddenAdoption.status,404,JSON.stringify(await forbiddenAdoption.clone().json()));
+  assert.equal(objects.size,countBefore,"revoked original rights never create a fresh unauthorized object copy");
+  assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM project_context_package_bindings").get().count,bindingCount);
+  assert.equal((await request(publicPath)).status,404,"previously issued public review links close immediately after upstream license withdrawal");
+  assert.equal((await request(publicMedia)).status,404,"previously issued governed public media links close immediately after upstream license withdrawal");
+  const replacementShare=await request("/api/shares",json(targetScope,{resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere"}));
+  assert.equal(replacementShare.status,409);
+  assert.equal((await replacementShare.json()).error,"context_source_rights_expired");
+
+  environment.OPENAI_API_KEY="synthetic-revoked-license-never-dispatched";
+  const originalFetch=globalThis.fetch;let calls=0;
+  globalThis.fetch=async()=>{calls+=1;throw new Error("a revoked upstream source can never reach a provider");};
+  try{
+    const previousEvents=database.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count;
+    const previousReservations=database.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count;
+    const previousJobs=database.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count;
+    const image={action:"generate",documentId:"doc-atmosphere",budgetAcknowledged:true};
+    const queued={kind:"generate",documentId:"doc-atmosphere",payload:{budgetAcknowledged:true}};
+    for(const [label,path,identity,payload] of [["personal owner direct generation","/api/events",colleague,image],
+      ["personal owner queued generation","/api/document-jobs",colleague,queued],
+      ["authorized project queued generation","/api/document-jobs",targetScope,queued]]){
+      const denied=await request(path,json(identity,payload));
+      assert.equal(denied.status,409,`${label}: ${JSON.stringify(await denied.clone().json())}`);
+      assert.equal((await denied.json()).error,"context_source_rights_expired",label);
+      assert.equal(calls,0,label);
+      assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count,previousEvents,`${label} records no generation event`);
+      assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count,previousReservations,`${label} creates no financial reservation`);
+      assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count,previousJobs,`${label} queues no chargeable work`);
+    }
+    assert.equal(calls,0,"copied owned-looking downstream receipts never authorize a later revoked original source");
+  }finally{globalThis.fetch=originalFetch;delete environment.OPENAI_API_KEY;}
 });
 
 test("assigned reviewers receive exact revision-bound inbox tasks, scoped delivery, deterministic reminders, and immediate revocation",async()=>{

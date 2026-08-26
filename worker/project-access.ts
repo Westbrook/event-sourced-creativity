@@ -11,6 +11,7 @@ import { artifactReviewState, artifactSourceVersions } from "../src/model/contex
 import { productionWorkflowIssues, type ProductionWorkflow } from "../src/model/production-workflow.ts";
 import { isContextCompositionRelation, validateContextCompositionGraph } from "../src/model/combined-context.ts";
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
+import { governedPackageSourceRightsCurrent } from "./context-package-rights.ts";
 
 const CONTEXT_COOKIE="forma_project_context";
 const PROJECT_EVENT_TYPES=new Set([
@@ -809,12 +810,19 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
       const identifier=String(request.payload?.artifact_id??request.payload?.object_id??"");
       const target=all.libraryArtifacts.find((artifact)=>artifact.id===identifier);
       const relevant=target?[target]:all.documents.some((document)=>document.id===identifier)?all.libraryArtifacts.filter((artifact)=>artifact.documentId===identifier):[];
+      if(request.payload?.presenter_notes_included===true){
+        const completed=target?source.find((event)=>event.eventId===target.sourceEventId&&event.type==="DocumentRenderCompleted"):undefined;
+        if(request.type!=="DocumentArtifactExported"||!target||target.kind!=="slides"
+          ||String(completed?.payload.requested_by_user_id??"")!==principal.userId)
+          return Response.json({error:"presenter_export_creator_required",message:"Private presenter notes and source excerpts can be released only by the presentation's authorized generating creator."},{status:403});
+      }
       for(const artifact of relevant){
         if(!artifactSourceVersions(artifact.id,source)){
           if(managedPilot)return Response.json({error:"artifact_source_revision_unavailable",message:"Controlled-pilot outputs require verified source revisions and independent approval before release."},{status:409});
           continue; // Unmanaged legacy organizations retain their existing compatibility contract.
         }
         const document=foldEvents(source,Number.POSITIVE_INFINITY,artifact.documentId,context.projectId);
+        if(!await governedPackageSourceRightsCurrent(env,context.organizationId,document.blocks))return Response.json({error:"context_source_rights_expired",message:"The original rights for an adopted organizational source are no longer valid."},{status:409});
         if(artifactReviewState(artifact,document.blocks,source).status!=="approved")return Response.json({error:"artifact_approval_required",message:"This output cannot leave its shared project until a separate reviewer approves its current source and output revision."},{status:409});
         const exactArtifactExport=request.type==="DocumentArtifactExported";
         if(exactArtifactExport||request.payload?.artifact_revision!==undefined){
@@ -831,7 +839,8 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   }
   const canvasAction=action==="canvas_sync"||original.some((event)=>PROJECT_CANVAS_MUTATION_TYPES.has(String(event.type??""))||Boolean(event.payload?.canvas_id));
   if(canvasAction&&!hasCapability(principal,"project.canvas.use",{organizationId:context.organizationId,projectAccessId:context.projectAccessId}))return Response.json({error:"project_canvas_access_required"},{status:403});
-  if(!original.length||original.length>(action==="canvas_sync"?120:50))return Response.json({error:"invalid_project_event_batch"},{status:400});
+  const maximumEvents=action==="canvas_sync"?120:privilegedPackageSidecars?384:50;
+  if(!original.length||original.length>maximumEvents)return Response.json({error:"invalid_project_event_batch",maximum:maximumEvents},{status:400});
   if(action==="canvas_sync"&&original.some((event)=>!String(event.payload?.client_event_id??"")))return Response.json({error:"client_event_id_required"},{status:400});
   if(original.some((event)=>event.type==="ArtifactApproved")&&original.some((event)=>/^(?:Block|Chip|DocumentArtifactEdited)/.test(String(event.type??""))))return Response.json({error:"review_context_changed",message:"Approve the output separately after its latest context changes have been reviewed."},{status:409});
   for(const decision of original.filter((event)=>event.type==="ArtifactApproved"||event.type==="ArtifactChangesRequested")){
@@ -862,6 +871,42 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     const current=await env.DB.prepare("SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=? AND organization_id=? AND owner_user_id=?")
       .bind(context.projectAccessId,context.organizationId,context.ownerUserId).first<{head:number}>();
     return Response.json({appended:original.map((_,index)=>existingEvents.get(existing.get(receiptKeys[index])!.eventId)!),rejected:[],head:Number(current?.head??0),idempotent:true});
+  }
+  if(incoming.some((event)=>["BlockPropertyEdited","BlockRenamed","BlockWeightSet"].includes(String(event.type??"")))){
+    const snapshot=foldEvents(await readProjectSourceEvents(env,context),Number.POSITIVE_INFINITY,"",context.projectId);
+    const blocks=new Map(snapshot.libraryBlocks.map((block)=>[block.id,{...block,properties:{...block.properties}}]));
+    const sameValue=(actual:unknown,expected:unknown)=>JSON.stringify(actual??null)===JSON.stringify(expected??null);
+    for(const event of incoming){
+      const payload=event.payload??{},id=String(payload.block_id??"");
+      if(event.type==="BlockCreated"){
+        blocks.set(id,{id,projectId:context.projectId,documentId:String(payload.document_id??""),canvasId:String(payload.canvas_id??""),
+          scope:payload.scope==="library"?"library":payload.scope==="canvas"?"canvas":"document",type:String(payload.type??"text"),
+          handle:String(payload.handle??id),position:String(payload.position??"a0"),removed:false,locked:false,
+          properties:typeof payload.properties==="object"&&payload.properties&&!Array.isArray(payload.properties)?{...payload.properties}: {},sourceEvents:[]});
+        continue;
+      }
+      const block=blocks.get(id);
+      if(!block)continue;
+      let property="",expected:unknown,actual:unknown,next:unknown,guarded=false;
+      if(event.type==="BlockPropertyEdited"){
+        property=String(payload.property_path??"");expected=payload.old_value;next=payload.new_value;
+        actual=property==="type"?block.type:property==="position"?block.position:block.properties[property];
+        guarded=Object.prototype.hasOwnProperty.call(payload,"old_value")
+          &&(property==="type"||property==="position"||Object.prototype.hasOwnProperty.call(block.properties,property));
+      }else if(event.type==="BlockRenamed"){
+        property="handle";actual=block.handle;expected=payload.old_handle;next=payload.new_handle;
+        guarded=Object.prototype.hasOwnProperty.call(payload,"old_handle");
+      }else if(event.type==="BlockWeightSet"){
+        property="weight";actual=block.properties.weight;expected=payload.previous_weight;next=payload.weight;
+        guarded=Object.prototype.hasOwnProperty.call(payload,"previous_weight")&&Object.prototype.hasOwnProperty.call(block.properties,"weight");
+      }else continue;
+      if(guarded&&!sameValue(actual,expected))return Response.json({error:"context_value_conflict",blockId:id,property,
+        message:"Another collaborator changed this exact decision. Your change was not saved; review the latest value and try again."},{status:409});
+      if(property==="handle")block.handle=String(next??block.handle);
+      else if(property==="type")block.type=String(next??block.type);
+      else if(property==="position")block.position=String(next??block.position);
+      else if(property)block.properties[property]=event.type==="BlockWeightSet"?Number(next??.5):next;
+    }
   }
   const pending:PendingProjectResources=new Map();
   const currentResources=await env.DB.prepare(`SELECT resource.resource_kind,resource.resource_id,json_extract(event.payload,'$.canvas_id') AS canvas_id

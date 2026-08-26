@@ -1,7 +1,7 @@
 import { hasCapability, requireConsent, requireUser } from "./pilot-policy.ts";
 import { readProjectRequestContext, synchronizeProjectScope } from "./project-access.ts";
 import { mediaKeyMatchesOwnerNamespace, ownerMediaNamespace } from "../src/model/media-ownership.ts";
-import { extractSourceDocument, sourceDocumentEvidence, sourceDocumentEvidenceDigest, sourceDocumentEvidenceFromProperties } from "../src/model/source-documents.ts";
+import { canonicalSourceDocumentMime, extractSourceDocument, sourceDocumentEvidence, sourceDocumentEvidenceDigest, sourceDocumentEvidenceFromProperties } from "../src/model/source-documents.ts";
 import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./access-policy.ts";
 import { audioFileExtension, audioMimeType, MAX_AUDIO_UPLOAD_BYTES } from "../src/model/audio.ts";
 import { verifiedAudioTiming } from "../src/model/audio-container.ts";
@@ -146,12 +146,16 @@ export async function uploadMedia(request: Request, env: WorkerEnv) {
       ORDER BY CASE WHEN cohort.status='closed' THEN 1 ELSE 0 END,cohort.created_at DESC LIMIT 1`)
       .bind(auth.user.userId).first<{cohort_id:string;source_classification:string}>();
   if(managedPilot&&form.get("nonSensitiveConfirmed")!=="true")return Response.json({error:"pilot_non_sensitive_source_confirmation_required"},{status:428});
-  const mimeType=file.type.toLowerCase();
+  const mimeType=canonicalSourceDocumentMime(file);
   const isAudio=Boolean(audioMimeType(mimeType));
   if((!SAFE_UPLOADED_IMAGE_TYPES.has(mimeType)&&!SAFE_UPLOADED_DOCUMENT_TYPES.has(mimeType)&&!isAudio)||file.size>(isAudio?MAX_AUDIO_UPLOAD_BYTES:12*1024*1024))return Response.json({error:isAudio?"Choose an MP3, WAV, M4A, AAC, OGG, FLAC, or WebM audio recording smaller than 25 MB.":"Choose a supported image, audio recording, PDF, text, Markdown, CSV, JSON, Word, presentation, or spreadsheet smaller than 12 MB."},{status:400});
   const owner=selected.context?.ownerUserId??auth.user.userId;
   const key=`${ownerMediaNamespace(owner)}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"-")}`;
   const bytes=await file.arrayBuffer();
+  if((!file.type||file.type.toLowerCase()==="application/octet-stream")&&(
+    mimeType==="application/pdf"&&!new TextDecoder().decode(new Uint8Array(bytes).subarray(0,5)).startsWith("%PDF-")
+    ||mimeType.includes("officedocument")&&!(new Uint8Array(bytes)[0]===0x50&&new Uint8Array(bytes)[1]===0x4b)
+  ))return Response.json({error:"The selected source does not match its advertised document format."},{status:400});
   const digest=await crypto.subtle.digest("SHA-256",bytes);
   const contentHash=[...new Uint8Array(digest)].map((byte)=>byte.toString(16).padStart(2,"0")).join("");
   const extraction=SAFE_UPLOADED_DOCUMENT_TYPES.has(mimeType)?await extractSourceDocument(file):null;

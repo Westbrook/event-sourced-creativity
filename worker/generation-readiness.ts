@@ -16,6 +16,7 @@ import { appendAuditEvent, ensureSchema, readWorkspaceEvents, uuidV7, type Event
 import { validateFalImageSize } from "./fal-image-adapter.ts";
 import { buildManagedProductionPlan, productionTeamFor, providerFacingProductionContinuity, providerFacingProductionTargets, type ProductionMode } from "../src/model/managed-production.ts";
 import { ProductionWorkflowContextError, resolveProductionWorkflowContext } from "./production-workflow.ts";
+import { governedPackageSourceRightsCurrent } from "./context-package-rights.ts";
 import type { ProductionWorkflowSource } from "../src/model/production-workflow.ts";
 
 export type GenerationPreflightInput = { kind: GenerationReadinessKind; documentId: string; documentRevision?: string; requestKey?: string; sourcePreviewId?: string | null; promptTechnique?: PromptTechnique; productionMode?:ProductionMode; snapshot?: Record<string, unknown>; sourceBlockVersions?:Array<Record<string,unknown>>;canvasId?:string;contextSetId?:string;contextRootBlockId?:string;characterOutputKind?:"headshot"|"character_sheet"; force?: boolean; sourceSurface?: string;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[] };
@@ -171,6 +172,12 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
   await ensureSchema(env);const checkedAt=nowIso();const technique=normalizePromptTechnique(input.promptTechnique);const productionMode:ProductionMode=input.productionMode==="managed"?"managed":"manual";
   const hasWorkflow=input.workflowId!==undefined||input.workflowStageId!==undefined||input.workflowSources!==undefined;
   const execution=user.projectExecution,cachePrefix=execution?`${GENERATION_PREFLIGHT_VERSION}:project:${execution.projectAccessId}:${execution.actorUserId}:`:`${GENERATION_PREFLIGHT_VERSION}:`;
+  if(execution){
+    const governedEvents=options.sourceEvents??await readProjectSourceEvents(env,execution);
+    const governedProjection=foldEvents(governedEvents,Number.POSITIVE_INFINITY,input.documentId,execution.projectId);
+    if(!await governedPackageSourceRightsCurrent(env,execution.organizationId,governedProjection.blocks))
+      throw new ContextIntegrityError("context_source_rights_expired","The original rights for an adopted organizational source are no longer valid.");
+  }
   let prefetched:PreflightRow|null|undefined;
   const claimedRevisionMatches=!hasWorkflow&&(!input.snapshot||documentGenerationRevision({snapshot:input.snapshot,sourceBlockVersions:input.sourceBlockVersions??[],documentId:input.documentId})===input.documentRevision);
   if(options.allowCache!==false&&!input.force&&claimedRevisionMatches&&input.requestKey&&input.documentRevision&&input.documentId){

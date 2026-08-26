@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { compileAssistantContext, ASSISTANT_CONTEXT_LIMITS, ASSISTANT_OUTPUT_KINDS } from "../src/model/conversation-context.ts";
+import { boundAssistantContext, compileAssistantContext, ASSISTANT_CONTEXT_LIMITS, ASSISTANT_OUTPUT_KINDS } from "../src/model/conversation-context.ts";
 import { foldEvents } from "../src/model/events.ts";
 import { deriveIntentTrajectories } from "../src/model/intent-trajectories.ts";
 
@@ -29,6 +29,65 @@ test("prioritizes exact current document, hard boundaries, and atomic audio with
   assert.ok(context.availableOutputKinds.includes("audio"));
   assert.equal(JSON.stringify(context).includes("secret.wav"), false);
   assert.equal(JSON.stringify(context).includes("allow_provider_audio_transfer"), false);
+});
+
+test("unlocked exact authored wording remains verbatim, protected, and prioritized above ordinary context",()=>{
+  const {events}=fixture();
+  const exact="Revenue  growth\nrequires  exact spacing";
+  events.push(event(6,"BlockCreated",{project_id:"project-a",document_id:"document-a",block_id:"mandatory-message",type:"message",handle:"Mandatory exact message",position:"z9",properties:{text:`Keep precisely:\n${exact}`,exact_text:exact,exact_placements:["opening","closing"],protected_phrases:[{text:exact,placement:"opening_and_closing"}]}}));
+  for(let index=0;index<24;index+=1)events.push(event(7+index,"BlockCreated",{project_id:"project-a",document_id:"document-a",block_id:`ordinary-${index}`,type:"direction",handle:`Ordinary ${index}`,position:`a${index}`,properties:{text:`Ordinary replaceable decision ${index}`}}));
+  const context=compileAssistantContext({route:"/document/document-a",events,projection:foldEvents(events,Number.POSITIVE_INFINITY,"document-a"),actorUserId:"owner"});
+  const required=context.decisionAtoms.find((item)=>item.id==="mandatory-message");
+  assert.ok(required,"mandatory first-party exact wording cannot disappear behind ordinary decisions");
+  assert.equal(required.protected,true);
+  assert.equal(required.text,`Keep precisely:\n${exact}`);
+  assert.equal(context.totals.protectedDecisions,2);
+});
+
+test("missing and revoked authoritative source-rights receipts always block paid specialist eligibility",()=>{
+  for(const classification of [null,"revoked"]){
+    const {events}=fixture();
+    events.push(event(6,"BlockCreated",{project_id:"project-a",document_id:"document-a",block_id:"licensed-reference",type:"reference",handle:"Licensed reference",position:"a6",properties:{text:"Private source remains withheld",reference_id:"strict-reference",rights_class:"owned_or_licensed"}}));
+    if(classification)events.push(event(7,"RightsAsserted",{project_id:"project-a",document_id:"document-a",reference_id:"strict-reference",rights_class:classification}));
+    const context=compileAssistantContext({route:"/document/document-a",events,projection:foldEvents(events,Number.POSITIVE_INFINITY,"document-a"),actorUserId:"owner"});
+    assert.equal(context.totals.unsafeRightsDecisions,1,String(classification));
+    assert.equal(context.decisionAtoms.find((item)=>item.id==="licensed-reference")?.providerEligible,false,String(classification));
+  }
+});
+
+test("multilingual protected context always fits its byte budget and outranks hydrated conversation history",()=>{
+  for(const count of [8,12,16]){
+    const events=[event(1,"ProjectCreated",{project_id:"project-a",name:"Launch project"}),event(2,"DocumentCreated",{project_id:"project-a",document_id:"document-a",title:"Launch direction"})];
+    for(let index=0;index<count;index+=1)events.push(event(index+3,"BlockCreated",{project_id:"project-a",document_id:"document-a",block_id:`required-${index}`,type:"exclusion",handle:`Required ${index}`,position:`a${index}`,properties:{text:"必".repeat(320),intent:"prohibit"}}));
+    const context=compileAssistantContext({route:"/document/document-a",events,projection:foldEvents(events,Number.POSITIVE_INFINITY,"document-a"),actorUserId:"owner"});
+    assert.ok(new TextEncoder().encode(JSON.stringify(context)).byteLength<=ASSISTANT_CONTEXT_LIMITS.maxBytes,count);
+    context.recentTurns=Array.from({length:6},(_,index)=>({id:`history-${index}`,role:index%2?"assistant":"user",text:"語".repeat(index%2?2400:1200),sequence:index}));
+    boundAssistantContext(context);
+    assert.ok(new TextEncoder().encode(JSON.stringify(context)).byteLength<=ASSISTANT_CONTEXT_LIMITS.maxBytes,count);
+    assert.equal(context.totals.protectedDecisions,count);
+    if(count<=12){assert.equal(context.decisionAtoms.length,count,"protected context survives before any optional private history");assert.equal(context.totals.truncatedProtectedDecisions,0);}
+    else assert.ok(context.decisionAtoms.length<count,"impossible protected coverage remains honestly incomplete and blocks paid specialist dispatch");
+  }
+});
+
+test("protected text beyond the complete specialist boundary is disclosed and never treated as safe",()=>{
+  const {events}=fixture();
+  events.push(event(6,"BlockCreated",{project_id:"project-a",document_id:"document-a",block_id:"long-protected",type:"message",handle:"Exact contractual text",position:"a9",properties:{text:`${"a".repeat(350)} FORBIDDEN AFTER THE LIMIT`,exact_text:"FORBIDDEN AFTER THE LIMIT"}}));
+  const context=compileAssistantContext({route:"/document/document-a",events,projection:foldEvents(events,Number.POSITIVE_INFINITY,"document-a"),actorUserId:"owner"});
+  assert.equal(context.totals.truncatedProtectedDecisions,1);
+  assert.equal(context.decisionAtoms.find((item)=>item.id==="long-protected")?.text.length,ASSISTANT_CONTEXT_LIMITS.decisionChars);
+});
+
+test("retired protected boundaries never displace an active exact creative promise",()=>{
+  const events=[event(1,"ProjectCreated",{project_id:"project-a",name:"Launch project"}),event(2,"DocumentCreated",{project_id:"project-a",document_id:"document-a",title:"Launch direction"})];
+  for(let index=0;index<17;index+=1)events.push(event(index+3,"BlockCreated",{project_id:"project-a",document_id:"document-a",block_id:`retired-${index}`,type:"exclusion",handle:`Historical boundary ${index}`,position:`a${index}`,properties:{text:`Retired boundary ${index}`,intent:"prohibit",weight:0}}));
+  events.push(event(21,"BlockCreated",{project_id:"project-a",document_id:"document-a",block_id:"active-promise",type:"message",handle:"Live protected promise",position:"z9",properties:{text:"Revenue  growth",exact_text:"Revenue  growth",weight:.8}}));
+  const context=compileAssistantContext({route:"/document/document-a",events,projection:foldEvents(events,Number.POSITIVE_INFINITY,"document-a"),actorUserId:"owner"});
+  assert.equal(context.totals.protectedDecisions,1);
+  assert.equal(context.decisionAtoms[0].id,"active-promise");
+  assert.equal(context.decisionAtoms[0].text,"Revenue  growth");
+  assert.equal(context.decisionAtoms[0].providerEligible,true);
+  assert.equal(context.decisionAtoms.filter((decision)=>decision.providerEligible&&decision.protected).length,1);
 });
 
 test("never uses a stale selected document on a projects or activity page", () => {

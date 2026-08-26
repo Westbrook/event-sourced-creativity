@@ -7,11 +7,16 @@ import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./acces
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 import { verifySourceDocumentEvidence } from "./media-api.ts";
 import { isContextCompositionRelation } from "../src/model/combined-context.ts";
+import { blockIntentFor } from "../src/model/block-types.ts";
+import { promptFactIsActive } from "../src/model/prompt-policy.ts";
+import { creativeContextRightsIssue } from "../src/model/context-health.ts";
+import { packageSourceRightsCurrent } from "./context-package-rights.ts";
 
 const MAX_PACKAGE_BLOCKS = 128;
 const MAX_PACKAGE_EVENTS = 384;
 const MAX_PACKAGE_BYTES = 250_000;
 const MAX_PACKAGE_SOURCE_BYTES=12*1024*1024;
+const MAX_PACKAGE_TOTAL_SOURCE_BYTES=48*1024*1024;
 const PACKAGE_PROVENANCE_FIELDS = new Set([
   "organization_context_package_id",
   "organization_context_package_version_id",
@@ -147,14 +152,17 @@ async function authoritativeSnapshot(env: WorkerEnv, actor: PilotUser, organizat
   const now = Date.now();
   const blocks: PackageBlock[] = [];
   const preparedSources:Array<{block:PackageBlock;bytes:Uint8Array;metadata:Record<string,string>}>=[];
+  let preparedSourceBytes=0;
   for (const block of selected as CreativeBlock[]) {
     const sourceKey=mediaKey(block.properties.media_url);
     if((block.type==="reference"||block.properties.media_url||block.properties.reference_id||block.properties.source_ref)&&block.type!=="reference"){
       return Response.json({error:"organization_source_media_custody_unavailable",message:"Only verified reference blocks can transfer original source files into organization custody."},{status:409});
     }
     if(unsafeNestedCustody(portableProperties(block.properties)))return Response.json({error:"organization_source_media_custody_unavailable",message:"Nested files and private source handles cannot cross project boundaries."},{status:409});
-    const expiration = String(block.properties.license_expires_at ?? block.properties.rights_expires_at ?? "").trim();
-    if (expiration && (!Number.isFinite(Date.parse(expiration)) || Date.parse(expiration) <= now)) {
+    const expirations=[block.properties.source_expires_at,block.properties.license_expires_at,block.properties.rights_expires_at]
+      .map((value)=>String(value??"").trim()).filter(Boolean).sort((first,second)=>Date.parse(first)-Date.parse(second));
+    const expiration=expirations[0]??"";
+    if (creativeContextRightsIssue(block.properties, now)) {
       return Response.json({ error: "context_package_source_rights_expired" }, { status: 409 });
     }
     const properties = portableProperties(block.properties);
@@ -173,9 +181,9 @@ async function authoritativeSnapshot(env: WorkerEnv, actor: PilotUser, organizat
       const referenceId=String(block.properties.reference_id??"");
       if(body.sourceRightsConfirmed!==true)return Response.json({error:"context_package_source_rights_confirmation_required"},{status:428});
       if(!sourceKey||!referenceId)return Response.json({error:"organization_source_media_custody_unavailable"},{status:409});
-      const rights=events.some((event)=>String(event.payload.reference_id??"")===referenceId
-        &&(event.type==="RightsAsserted"&&["owned","owned_or_licensed"].includes(String(event.payload.rights_class??""))
-          ||event.type==="ReferenceIngested"&&["owned","owned_or_licensed"].includes(String(event.payload.rights_class??""))));
+      const latestRights=[...events].reverse().find((event)=>String(event.payload.reference_id??"")===referenceId
+        &&["RightsAsserted","ReferenceIngested"].includes(event.type));
+      const rights=Boolean(latestRights&&["owned","owned_or_licensed"].includes(String(latestRights.payload.rights_class??"")));
       if(!rights)return Response.json({error:"context_package_source_rights_unverified"},{status:409});
       const scoped=await env.DB.prepare(`SELECT resource_id FROM project_resource_scopes
         WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND resource_kind='media' AND resource_id=?`)
@@ -188,6 +196,9 @@ async function authoritativeSnapshot(env: WorkerEnv, actor: PilotUser, organizat
       }
       const bytes=new Uint8Array(await new Response(original.body).arrayBuffer());
       if(!bytes.length||bytes.byteLength>MAX_PACKAGE_SOURCE_BYTES)return Response.json({error:"organization_context_source_too_large",maximumBytes:MAX_PACKAGE_SOURCE_BYTES},{status:413});
+      if(preparedSourceBytes+bytes.byteLength>MAX_PACKAGE_TOTAL_SOURCE_BYTES)return Response.json({error:"organization_context_sources_too_large",
+        maximumBytes:MAX_PACKAGE_TOTAL_SOURCE_BYTES,requiredBytes:preparedSourceBytes+bytes.byteLength},{status:413});
+      preparedSourceBytes+=bytes.byteLength;
       const digest=await bytesDigest(bytes);
       if(original.customMetadata.sha256!==digest)return Response.json({error:"organization_source_evidence_integrity_failed"},{status:409});
       const headers=new Headers();original.writeHttpMetadata(headers);
@@ -236,7 +247,8 @@ async function loadPublishedVersion(env:WorkerEnv,organizationId:string,packageI
   let snapshot: PackageSnapshot;
   try { snapshot = JSON.parse(serialized) as PackageSnapshot; } catch { return null; }
   if (snapshot.schema !== 1 || snapshot.organizationId !== organizationId || !Array.isArray(snapshot.blocks)) return null;
-  if(!allowExpiredHistory&&snapshot.blocks.some((block)=>block.rightsExpiresAt&&Date.parse(block.rightsExpiresAt)<=Date.now()))return null;
+  if(!allowExpiredHistory&&(snapshot.blocks.some((block)=>block.rightsExpiresAt&&Date.parse(block.rightsExpiresAt)<=Date.now()
+    ||Boolean(creativeContextRightsIssue(block.properties,Date.now())))||!await packageSourceRightsCurrent(env,organizationId,snapshot)))return null;
   return { row, snapshot };
 }
 
@@ -525,7 +537,16 @@ async function updateBinding(env: WorkerEnv, actor: PilotUser, organizationId: s
         .bind(bindingId,organizationId,nextBlock.sourceBlockId,targetId,nextBlock.contentSha256,eventId));
       continue;
     }
-    if (nextBlock.contentSha256 === existing.content_sha256) continue;
+    if (nextBlock.contentSha256 === existing.content_sha256){
+      const unchanged=projection.blocks.find((block)=>block.id===existing.target_block_id&&!block.removed);
+      if(!unchanged||await blockDigest(unchanged)!==existing.content_sha256){await cleanupSources();return Response.json({error:"context_package_local_override_conflict",blockId:existing.target_block_id},{status:409});}
+      if(String(unchanged.properties.organization_context_package_version_id??"")!==String(next.row.version_id)){
+        if(unchanged.locked)events.push({type:"BlockUnlocked",payload:contextPayload(unchanged.id)});
+        events.push({type:"BlockPropertyEdited",payload:{...contextPayload(unchanged.id),property_path:"organization_context_package_version_id",old_value:String(unchanged.properties.organization_context_package_version_id??""),new_value:String(next.row.version_id)}});
+        if(unchanged.locked)events.push({type:"BlockLocked",payload:contextPayload(unchanged.id)});
+      }
+      continue;
+    }
     const local = projection.blocks.find((block) => block.id === existing.target_block_id && !block.removed);
     if (!local || await blockDigest(local) !== existing.content_sha256){await cleanupSources();return Response.json({ error: "context_package_local_override_conflict", blockId: existing.target_block_id }, { status: 409 });}
     if(local.locked)events.push({type:"BlockUnlocked",payload:contextPayload(local.id)});
@@ -538,7 +559,7 @@ async function updateBinding(env: WorkerEnv, actor: PilotUser, organizationId: s
       if (JSON.stringify(before[key]) === JSON.stringify(after[key])) continue;
       events.push({ type: "BlockPropertyEdited", payload: { project_id: project.projectId, document_id: String(binding.document_id), block_id: local.id, property_path: key, old_value: before[key] ?? null, new_value: after[key] ?? null } });
     }
-    events.push({ type: "BlockPropertyEdited", payload: { project_id: project.projectId, document_id: String(binding.document_id), block_id: local.id, property_path: "organization_context_package_version_id", old_value: String(binding.version_id), new_value: String(next.row.version_id) } });
+    events.push({ type: "BlockPropertyEdited", payload: { project_id: project.projectId, document_id: String(binding.document_id), block_id: local.id, property_path: "organization_context_package_version_id", old_value: String(local.properties.organization_context_package_version_id??""), new_value: String(next.row.version_id) } });
     if(nextBlock.locked)events.push({type:"BlockLocked",payload:contextPayload(local.id)});
     sidecars.push((eventId)=>env.DB.prepare(`UPDATE project_context_package_members SET content_sha256=?
       WHERE binding_id=? AND organization_id=? AND source_block_id=? AND content_sha256=?
@@ -624,17 +645,63 @@ export async function handleContextPackages(request: Request, env: WorkerEnv, ac
       AND authorized.status='active' AND authorized.accepted_at IS NOT NULL AND authorized.revoked_at IS NULL
       AND ${effectivePilotParticipantSql("authorized.organization_id","authorized.user_id")}
       AND NOT ${effectivePilotReviewerSql("authorized.organization_id","authorized.user_id")}`).bind(organizationId,actor.userId).first());
+  const reviewProjects=new Set(actor.access.projects.filter((project)=>project.organizationId===organizationId&&project.role==="viewer"
+    &&hasCapability(actor,"project.review.approve",{organizationId,projectAccessId:project.projectAccessId})).map((project)=>project.projectAccessId));
+  const canReview=Boolean(reviewProjects.size&&await env.DB.prepare(`SELECT 1 AS authorized FROM organization_memberships authorized
+    JOIN users identity ON identity.user_id=authorized.user_id AND identity.consent_version=?
+    WHERE authorized.organization_id=? AND authorized.user_id=? AND authorized.status='active'
+      AND authorized.accepted_at IS NOT NULL AND authorized.revoked_at IS NULL
+      AND ${effectivePilotParticipantSql("authorized.organization_id","authorized.user_id")}
+      AND ${effectivePilotReviewerSql("authorized.organization_id","authorized.user_id")}`)
+    .bind(POLICY_VERSION,organizationId,actor.userId).first());
+  const canInspectDrafts=canManage||canReview;
   if (path.length === 1 && request.method === "GET") {
     const rows = await env.DB.prepare(`SELECT package.package_id,package.name,package.description,package.status,package.created_at,package.updated_at,
-      version.version_id,version.version,version.content_sha256,version.published_at,version.approved_by_user_id,
-      (SELECT COUNT(*) FROM organization_context_package_sources source WHERE source.version_id=version.version_id AND source.organization_id=package.organization_id) AS block_count,
+      version.version_id,version.version,version.status AS version_status,version.created_by_user_id,version.content_sha256,version.published_at,version.approved_by_user_id,
+      draft.version_id AS draft_version_id,draft.version AS draft_version,draft.created_by_user_id AS draft_created_by_user_id,
+      draft.source_project_access_id AS draft_source_project_access_id,
+      draft.content_sha256 AS draft_content_sha256,draft_content.content_json AS draft_content_json,
+      (SELECT COUNT(*) FROM organization_context_package_sources source WHERE source.version_id=COALESCE(version.version_id,draft.version_id) AND source.organization_id=package.organization_id) AS block_count,
       (SELECT COUNT(*) FROM project_context_package_bindings binding WHERE binding.package_id=package.package_id AND binding.organization_id=package.organization_id AND binding.status='active') AS binding_count
       FROM organization_context_packages package LEFT JOIN organization_context_package_versions version
         ON version.version_id=(SELECT latest.version_id FROM organization_context_package_versions latest WHERE latest.package_id=package.package_id AND latest.organization_id=package.organization_id
           AND latest.status='published' AND latest.redacted_at IS NULL ORDER BY latest.version DESC LIMIT 1)
+      LEFT JOIN organization_context_package_versions draft ON ?=1 AND draft.version_id=(
+        SELECT pending.version_id FROM organization_context_package_versions pending WHERE pending.package_id=package.package_id
+          AND pending.organization_id=package.organization_id AND pending.status='draft' AND pending.redacted_at IS NULL ORDER BY pending.version DESC LIMIT 1)
+      LEFT JOIN organization_context_package_contents draft_content ON draft_content.version_id=draft.version_id
+        AND draft_content.organization_id=package.organization_id AND draft_content.redacted_at IS NULL
       WHERE package.organization_id=? AND package.status='active' AND (?=1 OR version.version_id IS NOT NULL)
-      ORDER BY package.updated_at DESC LIMIT 100`).bind(organizationId, Number(canManage)).all<Record<string, unknown>>();
-    return Response.json({ packages: rows.results.map((row) => ({ id: String(row.package_id), name: String(row.name), description: String(row.description), status: String(row.status), versionId: row.version_id ? String(row.version_id) : null, version: row.version === null ? null : Number(row.version), contentSha256: row.content_sha256 ? String(row.content_sha256) : null, publishedAt: row.published_at ? String(row.published_at) : null, publishedByUserId: row.approved_by_user_id ? String(row.approved_by_user_id) : null, blockCount: Number(row.block_count ?? 0), bindingCount: Number(row.binding_count ?? 0), createdAt: String(row.created_at), updatedAt: String(row.updated_at) })) });
+      ORDER BY package.updated_at DESC LIMIT 100`).bind(Number(canInspectDrafts),organizationId,Number(canInspectDrafts)).all<Record<string, unknown>>();
+    return Response.json({ packages: rows.results.flatMap((row) => {
+      const reviewableDraft=Boolean(row.draft_version_id&&(canManage||canReview&&reviewProjects.has(String(row.draft_source_project_access_id??""))));
+      if(!row.version_id&&!reviewableDraft)return[];
+      let draftPreview:Array<{handle:string;type:string;text:string;locked:boolean;intent:string;active:boolean;exactText:string|null;
+        exactPlacements:string[];protectedPhrases:Array<{text:string;placement:string|null}>;
+        relations:Array<{kind:string;targetHandle:string}>;sourceName:string|null;rightsExpiresAt:string|null}>=[];
+      if(reviewableDraft&&row.draft_content_json)try{
+        const snapshot=JSON.parse(String(row.draft_content_json)) as Partial<PackageSnapshot>;
+        const blocks=(Array.isArray(snapshot.blocks)?snapshot.blocks:[]).slice(0,MAX_PACKAGE_BLOCKS);
+        const handles=new Map(blocks.map((block)=>[block.sourceBlockId,String(block.handle)]));
+        draftPreview=blocks.map((block)=>({handle:String(block.handle),type:String(block.type),
+          text:String(block.properties?.text??block.properties?.label??""),locked:Boolean(block.locked),intent:blockIntentFor(block.type,block.properties??{}),
+          active:promptFactIsActive({type:block.type,properties:block.properties}),exactText:String(block.properties?.exact_text??"")||null,
+          exactPlacements:Array.isArray(block.properties?.exact_placements)?block.properties.exact_placements.map(String):[],
+          protectedPhrases:Array.isArray(block.properties?.protected_phrases)?block.properties.protected_phrases.map((phrase)=>typeof phrase==="string"
+            ?{text:phrase,placement:null}:{text:String((phrase as Record<string,unknown>)?.text??""),placement:String((phrase as Record<string,unknown>)?.placement??"")||null}).filter((phrase)=>phrase.text):[],
+          relations:(Array.isArray(snapshot.relations)?snapshot.relations:[]).filter((relation)=>relation.fromSourceBlockId===block.sourceBlockId)
+            .map((relation)=>({kind:relation.kind,targetHandle:handles.get(relation.toSourceBlockId)??relation.toSourceBlockId})),
+          sourceName:block.source?.originalName??null,rightsExpiresAt:block.rightsExpiresAt??null}));
+      }catch{draftPreview=[];}
+      return[{ id: String(row.package_id), name: String(row.name), description: String(row.description), status: String(row.status),versionId:row.version_id?String(row.version_id):null,
+        version:row.version===null?null:Number(row.version),versionStatus:row.version_status?String(row.version_status):reviewableDraft?"draft":null,
+        createdByUserId:row.created_by_user_id?String(row.created_by_user_id):row.draft_created_by_user_id?String(row.draft_created_by_user_id):null,
+        pendingDraftVersionId:reviewableDraft?String(row.draft_version_id):null,pendingDraftVersion:reviewableDraft?Number(row.draft_version):null,
+        pendingDraftContentSha256:reviewableDraft?String(row.draft_content_sha256):null,
+        canApprove:Boolean(reviewableDraft&&row.draft_created_by_user_id!==actor.userId),...(reviewableDraft?{draftPreview}:{}),
+        contentSha256:row.content_sha256?String(row.content_sha256):null,publishedAt:row.published_at?String(row.published_at):null,publishedByUserId:row.approved_by_user_id?String(row.approved_by_user_id):null,
+        blockCount:Number(row.block_count??0),bindingCount:Number(row.binding_count??0),createdAt:String(row.created_at),updatedAt:String(row.updated_at)}];
+    }) });
   }
   if (path.length === 1 && request.method === "POST") {
     if (!canManage) return denied();
@@ -662,17 +729,28 @@ export async function handleContextPackages(request: Request, env: WorkerEnv, ac
     return createVersion(env, actor, organizationId, packageId, await request.json().catch(() => ({})) as Record<string, unknown>);
   }
   if (path.length === 4 && path[2] === "versions" && request.method === "GET") {
-    const loaded=await loadPublishedVersion(env,organizationId,packageId,path[3]??"",true);
+    const loaded=await loadPublishedVersion(env,organizationId,packageId,path[3]??"");
     if (!loaded) return new Response("Not found", { status: 404 });
     return Response.json({ versionId: String(loaded.row.version_id), version: Number(loaded.row.version), contentSha256: String(loaded.row.content_sha256), publishedAt: String(loaded.row.published_at), snapshot: loaded.snapshot });
   }
   if (path.length === 5 && path[2] === "versions" && path[4] === "publish" && request.method === "POST") {
-    if (!canManage) return denied();
+    if (!canManage&&!canReview) return denied();
     const versionId = path[3] ?? "";
-    const row = await env.DB.prepare(`SELECT version.version,version.content_sha256,content.content_json FROM organization_context_package_versions version
+    const row = await env.DB.prepare(`SELECT version.version,version.content_sha256,version.created_by_user_id,version.source_project_access_id,content.content_json FROM organization_context_package_versions version
       JOIN organization_context_package_contents content ON content.version_id=version.version_id AND content.organization_id=version.organization_id AND content.redacted_at IS NULL
-      WHERE version.version_id=? AND version.package_id=? AND version.organization_id=? AND version.status='draft'`).bind(versionId, packageId, organizationId).first<{ version: number; content_sha256: string; content_json: string }>();
+      WHERE version.version_id=? AND version.package_id=? AND version.organization_id=? AND version.status='draft'`).bind(versionId, packageId, organizationId).first<{ version: number; content_sha256: string;content_json:string;created_by_user_id:string;source_project_access_id:string }>();
     if (!row || await sha256(row.content_json) !== row.content_sha256) return Response.json({ error: "context_package_draft_unavailable" }, { status: 409 });
+    if(!canManage&&(!canReview||!reviewProjects.has(row.source_project_access_id)))return denied();
+    const managedPilot=Boolean(await env.DB.prepare("SELECT 1 AS governed FROM pilot_cohorts WHERE organization_id=? AND status IN('active','paused','closed') LIMIT 1").bind(organizationId).first());
+    if(managedPilot&&row.created_by_user_id===actor.userId)return Response.json({error:"independent_context_approver_required",message:"A different authorized administrator or designated source-project reviewer must review and publish this controlled-pilot context."},{status:403});
+    let snapshot:PackageSnapshot;
+    try{snapshot=JSON.parse(row.content_json) as PackageSnapshot;}catch{return Response.json({error:"context_package_draft_unavailable"},{status:409});}
+    if(managedPilot){
+      const head=Number((await env.DB.prepare("SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=? AND organization_id=?")
+        .bind(row.source_project_access_id,organizationId).first<{head:number}>())?.head??0);
+      if(!Number.isSafeInteger(snapshot.sourceHead)||head!==snapshot.sourceHead||snapshot.blocks.some((block)=>Boolean(creativeContextRightsIssue(block.properties,Date.now()))))
+        return Response.json({error:"context_package_source_changed",message:"The source decisions or licensed evidence changed after this draft was captured. Create a new draft for independent review."},{status:409});
+    }
     const expired = await env.DB.prepare("SELECT 1 AS present FROM organization_context_package_sources WHERE version_id=? AND organization_id=? AND rights_expires_at IS NOT NULL AND rights_expires_at<=? LIMIT 1")
       .bind(versionId, organizationId, new Date().toISOString()).first();
     if (expired) return Response.json({ error: "context_package_source_rights_expired" }, { status: 409 });
@@ -680,13 +758,28 @@ export async function handleContextPackages(request: Request, env: WorkerEnv, ac
     const published = await env.DB.batch([
       env.DB.prepare(`UPDATE organization_context_package_versions SET status='published',approved_by_user_id=?,published_at=?
         WHERE version_id=? AND package_id=? AND organization_id=? AND status='draft' AND content_sha256=?
+          AND NOT EXISTS(SELECT 1 FROM pilot_cohorts controlled WHERE controlled.organization_id=organization_context_package_versions.organization_id
+            AND controlled.status IN('active','paused','closed') AND organization_context_package_versions.created_by_user_id=?)
+          AND(?=0 OR(SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes source_scope
+            WHERE source_scope.project_access_id=? AND source_scope.organization_id=organization_context_package_versions.organization_id)=?)
           AND EXISTS(SELECT 1 FROM organization_memberships authorized JOIN users identity ON identity.user_id=authorized.user_id
             WHERE authorized.organization_id=organization_context_package_versions.organization_id AND authorized.user_id=?
-              AND authorized.role IN('owner','administrator') AND authorized.status='active' AND authorized.accepted_at IS NOT NULL
+              AND authorized.status='active' AND authorized.accepted_at IS NOT NULL
               AND authorized.revoked_at IS NULL AND identity.consent_version=?
               AND ${effectivePilotParticipantSql("authorized.organization_id","authorized.user_id")}
-              AND NOT ${effectivePilotReviewerSql("authorized.organization_id","authorized.user_id")})`)
-        .bind(actor.userId,now,versionId,packageId,organizationId,row.content_sha256,actor.userId,POLICY_VERSION),
+              AND((?=1 AND authorized.role IN('owner','administrator') AND NOT ${effectivePilotReviewerSql("authorized.organization_id","authorized.user_id")})
+                OR(?=1 AND ${effectivePilotReviewerSql("authorized.organization_id","authorized.user_id")}
+                  AND EXISTS(SELECT 1 FROM organization_projects source_project
+                    JOIN project_memberships viewer ON viewer.project_access_id=source_project.project_access_id
+                      AND viewer.organization_id=source_project.organization_id AND viewer.user_id=authorized.user_id
+                      AND viewer.role='viewer' AND viewer.status='active' AND viewer.revoked_at IS NULL
+                    JOIN capability_grants approval ON approval.user_id=authorized.user_id AND approval.capability='project.review.approve'
+                      AND approval.scope_type='project' AND approval.organization_id=source_project.organization_id
+                      AND approval.project_access_id=source_project.project_access_id AND approval.status='active'
+                      AND approval.revoked_at IS NULL AND(approval.expires_at IS NULL OR approval.expires_at>?)
+                    WHERE source_project.project_access_id=organization_context_package_versions.source_project_access_id
+                      AND source_project.organization_id=organization_context_package_versions.organization_id AND source_project.status='active'))))`)
+        .bind(actor.userId,now,versionId,packageId,organizationId,row.content_sha256,actor.userId,Number(managedPilot),row.source_project_access_id,snapshot.sourceHead,actor.userId,POLICY_VERSION,Number(canManage),Number(canReview),now),
       env.DB.prepare(`UPDATE organization_context_packages SET updated_at=? WHERE package_id=? AND organization_id=? AND status='active'
         AND EXISTS(SELECT 1 FROM organization_context_package_versions WHERE version_id=? AND package_id=? AND organization_id=?
           AND status='published' AND published_at=? AND approved_by_user_id=?)`)

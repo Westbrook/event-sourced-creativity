@@ -2527,6 +2527,23 @@
               "description": "Whether the native control can be read but not edited."
             },
             {
+              "kind": "method",
+              "name": "restoreDraft",
+              "parameters": [
+                {
+                  "name": "value",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
               "kind": "field",
               "name": "tasks",
               "type": {

@@ -238,7 +238,7 @@ test("rejects foreign project tenancy, public evidence visibility, different pri
   }
 });
 
-test("never lets another authorized project editor consume the generating author's actor-private source receipt",async()=>{
+test("allows another authorized project editor to revise shared outputs without disclosing the author's actor-private source receipt",async()=>{
   const state=await governedFixture();
   const identity={"oai-authenticated-user-id":"source-aware-other-editor","oai-authenticated-user-email":"source-aware-other-editor@example.test"};
   assert.equal((await state.request("/api/session",{headers:identity})).status,200);
@@ -251,12 +251,18 @@ test("never lets another authorized project editor consume the generating author
   const membership=await state.request(`/api/workspaces/${state.organizationId}/projects/${state.projectAccessId}/members`,state.json({userId:"source-aware-other-editor",role:"editor"}));
   assert.equal(membership.status,201,JSON.stringify(await membership.clone().json()));
   const editorHeaders=await state.open(identity);
+  const receipt={type:"DocumentArtifactExported",payload:{artifact_id:ARTIFACT,artifact_kind:"slides",document_id:DOCUMENT,
+    format:"application/vnd.openxmlformats-officedocument.presentationml.presentation",destination_kind:"powerpoint",presenter_notes_included:true}};
+  const deniedPresenter=await state.request("/api/events",state.json({action:"append",event:receipt},editorHeaders));
+  assert.equal(deniedPresenter.status,403,JSON.stringify(await deniedPresenter.clone().json()));
+  assert.equal((await deniedPresenter.json()).error,"presenter_export_creator_required","another editor cannot forge a private presenter release receipt");
+  const approvedPresenter=await state.request("/api/events",state.json({action:"append",event:receipt},state.ownerHeaders));
+  assert.equal(approvedPresenter.status,200,JSON.stringify(await approvedPresenter.clone().json()));
   const response=await state.edit(PROMISE,editorHeaders);
-  assert.equal(response.status,400,JSON.stringify(await response.clone().json()));
-  const rejected=await response.json();
-  assert.equal(rejected.error,"invalid_artifact_revision");
-  assert.equal(rejected.issues.some((issue)=>issue.code==="duplicate_deck_copy"),true,"editor permissions do not grant access to another actor's generation inputs");
-  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentArtifactEdited'").get().count,0);
+  assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+  const revised=await response.json();
+  assert.equal(JSON.stringify(revised).includes("document_snapshot"),false,"the author's actor-private source receipt never appears in the collaborator response");
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentArtifactEdited'").get().count,1);
 });
 
 function updateReceipt(state,edit){
