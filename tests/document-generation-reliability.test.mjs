@@ -272,6 +272,9 @@ async function originalSourceAudioFixture({shared=false,muted=false}={}){
     const changed=(await(await runJob((await retry.json()).job)).json()).job;
     assert.equal(changed.errorDetail.code,"context_source_version_mismatch",JSON.stringify(changed));
     assert.equal(documentJobCanRecoverProviderRender(changed),!shared,"native eligibility still requires the actual confirmed provider identity, not a derived flag");
+    const listed=(await(await jobRequest("/api/document-jobs")).json()).jobs.find(candidate=>candidate.jobId===job.jobId);assert.ok(listed);
+    assert.equal(documentJobCanRecoverProviderRender(listed),!shared,"the Activity listing retains the same confirmed-provider eligibility");
+    assert.equal(generationFailureGuidance(listed.errorDetail,listed.error??"",listed).retryAllowed,!shared,"Activity's second guidance gate must agree with the confirmed provider eligibility");
     assert.equal(calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length,2);
     failDownload=false;
     return {...fixture,request:jobRequest,runJob,unscopedRequest:fixture.request,organizationId,projectAccessId,contextId,job,original,originalInput,originalCostId,originalRequest:request,calls,stored,deleted,firstFact,restore:()=>{globalThis.fetch=previousFetch;},afterDownload:callback=>{afterDownload=callback;}};
@@ -320,6 +323,20 @@ test("original-source audio recovery proves the legacy receipt, preserves newer 
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted'").get().count,1);
     assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),reservations);
   }finally{fixture.restore();}
+});
+
+test("original-source audio recovery guidance never substitutes a hint for confirmed provider identity",()=>{
+  const detail={code:"context_source_version_mismatch",category:"provider",scope:"request",action:"edit_request",message:"Source changed",retryable:false,retryAfterMs:null,requestId:null,httpStatus:409};
+  const base={kind:"render_document",status:"failed",stage:"failed",result:{artifactKind:"audio",audioProviderSubmission:"confirmed",providerJobId:"original-audio-id"},errorDetail:detail};
+  assert.equal(generationFailureGuidance(detail,"",base).retryAllowed,true);
+  assert.match(generationFailureGuidance(detail,"",base).summary,/original source/);
+  for(const patch of [{providerJobId:null,originalSourceAudioRecoveryAvailable:true},{providerJobId:"pending"},{audioProviderSubmission:"pending"}]){
+    const job={...base,result:{...base.result,...patch}};
+    assert.equal(documentJobCanRecoverProviderRender(job),false);assert.equal(generationFailureGuidance(detail,"",job).retryAllowed,false);
+  }
+  const safety={...detail,category:"safety",httpStatus:422};
+  assert.equal(documentJobCanRecoverProviderRender({...base,errorDetail:safety}),false);
+  assert.equal(generationFailureGuidance(safety,"",base).retryAllowed,false);
 });
 
 const mutateAudioCheckpoint=(fixture,change)=>{
