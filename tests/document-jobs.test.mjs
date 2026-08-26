@@ -113,7 +113,7 @@ test("recovers an expired running job before advancing queued document renders",
   assert.match(jobsApi,/if \(!rowIsStale\(running\)\) return;/);
   assert.match(jobsApi,/const recovered = await runDocumentJob\(env, owner, running\.job_id\);/);
   assert.match(jobsApi,/if \(recoveryBlocker&&!requiresForegroundDocumentExecution\(recoveryBlocker\)\) context\?\.waitUntil\(driveDocumentQueue\(env, user\)\);/);
-  assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(running\)\)\{await failStaleJob\(env,owner,running,unsafePresentationRecovery\(running\)\?\?undefined\);continue;\}/);
+  assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(running\)\)\{await failStaleJob\(env,owner,running,unsafePaidRecovery\(running\)\?\?undefined\);continue;\}/);
   assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(next\)\)return;/);
   assert.match(jobsApi,/if \(context&&!requiresForegroundDocumentExecution\(existing\)\)/);
   assert.match(jobsApi,/stage: "queue-recovery"/);

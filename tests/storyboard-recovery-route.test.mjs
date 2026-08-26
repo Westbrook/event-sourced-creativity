@@ -291,7 +291,7 @@ test("an ambiguous storyboard submission with no Fal request identifier remains 
 
     const retry = await fixture.route(`${admitted.jobId}/retry`, { method: "POST" });
     assert.equal(retry.status, 409, JSON.stringify(await retry.clone().json()));
-    assert.equal((await retry.json()).error, "provider_job_not_retryable");
+    assert.equal((await retry.json()).error, "provider_submission_uncertain");
     assert.equal(provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST").length, 1);
     assert.equal(fixture.sqlite.prepare("SELECT status FROM budget_reservations WHERE reservation_id=?").get(tokenReservationId).status, "active");
     assert.equal(fixture.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(costReservationId).status, "executing");
