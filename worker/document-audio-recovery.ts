@@ -1,7 +1,7 @@
 import { audioAdapterContractForModel, normalizeAudioRequestProfile } from "../src/model/audio.ts";
 import { creativeContextRightsIssue } from "../src/model/context-health.ts";
 import { documentArtifactValidationIssues, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
-import { hasUnresolvedProviderSubmission } from "../src/model/provider-submission.ts";
+import { hasUnresolvedProviderSubmission, providerSubmissions } from "../src/model/provider-submission.ts";
 import { standingConstraints } from "../src/model/taste.ts";
 import { authoritativeCreativeContext } from "./context-authority.ts";
 import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./access-policy.ts";
@@ -11,6 +11,7 @@ import { storeGeneratedMedia } from "./media-api.ts";
 import { POLICY_VERSION, storePrivateContent, type PilotUser } from "./pilot-policy.ts";
 import { readProjectSourceEvents } from "./project-access.ts";
 import { ProviderRequestError } from "./provider-errors.ts";
+import { LIVE_REPLAY_PRICING_VERSION, hasKnownTextModelPricing, priceTextUsageBreakdownMicrousd } from "./replay-cost.ts";
 import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readWorkspaceEvents, serializeEvent, streamHead, uuidV7, type EventRow, type WorkerEnv } from "./runtime.ts";
 
 type Guard = { sql: string; bindings: Array<string | number | null> };
@@ -121,7 +122,8 @@ export async function recoverOriginalSourceAudio(env: WorkerEnv, user: PilotUser
       && jsonEqual(profile, normalizeAudioRequestProfile(request.audioProfile, snapshot)), "original_audio_profile_mismatch");
     const plan = parseDocumentArtifactContent(JSON.stringify(checkpoint.artifactPlan));
     requireEvidence(plan && documentArtifactValidationIssues("audio", plan, { itemCount: Number(originalSettings.item_count ?? 1) }).length === 0, "paid_plan_unavailable");
-    const plannerResponseId = String(checkpoint.plannerResponseId ?? "");
+    let plannerResponseId = String(checkpoint.plannerResponseId ?? "");
+    let legacyPlannerResponseId: string | null = null;
     requireEvidence(plannerResponseId && typeof audioInput.submitted_prompt === "string" && audioInput.submitted_prompt.trim(), "paid_planner_or_prompt_missing");
 
     // The legacy audio producer retained its acceptance in audioInputReceipt, not
@@ -142,7 +144,7 @@ export async function recoverOriginalSourceAudio(env: WorkerEnv, user: PilotUser
     const usage = failed && paidEvents.find(event => event.type === "GenerationUsageRecorded" && event.actor === "worker:policy"
       && event.causationId === failed.eventId && event.correlationId === failed.correlationId && event.sequence > failed.sequence
       && event.payload.artifact_id === artifactId && event.payload.document_id === row.document_id && event.payload.artifact_kind === "audio"
-      && event.payload.provider_job_id === providerId && event.payload.planner_response_id === plannerResponseId);
+      && event.payload.provider_job_id === providerId);
     if (!(requested && failed && usage)) {
       // Diagnose only this already-authorized job. Counts and predicate results
       // cannot replace retained evidence or make a failed verification succeed.
@@ -178,6 +180,43 @@ export async function recoverOriginalSourceAudio(env: WorkerEnv, user: PilotUser
       } catch { /* Diagnostics must never change the failed verification result. */ }
     }
     requireEvidence(requested && failed && usage, "original_paid_event_chain_missing");
+    if (usage.payload.planner_response_id !== plannerResponseId) {
+      // Released progress writers pinned the scalar to the FIRST paid response,
+      // even when a bounded repair supplied the final plan. Prove both distinct
+      // roles against the immutable final-ID usage; never accept an arbitrary
+      // alternative ID or an unverified checkpoint flag.
+      const validation = record(record(checkpoint.plannerInput).validation);
+      const responseIds = Array.isArray(validation.provider_response_ids) ? validation.provider_response_ids : [];
+      const finalResponseId = usage.payload.planner_response_id;
+      requireEvidence(typeof finalResponseId === "string" && finalResponseId && responseIds.length === 2
+        && responseIds.every(id => typeof id === "string" && id) && new Set(responseIds).size === 2
+        && responseIds[0] === plannerResponseId && responseIds[1] === finalResponseId
+        && jsonEqual(responseIds, checkpoint.plannerResponseIds)
+        && validation.repair_attempted === true && validation.repair_response_id === finalResponseId
+        && validation.provider_call_count === 2 && validation.maximum_provider_calls === 2
+        && Array.isArray(validation.initial_issues) && validation.initial_issues.length > 0
+        && Array.isArray(validation.repair_issues) && validation.repair_issues.length === 0, "original_repaired_planner_identity_mismatch");
+      const planning = providerSubmissions(checkpoint).filter(receipt => receipt.operation === "planning");
+      const submittedModel = String(record(input.planner).model ?? ""), returnedModel = String(checkpoint.plannerModel ?? "");
+      requireEvidence(record(input.planner).provider === "openai" && hasKnownTextModelPricing(submittedModel) && hasKnownTextModelPricing(returnedModel)
+        && planning.length === 2 && new Set(planning.map(receipt => receipt.providerRequestId)).size === 2
+        && planning.every(receipt => receipt.provider === "openai" && receipt.status === "completed" && receipt.model === submittedModel
+          && responseIds.includes(receipt.providerRequestId) && Number.isSafeInteger(receipt.costMicrousd) && Number(receipt.costMicrousd) > 0
+          && [receipt.inputTokens, receipt.outputTokens, receipt.totalTokens].every(value => Number.isSafeInteger(value) && Number(value) >= 0)
+          && receipt.totalTokens === Number(receipt.inputTokens) + Number(receipt.outputTokens))
+        && Array.isArray(usage.payload.model_ids) && usage.payload.model_ids.includes(returnedModel), "original_repaired_planner_receipts_missing");
+      const aggregate = planning.reduce((total, receipt) => ({ inputTokens: total.inputTokens + Number(receipt.inputTokens), outputTokens: total.outputTokens + Number(receipt.outputTokens), totalTokens: total.totalTokens + Number(receipt.totalTokens) }), { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
+      const retainedUsage = record(checkpoint.plannerUsage);
+      requireEvidence(aggregate.inputTokens === usage.payload.input_tokens && aggregate.outputTokens === usage.payload.output_tokens
+        && aggregate.totalTokens === usage.payload.total_tokens && aggregate.totalTokens === usage.payload.planner_tokens
+        && aggregate.inputTokens === retainedUsage.inputTokens && aggregate.outputTokens === retainedUsage.outputTokens && aggregate.totalTokens === retainedUsage.totalTokens
+        && usage.payload.pricing_version === LIVE_REPLAY_PRICING_VERSION
+        && planning.every(receipt => receipt.costMicrousd === priceTextUsageBreakdownMicrousd(submittedModel, { inputTokens: Number(receipt.inputTokens), outputTokens: Number(receipt.outputTokens), totalTokens: Number(receipt.totalTokens) }).totalMicrousd)
+        && usage.payload.planner_cost_microusd === priceTextUsageBreakdownMicrousd(returnedModel, aggregate).totalMicrousd, "original_repaired_planner_accounting_mismatch");
+      legacyPlannerResponseId = plannerResponseId;
+      plannerResponseId = finalResponseId;
+    }
+    requireEvidence(usage.payload.planner_response_id === plannerResponseId, "original_paid_planner_mismatch");
     const costId = String(usage.payload.cost_reservation_id ?? ""), settledCost = Number(usage.payload.cost_microusd ?? 0);
     const audioCost = Number(record(audioInput.parameters).published_cost_microusd ?? 0);
     requireEvidence(Number.isSafeInteger(settledCost) && Number.isSafeInteger(audioCost) && audioCost > 0
@@ -276,7 +315,7 @@ export async function recoverOriginalSourceAudio(env: WorkerEnv, user: PilotUser
         original_request_event_id: requested.eventId, original_failure_event_id: failed.eventId, original_usage_event_id: usage.eventId, provider_job_id: providerId, new_generation_requests: 0, provider_retrieval_only: true, current_edits_preserved: true };
       const savedInput = { schema_version: 1, job_id: row.job_id, artifact_id: artifactId, artifact_kind: "audio", document_id: row.document_id, project_id: projectId, captured_at: new Date().toISOString(),
         request: { ...originalSettings, source_surface: row.source_surface }, document_snapshot: compiledSnapshot, original_document_snapshot: snapshot, source_block_versions: originalActiveVersions, admitted_source_block_versions: input.source_block_versions,
-        source: { snapshot_sha256: originalHash, document_revision: request.documentRevision }, planner: { provider: "openai", model: checkpoint.plannerModel, response_id: plannerResponseId, ...record(checkpoint.plannerInput) }, render: audioInput, accounting, recovery };
+        source: { snapshot_sha256: originalHash, document_revision: request.documentRevision }, planner: { ...record(checkpoint.plannerInput), provider: "openai", model: checkpoint.plannerModel, response_id: plannerResponseId, ...(legacyPlannerResponseId ? { legacy_checkpoint_response_id: legacyPlannerResponseId } : {}) }, render: audioInput, accounting, recovery };
       const content = await storePrivateContent(env, historyOwner, "document-artifact", JSON.stringify(plan)); stagedContent.push({ id: content.contentId, owner: historyOwner, kind: "document-artifact" });
       const saved = await storePrivateContent(env, user.userId, "document-artifact-input", JSON.stringify(savedInput), scope); stagedContent.push({ id: saved.contentId, owner: user.userId, kind: "document-artifact-input" });
       const head = await validateCurrent();
@@ -295,7 +334,7 @@ export async function recoverOriginalSourceAudio(env: WorkerEnv, user: PilotUser
         input_tokens: 0, output_tokens: 0, total_tokens: 0, planner_tokens: 0, reserved_tokens: 0, reserved_microusd: 0, cost_microusd: 0, audio_cost_microusd: 0, planner_cost_microusd: 0,
         previously_settled_cost_microusd: settledCost, planner_response_id: plannerResponseId, provider_job_id: providerId, model_ids: [String(checkpoint.plannerModel), model], planner_cost_previously_recorded: true, planner_usage_previously_recorded: true, recovery,
       }, { causationId: completed.eventId });
-      const result = { ...checkpoint, artifactId, artifactKind: "audio", audioRecoveredOriginalSource: true, recovery,
+      const result = { ...checkpoint, plannerResponseId, artifactId, artifactKind: "audio", audioRecoveredOriginalSource: true, recovery,
         generationReceipt: { ...receipt, settled_cost_microusd: settledCost, incremental_cost_microusd: 0, original_input_ref: originalInputId, recovered_input_ref: saved.contentId, provider_request_status: "completed", reservation_status: "settled", recovery },
         head: recoveredUsage.sequence, eventIds: [completed.eventId, recoveredUsage.eventId], stage: "completed", progressMessage: "Recovered the original paid audio with its original source. Newer edits are unchanged; no new generation was purchased." } as Record<string, unknown>;
       delete result.errorDetail; delete result.dismissedAt;

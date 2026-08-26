@@ -15,7 +15,7 @@ export function paidProviderObserver(checkpoint: Record<string, unknown>, progre
       const planning = Object.values(receipts).filter((entry) => entry.operation === "planning" && entry.status === "completed");
       const plannerPatch = receipt.operation === "planning" && receipt.status === "completed" ? {
         plannerModel: receipt.model,
-        plannerResponseId: planning[0]?.providerRequestId ?? "",
+        plannerResponseId: receipt.providerRequestId ?? "",
         plannerResponseIds: planning.map((entry) => entry.providerRequestId).filter(Boolean),
         plannerUsage: planning.reduce((total, entry) => ({ inputTokens: total.inputTokens + Number(entry.inputTokens ?? 0), outputTokens: total.outputTokens + Number(entry.outputTokens ?? 0), totalTokens: total.totalTokens + Number(entry.totalTokens ?? 0) }), { inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
       } : {};

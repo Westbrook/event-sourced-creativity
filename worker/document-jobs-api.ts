@@ -1102,8 +1102,11 @@ async function updateJobProgress(env: WorkerEnv, row: DocumentJobRow, stage: str
   const paidPlanning=providerSubmissions(result).filter((receipt)=>receipt.operation==="planning"&&receipt.status==="completed");
   if(paidPlanning.length){
     result.plannerUsage=paidPlanning.reduce((total,receipt)=>({inputTokens:total.inputTokens+Number(receipt.inputTokens??0),outputTokens:total.outputTokens+Number(receipt.outputTokens??0),totalTokens:total.totalTokens+Number(receipt.totalTokens??0)}),{inputTokens:0,outputTokens:0,totalTokens:0});
-    result.plannerResponseIds=paidPlanning.map((receipt)=>receipt.providerRequestId).filter(Boolean);
-    result.plannerResponseId=paidPlanning[0].providerRequestId??result.plannerResponseId;
+    const paidPlanningIds=paidPlanning.map((receipt)=>receipt.providerRequestId).filter(Boolean);
+    result.plannerResponseIds=paidPlanningIds;
+    // Keep the adapter's selected response (including a successful repair),
+    // while accounting still includes every completed planning request.
+    if(!paidPlanningIds.includes(String(result.plannerResponseId??"")))result.plannerResponseId=paidPlanning.at(-1)?.providerRequestId??result.plannerResponseId;
   }
   if((requiresForegroundDocumentExecution(row)||row.kind==="render_document"&&["audio","storyboard"].includes(String(parseRequest(row).artifactKind??"")))&&previous.generationReceipt&&typeof previous.generationReceipt==="object"&&!Array.isArray(previous.generationReceipt)){
     const receipt=previous.generationReceipt as GenerationReceipt;
