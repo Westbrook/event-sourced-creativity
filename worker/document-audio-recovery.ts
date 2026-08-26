@@ -10,6 +10,7 @@ import { recoverAcceptedAudio, verifiedAudioRecoveryQueue, type CreativeAudioPre
 import { storeGeneratedMedia } from "./media-api.ts";
 import { POLICY_VERSION, storePrivateContent, type PilotUser } from "./pilot-policy.ts";
 import { readProjectSourceEvents } from "./project-access.ts";
+import { ProviderRequestError } from "./provider-errors.ts";
 import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readWorkspaceEvents, serializeEvent, streamHead, uuidV7, type EventRow, type WorkerEnv } from "./runtime.ts";
 
 type Guard = { sql: string; bindings: Array<string | number | null> };
@@ -50,6 +51,7 @@ export async function recoverOriginalSourceAudio(env: WorkerEnv, user: PilotUser
   let stagedMedia: Awaited<ReturnType<typeof storeGeneratedMedia>> | null = null;
   const correlationId = `${row.job_id}:audio-recovery:${uuidV7()}`;
   let claimed = false;
+  let phase = "verifying-original-evidence";
   try {
     requireEvidence(row.owner_id === user.userId && row.stream_id === user.streamId && row.expires_at > new Date().toISOString(), "job_authorization_or_retention");
     if (row.status === "completed" && checkpoint.audioRecoveredOriginalSource === true) return { job: row, recovered: true };
@@ -225,12 +227,15 @@ export async function recoverOriginalSourceAudio(env: WorkerEnv, user: PilotUser
     claimed = true;
     const running: DocumentJobRow = { ...row, status: "running", correlation_id: correlationId, result_json: JSON.stringify(claimedResult), started_at: started };
     return await execution.run(running, async control => {
+      phase = "retrieving-original-recording";
       const prepared: CreativeAudioPreparedReceipt = { provider: "fal", model, submittedPrompt: String(audioInput.submitted_prompt), parameters: record(audioInput.parameters), imageReference: null, sourceAudioTreatment: "none", audioWaveformSubmitted: false };
       const audio = await recoverAcceptedAudio(env, { providerJobId: providerId, providerModel: model, providerStatusUrl: String(queue.status_url), providerResponseUrl: String(queue.response_url), providerCancelUrl: String(queue.cancel_url), retainedReceipt: prepared, profile, signal: control.signal,
         onStage: async (stage, message) => { await authorize(); await control.progress(stage, message); } });
       requireEvidence(audio.costMicrousd === audioCost, "provider_original_charge_mismatch");
+      phase = "rechecking-current-authority";
       await validateCurrent();
       await control.beginCommit();
+      phase = "saving-recovered-audio";
       stagedMedia = await storeGeneratedMedia(env, historyOwner, `${artifactId}-recovery-${uuidV7()}`, audio.bytes, model, audio.mimeType, { artifactRole: "document-audio", artifactId, providerJobId: providerId, provider: "fal", recoveryJobId: row.job_id });
       const accounting = { settled_cost_microusd: settledCost, incremental_cost_microusd: 0, original_cost_reservation_id: costId };
       const recovery = { mode: "original-source-provider-verified", original_job_id: row.job_id, original_input_ref: originalInputId, original_source_revision: String(request.documentRevision), original_source_snapshot_sha256: originalHash,
@@ -276,6 +281,7 @@ export async function recoverOriginalSourceAudio(env: WorkerEnv, user: PilotUser
       const assertCommit = env.DB.prepare(`SELECT json(CASE WHEN EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status='completed'
         AND json_extract(result_json,'$.eventIds[0]')=? AND json_extract(result_json,'$.eventIds[1]')=?) THEN 'true' ELSE 'audio_recovery_commit_conflict' END) AS committed`)
         .bind(row.job_id, user.userId, user.streamId, correlationId, completed.eventId, recoveredUsage.eventId);
+      phase = "committing-recovered-audio";
       await env.DB.batch([insert(completed, head), insert(recoveredUsage, head + 1), finish, assertCommit]);
       const finished = await env.DB.prepare("SELECT * FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status='completed'")
         .bind(row.job_id, user.userId, user.streamId, correlationId).first<DocumentJobRow>();
@@ -307,6 +313,10 @@ export async function recoverOriginalSourceAudio(env: WorkerEnv, user: PilotUser
       await env.DB.prepare("UPDATE document_jobs SET status='failed',correlation_id=?,result_json=?,error_message=?,started_at=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status IN('running','committing')")
         .bind(row.correlation_id, row.result_json, row.error_message, row.started_at, row.completed_at, new Date().toISOString(), row.job_id, user.userId, user.streamId, correlationId).run();
     }
-    return unavailable(error instanceof RecoveryUnavailable ? error.message : error instanceof Error && "code" in error ? String(error.code) : "provider_or_storage_verification_failed");
+    const reason = error instanceof RecoveryUnavailable ? error.message : error instanceof ProviderRequestError ? error.detail.code : error instanceof Error && "code" in error ? String(error.code) : "provider_or_storage_verification_failed";
+    // Operational identifiers only: never log source text, prompts, credentials,
+    // media URLs, private envelopes, or raw provider/database error messages.
+    console.error("audio_original_source_recovery_unavailable", { jobId: row.job_id, phase, reason });
+    return unavailable(reason);
   }
 }
