@@ -41,6 +41,26 @@ test("validates retained artifact content without accepting partial provider out
   assert.equal(generic?.presentation?.footerLabel,"The librarian and the discovery");assert.equal(defaultSlidePresentation().footerLabel,"");
 });
 
+test("validates incomplete and substantively repeated artifact content across every non-slide medium",()=>{
+  for(const kind of DOCUMENT_ARTIFACT_KINDS.filter((value)=>value!=="slides")){
+    const output=parseDocumentArtifactContent(JSON.stringify({
+      title:"",
+      summary:"A source-grounded creative result.",
+      content_markdown:"# Authored creative result",
+      items:[
+        {title:"First movement",body:"Build the story once. Preserve each independently meaningful audience expression.",notes:"",image_prompt:""},
+        {title:"Second movement",body:"Build the story once. Deliver the right expression to the right moment.",notes:"",image_prompt:""},
+        {title:"Empty movement",body:"",notes:"",image_prompt:""},
+      ],
+    }));
+    const issues=documentArtifactValidationIssues(kind,output,{itemCount:3});
+
+    assert.ok(issues.some(({code,path})=>code==="missing_title"&&path==="title"),kind);
+    assert.ok(issues.some(({code,path})=>code==="duplicate_artifact_content"&&path==="items.1.body"),kind);
+    assert.ok(issues.some(({code,path})=>code==="missing_item_content"&&path==="items.2"),kind);
+  }
+});
+
 test("offers four coherent deck-level styles while preserving the generated starting palette",()=>{
   assert.deepEqual(SLIDE_STYLE_PRESETS.map((preset)=>preset.id),["gallery","editorial","nocturne","field-notes"]);
   assert.deepEqual(SLIDE_STYLE_PRESETS.map((preset)=>preset.label),["Gallery","Editorial","Nocturne","Field notes"]);
@@ -503,6 +523,57 @@ test("repairs an incomplete provider slide plan once and retains exact validatio
   globalThis.fetch=async(_input,init={})=>{const request=JSON.parse(String(init.body));requests.push(request);const output=requests.length===1?incomplete:repaired;return Response.json({id:`response-${requests.length}`,model:"gpt-test",output_text:JSON.stringify(output),usage:{input_tokens:100,output_tokens:50,total_tokens:150}});};
   try{const result=await generateDocumentArtifact({OPENAI_API_KEY:"test",OPENAI_MODEL:"gpt-test"},"user-1","slides",{documentTitle:"Field study",snapshot:{facts:[],relationships:[]},options:{itemCount:1,locale:"ja-JP"}});assert.equal(requests.length,2);for(const request of requests){assert.match(request.instructions,/selected language \(ja-JP\)/);assert.match(request.instructions,/Preserve the original language and exact text of user-authored document titles/);assert.equal(JSON.parse(request.input).document_title,"Field study");}assert.equal(requests[1].text.format.name,"document_slides_repair");assert.equal(result.output.items[0]?.title,"Protect the opening");assert.equal(result.inputReceipt.validation.repair_attempted,true);assert.ok(result.inputReceipt.validation.initial_issues.some((issue)=>issue.code==="missing_title"));assert.deepEqual(result.inputReceipt.validation.repair_issues,[]);assert.deepEqual(result.usage,{inputTokens:200,outputTokens:100,totalTokens:300});}
   finally{globalThis.fetch=originalFetch;}
+});
+
+test("locally heals repeated slide openings and generic captions while registering the adapter defect without another provider call",async()=>{
+  const originalFetch=globalThis.fetch;
+  const requests=[];
+  const generated={
+    title:"One context, many paths",
+    summary:"A complete, source-grounded pitch.",
+    content_markdown:"# One context, many paths\n\nBuild the story once. Meet people where they are.",
+    presentation:{...presentation,footer_label:"Forma"},
+    items:[{
+      title:"Build the story once.",
+      body:"Build the story once. Meet people where they are.",
+      notes:"Preserve the complete authored direction.",
+      image_prompt:"A coherent visual argument.",
+      context_group_ids:[],
+      slide:{
+        layout:"statement",
+        kicker:"A useful invitation",
+        bullets:["Build the story once. Carry its source into every useful format."],
+        visual:{kind:"hero-type",label:"Visual emphasis",value:"One creative world with many thoughtful expressions",data:[]},
+      },
+    }],
+  };
+  globalThis.fetch=async(_input,init={})=>{
+    requests.push(JSON.parse(String(init.body)));
+    return Response.json({id:"locally-repaired-pitch",model:"gpt-test",output_text:JSON.stringify(generated),usage:{input_tokens:100,output_tokens:50,total_tokens:150}});
+  };
+
+  try{
+    const result=await generateDocumentArtifact({OPENAI_API_KEY:"test",OPENAI_MODEL:"gpt-test"},"user-1","slides",{
+      documentTitle:"One context, many paths",
+      snapshot:{facts:[],relationships:[]},
+      options:{itemCount:1},
+    });
+    const item=result.output.items[0];
+    const validation=result.inputReceipt.validation;
+
+    assert.equal(requests.length,1,"deterministic copy cleanup must not purchase another provider response");
+    assert.equal(item.title,"Build the story once.");
+    assert.equal(item.body,"Meet people where they are.");
+    assert.deepEqual(item.slide.bullets,["Carry its source into every useful format."]);
+    assert.equal(item.slide.visual.label,"");
+    assert.deepEqual(validation.initial_issues,[]);
+    assert.equal(validation.repair_attempted,false);
+    assert.deepEqual(validation.validation_history.map(({stage})=>stage),["initial","review"]);
+    assert.deepEqual(validation.adapter_reconciliation.issue_codes,["duplicate_slide_copy","generic_visual_label"]);
+    assert.equal(validation.adapter_reconciliation.status,"pending");
+    assert.equal(validation.adapter_reconciliation.self_healed,true);
+    assert.equal(validation.adapter_reconciliation.adapter_version,"2026-08-26-validated-self-healing-v3");
+  }finally{globalThis.fetch=originalFetch;}
 });
 
 test("first-time storyboards prefer coherent production without silently changing video cost or manual choice",async()=>{

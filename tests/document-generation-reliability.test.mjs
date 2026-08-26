@@ -1040,6 +1040,73 @@ test("fails closed for an unpriced slideshow model before provider submission an
   }finally{globalThis.fetch=previousFetch;}
 });
 
+test("all document media reject unpriced planning before source transmission or provider spending",async()=>{
+  const fixture=await reliabilityWorker();
+  fixture.environment.OPENAI_MODEL="unpriced-document-model";
+  const previousFetch=globalThis.fetch;
+  let providerCalls=0;
+  globalThis.fetch=async()=>{providerCalls+=1;throw new Error("An unpriced document planner must never receive authored source context.");};
+
+  try{
+    const response=await handleEvents(new Request("http://localhost/api/events",json({
+      action:"render_document",
+      documentId:"doc-atmosphere",
+      artifactKind:"scene",
+      productionMode:"manual",
+      itemCount:1,
+      requestKey:"unpriced-cross-media-planner",
+    })),fixture.environment);
+    const failed=await response.json();
+
+    assert.equal(response.status,429,JSON.stringify(failed));
+    assert.equal(failed.error,"document_model_pricing_unavailable");
+    assert.equal(providerCalls,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN('active','executing')").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations WHERE status='active'").get().count,0);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+test("an oversized cross-media repair stops before another provider call and settles only its original planning usage",async()=>{
+  const fixture=await reliabilityWorker();
+  const previousFetch=globalThis.fetch;
+  let providerCalls=0;
+  globalThis.fetch=async(url)=>{
+    assert.equal(String(url),"https://api.openai.com/v1/responses");
+    providerCalls+=1;
+    if(providerCalls>1)throw new Error("A repair exceeding the approved document token ceiling must not reach the provider.");
+    return Response.json({
+      id:"already-paid-oversized-scene-draft",
+      model:"gpt-5.6-terra",
+      output_text:JSON.stringify({
+        title:"",
+        summary:"An invalid initial narrative plan.",
+        content_markdown:"",
+        items:[{title:"Unfinished scene",body:"x".repeat(45_000),notes:"",image_prompt:"",context_group_ids:[]}],
+      }),
+      usage:{input_tokens:100,output_tokens:50,total_tokens:150},
+    });
+  };
+
+  try{
+    const response=await handleEvents(new Request("http://localhost/api/events",json({
+      action:"render_document",
+      documentId:"doc-atmosphere",
+      artifactKind:"scene",
+      productionMode:"manual",
+      itemCount:1,
+      requestKey:"oversized-cross-media-repair",
+    })),fixture.environment);
+    const failed=await response.json();
+
+    assert.equal(response.status,429,JSON.stringify(failed));
+    assert.equal(failed.error,"document_token_cap_reached");
+    assert.equal(providerCalls,1,"the initial response is retained but its unsafe repair is never purchased");
+    const reservation=fixture.sqlite.prepare("SELECT reserved_tokens,used_tokens,status FROM budget_reservations WHERE operation='document-render:scene'").get();
+    assert.deepEqual({...reservation},{reserved_tokens:32_000,used_tokens:150,status:"settled"});
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN('active','executing')").get().count,0);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
 test("settles every metered initial and bounded-repair response when source-fidelity validation fails",async()=>{
   const fixture=await reliabilityWorker();
   await authoredOutline(fixture,12);

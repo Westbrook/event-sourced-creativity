@@ -4,6 +4,7 @@ import { ensureModalDialog } from "./modal-dialog";
 import { isDraftOutput, outputQualityLabel, type CreativeOutput } from "../model/events";
 import { focalPointCss } from "../model/focal-point";
 import { positionImageAtFocalPoint } from "../model/image-focus";
+import { imageOutputNamingCandidate } from "../model/output-naming";
 import { PROMPT_TECHNIQUES, promptTechniqueDefinition } from "../model/prompt-structures";
 
 export class OutputVisual extends FormaElement {
@@ -54,7 +55,7 @@ export class OutputVisual extends FormaElement {
             <button type="button" class="icon-button modal-close" aria-label=${this.i18n.t("output.close","Close generated image")} @click=${this.#close}>${icon("close")}</button>
             <header>
               <span class="eyebrow">${fanNavigation?this.i18n.t("output.position","Image {index} of {total} · {technique} approach",{index:this.i18n.number(activeIndex+1),total:this.i18n.number(fan.length),technique}):this.i18n.t("output.generated","Generated image")}</span>
-              <h2 id=${`generated-image-title-${active.id}`}>${fanNavigation?this.i18n.t("output.result","{technique} result",{technique}):this.i18n.t("output.image","{quality} image",{quality:this.#quality(active)})}</h2>
+              <h2 id=${`generated-image-title-${active.id}`} dir="auto">${active.title||(!this.readOnly?imageOutputNamingCandidate(active,this.store.content.get(),this.store.projection.get().documents.find((document)=>document.id===active.documentId)?.title??"").title:"")||(fanNavigation?this.i18n.t("output.result","{technique} result",{technique}):this.i18n.t("output.image","{quality} image",{quality:this.#quality(active)}))}</h2>
               ${fanNavigation?html`<span class="sr-only image-lightbox-position" role="status" aria-live="polite" aria-atomic="true">${this.i18n.t("output.positionOnly","{index} of {total}",{index:this.i18n.number(activeIndex+1),total:this.i18n.number(fan.length)})}</span><p id=${this.#navigationDescriptionId}>${this.i18n.t("output.navigation","Use the Left and Right Arrow keys to move through all {count} images without closing this dialog.",{count:this.i18n.number(fan.length)})}</p>`:nothing}
             </header>
             <div class="image-lightbox-stage">${this.#image(active)}${fanNavigation?html`<button type="button" class="icon-button fan-image-navigation previous" aria-label=${this.i18n.t("output.previous","Previous fan image")} aria-keyshortcuts=${rtl?"ArrowRight":"ArrowLeft"} @click=${()=>this.#navigateFan(-1,"button")}>${icon(rtl?"next":"previous")}</button><button type="button" class="icon-button fan-image-navigation next" aria-label=${this.i18n.t("output.next","Next fan image")} aria-keyshortcuts=${rtl?"ArrowLeft":"ArrowRight"} @click=${()=>this.#navigateFan(1,"button")}>${icon(rtl?"previous":"next")}</button>`:nothing}</div>

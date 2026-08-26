@@ -125,6 +125,9 @@ export class FormaCreativeAssistant extends FormaElement {
         this.#tasks = [payload.task, ...this.#tasks.filter((task) => task.id !== payload.task!.id)];
         this.#activeTasks.add(payload.task.id);
       }
+      try { await this.store.refreshEvents(); }
+      catch { /* The turn is already committed; later polling can safely refresh it. */ }
+      if (scope !== this.#scope()) return;
     } catch {
       if (scope === this.#scope()) {
         this.#messages = [...this.#messages, { id: `${turnId}:error`, role: "assistant", key: "assistant.unavailable" }];
@@ -150,7 +153,7 @@ export class FormaCreativeAssistant extends FormaElement {
       canAuthor,
       canGenerate,
       canEditCanvas,
-      providerConfigured: Boolean(session?.provider.configured),
+      providerConfigured: Boolean(session?.provider.plannerConfigured ?? session?.provider.configured),
       personal: Boolean(session && !context),
     });
   }
@@ -167,14 +170,23 @@ export class FormaCreativeAssistant extends FormaElement {
 
     const projection = this.store.projection.get();
     if (input.mode === "creative-chat") {
+      if (this.store.documentJobActive("chat", projection.documentId)) {
+        panel.resolveToolRequest(false, input.message);
+        return;
+      }
       const accepted = await this.store.chat(input.message, false);
-      if (scope !== this.#scope()) return;
+      if (scope !== this.#scope()) { panel.resolveToolRequest(false, input.message); return; }
       panel.resolveToolRequest(Boolean(accepted), input.message);
       if (accepted) this.store.setRoute(withDocumentInRoute("/studio/chat", projection.documentId, projection.documentTitle));
       return;
     }
 
     const documentId = surface.canvasId ? projection.documents[0]?.id ?? projection.documentId : projection.documentId;
+    if (["plan-document", "plan-board"].includes(input.mode)
+      && this.store.documentJobActive("structure_adaptive", documentId)) {
+      panel.resolveToolRequest(false, input.message);
+      return;
+    }
     const accepted = await new Promise<boolean>((resolve) => {
       const detail: AssistantToolRequest = {
         requestId: crypto.randomUUID(),
@@ -189,12 +201,39 @@ export class FormaCreativeAssistant extends FormaElement {
       const event = new CustomEvent<AssistantToolRequest>("forma-assistant-tool-request", { detail, cancelable: true });
       if (window.dispatchEvent(event)) resolve(false);
     });
-    if (scope !== this.#scope()) return;
+    if (scope !== this.#scope()) { panel.resolveToolRequest(false, input.message); return; }
     panel.resolveToolRequest(accepted, input.message);
-    this.#messages = [...this.#messages, {
-      id: crypto.randomUUID(), role: "assistant", key: accepted ? "assistant.mode.queued" : "assistant.mode.failed",
-    }];
+    if (accepted && input.mode === "quick-edit") {
+      this.#open = false;
+      this.requestUpdate();
+      void this.updateComplete.then(()=>requestAnimationFrame(()=>{
+        const review=document.querySelector<HTMLElement>(".document-quick-edit-review");
+        review?.scrollIntoView({block:"nearest",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});
+        review?.focus({preventScroll:true});
+      }));
+      return;
+    }
+    this.#messages = [...this.#messages,
+      ...(accepted ? [{ id: crypto.randomUUID(), role: "user" as const, text: input.message }] : []),
+      { id: crypto.randomUUID(), role: "assistant", key: accepted ? "assistant.mode.queued" : "assistant.mode.failed",
+        ...(accepted && ["plan-document", "plan-board"].includes(input.mode)
+          ? { reviewMode: input.mode as "plan-document" | "plan-board", reviewReady: false } : {}) },
+    ];
     this.requestUpdate();
+  }
+
+  #review(mode: "plan-document" | "plan-board") {
+    const selector = mode === "plan-document" ? ".adaptive-model-plan" : ".canvas-intent-response";
+    if (!document.querySelector<HTMLElement>(selector)) return;
+    this.#open = false;
+    this.requestUpdate();
+    void this.updateComplete.then(() => requestAnimationFrame(() => {
+      const review = document.querySelector<HTMLElement>(selector);
+      if (!review) return;
+      if (!review.hasAttribute("tabindex")) review.tabIndex = -1;
+      review.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      review.focus({ preventScroll: true });
+    }));
   }
 
   async #proposal(detail: { proposal: AssistantDisplayedProposal; action: "accept" | "dismiss" }) {
@@ -280,13 +319,25 @@ export class FormaCreativeAssistant extends FormaElement {
       window.clearTimeout(this.#taskTimer);
       queueMicrotask(() => { if (this.#open) void this.#load(); });
     }
-    return html`<forma-assistant-panel .open=${this.#open} .conversationScope=${this.#scope()} .context=${this.#context} .messages=${this.#messages} .proposals=${this.#proposals}
+    const projection = this.store.projection.get();
+    const documentId = surface.canvasId ? projection.documents[0]?.id ?? projection.documentId : projection.documentId;
+    const planning = Boolean(documentId && this.store.documentJobActive("structure_adaptive", documentId));
+    const chatting = Boolean(documentId && this.store.documentJobActive("chat", documentId));
+    const busyModes: AssistantInteractionMode[] = [...(planning ? ["plan-document" as const, "plan-board" as const] : []), ...(chatting ? ["creative-chat" as const] : [])];
+    const messages = this.#messages.map((message) => message.reviewMode
+      ? { ...message, reviewReady: !planning && Boolean(message.reviewMode === "plan-document"
+        ? this.store.adaptiveStructureFor(documentId)
+        : this.store.adaptiveSuggestionSetsFor(documentId).length) }
+      : message);
+    return html`<forma-assistant-panel .open=${this.#open} .conversationScope=${this.#scope()} .context=${this.#context} .messages=${messages} .proposals=${this.#proposals}
       .tasks=${this.#tasks} .models=${session.assistant.models ?? []} .modes=${interaction.modes}
+      .busyModes=${busyModes}
       .canReconcile=${false}
-      .pending=${this.#pending.size + this.#activeTasks.size} .readOnly=${Boolean(session.projectContext && !session.projectContext.permissions.includes("project.author"))}
+      .pending=${this.#pending.size + this.#activeTasks.size + Number(planning)} .readOnly=${Boolean(session.projectContext && !session.projectContext.permissions.includes("project.author"))}
       .guidanceOnly=${!(session.projectContext && !session.projectContext.permissions.includes("project.author")) && (session.assistant.phase !== "actions" || !surface.documentId)}
       @forma-assistant-toggle=${(event: CustomEvent<{ open: boolean }>) => { this.#open = event.detail.open; this.requestUpdate(); if (this.#open) void this.#load(); }}
       @forma-assistant-message=${(event: CustomEvent<{ message: string; mode?: Exclude<AssistantInteractionMode, "guidance">; model?: string; premiumApproval?: boolean }>) => { if (event.detail.mode) void this.#tool({ message: event.detail.message, mode: event.detail.mode }); else void this.#send(event.detail); }}
+      @forma-assistant-review=${(event: CustomEvent<{ mode: "plan-document" | "plan-board" }>) => { this.#review(event.detail.mode); }}
       @forma-assistant-proposal=${(event: CustomEvent<{ proposal: AssistantDisplayedProposal; action: "accept" | "dismiss" }>) => { void this.#proposal(event.detail); }}
       @forma-assistant-task=${(event: CustomEvent<{ task: AssistantDisplayedTask; action: "cancel" | "reconcile" }>) => { void this.#task(event.detail); }}></forma-assistant-panel>`;
   }

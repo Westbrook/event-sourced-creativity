@@ -13,7 +13,7 @@ const MIN_EPISODE_MS=1_500;
 const attentionRef=(element:HTMLElement|null)=>element?.dataset.attentionRef??(element?.dataset.outputId?`object:${element.dataset.outputId}`:element?.dataset.blockId?`block:${element.dataset.blockId}`:null);
 const contextFor=(target:Element|null)=>{
   const declared=target?.closest<HTMLElement>("[data-attention-context]")?.dataset.attentionContext;if(declared)return declared;
-  if(target?.closest(".comparison-modal"))return"comparison";if(target?.closest(".composer-dock,.block-editor,.block-composer"))return"writing-direction";
+  if(target?.closest(".comparison-modal"))return"comparison";if(target?.closest(".composer-dock,.chat-composer,.forma-assistant-composer,forma-ui-conversation-composer,.block-editor,.block-composer"))return"writing-direction";
   if(target?.closest(".output-column,.output-card,.library-output"))return"generation";if(target?.closest(".context-column,.context-block"))return"studio-context";if(target?.closest(".library-main"))return"library-browsing";return null;
 };
 const safeRef=(event:CreativeEvent)=>{

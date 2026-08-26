@@ -8,6 +8,12 @@ export const POWERPOINT_DOCUMENT_MIME="application/vnd.openxmlformats-officedocu
 const POWERPOINT_EMUS_PER_CANVAS_PIXEL=12_700;
 const POWERPOINT_SLIDE_WIDTH=PRESENTATION_CANVAS_WIDTH*POWERPOINT_EMUS_PER_CANVAS_PIXEL;
 const POWERPOINT_SLIDE_HEIGHT=PRESENTATION_CANVAS_HEIGHT*POWERPOINT_EMUS_PER_CANVAS_PIXEL;
+const MAX_POWERPOINT_SLIDES=2_000;
+const MAX_OFFICE_ARCHIVE_ENTRIES=8_192;
+const MAX_OFFICE_DOCUMENT_ENTRY_BYTES=16*1024*1024;
+const MAX_OFFICE_DOCUMENT_ARCHIVE_BYTES=128*1024*1024;
+const MAX_OFFICE_MEDIA_ENTRY_BYTES=24_000_000;
+const MAX_OFFICE_MEDIA_ARCHIVE_BYTES=96_000_000;
 
 const encoder=new TextEncoder();
 const XML='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
@@ -27,35 +33,62 @@ const override=(name:string,type:string)=>`<Override PartName="/${name}" Content
 const crcTable=Uint32Array.from({length:256},(_,value)=>{let crc=value;for(let bit=0;bit<8;bit+=1)crc=(crc&1)?0xEDB88320^(crc>>>1):crc>>>1;return crc>>>0;});
 const crc32=(bytes:Uint8Array)=>{let crc=0xFFFFFFFF;for(const byte of bytes)crc=crcTable[(crc^byte)&0xFF]!^(crc>>>8);return(crc^0xFFFFFFFF)>>>0;};
 
-/** Bounded, dependency-free ZIP STORE archives preserve authored parts and original media bytes. */
-export function createOfficeArchive(entries:Array<{name:string;content:string|Uint8Array}>,options:{media?:boolean}={}):Uint8Array{
-  if(!entries.length||entries.length>500)throw new Error("invalid_office_archive");
-  const maxEntryBytes=options.media?24_000_000:2_000_000,maxArchiveBytes=options.media?96_000_000:5_000_000,seen=new Set<string>();
-  const encoded=entries.map(({name,content})=>{
-    if(!name||name.startsWith("/")||name.includes("\\")||/\p{Cc}/u.test(name)||name.split("/").some((segment)=>!segment||segment==="."||segment==="..")||seen.has(name))throw new Error("invalid_office_archive_path");
-    seen.add(name);
-    const filename=encoder.encode(name),body=typeof content==="string"?encoder.encode(content):content;
-    if(filename.length>1024||body.length>maxEntryBytes)throw new Error("office_archive_entry_too_large");
-    return{filename,body,checksum:crc32(body)};
-  });
-  const localSize=encoded.reduce((total,item)=>total+30+item.filename.length+item.body.length,0);
-  const centralSize=encoded.reduce((total,item)=>total+46+item.filename.length,0);
-  const total=localSize+centralSize+22;if(total>maxArchiveBytes)throw new Error("office_archive_too_large");
-  const output=new Uint8Array(total),view=new DataView(output.buffer);let local=0,central=localSize;
-  for(const item of encoded){
-    const start=local;
-    view.setUint32(local,0x04034B50,true);view.setUint16(local+4,20,true);view.setUint16(local+6,0x0800,true);
-    view.setUint16(local+12,0x21,true);view.setUint32(local+14,item.checksum,true);view.setUint32(local+18,item.body.length,true);
-    view.setUint32(local+22,item.body.length,true);view.setUint16(local+26,item.filename.length,true);
-    output.set(item.filename,local+30);output.set(item.body,local+30+item.filename.length);local+=30+item.filename.length+item.body.length;
-    view.setUint32(central,0x02014B50,true);view.setUint16(central+4,20,true);view.setUint16(central+6,20,true);view.setUint16(central+8,0x0800,true);
-    view.setUint16(central+14,0x21,true);view.setUint32(central+16,item.checksum,true);view.setUint32(central+20,item.body.length,true);
-    view.setUint32(central+24,item.body.length,true);view.setUint16(central+28,item.filename.length,true);view.setUint32(central+42,start,true);
-    output.set(item.filename,central+46);central+=46+item.filename.length;
-  }
-  view.setUint32(central,0x06054B50,true);view.setUint16(central+8,encoded.length,true);view.setUint16(central+10,encoded.length,true);
-  view.setUint32(central+12,centralSize,true);view.setUint32(central+16,localSize,true);
+type OfficeArchiveEntry={name:string;content:string|Uint8Array};
+type EncodedOfficeArchiveEntry={filename:Uint8Array;body:Uint8Array;checksum:number};
+type OfficeArchiveState={encoded:EncodedOfficeArchiveEntry[];seen:Set<string>;maxEntryBytes:number;maxArchiveBytes:number;localSize:number;centralSize:number};
+type OfficeArchiveWriter={state:OfficeArchiveState;output:Uint8Array;view:DataView;local:number;central:number};
+
+function prepareOfficeArchive(entries:OfficeArchiveEntry[],options:{media?:boolean}):OfficeArchiveState{
+  if(!entries.length||entries.length>MAX_OFFICE_ARCHIVE_ENTRIES)throw new Error("invalid_office_archive");
+  return{encoded:[],seen:new Set<string>(),maxEntryBytes:options.media?MAX_OFFICE_MEDIA_ENTRY_BYTES:MAX_OFFICE_DOCUMENT_ENTRY_BYTES,maxArchiveBytes:options.media?MAX_OFFICE_MEDIA_ARCHIVE_BYTES:MAX_OFFICE_DOCUMENT_ARCHIVE_BYTES,localSize:0,centralSize:0};
+}
+
+function appendOfficeArchiveEntry(state:OfficeArchiveState,{name,content}:OfficeArchiveEntry){
+  if(!name||name.startsWith("/")||name.includes("\\")||/\p{Cc}/u.test(name)||name.split("/").some((segment)=>!segment||segment==="."||segment==="..")||state.seen.has(name))throw new Error("invalid_office_archive_path");
+  if((typeof content==="string"?content.length:content.byteLength)>state.maxEntryBytes)throw new Error("office_archive_entry_too_large");
+  const filename=encoder.encode(name),body=typeof content==="string"?encoder.encode(content):content;
+  if(filename.length>1024||body.byteLength>state.maxEntryBytes)throw new Error("office_archive_entry_too_large");
+  const localSize=state.localSize+30+filename.length+body.byteLength,centralSize=state.centralSize+46+filename.length;
+  if(localSize+centralSize+22>state.maxArchiveBytes)throw new Error("office_archive_too_large");
+  state.seen.add(name);
+  state.encoded.push({filename,body,checksum:crc32(body)});
+  state.localSize=localSize;
+  state.centralSize=centralSize;
+}
+
+function createOfficeArchiveWriter(state:OfficeArchiveState):OfficeArchiveWriter{
+  const output=new Uint8Array(state.localSize+state.centralSize+22);
+  return{state,output,view:new DataView(output.buffer),local:0,central:state.localSize};
+}
+
+function appendOfficeArchiveOutput(writer:OfficeArchiveWriter,item:EncodedOfficeArchiveEntry){
+  const{view,output}=writer,local=writer.local,central=writer.central;
+  view.setUint32(local,0x04034B50,true);view.setUint16(local+4,20,true);view.setUint16(local+6,0x0800,true);
+  view.setUint16(local+12,0x21,true);view.setUint32(local+14,item.checksum,true);view.setUint32(local+18,item.body.length,true);
+  view.setUint32(local+22,item.body.length,true);view.setUint16(local+26,item.filename.length,true);
+  output.set(item.filename,local+30);output.set(item.body,local+30+item.filename.length);
+  view.setUint32(central,0x02014B50,true);view.setUint16(central+4,20,true);view.setUint16(central+6,20,true);view.setUint16(central+8,0x0800,true);
+  view.setUint16(central+14,0x21,true);view.setUint32(central+16,item.checksum,true);view.setUint32(central+20,item.body.length,true);
+  view.setUint32(central+24,item.body.length,true);view.setUint16(central+28,item.filename.length,true);view.setUint32(central+42,local,true);
+  output.set(item.filename,central+46);
+  writer.local=local+30+item.filename.length+item.body.length;
+  writer.central=central+46+item.filename.length;
+}
+
+function finishOfficeArchive(writer:OfficeArchiveWriter):Uint8Array{
+  const{state,output,view,central}=writer;
+  view.setUint32(central,0x06054B50,true);view.setUint16(central+8,state.encoded.length,true);view.setUint16(central+10,state.encoded.length,true);
+  view.setUint32(central+12,state.centralSize,true);view.setUint32(central+16,state.localSize,true);
   return output;
+}
+
+/** Bounded, dependency-free ZIP STORE archives preserve authored parts and original media bytes. */
+export function createOfficeArchive(entries:OfficeArchiveEntry[],options:{media?:boolean}={}):Uint8Array{
+  const state=prepareOfficeArchive(entries,options);
+  for(const entry of entries)appendOfficeArchiveEntry(state,entry);
+  const writer=createOfficeArchiveWriter(state);
+  for(const entry of state.encoded)appendOfficeArchiveOutput(writer,entry);
+  return finishOfficeArchive(writer);
 }
 
 const coreProperties=(title:string)=>{
@@ -280,11 +313,12 @@ function addVisualShapes(shapes:string[],nextId:()=>number,slide:SlideVisualData
 }
 const themeXml=(accent:string,locale="en-US",fontFamily?:string)=>`${XML}<a:theme xmlns:a="${A}" name="Forma"><a:themeElements><a:clrScheme name="Forma"><a:dk1><a:sysClr val="windowText" lastClr="111827"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="273449"/></a:dk2><a:lt2><a:srgbClr val="F4F5F7"/></a:lt2><a:accent1><a:srgbClr val="${accent}"/></a:accent1>${["10B981","F59E0B","EF4444","8B5CF6","06B6D4"].map((shade,index)=>`<a:accent${index+2}><a:srgbClr val="${shade}"/></a:accent${index+2}>`).join("")}<a:hlink><a:srgbClr val="2563EB"/></a:hlink><a:folHlink><a:srgbClr val="7C3AED"/></a:folHlink></a:clrScheme><a:fontScheme name="Forma"><a:majorFont><a:latin typeface="${escapeXml(fontFamily??"Aptos Display")}"/><a:ea typeface="${/^ja(?:-|$)/i.test(locale)?"Yu Gothic":""}"/><a:cs typeface=""/></a:majorFont><a:minorFont><a:latin typeface="${escapeXml(fontFamily??"Aptos")}"/><a:ea typeface="${/^ja(?:-|$)/i.test(locale)?"Yu Gothic":""}"/><a:cs typeface=""/></a:minorFont></a:fontScheme><a:fmtScheme name="Forma"><a:fillStyleLst>${'<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'.repeat(3)}</a:fillStyleLst><a:lnStyleLst>${'<a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>'.repeat(3)}</a:lnStyleLst><a:effectStyleLst>${"<a:effectStyle><a:effectLst/></a:effectStyle>".repeat(3)}</a:effectStyleLst><a:bgFillStyleLst>${'<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'.repeat(3)}</a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>`;
 
-/** Emit audience-safe editable widescreen slides; presenter notes require explicit authorization. */
-export function createPowerPointDocument(items:DocumentArtifactDraftItem[],presentation:SlidePresentation,options:{title?:string;showFooterLabel?:boolean;language?:string;direction?:"ltr"|"rtl";includePresenterNotes?:boolean}&OfficeLocalization={}):Uint8Array{
-  if(!items.length||items.length>100)throw new Error("invalid_presentation_slide_count");
+type PowerPointDocumentOptions={title?:string;showFooterLabel?:boolean;language?:string;direction?:"ltr"|"rtl";includePresenterNotes?:boolean}&OfficeLocalization;
+export type PowerPointDocumentProgress={stage:"preparing"|"rendering"|"finalizing";completed:number;total:number};
+
+function preparePowerPointDocument(items:DocumentArtifactDraftItem[],presentation:SlidePresentation,options:PowerPointDocumentOptions):{entries:OfficeArchiveEntry[];appendSlide:(index:number)=>void}{
+  if(!items.length||items.length>MAX_POWERPOINT_SLIDES)throw new Error("invalid_presentation_slide_count");
   const includePresenterNotes=options.includePresenterNotes===true;
-  const audienceItems=items.map((item)=>presentationAudienceItem(item,{includePresenterNotes}));
   const requestedFont=String(presentation.fontFamily??"").trim();
   const localization:OfficeLocalization={translate:options.translate,number:options.number,...(/^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,69}$/u.test(requestedFont)?{fontFamily:requestedFont}:{})};
   const translated=(source:string)=>localization.translate?.(source)??source;
@@ -298,7 +332,7 @@ export function createPowerPointDocument(items:DocumentArtifactDraftItem[],prese
   const master=`${XML}<p:sldMaster xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"><p:cSld name="${escapeXml(translated("Forma master"))}"><p:spTree>${group}</p:spTree></p:cSld>${colorMap}<p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>`;
   const layout=`${XML}<p:sldLayout xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}" type="blank" preserve="1"><p:cSld name="${escapeXml(translated("Forma editable layout"))}"><p:spTree>${group}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>`;
   const notesMaster=`${XML}<p:notesMaster xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"><p:cSld><p:spTree>${group}</p:spTree></p:cSld>${colorMap}<p:notesStyle/></p:notesMaster>`;
-  const entries=[
+  const entries:OfficeArchiveEntry[]=[
     {name:"[Content_Types].xml",content:baseTypes(contentTypes)},{name:"_rels/.rels",content:rootRelationships("ppt/presentation.xml")},
     {name:"docProps/core.xml",content:coreProperties(title)},{name:"docProps/app.xml",content:appProperties(true)},
     {name:"ppt/presentation.xml",content:deck},{name:"ppt/_rels/presentation.xml.rels",content:relationships(deckRels)},
@@ -307,7 +341,8 @@ export function createPowerPointDocument(items:DocumentArtifactDraftItem[],prese
     {name:"ppt/notesMasters/notesMaster1.xml",content:notesMaster},{name:"ppt/notesMasters/_rels/notesMaster1.xml.rels",content:relationships([relationship("rId1","theme","../theme/theme1.xml")])},
     {name:"ppt/theme/theme1.xml",content:themeXml(accent,locale,localization.fontFamily)},
   ];
-  audienceItems.forEach((item,index)=>{
+  const appendSlide=(index:number)=>{
+    const item=presentationAudienceItem(items[index]!,{includePresenterNotes});
     const slide=item.slide,bulletLines=slide?.bullets?.map((line)=>`• ${line}`)??[],layoutName=String(slide?.layout??"split"),kind=String(slide?.visual?.kind??"");
     const sourceEntries=(slide?.citations??[]).map((citation)=>({visible:[publicSourceLabel(citation.label,translated("Authored source")),localizedSourceAnchor(publicSourceLabel(citation.anchor),localization.translate,localization.number)].filter(Boolean).join(" · "),excerpt:""})).filter((citation)=>citation.visible);
     const quoteCitation=slide?.quote?.citation?publicSourceLabel(slide.quote.citation,translated("Authored source")):"";
@@ -365,6 +400,51 @@ export function createPowerPointDocument(items:DocumentArtifactDraftItem[],prese
     }
     const notes=`${XML}<p:notes xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"><p:cSld><p:spTree>${group}<p:sp><p:nvSpPr><p:cNvPr id="2" name="${escapeXml(translated("Slide image"))}"/><p:cNvSpPr/><p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp><p:sp><p:nvSpPr><p:cNvPr id="3" name="${escapeXml(translated("Editable speaker notes"))}"/><p:cNvSpPr/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>${noteLines.map((line)=>`<a:p><a:pPr${rtl?' rtl="1" algn="r"':""}/><a:r><a:rPr lang="${locale}"/><a:t>${escapeXml(line)}</a:t></a:r></a:p>`).join("")||"<a:p/>"}</p:txBody></p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>`;
     entries.push({name:`ppt/slides/slide${index+1}.xml`,content:document},{name:`ppt/slides/_rels/slide${index+1}.xml.rels`,content:relationships([relationship("rId1","slideLayout","../slideLayouts/slideLayout1.xml"),relationship("rId2","notesSlide",`../notesSlides/notesSlide${index+1}.xml`)])},{name:`ppt/notesSlides/notesSlide${index+1}.xml`,content:notes},{name:`ppt/notesSlides/_rels/notesSlide${index+1}.xml.rels`,content:relationships([relationship("rId1","notesMaster","../notesMasters/notesMaster1.xml"),relationship("rId2","slide",`../slides/slide${index+1}.xml`)])});
-  });
-  return createOfficeArchive(entries);
+  };
+  return{entries,appendSlide};
+}
+
+/** Emit audience-safe editable widescreen slides; presenter notes require explicit authorization. */
+export function createPowerPointDocument(items:DocumentArtifactDraftItem[],presentation:SlidePresentation,options:PowerPointDocumentOptions={}):Uint8Array{
+  const archive=preparePowerPointDocument(items,presentation,options);
+  for(let index=0;index<items.length;index+=1)archive.appendSlide(index);
+  return createOfficeArchive(archive.entries);
+}
+
+/** Generate large editable presentations cooperatively, reporting progress and respecting cancellation. */
+export async function createPowerPointDocumentAsync(items:DocumentArtifactDraftItem[],presentation:SlidePresentation,options:PowerPointDocumentOptions&{onProgress?:(progress:PowerPointDocumentProgress)=>void;signal?:AbortSignal}={}):Promise<Uint8Array>{
+  const{onProgress,signal,...documentOptions}=options;
+  signal?.throwIfAborted();
+  const archive=preparePowerPointDocument(items,presentation,documentOptions);
+  let lastYield=Date.now();
+  const checkpoint=async(force=false)=>{
+    if(!force&&Date.now()-lastYield<12)return;
+    await new Promise<void>((resolve)=>setTimeout(resolve,0));
+    signal?.throwIfAborted();
+    lastYield=Date.now();
+  };
+  onProgress?.({stage:"preparing",completed:0,total:items.length});
+  signal?.throwIfAborted();
+  await checkpoint(true);
+  for(let index=0;index<items.length;index+=1){
+    archive.appendSlide(index);
+    onProgress?.({stage:"rendering",completed:index+1,total:items.length});
+    signal?.throwIfAborted();
+    if(index%4===3)await checkpoint();
+  }
+  onProgress?.({stage:"finalizing",completed:items.length,total:items.length});
+  signal?.throwIfAborted();
+  await checkpoint(true);
+  const state=prepareOfficeArchive(archive.entries,{});
+  for(let index=0;index<archive.entries.length;index+=1){
+    appendOfficeArchiveEntry(state,archive.entries[index]!);
+    if(index%16===15)await checkpoint();
+  }
+  const writer=createOfficeArchiveWriter(state);
+  for(let index=0;index<state.encoded.length;index+=1){
+    appendOfficeArchiveOutput(writer,state.encoded[index]!);
+    if(index%16===15)await checkpoint();
+  }
+  signal?.throwIfAborted();
+  return finishOfficeArchive(writer);
 }

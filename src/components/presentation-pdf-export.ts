@@ -15,16 +15,33 @@ import type { PresentationSlide } from "./presentation-slide";
 const SVG_NAMESPACE="http://www.w3.org/2000/svg";
 const HTML_NAMESPACE="http://www.w3.org/1999/xhtml";
 const EXPORT_SCALE=2;
+const MAX_CAPTURE_FIT_PASSES=10;
+const MIN_CAPTURE_CONTENT_ZOOM=.3;
+const MAX_CACHED_SLIDE_IMAGES=24;
 const fontStylesheetCache=new Map<string,Promise<string>>();
 const fontResourceCache=new Map<string,Promise<string>>();
 const PRESENTATION_PDF_HIDDEN_SELECTOR="script,style,template,[hidden],[inert],[aria-hidden=\"true\"],[data-speaker-notes],[data-presentation-speaker-notes],.presentation-speaker-notes,.presentation-slide-speaker-notes";
 const PRESENTATION_PDF_HEADING_SELECTOR="h1,h2,h3,h4,h5,h6";
 const PRESENTATION_PDF_CHART_ROW_SELECTOR=".presentation-slide__chart-row,[data-presentation-chart-row]";
+export type PresentationPdfProgress={stage:"preparing"|"rendering"|"finalizing";completed:number;total:number};
+export type PresentationPdfRenderOptions=PresentationPdfOptions&{onProgress?:(progress:PresentationPdfProgress)=>void;signal?:AbortSignal};
 /** A tagged PDF must never claim evidence that its corresponding visible slide clips. */
 export const presentationPdfVisualContentFits=(host:Pick<HTMLElement,"querySelectorAll">)=>{
   const surfaces=Array.from(host.querySelectorAll<HTMLElement>(PRESENTATION_VISUAL_FIT_SELECTOR));
   return surfaces.length>0&&surfaces.every((surface)=>surface.clientWidth>0&&surface.clientHeight>0
     &&surface.scrollWidth<=surface.clientWidth+1&&surface.scrollHeight<=surface.clientHeight+1);
+};
+
+const throwIfExportCanceled=(signal?:AbortSignal)=>{
+  if(!signal?.aborted)return;
+  if(signal.reason instanceof DOMException&&signal.reason.name==="AbortError")throw signal.reason;
+  throw new DOMException("The presentation export was canceled.","AbortError");
+};
+
+const reportProgress=(options:PresentationPdfRenderOptions,stage:PresentationPdfProgress["stage"],completed:number,total:number)=>{
+  throwIfExportCanceled(options.signal);
+  options.onProgress?.({stage,completed,total});
+  throwIfExportCanceled(options.signal);
 };
 
 const semanticText=(element:Element)=>String((element as HTMLElement).innerText??element.textContent??"").replace(/\s+/gu," ").trim();
@@ -283,10 +300,12 @@ const documentStyles=async()=>{
   return`${await inlineLoadedFonts(imports)}\n${rules}`;
 };
 
-const waitForImages=async(root:HTMLElement)=>{
+const waitForImages=async(root:HTMLElement,signal?:AbortSignal)=>{
   await Promise.all(Array.from(root.querySelectorAll("img")).map(async(image)=>{
+    throwIfExportCanceled(signal);
     if(image.complete&&image.naturalWidth===0)return;
     try{await image.decode();}catch{/* Preserve the same broken-image state visible in the application. */}
+    throwIfExportCanceled(signal);
   }));
 };
 
@@ -297,16 +316,31 @@ const dataUrl=async(blob:Blob)=>await new Promise<string>((resolve,reject)=>{
   reader.readAsDataURL(blob);
 });
 
-const inlineImages=async(original:HTMLElement,clone:HTMLElement)=>{
+const inlineImages=async(original:HTMLElement,clone:HTMLElement,cache:Map<string,Promise<string>>,signal?:AbortSignal)=>{
   const source=Array.from(original.querySelectorAll("img"));
   const copies=Array.from(clone.querySelectorAll("img"));
   await Promise.all(source.map(async(image,index)=>{
+    throwIfExportCanceled(signal);
     const copied=copies[index],url=image.currentSrc||image.src;
     if(!copied||!url||url.startsWith("data:"))return;
-    const response=await fetch(url,{credentials:"same-origin"});
-    if(!response.ok)throw new Error(`The slide image could not be prepared (${response.status}).`);
+    let prepared=cache.get(url);
+    if(!prepared){
+      prepared=fetch(url,{credentials:"same-origin",...signal?{signal}:{}}).then(async(response)=>{
+        if(!response.ok)throw new Error(`The slide image could not be prepared (${response.status}).`);
+        return dataUrl(await response.blob());
+      });
+      cache.set(url,prepared);
+      if(cache.size>MAX_CACHED_SLIDE_IMAGES){
+        const oldest=cache.keys().next().value;
+        if(oldest!==undefined)cache.delete(oldest);
+      }
+    }else{
+      cache.delete(url);
+      cache.set(url,prepared);
+    }
     copied.removeAttribute("srcset");
-    copied.src=await dataUrl(await response.blob());
+    copied.src=await prepared;
+    throwIfExportCanceled(signal);
   }));
 };
 
@@ -318,7 +352,8 @@ const rootVariables=(target:HTMLElement)=>{
   }
 };
 
-const svgImage=async(host:PresentationSlide,css:string)=>{
+const svgImage=async(host:PresentationSlide,css:string,imageCache:Map<string,Promise<string>>,signal?:AbortSignal)=>{
+  throwIfExportCanceled(signal);
   const svg=document.createElementNS(SVG_NAMESPACE,"svg");
   svg.setAttribute("xmlns",SVG_NAMESPACE);
   svg.setAttribute("width",String(PRESENTATION_PDF_PAGE_WIDTH));
@@ -359,7 +394,7 @@ const svgImage=async(host:PresentationSlide,css:string)=>{
       copiedSlide.style.setProperty(property,computed.getPropertyValue(property));
     }
   }
-  await inlineImages(host,clone);
+  await inlineImages(host,clone,imageCache,signal);
   wrapper.append(clone);
   foreignObject.append(wrapper);
   svg.append(foreignObject);
@@ -371,28 +406,129 @@ const svgImage=async(host:PresentationSlide,css:string)=>{
   // a self-contained data URL keeps every captured pixel origin-clean.
   image.src=`data:image/svg+xml;charset=utf-8,${encodeURIComponent(serialized)}`;
   await image.decode();
+  throwIfExportCanceled(signal);
   return image;
 };
 
-const compressedRgb=async(canvas:HTMLCanvasElement)=>{
+const compressedRgb=async(canvas:HTMLCanvasElement,signal?:AbortSignal)=>{
+  throwIfExportCanceled(signal);
   const context=canvas.getContext("2d");
   if(!context)throw new Error("The slide capture surface is unavailable.");
   const rgba=context.getImageData(0,0,canvas.width,canvas.height).data;
   const rgb=new Uint8Array(canvas.width*canvas.height*3);
   for(let source=0,target=0;source<rgba.length;source+=4,target+=3){
+    if(source%1_048_576===0)throwIfExportCanceled(signal);
     rgb[target]=rgba[source]!;
     rgb[target+1]=rgba[source+1]!;
     rgb[target+2]=rgba[source+2]!;
   }
-  const stream=new Blob([rgb]).stream().pipeThrough(new CompressionStream("deflate"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  const stream=new Blob([rgb]).stream().pipeThrough(new CompressionStream("deflate"),signal?{signal}:undefined);
+  const compressed=new Uint8Array(await new Response(stream).arrayBuffer());
+  throwIfExportCanceled(signal);
+  return compressed;
 };
 
-const nextFrame=()=>new Promise<void>((resolve)=>requestAnimationFrame(()=>resolve()));
+const nextFrame=(signal?:AbortSignal)=>new Promise<void>((resolve,reject)=>{
+  if(signal?.aborted){
+    try{throwIfExportCanceled(signal);}catch(error){reject(error);}
+    return;
+  }
+  let frame=0;
+  const finish=()=>{
+    if(frame&&typeof cancelAnimationFrame==="function")cancelAnimationFrame(frame);
+    clearTimeout(timer);
+    signal?.removeEventListener("abort",cancel);
+    resolve();
+  };
+  const cancel=()=>{
+    if(frame&&typeof cancelAnimationFrame==="function")cancelAnimationFrame(frame);
+    clearTimeout(timer);
+    signal?.removeEventListener("abort",cancel);
+    try{throwIfExportCanceled(signal);}catch(error){reject(error);}
+  };
+  if(typeof requestAnimationFrame==="function")frame=requestAnimationFrame(finish);
+  // requestAnimationFrame is paused in background tabs; downloads must keep preparing.
+  const timer=setTimeout(finish,frame?40:0);
+  signal?.addEventListener("abort",cancel,{once:true});
+});
 
-export async function renderPresentationPdf(items:DocumentArtifactDraftItem[],presentation:SlidePresentation,options:PresentationPdfOptions={}):Promise<PresentationPdfResult>{
+const protectedSlideSurfaces=(host:Pick<HTMLElement,"querySelectorAll">)=>
+  Array.from(host.querySelectorAll<HTMLElement>(PRESENTATION_VISUAL_FIT_SELECTOR));
+
+const protectedSurfaceOverflows=(surface:HTMLElement)=>surface.clientWidth<=0||surface.clientHeight<=0
+  ||surface.scrollWidth>surface.clientWidth+1||surface.scrollHeight>surface.clientHeight+1;
+
+const adaptiveContentTargets=(host:HTMLElement,surfaces:HTMLElement[])=>{
+  const artboard=host.querySelector<HTMLElement>(".presentation-slide");
+  const body=host.querySelector<HTMLElement>(".presentation-slide-body");
+  const targets=new Map<HTMLElement,number>();
+
+  for(const surface of surfaces){
+    if(surface.clientWidth<=0||surface.clientHeight<=0)continue;
+    const ratio=Math.min(surface.clientWidth/Math.max(surface.scrollWidth,1),surface.clientHeight/Math.max(surface.scrollHeight,1));
+    const candidates=surface===artboard||surface===body
+      ?Array.from(body?.children??[]).filter((child):child is HTMLElement=>child.nodeType===1)
+      :surface.matches(".presentation-slide__footnotes")
+        ?[surface.querySelector<HTMLElement>("ol")??surface]
+        :[surface];
+    for(const candidate of candidates){
+      if(candidate===artboard||candidate===body)continue;
+      targets.set(candidate,Math.min(targets.get(candidate)??1,ratio));
+    }
+  }
+
+  const candidates=Array.from(targets);
+  return candidates.filter(([target])=>!candidates.some(([nested])=>nested!==target&&target.contains(nested)));
+};
+
+/** Reflow dense approved evidence into the canonical artboard without dropping or clipping it. */
+export async function fitPresentationPdfVisualContent(host:HTMLElement,signal?:AbortSignal):Promise<void>{
+  throwIfExportCanceled(signal);
+  if(presentationPdfVisualContentFits(host))return;
+
+  const artboard=host.querySelector<HTMLElement>(".presentation-slide");
+  if(!artboard)throw new Error("Protected slide content cannot be exported without visible clipping.");
+
+  artboard.classList.remove("presentation-slide--density-comfortable","presentation-slide--density-compact");
+  artboard.classList.add("presentation-slide--density-dense");
+  artboard.setAttribute("data-layout-density","dense");
+
+  for(const table of Array.from(host.querySelectorAll<HTMLElement>(".presentation-slide__table,.presentation-slide__matrix"))){
+    table.style.setProperty("width","100%","important");
+    table.style.setProperty("min-width","0","important");
+    table.style.setProperty("table-layout","fixed");
+    for(const cell of Array.from(table.querySelectorAll<HTMLElement>("caption,th,td"))){
+      cell.style.setProperty("overflow-wrap","anywhere");
+      cell.style.setProperty("word-break","break-word");
+    }
+  }
+
+  for(let pass=0;pass<MAX_CAPTURE_FIT_PASSES;pass+=1){
+    await nextFrame(signal);
+    throwIfExportCanceled(signal);
+    const surfaces=protectedSlideSurfaces(host);
+    if(!surfaces.length||surfaces.some((surface)=>surface.clientWidth<=0||surface.clientHeight<=0))break;
+    const overflowing=surfaces.filter(protectedSurfaceOverflows);
+    if(!overflowing.length)return;
+
+    let adjusted=false;
+    for(const[target,ratio]of adaptiveContentTargets(host,overflowing)){
+      const existing=Number.parseFloat(target.style.getPropertyValue("zoom"))||1;
+      const next=Math.max(MIN_CAPTURE_CONTENT_ZOOM,Math.min(existing-.025,existing*ratio*.97));
+      if(next>=existing)continue;
+      target.style.setProperty("zoom",String(Number(next.toFixed(4))));
+      adjusted=true;
+    }
+    if(!adjusted)break;
+  }
+
+  if(!presentationPdfVisualContentFits(host))throw new Error("Protected slide content cannot be exported without visible clipping.");
+}
+
+export async function renderPresentationPdf(items:DocumentArtifactDraftItem[],presentation:SlidePresentation,options:PresentationPdfRenderOptions={}):Promise<PresentationPdfResult>{
   if(!items.length)throw new TypeError("At least one presentation slide is required.");
   if(typeof CompressionStream==="undefined")throw new Error("This browser does not support lossless slide capture.");
+  reportProgress(options,"preparing",0,items.length);
   const audienceItems=items.map((item)=>presentationAudienceItem(item));
 
   const stage=document.createElement("forma-ui-locale");
@@ -402,12 +538,18 @@ export async function renderPresentationPdf(items:DocumentArtifactDraftItem[],pr
   stage.style.cssText=`position:fixed;left:-${PRESENTATION_PDF_PAGE_WIDTH*4}px;top:0;width:${PRESENTATION_PDF_PAGE_WIDTH}px;height:${PRESENTATION_PDF_PAGE_HEIGHT}px;overflow:hidden;pointer-events:none;z-index:-1;`;
   document.body.append(stage);
 
+  let canvas:HTMLCanvasElement|undefined;
   try{
+    await nextFrame(options.signal);
     await document.fonts.ready;
+    throwIfExportCanceled(options.signal);
     let css="",fontSignature="";
     const pages:PresentationPdfRenderedPage[]=[];
+    const imageCache=new Map<string,Promise<string>>();
+    let context:CanvasRenderingContext2D|null=null;
 
     for(let index=0;index<audienceItems.length;index+=1){
+      throwIfExportCanceled(options.signal);
       const host=document.createElement("forma-presentation-slide") as PresentationSlide;
       host.style.cssText=`display:block;width:${PRESENTATION_PDF_PAGE_WIDTH}px;height:${PRESENTATION_PDF_PAGE_HEIGHT}px;--presentation-slide-scale:1;`;
       host.item=audienceItems[index]!;
@@ -419,28 +561,35 @@ export async function renderPresentationPdf(items:DocumentArtifactDraftItem[],pr
       stage.replaceChildren(host);
 
       await host.updateComplete;
-      await waitForImages(host);
-      await nextFrame();
+      throwIfExportCanceled(options.signal);
+      await waitForImages(host,options.signal);
+      await nextFrame(options.signal);
       await document.fonts.ready;
-      if(!presentationPdfVisualContentFits(host))throw new Error("Protected slide content cannot be exported without visible clipping.");
+      throwIfExportCanceled(options.signal);
+      await fitPresentationPdfVisualContent(host,options.signal);
       const loadedFonts=Array.from(document.fonts).filter((face)=>face.status==="loaded").map((face)=>`${face.family}:${face.style}:${face.weight}:${face.unicodeRange}`).join("|");
       if(!css||loadedFonts!==fontSignature){
         css=await documentStyles();
         fontSignature=loadedFonts;
       }
 
-      const canvas=document.createElement("canvas");
-      canvas.width=PRESENTATION_PDF_PAGE_WIDTH*EXPORT_SCALE;
-      canvas.height=PRESENTATION_PDF_PAGE_HEIGHT*EXPORT_SCALE;
-      const context=canvas.getContext("2d");
+      throwIfExportCanceled(options.signal);
+      if(!canvas){
+        canvas=document.createElement("canvas");
+        canvas.width=PRESENTATION_PDF_PAGE_WIDTH*EXPORT_SCALE;
+        canvas.height=PRESENTATION_PDF_PAGE_HEIGHT*EXPORT_SCALE;
+        context=canvas.getContext("2d");
+      }
       if(!context)throw new Error("The slide capture surface is unavailable.");
-      const image=await svgImage(host,css);
+      context.clearRect(0,0,canvas.width,canvas.height);
+      const image=await svgImage(host,css,imageCache,options.signal);
       context.drawImage(image,0,0,canvas.width,canvas.height);
+      image.src="";
 
       pages.push({
         width:canvas.width,
         height:canvas.height,
-        bytes:await compressedRgb(canvas),
+        bytes:await compressedRgb(canvas,options.signal),
         text:host.innerText,
         heading:host.querySelector<HTMLElement>("h1,h2,h3,h4,h5,h6")?.innerText||audienceItems[index]!.title,
         bullets:Array.from(host.querySelectorAll<HTMLElement>("section > ul > li,section > ol > li")).map((item)=>item.innerText.trim()).filter(Boolean),
@@ -448,10 +597,17 @@ export async function renderPresentationPdf(items:DocumentArtifactDraftItem[],pr
         language:options.language||document.documentElement.lang||"en",
         direction:options.direction||(getComputedStyle(host).direction==="rtl"?"rtl":"ltr"),
       });
+      reportProgress(options,"rendering",index+1,audienceItems.length);
+      await nextFrame(options.signal);
     }
 
-    return createPresentationPdfFromRenderedSlides(pages,{...options,language:options.language||document.documentElement.lang||"en"});
+    reportProgress(options,"finalizing",pages.length,audienceItems.length);
+    await nextFrame(options.signal);
+    const result=createPresentationPdfFromRenderedSlides(pages,{...options,language:options.language||document.documentElement.lang||"en"});
+    throwIfExportCanceled(options.signal);
+    return result;
   }finally{
+    if(canvas){canvas.width=0;canvas.height=0;}
     stage.remove();
   }
 }

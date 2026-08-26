@@ -545,10 +545,22 @@ function requestsProtectedAudioImitation(value:string){
     if(protectedAudioImitation.test(passage)||protectedNamedWork.test(passage))return true;
     const named=passage.match(/\b(?:in\s+the\s+style\s+of|sound(?:s|ing)?\s+(?:(?:exactly|just)\s+)?like|imitat(?:e|es|ing)|clon(?:e|es|ing)|impersonat(?:e|es|ing)|(?:music|score|song|theme|melody|voice)\s+(?:by|from))\s+([^.;\n]+)/i);
     if(named&&/^\p{Lu}[\p{L}'’.-]+(?:\s+\p{Lu}[\p{L}'’.-]+){0,4}(?:\b|$)/u.test(named[1]!.trim()))return true;
-    const namedVoice=passage.match(/\b(?:voice|vocals?|speech|narration)\s+(?:of|by|from)\s+([^.;\n]+)/iu)
-      ??passage.match(/\b(?:narrat(?:e|es|ing)|read(?:s|ing)?|speak(?:s|ing)?|deliver(?:ed|ing)?)\s+(?:(?:exactly|just)\s+)?(?:like|as|in\s+the\s+voice\s+of)\s+([^.;\n]+)/iu);
-    if(namedVoice&&/^\p{Lu}[\p{L}'’.-]+(?:\s+\p{Lu}[\p{L}'’.-]+){1,4}(?:\b|$)/u.test(namedVoice[1]!.trim()))return true;
-    if(/\b\p{Lu}[\p{L}.-]+(?:\s+\p{Lu}[\p{L}.-]+){1,4}[’']s\s+(?:voice|vocals?|narration|delivery)\b/u.test(passage))return true;
+    const personVoice=(candidate:string)=>{
+      const trimmed=candidate.trim();
+      const articleLed=/^(?:an?|the)\s+/i.test(trimmed);
+      const value=trimmed.replace(/^(?:an?|the)\s+/i,"").replace(/^(?:actor|singer|artist|performer|celebrity)\s+/i,"").replace(/\s+(?:exactly|precisely|perfectly|please|instead)\b.*$/i,"");
+      const words=value.match(/^[\p{L}][\p{L}'’.-]*(?:\s+[\p{L}][\p{L}'’.-]*){0,4}/u)?.[0]?.split(/\s+/u)??[];
+      if(!words.length||words.some((word)=>/^(?:a|an|the|and|or|calm|warm|friendly|natural|caring|gentle|confident|clear|soft|deep|dramatic|original|professional|human|person|friend|parent|teacher|narrator|storyteller|character|radio|podcast|experienced|guide|trusted|journalist|patient|instructor|real|estate|agent|excited|child|bedtime|story|documentary|host|news|anchor|sports|commentator|cinematic|nature|upbeat|conversational|slow|reassuring|joyful|energetic|quiet|thoughtful|wise|mentor)$/i.test(word)))return false;
+      if(articleLed&&!words.some((word)=>/^\p{Lu}/u.test(word))&&/[\p{Lu}\p{Ll}]/u.test(value))return false;
+      return words.length>1||/^\p{Lu}/u.test(words[0]!)||!/[\p{Lu}\p{Ll}]/u.test(words[0]!);
+    };
+    const namedVoice=passage.match(/\b(?:voice|vocals?|speech|narration|voice[- ]?over)\s+(?:of|by|from|like|matching|should\s+be)\s+([^.;\n]+)/iu)
+      ??passage.match(/\b(?:narrat(?:e|es|ing)|read(?:s|ing)?|speak(?:s|ing)?|deliver(?:ed|ing)?|sound(?:s|ing)?|imitat(?:e|es|ing)|impersonat(?:e|es|ing)|clon(?:e|es|ing))\s+(?:(?:exactly|just)\s+)?(?:like|as|in\s+the\s+voice\s+of)\s+([^.;\n]+)/iu)
+      ??passage.match(/\b(?:speak|read|narrate|deliver)\s+in\s+(?:an?\s+)?([^.;\n]+?)\s+voice\b/iu)
+      ??passage.match(/\b(?:narrate|read|speak)\s+in\s+(?:an?\s+)?([^.;\n]+?)\s+style\b/iu)
+      ??passage.match(/\b(?:imitate|impersonate|clone|mimic)\s+([^.;\n]+)/iu)
+      ??passage.match(/\b(?:use|using|adopt|match|with|in)?\s*(?:an?\s+)?([^.;\n]+?)(?:[-\s]style\s+(?:voice|voice[- ]?over|vocals?|narration|delivery)|[’']s\s+(?:voice|vocals?|narration|delivery))\b/iu);
+    if(namedVoice&&personVoice(namedVoice[1]!))return true;
     const recognizable=passage.match(/\b(?:recognizable|famous|well[- ]known|signature)\s+(?:the\s+)?([^.;\n]+)/i);
     if(recognizable&&/^\p{Lu}[\p{L}'’.-]+(?:\s+\p{Lu}[\p{L}'’.-]+){1,5}(?:\b|$)/u.test(recognizable[1]!.trim()))return true;
     const recreated=passage.match(/\b(?:recreat(?:e|es|ing)|reproduc(?:e|es|ing)|copy|copies)\s+(?:the\s+)?([^.;\n]+)/i);
@@ -573,17 +585,25 @@ export function audioAuthoringConflict(snapshot: Record<string, unknown>, profil
   const intendedRoles=audioContexts(snapshot,"all").map((context)=>context.role);
   const nonMusicalGoal=profile?.goal==="narration"||profile?.goal==="sound_effects"||profile?.goal==="video_sound_effects";
   const nonMusicalOnly=profile?.goal?nonMusicalGoal:intendedRoles.length>0&&intendedRoles.every((role)=>role==="soundscape"||role==="sound_design"||role==="voice");
-  const musicOnlyProhibition=(direction:string)=>/\b(?:no|without|avoid|exclude|excluding|forbid(?:den)?|prohibit(?:ed)?)\s+(?:(?:all|any|background|generated|recorded)\s+){0,3}(?:music|musical\s+score|score|soundtrack|songs?)\b|\b(?:music|soundtrack)[-\s]+free\b/i.test(direction)
-    &&!/\b(?:no|without|forbid(?:den)?|prohibit(?:ed)?|exclude|excluding)\s+(?:(?:all|any|audible|background|generated|recorded)\s+){0,3}(?:audio|sound(?:s|\s+effects?)?)\b|\b(?:must|requires?|required|remain|keep)\b[^.;\n]{0,65}\b(?:silent|silence)\b/i.test(direction);
-  const soundEffectsOnlyProhibition=(direction:string)=>/\b(?:no|without|avoid|exclude|excluding|forbid(?:den)?|prohibit(?:ed)?)\s+(?:(?:all|any|additional|generated)\s+){0,3}(?:sound\s+effects?|foley|sfx)\b/i.test(direction)
-    &&!/\b(?:no|without|avoid|exclude|forbid(?:den)?|prohibit(?:ed)?)\s+(?:(?:all|any|audible)\s+){0,3}audio\b/i.test(direction);
-  const speechOnlyProhibition=(direction:string)=>/\b(?:no|without|avoid|exclude|excluding|forbid(?:den)?|prohibit(?:ed)?)\s+(?:(?:all|any|spoken|generated)\s+){0,3}(?:speech|dialogue|narration|voices?)\b/i.test(direction);
-  const needsSoundEffects=profile?.goal==="sound_effects"||profile?.goal==="video_sound_effects"||profile?.goal==="mixed_audio";
-  const needsSpeech=profile?.goal==="narration"||profile?.goal==="mixed_audio";
+  const needsMusic=profile?.goal?["music","timed_music","video_music","mixed_audio"].includes(profile.goal):!nonMusicalOnly;
+  const needsSoundEffects=profile?.goal?profile.goal==="sound_effects"||profile.goal==="video_sound_effects"||profile.goal==="mixed_audio":true;
+  const needsSpeech=profile?.goal?profile.goal==="narration"||profile.goal==="mixed_audio":true;
   const violatesAudioDirection=(direction:string)=>{
-    if(profile?.goal&&soundEffectsOnlyProhibition(direction))return needsSoundEffects;
-    if(profile?.goal&&speechOnlyProhibition(direction)&&needsSpeech)return true;
-    return absoluteAudioProhibition.test(direction)&&!(nonMusicalOnly&&musicOnlyProhibition(direction));
+    let recognizedProhibition=false;
+    for(const match of direction.matchAll(/(?=\b(?:no|without|avoid|exclude|excluding|forbid(?:den)?|prohibit(?:ed)?|never\s+(?:include|add|use|play|generate))\s+([^.;\n]{1,240}))/giu)){
+      const clause=match[1]!.split(/\b(?:but|however|except|instead|although|yet|because|while)\b/iu)[0]!;
+      const all=/\baudio\b|\bsounds?\b(?!\s+effects?\b)/iu.test(clause);
+      const music=/\b(?:music|musical\s+score|score|soundtrack|songs?)\b/iu.test(clause);
+      const effects=/\b(?:sound\s+effects?|foley|sfx)\b/iu.test(clause);
+      const speech=/\b(?:speech|dialogue|narration|voice(?:s|[- ]?overs?)?|vocals?|spoken\s+words?|talk(?:ing)?)\b/iu.test(clause);
+      if(all||music&&needsMusic||effects&&needsSoundEffects||speech&&needsSpeech)return true;
+      recognizedProhibition||=music||effects||speech;
+    }
+    if(/\b(?:speech|dialogue|narration|voice(?:s|[- ]?overs?)?|vocals?)[-\s]+free\b/iu.test(direction))return needsSpeech;
+    if(/\b(?:sound\s+effects?|foley|sfx)[-\s]+free\b/iu.test(direction))return needsSoundEffects;
+    if(/\b(?:music|soundtrack)[-\s]+free\b/iu.test(direction))return needsMusic;
+    if(recognizedProhibition)return false;
+    return absoluteAudioProhibition.test(direction);
   };
 
   if([guidance?.tone,guidance?.audience].some((value)=>requestsProtectedAudioImitation(text(value)))){

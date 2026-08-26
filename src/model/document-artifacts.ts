@@ -538,7 +538,23 @@ export function documentArtifactValidationIssues(kind:DocumentArtifactKind,outpu
   }
   for(const groupId of expectedGroups)if(!assignedGroups.includes(groupId))add("missing_context_group","items.context_group_ids",`Combined Context ${groupId} was not assigned to any item.`);
   for(const groupId of assignedGroups)if(!knownGroups.has(groupId))add("unknown_context_group","items.context_group_ids",`Unknown Combined Context ${groupId} was assigned.`);
-  if(kind!=="slides")return issues;
+  if(kind!=="slides"){
+    if(!output.title.trim())add("missing_title","title","The artifact needs a meaningful audience-facing title.");
+    const previousBodies:string[]=[];
+    output.items.forEach((item,index)=>{
+      if(!item.body.trim()&&!item.notes.trim()&&!item.image_prompt.trim()){
+        add("missing_item_content",`items.${index}`,"Each artifact item needs meaningful authored content or direction.");
+      }
+      const body=item.body.trim();
+      if(body.length>=24&&copyTokens(body).length>=4){
+        if(previousBodies.some((previous)=>slideCopyIsNearDuplicate(previous,body))){
+          add("duplicate_artifact_content",`items.${index}.body`,"This artifact item repeats a substantive earlier narrative movement.");
+        }
+        previousBodies.push(body);
+      }
+    });
+    return issues;
+  }
   if(!output.presentation?.footerLabel?.trim())add("missing_footer_label","presentation.footer_label","The deck needs a document-derived footer label.");
   for(const groupId of expectedGroups){const positions=output.items.flatMap((item,index)=>(item.context_group_ids??[]).includes(groupId)?[index]:[]);const reopened=positions.find((position,index)=>index>0&&position!==positions[index-1]!+1);if(reopened!==undefined)add("split_context_group",`items.${reopened}.context_group_ids`,`Combined Context ${groupId} must occupy one slide or a contiguous chapter.`);}
   let previousSourceOrder=0;let previousSection="";const completedSections=new Set<string>();

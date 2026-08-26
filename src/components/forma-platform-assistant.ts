@@ -163,7 +163,7 @@ export class FormaPlatformAssistant extends FormaPresentationalElement {
     const surface = assistantSurfaceForRoute(this.route || location.pathname);
     if (!session?.assistant?.enabled || session.assistant.host !== "platform" || surface.host !== "platform"
       || surface.application !== session.audience || !surface.available) return nothing;
-    return html`<forma-assistant-panel .open=${this.#open} .context=${this.#context} .messages=${this.#messages}
+    return html`<forma-assistant-panel .open=${this.#open} .conversationScope=${this.#scope()} .context=${this.#context} .messages=${this.#messages}
       .proposals=${this.#proposals} .tasks=${[]} .models=${[]} .pending=${this.#pending.size} .readOnly=${false} .guidanceOnly=${true}
       .pageLabel=${this.#pageLabel()}
       @forma-assistant-toggle=${(event: CustomEvent<{ open: boolean }>) => { this.#open = event.detail.open; this.requestUpdate(); if (this.#open) void this.#load(); }}

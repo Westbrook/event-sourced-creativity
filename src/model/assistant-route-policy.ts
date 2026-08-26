@@ -63,7 +63,7 @@ export function assistantInteractionForSurface(surface: AssistantSurface, option
   if (surface.host === "platform") {
     return { presentation: "floating", owner: "platform-assistant", scope: "platform", modes: ["guidance"] };
   }
-  if (surface.page === "chat" && options.canGenerate) {
+  if (surface.page === "chat" && options.canGenerate && options.providerConfigured) {
     return { presentation: "embedded", owner: "creative-chat", scope: "document", modes: ["creative-chat"] };
   }
 

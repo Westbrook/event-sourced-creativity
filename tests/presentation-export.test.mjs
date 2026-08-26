@@ -54,8 +54,14 @@ test("the presentation export records truthful, public-safe audited PowerPoint m
   assert.equal(event.privateJson, null, "format metadata never requires an authored private envelope");
 });
 
-test("the unified compatible presentation export and import instructions are fully translated", () => {
-  const keys = ["presentation.export.powerpoint", "presentation.export.powerpointHint"];
+test("the unified compatible presentation export, recovery, and import instructions are fully translated", () => {
+  const keys = [
+    "presentation.export.powerpoint",
+    "presentation.export.powerpointHint",
+    "presentation.export.pdfClipped",
+    "presentation.export.pdfFailed",
+    "presentation.export.powerpointFailed",
+  ];
   for (const [locale, messages] of Object.entries(FORMA_RESPONSIVE_MESSAGES)) {
     for (const key of keys) assert.ok(messages[key]?.trim(), `${locale} translates ${key}`);
     const label = messages["presentation.export.powerpoint"];
@@ -96,6 +102,48 @@ test("one accessible export menu separates audience-safe delivery from explicitl
   assert.match(styles, /\.presentation-deck-export-menu\[popover\]\s*\{[^}]*position:\s*fixed;[^}]*inline-size:\s*min\(24rem,calc\(100dvw - 1rem\)\)/u);
   assert.match(styles, /\.presentation-deck-export-menu button\s*\{[^}]*min-block-size:\s*var\(--forma-control-min-size,2\.75rem\)/u);
   assert.equal((visualHarness.match(/page\.getByRole\("button",\{name:"Export"\}\)\.click\(\)/gu) ?? []).length, 2);
+  assert.match(visualHarness,/presentation-deck-export-status\[data-export-stage="failed"\]/u,"the browser fidelity harness verifies the persistent export failure state");
+  assert.match(visualHarness,/getByRole\("button",\{name:"Retry"\}\)/u,"failed captures expose the same accessible recovery control in the real browser");
+});
+
+test("presentation exports communicate staged progress, accessible completion counts, and recoverable failures", async () => {
+  const [deck, styles] = await Promise.all([
+    readFile(new URL("../src/components/presentation-deck.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(deck, /#exportProgress:\{stage:"preparing"\|"rendering"\|"finalizing"\|"downloading"\|"failed";completed:number;total:number;message\?:string\}\|null=null/u);
+  assert.match(deck, /class="presentation-deck-export-status" data-export-stage=\$\{progress\.stage\} role=\$\{failed\?"alert":"status"\} aria-live=\$\{failed\?"assertive":"polite"\} aria-atomic="true"/u);
+  assert.match(deck, /<progress max=\$\{total\} value=\$\{completed\} aria-label=\$\{this\.i18n\.t\("status\.progress"\)\} aria-valuetext=\$\{count\}>/u);
+  assert.match(deck, /<progress aria-label=\$\{this\.i18n\.t\("status\.progress"\)\}><\/progress>/u,"preparation remains truthfully indeterminate until page rendering begins");
+  assert.match(deck, /this\.i18n\.system\("\{count\} of \{total\}",\{count:this\.i18n\.number\(completed\),total:this\.i18n\.number\(total\)\}\)/u,"slide counts use existing translated labels and locale-aware numerals");
+  assert.match(deck, /this\.i18n\.t\("job\.progress\.rendering"\)/u);
+  assert.match(deck, /this\.i18n\.t\("job\.progress\.finalizing"\)/u);
+  assert.match(deck, /this\.i18n\.t\("job\.progress\.downloading"\)/u);
+  assert.match(deck, /aria-describedby=\$\{this\.#exportProgress\?`\$\{this\.#exportMenuId\}-status`:nothing\} aria-busy=\$\{String\(this\.#exporting\)\}/u);
+  assert.match(deck, /#exportAbort\?:AbortController/u);
+  assert.match(deck, /override disconnectedCallback\(\)\{this\.#exportAbort\?\.abort\(\)/u,"leaving the presentation cancels any unfinished export");
+  assert.match(deck, /const result=await renderPresentationPdf\(items,presentation,options\)/u);
+  assert.match(deck, /const bytes=await createPowerPointDocumentAsync\(items,presentation,/u,"large editable exports use the same cooperative asynchronous pipeline");
+  assert.ok((deck.match(/onProgress,signal:controller\.signal/gu)??[]).length>=2,"PDF and editable presentations both stream real slide progress and honor cancellation");
+  assert.match(deck, /new Blob\(\[result\.bytes as Uint8Array<ArrayBuffer>\]/u,"the complete PDF is not duplicated in memory before browser delivery");
+  assert.match(deck, /new Blob\(\[bytes as Uint8Array<ArrayBuffer>\]/u,"the complete editable presentation is not duplicated in memory before browser delivery");
+  assert.doesNotMatch(deck,/Uint8Array\.from\((?:result\.bytes|bytes)\)/u);
+  assert.match(deck, /class="button secondary compact presentation-deck-export-cancel"[\s\S]{0,100}this\.#exportAbort\?\.abort\(\)/u,"large asynchronous exports provide a genuinely cancellable operation");
+  assert.match(deck, /this\.i18n\.t\("action\.cancel"\)/u,"the cancel action remains translated in every supported locale");
+  assert.match(deck, /class="button secondary compact presentation-deck-export-retry"[\s\S]{0,180}trigger\?\.focus\(\{preventScroll:true\}\);trigger\?\.click\(\)/u,"failure recovery restores focus and reopens the export format chooser");
+  assert.match(deck,/presentation\.export\.pdfClipped/u,"irrecoverable protected-content clipping receives truthful, actionable guidance");
+  assert.match(deck,/presentation\.export\.pdfFailed/u);
+  assert.match(deck,/presentation\.export\.powerpointFailed/u);
+  assert.doesNotMatch(deck,/too large to export completely|Nothing was released/u,"export failures must not misdiagnose slide clipping as deck size");
+  assert.doesNotMatch(deck,/this\.store\.toast\(message\)/u,"export failures stay in their persistent alert instead of the shell's success-check toast");
+  assert.match(deck, /\$\{this\.#renderExportProgress\(\)\}\s*<span class="sr-only" role="status"/u,"export announcements remain separate from slide-navigation announcements");
+
+  assert.match(styles, /\.presentation-deck-export-status\s*\{[^}]*display:\s*grid;[^}]*min-inline-size:\s*0/u);
+  assert.match(styles, /\.presentation-deck-export-status :is\(\.presentation-deck-export-cancel,\.presentation-deck-export-retry\)\s*\{[^}]*min-block-size:\s*var\(--forma-control-min-size,2\.75rem\)/u,"cancellation and recovery remain accessible touch targets");
+  assert.match(styles, /\.presentation-deck-export-status\[data-export-stage="failed"\]\s*\{[^}]*color:\s*var\(--danger\)/u);
+  assert.match(styles, /\.presentation-deck--slideshow\.presentation-deck--export-status\s*\{\s*grid-template-rows:\s*auto auto minmax\(0,1fr\)/u,"a visible status region preserves the constrained slide viewport");
+  assert.match(styles, /\[data-output-focus="true"\] \.presentation-deck--slideshow\.presentation-deck--export-status\s*\{\s*grid-template-rows:\s*auto minmax\(0,1fr\)/u,"progress remains visible and slide geometry remains bounded in focused short-landscape viewers");
 });
 
 test("PDF, PowerPoint, Word, and media-archive conversion load only after an authorized export is requested", async () => {

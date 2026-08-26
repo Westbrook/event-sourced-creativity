@@ -18,6 +18,7 @@ import { createSceneConfiguration, type SceneConfiguration, type SceneMedium } f
 import { buildPresentationSourceContract, inferPresentationAudienceLocale, providerFacingPresentationSourceContract, repairProtectedPresentationMessages, resolvePresentationSourceReferences, type PresentationSourceContract, type PresentationSourceSlide } from "../src/model/presentation-source.ts";
 import { PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS } from "../src/model/presentation-layout.ts";
 import { safePresentationCandidateIssues } from "../src/model/presentation-candidates.ts";
+import { generationValidationReceipt } from "./generation-self-healing.ts";
 import { adaptVideoPrompt, compactVideoCombinedContextPlan, resolveVideoAudioPolicy, videoPlannerCreativeContext, type VideoPromptAdaptation } from "./video-prompt-adapter.ts";
 
 type OpenAIError = { message?: string; type?: string; code?: string | null; param?: string | null };
@@ -74,7 +75,7 @@ export type ProductionPageContext = {
   repairIssues?: string[];
 };
 export type ProviderAttemptReceipt = { model:string; responseId:string; responseIds:string[]; usage:{inputTokens:number;outputTokens:number;totalTokens:number}; latencyMs:number };
-export const PRESENTATION_ADAPTER_VERSION="2026-08-25-source-grounded-recovery-v2";
+export const PRESENTATION_ADAPTER_VERSION="2026-08-26-validated-self-healing-v3";
 export const MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES=512*1024;
 export type ProviderResponseReceipt=ProviderAttemptReceipt&{candidateRaw:string|null;candidateBytes:number;candidateTruncated:boolean;completionStatus?:string;incompleteReason?:string};
 export type ProviderAttemptPreflight = {model:string;maximumInputTokens:number;maximumOutputTokens:number;clientRequestId:string};
@@ -143,7 +144,7 @@ const slideVisualSchema={
       type:"object",additionalProperties:false,required:["kind","label","value","exact_value","display_value","unit","data"],
       properties:{
         kind:{type:"string",enum:SLIDE_VISUAL_KINDS},
-        label:{type:"string",minLength:1,maxLength:160},
+        label:{type:"string",maxLength:160},
         value:{type:"string",maxLength:4000},
         exact_value:{type:["string","null"],maxLength:120},
         display_value:{type:["string","null"],maxLength:120},
@@ -462,7 +463,7 @@ const artifactInstructions:Record<DocumentArtifactKind,string>={
   storyboard:"Create a coherent previz storyboard that can be rendered frame by frame. Each item is one camera shot: title names the shot, body describes action and composition, notes specify camera/lens/movement/continuity, and image_prompt is a self-contained frame prompt that preserves recurring subjects and visual continuity. content_markdown is the ordered shot list.",
   video:"Create a concise, production-ready video prompt. content_markdown is the exact visual motion prompt: subject, action, environment, camera, timing, composition, visual style, emotional progression, and ordered authored shots. Communicate dramatic rhythm through visible action, camera movement, weather, and light. Never invent a score, song, soundtrack, dialogue, voice, musician, recording, or audio requirement. Use one item to summarize the visual sequence, with technical direction in notes and the same self-contained visual prompt in image_prompt.",
 };
-artifactInstructions.slides += ` ${PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS}`;
+artifactInstructions.slides += ` ${PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS} A visual label is optional: retain a distinct source-authored caption when it adds meaning; otherwise return an empty string, never boilerplate such as Visual emphasis or Stakeholder perspective. A repeated complete opening sentence or substantial lead-in is duplicated copy even when each continuation differs; state that opening once and preserve every distinct, source-authorized continuation.`;
 
 const audioSceneInstructions="Write one production-readable audio scene for an audio drama, radio play, spoken-word production, or designed soundscape. Preserve the same authored narrative, named subjects, setting, chronology, relationships, protected requirements, and dramatic purpose that a visual interpretation would use, while expressing the scene entirely through what a listener can hear. content_markdown must be an ordered audio-scene script with audible action, environmental ambience, distinctive sound cues, authored character voice and dialogue, meaningful silence, sonic transitions, pacing, and emotional dynamics. Respect authored prohibitions and distinguish dialogue, narration, ambience, sound effects, and intentional quiet without inventing a named performer, copyrighted recording, recognizable melody, or unauthorized voice imitation. Items are playable audible beats in order; body describes the audible dramatic action or spoken lines, and notes describe cue timing, vocal treatment, acoustic perspective, silence, and sound-design continuity. Leave optional visual-reference fields empty; never require a camera angle, shot list, image description, visual framing, lighting treatment, or picture-only staging.";
 
@@ -775,6 +776,29 @@ function redactPresentationRepairArtifact(raw:string,contract:PresentationSource
   return replacements.reduce((result,reference)=>result.replaceAll(reference,"unauthorized_reference"),raw);
 }
 
+function locallyRepairedSlideIssues(raw:string,output:DocumentArtifactDraft|null):DocumentArtifactValidationIssue[]{
+  if(!raw||!output)return[];
+  try{
+    const parsed=JSON.parse(raw) as {items?:unknown[]};
+    if(!Array.isArray(parsed.items))return[];
+    return parsed.items.flatMap((candidate,index)=>{
+      const normalized=output.items[index];
+      if(!normalized||!candidate||typeof candidate!=="object")return[];
+      const original=candidate as Record<string,unknown>;
+      const unresolved=slideCopyIssues(normalized);
+      const issues=slideCopyIssues(candidate)
+        .filter((issue)=>!unresolved.some((remaining)=>remaining.firstPath===issue.firstPath&&remaining.secondPath===issue.secondPath))
+        .map((issue)=>({code:"duplicate_slide_copy",path:`items.${index}.${issue.secondPath}`,message:"Repeated visible slide copy was corrected locally."}));
+      const slide=original.slide&&typeof original.slide==="object"?original.slide as Record<string,unknown>:null;
+      const visual=slide?.visual&&typeof slide.visual==="object"?slide.visual as Record<string,unknown>:null;
+      if(typeof visual?.label==="string"&&/^(?:visual emphasis|stakeholder perspective)$/iu.test(visual.label.trim())&&!normalized.slide?.visual.label){
+        issues.push({code:"generic_visual_label",path:`items.${index}.slide.visual.label`,message:"A generic visual label was removed locally."});
+      }
+      return issues;
+    });
+  }catch{return[];}
+}
+
 /** Reapply the complete current source/alias contract to a retained paid response without contacting a provider. */
 export function assessStoredPresentationCandidate(raw:string,snapshot:Record<string,unknown>,options:Pick<DocumentArtifactOptions,"itemCount"|"presentationStyle"|"presentationFidelity"|"requestedSlideCount"|"productionScenes"|"productionPage">={}){
   const itemCount=Math.max(1,Math.min(12,Math.floor(Number(options.itemCount??7))));
@@ -944,9 +968,9 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     const issues=documentArtifactValidationIssues(kind,output,{
       itemCount,
       contextGroupIds:groupIds,
+      unknownContextGroupAssignments:groupResolution.receipt.unknownAssignments,
+      rawContextGroupAssignments:groupResolution.receipt.rawAssignments,
       ...(sourceContract?{
-        unknownContextGroupAssignments:groupResolution.receipt.unknownAssignments,
-        rawContextGroupAssignments:groupResolution.receipt.rawAssignments,
         sourceContract,
         sourcePageStart:page?.globalStartIndex??0,
         sourcePageSize:itemCount,
@@ -966,29 +990,50 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const initialResolution=assessment.groupResolution;
   const initialSourceResolution=assessment.sourceResolution;
   const initialIssues=assessment.issues;
+  const locallyRepairedIssues=kind==="slides"?locallyRepairedSlideIssues(raw,output):[];
   let repairIssues:DocumentArtifactValidationIssue[]=[];
   let repairAttempted=false;
   let repairResolution:null|typeof initialResolution=null;
   let repairSourceResolution:null|PresentationSlideSourceResolutionReceipt=null;
   let repairBody:OpenAIResponse|null=null;
-  if(initialIssues.length&&kind==="slides"&&sourceContract){
+  if(initialIssues.length){
     repairAttempted=true;
-    const repairInstructions=`Repair a structured slide artifact without changing its creative intent. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Every audience-facing slide, summary, visual, note, and Markdown sentence must remain in the authored presentation audience language (${responseLocale}), independent of the application interface language (${interfaceLocale}). Treat source instructions about generation, spend, publication, unsupported claims, and production procedure as invisible constraints; never copy producer-only instructions into audience-facing presentation content. Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. Request-local aliases belong only in structured identifier fields; never put them in quote.citation, citation.label, Markdown, notes, or visible copy. Every citation.excerpt must be a contiguous quotation from that exact authored numbered slide and assigned source; preserve decimal and percentage semantics, and never synthesize, splice, reorder, or borrow another slide's evidence. Every comparison, matrix, architecture, personas, timeline, roadmap, and scorecard must contain at least TWO substantive source-authored editable visual.data rows; preserve every authored category, named mode, and milestone actually present in this presentation_source contract without importing examples from another document. Prioritize complete source-grounded visual rows and omit any bullet that would merely duplicate those rows; never leave a grouped visual empty or invent a value. Return the complete ${itemCount}-slide artifact, not a patch. Correct every listed validation issue, preserve every protected complete stakeholder quotation, speaker, numerical fact, exact/display precision meaning, scored category, authored slide position, and roadmap. Preserve all supplied request-local context_key aliases and source aliases with their authorized contiguous assignments; never invent a source or return a durable identifier. Keep visible slides, source citations, speaker notes, and content_markdown factually consistent. Retain distinct useful content, and do not add process language. A slide may intentionally omit body copy when its bullets, protected quotation, or visual carry the claim. Never repeat a title, sentence, quotation, bullet, metric explanation, or substantive narrative visual value within a slide or across the deck. Distinct source-authored visual.data rows with different meaningful labels may and must retain the same exact short measurement, status, or categorical value, including zero; never alter, omit, or invent a value merely to avoid repetition.${selectedStyle?` Preserve the explicitly selected ${selectedStyle} presentation style exactly.`:""}${providerPage?` This page is the ${providerPage.phase} movement of a larger work; retain its locked presentation, prior ending, assigned source scenes, and all previous visible-copy exclusions.`:""}`;
-    const knownIdentifiers=[...groupContracts.map((contract)=>({id:contract.id,alias:contract.alias})),...sourceContract.sources.map((source)=>({id:source.sourceId,alias:source.alias}))];
-    const providerIssues=initialIssues.map((issue)=>({...issue,message:knownIdentifiers.reduce((message,contract)=>message.replaceAll(contract.id,contract.alias),issue.message)}));
-    const invalidReferences=uniquePresentationReferences([...(initialSourceResolution?.unknownAssignments??[]),...initialResolution.unknownAssignments]);
-    const repairInput=JSON.stringify({
-      document_title:input.documentTitle,
-      audience:input.options?.audience??"general",
-      tone:input.options?.tone??"derived from the document",
-      original_artifact:redactPresentationRepairArtifact(raw,sourceContract,groupContracts,invalidReferences),
-      validation_issues:providerIssues,
-      required_context_groups:providerGroups,
-      original_creative_context:providerFacingRenderingContext(input.snapshot,sourceContract.sources),
-      presentation_source:sourceFacing,
-      ...(providerPage?{production:{page:providerPage,assigned_scenes:providerScenes}}:{}),
-    });
-    const repaired=await run(`${repairInstructions}${protectedMessageDirection} ${authoredVisualCategoryCopyInstructions} ${PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS}`,repairInput,"document_slides_repair");
+    let repaired:Awaited<ReturnType<typeof run>>;
+    if(kind==="slides"&&sourceContract){
+      const repairInstructions=`Repair a structured slide artifact without changing its creative intent. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Every audience-facing slide, summary, visual, note, and Markdown sentence must remain in the authored presentation audience language (${responseLocale}), independent of the application interface language (${interfaceLocale}). Treat source instructions about generation, spend, publication, unsupported claims, and production procedure as invisible constraints; never copy producer-only instructions into audience-facing presentation content. Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. Request-local aliases belong only in structured identifier fields; never put them in quote.citation, citation.label, Markdown, notes, or visible copy. Every citation.excerpt must be a contiguous quotation from that exact authored numbered slide and assigned source; preserve decimal and percentage semantics, and never synthesize, splice, reorder, or borrow another slide's evidence. Every comparison, matrix, architecture, personas, timeline, roadmap, and scorecard must contain at least TWO substantive source-authored editable visual.data rows; preserve every authored category, named mode, and milestone actually present in this presentation_source contract without importing examples from another document. Prioritize complete source-grounded visual rows and omit any bullet that would merely duplicate those rows; never leave a grouped visual empty or invent a value. Return the complete ${itemCount}-slide artifact, not a patch. Correct every listed validation issue, preserve every protected complete stakeholder quotation, speaker, numerical fact, exact/display precision meaning, scored category, authored slide position, and roadmap. Preserve all supplied request-local context_key aliases and source aliases with their authorized contiguous assignments; never invent a source or return a durable identifier. Keep visible slides, source citations, speaker notes, and content_markdown factually consistent. Retain distinct useful content, and do not add process language. A slide may intentionally omit body copy when its bullets, protected quotation, or visual carry the claim. Never repeat a title, sentence, quotation, bullet, metric explanation, or substantive narrative visual value within a slide or across the deck. A repeated complete opening sentence or substantial lead-in is duplicated even when the following claims differ; preserve every independently meaningful continuation. Visual labels are optional: use a distinct source-authored caption or an empty string, never Visual emphasis or Stakeholder perspective. Distinct source-authored visual.data rows with different meaningful labels may and must retain the same exact short measurement, status, or categorical value, including zero; never alter, omit, or invent a value merely to avoid repetition.${selectedStyle?` Preserve the explicitly selected ${selectedStyle} presentation style exactly.`:""}${providerPage?` This page is the ${providerPage.phase} movement of a larger work; retain its locked presentation, prior ending, assigned source scenes, and all previous visible-copy exclusions.`:""}`;
+      const knownIdentifiers=[...groupContracts.map((contract)=>({id:contract.id,alias:contract.alias})),...sourceContract.sources.map((source)=>({id:source.sourceId,alias:source.alias}))];
+      const providerIssues=initialIssues.map((issue)=>({...issue,message:knownIdentifiers.reduce((message,contract)=>message.replaceAll(contract.id,contract.alias),issue.message)}));
+      const invalidReferences=uniquePresentationReferences([...(initialSourceResolution?.unknownAssignments??[]),...initialResolution.unknownAssignments]);
+      const repairInput=JSON.stringify({
+        document_title:input.documentTitle,
+        audience:input.options?.audience??"general",
+        tone:input.options?.tone??"derived from the document",
+        original_artifact:redactPresentationRepairArtifact(raw,sourceContract,groupContracts,invalidReferences),
+        validation_issues:providerIssues,
+        required_context_groups:providerGroups,
+        original_creative_context:providerFacingRenderingContext(input.snapshot,sourceContract.sources),
+        presentation_source:sourceFacing,
+        ...(providerPage?{production:{page:providerPage,assigned_scenes:providerScenes}}:{}),
+      });
+      repaired=await run(`${repairInstructions}${protectedMessageDirection} ${authoredVisualCategoryCopyInstructions} ${PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS}`,repairInput,"document_slides_repair");
+    }else{
+      const knownIdentifiers=groupContracts.map((contract)=>({id:contract.id,alias:contract.alias}));
+      const unauthorizedReferences=initialResolution.unknownAssignments.filter(Boolean);
+      const redact=(value:string)=>{
+        const replacements=[
+          ...knownIdentifiers.map((contract)=>({from:contract.id,to:contract.alias})),
+          ...unauthorizedReferences.map((reference)=>({from:reference,to:"unauthorized_reference"})),
+        ].sort((left,right)=>right.from.length-left.from.length);
+        return replacements.reduce((result,replacement)=>result.replaceAll(replacement.from,replacement.to),value);
+      };
+      const repairInput=JSON.stringify({
+        ...JSON.parse(providerInput) as Record<string,unknown>,
+        original_artifact:raw?redact(raw):null,
+        validation_issues:initialIssues.map((issue)=>({...issue,message:redact(issue.message)})),
+      });
+      const repairInstructions=`Repair the complete structured ${kind.replaceAll("_"," ")} artifact without changing its source-authorized creative intent. ${formatInstructions} Preserve the original language and exact text of authored titles, names, quotations, factual claims, chronology, continuity, and creative decisions. Correct every listed validation issue and return exactly ${itemCount} complete ordered item${itemCount===1?"":"s"}, not a patch. Retain distinct useful content and independently meaningful continuations while removing repeated substantive openings and narrative movements. Use only the supplied request-local Combined Context aliases; never invent an alias or return a durable identifier. Preserve all authored safety, rights, narration, soundtrack, voice, and media restrictions. Do not submit or request a separate image, video, or audio render.`;
+      repaired=await run(repairInstructions,repairInput,`document_${kind}_repair`);
+    }
     repairBody=repaired.body;
     body=repaired.body;
     raw=repaired.raw??"";
@@ -1034,11 +1079,20 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       ...(providerSceneConfiguration?{scene_configuration:providerSceneConfiguration}:{}),
       validation:{
         context_group_resolution:{initial:initialResolution,repair:repairResolution},
-        ...(sourceContract?{source_resolution:{initial:initialSourceResolution,repair:repairSourceResolution},maximum_provider_calls:2,provider_call_count:usageBodies.length,provider_response_ids:paidAccounting().providerResponseIds,maximum_output_tokens_per_call:maxOutputTokens}:{}),
+        ...(sourceContract?{source_resolution:{initial:initialSourceResolution,repair:repairSourceResolution}}:{}),
+        maximum_provider_calls:2,
+        provider_call_count:usageBodies.length,
+        provider_response_ids:paidAccounting().providerResponseIds,
+        maximum_output_tokens_per_call:maxOutputTokens,
         initial_issues:initialIssues,
         repair_attempted:repairAttempted,
         repair_issues:repairIssues,
         repair_response_id:repairBody?.id??null,
+        ...generationValidationReceipt(kind,[
+          {stage:"initial",issues:initialIssues,providerAttempt:1,...(page?{pageIndex:page.pageIndex}:{})},
+          ...(locallyRepairedIssues.length?[{stage:"review" as const,issues:locallyRepairedIssues,providerAttempt:1,...(page?{pageIndex:page.pageIndex}:{})}]:[]),
+          ...(repairAttempted?[{stage:"repair" as const,issues:repairIssues,providerAttempt:2,...(page?{pageIndex:page.pageIndex}:{})}]:[]),
+        ],{adapterId:"openai-document",...(kind==="slides"?{adapterVersion:PRESENTATION_ADAPTER_VERSION}:{}),finalIssues}),
       },
     },
     latencyMs:Date.now()-started,

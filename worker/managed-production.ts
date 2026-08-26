@@ -22,6 +22,7 @@ import { readGeneratedImageReference, storeGeneratedImage, storeGeneratedMedia }
 import {
   generateCreativeVideo,
   generateDocumentArtifact,
+  PRESENTATION_ADAPTER_VERSION,
   type CreativeVideoPreparedReceipt,
   type ImageReference,
   type ProviderAttemptPreflight,
@@ -304,6 +305,18 @@ export async function generateManagedArtifactDraft(
       pageIndex,
       providerAttempt: observedProviderAttempts,
     });
+    for (const observation of validation.validation_history.filter((entry) => entry.stage === "review" && entry.issues.length)) {
+      validationObservations.push({
+        stage: "review",
+        issues: observation.issues.map(({ code, path }) => ({
+          code,
+          path,
+          message: "A generated artifact issue was corrected locally before validation.",
+        })),
+        pageIndex,
+        providerAttempt: observedProviderAttempts,
+      });
+    }
     if (validation.repair_attempted) {
       observedProviderAttempts += 1;
       validationObservations.push({
@@ -550,6 +563,7 @@ export async function generateManagedArtifactDraft(
   const first = pages[0]!;
   const validationReceipt = generationValidationReceipt(kind, validationObservations, {
     adapterId: "openai-document",
+    ...(kind === "slides" ? { adapterVersion: PRESENTATION_ADAPTER_VERSION } : {}),
     finalIssues,
   });
   return {

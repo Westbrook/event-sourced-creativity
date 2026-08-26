@@ -271,9 +271,13 @@ test("the strict slideshow schema preserves complete attributed quotes, editable
     assert.ok(slideSchema.properties.bullets.maxItems >= 24);
     assert.ok(slideSchema.properties.citations.maxItems >= 24);
     assert.ok(visualSchema.properties.data.maxItems >= 48, "editable scorecards and comparison matrices must not be capped at five rows");
+    assert.equal(visualSchema.properties.label.minLength,undefined,"an independently meaningful visual must never require a boilerplate caption");
     assert.equal(visualSchema.properties.data.items.properties.value.minLength,undefined,"category-only architecture nodes must not be forced to invent or repeat a value");
     assert.ok(slideSchema.properties.source_ids.maxItems >= 24);
     assert.deepEqual(schema.properties.presentation.properties.style_preset.enum, ["field-notes"], "an explicitly selected deck style must be schema-locked before the first provider call");
+    assert.match(request.instructions,/visual label is optional/i);
+    assert.match(request.instructions,/never boilerplate such as Visual emphasis/i);
+    assert.match(request.instructions,/repeated complete opening sentence or substantial lead-in/i);
 
     assert.equal(input.creative_context.facts[0].source_key, "blk_001");
     assert.deepEqual(input.creative_context.facts[0].source_group_keys, ["grp_001"]);
@@ -729,6 +733,77 @@ test("ungrouped authored source blocks still ground every slide without manufact
     assert.deepEqual(result.output.items.map((item) => item.slide.sourceIds), [[PRIVATE_BLOCK_ID], [PRIVATE_BLOCK_ID]]);
     assert.equal(result.output.items[1].slide.quote.sourceId, PRIVATE_BLOCK_ID);
     assertRequestContainsNoPrivateSourceIdentifiers(requests[0].request);
+  });
+});
+
+for(const kind of ["short_story","scene","storyboard","video","audio"]){
+  test(`${kind} repairs an unauthorized context alias once without disclosing private identifiers`,async()=>{
+    const artifact=(groups)=>({
+      title:"Scoped authored work",
+      summary:"An independent authored movement.",
+      content_markdown:"# Scoped authored work\n\nPreserve the complete original movement.",
+      items:[{
+        title:"First independent movement",
+        body:"The team preserves its source-authorized creative continuity.",
+        notes:"Keep the authored ordering.",
+        image_prompt:"Optional authored visual reference.",
+        context_group_ids:groups,
+      }],
+    });
+    const invalid=artifact(["context_group_999",PRIVATE_GROUP_ID]);
+    const repaired=artifact(["context_group_1"]);
+
+    await withProviderResponses([invalid,repaired],async(requests)=>{
+      const preflights=[];
+      const result=await generateDocumentArtifact(
+        {OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},
+        "authorized-executive-actor",
+        kind,
+        {documentTitle:"Scoped authored work",snapshot:executiveSourceSnapshot(),options:{itemCount:1,onBeforeProviderAttempt:(attempt)=>preflights.push(attempt)}},
+      );
+
+      assert.equal(requests.length,2);
+      assert.equal(requests[1].request.text.format.name,`document_${kind}_repair`);
+      assert.equal(preflights.length,2);
+      assert.equal(new Set(preflights.map(({clientRequestId})=>clientRequestId)).size,2);
+      assert.ok(result.inputReceipt.validation.initial_issues.some(({code})=>code==="unknown_context_group_reference"));
+      assert.deepEqual(result.inputReceipt.validation.repair_issues,[]);
+      assert.equal(result.inputReceipt.validation.maximum_provider_calls,2);
+      assert.equal(result.inputReceipt.validation.provider_call_count,2);
+      assert.deepEqual(result.inputReceipt.validation.provider_response_ids,["presentation-provider-response-1","presentation-provider-response-2"]);
+      assert.deepEqual(result.output.items[0].context_group_ids,[PRIVATE_GROUP_ID]);
+      assert.deepEqual(result.usage,{inputTokens:240,outputTokens:160,totalTokens:400});
+      assert.deepEqual(result.inputReceipt.validation.validation_history.map(({stage})=>stage),["initial","repair"]);
+      assert.equal(result.inputReceipt.validation.adapter_reconciliation.status,"pending");
+      assert.equal(result.inputReceipt.validation.adapter_reconciliation.self_healed,true);
+      assert.doesNotMatch(JSON.stringify(result.inputReceipt.validation.validation_history),/PRIVATE_/u);
+      for(const {request} of requests)assertRequestContainsNoPrivateSourceIdentifiers(request);
+    });
+  });
+}
+
+test("an unresolved non-slide validation failure stops after exactly one bounded repair",async()=>{
+  const invalid={
+    title:"Scoped authored scene",
+    summary:"One ordered narrative moment.",
+    content_markdown:"# Scoped authored scene\n\nThe original moment remains complete.",
+    items:[{title:"First movement",body:"The original source-authorized movement remains complete.",notes:"Keep the continuity.",image_prompt:"Authored framing.",context_group_ids:[PRIVATE_GROUP_ID]}],
+  };
+
+  await withProviderResponses([invalid,invalid],async(requests)=>{
+    await assert.rejects(
+      generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-executive-actor","scene",{documentTitle:"Scoped authored scene",snapshot:executiveSourceSnapshot(),options:{itemCount:1}}),
+      (error)=>{
+        assert.equal(error.providerCallCount,2);
+        assert.deepEqual(error.providerResponseIds,["presentation-provider-response-1","presentation-provider-response-2"]);
+        assert.deepEqual(error.providerUsage,{inputTokens:240,outputTokens:160,totalTokens:400});
+        assert.doesNotMatch(error.detail.message,/PRIVATE_/u);
+        return true;
+      },
+    );
+    assert.equal(requests.length,2);
+    assert.equal(requests[1].request.text.format.name,"document_scene_repair");
+    for(const {request} of requests)assertRequestContainsNoPrivateSourceIdentifiers(request);
   });
 });
 

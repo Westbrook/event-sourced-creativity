@@ -117,7 +117,10 @@ export class FormaComponentCatalog extends FormaPresentationalElement {
   #clear() { this.#query = ""; this.#level = "all"; this.#message = this.i18n.t("catalog.cleared", "Showing every available component."); this.requestUpdate(); void this.updateComplete.then(() => this.querySelector<HTMLInputElement>(".component-library-search input")?.focus({ preventScroll: true })); }
   #demo(event: Event) {
     if (event instanceof CustomEvent && event.cancelable) event.preventDefault();
-    const target = event.target as (HTMLElement & { label?: string; heading?: string; action?: string }) | null;
+    const source = event.target as (HTMLElement & { label?: string; heading?: string; action?: string }) | null;
+    const target = source instanceof HTMLFormElement
+      ? source.querySelector<HTMLElement & { label?: string; heading?: string; action?: string }>("forma-ui-conversation-composer") ?? source
+      : source;
     const label = target?.label || target?.heading || target?.action || target?.getAttribute("label") || target?.getAttribute("heading") || target?.getAttribute("action") || target?.textContent?.trim() || event.type.replace("forma-", "");
     this.#message = this.i18n.t("catalog.previewAction", "Preview interaction: {label}. No project data was changed.", { label });
     this.requestUpdate();

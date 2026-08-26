@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { describeOutput, describeOutputs, imageOutputNamingCandidate } from "../src/model/output-naming.ts";
 import { foldEvents } from "../src/model/events.ts";
@@ -25,6 +26,13 @@ test("take identity includes filtered and discarded historical siblings",()=>{
   assert.equal(description.ordinal,3);
   assert.equal(description.total,3);
   assert.match(description.label,/^Take 3 —/u);
+});
+
+test("multiple images from one generation retain their recorded creation order",()=>{
+  const earlier={id:"z",sequence:10,documentId:"document",kind:"image",title:"Shared visual direction"};
+  const later={id:"a",sequence:10,documentId:"document",kind:"image",title:"Shared visual direction"};
+  const descriptions=describeOutputs([later,earlier],{events:[event(10,"GenerationCompleted",{document_id:"document",object_ids:["z","a"]},"worker:generator")]});
+  assert.deepEqual(descriptions.map(({id,ordinal})=>({id,ordinal})),[{id:"a",ordinal:2},{id:"z",ordinal:1}]);
 });
 
 test("authored names remain verbatim while equal custom names stay distinguishable",()=>{
@@ -60,15 +68,21 @@ test("take labels and occurrence dates follow the requested locale",()=>{
   assert.match(descriptions[0].secondaryLabel,/août/u);
 });
 
+test("audio results describe their actual intent and duration",()=>{
+  const sound={id:"score",sequence:1,documentId:"document",kind:"audio",title:"The last match",settings:{audio_goal:"music",duration_seconds:30}};
+  assert.match(describeOutput(sound,[sound]).secondaryLabel,/Original music · 30 s/u);
+});
+
 test("output renames preserve durable identity, creation provenance, review state, and production sources",()=>{
-  const rows=[event(1,"ProjectCreated",{project_id:"project",name:"A project"}),event(2,"DocumentCreated",{project_id:"project",document_id:"document",title:"A document"}),event(3,"GenerationCompleted",{project_id:"project",document_id:"document",object_ids:["image"],title:"Generated image"},"worker:generator"),event(4,"DocumentRenderCompleted",{project_id:"project",document_id:"document",artifact_id:"artifact",artifact_kind:"scene",title:"Generated scene",summary:"A tense opening",items:[],settings:{scene_medium:"visual"}},"worker:renderer")];
+  const rows=[event(1,"ProjectCreated",{project_id:"project",name:"A project"}),event(2,"DocumentCreated",{project_id:"project",document_id:"document",title:"A document"}),event(3,"GenerationCompleted",{project_id:"project",document_id:"document",object_ids:["image"],title:"Generated image"},"worker:generator"),event(4,"DocumentRenderCompleted",{project_id:"project",document_id:"document",artifact_id:"artifact",artifact_kind:"scene",title:"Generated scene",summary:"A tense opening",items:[],settings:{scene_medium:"visual"},source_block_versions:[]},"worker:renderer"),event(5,"ArtifactApproved",{project_id:"project",document_id:"document",artifact_id:"artifact"},"user:independent-reviewer")];
   const before=foldEvents(rows),original=before.artifacts[0];
   const workflow=recommendProductionWorkflow({id:"workflow",documentId:"document",projectId:"project",target:"video"});
   const stage=workflow.stages.find(({format})=>format==="scene");
   const sourceFor=(output)=>({outputKind:"artifact",outputId:output.id,format:output.kind,documentId:output.documentId,sourceEventId:output.sourceEventId,revision:0,approvalRequired:stage.approvalRequired,allowTextGuidance:false});
   const sourceBefore=productionWorkflowSourceIdentity([sourceFor(original)]);
   const reviewBefore=artifactReviewState(original,before.blocks,rows);
-  const renamed=[...rows,event(5,"OutputRenamed",{output_id:"artifact",artifact_id:"artifact",output_kind:"artifact",artifact_kind:"scene",document_id:"document",project_id:"project",old_title:"Generated scene",new_title:"Opening · approved cut"}),event(6,"OutputRenamed",{output_id:"image",object_id:"image",output_kind:"image",document_id:"document",project_id:"project",old_title:"Generated image",new_title:"Campaign hero"})];
+  assert.equal(reviewBefore.status,"approved");
+  const renamed=[...rows,event(6,"OutputRenamed",{output_id:"artifact",artifact_id:"artifact",output_kind:"artifact",artifact_kind:"scene",document_id:"document",project_id:"project",old_title:"Generated scene",new_title:"Opening · approved cut"}),event(7,"OutputRenamed",{output_id:"image",object_id:"image",output_kind:"image",document_id:"document",project_id:"project",old_title:"Generated image",new_title:"Campaign hero"})];
   const after=foldEvents(renamed),changed=after.artifacts[0];
   assert.equal(changed.title,"Opening · approved cut");
   assert.equal(changed.titleSource,"authored");
@@ -84,4 +98,31 @@ test("output renames preserve durable identity, creation provenance, review stat
 test("rename projection rejects mismatched document identities",()=>{
   const rows=[event(1,"ProjectCreated",{project_id:"project",name:"A project"}),event(2,"DocumentCreated",{project_id:"project",document_id:"document",title:"A document"}),event(3,"GenerationCompleted",{document_id:"document",object_ids:["image"],title:"Original"},"worker:generator"),event(4,"OutputRenamed",{output_id:"image",object_id:"image",output_kind:"image",document_id:"another-document",project_id:"project",new_title:"Untrusted name"})];
   assert.equal(foldEvents(rows).outputs[0].title,"Original");
+});
+
+test("rename projection rejects mismatched project, resource mirrors, and unsafe titles",()=>{
+  const foundation=[event(1,"ProjectCreated",{project_id:"project",name:"A project"}),event(2,"DocumentCreated",{project_id:"project",document_id:"document",title:"A document"}),event(3,"GenerationCompleted",{document_id:"document",object_ids:["image"],title:"Original"},"worker:generator")];
+  const trusted={output_id:"image",object_id:"image",output_kind:"image",document_id:"document",project_id:"project",new_title:"Trusted"};
+  for(const invalid of [{...trusted,project_id:"foreign"},{...trusted,object_id:"different"},{...trusted,artifact_id:"image"},{...trusted,new_title:"bad\nname"},{...trusted,new_title:"x".repeat(121)}])assert.equal(foldEvents([...foundation,event(4,"OutputRenamed",invalid)]).outputs[0].title,"Original");
+});
+
+test("production source choices expose stable take labels, guidance, exact identity, and author-only renaming",async()=>{
+  const [artifacts,images,canvas,deliver,activity]=await Promise.all(["../src/components/document-artifacts.ts","../src/components/output-card.ts","../src/canvas/canvas-application.ts","../src/components/forma-deliver.ts","../src/components/forma-activity.ts"].map((path)=>readFile(new URL(path,import.meta.url),"utf8")));
+  assert.match(artifacts,/describeOutputs\(visible,\{[^}]*includeTimestamp:true,alwaysIncludeTake:true/u);
+  assert.match(artifacts,/<option value=\$\{candidate\.id\} title=\$\{candidate\.label\} dir="auto">\$\{candidate\.label\}<\/option>/u);
+  assert.match(artifacts,/aria-describedby=\$\{sourceDescriptionId\}/u);
+  assert.match(artifacts,/workflow\.sourceNamingHelp/u);
+  assert.match(artifacts,/<option value=\$\{artifact\.id\} dir="auto">\$\{eligibleAudioVideoNames\.get\(artifact\.id\)\?\?artifact\.title\}/u);
+  assert.match(artifacts,/canAuthor\?html`<button[^>]*artifact-rename/u);
+  assert.match(artifacts,/type:"OutputRenamed",payload:\{output_id:artifact\.id,artifact_id:artifact\.id/u);
+  assert.match(images,/canAuthor\?html`<button[^>]*output-rename/u);
+  assert.match(images,/type:"OutputRenamed",payload:\{output_id:output\.id,object_id:output\.id/u);
+  assert.match(canvas,/#itemTitle\(item:CanvasItem\)/u);
+  assert.match(canvas,/<h2 id="canvas-output-viewer-title" dir="auto">\$\{title\}<\/h2>/u);
+  assert.match(deliver,/resultNames\.get\(artifact\.id\)\?\?artifact\.title/u);
+  assert.match(deliver,/resultNames\.get\(output\.id\)/u);
+  assert.match(activity,/resultNames\.get\(artifact\.id\)\?\?artifact\.title/u);
+  assert.match(activity,/resultNames\.get\(output\.id\)/u);
+  assert.doesNotMatch(deliver,/this\.store\.content\.get\(\)/u,"Deliver must not hydrate or expose private provider content");
+  assert.doesNotMatch(activity,/this\.store\.content\.get\(\)/u,"Activity must not hydrate or expose private provider content");
 });

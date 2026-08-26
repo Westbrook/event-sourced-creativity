@@ -340,7 +340,7 @@ test("alternative creator lenses mount their real task before explanatory readin
   assert.match(alternatives, /const body = html`\s*<div class="context-board" data-forma-content="primary">[\s\S]*?\$\{capture\}\s*\$\{readiness\}`/);
   assert.match(alternatives, /const body = html`\s*<form id=\$\{guidedFormId\}[\s\S]*?<section class="guided-brief guided-brief--focused">[\s\S]*?\$\{steps\}\s*\$\{readiness\}/);
   assert.match(editorAlternatives, /const body = html`\s*<div class="reality-editor" data-forma-content="primary">[\s\S]*?<\/div>\s*\$\{readiness\}/);
-  assert.match(editorAlternatives, /const body = html`\s*<div class=\$\{`adaptive-workspace adaptive-stage--\$\{stage\}`\} data-forma-content="primary">[\s\S]*?\$\{suggestions\}\s*\$\{intent\}\s*\$\{readiness\}`/);
+  assert.match(editorAlternatives, /const body = html`\$\{suggestions\}\s*<div class=\$\{`adaptive-workspace adaptive-stage--\$\{stage\}`\} data-forma-content="primary">[\s\S]*?\$\{intent\}\s*\$\{readiness\}`/);
 });
 
 test("wide-screen support panes remain bounded and truly empty overviews do not claim the work surface", () => {

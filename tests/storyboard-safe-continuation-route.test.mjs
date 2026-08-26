@@ -43,7 +43,12 @@ const storyboardPlan = {
   presentation: null,
   items: Array.from({ length: 4 }, (_, index) => ({
     title: `One context reaches audience ${index + 1}`,
-    body: `An adult designer arranges distinct visual path ${index + 1} around one shared creative context.`,
+    body: [
+      "An adult designer studies the shared creative brief beside the morning window.",
+      "A producer arranges blank editorial cards into an emerging campaign direction.",
+      "The creative team compares distinct audience treatments across the studio table.",
+      "A finished visual sequence unites every approved direction around the central brief.",
+    ][index],
     notes: `Wide establishing shot ${index + 1} with warm natural light and clear visual hierarchy.`,
     image_prompt: `Editorial wide photograph ${index + 1} of an adult designer arranging abstract blank cards around one central creative document, warm natural light.`,
     context_group_ids: [],
@@ -201,7 +206,7 @@ test("owner safely continues a four-frame storyboard after one rejected image wh
     assert.equal(failedResponse.status, 200, JSON.stringify(await failedResponse.clone().json()));
     const failed = (await failedResponse.json()).job;
     assert.equal(failed.status, "failed", JSON.stringify({ errorDetail: failed.errorDetail, result: failed.result, calls: provider.calls }));
-    assert.equal(failed.errorDetail.category, "safety");
+    assert.equal(failed.errorDetail.category, "safety", JSON.stringify(failed.errorDetail));
     assert.equal(failed.errorDetail.httpStatus, 422);
     assert.equal(failed.errorDetail.retryable, false);
     assert.equal(failed.result.storyboardProviderSubmission, "confirmed");

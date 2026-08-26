@@ -132,7 +132,7 @@ function scopedEvent(event:CreativeEvent,index:ProjectIndex){
   if(explicit&&explicit!==index.projectId)return false;
   if(event.type==="OutputRenamed"){
     const documentId=String(payload.document_id??""),id=String(payload.output_id??"");
-    if(!documentId||!index.documentIds.has(documentId)||!id)return false;
+    if(explicit!==index.projectId||!documentId||!index.documentIds.has(documentId)||!id)return false;
     return payload.output_kind==="image"
       ?String(payload.object_id??"")===id&&!payload.artifact_id&&index.outputIds.has(id)
       :payload.output_kind==="artifact"&&String(payload.artifact_id??"")===id&&!payload.object_id&&index.artifactIds.has(id);
@@ -436,7 +436,10 @@ export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestC
     CROSS JOIN private_content content ON content.content_id=scope.resource_id
     WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=? AND scope.resource_kind='content'
       AND ((scope.visibility='collaborative_output' AND content.owner_id=scope.owner_user_id AND content.kind='document-artifact')
-        OR(scope.visibility='actor_private' AND scope.actor_user_id=? AND content.owner_id=? AND content.kind IN('chat-user','chat-assistant')))
+        OR(scope.visibility='actor_private' AND scope.actor_user_id=? AND content.owner_id=? AND content.kind IN('chat-user','chat-assistant')
+          AND EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id=content.content_id
+            AND retention.organization_id=scope.organization_id AND retention.project_access_id=scope.project_access_id
+            AND retention.project_id=scope.project_id AND retention.actor_user_id=scope.actor_user_id)))
       AND content.redacted_at IS NULL AND content.expires_at>?`)
     .bind(context.projectAccessId,context.organizationId,context.ownerUserId,context.principalUserId,context.principalUserId,new Date().toISOString()));
   const [rows,headRow,resourceRows,contentRow]=await env.DB.batch<Record<string,unknown>>(statements);
