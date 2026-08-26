@@ -152,6 +152,72 @@ async function stalePresentationAttempt(fixture,job,{attemptCount=1,reserve=fals
 
 const flushExecution=async()=>{for(let index=0;index<8;index+=1)await new Promise(setImmediate);};
 
+test("paid audio download recovery reuses its plan and provider request with zero additional settlement",async()=>{
+  const fixture=await reliabilityWorker();fixture.environment.FAL_KEY="test-existing-fal-key";
+  const previousFetch=globalThis.fetch,calls=[],stored=[];
+  let failDownload=true;
+  fixture.environment.MEDIA.put=async(key,bytes,options)=>{stored.push({key,bytes,options});};
+  const plan={title:"Original retained score",summary:"An original instrumental piano and cello composition.",content_markdown:"Create an original instrumental score moving from restraint to quiet resolution.",presentation:null,items:[{title:"Complete arrangement",body:"Original felt piano and soft cello develop a restrained resolving motif.",notes:"No voices or artist imitation.",image_prompt:"",slide:null,context_group_ids:[]}]};
+  globalThis.fetch=async(value,init={})=>{
+    const url=String(value),method=init.method??"GET";calls.push({url,method});
+    if(url==="https://api.openai.com/v1/moderations")return Response.json({id:"audio-recovery-moderation",results:[{flagged:false,categories:{}}]});
+    if(url==="https://api.openai.com/v1/responses")return Response.json({id:"paid-audio-plan",model:"gpt-5.6-terra",output_text:JSON.stringify(plan),usage:{input_tokens:8101,output_tokens:3820,total_tokens:11921}});
+    if(url==="https://queue.fal.run/fal-ai/lyria3/pro"&&method==="POST")return Response.json({request_id:"paid-audio-edge-result"});
+    if(url.endsWith("/paid-audio-edge-result/status?logs=1"))return Response.json({status:"COMPLETED"});
+    if(url.endsWith("/paid-audio-edge-result"))return Response.json({audio:{url:"https://fal.media/paid-audio-edge.mp3",content_type:"audio/mpeg",file_size:3}});
+    if(url==="https://fal.media/paid-audio-edge.mp3"){
+      assert.equal(init.redirect,"manual");assert.equal(init.headers,undefined);
+      if(failDownload)throw new TypeError('Invalid redirect value, must be one of "follow" or "manual"');
+      return new Response(new Uint8Array([1,2,3]),{headers:{"content-type":"audio/mpeg"}});
+    }
+    throw new Error(`Unexpected request ${method} ${url}`);
+  };
+  try{
+    await fixture.drainBackground();
+    const admission=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"audio",productionMode:"manual",itemCount:1,paidMediaConfirmed:true,requestKey:"paid-audio-edge-recovery"}}));
+    assert.equal(admission.status,202,JSON.stringify(await admission.clone().json()));
+    const {job}=await admission.json();
+    const failed=(await(await fixture.runJob(job)).json()).job;
+    assert.equal(failed.status,"failed");assert.equal(failed.errorDetail.code,"provider_network_failed");
+    assert.equal(failed.result.generationReceipt.settled_cost_microusd,142_042);
+    const original=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+    assert.equal(original.providerJobId,"paid-audio-edge-result");
+    assert.ok(original.artifactPlan);assert.equal(original.audioInputReceipt.model,"fal-ai/lyria3/pro");
+    const originalCostId=original.costReservationId;
+    assert.deepEqual({...fixture.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE reservation_id=?").get(originalCostId)},{status:"settled",used_microusd:142_042});
+    const originalPosts=calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length;
+    assert.equal(originalPosts,2);
+
+    const retry=await fixture.request(`/api/document-jobs/${job.jobId}/retry`,{method:"POST"});
+    assert.equal(retry.status,202,JSON.stringify(await retry.clone().json()));
+    const resumed=(await retry.json()).job;assert.equal(resumed.jobId,job.jobId);
+    const recovery=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+    assert.equal(recovery.providerJobId,"paid-audio-edge-result");
+    assert.equal(recovery.prepaidProviderCostMicrousd,80_000);
+    failDownload=false;
+    const completed=(await(await fixture.runJob(resumed)).json()).job;
+    assert.equal(completed.status,"completed",JSON.stringify(completed.errorDetail));
+    assert.equal(completed.result.generationReceipt.settled_cost_microusd,0);
+    assert.equal(calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length,originalPosts);
+    assert.equal(stored.length,1);
+    const artifacts=fixture.sqlite.prepare("SELECT payload FROM events WHERE type='DocumentRenderCompleted'").all();
+    assert.equal(artifacts.length,1);
+    const artifact=JSON.parse(artifacts[0].payload);assert.equal(artifact.artifact_kind,"audio");assert.ok(artifact._private_ref);
+    const privateArtifact=fixture.sqlite.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id=? AND owner_id=? AND redacted_at IS NULL").get(artifact._private_ref,"dev-local-creative");
+    assert.ok(privateArtifact);
+    assert.equal(JSON.parse(privateArtifact.private_json).media_url,`/api/media/${encodeURIComponent(stored[0].key)}`);
+    assert.equal(artifact.media_url,undefined);
+    assert.equal(stored[0].options.customMetadata.providerJobId,"paid-audio-edge-result");
+    assert.equal(stored[0].options.httpMetadata.contentType,"audio/mpeg");
+    assert.deepEqual({...fixture.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE reservation_id=?").get(originalCostId)},{status:"settled",used_microusd:142_042});
+    assert.equal(fixture.sqlite.prepare("SELECT SUM(used_microusd) AS cost FROM cost_budget_reservations").get().cost,142_042);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN ('active','executing')").get().count,0);
+    await fixture.runJob(resumed);
+    assert.equal(calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length,originalPosts);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted'").get().count,1);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
 for(const form of ["preview","generate","short_story","scene","storyboard","audio","video"]){
   test(`${form} keeps paid planning in the live request and records its boundary before dispatch`,async()=>{
     const fixture=await reliabilityWorker();fixture.environment.FAL_KEY="test-existing-fal-key";
