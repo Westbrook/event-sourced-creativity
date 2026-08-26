@@ -1,0 +1,200 @@
+forma-assistant-panel {
+  position: fixed;
+  inset-inline-end: max(1rem, var(--forma-safe-inline-end, 0px));
+  inset-block-end: calc(max(1rem, env(safe-area-inset-bottom, 0px)) + var(--forma-keyboard-offset, 0px));
+  z-index: 46;
+  display: block;
+  color: var(--ink, #18211e);
+}
+
+.forma-assistant-launcher {
+  min-inline-size: 7rem;
+  min-block-size: 2.75rem;
+  padding-inline: 1rem;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 999px;
+  background: var(--surface, #fffdf9);
+  color: inherit;
+  box-shadow: 0 10px 35px rgb(28 37 32 / 14%);
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  cursor: pointer;
+}
+
+.forma-assistant-panel {
+  inline-size: min(25rem, calc(100vw - 2rem));
+  max-block-size: min(39rem, calc(100dvh - 7rem - var(--forma-keyboard-offset, 0px)));
+  display: grid;
+  grid-template-rows: auto minmax(8rem, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, currentColor 13%, transparent);
+  border-radius: 1rem;
+  background: var(--surface, #fffdf9);
+  box-shadow: 0 18px 65px rgb(28 37 32 / 20%);
+}
+
+.forma-assistant-header,
+.forma-assistant-composer {
+  padding: .875rem 1rem;
+}
+
+.forma-assistant-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: .75rem;
+  border-block-end: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.forma-assistant-header strong,
+.forma-assistant-header small {
+  display: block;
+}
+
+.forma-assistant-header small,
+.forma-assistant-page,
+.forma-assistant-pending,
+.forma-assistant-read-only {
+  color: color-mix(in srgb, currentColor 66%, transparent);
+  font-size: .78rem;
+}
+
+.forma-assistant-close,
+.forma-assistant-send {
+  min-inline-size: 2.75rem;
+  min-block-size: 2.75rem;
+}
+
+.forma-assistant-transcript {
+  display: grid;
+  align-content: start;
+  gap: .75rem;
+  padding: 1rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.forma-assistant-message {
+  max-inline-size: 95%;
+  margin: 0;
+  padding: .65rem .8rem;
+  border-radius: .85rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.forma-assistant-message--assistant {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.forma-assistant-message--user {
+  justify-self: end;
+  background: color-mix(in srgb, var(--accent, #507768) 17%, transparent);
+}
+
+.forma-assistant-proposal,
+.forma-assistant-task {
+  display: grid;
+  gap: .45rem;
+  padding: .8rem;
+  border: 1px solid color-mix(in srgb, currentColor 13%, transparent);
+  border-radius: .75rem;
+}
+
+.forma-assistant-proposal button,
+.forma-assistant-task button {
+  min-block-size: 2.75rem;
+  text-align: start;
+}
+
+.forma-assistant-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: .5rem;
+  border-block-start: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.forma-assistant-model {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: .5rem;
+}
+
+.forma-assistant-model > label:first-child {
+  display: grid;
+  gap: .3rem;
+  font-size: .78rem;
+}
+
+.forma-assistant-model select {
+  min-block-size: 2.75rem;
+  padding-inline: .65rem;
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border-radius: .55rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.forma-assistant-premium {
+  display: flex;
+  align-items: flex-start;
+  gap: .5rem;
+  font-size: .8rem;
+  line-height: 1.4;
+}
+
+.forma-assistant-premium input {
+  min-inline-size: 1rem;
+  min-block-size: 1rem;
+}
+
+.forma-assistant-input {
+  min-block-size: 2.75rem;
+  max-block-size: 8rem;
+  resize: vertical;
+  padding: .65rem .75rem;
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border-radius: .65rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+@media (max-width: 48rem) {
+  forma-assistant-panel {
+    inset-inline-start: max(.625rem, var(--forma-safe-inline-start, 0px));
+    inset-inline-end: max(.625rem, var(--forma-safe-inline-end, 0px));
+    inset-block-end: calc(.625rem + max(var(--forma-bottom-nav-size, 0px), var(--forma-keyboard-offset, 0px), env(safe-area-inset-bottom, 0px)));
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .forma-assistant-panel {
+    inline-size: 100%;
+    max-block-size: min(37rem, calc(100dvh - 3rem - max(var(--forma-bottom-nav-size, 0px), var(--forma-keyboard-offset, 0px))));
+  }
+}
+
+@media (forced-colors: active) {
+  .forma-assistant-launcher,
+  .forma-assistant-panel,
+  .forma-assistant-input,
+  .forma-assistant-proposal,
+  .forma-assistant-task,
+  .forma-assistant-model select {
+    border: 1px solid CanvasText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  forma-assistant-panel,
+  .forma-assistant-panel,
+  .forma-assistant-transcript {
+    scroll-behavior: auto;
+    animation: none;
+    transition: none;
+  }
+}

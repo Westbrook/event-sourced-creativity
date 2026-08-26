@@ -1,6 +1,6 @@
 import type { CreativeEvent } from "./events.ts";
 
-export type IntentOutputKind = "image" | "short_story" | "scene" | "slides" | "storyboard" | "video" | "context";
+export type IntentOutputKind = "image" | "short_story" | "scene" | "slides" | "storyboard" | "video" | "audio" | "context";
 
 export type IntentTrajectoryStatus =
   | "initiated"
@@ -85,12 +85,13 @@ const formatLabels: Record<IntentOutputKind, string> = {
   slides: "presentation",
   storyboard: "storyboard",
   video: "video",
+  audio: "audio",
   context: "creative direction",
 };
 
 function outputKind(value: unknown): IntentOutputKind {
   const kind = text(value);
-  return kind === "image" || kind === "short_story" || kind === "scene" || kind === "slides" || kind === "storyboard" || kind === "video" ? kind : "context";
+  return kind === "image" || kind === "short_story" || kind === "scene" || kind === "slides" || kind === "storyboard" || kind === "video" || kind === "audio" ? kind : "context";
 }
 
 function scopedDocumentId(event: CreativeEvent) {

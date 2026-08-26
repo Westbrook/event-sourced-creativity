@@ -1,7 +1,7 @@
 /** Server-issued authorities. A role label or visible link never grants a capability. */
 export const FORMA_CAPABILITIES = [
   "self.profile.read", "self.privacy.manage", "self.usage.read", "self.share.manage",
-  "project.read", "project.author", "project.library.manage", "project.canvas.use", "project.output.request", "project.review.approve",
+  "project.read", "project.assistant.read", "project.assistant.propose", "project.author", "project.library.manage", "project.canvas.use", "project.output.request", "project.review.approve",
   "workspace.member.read", "workspace.member.manage", "workspace.project.read", "workspace.project.manage",
   "workspace.policy.manage", "workspace.budget.manage", "workspace.usage.read", "workspace.audit.read",
   "platform.identity.manage", "platform.policy.manage", "platform.provider.configure", "platform.provider.activate",

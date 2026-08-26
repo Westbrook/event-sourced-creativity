@@ -18,6 +18,8 @@ import { handleWorkspaces } from "./workspaces-api";
 import { readProjectRequestContext } from "./project-access";
 import { handlePerformanceSample } from "./performance-api";
 import { handleArtifactEdit } from "./artifact-api";
+import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask } from "./assistant-api";
+import { handlePlatformAssistant } from "./platform-assistant-api";
 import { handleEventPrivacy } from "./privacy-api";
 import { handleProjectNotifications } from "./project-notifications-api";
 import { processReviewReminders } from "./review-automation-api";
@@ -106,6 +108,14 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
       return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
     }
     if(url.pathname==="/api/session")return handleSession(request,env,context);
+    if(url.pathname==="/api/platform/assistant")return handlePlatformAssistant(request,env);
+    if(url.pathname==="/api/assistant")return handleAssistant(request,env,context);
+    const assistantProposal=url.pathname.match(/^\/api\/assistant\/proposals\/([^/]+)\/(accept|reject)$/);
+    if(assistantProposal)return handleAssistantProposal(request,env,assistantProposal[1]!,assistantProposal[2]!);
+    const assistantTask=url.pathname.match(/^\/api\/assistant\/tasks\/([^/]+)\/(cancel|reconcile)$/);
+    if(assistantTask)return handleAssistantTask(request,env,assistantTask[1]!,assistantTask[2]!);
+    const assistantBilling=url.pathname.match(/^\/api\/platform\/assistant\/billing\/([^/]+)\/reconcile$/);
+    if(assistantBilling)return handleAssistantBillingReconciliation(request,env,assistantBilling[1]!);
     if(url.pathname==="/api/project-notifications")return handleProjectNotifications(request,env);
     if(url.pathname==="/api/privacy/events")return handleEventPrivacy(request,env);
     if(url.pathname==="/api/privacy/attention"&&request.method==="POST"){

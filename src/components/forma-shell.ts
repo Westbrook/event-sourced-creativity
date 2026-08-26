@@ -12,6 +12,7 @@ import "./design-system/navigation";
 import "./design-system/language-picker";
 import "./icons-navigation";
 import "./forma-attention-observer";
+import "./forma-creative-assistant.ts";
 
 export class FormaShell extends FormaElement {
   #commandIndex = 0;
@@ -344,6 +345,7 @@ export class FormaShell extends FormaElement {
       ${audienceNavigation}
       ${this.store.error.get() ? html`<div class="error-banner" role="alert"><b>${simplifiedEditor ? this.i18n.t("shell.error") : this.i18n.t("shell.streamUnavailable","Durable stream unavailable.")}</b> ${this.store.error.get()} <button @click=${() => this.store.load()}>${this.i18n.t("action.retry")}</button></div>` : nothing}
       <main id="main-content" tabindex="-1" aria-busy=${this.store.loading.get()&&!this.store.events.get().length||!this.store.routeDataReady()?"true":"false"}>${this.store.loading.get()&&!this.store.events.get().length||!this.store.routeDataReady()?html`<section class="application-loading" role="status"><span aria-hidden="true"></span><div><b>${this.i18n.t("shell.loading","",{application:this.i18n.t("shell."+applicationId,application.label)})}</b><p>${this.i18n.t("shell.loadingDetail")}</p></div></section>`:this.#page()}</main>
+      ${session?.assistant?.enabled&&session.policy.accepted?html`<forma-creative-assistant></forma-creative-assistant>`:nothing}
       ${this.store.ui.toast ? html`<div class="toast" role="status" aria-live="polite" popover="manual">${icon("check")} ${this.i18n.system(this.store.ui.toast)}</div>` : nothing}
       ${this.store.ui.commandOpen ? this.#commands() : nothing}
       ${this.store.ui.shareOpen&&this.store.canManageProjectShares()?this.#share():nothing}

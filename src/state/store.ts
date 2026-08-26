@@ -51,6 +51,12 @@ export type PilotSession = {
   audience?: ApplicationId;
   capabilities?: FormaCapability[];
   permissionEpoch?: string;
+  assistant?: {
+    enabled: true;
+    phase: "read-only" | "actions";
+    capabilities: Array<"project.assistant.read" | "project.assistant.propose">;
+    models?: Array<{ id: "gpt-5.6-luna" | "gpt-5.6-terra" | "gpt-5.6-sol"; maximumMicrousd: number; premiumApprovalRequired: boolean }>;
+  };
   organizations?: Array<{ organizationId: string; name: string; role: string }>;
   projects?: Array<{organizationId:string;projectAccessId:string;projectId:string;projectName:string;role:string}>;
   projectContext?:{organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string;role:string;permissions:FormaCapability[];expiresAt:string;managedPilot?:boolean};

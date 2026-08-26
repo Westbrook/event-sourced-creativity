@@ -48,6 +48,8 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
   const remainingLegacy = await ownedLegacyCount(env, actor.userId);
   if (remainingLegacy) return Response.json({ error: "historical_privacy_migration_required", legacyAuthoredEvents: remainingLegacy, message: "An administrator must first migrate historical authored event bodies; erasure would otherwise be incomplete." }, { status: 409 });
   const now = new Date().toISOString();
+  const platformAssistant = await env.DB.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
+    .first<{ available: number }>();
   const result = await env.DB.batch([
     env.DB.prepare(`UPDATE event_private_payloads SET private_json='',redacted_at=?
       WHERE owner_id=? AND redacted_at IS NULL
@@ -62,6 +64,10 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
         AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id AND (resource.actor_user_id=? OR resource.owner_user_id=?))`)
       .bind(now, actor.userId, actor.userId, actor.userId),
     env.DB.prepare("DELETE FROM external_content WHERE owner_id=?").bind(actor.userId),
+    ...(platformAssistant ? [env.DB.prepare("UPDATE platform_assistant_private_content SET content='',redacted_at=? WHERE actor_user_id=? AND redacted_at IS NULL")
+      .bind(now, actor.userId)] : []),
   ]);
-  return Response.json({ erasedAuthoredEventBodies: Number(result[0]?.meta.changes ?? 0), erasedTemporaryContent: Number(result[1]?.meta.changes ?? 0), clearedDerivedContent: Number(result[2]?.meta.changes ?? 0), finishedOutputsRetained: true, sharedOrganizationContextRetained: true, uploadedFilesRetained: true, otherDevicesAndBackupsPurged: false });
+  return Response.json({ erasedAuthoredEventBodies: Number(result[0]?.meta.changes ?? 0), erasedTemporaryContent: Number(result[1]?.meta.changes ?? 0),
+    erasedPlatformConversations: Number(result[3]?.meta.changes ?? 0), clearedDerivedContent: Number(result[2]?.meta.changes ?? 0),
+    finishedOutputsRetained: true, sharedOrganizationContextRetained: true, uploadedFilesRetained: true, otherDevicesAndBackupsPurged: false });
 }

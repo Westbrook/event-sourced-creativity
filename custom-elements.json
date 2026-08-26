@@ -2434,6 +2434,209 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/design-system/assistant-panel.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaAssistantPanel",
+          "tagName": "forma-assistant-panel",
+          "customElement": true,
+          "summary": "Assistant panel application interface.",
+          "description": "Private, page-aware conversational assistant.\nAsk about the current page, selected work, recent authorized activity, and reviewable next steps without leaving the page.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "canReconcile",
+              "type": {
+                "text": "boolean"
+              },
+              "attribute": "canreconcile"
+            },
+            {
+              "kind": "field",
+              "name": "context",
+              "type": {
+                "text": "AssistantContext | null"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "guidanceOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "attribute": "guidanceonly"
+            },
+            {
+              "kind": "field",
+              "name": "messages",
+              "type": {
+                "text": "AssistantDisplayedMessage[]"
+              },
+              "description": "Property-only author-supplied localized message overrides inherited by descendant components."
+            },
+            {
+              "kind": "field",
+              "name": "models",
+              "type": {
+                "text": "AssistantDisplayedModel[]"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "open",
+              "type": {
+                "text": "boolean"
+              },
+              "attribute": "open"
+            },
+            {
+              "kind": "field",
+              "name": "pageLabel",
+              "type": {
+                "text": "string"
+              },
+              "attribute": "pagelabel"
+            },
+            {
+              "kind": "field",
+              "name": "pending",
+              "type": {
+                "text": "number"
+              },
+              "attribute": "pending"
+            },
+            {
+              "kind": "field",
+              "name": "proposals",
+              "type": {
+                "text": "AssistantDisplayedProposal[]"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "attribute": "readonly",
+              "description": "Whether the native control can be read but not edited."
+            },
+            {
+              "kind": "field",
+              "name": "tasks",
+              "type": {
+                "text": "AssistantDisplayedTask[]"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "canreconcile",
+              "fieldName": "canReconcile",
+              "type": {
+                "text": "boolean"
+              }
+            },
+            {
+              "name": "guidanceonly",
+              "fieldName": "guidanceOnly",
+              "type": {
+                "text": "boolean"
+              }
+            },
+            {
+              "name": "open",
+              "fieldName": "open",
+              "type": {
+                "text": "boolean"
+              }
+            },
+            {
+              "name": "pagelabel",
+              "fieldName": "pageLabel",
+              "type": {
+                "text": "string"
+              }
+            },
+            {
+              "name": "pending",
+              "fieldName": "pending",
+              "type": {
+                "text": "number"
+              }
+            },
+            {
+              "name": "readonly",
+              "fieldName": "readOnly",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Whether the native control can be read but not edited."
+            }
+          ],
+          "events": [
+            {
+              "name": "forma-assistant-message",
+              "type": {
+                "text": "CustomEvent<{ premiumApproval?: true | undefined; model?: \"gpt-5.6-luna\" | \"gpt-5.6-terra\" | \"gpt-5.6-sol\" | undefined; message: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-assistant-proposal",
+              "type": {
+                "text": "CustomEvent<{ proposal: AssistantDisplayedProposal; action: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-assistant-task",
+              "type": {
+                "text": "CustomEvent<{ task: AssistantDisplayedTask; action: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-assistant-toggle",
+              "type": {
+                "text": "CustomEvent<{ open: boolean; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-assistant-panel",
+          "declaration": {
+            "name": "FormaAssistantPanel",
+            "module": "src/components/design-system/assistant-panel.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaAssistantPanel",
+          "declaration": {
+            "name": "FormaAssistantPanel",
+            "module": "src/components/design-system/assistant-panel.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/design-system/atoms.ts",
       "declarations": [
         {
@@ -9785,7 +9988,7 @@
               "kind": "field",
               "name": "presentation",
               "type": {
-                "text": "\"full\" | \"compact\" | \"canvas\" | \"rail\""
+                "text": "\"canvas\" | \"full\" | \"compact\" | \"rail\""
               },
               "default": "\"full\"",
               "attribute": "presentation"
@@ -9805,7 +10008,7 @@
               "name": "presentation",
               "fieldName": "presentation",
               "type": {
-                "text": "\"full\" | \"compact\" | \"canvas\" | \"rail\""
+                "text": "\"canvas\" | \"full\" | \"compact\" | \"rail\""
               },
               "default": "\"full\""
             },
@@ -10228,6 +10431,47 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/forma-creative-assistant.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaCreativeAssistant",
+          "tagName": "forma-creative-assistant",
+          "customElement": true,
+          "summary": "Creative assistant application interface.",
+          "description": "Private, page-aware conversational assistant.\nAsk about the current page, selected work, recent authorized activity, and reviewable next steps without leaving the page.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-creative-assistant",
+          "declaration": {
+            "name": "FormaCreativeAssistant",
+            "module": "src/components/forma-creative-assistant.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaCreativeAssistant",
+          "declaration": {
+            "name": "FormaCreativeAssistant",
+            "module": "src/components/forma-creative-assistant.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/forma-creative-editor.ts",
       "declarations": [
         {
@@ -10555,6 +10799,66 @@
           "declaration": {
             "name": "FormaMemory",
             "module": "src/components/forma-memory.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/forma-platform-assistant.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaPlatformAssistant",
+          "tagName": "forma-platform-assistant",
+          "customElement": true,
+          "summary": "Platform assistant application interface.",
+          "description": "Independent internal assistant: no Creator store, project documents, media, provider calls, or mutations.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "route",
+              "type": {
+                "text": "string"
+              },
+              "attribute": "route"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "route",
+              "fieldName": "route",
+              "type": {
+                "text": "string"
+              }
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-platform-assistant",
+          "declaration": {
+            "name": "FormaPlatformAssistant",
+            "module": "src/components/forma-platform-assistant.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaPlatformAssistant",
+          "declaration": {
+            "name": "FormaPlatformAssistant",
+            "module": "src/components/forma-platform-assistant.ts"
           }
         }
       ]

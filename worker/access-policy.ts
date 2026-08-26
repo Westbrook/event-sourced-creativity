@@ -58,6 +58,13 @@ export const effectivePilotReviewerSql=(organizationId:string,userId:string)=>`E
     AND reviewer_participant.revoked_at IS NULL AND reviewer_participant.role='reviewer'
 )`;
 
+const CREATOR_PROJECT_NAME_SQL = `COALESCE((SELECT CASE event.type WHEN 'ProjectRenamed' THEN json_extract(COALESCE(secret.private_json,event.payload),'$.new_name') ELSE json_extract(COALESCE(secret.private_json,event.payload),'$.name') END
+        FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
+        LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
+        WHERE scope.project_access_id=project.project_access_id AND scope.organization_id=project.organization_id
+          AND event.type IN ('ProjectCreated','ProjectRenamed')
+        ORDER BY scope.project_sequence DESC LIMIT 1),'')`;
+
 /** One indexed user query resolves active grants and accepted parent scopes atomically. */
 export const PRINCIPAL_WITH_ACCESS_SQL = `
   SELECT principal.*,
@@ -109,12 +116,7 @@ export const PRINCIPAL_WITH_ACCESS_SQL = `
         AND ${effectivePilotParticipantSql("organization.organization_id","principal.user_id")}), '[]') AS organizations_json,
     COALESCE((SELECT json_group_array(json_object(
       'projectAccessId', project.project_access_id, 'projectId', project.project_id,
-      'projectName', COALESCE((SELECT CASE event.type WHEN 'ProjectRenamed' THEN json_extract(COALESCE(secret.private_json,event.payload),'$.new_name') ELSE json_extract(COALESCE(secret.private_json,event.payload),'$.name') END
-        FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
-        LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
-        WHERE scope.project_access_id=project.project_access_id AND scope.organization_id=project.organization_id
-          AND event.type IN ('ProjectCreated','ProjectRenamed')
-        ORDER BY scope.project_sequence DESC LIMIT 1),''),
+      'projectName', ${CREATOR_PROJECT_NAME_SQL},
       'organizationId', project.organization_id,
       'role', CASE WHEN ${effectivePilotReviewerSql("organization.organization_id","principal.user_id")} THEN 'viewer'
         WHEN project.owner_user_id=principal.user_id THEN 'owner' ELSE project_member.role END
@@ -166,6 +168,9 @@ export const PRINCIPAL_WITH_ACCESS_SQL = `
     ) AS permission_epoch
   FROM (SELECT * FROM users WHERE user_id=?) principal
 `;
+
+/** Platform authorization preserves exact policy epochs without ever selecting creator events, payloads, or names. */
+export const PLATFORM_PRINCIPAL_WITH_ACCESS_SQL = PRINCIPAL_WITH_ACCESS_SQL.replace(CREATOR_PROJECT_NAME_SQL, "''");
 
 function parseList<T>(value: unknown): T[] {
   if (typeof value !== "string") return [];

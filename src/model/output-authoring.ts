@@ -203,6 +203,7 @@ export function outputFrameEditEvents(frame: CreativeBlock, blocks: readonly Cre
 
 /** Route every existing plain-text editor through the same derived-output boundary. */
 export function outputBlockTextEditEvents(block: CreativeBlock, blocks: readonly CreativeBlock[], value: string, sourceSurface = "output-context-editor"): EventInput[] {
+  if (block.properties.source_evidence_hash) return [];
   if ((block.properties.source_artifact_kind === "storyboard" || block.properties.source_artifact_kind === "video") && block.properties.source_artifact_item_id) return outputFrameEditEvents(block, blocks, value, sourceSurface);
   const draft = outputInputDraft(block);
   if (draft) return outputInputEditEvents(block, blocks, { ...draft, markdown: value }, { sourceSurface });
@@ -214,10 +215,10 @@ export function outputBlockTextEditEvents(block: CreativeBlock, blocks: readonly
 
 /** Remove an output and only its relation-owned children as one reversible family. */
 export function outputBlockRemovalEvents(block: CreativeBlock, blocks: readonly CreativeBlock[], relations: readonly CreativeBlockRelation[], input: EventInput): EventInput[] {
-  if (block.locked || relations.some((relation) => relation.kind === "artifact_contains" && relation.toBlockId === block.id)) return [];
+  if (block.locked || block.properties.source_evidence_hash || relations.some((relation) => relation.kind === "artifact_contains" && relation.toBlockId === block.id)) return [];
   const ownedIds = new Set(relations.filter((relation) => relation.kind === "artifact_contains" && relation.fromBlockId === block.id).map((relation) => relation.toBlockId));
   const owned = blocks.filter((candidate) => !candidate.removed && ownedIds.has(candidate.id));
-  if (owned.some((candidate) => candidate.locked)) return [];
+  if (owned.some((candidate) => candidate.locked || candidate.properties.source_evidence_hash)) return [];
   return [...owned.map((candidate): EventInput => ({
     type: "BlockRemoved",
     payload: { ...input.payload, block_id: candidate.id, scope: candidate.scope, document_id: candidate.documentId || undefined, source_artifact_id: candidate.properties.source_artifact_id, context_set_root_id: block.id, reason: "removed-with-owned-output-input" },

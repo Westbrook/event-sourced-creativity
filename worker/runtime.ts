@@ -31,6 +31,11 @@ export interface WorkerEnv {
   FORMA_WORKSPACE_COST_LIMIT_USD?: string;
   FORMA_PILOT_COHORT_ID?: string;
   FORMA_LIVE_REPLAY_ENABLED?: string;
+  FORMA_ASSISTANT_INTERNAL_USER_IDS?: string;
+  FORMA_ASSISTANT_ACTION_USER_IDS?: string;
+  FORMA_ASSISTANT_PROVIDER_USER_IDS?: string;
+  FORMA_ASSISTANT_SOL_USER_IDS?: string;
+  FORMA_ASSISTANT_ALLOWED_MODELS?: string;
   FORMA_ENCRYPTION_ROOT_KEY?: string;
   FORMA_ENCRYPTION_ROOT_KEYS?: string;
   FORMA_ENCRYPTION_ROOT_KEY_VERSION?: string;
@@ -485,6 +490,20 @@ export async function sweepExpiredPrivateContent(env: WorkerEnv, limit = 250): P
       processed+=Number(revisions.meta.changes??0);
     }
   }
+  if(processed<maximum){
+    const platform=await env.DB.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
+      .first<{available:number}>();
+    if(platform){
+      const expired=await env.DB.prepare("SELECT content_id FROM platform_assistant_private_content WHERE redacted_at IS NULL AND expires_at<=? ORDER BY expires_at LIMIT 1")
+        .bind(now).first<{content_id:string}>();
+      if(expired){
+        const redacted=await env.DB.prepare(`UPDATE platform_assistant_private_content SET content='',redacted_at=? WHERE rowid IN(
+          SELECT rowid FROM platform_assistant_private_content WHERE redacted_at IS NULL AND expires_at<=? ORDER BY expires_at LIMIT ?)`)
+          .bind(now,now,maximum-processed).run();
+        processed+=Number(redacted.meta.changes??0);
+      }
+    }
+  }
   return processed;
 }
 
@@ -496,6 +515,9 @@ export async function observeScheduledRetention(env: WorkerEnv, limit = 1_000): 
   try{
     const processed=await sweepExpiredPrivateContent(env,limit);
     const now=new Date().toISOString();
+    const platform=await env.DB.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
+      .first<{available:number}>();
+    const platformBacklog=platform?" UNION ALL SELECT platform.expires_at FROM platform_assistant_private_content platform WHERE platform.redacted_at IS NULL AND platform.expires_at<=?":"";
     const backlog=await env.DB.prepare(`SELECT COUNT(*) AS count,MIN(expires_at) AS oldest FROM(
       SELECT private_content.expires_at FROM private_content WHERE private_content.redacted_at IS NULL AND private_content.kind!='document-artifact' AND private_content.expires_at<=?
         AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope JOIN organization_retention_policies policy ON policy.organization_id=scope.organization_id AND policy.legal_hold=1
@@ -505,8 +527,8 @@ export async function observeScheduledRetention(env: WorkerEnv, limit = 1_000): 
       UNION ALL SELECT artifact_revisions.expires_at FROM artifact_revisions WHERE artifact_revisions.redacted_at IS NULL AND artifact_revisions.expires_at<=?
         AND NOT EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=artifact_revisions.organization_id AND policy.legal_hold=1)
         AND NOT EXISTS(SELECT 1 FROM organization_legal_holds hold WHERE hold.organization_id=artifact_revisions.organization_id AND hold.status='active'
-          AND (hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=artifact_revisions.project_access_id OR hold.scope_kind='artifact' AND hold.resource_id=artifact_revisions.artifact_id)))`)
-      .bind(now,now).first<{count:number;oldest:string|null}>();
+          AND (hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=artifact_revisions.project_access_id OR hold.scope_kind='artifact' AND hold.resource_id=artifact_revisions.artifact_id))${platformBacklog})`)
+      .bind(now,now,...(platform?[now]:[])).first<{count:number;oldest:string|null}>();
     await env.DB.prepare("UPDATE retention_sweep_runs SET status='completed',finished_at=?,processed_count=?,remaining_count=?,oldest_expired_at=? WHERE run_id=?")
       .bind(now,processed,Number(backlog?.count??0),backlog?.oldest??null,runId).run();
     await env.DB.prepare("DELETE FROM retention_sweep_runs WHERE run_id NOT IN(SELECT run_id FROM retention_sweep_runs ORDER BY started_at DESC,run_id DESC LIMIT 500)").run();

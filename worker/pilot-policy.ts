@@ -3,9 +3,10 @@ import { MICRO_USD_PER_USD } from "./replay-cost.ts";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./document-job-reservations.ts";
 import { readCanvasGovernance } from "./canvas-governance-policy.ts";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
-import { PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow, principalHasCapability, type PrincipalAccess } from "./access-policy.ts";
+import { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL, PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow, principalHasCapability, type PrincipalAccess } from "./access-policy.ts";
 import type { FormaCapability } from "../src/platform/capabilities.ts";
 import { APPLICATIONS, applicationDefinition, applicationIdFromRoute, authorizedApplicationHome, routeRequiredCapabilities, type ApplicationId } from "../src/platform/applications.ts";
+import { ASSISTANT_MODELS, assistantModelCostMicrousd, type AssistantModel } from "../src/model/assistant-model-policy.ts";
 import { readProjectRequestContext } from "./project-access.ts";
 
 export const POLICY_VERSION = "pilot-2026-08-10";
@@ -161,6 +162,63 @@ export async function requireCapability(
 
 export function requireConsent(user: PilotUser) {
   return user.consentVersion === POLICY_VERSION ? null : Response.json({ error: "pilot_terms_required", policyVersion: POLICY_VERSION }, { status: 428 });
+}
+
+export type PlatformAssistantPrincipal = {
+  userId: string;
+  email: string;
+  role: PilotRole;
+  consentVersion: string | null;
+  updatedAt: string;
+  access: PrincipalAccess;
+  authorizationSnapshot: {
+    rawEpoch: string;
+    grants: string;
+    organizations: string;
+    projects: string;
+    identityPolicies: string;
+    canvasRequirements: number;
+  };
+};
+
+/** Internal assistant identity retains normal identity policy without hydrating creator events or project names. */
+export async function requirePlatformAssistantPrincipal(request: Request, env: WorkerEnv): Promise<{
+  principal: PlatformAssistantPrincipal | null;
+  response: Response | null;
+}> {
+  await ensureSchema(env);
+  const identity = identityFromRequest(request);
+  if (!identity) return { principal: null, response: Response.json({ error: "authentication_required" }, { status: 401 }) };
+  if (decodedCookieValue(request, "forma_impersonation")) {
+    return { principal: null, response: Response.json({ error: "return_to_principal_before_internal_access" }, { status: 409 }) };
+  }
+  const restrictedCohort = env.FORMA_PILOT_COHORT_ID?.trim() ?? "";
+  if (restrictedCohort) {
+    const breakglass = new Set((env.FORMA_ADMIN_EMAILS ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
+    if (!breakglass.has(identity.email)) {
+      const now = new Date().toISOString();
+      const admitted = await env.DB.prepare(`SELECT 1 AS admitted FROM pilot_cohorts cohort
+        JOIN organizations organization ON organization.organization_id=cohort.organization_id AND organization.status='active'
+        JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
+        WHERE cohort.organization_id=(SELECT selected.organization_id FROM pilot_cohorts selected WHERE selected.cohort_id=?)
+          AND cohort.status IN('active','paused') AND cohort.starts_at<=? AND cohort.ends_at>?
+          AND participant.user_id=? AND participant.email_normalized=? AND participant.status='active' AND participant.revoked_at IS NULL LIMIT 1`)
+        .bind(restrictedCohort, now, now, identity.userId, identity.email).first();
+      if (!admitted) return { principal: null, response: Response.json({ error: "pilot_participant_required" }, { status: 403 }) };
+    }
+  }
+  const row = await env.DB.prepare(PLATFORM_PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
+  if (!row) return { principal: null, response: Response.json({ error: "authentication_required" }, { status: 401 }) };
+  if (row.email !== identity.email) return { principal: null, response: Response.json({ error: "identity_confirmation_required" }, { status: 403 }) };
+  const role = String(row.role) as PilotRole;
+  if (!Object.hasOwn(roleRank, role)) return { principal: null, response: Response.json({ error: "invalid_account_role" }, { status: 403 }) };
+  const access = await principalAccessFromRow(row, role, { email: identity.email, source: identity.source, subject: identity.userId });
+  if (access.identityPolicyDeniedCustody) return { principal: null, response: Response.json({ error: "organization_identity_policy_required" }, { status: 403 }) };
+  return { principal: { userId: String(row.user_id), email: identity.email, role,
+    consentVersion: row.consent_version ? String(row.consent_version) : null, updatedAt: String(row.updated_at ?? ""), access,
+    authorizationSnapshot: { rawEpoch: String(row.permission_epoch ?? ""), grants: String(row.grants_json ?? "[]"),
+      organizations: String(row.organizations_json ?? "[]"), projects: String(row.projects_json ?? "[]"),
+      identityPolicies: String(row.identity_policies_json ?? "[]"), canvasRequirements: Number(row.approved_canvas_requirements ?? 0) } }, response: null };
 }
 
 const period = () => new Date().toISOString().slice(0, 7);
@@ -959,7 +1017,10 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
     const access={role:principal.role,capabilities:principal.access.capabilities,canvasAccess:principal.access.canvasAccess};
     const availableApplications=APPLICATIONS.filter((application)=>application.id==="creative"||application.id==="canvas"&&principal.access.canvasAccess||application.requiredCapabilities.some((capability)=>principal.access.capabilities.includes(capability)))
       .map((application)=>({id:application.id,href:authorizedApplicationHome(application.id,access)}));
-    return Response.json({user:publicUser(principal),audience,capabilities,availableApplications,permissionEpoch:principal.access.permissionEpoch,organizations:[],canvas:{access:principal.access.canvasAccess},impersonation:null},{headers:{"cache-control":"private, no-store"}});
+    const assistantUsers=new Set((env.FORMA_ASSISTANT_INTERNAL_USER_IDS??"").split(",").map((value)=>value.trim()).filter(Boolean));
+    const assistant=assistantUsers.has(principal.userId)&&principal.consentVersion===POLICY_VERSION
+      ?{enabled:true as const,host:"platform" as const,phase:"read-only" as const}:null;
+    return Response.json({user:publicUser(principal),audience,capabilities,availableApplications,permissionEpoch:principal.access.permissionEpoch,organizations:[],canvas:{access:principal.access.canvasAccess},impersonation:null,...(assistant?{assistant}:{})},{headers:{"cache-control":"private, no-store"}});
   }
   const budgetUser=principal;
   if(request.method==="POST")await reconcileFailedBudgetReservations(env,budgetUser);
@@ -981,10 +1042,25 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
     ...effectiveAccess.capabilities.filter((capability)=>capability.startsWith("self.")),
     ...selected.context.permissions.filter((capability)=>capability!=="project.canvas.use"||selectedCanvasAccess),
   ]:personalCapabilities;
+  const assistantTesters=new Set((env.FORMA_ASSISTANT_INTERNAL_USER_IDS??"").split(",").map((value)=>value.trim()).filter(Boolean));
+  const assistantEditors=new Set((env.FORMA_ASSISTANT_ACTION_USER_IDS??"").split(",").map((value)=>value.trim()).filter(Boolean));
+  const assistantProviders=new Set((env.FORMA_ASSISTANT_PROVIDER_USER_IDS??"").split(",").map((value)=>value.trim()).filter(Boolean));
+  const assistantPremiumUsers=new Set((env.FORMA_ASSISTANT_SOL_USER_IDS??"").split(",").map((value)=>value.trim()).filter(Boolean));
+  const assistantModelAllowlist=(env.FORMA_ASSISTANT_ALLOWED_MODELS??"gpt-5.6-luna,gpt-5.6-terra").split(",")
+    .map((value)=>value.trim()).filter((value):value is AssistantModel=>ASSISTANT_MODELS.includes(value as AssistantModel));
+  const assistantProviderAllowed=Boolean(env.OPENAI_API_KEY&&assistantProviders.has(principal.userId)
+    &&(selected.context?hasCapability(principal,"project.output.request",{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId})
+      :effectiveAccess.capabilities.includes("project.output.request")));
+  const assistantModels=assistantProviderAllowed?[...new Set(assistantModelAllowlist)]
+    .filter((model)=>model!=="gpt-5.6-sol"||principal.role==="admin"&&assistantPremiumUsers.has(principal.userId))
+    .map((id)=>({id,maximumMicrousd:assistantModelCostMicrousd(id,10_400,1_600),premiumApprovalRequired:id==="gpt-5.6-sol"})):[];
+  const assistant=assistantTesters.has(principal.userId)&&!auth.impersonation&&(audience==="creative"||audience==="canvas")
+    ?{enabled:true as const,phase:assistantEditors.has(principal.userId)?"actions" as const:"read-only" as const,capabilities:["project.assistant.read",...(!selected.context||hasCapability(principal,"project.author",{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId})?["project.assistant.propose"]:[])],...(assistantModels.length?{models:assistantModels}:{})}
+    :null;
   const visibleBudgets=privileged||canReadTenantUsage?accountBudgets:{budgets:{...accountBudgets.budgets,workspace:{...accountBudgets.budgets.user}},costBudgets:{...accountBudgets.costBudgets,workspace:{...accountBudgets.costBudgets.user}}};
   return Response.json({user:safeUser,audience,capabilities,permissionEpoch:effectiveAccess.permissionEpoch,organizations:auth.impersonation?[]:principal.access.organizations,projects:auth.impersonation?[]:principal.access.projects,
     ...(selected.context?{projectContext:{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId,projectId:selected.context.projectId,ownerUserId:selected.context.ownerUserId,role:selected.context.role,permissions:selected.context.permissions.filter((capability)=>capability!=="project.canvas.use"||selectedCanvasAccess),expiresAt:selected.context.expiresAt,managedPilot:Boolean(scopedRetention?.pilot_status)}}:{}),
-    impersonation:safeImpersonation,policy:{version:POLICY_VERSION,accepted:user.consentVersion===POLICY_VERSION,passiveCapture:false,attentionCapture:{available:true,defaultOn:false,retentionDays:14,rawInputCapture:false},externalAssetsRequireAssertion:true,retentionDays:Number(scopedRetention?.transient_days??intEnv(env.FORMA_RETENTION_DAYS,30)),evidenceRetentionDays:Number(scopedRetention?.evidence_days??Math.max(1,Math.min(3650,intEnv(env.FORMA_EVIDENCE_RETENTION_DAYS,DEFAULT_EVIDENCE_RETENTION_DAYS)))),sharing:"private-expiring-revocable"},canvas:safeCanvas,provider,...visibleBudgets});
+    ...(assistant?{assistant}:{}),impersonation:safeImpersonation,policy:{version:POLICY_VERSION,accepted:user.consentVersion===POLICY_VERSION,passiveCapture:false,attentionCapture:{available:true,defaultOn:false,retentionDays:14,rawInputCapture:false},externalAssetsRequireAssertion:true,retentionDays:Number(scopedRetention?.transient_days??intEnv(env.FORMA_RETENTION_DAYS,30)),evidenceRetentionDays:Number(scopedRetention?.evidence_days??Math.max(1,Math.min(3650,intEnv(env.FORMA_EVIDENCE_RETENTION_DAYS,DEFAULT_EVIDENCE_RETENTION_DAYS)))),sharing:"private-expiring-revocable"},canvas:safeCanvas,provider,...visibleBudgets});
 }
 
 export async function handleImpersonation(request:Request,env:WorkerEnv){

@@ -52,7 +52,7 @@ export function creativeNextActions(facts: CreativeWorkspaceFacts): CreativeNext
   if (activeBlocks.length && !facts.outputs.length) actions.push({ id: "make-draft", label: "Try a first draft", reason: `${activeBlocks.length} creative decision${activeBlocks.length === 1 ? " is" : "s are"} ready to explore visually.`, priority: 85, evidence: activeBlocks.length });
   if (comparableOutputs.length >= 2) actions.push({ id: "compare-images", label: "Compare directions", reason: "Looking at alternatives together makes the next refinement easier to choose.", priority: retained.length ? 48 : 76, evidence: comparableOutputs.length });
   if (drafts.length && !finished.length) actions.push({ id: "refine-image", label: "Take the strongest draft further", reason: "A promising exploration can become a finished result without starting over.", priority: 80, evidence: drafts.length });
-  if (activeBlocks.length && !facts.artifacts.length) actions.push({ id: "create-output", label: "Explore another format", reason: "The same work can become a story, scene, presentation, storyboard, or video.", priority: 58, evidence: activeBlocks.length });
+  if (activeBlocks.length && !facts.artifacts.length) actions.push({ id: "create-output", label: "Explore another format", reason: "The same work can become a story, scene, presentation, storyboard, video, or audio.", priority: 58, evidence: activeBlocks.length });
   if (facts.artifacts.length || retained.length) actions.push({ id: "reuse-output", label: "Build on an existing result", reason: "Any finished output can become precise context for the next piece of work.", priority: 64, evidence: facts.artifacts.length + retained.length });
   return actions.sort((left, right) => right.priority - left.priority).slice(0, 3);
 }

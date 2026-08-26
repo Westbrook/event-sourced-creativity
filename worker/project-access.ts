@@ -10,6 +10,7 @@ import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./acces
 import { artifactReviewState, artifactSourceVersions } from "../src/model/context-health.ts";
 import { productionWorkflowIssues, type ProductionWorkflow } from "../src/model/production-workflow.ts";
 import { isContextCompositionRelation, validateContextCompositionGraph } from "../src/model/combined-context.ts";
+import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
 
 const CONTEXT_COOKIE="forma_project_context";
 const PROJECT_EVENT_TYPES=new Set([
@@ -203,7 +204,7 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     CASE WHEN retained.content_id IS NULL THEN 0 ELSE 1 END AS private_provider_response
     FROM project_resource_scopes resource LEFT JOIN private_content retained ON resource.resource_kind='content'
       AND retained.content_id=resource.resource_id AND retained.owner_id=resource.actor_user_id
-      AND(retained.kind='provider-response' OR retained.kind IN('document-artifact-input','activity-issue-note') AND json_valid(retained.content)=1
+      AND(retained.kind IN('provider-response','assistant-action') OR retained.kind IN('document-artifact-input','activity-issue-note') AND json_valid(retained.content)=1
         AND EXISTS(SELECT 1 FROM project_resource_scopes anchored JOIN document_jobs job ON job.job_id=anchored.resource_id
           WHERE anchored.resource_kind='job' AND anchored.project_access_id=resource.project_access_id
             AND anchored.organization_id=resource.organization_id AND anchored.project_id=resource.project_id
@@ -436,6 +437,39 @@ export async function readProjectEventPage(env:WorkerEnv,context:ProjectRequestC
   const events=(rows?.results??[]).map((row)=>presentProjectEvent(row,context,activeResources,allowedContent));
   const head=Number(headRow?.results[0]?.head??0),nextAfter=Number(events.at(-1)?.sequence??after);
   return{events,head,nextAfter,hasMore:nextAfter<head,...(includeContent?{content}:{}),permissionSchemaVersion:1};
+}
+
+/** Reconstruct semantic resource state without replaying unrelated activity or bypassing actor redaction. */
+export async function readProjectAssistantEventView(env:WorkerEnv,context:ProjectRequestContext,selection:{documentId?:string|null;canvasId?:string|null}={}){
+  await synchronizeProjectScope(env,context);
+  const documentId=selection.documentId??"",canvasId=selection.canvasId??"";
+  const scope="scope.project_access_id=? AND scope.organization_id=? AND scope.owner_user_id=?";
+  const joins="FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL";
+  const eventDocument="COALESCE(json_extract(event.payload,'$.document_id'),(SELECT json_extract(previous.payload,'$.document_id') FROM events previous WHERE previous.stream_id=event.stream_id AND previous.sequence<=event.sequence AND previous.type IN('DocumentCreated','DocumentOpened') ORDER BY previous.sequence DESC LIMIT 1))";
+  const bootstrap=env.DB.prepare(`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id ${joins}
+    WHERE ${scope} AND(event.type='ProjectCreated'
+      OR event.type IN('DocumentCreated','DocumentForked','DocumentRenamed','DocumentRemoved','DocumentRestored') AND(?='' OR json_extract(event.payload,'$.document_id')=?)
+      OR event.type IN('CanvasCreated','CanvasRenamed','CanvasRemoved','CanvasRestored') AND(?='' OR json_extract(event.payload,'$.canvas_id')=?))
+    ORDER BY scope.project_sequence DESC LIMIT 96`).bind(context.projectAccessId,context.organizationId,context.ownerUserId,documentId,documentId,canvasId,canvasId);
+  const semantic=env.DB.prepare(`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id ${joins}
+    WHERE ${scope} AND event.type IN(${ASSISTANT_STATE_EVENT_SQL})
+      AND((?='' AND ?='') OR ${eventDocument}=? OR json_extract(event.payload,'$.canvas_id')=?
+        OR json_extract(event.payload,'$.source_canvas_id')=? OR event.type IN('ProjectCreated','ProjectOpened','ProjectRenamed'))
+    ORDER BY scope.project_sequence DESC LIMIT 384`).bind(context.projectAccessId,context.organizationId,context.ownerUserId,documentId,canvasId,documentId,canvasId,canvasId);
+  const boundaries=env.DB.prepare(`SELECT event.*,secret.private_json,scope.project_sequence,scope.actor_user_id ${joins}
+    WHERE ${scope} AND event.type='BlockCreated' AND(?='' OR ${eventDocument}=?)
+      AND(json_extract(event.payload,'$.type')='exclusion' OR json_extract(secret.private_json,'$.properties.intent')='prohibit'
+        OR json_extract(secret.private_json,'$.properties.locked')=1) ORDER BY scope.project_sequence DESC LIMIT 32`)
+    .bind(context.projectAccessId,context.organizationId,context.ownerUserId,documentId,documentId);
+  const resource=env.DB.prepare("SELECT resource_kind,resource_id FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND owner_user_id=?")
+    .bind(context.projectAccessId,context.organizationId,context.ownerUserId);
+  const [basics,state,limits,resources]=await env.DB.batch<Record<string,unknown>>([bootstrap,semantic,boundaries,resource]);
+  const activeResources=resourceIndex(resources.results??[]);
+  const unique=new Map<string,Record<string,unknown>>();
+  for(const row of [...(basics.results??[]),...(state.results??[]),...(limits.results??[])])unique.set(String(row.event_id),row);
+  return [...unique.values()].sort((left,right)=>Number(left.project_sequence)-Number(right.project_sequence))
+    .map((row)=>presentProjectEvent(row,context,activeResources))
+    .filter((event)=>event.type!=="ProjectResourceRestricted");
 }
 
 /** Internal generation receives exact project history, never an owner's account-wide stream. */
@@ -693,11 +727,33 @@ async function currentProjectArtifactDigest(env:WorkerEnv,context:ProjectRequest
   return retained?Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(retained.content))),(byte)=>byte.toString(16).padStart(2,"0")).join(""):"";
 }
 
-export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestContext,principal:PilotUser,body:{action?:string;event?:{type?:string;payload?:Record<string,unknown>;compensatesEventId?:string|null};events?:Array<{type?:string;payload?:Record<string,unknown>;compensatesEventId?:string|null}>;clientId?:string;correlationId?:string;expectedSequence?:number},atomicEdit?:{artifactId:string;contentId:string;oldContent:string;newContent:string;expectedRevision:number;documentId:string;revisions:ArtifactRevisionSnapshot[];restoreSource?:{revision:number;contentSha256:string;contentJson:string}},atomicSidecars?:{statements?:D1PreparedStatement[];buildStatements?:(eventId:string)=>D1PreparedStatement[];guardSql?:string;guardBindings?:Array<string|number|null>}){
+export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestContext,principal:PilotUser,body:{action?:string;event?:{type?:string;payload?:Record<string,unknown>;compensatesEventId?:string|null};events?:Array<{type?:string;payload?:Record<string,unknown>;compensatesEventId?:string|null}>;clientId?:string;correlationId?:string;expectedSequence?:number},atomicEdit?:{artifactId:string;contentId:string;oldContent:string;newContent:string;expectedRevision:number;documentId:string;revisions:ArtifactRevisionSnapshot[];restoreSource?:{revision:number;contentSha256:string;contentJson:string}},atomicSidecars?:{
+  statements?:D1PreparedStatement[];
+  buildStatements?:(eventId:string)=>D1PreparedStatement[];
+  guardSql?:string;
+  guardBindings?:Array<string|number|null>;
+  expectedOwnerHead?:number;
+  preserveGovernance?:true;
+  assistantAcceptance?:{proposalId:string;turnId:string;actorUserId:string;scopeKey:string;organizationId:string;projectAccessId:string;projectId:string;documentId:string};
+}){
   const action=String(body.action??"append");
   if(!["append","batch","canvas_sync"].includes(action))return Response.json({error:"project_operation_unavailable"},{status:403});
   const original=Array.isArray(body.events)?body.events:body.event?[body.event]:[];
-  if(!atomicSidecars&&original.some((event)=>{
+  const assistantAcceptance=atomicSidecars?.assistantAcceptance;
+  if(assistantAcceptance){
+    const accepted=original[0],mutation=original[1],payload=accepted?.payload??{};
+    if(!atomicSidecars?.preserveGovernance||!atomicSidecars.guardSql||!atomicSidecars.buildStatements||!Number.isSafeInteger(atomicSidecars.expectedOwnerHead)||action!=="batch"||original.length!==2
+      ||accepted?.type!=="ProposalAccepted"||!["BlockCreated","BlockPropertyEdited","BlockRemoved","BlockRelationAdded","BlockRelationRemoved"].includes(String(mutation?.type??""))
+      ||assistantAcceptance.actorUserId!==principal.userId||assistantAcceptance.organizationId!==context.organizationId
+      ||assistantAcceptance.projectAccessId!==context.projectAccessId||assistantAcceptance.projectId!==context.projectId
+      ||String(payload.proposal_id??"")!==assistantAcceptance.proposalId||String(payload.turn_id??"")!==assistantAcceptance.turnId
+      ||String(payload.actor_user_id??"")!==principal.userId||String(payload.project_id??"")!==context.projectId
+      ||String(payload.document_id??"")!==assistantAcceptance.documentId
+      ||String(mutation?.payload?.project_id??"")!==context.projectId||String(mutation?.payload?.document_id??"")!==assistantAcceptance.documentId)
+      return Response.json({error:"invalid_assistant_approval"},{status:403});
+  }
+  const privilegedPackageSidecars=Boolean(atomicSidecars&&!atomicSidecars.preserveGovernance);
+  if(!privilegedPackageSidecars&&original.some((event)=>{
     if(event.type==="BlockCreated"){
       const properties=event.payload?.properties;
       return Boolean(properties&&typeof properties==="object"&&Object.keys(properties as Record<string,unknown>).some((key)=>key.startsWith("organization_context_package_")||key==="organization_context_source_block_id"));
@@ -708,7 +764,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     }
     return false;
   }))return Response.json({error:"organization_context_provenance_reserved"},{status:403});
-  if(!atomicSidecars){
+  if(!privilegedPackageSidecars){
     const governedBlockIds=new Set<string>();
     for(const event of original){
       const type=String(event.type??"");
@@ -823,13 +879,14 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   if(incoming.some((event)=>event.type==="BlockRelationRemoved"||event.type==="BlockRelationAdded"&&isContextCompositionRelation(event.payload?.kind))){
     const graphEvents=reviewEvents??await readProjectSourceEvents(env,context);
     const graph=foldEvents(graphEvents,Number.POSITIVE_INFINITY,"",context.projectId);
-    const issue=validateContextCompositionGraph({blocks:graph.libraryBlocks,relations:graph.libraryBlockRelations,events:incoming,ignoreLocks:Boolean(atomicSidecars)});
+    const issue=validateContextCompositionGraph({blocks:graph.libraryBlocks,relations:graph.libraryBlockRelations,events:incoming,ignoreLocks:privilegedPackageSidecars});
     if(issue)return Response.json({error:issue.code,message:issue.message,index:issue.index},{status:409});
   }
   if(incoming.some((event)=>event.type==="ArtifactApproved")&&incoming.some((event)=>/^(?:Block|Chip|DocumentArtifactEdited)/.test(String(event.type??"")))){
     return Response.json({error:"review_context_changed",message:"Approve the output separately after its latest context changes have been reviewed."},{status:409});
   }
-  for(const event of incoming){
+  for(const [index,event] of incoming.entries()){
+    if(assistantAcceptance&&index===0&&event.type==="ProposalAccepted")continue;
     const reason=await validateProjectMutation(env,context,event,pending,principal,canvasAction);if(reason)return Response.json({error:reason},{status:403});
     if(reviewEvents&&ARTIFACT_REVIEW_EVENT_TYPES.has(String(event.type??""))){
       const type=String(event.type),artifactId=String(event.payload?.artifact_id??"");
@@ -878,6 +935,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     }
   }
   const ownerHead=await streamHead(env,ownerStream);
+  if(assistantAcceptance&&ownerHead!==atomicSidecars?.expectedOwnerHead)return Response.json({error:"assistant_proposal_stale"},{status:409});
   if(validatedOwnerHead!==null&&ownerHead!==validatedOwnerHead)return Response.json({error:"stale_review_context",message:"The project changed while this review was being checked. Refresh and review the latest version."},{status:409});
   if(releaseValidationHead!==null&&ownerHead!==releaseValidationHead)return Response.json({error:"stale_release_context",message:"The project changed while export approval was being checked. Refresh the approved output before releasing it."},{status:409});
   const current=await env.DB.prepare("SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=?").bind(context.projectAccessId).first<{head:number}>();

@@ -7,6 +7,7 @@ import { FormaPresentationalElement } from "./presentational-element";
 import { beginRoutePopulation,completeRoutePopulation,recordPopulationSource } from "../performance";
 import "./design-system/navigation";
 import "./design-system/language-picker";
+import "./forma-platform-assistant.ts";
 
 /** Internal task surfaces never import, initialize, observe, or hydrate creator work. */
 export class FormaPlatformShell extends FormaPresentationalElement {
@@ -15,17 +16,27 @@ export class FormaPlatformShell extends FormaPresentationalElement {
   #unsubscribe?: () => void;
   #announcement="";
   #popstate = () => { void this.#load(); };
+  #syncKeyboard = () => {
+    const viewport = window.visualViewport;
+    const offset = viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0;
+    this.style.setProperty("--forma-keyboard-offset", `${Math.round(offset)}px`);
+  };
 
   override connectedCallback() {
     super.connectedCallback();
     this.#unsubscribe = platformSession.subscribe(() => this.requestUpdate());
     window.addEventListener("popstate", this.#popstate);
+    window.visualViewport?.addEventListener("resize", this.#syncKeyboard);
+    window.visualViewport?.addEventListener("scroll", this.#syncKeyboard);
+    this.#syncKeyboard();
     void this.#load();
   }
 
   override disconnectedCallback() {
     this.#unsubscribe?.();
     window.removeEventListener("popstate", this.#popstate);
+    window.visualViewport?.removeEventListener("resize", this.#syncKeyboard);
+    window.visualViewport?.removeEventListener("scroll", this.#syncKeyboard);
     super.disconnectedCallback();
   }
 
@@ -108,7 +119,10 @@ export class FormaPlatformShell extends FormaPresentationalElement {
         <a class="button secondary compact" href="/settings">${this.i18n.t("shell.navigation.settings", "Settings")}</a>
       </header>
       <forma-ui-audience-navigation class="platform-navigation" .label=${currentLabel} .value=${activeTask} .destinations=${destinations} @forma-navigate=${(event: CustomEvent<{ value: string; href: string }>) => this.#navigate(event, event.detail.href)}></forma-ui-audience-navigation>
-      <main id="main-content" tabindex="-1" aria-busy=${this.#loading ? "true" : "false"}>${this.#loading ? html`<section class="application-loading"><b>${this.i18n.t("shell.loading", "Opening your {application} workspace", { application: currentLabel })}</b></section>` : this.#error ? html`<section class="page-pad" role="alert"><h1>${this.i18n.t("shell.accessUnavailable", "Workspace unavailable")}</h1><p>${this.i18n.system(this.#error)}</p><a href="/projects">${this.i18n.t("shell.returnToProjects", "Return to your projects")}</a></section>` : this.#content()}</main><span class="sr-only" role="status" aria-live="polite" aria-atomic="true">${this.#announcement}</span>
+      <main id="main-content" tabindex="-1" aria-busy=${this.#loading ? "true" : "false"}>${this.#loading ? html`<section class="application-loading"><b>${this.i18n.t("shell.loading", "Opening your {application} workspace", { application: currentLabel })}</b></section>` : this.#error ? html`<section class="page-pad" role="alert"><h1>${this.i18n.t("shell.accessUnavailable", "Workspace unavailable")}</h1><p>${this.i18n.system(this.#error)}</p><a href="/projects">${this.i18n.t("shell.returnToProjects", "Return to your projects")}</a></section>` : this.#content()}</main>
+      ${!this.#loading && !this.#error && session?.assistant?.enabled && session.assistant.host === "platform"
+        ? html`<forma-platform-assistant .route=${location.pathname}></forma-platform-assistant>` : nothing}
+      <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">${this.#announcement}</span>
     </div>`;
   }
 }

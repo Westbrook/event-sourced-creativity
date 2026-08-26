@@ -10,6 +10,7 @@ export type PlatformSession = {
   permissionEpoch: string;
   organizations: Array<{ organizationId: string; name: string; role: string }>;
   canvas?: { access: boolean };
+  assistant?: { enabled: true; host: "platform"; phase: "read-only" };
 };
 
 const listeners = new Set<() => void>();
