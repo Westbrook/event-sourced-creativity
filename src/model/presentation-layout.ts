@@ -4,7 +4,7 @@ import { presentationAudienceCitations } from "./presentation-delivery.ts";
 /** One trusted logical artboard for browser presentation, capture, and editable export. */
 export const PRESENTATION_CANVAS_WIDTH = 960 as const;
 export const PRESENTATION_CANVAS_HEIGHT = 540 as const;
-export const PRESENTATION_LAYOUT_VERSION = 1 as const;
+export const PRESENTATION_LAYOUT_VERSION = 2 as const;
 export const PRESENTATION_MIN_READABLE_WIDTH = 560 as const;
 export const PRESENTATION_MIN_READABLE_HEIGHT = 315 as const;
 /** Every protected visual surface is measured identically in live viewers and PDF exports. */
@@ -107,6 +107,7 @@ export type PresentationLayoutPlan = {
   safeArea: { inline: number; block: number };
   capacities: typeof PRESENTATION_LAYOUT_CAPACITIES;
   density: PresentationLayoutDensity;
+  visualPlacement: "side-by-side" | "full-width";
   citationPlacement: PresentationCitationPlacement;
   className: `presentation-slide--density-${PresentationLayoutDensity}`;
   /** The approved source is never mutated; its complete private evidence remains inspectable. */
@@ -184,6 +185,13 @@ export function planSlideLayout(
     : contentReasons.length || bullets.length >= 4 || data.length >= 6 || audienceCitations.length >= 2
       ? "compact"
       : "comfortable";
+  // Dense source inventories need room for their complete editable cards, not
+  // a smaller font inside the same half-width diagram panel.
+  const visualPlacement = (slide?.visual.kind === "architecture" || slide?.visual.kind === "diagram")
+    && slide.layout !== "cover" && slide.layout !== "closing"
+    && data.length >= 6 && visualCharacters > PRESENTATION_LAYOUT_CAPACITIES.visualCharacters
+    && narrativeCharacters <= PRESENTATION_LAYOUT_CAPACITIES.narrativeCharacters
+    ? "full-width" : "side-by-side";
 
   return {
     version: PRESENTATION_LAYOUT_VERSION,
@@ -195,6 +203,7 @@ export function planSlideLayout(
     safeArea: { inline: presentation?.stylePreset === "editorial" ? 48 : 40, block: 32 },
     capacities: PRESENTATION_LAYOUT_CAPACITIES,
     density,
+    visualPlacement,
     citationPlacement,
     className: `presentation-slide--density-${density}`,
     visibleItem,

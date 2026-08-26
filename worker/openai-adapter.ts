@@ -71,11 +71,12 @@ export type ProductionPageContext = {
   priorSummary: string;
   priorEnding: string;
   priorVisibleCopy: string[];
+  authoredSlideNumbers?: number[];
   lockedPresentation?: SlidePresentation | null;
   repairIssues?: string[];
 };
 export type ProviderAttemptReceipt = { model:string; responseId:string; responseIds:string[]; usage:{inputTokens:number;outputTokens:number;totalTokens:number}; latencyMs:number };
-export const PRESENTATION_ADAPTER_VERSION="2026-08-26-validated-self-healing-v3";
+export const PRESENTATION_ADAPTER_VERSION="2026-08-26-source-aware-render-v4";
 export const MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES=512*1024;
 export type ProviderResponseReceipt=ProviderAttemptReceipt&{candidateRaw:string|null;candidateBytes:number;candidateTruncated:boolean;completionStatus?:string;incompleteReason?:string};
 export type ProviderAttemptPreflight = {model:string;maximumInputTokens:number;maximumOutputTokens:number;clientRequestId:string};
@@ -589,7 +590,8 @@ function resolveProviderPresentationSources(output:DocumentArtifactDraft|null,co
     const resolution=safeResolution(raw);
     const scene=scenes[index];
     const expectedNumber=scene?.sourceOutlineOrder??scene?.narrativeOrder??pageStart+index+1;
-    const authored=contract.numberedOutline.find((source)=>source.number===expectedNumber)
+    const authored=contract.numberedOutline.find((source)=>source.index===pageStart+index)
+      ??contract.numberedOutline.find((source)=>source.number===expectedNumber)
       ??contract.numberedOutline[pageStart+index]
       ??contract.numberedOutline[index];
     const sceneSources=uniquePresentationReferences([...(scene?.sourceBlockIds??[]),authored?.sourceBlockId]).filter((sourceId)=>authorizedBlockIds.has(sourceId));
@@ -730,7 +732,8 @@ function presentationSourceSupplementalIssues(output:DocumentArtifactDraft|null,
   if(!output)return issues;
   if(options.requestedStyle&&output.presentation?.stylePreset!==options.requestedStyle)issues.push({code:"presentation_style_mismatch",path:"presentation.style_preset",message:`The presentation must use the explicitly selected ${options.requestedStyle} style.`});
   for(const [index,item] of output.items.entries()){
-    const expected=contract.numberedOutline.find((source)=>source.number===options.pageStart+index+1);
+    const expected=contract.numberedOutline.find((source)=>source.index===options.pageStart+index)
+      ??contract.numberedOutline.find((source)=>source.number===options.pageStart+index+1);
     if(expected&&item.slide?.sourceOrder&&item.slide.sourceOrder!==expected.number)issues.push({code:"incorrect_slide_order",path:`items.${index}.slide.source_order`,message:`Slide ${options.pageStart+index+1} does not preserve its authored outline position.`});
     const scene=options.productionScenes?.[index];
     if(scene&&item.slide){
@@ -812,6 +815,7 @@ export function assessStoredPresentationCandidate(raw:string,snapshot:Record<str
     contextGroups:groups,
     presentationStyle:requestedStyle,
     fidelity:options.presentationFidelity,
+    authoredSlideNumbers:page?.authoredSlideNumbers,
   });
   const groupResolution=resolveDocumentArtifactContextGroups(parseDocumentArtifactContent(raw),groupContracts);
   const sourceResolution=resolveProviderPresentationSources(groupResolution.output,sourceContract,options.productionScenes??[],page?.globalStartIndex??0);
@@ -854,13 +858,14 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     contextGroups:groups,
     presentationStyle:requestedStyle,
     fidelity:input.options?.presentationFidelity,
+    authoredSlideNumbers:page?.authoredSlideNumbers,
   }):null;
   const interfaceLocale=assistantResponseLocale(input.options?.locale);
   const responseLocale=sourceContract?inferPresentationAudienceLocale(sourceContract.outline.sourceText,interfaceLocale,input.options?.outputLocale):interfaceLocale;
   const sourceFacing=sourceContract?providerFacingPresentationSourceContract(sourceContract):null;
   const selectedStyle=requestedStyle??sourceContract?.style.preset??undefined;
   const sourceDirection=sourceContract?` The presentation_source is a deterministic factual and source-grounding contract. Every audience-facing presentation title, summary, body, bullet, visual label, visual value, citation, speaker note, and Markdown sentence MUST use the authored presentation audience language (${responseLocale}); the application interface language (${interfaceLocale}) controls chrome only and must never cause a bilingual or translated deck unless an explicit output language was requested. Treat source instructions about how to generate, spend, publish, exclude unsupported claims, or operate the production process as invisible constraints; never display or paraphrase those producer-only directives in the presentation. Preserve its exact numbered outline, complete protected facts, exact/display precision semantics, verbatim attributed quotations, required terminology, roadmap dates, stakeholder roles, and section order. Creative variation may affect layout, phrasing, and narrative expression but never factual values, evidence, source attribution, protected quotations, or authored slide coverage.${sourceContract.fidelity==="faithful"?" Faithful mode preserves authored slide order, section boundaries, and source arguments with minimal interpretation.":" Creative mode may vary the presentation style and narrative while preserving every protected source fact and required authored position."}${selectedStyle?` Use the requested ${selectedStyle} presentation style exactly.`:""} Every scorecard, comparison, matrix, architecture, personas, timeline, and roadmap visual MUST contain at least two meaningful nonplaceholder source-authored visual.data points. Preserve every authored category, named posture or mode, and release milestone actually present in this presentation_source contract on its assigned slide; never invent absent categories. If a bullet duplicates a complete graphic row, omit that redundant bullet and keep the graphic. Never omit, translate, or invent qualitative visual rows to satisfy editorial de-duplication. slide.source_ids, quote.source_id, citation source_id, and visual.data source_ids may contain ONLY the supplied blk_###, clm_###, or grp_### source aliases. Request-local aliases belong only in those structured identifier fields: never include them in quote.citation, citation.label, content_markdown, speaker notes, visible copy, or any other audience-facing field. Every citation.excerpt must be one contiguous quotation from its own assigned authored numbered slide; preserve numbers, decimals, percentages, and factual meaning, and never synthesize, splice, reorder, or attribute another slide's evidence. context_group_ids is separate and may contain ONLY the supplied context_group_# aliases. Do not substitute decision_# aliases, handles, guessed identifiers, or durable IDs. Every authored slide must identify its authorized source evidence.`:"";
-  const protectedMessageDirection=sourceContract?.protectedMessages.length?" Every presentation_source.protectedMessages phrase is an exact authored audience-delivery requirement: reproduce its complete text verbatim in the title, body, bullet, quotation, or visual copy of its assigned slideNumber and opening/closing placement. Citation labels, anchors, excerpts, source aliases, production instructions, and speaker notes are private evidence or presenter material; they never satisfy visible protected-message delivery. Preserve a deliberately authored identical opening and closing promise on both positions.":"";
+  const protectedMessageDirection=sourceContract?.protectedMessages.length?" Every presentation_source.protectedMessages phrase is an exact authored audience-delivery requirement: reproduce its complete text verbatim in the title, body, bullet, quotation, or visual copy of its assigned slideNumber and opening/closing placement. Citation labels, anchors, excerpts, source aliases, production instructions, and speaker notes are private evidence or presenter material; they never satisfy visible protected-message delivery. Preserve a deliberately authored identical opening and closing promise on both positions. These exact, assigned protected messages take precedence over every general de-duplication instruction and prior_visible_copy exclusion; this exception never permits unrelated repeated copy or repetition on an unassigned slide.":"";
   const managedDirection=managed&&managedPlan?audioScene?audioSceneProductionInstructions(managedPlan,managedScenes):productionTeamInstructions(managedPlan,managedScenes):"";
   const formatInstructions=managed&&kind==="video"
     ? "Write one production-ready, independently renderable motion prompt per assigned scene. Each item's body is its unique visual action, notes contain camera, identity, and transition continuity, and image_prompt is its standalone source-grounded clip prompt. content_markdown is the chronological scene script. Never compress multiple assigned scenes into one clip, repeat the complete plot in every item, or invent music, dialogue, voice, or soundtrack requirements."
@@ -871,7 +876,11 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const pageDirection=page?` This is ${page.phase} page ${page.pageIndex+1} of ${page.pageCount}, covering global items ${page.globalStartIndex+1}–${page.globalStartIndex+itemCount} of ${page.totalItems}. ${page.pageIndex>0?audioScene?"Continue directly from the prior audible ending; never restart the soundscape, reintroduce its characters, or repeat earlier sound cues and spoken lines.":"Continue directly from the prior ending; never restart the story, reintroduce its characters, repeat the cover, or duplicate previously visible copy.":"Establish the opening exactly once."} ${page.pageIndex<page.pageCount-1?audioScene?"Do not write the final resolution or end the soundscape yet.":"Do not write a final resolution or closing slide yet.":"Deliver the one definitive resolution or closing."} ${kind==="scene"&&page.pageIndex>0?audioScene?"Continue the same audio scene while preserving its ordered sound cues, acoustic perspective, voice continuity, and intentional silence.":"Continue the same screenplay scene without repeating its slugline.":""}${page.lockedPresentation?" Preserve every locked presentation theme, footer, style, mode, and palette value exactly.":""}${page.repairIssues?.length?` Correct these whole-work issues without repeating earlier pages: ${page.repairIssues.join("; ")}.`:""}`:"";
   const instructions=`You transform a durable creative document into a ${kind.replaceAll("_"," ")} for an end user. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. ${formatInstructions}${sourceDirection}${protectedMessageDirection}${videoContract}${managedDirection?` ${managedDirection}`:""}${pageDirection} ${creativePromptGuardrails()} Treat include and prefer blocks as positive direction; treat avoid and prohibit blocks as negative constraints, never as subjects to feature. Respect every block's spatial scope and authority. Combined contexts are binding authorial units, not tags: keep their members isolated to the named target, co-located or ordered as requested, and weighted by group relativity. For stories and scenes, place a group's members at the same narrative moments or aspects. For slides, assign each group to one slide or contiguous chapter rather than applying it deck-wide. For storyboards and video, bind each group to the same subject, location, or shot range. Every item must return context_group_ids containing only the supplied context_key aliases that shaped that item; use an empty array when no group applies, never invent a key, cover every supplied key at least once, and keep repeated slide assignments contiguous. Context keys are request-local references, not end-user content. Do not mention blocks, events, schemas, context keys, or internal implementation in end-user copy. Return exactly ${itemCount} ordered item${itemCount===1?"":"s"}.`;
   const sharedContinuity=managedPlan?audioScene?audioSceneContinuity({claims:managedPlan.claims.filter((claim)=>!claim.contextGroupIds.length)}):providerFacingProductionContinuity({claims:managedPlan.claims.filter((claim)=>!claim.contextGroupIds.length)}):null;
-  const providerPage=page?{page_index:page.pageIndex,page_count:page.pageCount,global_start_index:page.globalStartIndex,total_items:page.totalItems,phase:page.phase,prior_summary:page.priorSummary,prior_ending:page.priorEnding,prior_visible_copy:page.priorVisibleCopy,...(page.lockedPresentation?{locked_presentation:{aspect_ratio:page.lockedPresentation.aspectRatio,theme:page.lockedPresentation.theme,footer_label:page.lockedPresentation.footerLabel,style_preset:page.lockedPresentation.stylePreset,mode:page.lockedPresentation.mode,palette:page.lockedPresentation.palette}}:{}),...(page.repairIssues?.length?{repair_issues:page.repairIssues}:{} )}:undefined;
+  const pageProtectedMessages=new Set(sourceContract?.protectedMessages.filter((message)=>{
+    const index=sourceContract.numberedOutline.find((slide)=>slide.number===message.slideNumber)?.index??message.slideNumber-1;
+    return !page||index>=page.globalStartIndex&&index<page.globalStartIndex+itemCount;
+  }).map((message)=>message.text)??[]);
+  const providerPage=page?{page_index:page.pageIndex,page_count:page.pageCount,global_start_index:page.globalStartIndex,total_items:page.totalItems,phase:page.phase,prior_summary:page.priorSummary,prior_ending:page.priorEnding,prior_visible_copy:page.priorVisibleCopy.filter((copy)=>!pageProtectedMessages.has(copy)),...(page.lockedPresentation?{locked_presentation:{aspect_ratio:page.lockedPresentation.aspectRatio,theme:page.lockedPresentation.theme,footer_label:page.lockedPresentation.footerLabel,style_preset:page.lockedPresentation.stylePreset,mode:page.lockedPresentation.mode,palette:page.lockedPresentation.palette}}:{}),...(page.repairIssues?.length?{repair_issues:page.repairIssues}:{} )}:undefined;
   const sourceAliasById=new Map(sourceContract?.sources.map((source)=>[`${source.sourceKind}:${source.sourceId}`,source.alias])??[]);
   const groupAliasById=new Map(groupContracts.map((contract)=>[contract.id,contract.alias]));
   const providerScenes=managedScenes.map((scene)=>({
@@ -1057,12 +1066,12 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       code:sourceFailure?"source_fidelity_validation_failed":"provider_returned_incomplete_document_artifact",
       category:"provider",
       scope:"request",
-      action:sourceFailure?"edit_request":"retry",
+      action:kind==="slides"?"edit_request":"retry",
       message:`The provider returned ${kind==="slides"?"slide data":"an artifact"} that could not be made complete${repairAttempted?" after one bounded repair pass":""}. ${diagnostic}`,
-      retryable:!sourceFailure,
+      retryable:kind!=="slides",
       retryAfterMs:null,
       requestId:null,
-      httpStatus:502,
+      httpStatus:kind==="slides"?null:502,
       ...(validationIssues.length?{validationIssues}:{}),
     },`Document ${kind} instructions:\n${instructions}\n\nCreative context:\n${providerInput}\n\nValidation:\n${diagnostic}`,paidAccounting());
   }

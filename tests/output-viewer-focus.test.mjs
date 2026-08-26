@@ -121,10 +121,17 @@ test("visual slides never acquire an outer scrollbar while review, editing, and 
   assert.match(styles,/\.presentation-deck--slideshow \.presentation-deck-stage \{[^}]*overflow:\s*hidden/);
 });
 
-test("meaningful slide overflow remains a safe, reversible reading recommendation without trapping visual presentation",()=>{
+test("desktop overflow is reported without unmounting the slide or resetting an explicit viewing choice",()=>{
   assert.match(deck,/presentationUsesReadingView\(\{contentOverflows:this\.#visualOverflow,readingPreference:this\.#readingOverride,viewportRequiresReading:this\.#automaticReading\}\)/,"reading policy preserves both accessibility defaults and deliberate viewer choice");
-  assert.match(deck,/if\(overflow===this\.#visualOverflow\)return;[\s\S]*?this\.#visualOverflow=overflow;[\s\S]*?if\(this\.#readingOverride===null\)this\.requestUpdate\(\)/,"actual clipping is still measured without silently overriding a deliberate reading or slide choice");
-  assert.match(deck,/const retryVisual=sizeChanged&&this\.#visualOverflow;/,"responsive resizing retries a previously oversized visual composition");
+  assert.match(deck,/if\(overflow===this\.#visualOverflow\)return;\s*this\.#visualOverflow=overflow;\s*this\.requestUpdate\(\)/,"actual clipping updates the diagnostic even after an explicit visual choice");
+  assert.match(deck,/event\.detail\.renderKey!==this\.#activeFitKey/,"obsolete fit receipts cannot affect the current slide revision");
+  assert.match(deck,/connectedCallback\(\)\{[^\n]*this\.requestUpdate\(\)/,"reattaching a viewer rebinds its viewport observer even when all slide properties are unchanged");
+  assert.match(deck,/#postureFrame=requestAnimationFrame/);
+  assert.match(shared,/#presentationPostureFrame=requestAnimationFrame/,"responsive posture updates never change observed layout during ResizeObserver delivery");
+  assert.match(deck,/if\(fitKey!==this\.#activeFitKey\)\{this\.#activeFitKey=fitKey;this\.#visualOverflow=false;/,"a revised item, style, footer, or locale invalidates the old fit result");
+  assert.match(deck,/presentation\.fitOverflow/,"unresolved overflow remains visible with a complete reading alternative");
+  assert.doesNotMatch(deck,/next!==this\.#index&&this\.#readingOverride===false/);
+  assert.doesNotMatch(shared,/nextIndex!==active\.index&&this\.#presentationReadingPreference===false|!reading&&this\.#presentationContentOverflow&&narrow/);
   assert.doesNotMatch(deck,/unsafeVisualOverride|if\(!reading&&this\.#visualOverflow\)/,"Slide view must never remain permanently disabled by stale provenance overflow");
   assert.doesNotMatch(deck,/contentNeedsReading|layout\?\.density==="dense"&&layout\.overflow\.readingModeRecommended/,"dense styling gets a real canonical fit measurement before choosing the reading view");
   assert.match(deck,/if\(view==="list"&&this\.#fullscreenActive\)[\s\S]*?document\.exitFullscreen\(\)/,"List cannot remove the last visible fullscreen exit action");

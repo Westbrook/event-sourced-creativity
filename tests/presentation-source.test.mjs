@@ -498,3 +498,19 @@ test("validates a late provider page against its global authored slide numbers w
   assert.deepEqual(validatePresentationSourceCoverage(page, contract, { pageStart: 8, pageSize: 4, requireEverySlideSource: true, requireAllProtectedContent: false }), []);
   assert.deepEqual(validatePresentationSourceCoverage(page.slice(0, 2), contract, { pageStart: 8, pageSize: 2, requireEverySlideSource: true, requireAllProtectedContent: false }), []);
 });
+
+test("late-page source and citation checks remain strict for legacy and globally indexed contracts", () => {
+  const snapshot={facts:[9,10].map((number)=>({block_id:`late-source-${number}`,active:true,properties:{text:`Slide ${number} — Authored decision ${number}\nKeep the evidence for decision ${number} connected to its own source.`}}))};
+  const validation={pageStart:8,pageSize:2,requireEverySlideSource:true,requireAllProtectedContent:false};
+  for(const options of [{},{authoredSlideNumbers:Array.from({length:10},(_,index)=>index+1)}]){
+    const contract=buildPresentationSourceContract(snapshot,options);
+    const page=faithfulSlides(contract);
+    assert.deepEqual(validatePresentationSourceCoverage(page,contract,validation),[]);
+    page[0].slide.sourceIds=["late-source-10"];
+    page[0].slide.citations=[{sourceId:"late-source-10",anchor:"Slide 99",excerpt:"An invented claim that was not in either authored source."}];
+    const issues=validatePresentationSourceCoverage(page,contract,validation);
+    for(const code of ["incorrect_slide_source","incorrect_citation_source","incorrect_citation_anchor","ungrounded_citation_excerpt"]){
+      assert.equal(issues.some((issue)=>issue.code===code&&issue.path.startsWith("items.0.")),true,`${code}, global positions: ${Boolean(options.authoredSlideNumbers)}`);
+    }
+  }
+});

@@ -9,14 +9,12 @@ export type PresentationViewPosture = {
 /**
  * Preserve a deliberate audience choice while keeping safe responsive defaults.
  *
- * Content that does not fit defaults to its complete semantic reading alternative,
- * but choosing "Slide view" must still recover a previously replaced visual slide.
- * This is especially important after auxiliary source evidence was removed from
- * the audience artboard: an old fit measurement cannot permanently trap a deck.
+ * Overflow is a repair/diagnostic signal, not permission to replace a desktop
+ * artboard with raw reading text. Keep the visual mounted so revised content and
+ * late fonts can be remeasured. Narrow viewports retain the accessible default.
  */
 export const presentationUsesReadingView = ({
-  contentOverflows,
   readingPreference,
   viewportRequiresReading,
 }: PresentationViewPosture): boolean =>
-  readingPreference ?? (viewportRequiresReading || contentOverflows);
+  readingPreference ?? viewportRequiresReading;

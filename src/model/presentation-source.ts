@@ -112,6 +112,8 @@ export type PresentationSourceOptions = {
   stylePreset?: string;
   presentationStyle?: string;
   fidelity?: "faithful" | "creative";
+  /** Global authored positions only; page-scoped source prose and aliases stay scoped. */
+  authoredSlideNumbers?: readonly number[];
 };
 
 export type PresentationSourceContract = {
@@ -619,7 +621,7 @@ function authoredProtectedMessageDirectives(block: SourceBlock): AuthoredProtect
   return result;
 }
 
-function extractProtectedMessages(blocks: SourceBlock[], outline: PresentationSourceOutline, sources: PresentationSourceAlias[], plannedSlideCount: number | null): ProtectedPresentationMessage[] {
+function extractProtectedMessages(blocks: SourceBlock[], outline: PresentationSourceOutline, sources: PresentationSourceAlias[], plannedSlideCount: number | null, authoredSlideNumbers?: readonly number[]): ProtectedPresentationMessage[] {
   const result: ProtectedPresentationMessage[] = [];
   const seen = new Set<string>();
   if (!outline.slides.length) {
@@ -646,25 +648,29 @@ function extractProtectedMessages(blocks: SourceBlock[], outline: PresentationSo
     }
     return result.sort((left, right) => left.slideNumber - right.slideNumber || left.text.localeCompare(right.text));
   }
-  const opening = outline.slides[0]!;
-  const closing = outline.slides.at(-1)!;
+  const openingNumber = authoredSlideNumbers?.[0] ?? outline.slides[0]!.number;
+  const closingNumber = authoredSlideNumbers?.at(-1) ?? outline.slides.at(-1)!.number;
+  const opening = outline.slides.find((slide) => slide.number === openingNumber);
+  const closing = outline.slides.find((slide) => slide.number === closingNumber);
+  const placementFor = (slide: PresentationSourceSlide): ProtectedPresentationMessagePlacement =>
+    slide.number === openingNumber ? "opening" : slide.number === closingNumber ? "closing" : "authored";
   for (const block of blocks) for (const authored of authoredProtectedMessageDirectives(block)) {
     const message = clean(authored.text);
     if (message.length < 4 || message.length > 500) continue;
     const authoredSlides = outline.slides.filter((slide) => slide.content.includes(message));
     const requested = new Set(authored.placements);
     const candidates = requested.size
-      ? outline.slides.filter((slide) => requested.has(slide.number === opening.number ? "opening" : slide.number === closing.number ? "closing" : "authored"))
+      ? outline.slides.filter((slide) => requested.has(placementFor(slide)))
       : authoredSlides;
     // An explicitly repeated opening/closing promise is one authored message
     // with two independently protected audience-facing placements.
-    if (opening.number !== closing.number && opening.content.includes(message) && closing.content.includes(message)) {
+    if (opening && closing && opening.number !== closing.number && opening.content.includes(message) && closing.content.includes(message)) {
       if (!candidates.includes(opening)) candidates.push(opening);
       if (!candidates.includes(closing)) candidates.push(closing);
     }
     for (const slide of candidates) {
       if (!slide.content.includes(message)) continue;
-      const placement = slide.number === opening.number ? "opening" : slide.number === closing.number ? "closing" : "authored";
+      const placement = placementFor(slide);
       const key = `${slide.number}\u0000${message}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -731,6 +737,18 @@ export function buildPresentationSourceContract(input: PresentationSourceInput, 
   const blocks = sourceBlocks(input);
   const sources = buildSourceAliases(input, options, blocks);
   const outline = inferPresentationSourceOutline(input);
+  const requestedNumbers = options.authoredSlideNumbers;
+  const authoredSlideNumbers = requestedNumbers?.length && requestedNumbers.length <= 100
+    && requestedNumbers.every((number, index) => Number.isSafeInteger(number) && number > 0 && (!index || number > requestedNumbers[index - 1]!))
+    && outline.slides.every((slide) => requestedNumbers.includes(slide.number))
+    ? requestedNumbers : undefined;
+  if (authoredSlideNumbers && outline.slides.length) {
+    for (const slide of outline.slides) {
+      slide.index = authoredSlideNumbers.indexOf(slide.number);
+      slide.order = slide.index + 1;
+    }
+    outline.authoredSlideCount = authoredSlideNumbers.length;
+  }
   for (const slide of outline.slides) slide.sourceAlias = sourceAliasFor(sources, slide.sourceBlockId);
   const requestedRaw = Number(options.requestedSlideCount ?? options.itemCount ?? 0);
   const requestedSlideCount = Number.isSafeInteger(requestedRaw) && requestedRaw > 0 && requestedRaw <= 100 ? requestedRaw : null;
@@ -744,7 +762,7 @@ export function buildPresentationSourceContract(input: PresentationSourceInput, 
     slideCountMismatch: requestedSlideCount !== null && outline.authoredSlideCount !== null && requestedSlideCount !== outline.authoredSlideCount,
     protectedFacts: extractProtectedFacts(blocks, outline, sources),
     protectedQuotes: extractProtectedQuotes(blocks, outline, sources),
-    protectedMessages: extractProtectedMessages(blocks, outline, sources, requestedSlideCount ?? outline.authoredSlideCount),
+    protectedMessages: extractProtectedMessages(blocks, outline, sources, requestedSlideCount ?? outline.authoredSlideCount, authoredSlideNumbers),
     protectedTerminology: extractProtectedTerminology(blocks, sources),
     roadmaps: extractRoadmaps(blocks, outline, sources),
     style: inferPresentationStyleContract(input, options),
@@ -841,9 +859,9 @@ function containsNumber(text: string, value: string) {
 }
 
 function relatedSlideIndex(outline: PresentationSourceSlide[], slideNumber: number | null, sourceBlockId: string | null, pageStart: number, length: number) {
-  const authored = slideNumber ? outline.findIndex((slide) => slide.number === slideNumber)
-    : sourceBlockId ? outline.findIndex((slide) => slide.sourceBlockId === sourceBlockId) : 0;
-  const relative = authored < 0 ? 0 : authored - pageStart;
+  const authored = slideNumber ? outline.find((slide) => slide.number === slideNumber)
+    : sourceBlockId ? outline.find((slide) => slide.sourceBlockId === sourceBlockId) : undefined;
+  const relative = authored ? authored.index - pageStart : 0;
   return Math.max(0, Math.min(Math.max(0, length - 1), relative));
 }
 
@@ -855,19 +873,17 @@ function relatedSlideIndex(outline: PresentationSourceSlide[], slideNumber: numb
 export function repairProtectedPresentationMessages<T>(values: readonly T[], contract: PresentationSourceContract, options: { pageStart?: number } = {}): T[] {
   const result = [...values];
   const pageStart = Math.max(0, Math.floor(Number(options.pageStart ?? 0)));
-  const opening = contract.numberedOutline[0];
-  if (!opening) return result;
+  const opening = contract.numberedOutline.find((slide) => slide.index === 0);
 
   for (const message of contract.protectedMessages) {
     if (message.placement !== "closing") continue;
-    const authoredIndex = contract.numberedOutline.findIndex((slide) => slide.number === message.slideNumber);
-    const index = authoredIndex - pageStart;
+    const authored = contract.numberedOutline.find((slide) => slide.number === message.slideNumber);
+    const index = (authored?.index ?? message.slideNumber - 1) - pageStart;
     if (index < 0 || index >= result.length) continue;
-    const authored = contract.numberedOutline[authoredIndex];
     const item = asRecord(result[index]);
     if (!authored || !authored.content.includes(message.text) || visibleSlideText(item).includes(message.text)) continue;
 
-    const openingIndex = contract.numberedOutline.findIndex((slide) => slide.number === opening.number) - pageStart;
+    const openingIndex = opening ? opening.index - pageStart : -1;
     const openingItem = openingIndex >= 0 && openingIndex < result.length ? asRecord(result[openingIndex]) : null;
     const assigned = asRecord(item.slide);
     const citations = Array.isArray(assigned.citations) ? assigned.citations.map(asRecord) : [];
@@ -878,7 +894,7 @@ export function repairProtectedPresentationMessages<T>(values: readonly T[], con
     ].map(clean).filter(Boolean);
     const resolved = resolvePresentationSourceReferences(references, contract, { allowDurableIds: true });
     if (message.sourceBlockId && !resolved.blockIds.includes(message.sourceBlockId)) continue;
-    const openingDelivered = Boolean(openingItem && opening.content.includes(message.text) && visibleSlideText(openingItem).includes(message.text));
+    const openingDelivered = Boolean(opening && openingItem && opening.content.includes(message.text) && visibleSlideText(openingItem).includes(message.text));
     const assignedEvidence = citations.some((citation) => {
       const excerpt = clean(citation.excerpt);
       if (!excerpt.includes(message.text) || !authored.content.includes(excerpt)) return false;
@@ -906,8 +922,11 @@ export function validatePresentationSourceCoverage(values: readonly unknown[], c
   const items = values.map(asRecord);
   const pageStart = Math.max(0, Math.floor(Number(options.pageStart ?? 0)));
   const pageSize = Math.max(0, Math.floor(Number(options.pageSize ?? items.length)));
-  const globalExpected = contract.numberedOutline.filter((slide) => slide.number > pageStart && slide.number <= pageStart + pageSize);
-  const expected = globalExpected.length ? globalExpected : contract.numberedOutline.slice(pageStart, pageStart + pageSize);
+  const globalExpected = contract.numberedOutline.filter((slide) => slide.index >= pageStart && slide.index < pageStart + pageSize);
+  // Retained page contracts predate global position metadata. Their local
+  // indices start at zero, but authored slide numbers still identify the page.
+  const numberedExpected = contract.numberedOutline.filter((slide) => slide.number > pageStart && slide.number <= pageStart + pageSize);
+  const expected = globalExpected.length ? globalExpected : numberedExpected.length ? numberedExpected : contract.numberedOutline.slice(pageStart, pageStart + pageSize);
   const complete = options.requireAllProtectedContent ?? (pageStart === 0 && (!contract.authoredSlideCount || items.length >= contract.authoredSlideCount));
   const requireGrounding = options.requireEverySlideSource ?? false;
   const issues: PresentationSourceCoverageIssue[] = [];
@@ -983,7 +1002,7 @@ export function validatePresentationSourceCoverage(values: readonly unknown[], c
   }
 
   for (const message of contract.protectedMessages) {
-    const authoredIndex = contract.numberedOutline.length ? contract.numberedOutline.findIndex((slide) => slide.number === message.slideNumber) : message.slideNumber - 1;
+    const authoredIndex = contract.numberedOutline.find((slide) => slide.number === message.slideNumber)?.index ?? message.slideNumber - 1;
     const index = authoredIndex - pageStart;
     if (index < 0 || index >= items.length) continue;
     if (!(visible[index] ?? "").includes(message.text)) {

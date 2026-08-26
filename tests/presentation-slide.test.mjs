@@ -22,7 +22,7 @@ const extensionlessTypeScriptHook = `
 
 register(`data:text/javascript,${encodeURIComponent(extensionlessTypeScriptHook)}`, import.meta.url);
 
-const { PresentationSlide } = await import("../src/components/presentation-slide.ts");
+const { PresentationSlide, presentationSlideRenderKey } = await import("../src/components/presentation-slide.ts");
 const { applySlideStylePreset, defaultSlidePresentation, SLIDE_STYLE_PRESETS } = await import("../src/model/document-artifacts.ts");
 
 const SCORES = [
@@ -101,7 +101,7 @@ test("canonical full and compact slides omit private production evidence without
   for(const compact of [false,true]){
     const markup=renderSlide(scorecard({citations:[citation]}),{compact});
     assert.match(markup,/data-presentation-artboard="960x540"/);
-    assert.match(markup,/data-layout-version=1/);
+    assert.match(markup,/data-layout-version=2/);
     assert.match(markup,/presentation-slide--density-compact/);
     assert.ok(!markup.includes(citation.label),"internal source labels never enter the audience slide");
     assert.ok(!markup.includes(citation.excerpt),"complete source excerpts remain in the authorized inspector");
@@ -571,4 +571,130 @@ test("every supported presentation preset supplies 4.5:1 body, muted, accent, an
 test("native slide rendering preserves a safe authored brand typeface",()=>{
   const markup=renderSlide(scorecard(),{presentation:{...defaultSlidePresentation("editorial"),fontFamily:"Helvetica Neue"}});
   assert.match(markup,/--slide-font:(?:&quot;|")Helvetica Neue(?:&quot;|"),sans-serif/);
+});
+
+function fitHarness(context) {
+  const descriptors = Object.fromEntries(["document", "requestAnimationFrame", "cancelAnimationFrame"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const frames = new Map(), events = [], fonts = new EventTarget();
+  fonts.status = "loaded";
+  fonts.ready = Promise.resolve();
+  let frameId = 0, connected = true, hasArtboard = true;
+  Object.assign(globalThis, {
+    document: { fonts },
+    requestAnimationFrame: (callback) => { frames.set(++frameId, callback); return frameId; },
+    cancelAnimationFrame: (id) => frames.delete(id),
+  });
+  context.after(() => {
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  });
+  const element = new PresentationSlide();
+  element.item = { title: "A durable creative beginning", body: "", notes: "", image_prompt: "", slide: {
+    layout: "cover", kicker: "", bullets: [], visual: { kind: "hero-type", label: "", value: "Give the audience a useful path", data: [] },
+  } };
+  const artboard = { clientWidth: 960, clientHeight: 540, scrollWidth: 960, scrollHeight: 540, dataset: { layoutDensity: "comfortable" } };
+  const section = { clientWidth: 432, clientHeight: 240, scrollWidth: 432, scrollHeight: 240 };
+  Object.defineProperties(element, {
+    dataset: { value: {} },
+    isConnected: { get: () => connected },
+    clientWidth: { value: 960 },
+    clientHeight: { value: 540 },
+  });
+  element.querySelector = () => hasArtboard ? artboard : null;
+  element.querySelectorAll = () => hasArtboard ? [artboard, section] : [];
+  element.dispatchEvent = (event) => { events.push(event.detail); return true; };
+  element.requestUpdate = () => {};
+  const render = () => {
+    const markup = renderMarkup(element.render());
+    artboard.dataset.layoutDensity = markup.match(/data-layout-density=(\w+)/)[1];
+    element.updated();
+  };
+  const flush = () => { const pending = [...frames.values()]; frames.clear(); pending.forEach((callback) => callback()); };
+  return { element, artboard, section, events, fonts, frames, render, flush,
+    connect: (value) => { connected = value; }, show: (value) => { hasArtboard = value; } };
+}
+
+test("fit receipts distinguish revisions and rendering inputs even when the boolean result stays true", (context) => {
+  const fit = fitHarness(context);
+  fit.render(); fit.flush();
+  const firstKey = fit.events[0].renderKey;
+  fit.element.item = structuredClone(fit.element.item);
+  fit.render(); fit.flush();
+  assert.equal(fit.events[1].renderKey, firstKey, "fresh normalized objects are not new content");
+  fit.element.item = { ...fit.element.item, title: "A revised creative beginning" };
+  fit.render(); fit.flush();
+  assert.equal(fit.events.length, 3);
+  assert.ok(fit.events.every((event) => event.contentFits));
+  assert.notEqual(fit.events[2].renderKey, firstKey);
+  const item = fit.element.item, presentation = defaultSlidePresentation();
+  const key = presentationSlideRenderKey(item, presentation, 0, 9);
+  for (const changed of [
+    presentationSlideRenderKey(item, { ...presentation, fontFamily: "Helvetica Neue" }, 0, 9),
+    presentationSlideRenderKey(item, presentation, 1, 9),
+    presentationSlideRenderKey(item, presentation, 0, 10),
+    presentationSlideRenderKey(item, presentation, 0, 9, false),
+    presentationSlideRenderKey(item, presentation, 0, 9, true, true),
+    presentationSlideRenderKey(item, presentation, 0, 9, true, false, "ar"),
+  ]) assert.notEqual(changed, key);
+});
+
+test("an obsolete font wait cannot publish a receipt for a replaced revision or disconnected slide", async (context) => {
+  const fit = fitHarness(context);
+  let finishFonts;
+  fit.fonts.status = "loading";
+  fit.fonts.ready = new Promise((resolve) => { finishFonts = resolve; });
+  fit.render();
+  assert.equal(fit.frames.size, 0);
+  fit.element.item = { ...fit.element.item, title: "The revised fitting slide" };
+  fit.fonts.status = "loaded";
+  fit.render(); fit.flush();
+  const currentKey = fit.events[0].renderKey;
+  finishFonts(); await Promise.resolve(); fit.flush();
+  assert.equal(fit.events.length, 1);
+  assert.equal(fit.events[0].renderKey, currentKey);
+
+  fit.fonts.status = "loading";
+  fit.fonts.ready = new Promise((resolve) => { finishFonts = resolve; });
+  fit.render(); fit.connect(false);
+  finishFonts(); await Promise.resolve(); fit.flush();
+  assert.equal(fit.events.length, 1);
+  fit.connect(true); fit.fonts.status = "loaded";
+  fit.render(); fit.flush();
+  assert.equal(fit.events.length, 2);
+});
+
+test("real overflow receives at most two semantic reflows and a new revision resets density", (context) => {
+  const fit = fitHarness(context);
+  fit.section.scrollHeight = 600;
+  fit.render(); fit.flush();
+  assert.equal(fit.events.length, 0);
+  fit.render(); fit.flush();
+  assert.equal(fit.artboard.dataset.layoutDensity, "compact");
+  assert.equal(fit.events.length, 0);
+  fit.render(); fit.flush();
+  assert.deepEqual(fit.events.map(({ contentFits, density }) => ({ contentFits, density })), [{ contentFits: false, density: "dense" }]);
+  assert.equal(fit.element.dataset.presentationFitState, "overflow");
+  fit.element.item = { ...fit.element.item, title: "Corrected layout" };
+  fit.section.scrollHeight = 240;
+  fit.render(); fit.flush();
+  assert.equal(fit.artboard.dataset.layoutDensity, "comfortable");
+  assert.equal(fit.events.at(-1).contentFits, true);
+});
+
+test("empty and hidden artboards remain pending but collapsed visible content is an overflow failure", (context) => {
+  const fit = fitHarness(context);
+  fit.show(false); fit.render(); fit.flush();
+  assert.equal(fit.events.length, 0);
+  assert.equal(fit.element.dataset.presentationFitState, "pending");
+  assert.equal(fit.element.dataset.presentationContentFits, undefined);
+  fit.show(true); fit.artboard.clientHeight = 0;
+  fit.render(); fit.flush();
+  assert.equal(fit.events.length, 0);
+  fit.artboard.clientHeight = 540; fit.section.clientHeight = 0;
+  for (let attempt = 0; attempt < 3; attempt++) { fit.render(); fit.flush(); }
+  assert.equal(fit.events.length, 1);
+  assert.equal(fit.events[0].contentFits, false);
+  assert.equal(fit.events[0].density, "dense");
 });

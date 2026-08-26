@@ -918,7 +918,7 @@ test("multi-page decks retain one cover, correct repeated content, and lock the 
     assert.equal(planned.inputReceipt.whole_work_validation.repaired_pages, 1);
     assert.equal(planned.inputReceipt.adapter_reconciliation.status,"pending");
     assert.equal(planned.inputReceipt.adapter_reconciliation.self_healed,true);
-    assert.equal(planned.inputReceipt.adapter_reconciliation.adapter_version,"2026-08-26-validated-self-healing-v3");
+    assert.equal(planned.inputReceipt.adapter_reconciliation.adapter_version,"2026-08-26-source-aware-render-v4");
     assert.equal(planned.output.items.length, 10);
     assert.equal(planned.output.items.filter((item) => item.slide.layout === "cover").length, 1);
     assert.equal(planned.output.items[8].body, "Meaning 9");

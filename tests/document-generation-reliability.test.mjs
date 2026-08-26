@@ -121,6 +121,8 @@ function independentProviderResponse(requestBody){
 function savedIndependentPresentationPlan(){
   const outline=INDEPENDENT_SLIDE_TITLES.map((title,index)=>({title,content:index===0?"Six independent criteria preserve the exact 61.125 assessment and rounded 61.13 executive decision.":index===1?"An attributed stakeholder statement supports independently reviewable product accountability.":`Independent evidence for ${title.toLowerCase()} preserves conversion ${index+10}.25%.`,sourceAlias:`PRIVATE_AUTHORED_SLIDE_${index+1}`}));
   const output=independentProviderResponse(JSON.stringify({input:JSON.stringify({presentation_source:{outline}})}));
+  output.items[1].notes+=`\n“${INDEPENDENT_SLIDE_QUOTE}” — Product Owner`;
+  output.content_markdown+=`\n\n“${INDEPENDENT_SLIDE_QUOTE}” — Product Owner`;
   const parsed=parseDocumentArtifactContent(JSON.stringify(output));
   assert.ok(parsed);
   assert.deepEqual(documentArtifactValidationIssues("slides",parsed,{itemCount:12}),[]);
@@ -220,7 +222,7 @@ test("keeps a faithful twelve-block presentation inside its live hosted executio
     const response=await execution;
     assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
     const completed=(await response.json()).job;
-    assert.equal(completed.status,"completed");
+    assert.equal(completed.status,"completed",JSON.stringify(completed.errorDetail));
     assert.equal(completed.attemptCount,1);
     assert.equal(completed.result.generationReceipt.authored_slide_count,12);
     assert.equal(completed.result.generationReceipt.actual_slide_count,12);
@@ -436,6 +438,36 @@ test("settles an already-paid presentation response once and refuses to restart 
     assert.equal(fixture.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE reservation_id=?").get(attempt.cost.reservationId).used_microusd,12_000);
     assert.equal(providerCalls,0);
   }finally{globalThis.fetch=previousFetch;}
+});
+
+test("paid draft recovery preserves an authorized closing repeat and refuses unrelated repeated copy without resubmission",async(context)=>{
+  const promise="Your content. One context. Infinite paths to your target.";
+  let providerCalls=0;
+  context.mock.method(globalThis,"fetch",async()=>{providerCalls++;throw new Error("Saved paid drafts must not trigger another provider request.");});
+  for(const invalid of [false,true]){
+    const fixture=await reliabilityWorker();
+    const documentId=await seedIndependentPresentation(fixture,`saved-pitch-repeat-${invalid}`);
+    const scores=`${INDEPENDENT_SLIDE_SCORES.map(([label,value])=>`${label}: ${value}`).join("; ")}. Exact equal-weight average: 61.125. Rounded display value: 61.13.`;
+    for(const[index,text]of[[1,`Slide 1 — ${promise}\n${scores}`],[12,`Slide 12 — ${INDEPENDENT_SLIDE_TITLES[11]}\nIndependent evidence for executive decision preserves conversion 21.25%. Close with the exact promise: ${promise}`]]){
+      await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockPropertyEdited",{project_id:"project-atmosphere",document_id:documentId,block_id:`PRIVATE_AUTHORED_SLIDE_${index}`,property_path:"text",new_value:text});
+    }
+    const admission=await fixture.request("/api/document-jobs",json(presentationAdmission(documentId,`saved-pitch-repeat-${invalid}`)));
+    assert.equal(admission.status,202,JSON.stringify(await admission.clone().json()));
+    const{job}=await admission.json(),attempt=await stalePresentationAttempt(fixture,job,{reserve:true,paid:true});
+    const draft=savedIndependentPresentationPlan();
+    draft.items[0].title=promise;
+    draft.items[0].slide.citations[0].excerpt=promise;
+    draft.items[11].slide.bullets=[draft.items[11].body];
+    draft.items[11].body=promise;
+    draft.content_markdown+=`\n\n${promise}`;
+    if(invalid){draft.items[10].slide.bullets=[draft.items[10].body];draft.items[10].body=promise;}
+    fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify({...attempt.checkpoint,artifactPlan:draft}),job.jobId);
+    const response=await fixture.runJob(job),actual=(await response.json()).job;
+    assert.equal(actual.status,invalid?"failed":"completed",JSON.stringify(actual.errorDetail));
+    if(invalid)assert.equal(actual.errorDetail.code,"presentation_recovery_unavailable");
+    else assert.equal(actual.result.generationReceipt.actual_provider_call_count,1);
+    assert.equal(providerCalls,0);
+  }
 });
 
 test("resumes a durably saved paid presentation draft with its original reservations and no second provider submission",async()=>{

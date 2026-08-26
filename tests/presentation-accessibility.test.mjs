@@ -49,6 +49,15 @@ test("presentation text and complete structured visual labels never shrink below
   ]) assert.match(rule(selector), /font-size:\s*clamp\(\.(?:75|8125|875)rem/);
 });
 
+test("headings reserve complete glyph line boxes and consume the selected slide font", () => {
+  for (const [selector, lineHeight] of [[".presentation-slide h3", "1.35"], [".presentation-visual-type strong", "1.2"]]) {
+    assert.ok(rule(selector).includes(`var(--forma-script-heading-line-height,${lineHeight})`));
+    assert.match(rule(selector), /var\(--slide-font,var\(--forma-font-family,var\(--sans\)\)\)/);
+  }
+  assert.match(rule(".presentation-slide-body > section"), /overflow:\s*clip/);
+  assert.doesNotMatch(rule(".presentation-slide h3"), /heading-line-height,\.98/);
+});
+
 test("architecture diagrams reserve stable readable geometry across embedded and fullscreen slide sizes",()=>{
   assert.match(presentation,/(?:^|\n)forma-presentation-slide \{[^}]*container:\s*presentation-slide-host\s*\/\s*size/,"the canonical slide host provides both contain-fit dimensions");
   assert.match(presentation,/forma-presentation-slide > \.presentation-slide\[data-presentation-artboard\] \{[^}]*width:\s*960px[^}]*height:\s*540px[^}]*scale:\s*var\(--presentation-slide-scale,1\)/,"each slide has one invariant 960-by-540 composition");

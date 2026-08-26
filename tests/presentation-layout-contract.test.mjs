@@ -65,9 +65,25 @@ test("presentation layout plans share one versioned trusted 960 × 540 artboard"
   assert.equal(plan.capacities.minimumBodyFontPx, 14);
   assert.equal(plan.capacities.minimumLabelFontPx, 12);
   assert.equal(plan.citationPlacement, "inline");
+  assert.equal(plan.visualPlacement, "side-by-side");
   assert.match(plan.className, /^presentation-slide--density-(?:comfortable|compact|dense)$/u);
   assert.equal(Object.hasOwn(plan, "html"), false);
   assert.equal(Object.hasOwn(plan, "css"), false);
+});
+
+test("dense multi-category diagrams receive full visual width without losing any authored row", () => {
+  const source = item({ title: "One idea. Dozens of files. Too many places to lose the plot.", body: "Contrast fragmented documents, design assets, audio, video, captions, approvals, and drifting versions." });
+  source.slide = { layout: "architecture", kicker: "The friction", bullets: [], sourceIds: ["approved-source"], visual: {
+    kind: "architecture", label: "A fragmented creative-work ecosystem", value: "",
+    data: Array.from({ length: 8 }, (_, index) => ({ label: `Creative category ${index + 1}`, value: "Complete source-authored file formats, applications, handoffs, and approval evidence.", weight: 1, sourceIds: ["approved-source"] })),
+  } };
+  const before = structuredClone(source), plan = planSlideLayout(source);
+  assert.equal(plan.density, "dense");
+  assert.equal(plan.visualPlacement, "full-width");
+  assert.deepEqual(source, before);
+  assert.deepEqual(plan.visibleItem.slide.visual.data, before.slide.visual.data);
+  assert.equal(planSlideLayout({ ...source, body: "A long independent audience argument. ".repeat(20) }).visualPlacement, "side-by-side", "a full-height narrative must not be squeezed above a diagram");
+  assert.equal(planSlideLayout({ ...source, slide: { ...source.slide, layout: "cover" } }).visualPlacement, "side-by-side");
 });
 
 test("audience plans preserve complete private provenance without budgeting or displaying it", () => {

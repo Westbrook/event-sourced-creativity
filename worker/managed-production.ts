@@ -11,7 +11,7 @@ import {
   type ManagedProductionPlan,
   type ProductionScene,
 } from "../src/model/managed-production.ts";
-import { buildPresentationSourceContract, inferPresentationAudienceLocale, validatePresentationSourceCoverage } from "../src/model/presentation-source.ts";
+import { buildPresentationSourceContract, inferPresentationAudienceLocale } from "../src/model/presentation-source.ts";
 import { safePresentationCandidateIssues } from "../src/model/presentation-candidates.ts";
 import type { SceneConfiguration, SceneMedium } from "../src/model/scene-configuration.ts";
 import { VIDEO_ADAPTER_CONTRACT, type VideoAudioMode } from "../src/model/video-adapter.ts";
@@ -227,14 +227,15 @@ function managedProductionValidationFailure(kind: DocumentArtifactKind, issues: 
     code: sourceFidelityFailure ? "source_fidelity_validation_failed" : "provider_returned_incomplete_document_artifact",
     category: "provider",
     scope: "request",
-    action: sourceFidelityFailure ? "edit_request" : "retry",
+    action: kind === "slides" ? "edit_request" : "retry",
     message: sourceFidelityFailure
       ? `The managed presentation did not preserve its required authorized source evidence after ${stage}: ${diagnostic}. Review the source document and presentation requirements before starting a new request.`
       : `The managed ${kind.replaceAll("_", " ")} could not be completed after ${stage}: ${diagnostic}.`,
-    retryable: !sourceFidelityFailure,
+    retryable: kind !== "slides",
     retryAfterMs: null,
     requestId: null,
-    httpStatus: 502,
+    // This is our terminal artifact review, not an upstream HTTP failure.
+    httpStatus: kind === "slides" ? null : 502,
     ...(issues.length?{validationIssues:issues.flatMap((issue)=>{
       const match=/^items\.(\d+)(.*)$/u.exec(issue.path);
       const globalIndex=match?Number(match[1]):0;
@@ -369,6 +370,7 @@ export async function generateManagedArtifactDraft(
       priorSummary: previous.at(-1)?.output.summary ?? "",
       priorEnding: previous.at(-1)?.output.content_markdown.slice(-700) ?? priorItems.at(-1)?.body.slice(-700) ?? "",
       priorVisibleCopy: priorItems.flatMap(managedSlideVisibleCopy).slice(-96),
+      ...(presentationSources?.numberedOutline.length ? { authoredSlideNumbers: presentationSources.numberedOutline.map((slide) => slide.number) } : {}),
       ...(kind === "slides" && lockedPresentation ? { lockedPresentation } : {}),
       ...(repairIssues.length ? { repairIssues } : {}),
     };
@@ -469,7 +471,7 @@ export async function generateManagedArtifactDraft(
         acceptedItems.push(resolved);
         return resolved;
       });
-      if (normalizeSlides) items = normalizeSlideDeckItems(items);
+      if (normalizeSlides) items = normalizeSlideDeckItems(items, { sourceContract: presentationSources ?? undefined });
     }
     const content = kind === "slides"
       ? managedSlideMarkdown(first.output.title, items,presentationAudienceLocale)
@@ -486,12 +488,12 @@ export async function generateManagedArtifactDraft(
   };
   const wholeWorkIssues = (output: DocumentArtifactDraft): DocumentArtifactValidationIssue[] => {
     const expectedGroups = combinedContextGroups(input.snapshot).map((group) => group.id);
-    const issues = documentArtifactValidationIssues(kind, output, { itemCount: input.production.scenes.length, contextGroupIds: expectedGroups });
+    const issues = documentArtifactValidationIssues(kind, output, {
+      itemCount: input.production.scenes.length,
+      contextGroupIds: expectedGroups,
+      ...(presentationSources ? { sourceContract: presentationSources, requireSourceGrounding: true, requireAllProtectedContent: true } : {}),
+    });
     if (kind === "slides") {
-      if (presentationSources) issues.push(...validatePresentationSourceCoverage(output.items, presentationSources, {
-        requireEverySlideSource: true,
-        requireAllProtectedContent: true,
-      }));
       for (const [index, item] of output.items.entries()) {
         const assignedSources = input.production.scenes[index]?.sourceBlockIds ?? [];
         const attributedSources = item.slide?.sourceIds ?? [];

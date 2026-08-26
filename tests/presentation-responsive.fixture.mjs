@@ -33,7 +33,7 @@ const items=[{
   },
 },{
   title:"Every protected source category stays available",
-  body:"Dense approved evidence switches to the complete reading surface rather than acquiring nested slide scrollbars.",
+  body:"Dense approved evidence remains on the composed slide, with a complete reading alternative available on request.",
   notes:"Protected speaker notes remain available without appearing in the visual slide.",
   image_prompt:"",
   slide:{
@@ -53,6 +53,19 @@ const items=[{
     },
   },
 }];
+
+if(parameters.get("case")==="lifecycle"){
+  presentation.fontFamily="LateLayoutQA";
+  items[0]={
+    title:"The audience can pick the experience.",body:"",notes:"Complete presenter context remains available.",image_prompt:"",
+    slide:{layout:"comparison",kicker:"Recipient context",bullets:[],sourceIds:["approved-source"],
+      visual:{kind:"comparison",label:"Experience by moment",value:"",data:[
+        {label:"Meeting",value:"Meeting deck",weight:.8},{label:"Laptop",value:"Laptop-friendly notes",weight:.7},
+        {label:"Phone",value:"Phone-friendly video",weight:.6},{label:"Commute",value:"Commute-ready audio",weight:.5},
+      ]}},
+  };
+  items[1]={...structuredClone(items[0]),title:"One source of truth. Fewer FINAL-final-v3 files."};
+}
 
 if(parameters.get("case")==="executive"||parameters.get("case")==="impossible"){
   const excerpt="Make Intelligence and Cost Understandable. At 20,000 input and 4,000 output tokens, estimated model costs are Luna $0.0088, Terra $0.0880, and Sol $0.2200. Proposed Fast, Balanced, and Deep modes apply organization-approved models, spending limits, measured escalation, explicit premium approvals, and visible cost consequences.";
@@ -135,6 +148,36 @@ document.querySelector("#focus").addEventListener("click",(event)=>{
   event.currentTarget.setAttribute("aria-pressed",String(focused));
   event.currentTarget.setAttribute("aria-label",focused?"Exit focus":"Focus view");
 });
+
+// Real browser controls exercise revisions and late fonts without mutating a
+// user's saved artifact or inspecting application state through automation.
+if(parameters.get("case")==="lifecycle"){
+  const originals=structuredClone(items),viewer=document.querySelector("#viewer");
+  const controls=document.createElement("nav");
+  controls.setAttribute("aria-label","Fit lifecycle test controls");
+  controls.style.cssText="position:fixed;inset: auto 0 0;display:flex;flex-wrap:wrap;gap:4px;padding:4px;background:#fff;color:#111;z-index:100";
+  viewer.style.blockSize="calc(100dvh - 76px)";
+  const status=document.createElement("output");
+  status.id="fit-test-status";status.setAttribute("aria-live","polite");status.textContent="Ready";
+  let receipts=0;
+  deck.addEventListener("presentation-slide-fit",(event)=>{
+    receipts++;
+    status.textContent=`Receipt ${receipts}: ${event.detail.contentFits?"fit":"overflow"}; ${event.detail.density}; ${event.detail.renderKey}`;
+  });
+  const actions={
+    "Overflow this slide":()=>{deck.items=[{...structuredClone(originals[0]),body:Array(180).fill("Preserve complete authorized source evidence and every meaningful audience claim.").join(" ")},...originals.slice(1)];},
+    "Restore this slide":()=>{deck.items=structuredClone(originals);},
+    "Load alternate font":async()=>{const face=new FontFace("LateLayoutQA",'local("Georgia")');document.fonts.add(face);await face.load();await document.fonts.ready;controls.dataset.fontLoaded="true";},
+    "Narrow viewer":()=>{viewer.style.inlineSize="390px";},
+    "Desktop viewer":()=>{viewer.style.inlineSize="100%";},
+    "Remount slides":()=>{const parent=deck.parentElement;deck.remove();parent.append(deck);},
+  };
+  for(const[label,action]of Object.entries(actions)){
+    const button=document.createElement("button");button.type="button";button.textContent=label;button.className="button secondary compact";
+    button.addEventListener("click",()=>void action());controls.append(button);
+  }
+  controls.append(status);document.body.append(controls);
+}
 
 if(surface==="shared"){
   const artifact={

@@ -213,7 +213,12 @@ function unsafePresentationRecovery(row:DocumentJobRow):ProviderFailureDetail|nu
   const paid=Boolean(checkpoint.plannerResponseId||Array.isArray(checkpoint.plannerResponseIds)&&checkpoint.plannerResponseIds.length||Number(usage.totalTokens??0)>0||receipt.provider_request_status==="submitted");
   const request=parseRequest(row);const expectedCount=Number(request.requestedSlideCount??request.itemCount??0);
   const saved=checkpoint.artifactPlan&&typeof checkpoint.artifactPlan==="object"?parseDocumentArtifactContent(JSON.stringify(checkpoint.artifactPlan)):null;
-  const resumable=Boolean(saved&&Number.isSafeInteger(expectedCount)&&expectedCount>0&&!documentArtifactValidationIssues("slides",saved,{itemCount:expectedCount}).length);
+  const workflow=Boolean(request.workflowId||request.workflowStageId);
+  const snapshot=request.snapshot&&typeof request.snapshot==="object"&&!Array.isArray(request.snapshot)?request.snapshot as Record<string,unknown>:{};
+  const sourceContract=workflow?undefined:buildPresentationSourceContract(snapshot,{itemCount:expectedCount,requestedSlideCount:expectedCount});
+  // Workflow authority is re-resolved by the executor, which must validate the
+  // retained draft against that fresh context and must never resubmit a paid one.
+  const resumable=Boolean(saved&&Number.isSafeInteger(expectedCount)&&expectedCount>0&&(workflow?saved.items.length===expectedCount:!documentArtifactValidationIssues("slides",saved,{itemCount:expectedCount,contextGroupIds:combinedContextGroups(snapshot).map((group)=>group.id),sourceContract,requireSourceGrounding:sourceContract?.sources.some((source)=>source.sourceKind==="block"),requireAllProtectedContent:true}).length));
   if(uncertain){
     const candidateRequestId=checkpoint.presentationProviderClientRequestId;
     const requestId=typeof candidateRequestId==="string"&&/^forma-slides-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(candidateRequestId)?candidateRequestId:null;
@@ -424,7 +429,7 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
     const sceneSlice=planned?.scenes.slice(globalStartIndex,globalStartIndex+Math.min(8,plannedSlideCount-globalStartIndex))??[];
     const sourceSnapshot=planned?combinedSceneSnapshot(compiledSnapshot,sceneSlice):compiledSnapshot;
     const expectedPageCount=planned?sceneSlice.length:Math.min(12,plannedSlideCount);
-    const productionPage=planned?{pageIndex,pageCount,globalStartIndex,totalItems:plannedSlideCount,phase:(pageCount===1?"complete":pageIndex===0?"opening":pageIndex===pageCount-1?"final":"continuation") as "complete"|"opening"|"continuation"|"final",priorSummary:"",priorEnding:"",priorVisibleCopy:[]}:undefined;
+    const productionPage=planned?{pageIndex,pageCount,globalStartIndex,totalItems:plannedSlideCount,authoredSlideNumbers:inferPresentationSourceOutline(compiledSnapshot).slides.map((slide)=>slide.number),phase:(pageCount===1?"complete":pageIndex===0?"opening":pageIndex===pageCount-1?"final":"continuation") as "complete"|"opening"|"continuation"|"final",priorSummary:"",priorEnding:"",priorVisibleCopy:[]}:undefined;
     const presentationStyle=typeof request.presentationStyle==="string"&&isSlideStylePresetId(request.presentationStyle)?request.presentationStyle:undefined;
     const assessment=assessStoredPresentationCandidate(raw,sourceSnapshot,{itemCount:expectedPageCount,requestedSlideCount:plannedSlideCount,presentationStyle,presentationFidelity:request.presentationFidelity==="creative"?"creative":"faithful",...(planned?{productionScenes:sceneSlice,productionPage}:{})});
     const candidateOrdinal=checkpointCandidates.findIndex((entry)=>entry.responseId===candidateResponse);

@@ -17,8 +17,10 @@ import { presentationAudienceCitations } from "../model/presentation-delivery";
 import {
   PRESENTATION_CANVAS_HEIGHT,
   PRESENTATION_CANVAS_WIDTH,
+  PRESENTATION_LAYOUT_VERSION,
   PRESENTATION_VISUAL_FIT_SELECTOR,
   planSlideLayout,
+  type PresentationLayoutDensity,
 } from "../model/presentation-layout";
 import { FormaPresentationalElement } from "./presentational-element";
 
@@ -83,6 +85,20 @@ const SLIDE_FOOTER_LABEL_PREFERENCE = "forma:slides:footer-label";
 let presentationSlideFitObserver: ResizeObserver | undefined;
 const presentationSlideFitMeasurements = new WeakMap<HTMLElement, () => void>();
 
+export type PresentationSlideFitDetail = { contentFits: boolean; renderKey: string; density: PresentationLayoutDensity };
+
+/** Value-based identity survives normalization; no authored copy enters DOM diagnostics. */
+export const presentationSlideRenderKey = (item: DocumentArtifactDraftItem, presentation: SlidePresentation | null, index: number, total: number, showFooterLabel = true, compact = false, locale = "en") => {
+  const value = JSON.stringify([PRESENTATION_LAYOUT_VERSION, normalizeSlideItem(item, index), normalizeSlidePresentation(presentation) ?? defaultSlidePresentation(), index, total, showFooterLabel, compact, locale]);
+  let first = 2166136261, second = 5381;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    first = Math.imul(first ^ code, 16777619);
+    second = Math.imul(second, 33) ^ code;
+  }
+  return `${(first >>> 0).toString(36)}-${(second >>> 0).toString(36)}`;
+};
+
 const observePresentationSlideFit = (host: HTMLElement) => {
   if (typeof ResizeObserver === "undefined") return;
   presentationSlideFitObserver ??= new ResizeObserver((entries) => {
@@ -131,21 +147,36 @@ export class PresentationSlide extends FormaPresentationalElement {
   compact = false;
   showFooterLabel = true;
   #fitFrame = 0;
+  #fitGeneration = 0;
+  #renderKey = "";
+  #fitDensity: PresentationLayoutDensity | null = null;
+
+  get fitKey() { return presentationSlideRenderKey(this.item, this.presentation, this.index, this.total, this.showFooterLabel, this.compact, this.i18n.locale); }
+
+  #fontsChanged = () => {
+    this.#fitDensity = null;
+    this.#scheduleFitMeasurement();
+    this.requestUpdate();
+  };
 
   override connectedCallback() {
     super.connectedCallback();
     presentationSlideFitMeasurements.set(this, this.#scheduleFitMeasurement);
     observePresentationSlideFit(this);
     if (typeof document !== "undefined") {
-      void document.fonts?.ready.then(() => {
-        if (this.isConnected) this.#scheduleFitMeasurement();
-      });
+      document.fonts?.addEventListener("loadingdone", this.#fontsChanged);
+      document.fonts?.addEventListener("loadingerror", this.#fontsChanged);
     }
   }
 
   override disconnectedCallback() {
     presentationSlideFitObserver?.unobserve(this);
     presentationSlideFitMeasurements.delete(this);
+    this.#fitGeneration++;
+    if (typeof document !== "undefined") {
+      document.fonts?.removeEventListener("loadingdone", this.#fontsChanged);
+      document.fonts?.removeEventListener("loadingerror", this.#fontsChanged);
+    }
     if (this.#fitFrame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this.#fitFrame);
     this.#fitFrame = 0;
     super.disconnectedCallback();
@@ -153,25 +184,46 @@ export class PresentationSlide extends FormaPresentationalElement {
 
   #scheduleFitMeasurement = () => {
     if (typeof requestAnimationFrame !== "function") return;
+    const generation = ++this.#fitGeneration;
+    const renderKey = this.fitKey;
     if (this.#fitFrame) cancelAnimationFrame(this.#fitFrame);
-    this.#fitFrame = requestAnimationFrame(() => {
+    this.#fitFrame = 0;
+    delete this.dataset.presentationContentFits;
+    this.dataset.presentationFitState = "pending";
+    const schedule = () => {
+      if (generation !== this.#fitGeneration || renderKey !== this.fitKey || !this.isConnected) return;
+      this.#fitFrame = requestAnimationFrame(() => {
       this.#fitFrame = 0;
-      if (!this.isConnected || !this.clientWidth || !this.clientHeight) return;
-      const surfaces = this.querySelectorAll<HTMLElement>(PRESENTATION_VISUAL_FIT_SELECTOR);
-      const contentFits = Array.from(surfaces).every((surface) =>
-        surface.clientWidth > 0 && surface.clientHeight > 0
+      if (generation !== this.#fitGeneration || renderKey !== this.fitKey || !this.isConnected || !this.clientWidth || !this.clientHeight) return;
+      const artboard = this.querySelector<HTMLElement>(".presentation-slide");
+      const surfaces = Array.from(this.querySelectorAll<HTMLElement>(PRESENTATION_VISUAL_FIT_SELECTOR));
+      // A hidden or not-yet-rendered slide is pending, never a successful fit.
+      if (!artboard || !artboard.clientWidth || !artboard.clientHeight || !surfaces.length) return;
+      const contentFits = surfaces.every((surface) => surface.clientWidth > 0 && surface.clientHeight > 0
           && surface.scrollHeight <= surface.clientHeight + 1
           && surface.scrollWidth <= surface.clientWidth + 1,
       );
-      const value = String(contentFits);
-      if (this.dataset.presentationContentFits === value) return;
-      this.dataset.presentationContentFits = value;
+      const density = artboard.dataset.layoutDensity as PresentationLayoutDensity;
+      if (!contentFits && density !== "dense") {
+        // Two bounded semantic reflows; never truncate evidence or shrink below
+        // the existing readable type scale to make a failed measurement pass.
+        this.#fitDensity = density === "comfortable" ? "compact" : "dense";
+        this.requestUpdate();
+        return;
+      }
+      this.dataset.presentationContentFits = String(contentFits);
+      this.dataset.presentationFitState = contentFits ? "fit" : "overflow";
+      this.dataset.presentationRenderKey = renderKey;
       this.dispatchEvent(new CustomEvent("presentation-slide-fit", {
         bubbles: true,
         composed: true,
-        detail: { contentFits },
+        detail: { contentFits, renderKey, density } satisfies PresentationSlideFitDetail,
       }));
-    });
+      });
+    };
+    const fonts = typeof document === "undefined" ? undefined : document.fonts;
+    if (fonts?.status === "loading") void fonts.ready.then(schedule, schedule);
+    else schedule();
   };
 
   protected override updated() {
@@ -364,6 +416,12 @@ export class PresentationSlide extends FormaPresentationalElement {
   }
 
   override render() {
+    const renderKey = this.fitKey;
+    if (renderKey !== this.#renderKey) {
+      this.#renderKey = renderKey;
+      this.#fitGeneration++;
+      this.#fitDensity = null;
+    }
     const presentation = normalizeSlidePresentation(this.presentation) ?? defaultSlidePresentation();
     const originalItem = normalizeSlideItem(this.item, this.index);
     const layout = planSlideLayout(originalItem, presentation);
@@ -375,12 +433,14 @@ export class PresentationSlide extends FormaPresentationalElement {
     const inlineQuote = slide.quote && kind !== "quote" ? slide.quote : null;
     const audienceCitations = layout.audienceCitations;
     const evidenceRail = layout.citationPlacement === "full-width" && Boolean(audienceCitations.length);
+    const density = this.#fitDensity === "dense" || layout.density === "dense" ? "dense" : this.#fitDensity ?? layout.density;
 
     return html`<article
-      class=${`presentation-slide ${layout.className}${evidenceRail ? " presentation-slide--evidence-rail" : ""} style-${presentation.stylePreset} layout-${slide.layout} visual-${kind}${hasVisual ? "" : " no-visual"}${this.compact ? " compact" : ""}`}
+      class=${`presentation-slide presentation-slide--density-${density}${layout.visualPlacement === "full-width" ? " presentation-slide--visual-wide" : ""}${evidenceRail ? " presentation-slide--evidence-rail" : ""} style-${presentation.stylePreset} layout-${slide.layout} visual-${kind}${hasVisual ? "" : " no-visual"}${this.compact ? " compact" : ""}`}
       data-presentation-artboard="960x540"
       data-layout-version=${layout.version}
-      data-layout-density=${layout.density}
+      data-layout-density=${density}
+      data-visual-placement=${layout.visualPlacement}
       data-citation-placement=${layout.citationPlacement}
       data-reading-recommended=${String(layout.overflow.readingModeRecommended)}
       style=${`${slideStyle(presentation)};--presentation-safe-inline:${layout.safeArea.inline}px;--presentation-safe-block:${layout.safeArea.block}px`}

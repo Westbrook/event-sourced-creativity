@@ -9,6 +9,10 @@ import {
   validatePresentationSourceCoverage,
 } from "../src/model/presentation-source.ts";
 import { assessStoredPresentationCandidate, generateDocumentArtifact } from "../worker/openai-adapter.ts";
+import { buildManagedProductionPlan } from "../src/model/managed-production.ts";
+import { combinedSceneSnapshot, generateManagedArtifactDraft } from "../worker/managed-production.ts";
+import { documentArtifactValidationIssues, normalizeSlideDeckItems, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
+import { collectProductionEvidence } from "../src/model/production-evidence.ts";
 
 const promise = "Your content. One context. Infinite paths to your target.";
 const sourceId = "PRIVATE_AUTHORED_PITCH_SOURCE_8731";
@@ -108,6 +112,139 @@ function output({ providerAliases = false, notesOnly = false } = {}) {
     ],
   };
 }
+
+const isolatedTitles = [promise, "One idea. Five files. Five chances to lose the plot.", "Stop managing formats. Start managing meaning.", "The storyteller picks the path.", "The audience can pick the experience.", "One source of truth. Fewer FINAL-final-v3 files.", "Three moments. One adaptable story.", "Human judgment stays in the loop.", "Build the story once. Meet people where they are."];
+const isolatedVisuals = ["A durable creative beginning", "Reformatting fragments the argument", "Keep meaning linked to evidence", "Choose a route through the story", "Give readers control over depth", "Revise shared context with confidence", "Adapt the format to the moment", "Approve changes before publication", "Deliver it in the form your audience needs now."];
+
+function isolatedPitchSnapshot() {
+  return { facts: isolatedTitles.map((title, index) => ({
+    block_id: `PRIVATE_ISOLATED_PITCH_${index + 1}`, type: "reference",
+    properties: { label: `Authored chapter ${index + 1}`, weight: 1,
+      text: `Slide ${index + 1} — ${title}\n${index === 0 ? `Preserve this line exactly: ${promise}\n` : index === 8 ? `Close with the exact promise: ${promise}\n` : ""}${isolatedVisuals[index]}` },
+  })), relationships: [] };
+}
+
+function isolatedPitchItem(position, source) {
+  return { title: isolatedTitles[position - 1], body: "", notes: position === 9 ? promise : "", image_prompt: "Source-grounded editorial visual.", context_group_ids: [],
+    slide: { layout: position === 1 ? "cover" : position === 9 ? "closing" : "statement", kicker: "", bullets: [], quote: null, section: null,
+      source_ids: [source], source_order: position,
+      citations: [{ source_id: source, label: `Authored chapter ${position}`, anchor: `Slide ${position}`, excerpt: position === 1 || position === 9 ? promise : isolatedVisuals[position - 1] }],
+      visual: { kind: "hero-type", label: "", value: isolatedVisuals[position - 1], data: [] } } };
+}
+
+for (const lateRepair of [false, true]) test(`isolated ninth-slide promise survives ${lateRepair ? "a whole-work repair and " : ""}final normalization without a duplicate-copy retry`, async (context) => {
+  const authored = isolatedPitchSnapshot();
+  const production = buildManagedProductionPlan("slides", authored, { requestedSlideCount: 9 });
+  const requests = [];
+  context.mock.method(globalThis, "fetch", async (url, init = {}) => {
+    assert.equal(String(url), "https://api.openai.com/v1/responses");
+    const request = JSON.parse(String(init.body)), input = JSON.parse(request.input);
+    requests.push({ request, input });
+    assert.ok(requests.length <= (lateRepair ? 3 : 2), "source-authorized repetition must not consume paid retries");
+    const items = input.production.assigned_scenes.map((scene) => isolatedPitchItem(scene.narrative_order, scene.source_keys[0]));
+    if (lateRepair && requests.length === 2) items[0].slide.layout = "cover";
+    const candidate = { ...output({ providerAliases: true }), items,
+      content_markdown: items.map((item) => [item.title, item.body, item.slide.visual.value].filter(Boolean).join("\n")).join("\n\n") };
+    return Response.json({ id: `isolated-pitch-${requests.length}`, model: "gpt-presentation-test", output_text: JSON.stringify(candidate), usage: { input_tokens: 120, output_tokens: 80, total_tokens: 200 } });
+  });
+  const result = await generateManagedArtifactDraft({ OPENAI_API_KEY: "mock-provider-key", OPENAI_MODEL: "gpt-presentation-test" }, "owner", "slides", {
+    documentTitle: "Pitch context", snapshot: authored, production, requestedSlideCount: 9, presentationStyle: "editorial", presentationFidelity: "faithful",
+  });
+  assert.equal(requests.length, lateRepair ? 3 : 2);
+  assert.deepEqual(requests.slice(0, 2).map(({ input }) => input.presentation_source.outline.map((slide) => slide.number)), [[1,2,3,4,5,6,7,8], [9]]);
+  for (const { request, input } of requests.slice(1)) {
+    assert.equal(input.presentation_source.outline[0].order, 9);
+    assert.deepEqual(input.presentation_source.protectedMessages.map(({ slideNumber, placement }) => ({ slideNumber, placement })), [{ slideNumber: 9, placement: "closing" }]);
+    assert.equal(input.production.page.prior_visible_copy.includes(promise), false);
+    assert.match(request.instructions, /take precedence over every general de-duplication instruction/);
+  }
+  assert.ok(requests.every(({ request }) => !JSON.stringify(request).includes("PRIVATE_ISOLATED_PITCH_")));
+  assert.equal(result.output.items[0].title, promise);
+  assert.equal(result.output.items[8].body, promise);
+  assert.equal(result.output.items[8].slide.layout, "closing");
+  assert.deepEqual(result.output.items.map((item) => item.slide.sourceIds), authored.facts.map((fact) => [fact.block_id]));
+  assert.equal(result.inputReceipt.provider_request_count, lateRepair ? 3 : 2);
+  assert.equal(result.inputReceipt.whole_work_validation.repaired_pages, lateRepair ? 1 : 0);
+  assert.deepEqual(result.inputReceipt.whole_work_validation.issues, []);
+  const contract = buildPresentationSourceContract(authored, { requestedSlideCount: 9 });
+  const evidence = collectProductionEvidence(production, { draft: result.output, sourceContract: contract });
+  assert.equal(evidence.metrics.nonDuplication.status, "measured");
+  assert.equal(evidence.metrics.nonDuplication.score, 1);
+  assert.equal(evidence.metrics.formatCraft.status, "measured");
+  assert.equal(evidence.metrics.formatCraft.score, 1);
+  assert.equal(normalizeSlideDeckItems(result.output.items, { sourceContract: contract })[8].body, promise);
+});
+
+test("a scoped first page cannot treat its eighth slide as the global closing slide", () => {
+  const authored = isolatedPitchSnapshot();
+  authored.facts[7].properties.text += `\n${promise}`;
+  const production = buildManagedProductionPlan("slides", authored, { requestedSlideCount: 9 });
+  const scoped = combinedSceneSnapshot(authored, production.scenes.slice(0, 8));
+  const contract = buildPresentationSourceContract(scoped, { itemCount: 8, requestedSlideCount: 9, authoredSlideNumbers: [1,2,3,4,5,6,7,8,9] });
+  const items = authored.facts.slice(0, 8).map((fact, index) => isolatedPitchItem(index + 1, fact.block_id));
+  items[7].body = promise;
+  const candidate = parseDocumentArtifactContent(JSON.stringify({ ...output({ providerAliases: true }), items }));
+  const issues = documentArtifactValidationIssues("slides", candidate, { itemCount: 8, sourceContract: contract, sourcePageStart: 0, sourcePageSize: 8, requireSourceGrounding: true, requireAllProtectedContent: false });
+  assert.equal(contract.authoredSlideCount, 9);
+  assert.equal(contract.protectedMessages.some((message) => message.slideNumber === 8 && message.placement === "closing"), false);
+  assert.ok(issues.some((issue) => issue.code === "duplicate_deck_copy" && issue.path === "items.7.body"));
+  assert.equal(normalizeSlideDeckItems(candidate.items, { sourceContract: contract })[7].body, "");
+});
+
+test("stored isolated final-page candidates use global source positions and never promote notes-only evidence", () => {
+  const authored = isolatedPitchSnapshot();
+  const production = buildManagedProductionPlan("slides", authored, { requestedSlideCount: 9 });
+  const scenes = production.scenes.slice(8), scoped = combinedSceneSnapshot(authored, scenes);
+  const options = { itemCount: 1, requestedSlideCount: 9, presentationStyle: "editorial", productionScenes: scenes,
+    productionPage: { pageIndex: 1, pageCount: 2, globalStartIndex: 8, totalItems: 9, phase: "final", priorSummary: "", priorEnding: "", priorVisibleCopy: [promise], authoredSlideNumbers: [1,2,3,4,5,6,7,8,9] } };
+  const candidate = { ...output({ providerAliases: true }), items: [isolatedPitchItem(9, "blk_001")] };
+  const accepted = assessStoredPresentationCandidate(JSON.stringify(candidate), scoped, options);
+  assert.deepEqual(accepted.issues, []);
+  assert.equal(accepted.output.items[0].body, promise);
+  candidate.items[0].slide.citations = [];
+  const rejected = assessStoredPresentationCandidate(JSON.stringify(candidate), scoped, options);
+  assert.ok(rejected.issues.some((issue) => issue.code === "missing_protected_message" && issue.path === "items.0.body"));
+});
+
+test("stored page assessment preserves non-contiguous authored numbers at their global positions", () => {
+  const authored=[
+    {number:10,title:"Keep the evidence connected",value:"Trace each decision to its original source"},
+    {number:11,title:"Make the next step clear",value:"Invite the audience to put the plan into practice"},
+  ];
+  const scoped={facts:authored.map(({number,title,value})=>({block_id:`scoped-${number}`,type:"reference",properties:{text:`Slide ${number} — ${title}\n${value}`}})),relationships:[]};
+  const options={itemCount:2,requestedSlideCount:10,presentationStyle:"editorial",productionPage:{pageIndex:1,pageCount:2,globalStartIndex:8,totalItems:10,phase:"final",priorSummary:"",priorEnding:"",priorVisibleCopy:[],authoredSlideNumbers:[1,2,3,4,5,6,7,9,10,11]}};
+  for(const explicitAssignments of [true,false]){
+    const candidate={...output({providerAliases:true}),items:authored.map(({number,title,value},index)=>({
+      title,body:"",notes:"",image_prompt:"",context_group_ids:[],
+      slide:{layout:index?"closing":"statement",kicker:"",bullets:[],
+        ...(explicitAssignments?{source_ids:[`blk_00${index+1}`],source_order:number}:{}),
+        visual:{kind:"hero-type",label:"",value,data:[]}},
+    }))};
+    const assessed=assessStoredPresentationCandidate(JSON.stringify(candidate),scoped,options);
+    assert.deepEqual(assessed.issues,[],`explicit source assignments: ${explicitAssignments}`);
+    assert.deepEqual(assessed.output.items.map((item)=>item.slide.sourceOrder),[10,11]);
+    assert.deepEqual(assessed.output.items.map((item)=>item.slide.sourceIds),[["scoped-10"],["scoped-11"]]);
+    candidate.items[1].slide.source_order=10;
+    assert.equal(assessStoredPresentationCandidate(JSON.stringify(candidate),scoped,options).issues.some((issue)=>issue.code==="incorrect_slide_order"&&issue.path==="items.1.slide.source_order"),true);
+  }
+});
+
+test("an exhausted local artifact repair is not mislabeled as a retryable upstream 502", async (context) => {
+  let calls=0;
+  context.mock.method(globalThis,"fetch",async()=>{
+    calls++;
+    return Response.json({id:`incomplete-layout-${calls}`,model:"gpt-presentation-test",output_text:'{"items": [',usage:{input_tokens:120,output_tokens:80,total_tokens:200}});
+  });
+  await assert.rejects(generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"owner","slides",{documentTitle:"Pitch context",snapshot:snapshot(),options:{itemCount:3,presentationStyle:"editorial"}}),(error)=>{
+    assert.equal(error.detail.code,"provider_returned_incomplete_document_artifact");
+    assert.equal(error.detail.action,"edit_request");
+    assert.equal(error.detail.retryable,false);
+    assert.equal(error.detail.httpStatus,null);
+    assert.ok(error.detail.validationIssues.some((issue)=>issue.code==="invalid_json"));
+    return true;
+  });
+  assert.equal(calls,2);
+});
 
 test("preserves complete newline-delimited pitch and feedback headings, including deliberate sentence and ending punctuation", () => {
   const pitchHeadings = [

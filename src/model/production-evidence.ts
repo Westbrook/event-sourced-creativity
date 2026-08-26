@@ -1,4 +1,5 @@
-import { documentArtifactValidationIssues, slideCopyIsNearDuplicate, slideDeckCopyIssues, type DocumentArtifactDraft } from "./document-artifacts.ts";
+import { documentArtifactValidationIssues, slideCopyIsNearDuplicate, type DocumentArtifactDraft } from "./document-artifacts.ts";
+import type { PresentationSourceContract } from "./presentation-source.ts";
 import type { ManagedProductionPlan, ProductionFormat, ProductionMode } from "./managed-production.ts";
 
 export type ProductionEvidenceBasis = "plan-proxy" | "rendered-text" | "rendered-slides" | "provider-image-receipt" | "provider-video-receipt" | "provider-audio-receipt" | "human-feedback";
@@ -119,6 +120,7 @@ export function collectProductionEvidence(
   input: {
     artifactId?: string;
     draft?: DocumentArtifactDraft;
+    sourceContract?: PresentationSourceContract;
     sceneReceipts?: Array<{ sceneId: string; status: string; durationSeconds?: number; providerJobId?: string; mediaUrl?: string; mediaType?: string; videoInputReceipt?: Record<string, unknown> }>;
     audioReceipt?: { providerJobId?: string; mediaUrl?: string; mediaType?: string };
     prompt?: string;
@@ -164,6 +166,11 @@ export function collectProductionEvidence(
   const uniqueCompleted = new Set(completed.map((receipt) => receipt.sceneId));
   const expectedSceneIds = new Set(plan.scenes.map((scene) => scene.id));
   const expectedGroupIds = [...new Set(plan.scenes.flatMap((scene) => scene.contextGroupIds))];
+  const slideIssues = isSlides && input.draft ? documentArtifactValidationIssues("slides", input.draft, {
+    itemCount: plan.scenes.length,
+    contextGroupIds: expectedGroupIds,
+    ...(input.sourceContract ? { sourceContract: input.sourceContract, requireSourceGrounding: input.sourceContract.sources.some((source) => source.sourceKind === "block"), requireAllProtectedContent: true } : {}),
+  }) : [];
   const validVisualReceipts = completed.length > 0 && completed.every((receipt) => expectedSceneIds.has(receipt.sceneId)
     && (!isVideo || Boolean(receipt.providerJobId))
     && Boolean(receipt.mediaUrl)
@@ -201,7 +208,7 @@ export function collectProductionEvidence(
         : measured(isSlides ? Number(Boolean(input.draft?.presentation)) : Number(narrativeDuplicates === 0 && orderedMovements), refs, isSlides ? "One presentation system covers the complete returned deck." : "Actual returned narrative movements preserve source order without near-identical prose."),
     nonDuplication: isAudio?unknown("Originality and sonic repetition cannot be evaluated without inspecting the completed audio waveform.")
       : isVideo || isImage ? unknown("Visual duplication cannot be evaluated without inspecting generated frames or image pixels.")
-      : hasDraft ? measured(isSlides ? Number(slideDeckCopyIssues(input.draft!.items).length === 0) : Number(narrativeDuplicates === 0), refs, "Compared actual returned visible copy across the complete work.") : unknown("No completed artifact was inspected."),
+      : hasDraft ? measured(isSlides ? Number(!slideIssues.some((issue) => issue.code === "duplicate_deck_copy")) : Number(narrativeDuplicates === 0), refs, "Compared actual returned visible copy across the complete work against authorized source repetition.") : unknown("No completed artifact was inspected."),
     transitionQuality: isAudio?unknown("Musical transitions cannot be evaluated without inspecting the completed audio waveform.")
       : isVideo ? unknown("Cuts cannot be evaluated without decoded adjacent video frames and an assembled timeline.")
       : isStoryboard ? unknown("Storyboard transitions cannot be evaluated without inspecting adjacent generated frames.")
@@ -213,7 +220,7 @@ export function collectProductionEvidence(
       ? completed.length ? measured(Number(validVisualReceipts && uniqueCompleted.size === plan.scenes.length && completed.length === plan.scenes.length
         && (!isVideo || completed.every((scene) => Number(scene.durationSeconds ?? 0) >= 4 && Number(scene.durationSeconds ?? 0) <= 15))), refs, "Validated unique completed provider identities, owned media references, media types, and requested scene durations; bytes were not decoded.") : unknown("No completed visual provider receipts were inspected.")
       : hasDraft ? measured(isSlides
-        ? Number(documentArtifactValidationIssues("slides", input.draft!, { itemCount: plan.scenes.length, contextGroupIds: expectedGroupIds }).length === 0)
+        ? Number(slideIssues.length === 0)
         : Number(Boolean(input.draft!.content_markdown.trim())), refs, "Validated the complete returned artifact against its format and authored target requirements.") : unknown("No completed artifact was inspected."),
     preferenceAlignment: unknown("No explicit human review or attributable preference decision was supplied."),
   };

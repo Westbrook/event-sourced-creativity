@@ -31,6 +31,7 @@ export class FormaSharedView extends FormaPresentationalElement {
   #presentationContentOverflow=false;
   #presentationObserver?:ResizeObserver;
   #presentationObserved?:Element;
+  #presentationPostureFrame=0;
   #presentationReturnFocus?:HTMLElement;
   #presentationTouchStart:{x:number;y:number}|null=null;
   #selectedExperienceKind="";
@@ -42,7 +43,8 @@ export class FormaSharedView extends FormaPresentationalElement {
     const reading=presentationRequiresReadingPosture(width,Math.max(0,height-56));
     if(reading===this.#presentationReading)return;
     this.#presentationReading=reading;
-    this.requestUpdate();
+    if(this.#presentationPostureFrame)cancelAnimationFrame(this.#presentationPostureFrame);
+    this.#presentationPostureFrame=requestAnimationFrame(()=>{this.#presentationPostureFrame=0;if(this.isConnected)this.requestUpdate();});
   };
   protected override updated(){
     document.title=this.#projection?`${this.#projection.documentTitle} — ${this.#i18n.t("shared.review","Shared review")} — Forma`:`${this.#i18n.t(this.#error?"shared.unavailable":"shared.loading",this.#error?"Link unavailable":"Opening shared review")} — Forma`;
@@ -56,7 +58,7 @@ export class FormaSharedView extends FormaPresentationalElement {
     }
   }
   override connectedCallback() { super.connectedCallback(); void this.#load(); }
-  override disconnectedCallback(){this.#presentationObserver?.disconnect();this.#presentationObserved=undefined;super.disconnectedCallback();}
+  override disconnectedCallback(){this.#presentationObserver?.disconnect();this.#presentationObserved=undefined;if(this.#presentationPostureFrame)cancelAnimationFrame(this.#presentationPostureFrame);this.#presentationPostureFrame=0;super.disconnectedCallback();}
 
   async #openImage(event:MouseEvent,url:string,label:string,approvedFan:Array<{url:string;label:string}>=[]){
     let parsed:URL;try{parsed=new URL(url,location.origin);}catch{return;}
@@ -84,22 +86,19 @@ export class FormaSharedView extends FormaPresentationalElement {
   #closePresentation(){this.querySelector<HTMLDialogElement>(".shared-presentation-dialog")?.close();this.#activePresentation=null;this.#presentationFocused=false;this.#presentationReading=false;this.#presentationReadingPreference=null;this.#presentationContentOverflow=false;this.#presentationTouchStart=null;this.#presentationObserver?.disconnect();this.#presentationObserved=undefined;const opener=this.#presentationReturnFocus;this.#presentationReturnFocus=undefined;this.requestUpdate();if(opener?.isConnected)opener.focus({preventScroll:true});}
   #setPresentationFocus(focused:boolean){this.#presentationFocused=focused;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLButtonElement>(".shared-presentation-focus-toggle")?.focus({preventScroll:true}));}
   #setPresentationReading(reading:boolean){
-    const bounds=this.#presentationObserved?.getBoundingClientRect(),narrow=Boolean(bounds&&presentationRequiresReadingPosture(bounds.width,Math.max(0,bounds.height-56)));
-    if(!reading&&this.#presentationContentOverflow&&narrow){this.#presentationReadingPreference=null;this.#presentationReading=true;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLElement>(".shared-presentation-reading")?.focus({preventScroll:true}));return;}
     this.#presentationReadingPreference=reading;this.#presentationReading=reading;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLElement>(reading?".shared-presentation-reading":".shared-presentation-reading-toggle")?.focus({preventScroll:true}));
   }
-  #sharedSlideFit=(event:CustomEvent<{contentFits:boolean}>)=>{
+  #sharedSlideFit=(event:CustomEvent<{contentFits:boolean;renderKey:string}>)=>{
+    const slide=this.querySelector<HTMLElementTagNameMap["forma-presentation-slide"]>(".shared-presentation-viewport forma-presentation-slide");
+    if(event.target!==slide||!slide||event.detail.renderKey!==slide.fitKey)return;
     const overflow=!event.detail.contentFits;
     if(overflow===this.#presentationContentOverflow)return;
     this.#presentationContentOverflow=overflow;
-    if(!overflow||this.#presentationReadingPreference!==null)return;
-    const bounds=this.#presentationObserved?.getBoundingClientRect();
-    if(bounds&&presentationRequiresReadingPosture(bounds.width,Math.max(0,bounds.height-56))){this.#presentationReading=true;this.requestUpdate();}
+    this.requestUpdate();
   };
   #navigatePresentation(index:number){
     const active=this.#activePresentation;if(!active)return;
     const nextIndex=Math.max(0,Math.min(active.artifact.items.length-1,index));
-    if(nextIndex!==active.index&&this.#presentationReadingPreference===false)this.#presentationReadingPreference=null;
     this.#presentationContentOverflow=false;
     if(this.#presentationReadingPreference===null){
       const bounds=this.#presentationObserved?.getBoundingClientRect();
@@ -200,7 +199,7 @@ export class FormaSharedView extends FormaPresentationalElement {
         <header><div><span>${this.#i18n.system("Presentation")}</span><h2 id="shared-presentation-heading" dir="auto">${artifact.title}</h2></div><div class="shared-presentation-actions"><button type="button" class="button secondary compact shared-presentation-reading-toggle" aria-pressed=${String(this.#presentationReading)} @click=${()=>this.#setPresentationReading(!this.#presentationReading)}>${this.#i18n.system(this.#presentationReading?"Slide view":"Read slide")}</button><button type="button" class="button secondary compact shared-presentation-focus-toggle" aria-pressed=${this.#presentationFocused} @click=${()=>this.#setPresentationFocus(!this.#presentationFocused)}>${this.#i18n.system(this.#presentationFocused?"Exit focus":"Focus view")}</button><button type="button" class="button secondary compact" @click=${()=>this.#closePresentation()}>${this.#i18n.t("action.close","Close")}</button></div></header>
         <div class=${`shared-presentation-stage${this.#presentationReading?" shared-presentation-stage--reading":""}`} data-slide-posture=${this.#presentationReading?"reading":"visual"} @presentation-slide-fit=${this.#sharedSlideFit} @pointerdown=${this.#presentationPointerDown} @pointerup=${this.#presentationPointerUp} @pointercancel=${()=>{this.#presentationTouchStart=null;}}>
           ${this.#presentationReading?this.#sharedSlideReader(item,index):html`<div class="shared-presentation-viewport"><forma-presentation-slide .item=${{title:item.title,body:item.body,notes:"",image_prompt:"",slide:item.slide}} .presentation=${artifact.presentation} .index=${index} .total=${artifact.items.length} .compact=${false}></forma-presentation-slide></div>`}
-          <nav aria-label=${this.#i18n.system("Presentation")}><button type="button" class="button secondary compact" aria-keyshortcuts=${rtl?"ArrowRight":"ArrowLeft"} ?disabled=${index===0} @click=${()=>this.#navigatePresentation(index-1)}>${this.#i18n.system("Previous")}</button><span role="status" aria-live="polite" aria-atomic="true">${position}</span><button type="button" class="button secondary compact" aria-keyshortcuts=${rtl?"ArrowLeft":"ArrowRight"} ?disabled=${index===artifact.items.length-1} @click=${()=>this.#navigatePresentation(index+1)}>${this.#i18n.system("Next")}</button></nav>
+          <nav aria-label=${this.#i18n.system("Presentation")}><button type="button" class="button secondary compact" aria-keyshortcuts=${rtl?"ArrowRight":"ArrowLeft"} ?disabled=${index===0} @click=${()=>this.#navigatePresentation(index-1)}>${this.#i18n.system("Previous")}</button><span role="status" aria-live="polite" aria-atomic="true">${position}${!this.#presentationReading&&this.#presentationContentOverflow?html`<span class="presentation-slide-fit-warning">${this.#i18n.t("presentation.fitOverflow","Some content does not fit. Read slide for the complete content.")}</span>`:nothing}</span><button type="button" class="button secondary compact" aria-keyshortcuts=${rtl?"ArrowLeft":"ArrowRight"} ?disabled=${index===artifact.items.length-1} @click=${()=>this.#navigatePresentation(index+1)}>${this.#i18n.system("Next")}</button></nav>
         </div>
       </section>
     </dialog>`;

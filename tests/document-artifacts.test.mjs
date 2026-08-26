@@ -477,6 +477,31 @@ test("preserves complete attributed stakeholder quotations and inspectable sourc
   for(const semantic of ["quote","scorecard","comparison","matrix","architecture","personas","roadmap"]){assert.equal(SLIDE_LAYOUTS.includes(semantic),true,semantic);assert.equal(SLIDE_VISUAL_KINDS.includes(semantic),true,semantic);}
 });
 
+test("preserves Markdown and notes for protected quotations delivered in structured data rows",()=>{
+  const quote="Every artifact must remain traceable, editable, reviewable, and reusable across devices.";
+  const sourceContract=buildPresentationSourceContract({facts:[{block_id:"quote-source",active:true,properties:{label:"Stakeholder evidence",text:`Slide 1 — Product evidence\n“${quote}” — Product Owner`}}]},{requestedSlideCount:1});
+  assert.equal(sourceContract.protectedQuotes.length,1);
+  const output=parseDocumentArtifactContent(JSON.stringify({title:"Product evidence",summary:"An attributed comparison.",content_markdown:"# Product evidence",presentation,items:[{
+    title:"A durable creative workflow",body:"",notes:"",image_prompt:"",context_group_ids:[],
+    slide:{layout:"comparison",kicker:"Stakeholder perspective",source_ids:["quote-source"],visual:{kind:"comparison",label:"Evidence and consequence",value:"",data:[
+      {label:"Customer expectation",value:`“${quote}” — Product Owner`,weight:1},
+      {label:"Product consequence",value:"Keep authored decisions connected to each output.",weight:1},
+    ]}},
+  }]}));
+  assert.ok(output);
+  assert.equal(output.items[0].slide.quote,undefined);
+  assert.equal(output.items[0].slide.visual.data[0].value.includes(quote),true);
+  const options={itemCount:1,sourceContract,requireSourceGrounding:true,requireAllProtectedContent:true};
+  const issues=documentArtifactValidationIssues("slides",output,options);
+  assert.deepEqual(issues.map(({code,path})=>({code,path})),[
+    {code:"missing_markdown_quote",path:"content_markdown"},
+    {code:"missing_quote_speaker_notes",path:"items.0.notes"},
+  ]);
+  output.content_markdown=`# Product evidence\n\n> ${quote}\n> — Product Owner`;
+  output.items[0].notes=`${quote} — Product Owner`;
+  assert.deepEqual(documentArtifactValidationIssues("slides",output,options),[]);
+});
+
 test("reconstructs the actual legacy quote split into a hidden hero continuation",()=>{
   const opening="“The differentiator is not that one brief can make five artifacts; it is that every artifact remains traceable, editable";
   const continuation="reviewable, and reusable across devices.”";
@@ -572,7 +597,7 @@ test("locally heals repeated slide openings and generic captions while registeri
     assert.deepEqual(validation.adapter_reconciliation.issue_codes,["duplicate_slide_copy","generic_visual_label"]);
     assert.equal(validation.adapter_reconciliation.status,"pending");
     assert.equal(validation.adapter_reconciliation.self_healed,true);
-    assert.equal(validation.adapter_reconciliation.adapter_version,"2026-08-26-validated-self-healing-v3");
+    assert.equal(validation.adapter_reconciliation.adapter_version,"2026-08-26-source-aware-render-v4");
   }finally{globalThis.fetch=originalFetch;}
 });
 

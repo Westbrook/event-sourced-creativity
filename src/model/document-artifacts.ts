@@ -1,4 +1,5 @@
 import type { ImageFocalPoint } from "./focal-point.ts";
+import { presentationAudienceText } from "./presentation-delivery.ts";
 import { protectedPresentationScoreContradictions, validatePresentationSourceCoverage, type PresentationSourceContract } from "./presentation-source.ts";
 
 export const DOCUMENT_ARTIFACT_KINDS = ["short_story", "scene", "slides", "storyboard", "video", "audio"] as const;
@@ -371,9 +372,25 @@ export function slideDeckCopyIssues(values:unknown[]):SlideDeckCopyIssue[]{
 }
 export const slideDeckCopyIsDistinct=(values:unknown[])=>slideDeckCopyIssues(values).length===0;
 
-export function normalizeSlideDeckItems(values:unknown[]):DocumentArtifactDraftItem[]{
-  const items=values.map((value,index)=>normalizeSlideItem(value,index)),prior:Array<{path:string;value:string}>=[];
-  return items.map((item,index)=>{if(!item.slide){return item;}const repeated=(path:string,value:string)=>Boolean(value)&&prior.some((candidate)=>crossSlideDuplicate(candidate,{path,value}));const body=repeated("body",item.body)?"":item.body;const bullets=item.slide.bullets.filter((bullet)=>!repeated("slide.bullets.0",bullet));const visual={...item.slide.visual,data:item.slide.visual.data.map((datum)=>({...datum}))};if(["hero-type","metric","diagram"].includes(visual.kind)&&repeated("slide.visual.value",visual.value))visual.value="";if(visual.kind==="bars"||visual.kind==="timeline")visual.data=visual.data.map((datum)=>repeated("slide.visual.data.0.value",datum.value)?{...datum,value:""}:datum);const normalized={...item,body,slide:normalizeSlideVisual({...item.slide,bullets,visual},{title:item.title,body},index)};prior.push(...slideNarrativeFields(normalized));return normalized;});
+export function normalizeSlideDeckItems(values:unknown[],options:{sourceContract?:PresentationSourceContract;sourcePageStart?:number}={}):DocumentArtifactDraftItem[]{
+  const items=values.map((value,index)=>normalizeSlideItem(value,index));
+  const prior:Array<{path:string;value:string;slideIndex:number}>=[];
+  return items.map((item,index)=>{
+    if(!item.slide)return item;
+    const repeated=(path:string,value:string)=>Boolean(value)&&prior.some((candidate)=>{
+      if(!crossSlideDuplicate(candidate,{path,value}))return false;
+      const duplicate={first:candidate.value,second:value,firstPath:candidate.path,secondPath:path,firstSlide:candidate.slideIndex,secondSlide:index};
+      return !options.sourceContract||!sourceAuthorizedRepeatedPresentationCopy(items,duplicate,options.sourceContract,options.sourcePageStart??0);
+    });
+    const body=repeated("body",item.body)?"":item.body;
+    const bullets=item.slide.bullets.filter((bullet,bulletIndex)=>!repeated(`slide.bullets.${bulletIndex}`,bullet));
+    const visual={...item.slide.visual,data:item.slide.visual.data.map((datum)=>({...datum}))};
+    if(["hero-type","metric","diagram"].includes(visual.kind)&&repeated("slide.visual.value",visual.value))visual.value="";
+    if(visual.kind==="bars"||visual.kind==="timeline")visual.data=visual.data.map((datum,datumIndex)=>repeated(`slide.visual.data.${datumIndex}.value`,datum.value)?{...datum,value:""}:datum);
+    const normalized={...item,body,slide:normalizeSlideVisual({...item.slide,bullets,visual},{title:item.title,body},index)};
+    prior.push(...slideNarrativeFields(normalized).map((field)=>({...field,slideIndex:index})));
+    return normalized;
+  });
 }
 
 export function slideVisualIsComplete(slide:SlideVisualData){
@@ -497,16 +514,17 @@ export type DocumentArtifactValidationOptions={
 /** Preserve only independently authored visual evidence and an exact opening-to-closing promise. */
 function sourceAuthorizedRepeatedPresentationCopy(values:readonly unknown[],duplicate:SlideDeckCopyIssue,contract:PresentationSourceContract,pageStart=0){
   const visualEvidence=duplicate.firstPath==="slide.visual.value"&&/^slide\.visual\.data\.\d+\.value$/u.test(duplicate.secondPath);
-  const opening=contract.numberedOutline[0],closing=contract.numberedOutline.at(-1);
+  const opening=contract.numberedOutline.find((slide)=>slide.index===0);
+  const closing=contract.numberedOutline.find((slide)=>slide.index===(contract.authoredSlideCount??contract.numberedOutline.length)-1);
   const openingPromise=duplicate.firstPath==="title"
     &&/^(?:body|slide\.visual\.value|slide\.bullets\.\d+)$/u.test(duplicate.secondPath)
     &&opening!==undefined&&closing!==undefined&&opening.number!==closing.number
-    &&pageStart+duplicate.firstSlide+1===opening.number&&pageStart+duplicate.secondSlide+1===closing.number
+    &&pageStart+duplicate.firstSlide===opening.index&&pageStart+duplicate.secondSlide===closing.index
     &&text(duplicate.first)===text(duplicate.second)
     &&contentKey(opening.content.split(/\r?\n/u,1)[0])===contentKey(duplicate.first);
   if(!visualEvidence&&!openingPromise)return false;
   const authoredEvidence=(slideIndex:number,value:string,datumIndex?:number)=>{
-    const authored=contract.numberedOutline.find((slide)=>slide.number===pageStart+slideIndex+1);
+    const authored=contract.numberedOutline.find((slide)=>slide.index===pageStart+slideIndex);
     const evidenceTokens=copyTokens(value),sourceTokens=copyTokens(authored?.content??"");
     if(!authored||evidenceTokens.length<2||evidenceTokens.length>12||text(value).length>160)return false;
     const contiguous=sourceTokens.some((_token,index)=>evidenceTokens.every((token,offset)=>sourceTokens[index+offset]===token));
@@ -593,8 +611,10 @@ export function documentArtifactValidationIssues(kind:DocumentArtifactKind,outpu
   if(options.sourceContract&&options.requireAllProtectedContent===true){
     for(const quote of options.sourceContract.protectedQuotes){
       const namedSpeaker=quote.speaker!==quote.role;
-      if(!output.content_markdown.includes(quote.text)||!output.content_markdown.includes(quote.role)||namedSpeaker&&!output.content_markdown.includes(quote.speaker))add("missing_markdown_quote","content_markdown",`The readable Markdown must retain the complete ${quote.role} quotation, named speaker, and attribution.`);
-      const index=output.items.findIndex((item)=>item.slide?.quote?.text===quote.text||item.body.includes(quote.text)||(item.slide?.bullets??[]).some((bullet)=>bullet.includes(quote.text))||item.slide?.visual.value.includes(quote.text));
+      const index=output.items.findIndex((item)=>presentationAudienceText(item).includes(quote.text));
+      // A wholly missing quotation already has a source-targeted issue. Do not
+      // turn that one-slide repair into a second, deck-wide Markdown repair.
+      if(index>=0&&(!output.content_markdown.includes(quote.text)||!output.content_markdown.includes(quote.role)||namedSpeaker&&!output.content_markdown.includes(quote.speaker)))add("missing_markdown_quote","content_markdown",`The readable Markdown must retain the complete ${quote.role} quotation, named speaker, and attribution.`);
       if(index>=0){const notes=output.items[index]?.notes??"";if(!notes.includes(quote.text)||!notes.includes(quote.role)||namedSpeaker&&!notes.includes(quote.speaker))add("missing_quote_speaker_notes",`items.${index}.notes`,`The complete ${quote.role} quotation, named speaker, and attribution must also remain in speaker notes.`);}
     }
     const checkProtectedScores=(value:string,path:string)=>{for(const mismatch of protectedPresentationScoreContradictions(value,options.sourceContract!))add("mislabeled_narrative_fact",path,`The protected ${mismatch.label} assessment must remain ${mismatch.expected}, not ${mismatch.observed}, in every readable output.`);};

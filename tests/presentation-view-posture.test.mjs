@@ -24,18 +24,26 @@ test("genuinely narrow and short viewports retain their accessible automatic rea
   }
 });
 
-test("meaningful measured clipping safely defaults to complete reading without becoming irreversible", () => {
+test("measured desktop overflow remains a visual repair signal rather than silently replacing the slide", () => {
   assert.equal(presentationUsesReadingView({
     contentOverflows: true,
     readingPreference: null,
     viewportRequiresReading: false,
-  }), true, "unclipped delivery remains the safe automatic default");
+  }), false, "the artboard stays mounted for local reflow, revisions, and late font measurements");
 
   assert.equal(presentationUsesReadingView({
     contentOverflows: true,
     readingPreference: false,
     viewportRequiresReading: false,
   }), false, "an intentional Slide view action can restore its structured visual");
+});
+
+test("intentional slide view survives overflow, navigation, and viewport changes", () => {
+  for (const viewportRequiresReading of [false, true]) {
+    for (const contentOverflows of [false, true]) {
+      assert.equal(presentationUsesReadingView({ contentOverflows, readingPreference: false, viewportRequiresReading }), false);
+    }
+  }
 });
 
 test("intentional reading stays selected after slides fit and while the viewport changes", () => {
