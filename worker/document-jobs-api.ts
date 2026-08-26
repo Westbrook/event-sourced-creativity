@@ -53,6 +53,21 @@ type DocumentJobRow = {
 
 const KINDS = new Set<DocumentJobKind>(["preview", "generate", "prompt_fan", "chat", "structure_adaptive", "extract_reference", "render_document"]);
 const MAX_PAYLOAD_BYTES = 750_000;
+// Resolve execution lanes from immutable document-creation history, never
+// client-supplied request snapshots. Older seeded documents inherit the most
+// recent project that existed when their creation event was recorded.
+const documentJobProjectSql=(alias:"target"|"candidate"|"active")=>`COALESCE((
+  SELECT COALESCE(NULLIF(json_extract(created.payload,'$.project_id'),''),(
+    SELECT NULLIF(json_extract(previous.payload,'$.project_id'),'')
+    FROM events previous
+    WHERE previous.stream_id=created.stream_id AND previous.sequence<=created.sequence
+      AND previous.type IN('ProjectCreated','ProjectOpened')
+    ORDER BY previous.sequence DESC LIMIT 1
+  )) FROM events created
+  WHERE created.stream_id=${alias}.stream_id AND created.type IN('DocumentCreated','DocumentForked')
+    AND json_extract(created.payload,'$.document_id')=${alias}.document_id
+  ORDER BY created.sequence ASC LIMIT 1
+),'')`;
 const TOKEN_RESERVATION_HANDOFF_SQL = "UPDATE budget_reservations SET correlation_id=?,updated_at=? WHERE reservation_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND operation=? AND status='active' AND EXISTS (SELECT 1 FROM cost_budget_reservations paired WHERE paired.reservation_id=? AND paired.owner_id=budget_reservations.owner_id AND paired.stream_id=budget_reservations.stream_id AND paired.correlation_id=budget_reservations.correlation_id AND paired.operation=budget_reservations.operation AND paired.period=budget_reservations.period AND paired.status IN ('active','executing')) AND EXISTS (SELECT 1 FROM document_jobs job WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=budget_reservations.stream_id AND job.correlation_id=? AND job.attempt_count=? AND job.status='running')";
 const COST_RESERVATION_HANDOFF_SQL = "UPDATE cost_budget_reservations SET correlation_id=?,status=CASE WHEN operation='document-render:storyboard' AND status='executing' THEN 'executing' ELSE 'active' END,updated_at=? WHERE reservation_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND operation=? AND status IN ('active','executing') AND EXISTS (SELECT 1 FROM budget_reservations paired WHERE paired.reservation_id=? AND paired.owner_id=cost_budget_reservations.owner_id AND paired.stream_id=cost_budget_reservations.stream_id AND paired.correlation_id=? AND paired.operation=cost_budget_reservations.operation AND paired.period=cost_budget_reservations.period AND paired.status='active') AND EXISTS (SELECT 1 FROM document_jobs job WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=cost_budget_reservations.stream_id AND job.correlation_id=? AND job.attempt_count=? AND job.status='running')";
 const UNCERTAIN_PRESENTATION_SUBMISSION_SQL="kind='render_document' AND COALESCE(json_extract(COALESCE(result_json,'{}'),'$.presentationProviderSubmission'),'')='pending'";
@@ -1258,7 +1273,23 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     return readJob(env,user.userId,jobId);
   }
 
-  const blocker = await env.DB.prepare("SELECT job_id FROM document_jobs WHERE stream_id=? AND kind!='prompt_fan' AND status IN ('queued','running','committing') AND NOT (status='queued' AND kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides') AND (requested_at<? OR (requested_at=? AND job_id<?)) ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId, row.requested_at, row.requested_at, row.job_id).first<{ job_id: string }>();
+  const independentPresentation=requiresForegroundDocumentExecution(row)&&queuedRequest.productionMode==="manual";
+  const projectLane=independentPresentation?user.projectExecution?.projectId??String((await env.DB.prepare(
+    `SELECT ${documentJobProjectSql("target")} AS project_id FROM document_jobs target WHERE target.job_id=? AND target.owner_id=? AND target.stream_id=?`,
+  ).bind(row.job_id,user.userId,user.streamId).first<{project_id:string}>())?.project_id??""):"";
+  // A manually approved presentation may run alongside a long-lived video in
+  // another verified project. Unknown ownership, every same-project job, and
+  // every other workload retain the original account-wide serialization.
+  const blocker = await env.DB.prepare(`SELECT candidate.job_id FROM document_jobs candidate
+    WHERE candidate.stream_id=? AND candidate.kind!='prompt_fan' AND candidate.status IN ('queued','running','committing')
+      AND NOT (candidate.status='queued' AND candidate.kind='render_document' AND COALESCE(json_extract(candidate.request_json,'$.artifactKind'),'')='slides')
+      AND (candidate.requested_at<? OR (candidate.requested_at=? AND candidate.job_id<?))
+      AND NOT (?=1 AND candidate.kind='render_document'
+        AND COALESCE(json_extract(candidate.request_json,'$.artifactKind'),'')='video'
+        AND ?<>'' AND ${documentJobProjectSql("candidate")} NOT IN ('',?))
+    ORDER BY candidate.requested_at ASC,candidate.job_id ASC LIMIT 1`)
+    .bind(user.streamId,row.requested_at,row.requested_at,row.job_id,Number(independentPresentation),projectLane,projectLane)
+    .first<{job_id:string}>();
   if (blocker) return row;
   if (row.status === "running" && !rowIsStale(row)) return row;
   if(row.status==="running"&&requiresForegroundDocumentExecution(row)){const unsafe=unsafePresentationRecovery(row);if(unsafe){await failStaleJob(env,user,row,unsafe);return readJob(env,user.userId,jobId);}}
@@ -1281,8 +1312,10 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     && Boolean(previousCheckpoint.reservationId && previousCheckpoint.costReservationId);
   const now = new Date(); const nowIso = now.toISOString(); const staleBefore = new Date(now.getTime() - DOCUMENT_JOB_STALE_AFTER_MS).toISOString(); const leaseExpiresAt = new Date(now.getTime() + DOCUMENT_JOB_LEASE_MS).toISOString();
   const attemptCorrelationId=`${jobId}:attempt:${attempt}`;const foregroundPresentation=requiresForegroundDocumentExecution(row);const initialResult={...previousCheckpoint,stage:foregroundPresentation?"compiling":"preparing",progressMessage:foregroundPresentation?attempt>1?"Recovering the interrupted presentation and compiling its authorized document context.":"Compiling the document into the requested presentation.":attempt>1?"Recovering the interrupted operation.":"Preparing the document context."};
-  const claimSql="UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=COALESCE(started_at,?),lease_expires_at=?,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND (status='queued' OR (status='running' AND (lease_expires_at<? OR updated_at<?))) AND NOT EXISTS(SELECT 1 FROM document_jobs active WHERE active.stream_id=document_jobs.stream_id AND active.job_id<>document_jobs.job_id AND active.kind!='prompt_fan' AND active.status IN('running','committing'))";
-  const claimBindings=[attemptCorrelationId,nowIso,leaseExpiresAt,JSON.stringify(initialResult),nowIso,jobId,user.userId,user.streamId,nowIso,staleBefore] as const;
+  const claimSql=`UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=COALESCE(started_at,?),lease_expires_at=?,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND (status='queued' OR (status='running' AND (lease_expires_at<? OR updated_at<?))) AND NOT EXISTS(SELECT 1 FROM document_jobs active WHERE active.stream_id=document_jobs.stream_id AND active.job_id<>document_jobs.job_id AND active.kind!='prompt_fan' AND active.status IN('running','committing')
+    AND NOT (?=1 AND active.kind='render_document' AND COALESCE(json_extract(active.request_json,'$.artifactKind'),'')='video'
+      AND ?<>'' AND ${documentJobProjectSql("active")} NOT IN ('',?)))`;
+  const claimBindings=[attemptCorrelationId,nowIso,leaseExpiresAt,JSON.stringify(initialResult),nowIso,jobId,user.userId,user.streamId,nowIso,staleBefore,Number(independentPresentation),projectLane,projectLane] as const;
   let claimed;
   if (handoffPaidProviderReservations) {
     const billingOwnerId = user.billingUserId ?? user.userId;

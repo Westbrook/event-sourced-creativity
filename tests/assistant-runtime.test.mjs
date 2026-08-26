@@ -1727,6 +1727,39 @@ test("derived output families, verified evidence, and governed context remain im
   }
 });
 
+test("document composition validates the requested project when another project is active", async () => {
+  const state = await fixture();
+  const original = { project_id: "project-atmosphere", document_id: "doc-atmosphere" };
+  const other = { project_id: "project-composition-background", document_id: "doc-composition-background" };
+  appendFixtureEvents(state.sqlite, "creative:dev-local-creative", [
+    ["ProjectCreated", { project_id: other.project_id, name: "Other open project" }],
+    ["DocumentCreated", { ...other, title: "Other open document" }],
+    ["BlockCreated", { ...other, block_id: "background-decision", type: "direction", handle: "direction/background", position: "a0", properties: { text: "Separate project decision" } }],
+    ["ProjectOpened", { project_id: other.project_id }],
+    ["DocumentOpened", { ...other }],
+  ]);
+
+  const accepted = await state.request("/api/events", json({ action: "batch", events: [
+    { type: "BlockPropertyEdited", payload: { ...original, block_id: "block-direction", property_path: "context_group", old_value: null,
+      new_value: { name: "Original direction", target: "Original direction", role: "custom", application: "isolate", relativity: .8 } } },
+    { type: "BlockCreated", payload: { ...original, block_id: "decomposed-decision", scope: "document", type: "message", handle: "message/focused-decision",
+      position: "z0001", properties: { text: "A focused authored decision", source_block_id: "block-direction", context_detail: true } } },
+    { type: "BlockRelationAdded", payload: { ...original, relation_id: "decomposed-relation", from_block_id: "block-direction",
+      to_block_id: "decomposed-decision", kind: "context_contains", properties: { member_order: 0 } } },
+  ] }));
+  assert.equal(accepted.status, 200, JSON.stringify(await accepted.clone().json()));
+  assert.equal((await accepted.json()).appended.length, 3,
+    "a different open project must not hide an existing parent in the requested document");
+
+  const foreign = await state.request("/api/events", json({ action: "append", event: {
+    type: "BlockRelationAdded", payload: { ...original, relation_id: "cross-project-relation", from_block_id: "block-direction",
+      to_block_id: "background-decision", kind: "context_contains", properties: { member_order: 1 } },
+  } }));
+  assert.equal(foreign.status, 409, JSON.stringify(await foreign.clone().json()));
+  assert.equal((await foreign.json()).error, "context_composition_endpoint_missing",
+    "selecting the requested project must never admit another project's private endpoint");
+});
+
 test("approved relations preserve the user's requested direction and reject cycles hidden outside the bounded chat view", async () => {
   const state = await fixture({ actions: true });
   const scope = { project_id: "project-atmosphere", document_id: "doc-atmosphere" };
@@ -2113,6 +2146,44 @@ test("context intelligence uses grounded web evidence, user-selected addendum ty
     const tokens=state.sqlite.prepare("SELECT used_tokens,reserved_tokens FROM budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
     const costs=state.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
     assert.deepEqual({...tokens},{used_tokens:3900,reserved_tokens:0});assert.deepEqual({...costs},{used_microusd:26800,reserved_microusd:0});assert.equal(calls.length,4);
+  }finally{globalThis.fetch=original;}
+});
+
+test("decomposes rich authored context while preserving research, addendum, and protected-source limits",async()=>{
+  const state=await fixture({provider:true});
+  const source="quiet ".repeat(790).trim();
+  appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[
+    ["BlockPropertyEdited",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"block-direction",property_path:"text",new_value:source}],
+  ]);
+  const original=globalThis.fetch;let calls=0;
+  try{
+    globalThis.fetch=async(url,init)=>{
+      calls+=1;
+      assert.equal(String(url),"https://api.openai.com/v1/responses");
+      const payload=JSON.parse(init.body);
+      assert.equal(JSON.parse(payload.input).source.text,source);
+      return Response.json({model:payload.model,output:[{type:"message",content:[{type:"output_text",text:'{"proposals":[]}'}]}],usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}});
+    };
+    const body={projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"};
+    const decomposed=await state.request("/api/context/decompose",json(body));
+    assert.equal(decomposed.status,200,JSON.stringify(await decomposed.clone().json()));
+    assert.equal((await decomposed.json()).plan.sourceText,source);
+
+    const research=await state.request("/api/context/research",json(body));
+    assert.equal(research.status,413);
+    assert.equal((await research.json()).error,"context_source_too_large");
+
+    const addition=await state.request("/api/context/decompose",json({...body,addedType:"direction",addedText:"x".repeat(1801)}));
+    assert.equal(addition.status,413);
+    assert.equal((await addition.json()).error,"context_source_too_large");
+
+    appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[
+      ["BlockPropertyEdited",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"block-direction",property_path:"text",old_value:source,new_value:"x".repeat(6001)}],
+    ]);
+    const oversized=await state.request("/api/context/decompose",json(body));
+    assert.equal(oversized.status,413);
+    assert.equal((await oversized.json()).error,"context_source_too_large");
+    assert.equal(calls,1,"rejected sources must never submit a paid provider request");
   }finally{globalThis.fetch=original;}
 });
 

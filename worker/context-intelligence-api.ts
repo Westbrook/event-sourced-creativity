@@ -132,12 +132,12 @@ export async function handleContextIntelligence(request:Request,env:WorkerEnv,op
   const addedText=clean(body.addedText,1800),addedType=clean(body.addedType,48),sourceText=operation==="decompose"&&addedText?addedText:researchBlockText(target);
   if(addedText&&(!isBlockKind(addedType)||addedType==="reference"))return response({error:"context_added_block_type_invalid"},400);
   if(!sourceText)return response({error:"context_source_empty"},400);
-  if(sourceText.length>2_400||typeof body.addedText==="string"&&body.addedText.trim().length>1_800)return response({error:"context_source_too_large"},413);
+  if(sourceText.length>(operation==="decompose"?6_000:2_400)||typeof body.addedText==="string"&&body.addedText.trim().length>1_800)return response({error:"context_source_too_large"},413);
   if(!(await pilotExecutionAllowance(env,principal.userId,scope)).allowed)return response({error:"pilot_execution_denied"},403);
   const budget=await readAccountBudgets(env,principal.userId,scope?.organizationId),searchCost=operation==="research"?CONTEXT_WEB_SEARCH_CALL_MICROUSD:0;
   const allowed=(env.FORMA_ASSISTANT_ALLOWED_MODELS??"gpt-5.6-luna,gpt-5.6-terra").split(",").map((value)=>value.trim()).filter((value):value is AssistantModel=>ASSISTANT_MODELS.includes(value as AssistantModel));
   const remaining=Math.min(budget.costBudgets.user.remainingMicrousd,budget.costBudgets.workspace.remainingMicrousd)-searchCost;
-  const decision=selectAssistantModel("proposal",{allowedModels:allowed,remainingMicrousd:remaining,premiumApproved:false,inputTokens:operation==="research"?12_000:6_000,outputTokens:operation==="research"?2_400:1_800});
+  const decision=selectAssistantModel("proposal",{allowedModels:allowed,remainingMicrousd:remaining,premiumApproved:false,inputTokens:operation==="research"?12_000:Math.max(6_000,sourceText.length+2_000),outputTokens:operation==="research"?2_400:1_800});
   if(decision.blocked||!decision.model)return response({error:"context_budget_unavailable",reason:decision.reason},429);
   const estimate=decision.estimatedMicrousd+searchCost,streamId=shared?`creative:${shared.ownerUserId}`:principal.streamId,correlationId=`context-${operation}:${principal.userId}:${uuidV7()}`,budgetOperation=`context-${operation}:${decision.model}`;
   const token=await reserveBudget(env,principal.userId,decision.inputTokens+decision.outputTokens,{streamId,correlationId,operation:budgetOperation,...(scope?{projectScope:scope}:{})});if(!token.ok)return response({error:"context_token_budget_unavailable"},429);

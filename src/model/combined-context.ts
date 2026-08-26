@@ -178,12 +178,22 @@ export function combinedContextMemberships(properties:Record<string,unknown>):Co
   const seen=new Set<string>();return raw.map((value,index)=>normalizeCombinedContextMembership(value,index)).filter((item):item is CombinedContextMembership=>Boolean(item)).filter((item)=>{const key=`${item.contextSetId}:${item.memberOrder}`;if(seen.has(key))return false;seen.add(key);return true;});
 }
 
-const factLabel=(fact:Record<string,unknown>)=>{const properties=record(fact.properties);return String(properties.text??properties.label??fact.handle??fact.type??"decision");};
+/** Labels identify a decision; its complete authored evidence remains on the fact. */
+const conciseContextLabel=(value:unknown,limit=160)=>{
+  const original=String(value??"").trim();
+  if(Array.from(original).length<=limit)return original;
+  const normalized=original.replace(/\s+/gu," ");
+  return`${Array.from(normalized).slice(0,limit-1).join("")}…`;
+};
+const factLabel=(fact:Record<string,unknown>)=>{
+  const properties=record(fact.properties);
+  return conciseContextLabel(properties.label??properties.text??fact.handle??fact.type??"decision");
+};
 
 export function combinedContextGroups(snapshot:Record<string,unknown>):CombinedContextGroup[]{
   const facts=(Array.isArray(snapshot.facts)?snapshot.facts:[]).map(record).filter(promptFactIsActive);
   const grouped=new Map<string,CombinedContextGroup>();
-  for(const fact of facts){const properties=record(fact.properties);for(const membership of combinedContextMemberships(properties)){const existing=grouped.get(membership.contextSetId)??{id:membership.contextSetId,name:membership.name,role:membership.role,target:membership.target,application:membership.application,relativity:membership.relativity,members:[]};existing.relativity=Math.max(existing.relativity,membership.relativity);existing.members.push({blockId:String(fact.block_id??""),label:factLabel(fact),role:String(fact.role??fact.type??"decision"),relativity:membership.relativity,order:membership.memberOrder});grouped.set(membership.contextSetId,existing);}}
+  for(const fact of facts){const properties=record(fact.properties);for(const membership of combinedContextMemberships(properties)){const existing=grouped.get(membership.contextSetId)??{id:membership.contextSetId,name:conciseContextLabel(membership.name),role:membership.role,target:conciseContextLabel(membership.target),application:membership.application,relativity:membership.relativity,members:[]};existing.relativity=Math.max(existing.relativity,membership.relativity);existing.members.push({blockId:String(fact.block_id??""),label:factLabel(fact),role:String(fact.role??fact.type??"decision"),relativity:membership.relativity,order:membership.memberOrder});grouped.set(membership.contextSetId,existing);}}
 
   const factsById=new Map(facts.map((fact)=>[String(fact.block_id??""),fact]));
   const relationships=(Array.isArray(snapshot.relationships)?snapshot.relationships:[]).map(record).filter((relation)=>isContextCompositionRelation(relation.kind));
@@ -209,9 +219,9 @@ export function combinedContextGroups(snapshot:Record<string,unknown>):CombinedC
     const legacyId=edges.some((edge)=>edge.kind===CONTEXT_CONTAINS_RELATION)?"":String(edges[0]?.properties.context_set_id??"");
     const legacy=combinedContextMemberships(rootProperties).find((membership)=>membership.contextSetId===legacyId);
     const id=legacyId||rootId;
-    const name=String(metadata.name??legacy?.name??rootProperties.label??rootProperties.text??root.handle??"Combined context").trim()||"Combined context";
+    const name=conciseContextLabel(metadata.name??legacy?.name??rootProperties.label??rootProperties.text??root.handle??"Combined context")||"Combined context";
     const ancestors=ancestorsFor(rootId);
-    const group:CombinedContextGroup={id,name,role:role(metadata.role??legacy?.role??combinedContextRoleForBlockType(String(root.type??""))),target:String(metadata.target??legacy?.target??name).trim()||name,application:application(metadata.application??legacy?.application),relativity:clamp(metadata.relativity??legacy?.relativity??rootProperties.weight),depth:ancestors.length,path:[...ancestors,name],members:[]};
+    const group:CombinedContextGroup={id,name,role:role(metadata.role??legacy?.role??combinedContextRoleForBlockType(String(root.type??""))),target:conciseContextLabel(metadata.target??legacy?.target??name)||name,application:application(metadata.application??legacy?.application),relativity:clamp(metadata.relativity??legacy?.relativity??rootProperties.weight),depth:ancestors.length,path:[...ancestors,name],members:[]};
     const visited=new Set<string>();
     const append=(blockId:string,depth:number,path:string[],weight:number)=>{
       if(visited.has(blockId))return;visited.add(blockId);const fact=factsById.get(blockId);if(!fact)return;

@@ -69,7 +69,7 @@ export class ContextIntelligence extends FormaElement{
 
   #groupEvent(target:CreativeBlock):EventInput[]{
     if(target.properties.context_group)return[];
-    const name=String(target.properties.label??target.properties.text??target.handle).trim()||target.handle;
+    const name=String(target.properties.label??target.handle??target.type).trim()||target.type;
     return[{type:"BlockPropertyEdited",payload:{...this.#scope(target),block_id:target.id,property_path:"context_group",old_value:null,new_value:{name,target:name,role:combinedContextRoleForBlockType(target.type),application:"isolate",relativity:Math.max(.5,Math.min(1,Number(target.properties.weight??.8)))},source_surface:`${this.surface}-context-intelligence`}}];
   }
 

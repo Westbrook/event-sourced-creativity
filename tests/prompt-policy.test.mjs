@@ -326,3 +326,25 @@ test("legacy rendering prompts remain byte-compatible without explicit source co
   assert.equal("source_key" in rendered.facts[0], false);
   assert.doesNotMatch(JSON.stringify(rendered), /first-private-block|second-private-block/);
 });
+
+test("rich composed decisions preserve full authored text while compacting redundant provider labels",()=>{
+  const source="A complete licensed creative source. ".repeat(140);
+  const context=providerFacingRenderingContext({
+    facts:[
+      {block_id:"rich-parent",type:"reference",properties:{text:source,context_group:{name:source,target:source,role:"custom",application:"isolate"}}},
+      {block_id:"focused-child",type:"message",properties:{label:"Focused workflow",text:"Focused workflow"}},
+    ],
+    relationships:[{from_block_id:"rich-parent",to_block_id:"focused-child",kind:"context_contains"}],
+  },[
+    {alias:"blk_001",sourceId:"rich-parent",sourceKind:"block"},
+    {alias:"blk_002",sourceId:"focused-child",sourceKind:"block"},
+  ]);
+
+  assert.equal(context.facts[0].properties.text,source,"full evidence must remain available for exact grounding");
+  assert.equal(context.facts[0].source_key,"blk_001");
+  assert.equal("context_group" in context.facts[0].properties,false,
+    "group semantics belong in the explicit Combined Context plan, not duplicated block metadata");
+  assert.ok(Array.from(context.relationships[0].from_label).length<=160);
+  assert.equal(context.relationships[0].to_label,"Focused workflow");
+  assert.deepEqual([context.relationships[0].from_decision,context.relationships[0].to_decision],["decision_1","decision_2"]);
+});

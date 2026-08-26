@@ -121,6 +121,71 @@ test("recovers an expired running job before advancing queued document renders",
   assert.doesNotMatch(jobsApi,/if \(running\) return;/);
 });
 
+test("a manual presentation bypasses only a verified video in another project",async()=>{
+  const [jobsApi,store]=await Promise.all([
+    readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8"),
+    readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
+  ]);
+  const projectTemplate=jobsApi.match(/const documentJobProjectSql=\(alias:"target"\|"candidate"\|"active"\)=>`([\s\S]*?)`;/u)?.[1];
+  const claimTemplate=jobsApi.match(/const claimSql=`([\s\S]*?)`;/u)?.[1];
+  assert.ok(projectTemplate,"project identity must come from immutable document-creation events");
+  assert.ok(claimTemplate,"project isolation must also hold inside the atomic claim");
+  assert.match(store,/projectDocuments\.has\(job\.documentId\)/u,
+    "the browser must not select an older unrelated project's running job");
+  const projectExpression=(alias)=>projectTemplate.replaceAll("${alias}",alias);
+  const claimSql=claimTemplate.replaceAll('${documentJobProjectSql("active")}',projectExpression("active"));
+
+  const sqlite=new DatabaseSync(":memory:");
+  sqlite.exec("CREATE TABLE events(stream_id TEXT,sequence INTEGER,type TEXT,payload TEXT)");
+  sqlite.exec("CREATE TABLE document_jobs(job_id TEXT PRIMARY KEY,owner_id TEXT,stream_id TEXT,document_id TEXT,kind TEXT,status TEXT,correlation_id TEXT,started_at TEXT,lease_expires_at TEXT,result_json TEXT,updated_at TEXT,attempt_count INTEGER,requested_at TEXT,request_json TEXT)");
+  const stream="creative:owner",owner="owner",now="2026-08-26T12:00:00.000Z";
+  const append=sqlite.prepare("INSERT INTO events VALUES(?,?,?,?)");
+  for(const [sequence,type,payload] of [
+    [1,"ProjectCreated",{project_id:"video-project"}],
+    [2,"DocumentCreated",{project_id:"video-project",document_id:"video-document"}],
+    [3,"ProjectCreated",{project_id:"presentation-project"}],
+    [4,"DocumentCreated",{project_id:"presentation-project",document_id:"presentation-one"}],
+    [5,"DocumentCreated",{project_id:"presentation-project",document_id:"presentation-two"}],
+    [6,"ProjectCreated",{project_id:"legacy-project"}],
+    [7,"DocumentCreated",{document_id:"legacy-document"}],
+  ])append.run(stream,sequence,type,JSON.stringify(payload));
+
+  const insert=sqlite.prepare("INSERT INTO document_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  const add=(id,document,kind,status,artifact)=>insert.run(id,owner,stream,document,kind,status,
+    `${id}:original`,null,"2099-01-01T00:00:00.000Z","{}",now,status==="running"?1:0,now,JSON.stringify({artifactKind:artifact}));
+  add("unrelated-video","video-document","render_document","running","video");
+  add("presentation-one","presentation-one","render_document","queued","slides");
+  add("presentation-two","presentation-two","render_document","queued","slides");
+  add("legacy-target","legacy-document","render_document","queued","slides");
+  add("unknown-target","unknown-document","render_document","queued","slides");
+
+  const lookup=(id)=>sqlite.prepare(`SELECT ${projectExpression("target")} AS project_id FROM document_jobs target WHERE target.job_id=?`).get(id).project_id;
+  assert.equal(lookup("presentation-one"),"presentation-project");
+  assert.equal(lookup("legacy-target"),"legacy-project","legacy creation inherits its historically active project");
+  assert.equal(lookup("unknown-target"),"","missing provenance fails closed");
+  const claim=(id,project="presentation-project",manual=true)=>Number(sqlite.prepare(claimSql).run(
+    `${id}:attempt:1`,now,"2099-01-01T00:00:00.000Z","{}",now,id,owner,stream,now,now,
+    Number(manual),project,project,
+  ).changes);
+
+  assert.equal(claim("presentation-one"),1,"a verified other-project video cannot starve a manual presentation");
+  assert.equal(claim("presentation-two"),0,"presentations in the same project must remain serialized");
+  sqlite.prepare("UPDATE document_jobs SET status='completed' WHERE job_id='presentation-one'").run();
+  assert.equal(claim("presentation-two","presentation-project",false),0,"the exception applies only to manual presentations");
+  assert.equal(claim("presentation-two",""),0,"an unknown target project must not bypass any active job");
+
+  add("same-project-video","presentation-one","render_document","running","video");
+  assert.equal(claim("presentation-two"),0,"a same-project video remains an execution boundary");
+  sqlite.prepare("UPDATE document_jobs SET status='completed' WHERE job_id='same-project-video'").run();
+  add("unknown-project-video","unknown-video-document","render_document","running","video");
+  assert.equal(claim("presentation-two"),0,"an unverifiable video project remains an execution boundary");
+  sqlite.prepare("UPDATE document_jobs SET status='completed' WHERE job_id='unknown-project-video'").run();
+  assert.equal(claim("presentation-two"),1);
+  assert.deepEqual({...sqlite.prepare("SELECT status,attempt_count,correlation_id FROM document_jobs WHERE job_id='unrelated-video'").get()},
+    {status:"running",attempt_count:1,correlation_id:"unrelated-video:original"},
+    "the unrelated in-flight video, its attempt, and its provider correlation are never changed");
+});
+
 test("atomically hands both paid-render reservations to the recovered provider attempt", async () => {
   const jobsApi = await readFile(new URL("../worker/document-jobs-api.ts", import.meta.url), "utf8");
   assert.match(jobsApi, /const claims = await env\.DB\.batch\(\[claimAttempt, tokenReservationHandoff, costReservationHandoff\]\);/);

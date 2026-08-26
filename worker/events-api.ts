@@ -1348,7 +1348,13 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
     const received=body.action==="canvas_sync"?await readEventsByClientEventIds(env,streamId,receiptIds):new Map<string,EventRow>();
     const pending=requested.map((item,index)=>({item,index,clientEventId:receiptIds[index]})).filter(({clientEventId})=>!clientEventId||!received.has(clientEventId));
     if(pending.some(({item})=>item.type==="BlockRelationRemoved"||item.type==="BlockRelationAdded"&&isContextCompositionRelation(item.payload?.kind))){
-      const projection=foldEvents(await readWorkspaceEvents(env,streamId));
+      // The account's most recently opened project can differ from the project
+      // whose document is being edited in another browser tab. Validate the
+      // relationship against its explicit scope, never that unrelated project.
+      const graphScope=pending.find(({item})=>item.type==="BlockRelationAdded"&&isContextCompositionRelation(item.payload?.kind))?.item.payload
+        ??pending.find(({item})=>item.payload?.project_id||item.payload?.document_id)?.item.payload;
+      const projection=foldEvents(await readWorkspaceEvents(env,streamId),Number.POSITIVE_INFINITY,
+        String(graphScope?.document_id??""),String(graphScope?.project_id??""));
       const issue=validateContextCompositionGraph({blocks:projection.libraryBlocks,relations:projection.libraryBlockRelations,events:pending.map(({item})=>item)});
       if(issue)return Response.json({error:issue.code,message:issue.message,index:pending[issue.index]?.index??issue.index},{status:409});
     }

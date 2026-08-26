@@ -27,6 +27,42 @@ test("Combined Contexts compile as ordered, weighted isolation boundaries",()=>{
   assert.match(combinedContextPromptDirectives(snapshot,"video")[0],/same shots or ordered shot range/i);
 });
 
+test("rich decomposed parents keep complete evidence without repeating it as group labels",()=>{
+  const reference="Licensed workplace workflow reference: "+"documents, decks, spreadsheets, design, video, audio, and collaboration. ".repeat(66);
+  const message="Slide 1 — One creative context\n"+"Reusable authored slide detail and product evidence. ".repeat(70);
+  const roots=[
+    {id:"rich-reference",type:"reference",text:reference,role:"custom"},
+    {id:"rich-message",type:"message",text:message,role:"message"},
+  ];
+  const rich={
+    facts:roots.flatMap(({id,type,text,role})=>[
+      {block_id:id,type,role,handle:`${type}/${id}`,properties:{text,context_group:{name:text,target:text,role,application:"isolate",relativity:.85}}},
+      ...["Formats and applications","Independently reusable message"].map((label,index)=>({
+        block_id:`${id}-child-${index}`,type:"direction",role:"direction",handle:`direction/${id}-${index}`,properties:{label,text:label},
+      })),
+    ]),
+    relationships:roots.flatMap(({id})=>[0,1].map((index)=>({
+      relation_id:`${id}-relation-${index}`,from_block_id:id,to_block_id:`${id}-child-${index}`,kind:"context_contains",properties:{member_order:index},
+    }))),
+  };
+
+  const groups=combinedContextGroups(rich);
+  assert.deepEqual(new Set(groups.map((group)=>group.id)),new Set(["rich-reference","rich-message"]));
+  for(const group of groups){
+    assert.equal(group.members.length,3);
+    assert.ok(Array.from(group.name).length<=160);
+    assert.ok(Array.from(group.target).length<=160);
+    assert.ok(group.members.every((member)=>Array.from(member.label).length<=160));
+    assert.equal(group.application,"isolate");
+  }
+  for(const directive of combinedContextPromptDirectives(rich,"slides")){
+    assert.ok(directive.length<2_000,"semantic instructions must not repeat each multi-kilobyte parent for every child");
+    assert.match(directive,/contiguous run of slides/i);
+  }
+  assert.equal(rich.facts.find((fact)=>fact.block_id==="rich-reference").properties.text,reference);
+  assert.equal(rich.facts.find((fact)=>fact.block_id==="rich-message").properties.text,message);
+});
+
 test("every prompt language carries the same Combined Context semantics",()=>{
   const prose=buildProsePrompt(snapshot,direction,[]),bullets=buildBulletPrompt(snapshot,direction,[]),structured=buildStructuredPrompt(snapshot,direction,[]),xml=buildXmlPrompt(snapshot,direction,[]);
   assert.match(prose,/Combined-context isolation map/);assert.match(prose,/Mara field kit/);

@@ -2,6 +2,7 @@
 const INTERNAL_CREATIVE_KEYS = new Set([
   "combined_context",
   "combined_context_memberships",
+  "context_group",
   "context_group_ids",
   "contextGroupIds",
   "context_groups",
@@ -255,7 +256,8 @@ export function providerFacingCreativeContext(value: unknown): unknown {
 const factDescription = (value: unknown) => {
   const fact = isRecord(value) ? value : {};
   const properties = isRecord(fact.properties) ? fact.properties : {};
-  return String(properties.text ?? properties.label ?? fact.handle ?? fact.role ?? fact.type ?? "creative decision");
+  const label=String(properties.label ?? properties.text ?? fact.handle ?? fact.role ?? fact.type ?? "creative decision").trim();
+  return Array.from(label).length<=160?label:`${Array.from(label.replace(/\s+/gu," ")).slice(0,159).join("")}…`;
 };
 
 function removeRenderingIdentifiers(value: unknown, aliases: ReadonlyMap<string, string>): unknown {
