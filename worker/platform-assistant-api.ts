@@ -34,10 +34,6 @@ async function ensurePlatformAssistantSchema(env: WorkerEnv) {
   return pending;
 }
 
-function admittedAssistant(env: WorkerEnv, userId: string) {
-  return new Set((env.FORMA_ASSISTANT_INTERNAL_USER_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean)).has(userId);
-}
-
 function protectedReplay(surface: AssistantSurface) {
   return surface.canonicalFamily === "/product/evaluation/actual" || surface.canonicalFamily === "/admin/events/replay";
 }
@@ -61,7 +57,6 @@ async function authorizePlatformAssistant(request: Request, env: WorkerEnv): Pro
   const authorization = await requirePlatformAssistantPrincipal(request, env);
   if (authorization.response || !authorization.principal) return { actor: null, denied: authorization.response! };
   const principal = authorization.principal;
-  if (!admittedAssistant(env, principal.userId)) return { actor: null, denied: response({ error: "assistant_not_available" }, 404) };
   if (principal.consentVersion !== POLICY_VERSION) return { actor: null, denied: response({ error: "pilot_terms_required" }, 428) };
   if (principal.access.permissionEpoch !== expectedEpoch) return { actor: null, denied: response({ error: "assistant_authorization_changed" }, 403) };
   if (!surface.requiredCapabilities.some((capability) => principal.access.capabilities.includes(capability))) {

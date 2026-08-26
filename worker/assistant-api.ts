@@ -12,7 +12,6 @@ import { outputBlockRemovalEvents, outputBlockTextEditEvents } from "../src/mode
 import type { FormaCapability } from "../src/platform/capabilities.ts";
 import { readCanvasGovernance } from "./canvas-governance-policy.ts";
 import {
-  assistantPilotEntitled,
   claimCostBudgetReservation,
   hasCapability,
   pilotExecutionAllowance,
@@ -252,14 +251,6 @@ async function authorizeAssistant(request: Request, env: WorkerEnv): Promise<{ a
   const auth = await requireUser(request, env, "viewer", { account: "principal" });
   if (auth.response || !auth.user) return { authorized: null, response: auth.response ?? json({ error: "authentication_required" }, 401) };
   const principal = auth.user;
-  const internalTester=assistantTesters(env).has(principal.userId);
-  const admittedProject=internalTester?null:await readProjectRequestContext(request,env,principal);
-  if(!internalTester){
-    if(admittedProject?.response)return{authorized:null,response:admittedProject.response};
-    const admission=admittedProject?.context;
-    if(!admission||!hasCapability(principal,"project.author",{organizationId:admission.organizationId,projectAccessId:admission.projectAccessId})
-      ||!await assistantPilotEntitled(env,principal.userId,admission.organizationId))return{authorized:null,response:json({error:"assistant_unavailable"},404)};
-  }
   const consent = requireConsent(principal);
   if (consent) return { authorized: null, response: consent };
   const url = new URL(request.url);
@@ -267,7 +258,7 @@ async function authorizeAssistant(request: Request, env: WorkerEnv): Promise<{ a
   if (!route.startsWith("/") || route.startsWith("//")) return { authorized: null, response: json({ error: "assistant_route_invalid" }, 400) };
   const surface = assistantSurfaceForRoute(route);
   if (!surface.available || surface.host !== "creator") return { authorized: null, response: json({ error: "assistant_surface_denied" }, 403) };
-  const selected = admittedProject??await readProjectRequestContext(request, env, principal);
+  const selected = await readProjectRequestContext(request, env, principal);
   if (selected.response) return { authorized: null, response: selected.response };
   const project = selected.context;
   const scope = project ? { organizationId: project.organizationId, projectAccessId: project.projectAccessId } : undefined;

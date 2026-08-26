@@ -185,22 +185,24 @@ async function sharedProjectFixture(options = {}) {
   return { ...state, owner: await open(owner), viewer: await open(viewer), organizationId, projectAccessId };
 }
 
-test("assistant is default-off and only the exact server-issued internal audience receives it", async () => {
-  const disabled = await fixture({ enabled: false });
-  assert.equal((await disabled.request("/api/session")).status, 200);
-  assert.equal((await (await disabled.request("/api/session")).json()).assistant, undefined);
-  assert.equal((await disabled.request(endpoint())).status, 404);
-
-  const enabled = await fixture();
-  const session = await (await enabled.request("/api/session")).json();
+test("assistant is available by default to every consented user without widening project access", async () => {
+  const state = await fixture({ enabled: false });
+  const session = await (await state.request("/api/session")).json();
   assert.deepEqual(session.assistant, { enabled: true, phase: "read-only", capabilities: ["project.assistant.read", "project.assistant.propose"] });
+  assert.equal((await state.request(endpoint())).status, 200);
+
   const other = { "oai-authenticated-user-id": "another-user", "oai-authenticated-user-email": "another-user@example.test" };
-  assert.equal((await enabled.request(endpoint(), { headers: other })).status, 404);
+  const otherSession = await (await state.request("/api/session", { headers: other })).json();
+  assert.deepEqual(otherSession.assistant, { enabled: true, phase: "read-only", capabilities: ["project.assistant.read", "project.assistant.propose"] });
+  assert.equal((await state.request(endpoint("/projects", ""), { headers: other })).status, 428, "terms remain mandatory");
+  state.sqlite.prepare("UPDATE users SET consent_version=? WHERE user_id=?").run("pilot-2026-08-10", "another-user");
+  assert.equal((await state.request(endpoint("/projects", ""), { headers: other })).status, 200);
+  assert.equal((await state.request(endpoint(), { headers: other })).status, 403, "another user's project remains inaccessible");
 });
 
-test("an active named controlled-pilot creator receives free scoped guidance without paid or authoring entitlements",async()=>{
+test("controlled-pilot creators retain free scoped guidance without paid or authoring entitlements",async()=>{
   const state=await sharedProjectFixture();
-  state.env.FORMA_ASSISTANT_INTERNAL_USER_IDS="dev-local-creative,assistant-viewer";
+  delete state.env.FORMA_ASSISTANT_INTERNAL_USER_IDS;
   const now=new Date().toISOString(),past=new Date(Date.now()-60_000).toISOString(),future=new Date(Date.now()+60_000).toISOString();
   state.sqlite.prepare("INSERT INTO pilot_cohorts(cohort_id,organization_id,status,starts_at,ends_at,created_by_user_id,created_at,updated_at) VALUES(?,?,'active',?,?,?,?,?)")
     .run("strict-named-cohort",state.organizationId,past,future,"assistant-owner",now,now);
@@ -216,8 +218,8 @@ test("an active named controlled-pilot creator receives free scoped guidance wit
   assert.equal(guidance.status,201,JSON.stringify(await guidance.clone().json()));
   assert.equal((await guidance.json()).task,undefined,"named participants receive free in-product guidance only");
   state.sqlite.prepare("UPDATE pilot_cohorts SET status='paused',updated_at=? WHERE cohort_id=?").run(new Date().toISOString(),"strict-named-cohort");
-  const revoked=await state.request(endpoint(),{headers:state.owner});
-  assert.ok([403,404].includes(revoked.status),`paused participants lose assistance immediately: ${revoked.status}`);
+  const paused=await state.request(endpoint(),{headers:state.owner});
+  assert.equal(paused.status,200,`paused participants retain free, permission-scoped guidance: ${paused.status}`);
 });
 
 test("hosted identity rejects unverified Access email and every cross-origin API mutation fails closed", async () => {
@@ -480,14 +482,8 @@ test("server-owned package adoption supports more than fifty guarded events with
   assert.equal(saved.appended.length,52,"twenty-six creates and twenty-six locks commit as one server-owned governed adoption");
 });
 
-test("privileged assistants are default-off, separately session-scoped, consent-gated, and never reuse the Creator endpoint", async () => {
-  const disabled = await fixture({ enabled: false });
-  const offSession = await (await disabled.request("/api/session?audience=operations")).json();
-  assert.equal(offSession.assistant, undefined);
-  const offHeaders = await platformHeaders(disabled, "operations");
-  assert.equal((await disabled.request(platformEndpoint("/operations/providers"), { headers: offHeaders })).status, 404);
-
-  const state = await fixture();
+test("privileged assistants are available by default, separately session-scoped, and consent-gated", async () => {
+  const state = await fixture({ enabled: false });
   const session = await (await state.request("/api/session?audience=operations")).json();
   assert.deepEqual(session.assistant, { enabled: true, host: "platform", phase: "read-only" });
   assert.equal(session.organizations.length, 0);
@@ -1868,8 +1864,8 @@ test("injected persistence failure atomically rolls back private content, events
   }, before);
 });
 
-test("shared-project viewers can ask privately without authoring, paid work, or collaborator leakage", async () => {
-  const { request, sqlite, viewer, owner, organizationId, projectAccessId } = await sharedProjectFixture();
+test("unenrolled shared-project viewers can ask privately without authoring, paid work, or collaborator leakage", async () => {
+  const { request, sqlite, viewer, owner, organizationId, projectAccessId } = await sharedProjectFixture({ enabled: false });
   const session = await (await request("/api/session", { headers: viewer })).json();
   assert.deepEqual(session.assistant.capabilities, ["project.assistant.read"]);
   assert.equal(session.projectContext.permissions.includes("project.author"), false);

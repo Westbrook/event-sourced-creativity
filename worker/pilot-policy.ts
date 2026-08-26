@@ -1056,8 +1056,7 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
     const access={role:principal.role,capabilities:principal.access.capabilities,canvasAccess:principal.access.canvasAccess};
     const availableApplications=APPLICATIONS.filter((application)=>application.id==="creative"||application.id==="canvas"&&principal.access.canvasAccess||application.requiredCapabilities.some((capability)=>principal.access.capabilities.includes(capability)))
       .map((application)=>({id:application.id,href:authorizedApplicationHome(application.id,access)}));
-    const assistantUsers=new Set((env.FORMA_ASSISTANT_INTERNAL_USER_IDS??"").split(",").map((value)=>value.trim()).filter(Boolean));
-    const assistant=assistantUsers.has(principal.userId)&&principal.consentVersion===POLICY_VERSION
+    const assistant=principal.consentVersion===POLICY_VERSION
       ?{enabled:true as const,host:"platform" as const,phase:"read-only" as const}:null;
     return Response.json({user:publicUser(principal),audience,capabilities,availableApplications,permissionEpoch:principal.access.permissionEpoch,organizations:[],canvas:{access:principal.access.canvasAccess},impersonation:null,...(assistant?{assistant}:{})},{headers:{"cache-control":"private, no-store"}});
   }
@@ -1081,7 +1080,6 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
     ...effectiveAccess.capabilities.filter((capability)=>capability.startsWith("self.")),
     ...selected.context.permissions.filter((capability)=>capability!=="project.canvas.use"||selectedCanvasAccess),
   ]:personalCapabilities;
-  const assistantTesters=new Set((env.FORMA_ASSISTANT_INTERNAL_USER_IDS??"").split(",").map((value)=>value.trim()).filter(Boolean));
   const assistantEditors=new Set((env.FORMA_ASSISTANT_ACTION_USER_IDS??"").split(",").map((value)=>value.trim()).filter(Boolean));
   const assistantProviders=new Set((env.FORMA_ASSISTANT_PROVIDER_USER_IDS??"").split(",").map((value)=>value.trim()).filter(Boolean));
   const assistantPremiumUsers=new Set((env.FORMA_ASSISTANT_SOL_USER_IDS??"").split(",").map((value)=>value.trim()).filter(Boolean));
@@ -1093,9 +1091,7 @@ export async function handleSession(request: Request, env: WorkerEnv, _context?:
   const assistantModels=assistantProviderAllowed?[...new Set(assistantModelAllowlist)]
     .filter((model)=>model!=="gpt-5.6-sol"||principal.role==="admin"&&assistantPremiumUsers.has(principal.userId))
     .map((id)=>({id,maximumMicrousd:assistantModelCostMicrousd(id,10_400,1_600),premiumApprovalRequired:id==="gpt-5.6-sol"})):[];
-  const pilotAssistant=Boolean(selected.context&&hasCapability(principal,"project.author",{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId})
-    &&await assistantPilotEntitled(env,principal.userId,selected.context.organizationId));
-  const assistant=(assistantTesters.has(principal.userId)||pilotAssistant)&&!auth.impersonation&&(audience==="creative"||audience==="canvas")
+  const assistant=!auth.impersonation&&(audience==="creative"||audience==="canvas")
     ?{enabled:true as const,phase:assistantEditors.has(principal.userId)?"actions" as const:"read-only" as const,capabilities:["project.assistant.read",...(!selected.context||hasCapability(principal,"project.author",{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId})?["project.assistant.propose"]:[])],...(assistantModels.length?{models:assistantModels}:{})}
     :null;
   const visibleBudgets=privileged||canReadTenantUsage?accountBudgets:{budgets:{...accountBudgets.budgets,workspace:{...accountBudgets.budgets.user}},costBudgets:{...accountBudgets.costBudgets,workspace:{...accountBudgets.costBudgets.user}}};
