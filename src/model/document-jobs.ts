@@ -231,8 +231,12 @@ export function documentJobCanRecoverProviderRender(job: DocumentJob) {
     || sceneReceipts.some((scene) => Boolean(scene.providerJobId) && (scene.status === "submitted" || scene.status === "completed"));
   if (!job.result.providerJobId && !recoverableScene) return false;
   const failure = documentJobFailure(job);
+  const originalSourceAudio = job.result.artifactKind === "audio" && failure?.code === "context_source_version_mismatch"
+    && job.result.audioProviderSubmission === "confirmed" && typeof job.result.providerJobId === "string"
+    && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(job.result.providerJobId)
+    && !["pending", "submitted", "unknown"].includes(job.result.providerJobId.toLowerCase());
   const recoverableReservationFailure=failure?.code==="cost_reservation_invalid_or_expired"||failure?.code==="cost_reservation_already_in_use"||failure?.code==="execution_interrupted";
-  return Boolean((failure?.retryable||recoverableReservationFailure)&&failure?.category!=="safety"&&failure?.httpStatus!==400&&failure?.httpStatus!==422);
+  return Boolean((failure?.retryable||recoverableReservationFailure||originalSourceAudio)&&failure?.category!=="safety"&&failure?.httpStatus!==400&&failure?.httpStatus!==422);
 }
 
 /** Fal identifiers are useful for recovery only after a durable, confirmed acceptance checkpoint. */
