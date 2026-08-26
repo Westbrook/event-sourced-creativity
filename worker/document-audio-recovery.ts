@@ -143,6 +143,40 @@ export async function recoverOriginalSourceAudio(env: WorkerEnv, user: PilotUser
       && event.causationId === failed.eventId && event.correlationId === failed.correlationId && event.sequence > failed.sequence
       && event.payload.artifact_id === artifactId && event.payload.document_id === row.document_id && event.payload.artifact_kind === "audio"
       && event.payload.provider_job_id === providerId && event.payload.planner_response_id === plannerResponseId);
+    if (!(requested && failed && usage)) {
+      // Diagnose only this already-authorized job. Counts and predicate results
+      // cannot replace retained evidence or make a failed verification succeed.
+      // No private values, envelope bodies, prompts, or provider URLs are logged.
+      try {
+        const counts = await env.DB.prepare(`SELECT event.type,COUNT(*) AS event_count,
+          SUM(CASE WHEN secret.private_event_id IS NOT NULL THEN 1 ELSE 0 END) AS envelope_count,
+          SUM(CASE WHEN secret.owner_id=? THEN 1 ELSE 0 END) AS owner_match_count,
+          SUM(CASE WHEN secret.document_id=? THEN 1 ELSE 0 END) AS document_match_count,
+          SUM(CASE WHEN secret.redacted_at IS NULL AND json_valid(secret.private_json) THEN 1 ELSE 0 END) AS retained_json_count
+          FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
+          WHERE event.stream_id=? AND (event.correlation_id=? OR event.correlation_id GLOB ?)
+            AND event.type IN('DocumentRenderRequested','DocumentRenderFailed','GenerationUsageRecorded') GROUP BY event.type`)
+          .bind(historyOwner, row.document_id, row.stream_id, row.job_id, `${row.job_id}:attempt:*`).all<Record<string, unknown>>();
+        const candidates = ["DocumentRenderRequested", "DocumentRenderFailed", "GenerationUsageRecorded"].map(type => ({
+          type,
+          checks: paidEvents.filter(event => event.type === type).slice(0, 3).map(event => ({
+            actor: event.actor === (type === "DocumentRenderRequested" ? scope ? `user:${user.userId}` : "user" : type === "DocumentRenderFailed" ? "worker:renderer" : "worker:policy"),
+            artifact: event.payload.artifact_id === artifactId,
+            document: event.payload.document_id === row.document_id,
+            audio: event.payload.artifact_kind === "audio",
+            provider: event.payload.provider_job_id === providerId,
+            planner: event.payload.planner_response_id === plannerResponseId,
+            consent: event.payload.paid_media_confirmed === true,
+            original: event.payload.resumed_provider_job === false,
+            manual: event.payload.production_mode === "manual",
+            linkedRequest: Boolean(failed && event.eventId === failed.causationId && event.correlationId === failed.correlationId && event.sequence < failed.sequence),
+            linkedUsage: Boolean(failed && event.causationId === failed.eventId && event.correlationId === failed.correlationId && event.sequence > failed.sequence),
+            interruptedUsage: event.payload.operation === "document-render:audio:interrupted",
+          })),
+        }));
+        console.error("audio_original_source_recovery_chain_diagnostic", { jobId: row.job_id, counts: counts.results, candidates });
+      } catch { /* Diagnostics must never change the failed verification result. */ }
+    }
     requireEvidence(requested && failed && usage, "original_paid_event_chain_missing");
     const costId = String(usage.payload.cost_reservation_id ?? ""), settledCost = Number(usage.payload.cost_microusd ?? 0);
     const audioCost = Number(record(audioInput.parameters).published_cost_microusd ?? 0);

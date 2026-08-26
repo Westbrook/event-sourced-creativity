@@ -400,6 +400,28 @@ for(const[label,mutate]of audioRecoveryFailures)test(`original-source audio reco
   }finally{fixture.restore();}
 });
 
+for(const damage of ["provider_mismatch","redacted_envelope","malformed_envelope"])test(`original-source audio recovery diagnoses ${damage} without exposing private evidence or permitting recovery`,async()=>{
+  const fixture=await originalSourceAudioFixture(),logged=[],previousError=console.error;
+  try{
+    if(damage==="provider_mismatch")mutateAudioPrivateEvent(fixture,"GenerationUsageRecorded",payload=>{payload.provider_job_id="private-mismatched-provider-never-log";});
+    else if(damage==="redacted_envelope")fixture.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id IN(SELECT event_id FROM events WHERE type='GenerationUsageRecorded' AND correlation_id=?)").run(new Date().toISOString(),`${fixture.job.jobId}:attempt:1`);
+    else fixture.sqlite.prepare("UPDATE event_private_payloads SET private_json=? WHERE private_event_id IN(SELECT event_id FROM events WHERE type='GenerationUsageRecorded' AND correlation_id=?)").run("{malformed-private-evidence",`${fixture.job.jobId}:attempt:1`);
+    const beforeCalls=fixture.calls.length,beforeReservations=fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all();
+    console.error=(...args)=>logged.push(args);
+    const response=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});
+    assert.equal(response.status,409);assert.equal((await response.json()).reason,"original_paid_event_chain_missing");
+    const diagnostic=logged.find(args=>args[0]==="audio_original_source_recovery_chain_diagnostic")?.[1];assert.ok(diagnostic);
+    assert.equal(diagnostic.counts.find(row=>row.type==="GenerationUsageRecorded").event_count,1);
+    const usage=diagnostic.candidates.find(row=>row.type==="GenerationUsageRecorded");
+    if(damage==="provider_mismatch"){assert.equal(usage.checks.length,1);assert.equal(usage.checks[0].provider,false);assert.equal(usage.checks[0].linkedUsage,true);}
+    else {assert.equal(usage.checks.length,0);assert.equal(diagnostic.counts.find(row=>row.type==="GenerationUsageRecorded").retained_json_count,0);}
+    const serialized=JSON.stringify(logged);
+    for(const privateValue of ["private-mismatched-provider-never-log","malformed-private-evidence",fixture.original.plannerResponseId,fixture.original.providerJobId,fixture.original.audioInputReceipt.submitted_prompt,fixture.originalInput.document_snapshot.facts[0].properties.text])if(privateValue)assert.equal(serialized.includes(privateValue),false);
+    assert.equal(fixture.calls.length,beforeCalls);assert.equal(fixture.stored.length,0);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),beforeReservations);
+  }finally{console.error=previousError;fixture.restore();}
+});
+
 for(const race of ["source_deleted","input_expired","consent_revoked"])test(`original-source audio recovery stops when ${race} during retrieval`,async()=>{
   const fixture=await originalSourceAudioFixture();
   try{
