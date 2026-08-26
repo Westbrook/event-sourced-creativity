@@ -534,7 +534,8 @@ test("the collapsed document rail stays coherent across the 760–768px compact-
   assert.equal(winning([legacyCollapsed, measuredCompactPage], "grid-template-columns", narrowShellInWideBrowser)?.value, "minmax(0, 1fr)", "a narrow measured application never inherits the wider browser's desktop sidebar");
   assert.equal(winning('.application-creative[data-nav-posture="compact"] .composer-dock', "inset-inline", narrowShellInWideBrowser)?.value, "0", "expanded and collapsed measured-compact rails keep the composer within their shell");
 
-  assert.match(projectRail, /aria-controls="project-rail-content"/);
+  assert.match(projectRail, /aria-controls=\$\{this\.#contentId\}/);
+  assert.match(projectRail, /id=\$\{this\.#contentId\}/);
   assert.match(projectRail, /aria-expanded=\$\{!collapsed\}/);
   assert.match(projectRail, /event\.key==="Escape"&&!collapsed/);
 });
@@ -705,6 +706,10 @@ test("layout and keyboard observers remain presentation-only and clean up their 
   assert.match(projectRail, /new ResizeObserver\(this\.#compactChanged\)/);
   assert.match(projectRail, /shell\?\.getBoundingClientRect\(\)\.width/);
   assert.match(projectRail, /this\.#inlineObserver\?\.disconnect\(\)/);
+  for (const event of ["online", "offline"]) {
+    assert.match(projectRail, new RegExp(`window\\.addEventListener\\("${event}", this\\.#connectionChanged\\)`));
+    assert.match(projectRail, new RegExp(`window\\.removeEventListener\\("${event}", this\\.#connectionChanged\\)`));
+  }
 });
 
 test("large workbenches expose real scoped project boards, review tasks, and a dismissible document overview",()=>{

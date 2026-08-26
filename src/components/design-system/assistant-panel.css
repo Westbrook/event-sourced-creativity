@@ -5,6 +5,7 @@ forma-assistant-panel {
   z-index: 46;
   display: block;
   color: var(--ink, #18211e);
+  pointer-events: none;
 }
 
 .forma-assistant-launcher {
@@ -20,6 +21,7 @@ forma-assistant-panel {
   align-items: center;
   gap: .5rem;
   cursor: pointer;
+  pointer-events: auto;
 }
 
 .forma-assistant-panel {
@@ -32,6 +34,7 @@ forma-assistant-panel {
   border-radius: 1rem;
   background: var(--surface, #fffdf9);
   box-shadow: 0 18px 65px rgb(28 37 32 / 20%);
+  pointer-events: auto;
 }
 
 .forma-assistant-header,
@@ -82,6 +85,7 @@ forma-assistant-panel {
   border-radius: .85rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .forma-assistant-message--assistant {
@@ -116,6 +120,41 @@ forma-assistant-panel {
   border-block-start: 1px solid color-mix(in srgb, currentColor 10%, transparent);
 }
 
+.forma-assistant-shared-composer,
+.forma-assistant-modes,
+.forma-assistant-mode-detail {
+  grid-column: 1 / -1;
+}
+
+.forma-assistant-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--forma-space-2, .5rem);
+}
+
+.forma-assistant-mode {
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  padding-inline: var(--forma-space-3, .75rem);
+  border: 1px solid var(--forma-color-border, currentColor);
+  border-radius: var(--forma-radius-large, 999px);
+  background: var(--forma-color-surface, transparent);
+  color: var(--forma-color-text, inherit);
+  font: inherit;
+}
+
+.forma-assistant-mode[aria-pressed="true"] {
+  border-color: var(--forma-color-accent, currentColor);
+  background: var(--forma-color-accent-subtle, transparent);
+  color: var(--forma-color-accent-text, inherit);
+}
+
+.forma-assistant-mode-detail {
+  margin: 0;
+  color: var(--forma-color-text-muted, currentColor);
+  font-size: var(--forma-font-size-supporting, .875rem);
+  line-height: var(--forma-body-line-height, 1.5);
+}
+
 .forma-assistant-model {
   grid-column: 1 / -1;
   display: grid;
@@ -144,6 +183,7 @@ forma-assistant-panel {
   gap: .5rem;
   font-size: .8rem;
   line-height: 1.4;
+  min-block-size: var(--forma-control-min-size, 2.75rem);
 }
 
 .forma-assistant-premium input {
@@ -161,6 +201,12 @@ forma-assistant-panel {
   background: transparent;
   color: inherit;
   font: inherit;
+}
+
+.forma-assistant-input:focus-visible {
+  border-color: var(--forma-focus-ring-color, currentColor);
+  outline: var(--forma-focus-ring-width, .1875rem) solid var(--forma-focus-ring-color, currentColor);
+  outline-offset: .125rem;
 }
 
 @media (max-width: 48rem) {

@@ -87,6 +87,7 @@ export const PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS = [
   `a concise body of at most ${PRESENTATION_LAYOUT_CAPACITIES.bodyCharacters} characters,`,
   `at most ${PRESENTATION_LAYOUT_CAPACITIES.bulletCount} nonredundant bullets,`,
   `and visual labels of at most ${PRESENTATION_LAYOUT_CAPACITIES.dataLabelCharacters} characters when the source permits.`,
+  `Keep individual chart and comparison-row values within ${PRESENTATION_LAYOUT_CAPACITIES.dataValueCharacters} characters when their complete source-authored meaning permits; otherwise preserve the complete value and choose a dense, readable visual layout.`,
   `Reserve ${PRESENTATION_LAYOUT_CAPACITIES.minimumBodyFontPx}px body text and`,
   `${PRESENTATION_LAYOUT_CAPACITIES.minimumLabelFontPx}px source-label text without scrolling.`,
   "Budget only audience-facing title, body, bullets, chart labels and values, protected exact messages, and intentionally published source attribution together; avoid redundant editorial copy.",
@@ -175,6 +176,7 @@ export function planSlideLayout(
     || visualCharacters > PRESENTATION_LAYOUT_CAPACITIES.visualCharacters
     || bullets.some((bullet) => bullet.length > PRESENTATION_LAYOUT_CAPACITIES.bulletCharacters)
     || bullets.length > PRESENTATION_LAYOUT_CAPACITIES.bulletCount
+    || data.some((datum) => (datum.displayValue ?? datum.value).length > PRESENTATION_LAYOUT_CAPACITIES.dataValueCharacters)
     || data.length > PRESENTATION_LAYOUT_CAPACITIES.dataPointCount
     || (slide?.quote?.text.length ?? 0) > PRESENTATION_LAYOUT_CAPACITIES.quoteCharacters;
   const density: PresentationLayoutDensity = dense

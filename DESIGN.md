@@ -485,6 +485,15 @@ lowest appropriate shared design-system layer; migrate every known duplicate
 consumer in the same change. Publishing that work is part of its definition of
 done, never optional follow-up. Ship these together:
 
+Contextual assistance and document Chat share the real, light-DOM
+`forma-ui-conversation-composer` molecule. A declarative interaction contract
+assigns each route exactly one conversational owner; optional document,
+project-board, and personal quick-edit modes retain their own permissions,
+cost disclosures, explicit approvals, and page-owned execution. Internal
+platform guidance never inherits Creator actions, and public shares never mount
+an assistant. Typed authoring, private session intentions, and search are
+deliberately separate from conversation.
+
 - The actual store-independent component, its shared token-driven styles, and
   production consumers, including public and guest surfaces when applicable.
 - A real, safe, isolated live example and searchable entry in Design &

@@ -2,6 +2,7 @@ import { artifactReviewState } from "./context-health.ts";
 import { DOCUMENT_ARTIFACT_KINDS, type DocumentArtifact, type DocumentArtifactKind } from "./document-artifacts.ts";
 import type { CreativeEvent, CreativeOutput, CreativeProjection } from "./events.ts";
 import type { ProductionFormat } from "./managed-production.ts";
+import { createSceneConfiguration, isSceneMedium, type SceneConfiguration, type SceneMedium } from "./scene-configuration.ts";
 
 export const DOCUMENT_PRODUCTION_WORKFLOW_EVENT = "DocumentProductionWorkflowConfigured";
 export const MAX_PRODUCTION_WORKFLOW_STAGES = 12;
@@ -28,6 +29,7 @@ export type ProductionWorkflowStage = {
   final: boolean;
   approvalRequired: boolean;
   source: ProductionWorkflowSource | null;
+  sceneMedium?: "auto" | SceneMedium;
 };
 
 export type ProductionWorkflow = {
@@ -56,6 +58,7 @@ export type ProductionWorkflowStageStatus =
 export type ProductionWorkflowStageState = {
   stage: ProductionWorkflowStage;
   status: ProductionWorkflowStageStatus;
+  inputFreshness: "current" | "changed" | null;
   artifact: DocumentArtifact | null;
   image: CreativeOutput | null;
   dependencies: ProductionWorkflowStageState[];
@@ -117,6 +120,7 @@ export function recommendProductionWorkflow(input: {
     final: false,
     approvalRequired: recipe.format !== "image" && input.approvalRequired === true,
     source: null,
+    ...(recipe.format === "scene" ? { sceneMedium: "auto" as const } : {}),
   }));
   stages.push({
     id: `${input.target}-final`,
@@ -127,8 +131,47 @@ export function recommendProductionWorkflow(input: {
     final: true,
     approvalRequired: false,
     source: null,
+    ...(input.target === "scene" ? { sceneMedium: "auto" as const } : {}),
   });
   return { id: input.id, documentId: input.documentId, projectId: input.projectId, target: input.target, approvalRequired: input.approvalRequired === true, stages };
+}
+
+/** Follow enabled handoffs while retaining the final goal for a later alternate scene render. */
+export function productionWorkflowSceneConfiguration(
+  workflow: ProductionWorkflow,
+  stageId: string,
+  requestedMedium?: SceneMedium,
+): SceneConfiguration | null {
+  const stageIndex = workflow.stages.findIndex((stage) => stage.id === stageId && stage.format === "scene");
+  if (stageIndex < 0) return null;
+
+  const stage = workflow.stages[stageIndex]!;
+  const reachableStages = new Set([stage.id]);
+  const downstreamFormats: ProductionFormat[] = [];
+
+  for (const candidate of workflow.stages.slice(stageIndex + 1)) {
+    if (!candidate.enabled || !candidate.dependsOn.some((dependency) => reachableStages.has(dependency))) continue;
+    reachableStages.add(candidate.id);
+    if (!downstreamFormats.includes(candidate.format)) downstreamFormats.push(candidate.format);
+  }
+
+  if (!downstreamFormats.includes(workflow.target)) downstreamFormats.push(workflow.target);
+
+  const explicitMedium = isSceneMedium(requestedMedium)
+    ? requestedMedium
+    : isSceneMedium(stage.sceneMedium)
+      ? stage.sceneMedium
+      : null;
+  const directionalFormats = downstreamFormats.filter((format) =>
+    format === "audio" || format === "image" || format === "storyboard" || format === "video" || format === "slides",
+  );
+  const inferredMedium: SceneMedium = directionalFormats.at(-1) === "audio" ? "audio" : "visual";
+
+  return createSceneConfiguration(explicitMedium ?? inferredMedium, {
+    source: explicitMedium ? "manual" : "production-path",
+    targetFormat: workflow.target,
+    downstreamFormats,
+  });
 }
 
 export function productionWorkflowIssues(workflow: ProductionWorkflow): string[] {
@@ -151,6 +194,9 @@ export function productionWorkflowIssues(workflow: ProductionWorkflow): string[]
   for (const stage of workflow.stages) {
     if (typeof stage.id !== "string" || !stage.id || stage.id.length > 120 || seen.has(stage.id)) issues.push("workflow_stage_identity_invalid");
     if (!validFormat(stage.format)) issues.push("workflow_stage_format_invalid");
+    if (stage.sceneMedium !== undefined && (stage.format !== "scene" || stage.sceneMedium !== "auto" && !isSceneMedium(stage.sceneMedium))) {
+      issues.push("workflow_scene_medium_invalid");
+    }
     if (stage.final && (stage.optional || !stage.enabled || stage.source)) issues.push("workflow_final_output_invalid");
     if (typeof stage.optional !== "boolean" || typeof stage.enabled !== "boolean" || typeof stage.final !== "boolean" || typeof stage.approvalRequired !== "boolean") {
       issues.push("workflow_stage_shape_invalid");
@@ -199,6 +245,66 @@ export function productionWorkflows(events: readonly CreativeEvent[], documentId
 const sourceRevision = (events: readonly CreativeEvent[], artifactId: string) =>
   events.filter((event) => event.type === "DocumentArtifactEdited" && String(event.payload.artifact_id ?? "") === artifactId).length;
 
+const recordedSceneMedium = (value: unknown): SceneMedium | null =>
+  value === undefined || value === null ? "visual" : isSceneMedium(value) ? value : null;
+
+const completedSceneMedium = (event: CreativeEvent): SceneMedium | null => {
+  const settings = event.payload.settings;
+  const configured = settings && typeof settings === "object" && !Array.isArray(settings)
+    ? (settings as Record<string, unknown>).scene_medium
+    : undefined;
+  return recordedSceneMedium(configured ?? event.payload.scene_medium);
+};
+
+/** Read an output's exact production inputs; malformed declared lineage fails closed. */
+export function productionWorkflowRecordedSources(event: CreativeEvent): ProductionWorkflowSource[] | null {
+  const settings = event.payload.settings && typeof event.payload.settings === "object" && !Array.isArray(event.payload.settings)
+    ? event.payload.settings as Record<string, unknown>
+    : null;
+  const hasWorkflow = settings !== null && Object.hasOwn(settings, "production_workflow");
+  if (hasWorkflow && (!settings.production_workflow || typeof settings.production_workflow !== "object"
+    || Array.isArray(settings.production_workflow))) return null;
+  const workflow = hasWorkflow ? settings!.production_workflow as Record<string, unknown> : null;
+  if (workflow && (!Object.hasOwn(workflow, "sources")
+    || event.payload.workflow_id !== undefined && String(workflow.id ?? "") !== String(event.payload.workflow_id)
+    || event.payload.workflow_stage_id !== undefined && String(workflow.stage_id ?? "") !== String(event.payload.workflow_stage_id))) return null;
+
+  const allowedFields = new Set([
+    "outputKind", "outputId", "format", "documentId", "sourceEventId", "revision", "contentSha256", "approvalRequired", "allowTextGuidance",
+  ]);
+  const validate = (recorded: unknown): ProductionWorkflowSource[] | null => {
+    if (!Array.isArray(recorded) || recorded.length > MAX_PRODUCTION_WORKFLOW_SOURCES) return null;
+    const unique = new Set<string>();
+    for (const candidate of recorded) {
+      if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return null;
+      const source = candidate as Record<string, unknown>;
+      if (Object.keys(source).some((key) => !allowedFields.has(key))
+        || source.outputKind !== "artifact" && source.outputKind !== "image"
+        || (source.outputKind === "image" ? source.format !== "image" : !DOCUMENT_ARTIFACT_KINDS.includes(source.format as DocumentArtifactKind))
+        || typeof source.outputId !== "string" || !source.outputId || source.outputId.length > 240
+        || typeof source.sourceEventId !== "string" || !source.sourceEventId || source.sourceEventId.length > 240
+        || source.documentId !== String(event.payload.document_id ?? "")
+        || !Number.isSafeInteger(source.revision) || Number(source.revision) < 0
+        || typeof source.approvalRequired !== "boolean" || typeof source.allowTextGuidance !== "boolean"
+        || source.outputKind === "artifact" && (typeof source.contentSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(source.contentSha256))
+        || source.outputKind === "image" && (source.revision !== 0 || source.approvalRequired || source.contentSha256 !== undefined)
+        || source.format !== "audio" && source.allowTextGuidance) return null;
+      const identity = `${source.outputKind}:${source.outputId}`;
+      if (unique.has(identity)) return null;
+      unique.add(identity);
+    }
+    return recorded as ProductionWorkflowSource[];
+  };
+
+  const eventSources = event.payload.workflow_sources !== undefined ? validate(event.payload.workflow_sources) : undefined;
+  const durableSources = workflow ? validate(workflow.sources) : undefined;
+  if (eventSources === null || durableSources === null) return null;
+  if (eventSources !== undefined && durableSources !== undefined
+    && JSON.stringify(productionWorkflowSourceIdentity(eventSources))
+      !== JSON.stringify(productionWorkflowSourceIdentity(durableSources))) return null;
+  return eventSources ?? durableSources ?? [];
+}
+
 const dependencySatisfied = (status: ProductionWorkflowStageStatus) =>
   status === "selected" || status === "approved" || status === "complete" || status === "skipped";
 
@@ -211,32 +317,57 @@ export function productionWorkflowStageStates(
 ): ProductionWorkflowStageState[] {
   const states = new Map<string, ProductionWorkflowStageState>();
   for (const stage of workflow.stages) {
+    const expectedSceneMedium = stage.format === "scene"
+      ? productionWorkflowSceneConfiguration(workflow, stage.id)?.medium ?? "visual"
+      : null;
     const dependencies = stage.dependsOn.map((dependency) => states.get(dependency)).filter((value): value is ProductionWorkflowStageState => Boolean(value));
     const activeDependencies = dependencies.filter((dependency) => dependency.stage.enabled);
     const currentSources = activeDependencies.flatMap((dependency) =>
       dependency.stage.source && dependencySatisfied(dependency.status)
         ? [{ ...dependency.stage.source, approvalRequired: dependency.stage.approvalRequired || dependency.stage.source.approvalRequired }]
         : []);
-    const completion = stage.final ? [...events].reverse().find((event) =>
-      event.type === (stage.format === "image" ? "GenerationCompleted" : "DocumentRenderCompleted")
-      && String(event.payload.workflow_id ?? "") === workflow.id
-      && String(event.payload.workflow_stage_id ?? "") === stage.id
-      && String(event.payload.document_id ?? "") === workflow.documentId
-      && JSON.stringify(productionWorkflowSourceIdentity(Array.isArray(event.payload.workflow_sources) ? event.payload.workflow_sources as ProductionWorkflowSource[] : []))
-        === JSON.stringify(productionWorkflowSourceIdentity(currentSources)),
-    ) : undefined;
+    const completion = stage.final ? [...events].reverse().find((event) => {
+      if (event.type !== (stage.format === "image" ? "GenerationCompleted" : "DocumentRenderCompleted")
+        || String(event.payload.workflow_id ?? "") !== workflow.id
+        || String(event.payload.workflow_stage_id ?? "") !== stage.id
+        || String(event.payload.document_id ?? "") !== workflow.documentId
+        || stage.format === "scene" && completedSceneMedium(event) !== expectedSceneMedium) return false;
+      const recorded = productionWorkflowRecordedSources(event);
+      return recorded !== null
+        && JSON.stringify(productionWorkflowSourceIdentity(recorded))
+          === JSON.stringify(productionWorkflowSourceIdentity(currentSources));
+    }) : undefined;
     const completedArtifactId = stage.final && completion ? String(completion.payload.artifact_id ?? "") : "";
     const completedImageId = stage.final && completion ? String(Array.isArray(completion.payload.object_ids) ? completion.payload.object_ids[0] ?? "" : "") : "";
     const artifact = completedArtifactId
-      ? projection.libraryArtifacts.find((candidate) => candidate.id === completedArtifactId && candidate.documentId === workflow.documentId) ?? null
+      ? projection.libraryArtifacts.find((candidate) => candidate.id === completedArtifactId && candidate.documentId === workflow.documentId && candidate.kind === stage.format) ?? null
       : stage.source?.outputKind === "artifact"
-      ? projection.libraryArtifacts.find((candidate) => candidate.id === stage.source?.outputId && candidate.documentId === workflow.documentId) ?? null
+      ? projection.libraryArtifacts.find((candidate) => candidate.id === stage.source?.outputId && candidate.documentId === workflow.documentId && candidate.kind === stage.format) ?? null
       : null;
     const image = completedImageId
       ? projection.libraryOutputs.find((candidate) => candidate.id === completedImageId && candidate.documentId === workflow.documentId && !candidate.discarded) ?? null
       : stage.source?.outputKind === "image"
       ? projection.libraryOutputs.find((candidate) => candidate.id === stage.source?.outputId && candidate.documentId === workflow.documentId && !candidate.discarded) ?? null
       : null;
+    const selectedCompletion = stage.enabled && !stage.final && stage.source && (artifact || image)
+      ? events.find((event) => event.eventId === stage.source?.sourceEventId
+        && String(event.payload.document_id ?? "") === workflow.documentId
+        && (stage.source?.outputKind === "artifact"
+          ? event.type === "DocumentRenderCompleted" && String(event.payload.artifact_id ?? "") === stage.source.outputId
+            && event.payload.artifact_kind === stage.format
+          : ["GenerationCompleted", "IdeationPreviewCompleted"].includes(event.type)
+            && (Array.isArray(event.payload.object_ids)
+              ? event.payload.object_ids.some((id) => String(id) === stage.source?.outputId)
+              : String(event.payload.object_id ?? "") === stage.source?.outputId))) ?? null
+      : null;
+    const recordedSources = selectedCompletion ? productionWorkflowRecordedSources(selectedCompletion) : null;
+    const inputFreshness: ProductionWorkflowStageState["inputFreshness"] = !selectedCompletion
+      ? null
+      : recordedSources !== null
+        && JSON.stringify(productionWorkflowSourceIdentity(recordedSources))
+          === JSON.stringify(productionWorkflowSourceIdentity(currentSources))
+        ? "current"
+        : "changed";
     let status: ProductionWorkflowStageStatus;
     if (!stage.enabled && stage.optional) status = "skipped";
     else if (activeDependencies.some((dependency) => !dependencySatisfied(dependency.status))) status = "blocked";
@@ -254,9 +385,11 @@ export function productionWorkflowStageStates(
     } else if (stage.final) status = runningStageIds.has(`${workflow.id}:${stage.id}`) ? "running" : "ready";
     else if (runningStageIds.has(`${workflow.id}:${stage.id}`) && !stage.source) status = "running";
     else if (!stage.source) status = "missing";
+    else if (inputFreshness === "changed") status = "stale";
     else if (stage.source.outputKind === "image") {
       status = image && image.sourceEventId === stage.source.sourceEventId ? "selected" : "stale";
-    } else if (!artifact || artifact.sourceEventId !== stage.source.sourceEventId || sourceRevision(events, artifact.id) !== stage.source.revision) {
+    } else if (!artifact || artifact.sourceEventId !== stage.source.sourceEventId || sourceRevision(events, artifact.id) !== stage.source.revision
+      || stage.format === "scene" && recordedSceneMedium(artifact.settings.scene_medium) !== expectedSceneMedium) {
       status = "stale";
     } else {
       const review = artifactReviewState(artifact, projection.libraryBlocks, events);
@@ -269,6 +402,7 @@ export function productionWorkflowStageStates(
     states.set(stage.id, {
       stage,
       status,
+      inputFreshness,
       artifact,
       image,
       dependencies,

@@ -4,7 +4,7 @@ export const ASSISTANT_STATE_EVENT_TYPES = [
   "DocumentCreated", "DocumentForked", "DocumentRenamed", "DocumentRemoved", "DocumentRestored", "DocumentProductionWorkflowConfigured",
   "BlockCreated", "BlockRenamed", "BlockPropertyEdited", "BlockWeightSet", "BlockLocked", "BlockUnlocked", "BlockRemoved", "BlockRestored", "BlockRehomed",
   "BlockRelationAdded", "BlockRelationRemoved", "ChipEdited", "ReferenceIngested", "RightsAsserted", "ExtractionCompleted",
-  "GenerationCompleted", "IdeationPreviewCompleted", "IdeationPromoted", "DocumentRenderCompleted", "DocumentArtifactEdited",
+  "GenerationCompleted", "IdeationPreviewCompleted", "IdeationPromoted", "DocumentRenderCompleted", "DocumentArtifactEdited", "OutputRenamed",
   "IntentDeclared", "GenerationRequested", "DocumentRenderRequested", "GenerationFailed", "DocumentRenderFailed",
   "GenerationPreflightCompleted", "GenerationBlockedBeforeProvider", "GenerationRemediationApplied", "GenerationRiskAcknowledged", "BudgetExceeded",
   "JobAttemptInterrupted", "JobCanceled", "JobForceFailed", "BranchAbandoned", "ProposalRejected", "ProposalDeclined", "BriefItemIgnored", "BriefDismissed",

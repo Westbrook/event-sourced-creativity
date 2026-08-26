@@ -175,7 +175,7 @@ export function compileAssistantContext(input: AssistantContextInput): Assistant
     .map((artifact) => ({ id: artifact.id, kind: artifact.kind, title: clip(artifact.title, ASSISTANT_CONTEXT_LIMITS.actionChars), documentId: artifact.documentId, status: "ready", sequence: artifact.sequence }));
   const images = (authorizedDocumentId ? input.projection.outputs : input.projection.libraryOutputs)
     .filter((output) => !output.discarded && authorizedDocumentIds.has(output.documentId) && (!authorizedDocumentId || output.documentId === authorizedDocumentId))
-    .map((output) => ({ id: output.id, kind: "image", title: "image", documentId: output.documentId, status: "ready", sequence: output.sequence }));
+    .map((output) => ({ id: output.id, kind: "image", title: clip(output.title?.trim() || "image", ASSISTANT_CONTEXT_LIMITS.actionChars), documentId: output.documentId, status: "ready", sequence: output.sequence }));
   const availableOutputs = [...artifacts, ...images].sort((left, right) => right.sequence - left.sequence)
     .slice(0, ASSISTANT_CONTEXT_LIMITS.outputs)
     .map(({ sequence: _sequence, ...output }) => output);

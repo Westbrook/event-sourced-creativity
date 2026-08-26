@@ -9,7 +9,7 @@ import { managedPilotSourceClassificationValid, verifySourceDocumentEvidence } f
 import { effectivePilotParticipantSql, effectivePilotReviewerSql } from "./access-policy.ts";
 import { artifactReviewState, artifactSourceVersions } from "../src/model/context-health.ts";
 import { productionWorkflowIssues, type ProductionWorkflow } from "../src/model/production-workflow.ts";
-import { isContextCompositionRelation, validateContextCompositionGraph } from "../src/model/combined-context.ts";
+import { ACTION_PARTICIPANT_RELATION, ACTION_REFERENCE_ROLES, isContextCompositionRelation, normalizeActionBlockReferences, validateContextCompositionGraph } from "../src/model/combined-context.ts";
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
 import { governedPackageSourceRightsCurrent } from "./context-package-rights.ts";
 
@@ -20,7 +20,7 @@ const PROJECT_EVENT_TYPES=new Set([
   "BlockRelationAdded","BlockRelationRemoved","ReferenceIngested","RightsAsserted","RegionPromoted","ExtractionRequested","ExtractionCompleted","ExtractionFailed","ExtractionSuperseded","ChipEdited",
   "CollectionCreated","CollectionRenamed","CollectionRemoved","CollectionRestored","CollectionItemAdded","CollectionItemRemoved","CollectionItemMoved",
   "ContextCompiled","GenerationCompleted","IdeationPreviewCompleted","IdeationPromoted","DocumentRenderCompleted","DocumentArtifactEdited","DocumentArtifactExported","ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested","ChatMessageSent","AssistantReasoned",
-  "ObjectSaved","ObjectDiscarded","ObjectPinned","ObjectUnpinned","ObjectExported","PromptFanOutputPromoted","AddedToLibrary","RemovedFromLibrary",
+  "ObjectSaved","ObjectDiscarded","ObjectPinned","ObjectUnpinned","ObjectExported","OutputRenamed","PromptFanOutputPromoted","AddedToLibrary","RemovedFromLibrary",
   "CanvasCreated","CanvasItemPlaced","CanvasReferenceCreated","CanvasTextApplied","CanvasArrangementCreated","CanvasArrangementRemoved","CanvasArrangementRestored",
   "CanvasRegisterSet","CanvasLockAcquired","CanvasLockReleased","StrokeAdded","StrokeErased","ContextSetFormalized","CanvasItemRemoved","CanvasItemRestored","CanvasRenamed","CanvasRemoved","CanvasRestored",
 ]);
@@ -28,7 +28,7 @@ const PROJECT_MUTATION_TYPES=new Set([
   "DocumentCreated","DocumentRenamed","DocumentRemoved","DocumentRestored","DocumentProductionWorkflowConfigured","BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet",
   "BlockLocked","BlockUnlocked","BlockRemoved","BlockRestored","BlockRelationAdded","BlockRelationRemoved","CollectionCreated","CollectionRenamed",
   "CollectionRemoved","CollectionRestored","CollectionItemAdded","CollectionItemRemoved","CollectionItemMoved","ObjectSaved","ObjectPinned","ObjectUnpinned",
-  "ObjectDiscarded","ObjectExported","DocumentArtifactEdited","DocumentArtifactExported","ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested","AddedToLibrary","RemovedFromLibrary","ChipEdited","ReferenceIngested","RightsAsserted",
+  "ObjectDiscarded","ObjectExported","OutputRenamed","DocumentArtifactEdited","DocumentArtifactExported","ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested","AddedToLibrary","RemovedFromLibrary","ChipEdited","ReferenceIngested","RightsAsserted",
 ]);
 const PROJECT_CANVAS_MUTATION_TYPES=new Set([
   "CanvasCreated","CanvasRenamed","CanvasRemoved","CanvasRestored","CanvasItemPlaced","CanvasReferenceCreated","CanvasItemRemoved","CanvasItemRestored",
@@ -130,6 +130,13 @@ function scopedEvent(event:CreativeEvent,index:ProjectIndex){
   if(event.type.startsWith("Project"))return String(payload.project_id??"")===index.projectId;
   const explicit=String(payload.project_id??"");
   if(explicit&&explicit!==index.projectId)return false;
+  if(event.type==="OutputRenamed"){
+    const documentId=String(payload.document_id??""),id=String(payload.output_id??"");
+    if(!documentId||!index.documentIds.has(documentId)||!id)return false;
+    return payload.output_kind==="image"
+      ?String(payload.object_id??"")===id&&!payload.artifact_id&&index.outputIds.has(id)
+      :payload.output_kind==="artifact"&&String(payload.artifact_id??"")===id&&!payload.object_id&&index.artifactIds.has(id);
+  }
   const canvas=String(payload.canvas_id??payload.source_canvas_id??"");
   if(PROJECT_CANVAS_MUTATION_TYPES.has(event.type)){
     if(!canvas||!index.canvasIds.has(canvas))return false;
@@ -402,7 +409,8 @@ function presentProjectEvent(row:Record<string,unknown>,context:ProjectRequestCo
   const privateConversation=event.type==="ChatMessageSent"||event.type==="AssistantReasoned"&&event.payload.operation==="creative-chat";
   if(PROJECT_CANVAS_MUTATION_TYPES.has(event.type)&&!context.permissions.includes("project.canvas.use")||privateConversation&&String(row.actor_user_id)!==context.principalUserId)
     return{...event,streamId:`project:${context.projectAccessId}`,sequence:Number(row.project_sequence),actor:`user:${String(row.actor_user_id)}`,type:"ProjectResourceRestricted",payload:{project_id:context.projectId,restricted:true}};
-  return{...event,streamId:`project:${context.projectAccessId}`,sequence:Number(row.project_sequence),actor:event.actor.startsWith("user")?`user:${String(row.actor_user_id)}`:event.actor,payload:redactProjectPayload(event.payload,contentIds,activeResources)};
+  const visibleContent=privateConversation?new Set([...contentIds,String(event.payload.content_ref??"")]):contentIds;
+  return{...event,streamId:`project:${context.projectAccessId}`,sequence:Number(row.project_sequence),actor:event.actor.startsWith("user")?`user:${String(row.actor_user_id)}`:event.actor,payload:redactProjectPayload(event.payload,visibleContent,activeResources)};
 }
 
 function resourceIndex(rows:Record<string,unknown>[]){
@@ -484,6 +492,27 @@ export async function readProjectSourceEvents(env:WorkerEnv,scope:{organizationI
 }
 
 type PendingProjectResources=Map<string,Set<string>>;
+
+const blockScopeKey=(payload:Record<string,unknown>)=>{
+  const document=String(payload.document_id??""),canvas=String(payload.canvas_id??""),scope=canvas||payload.scope==="canvas"?"canvas":payload.scope==="library"||payload.library_block===true?"library":"document";
+  return`${scope}:${scope==="document"?document:scope==="canvas"?canvas:""}`;
+};
+
+async function blockResourceMetadata(env:WorkerEnv,context:ProjectRequestContext,id:string,pending:PendingProjectResources){
+  const key=`block_scope:${id}`,known=pending.get(key);
+  if(known){const values=[...known];return{scope:values.find((value)=>!value.startsWith("type:"))??"",type:(values.find((value)=>value.startsWith("type:"))??"").slice(5)};}
+  const columns=`event.payload,COALESCE(json_extract(event.payload,'$.document_id'),(SELECT json_extract(previous.payload,'$.document_id') FROM events previous
+    WHERE previous.stream_id=event.stream_id AND previous.sequence<=event.sequence AND previous.type IN('DocumentCreated','DocumentOpened','DocumentForked') ORDER BY previous.sequence DESC LIMIT 1)) AS implied_document_id`;
+  let row=await env.DB.prepare(`SELECT ${columns} FROM project_resource_scopes resource JOIN events event ON event.event_id=resource.source_event_id
+    WHERE resource.project_access_id=? AND resource.organization_id=? AND resource.owner_user_id=? AND resource.resource_kind='block' AND resource.resource_id=?`)
+    .bind(context.projectAccessId,context.organizationId,context.ownerUserId,id).first<{payload:string;implied_document_id:string|null}>();
+  if(!row)row=await env.DB.prepare(`SELECT ${columns} FROM project_resource_scopes resource JOIN events event INDEXED BY idx_events_stream_type
+      ON event.stream_id=? AND event.type='BlockCreated' AND json_extract(event.payload,'$.block_id')=resource.resource_id
+      WHERE resource.project_access_id=? AND resource.organization_id=? AND resource.owner_user_id=? AND resource.resource_kind='block' AND resource.resource_id=? AND resource.source_event_id IS NULL LIMIT 1`)
+    .bind(`creative:${context.ownerUserId}`,context.projectAccessId,context.organizationId,context.ownerUserId,id).first<{payload:string;implied_document_id:string|null}>();
+  if(!row)return null;
+  try{const payload=JSON.parse(row.payload) as Record<string,unknown>;if(!payload.document_id&&row.implied_document_id)payload.document_id=row.implied_document_id;const metadata={scope:blockScopeKey(payload),type:String(payload.type??"")};pending.set(key,new Set([metadata.scope,`type:${metadata.type}`]));return metadata;}catch{return null;}
+}
 
 async function resourceExists(env:WorkerEnv,context:ProjectRequestContext,kind:string,id:string,pending?:PendingProjectResources){
   if(!id)return false;
@@ -615,6 +644,17 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
   const document=String(payload.document_id??"");
   if(type.startsWith("Document")&&!document)return"document_id_required";
   if(document&&type!=="DocumentCreated"&&!await exists("document",document))return"foreign_document_resource";
+  if(type==="OutputRenamed"){
+    const kind=payload.output_kind,id=String(payload.output_id??"");
+    const title=typeof payload.new_title==="string"?payload.new_title.normalize("NFC").trim():"";
+    if(project!==context.projectId||!document)return"output_scope_required";
+    if(kind!=="image"&&kind!=="artifact")return"invalid_output_kind";
+    if(!id||String(kind==="image"?payload.object_id??"":payload.artifact_id??"")!==id
+      ||Boolean(kind==="image"?payload.artifact_id:payload.object_id))return"output_identity_mismatch";
+    if(!title||Array.from(title).length>120||/\p{Cc}/u.test(title))return"invalid_output_title";
+    if(!await exists(kind==="image"?"output":"artifact",id))return"foreign_output_resource";
+    payload.new_title=title;
+  }
   if(type==="DocumentProductionWorkflowConfigured"){
     const workflow=payload.workflow as ProductionWorkflow|undefined;
     if(!workflow||typeof workflow!=="object"||Array.isArray(workflow)||productionWorkflowIssues(workflow).length||workflow.id!==payload.workflow_id||workflow.documentId!==document||workflow.projectId!==context.projectId||workflow.target!==payload.target_kind||workflow.approvalRequired!==true)return"production_workflow_invalid";
@@ -674,6 +714,21 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
   const editedValue=type==="BlockPropertyEdited"||type==="ChipEdited"?payload.new_value:undefined;
   if(editedProperty==="type"&&String(editedValue)==="reference")return"reference_type_transition_forbidden";
   const guardedProperties={...properties,...(editedProperty?{[editedProperty]:editedValue}:{})};
+  if(Object.hasOwn(guardedProperties,"block_references")){
+    const submitted=guardedProperties.block_references,normalized=normalizeActionBlockReferences(submitted);
+    const owner=type==="BlockCreated"?{scope:blockScopeKey(payload),type:String(payload.type??"")}:await blockResourceMetadata(env,context,block,pending);
+    if(!Array.isArray(submitted)||normalized.length!==submitted.length||owner?.type!=="action")return"invalid_action_block_references";
+    for(const reference of normalized){
+      if(!await exists("block",reference.block_id))return"foreign_block_resource";
+      if((await blockResourceMetadata(env,context,reference.block_id,pending))?.scope!==owner.scope)return"cross_scene_action_reference";
+    }
+  }
+  if(type==="BlockRelationAdded"&&String(payload.kind??"")===ACTION_PARTICIPANT_RELATION){
+    if(!ACTION_REFERENCE_ROLES.includes(properties.participant_role as typeof ACTION_REFERENCE_ROLES[number]))return"invalid_action_participant_role";
+    const action=await blockResourceMetadata(env,context,from,pending),participant=await blockResourceMetadata(env,context,to,pending);
+    if(action?.type!=="action")return"invalid_action_participant_owner";
+    if(!action||!participant||action.scope!==participant.scope)return"cross_scene_action_reference";
+  }
   if(guardedProperties.reference_id&&!await exists("reference",String(guardedProperties.reference_id)))return"foreign_reference_resource";
   if(guardedProperties.media_url){const key=mediaKey(guardedProperties.media_url);if(!key||!await exists("media",key))return"foreign_media_resource";}
   if(type==="BlockCreated"&&String(payload.type??"")==="reference"&&properties.media_url){
@@ -704,6 +759,7 @@ async function validateProjectMutation(env:WorkerEnv,context:ProjectRequestConte
   const createdId=createdKind==="document"?document:createdKind==="block"?block:createdKind==="collection"?collection:createdKind==="reference"?reference:createdKind==="canvas"?canvas:createdKind==="canvas_item"?itemId:createdKind==="canvas_arrangement"?arrangement:createdKind==="canvas_context"?contextSet:relation;
   if(createdKind&&createdId){
     const values=pending.get(createdKind)??new Set<string>();values.add(createdId);pending.set(createdKind,values);
+    if(createdKind==="block")pending.set(`block_scope:${createdId}`,new Set([blockScopeKey(payload),`type:${String(payload.type??"")}`]));
     if(["canvas_item","canvas_arrangement","canvas_context"].includes(createdKind))pending.set(`parent:${createdKind}:${createdId}`,new Set([canvas]));
   }
   const lifecycle=type==="CanvasRemoved"||type==="CanvasRestored"?["canvas",canvas]:type==="CanvasItemRemoved"||type==="CanvasItemRestored"?["canvas_item",itemId]:type==="CanvasArrangementRemoved"||type==="CanvasArrangementRestored"?["canvas_arrangement",arrangement]:null;
@@ -906,6 +962,21 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
       else if(property==="type")block.type=String(next??block.type);
       else if(property==="position")block.position=String(next??block.position);
       else if(property)block.properties[property]=event.type==="BlockWeightSet"?Number(next??.5):next;
+    }
+  }
+  if(incoming.some((event)=>event.type==="OutputRenamed")){
+    const snapshot=foldEvents(await readProjectSourceEvents(env,context),Number.POSITIVE_INFINITY,"",context.projectId);
+    for(const event of incoming.filter((candidate)=>candidate.type==="OutputRenamed")){
+      const payload=event.payload??{},id=String(payload.output_id??"");
+      const target=payload.output_kind==="image"
+        ?snapshot.libraryOutputs.find((candidate)=>candidate.id===id)
+        :payload.output_kind==="artifact"?snapshot.libraryArtifacts.find((candidate)=>candidate.id===id):undefined;
+      if(!target||target.documentId!==String(payload.document_id??"")||String(payload.project_id??"")!==context.projectId
+        ||payload.output_kind==="artifact"&&payload.artifact_kind!==undefined&&"kind" in target&&target.kind!==payload.artifact_kind)
+        return Response.json({error:"foreign_output_resource"},{status:403});
+      if(target.title&&Object.hasOwn(payload,"old_title")&&String(payload.old_title??"")!==target.title)
+        return Response.json({error:"output_title_conflict",message:"Another collaborator renamed this result. Review its latest name and try again."},{status:409});
+      if(typeof payload.new_title==="string")target.title=payload.new_title.normalize("NFC").trim();
     }
   }
   const pending:PendingProjectResources=new Map();

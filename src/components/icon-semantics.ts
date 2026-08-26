@@ -14,6 +14,7 @@ const blockIcons: Readonly<Record<BlockKind, FormaIconName>> = {
   emotion: "spark",
   subject: "user",
   environment: "image",
+  action: "spark",
   motion: "video",
   scale: "expand",
   composition: "grid",

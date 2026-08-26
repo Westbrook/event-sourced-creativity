@@ -1,6 +1,9 @@
-import type { DocumentArtifact, DocumentArtifactDraft, DocumentArtifactDraftItem } from "./document-artifacts.ts";
+import { DOCUMENT_ARTIFACT_KINDS, type DocumentArtifact, type DocumentArtifactDraft, type DocumentArtifactDraftItem } from "./document-artifacts.ts";
 import type { CreativeOutput, EventInput } from "./events.ts";
+import type { ProductionFormat } from "./managed-production.ts";
+import { createSceneConfiguration, isSceneMedium } from "./scene-configuration.ts";
 import { storyboardFrameContextEvents } from "./storyboard-context.ts";
+import { AUDIO_ROLES, type AudioRole } from "./audio.ts";
 
 export type OutputContextOptions = {
   documentId: string;
@@ -40,14 +43,110 @@ const sharedPayload = (options: OutputContextOptions) => ({
   ...(options.sourceCanvasItemIds?.length ? { source_canvas_item_ids: options.sourceCanvasItemIds } : {}),
 });
 
+function artifactAudioRole(artifact:DocumentArtifact):AudioRole{
+  const settings=artifact.settings&&typeof artifact.settings==="object"?artifact.settings:{};
+  const profile=settings.audio_profile&&typeof settings.audio_profile==="object"?settings.audio_profile as Record<string,unknown>:{};
+  const role=String(settings.audio_role??profile.role??"score");
+  return AUDIO_ROLES.includes(role as AudioRole)?role as AudioRole:"score";
+}
 const artifactSemantics = (artifact: DocumentArtifact) => ({
   short_story: { type:"message", subtype:"Narrative source", role:"sequence", application:"ordered", target:`${artifact.title} narrative continuity` },
   scene: { type:"message", subtype:"Scripted scene", role:"scene", application:"co_locate", target:`${artifact.title} scene unit` },
   slides: { type:"message", subtype:"Presentation source", role:"slide_chapter", application:"ordered", target:`${artifact.title} presentation sequence` },
   storyboard: { type:"composition", subtype:"Storyboard sequence", role:"sequence", application:"ordered", target:`${artifact.title} ordered shot sequence` },
   video: { type:"motion", subtype:"Rendered motion", role:"sequence", application:"ordered", target:`${artifact.title} motion continuity` },
-  audio: { type:"audio", subtype:"Score", role:"sequence", application:"ordered", target:`${artifact.title} musical and emotional continuity` },
+  audio: { type:"audio", subtype:({score:"Score",song:"Song",soundscape:"Soundscape",sound_design:"Sound design",voice:"Voice",silence:"Silence"} as Record<AudioRole,string>)[artifactAudioRole(artifact)], role:"sequence", application:"ordered", target:`${artifact.title} audible and emotional continuity` },
 }[artifact.kind]);
+
+const sceneRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+const sceneProductionFormat = (value: unknown): value is ProductionFormat =>
+  value === "image" || DOCUMENT_ARTIFACT_KINDS.includes(value as typeof DOCUMENT_ARTIFACT_KINDS[number]);
+
+const safeSceneLineageValue = (value: unknown): string | null =>
+  typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,239}$/u.test(value) ? value : null;
+
+/** Carry useful scene semantics forward without copying private receipt/media fields. */
+function sceneContextMetadata(artifact: DocumentArtifact) {
+  if (artifact.kind !== "scene") return null;
+
+  const settings = sceneRecord(artifact.settings);
+  const configured = sceneRecord(settings.scene_configuration);
+  const medium = isSceneMedium(settings.scene_medium)
+    ? settings.scene_medium
+    : isSceneMedium(configured.medium) ? configured.medium : null;
+  // Historical scenes had no medium contract; leave their existing context untouched.
+  if (!medium) return null;
+
+  const workflow = sceneRecord(settings.production_workflow);
+  const continuity = {
+    ...sceneRecord(settings.scene_context_lineage),
+    ...sceneRecord(configured.context_continuity ?? configured.contextContinuity),
+  };
+  const requestedTarget = configured.targetFormat ?? configured.target_format ?? workflow.target_format ?? workflow.target;
+  const requestedDownstream = configured.downstreamFormats ?? configured.downstream_formats;
+  const downstreamFormats = Array.isArray(requestedDownstream)
+    ? requestedDownstream.filter(sceneProductionFormat).slice(0, 12)
+    : [];
+  const source = configured.source === "production-path" || configured.source !== "manual" && typeof workflow.id === "string"
+    ? "production-path"
+    : "manual";
+  const configuration = createSceneConfiguration(medium, {
+    source,
+    targetFormat: sceneProductionFormat(requestedTarget) ? requestedTarget : null,
+    downstreamFormats,
+  });
+  const availableMedia = [configuration.medium, configuration.alternateMedium];
+  const fingerprint = [
+    settings.scene_context_fingerprint,
+    settings.context_fingerprint,
+    settings.source_context_fingerprint,
+    settings.source_snapshot_sha256,
+    configured.context_fingerprint,
+    configured.contextFingerprint,
+    continuity.context_fingerprint,
+    continuity.contextFingerprint,
+    continuity.source_snapshot_sha256,
+  ].map(safeSceneLineageValue).find(Boolean);
+  const workflowId = safeSceneLineageValue(continuity.workflow_id ?? continuity.workflowId ?? workflow.id);
+  const continuityBlockIds = continuity.source_block_ids ?? continuity.sourceBlockIds;
+  const continuityArtifactIds = continuity.source_artifact_ids ?? continuity.sourceArtifactIds;
+  const sourceBlockIds = Array.isArray(continuityBlockIds)
+    ? [...new Set(continuityBlockIds
+      .map(safeSceneLineageValue).filter((value): value is string => value !== null))].slice(0, 100)
+    : [];
+  const sourceArtifactIds = Array.isArray(continuityArtifactIds)
+    ? [...new Set(continuityArtifactIds
+      .map(safeSceneLineageValue).filter((value): value is string => value !== null))].slice(0, 12)
+    : [];
+
+  return {
+    scene_medium: configuration.medium,
+    scene_configuration: configuration,
+    scene_alternate_medium: configuration.alternateMedium,
+    scene_available_media: availableMedia,
+    ...(configuration.targetFormat ? { scene_target_format: configuration.targetFormat } : {}),
+    scene_downstream_formats: configuration.downstreamFormats,
+    scene_context_reuse: {
+      strategy: "same-authored-context",
+      available_media: availableMedia,
+      ...(configuration.targetFormat ? { target_format: configuration.targetFormat } : {}),
+    },
+    scene_context_lineage: {
+      source_artifact_id: artifact.id,
+      source_document_id: artifact.documentId,
+      ...(safeSceneLineageValue(artifact.sourceEventId) ? { source_event_id: artifact.sourceEventId } : {}),
+      ...(safeSceneLineageValue(continuity.project_id ?? continuity.projectId)
+        ? { project_id: continuity.project_id ?? continuity.projectId } : {}),
+      ...(workflowId ? { workflow_id: workflowId } : {}),
+      ...(sourceBlockIds.length ? { source_block_ids: sourceBlockIds } : {}),
+      // `source_ids` is an existing provider-redacted identifier contract.
+      ...(sourceArtifactIds.length ? { source_ids: sourceArtifactIds } : {}),
+      ...(fingerprint ? { context_fingerprint: fingerprint } : {}),
+    },
+  };
+}
 
 type AuthoredArtifactItem = DocumentArtifactDraftItem & { source_artifact_item_id: string; media_url?: string | null; media_type?: string | null; scene_id?: string | null; narrative_order?: number | null; generation_order?: number | null; duration_seconds?: number | null };
 
@@ -87,15 +186,16 @@ const artifactText = (artifact: DocumentArtifact, content?: DocumentArtifactDraf
  */
 export function artifactContextEvents(artifact: DocumentArtifact, options: ArtifactContextOptions): OutputContextResult {
   const idFactory=options.idFactory??(()=>crypto.randomUUID());const semantics=artifactSemantics(artifact);const contextSetId=options.contextSetId??idFactory();const rootBlockId=options.existingRootBlockId??idFactory();const items=draftItems(artifact,options.content);const events:EventInput[]=[];const blockIds:string[]=[];const shared={...sharedPayload(options),source_artifact_id:artifact.id,source_artifact_kind:artifact.kind,source_document_id:artifact.documentId};
+  const sceneMetadata=sceneContextMetadata(artifact);
   if(!options.existingRootBlockId){
     blockIds.push(rootBlockId);
     const audioReferenceId=artifact.kind==="audio"&&artifact.mediaUrl?idFactory():null;
     if(audioReferenceId)events.push({type:"ReferenceIngested",payload:{...shared,reference_id:audioReferenceId,source_type:"generated-audio",source_ref:artifact.mediaUrl,media_url:artifact.mediaUrl,media_type:artifact.mediaType,content_hash:String(artifact.settings.source_media_sha256??""),rights_class:"account-generated",provider:artifact.provider,model_id:artifact.modelId}});
     events.push({type:"BlockCreated",payload:{...shared,block_id:rootBlockId,type:semantics.type,handle:`${semantics.type}/${slug(artifact.title)}-${artifact.id.slice(-8)}`,position:`${options.positionPrefix??"z"}${String(options.positionStart??0).padStart(8,"0")}`,properties:{
-      label:artifact.title,text:artifactText(artifact,options.content),artifact_markdown:artifactText(artifact,options.content),subtype:semantics.subtype,intent:"include",authority:"authored",weight:.9,
+      label:artifact.title,text:artifactText(artifact,options.content),artifact_markdown:artifactText(artifact,options.content),subtype:sceneMetadata?sceneMetadata.scene_medium==="audio"?"Audio scene":"Visual scene":semantics.subtype,intent:"include",authority:"authored",weight:.9,
       source_artifact_id:artifact.id,source_artifact_kind:artifact.kind,source_document_id:artifact.documentId,source_artifact_content_ref:artifact.contentRef,source_artifact_input_ref:artifact.inputRef??null,
-      artifact_summary:artifact.summary,artifact_item_count:artifact.itemCount,artifact_structure:{presentation:options.content?.presentation??artifact.presentation,items},
-      media_url:artifact.mediaUrl,media_type:artifact.mediaType,provider:artifact.provider,model_id:artifact.modelId,input_mode:"full_output",...(artifact.kind==="audio"?{reference_id:audioReferenceId,source_mime_type:artifact.mediaType,source_content_hash:String(artifact.settings.source_media_sha256??""),duration_seconds:typeof artifact.settings.duration_seconds==="number"?artifact.settings.duration_seconds:null,audio_role:"score",rights_class:"account-generated",inform_generation:false,include_in_output:false,allow_provider_audio_transfer:false,lyrics:typeof artifact.settings.lyrics==="string"?artifact.settings.lyrics:"",audio_cues:Array.isArray(artifact.settings.audio_cues)?artifact.settings.audio_cues:[]}:{}),
+      artifact_summary:artifact.summary,artifact_item_count:artifact.itemCount,artifact_structure:{presentation:options.content?.presentation??artifact.presentation,items,...(sceneMetadata??{})},...(sceneMetadata??{}),
+      media_url:artifact.mediaUrl,media_type:artifact.mediaType,provider:artifact.provider,model_id:artifact.modelId,input_mode:"full_output",...(artifact.kind==="audio"?{reference_id:audioReferenceId,source_mime_type:artifact.mediaType,source_content_hash:String(artifact.settings.source_media_sha256??""),duration_seconds:typeof artifact.settings.duration_seconds==="number"?artifact.settings.duration_seconds:null,audio_role:artifactAudioRole(artifact),rights_class:"account-generated",inform_generation:false,include_in_output:false,allow_provider_audio_transfer:false,lyrics:typeof artifact.settings.lyrics==="string"?artifact.settings.lyrics:"",audio_cues:Array.isArray(artifact.settings.audio_cues)?artifact.settings.audio_cues:[]}:{}),
       context_set_id:contextSetId,context_set_root_id:rootBlockId,copied_as_context_set:true,semantic_isolation:true,
       combined_context_memberships:[{contextSetId,name:artifact.title,role:semantics.role,target:semantics.target,application:semantics.application,relativity:1,memberOrder:0,sourceCanvasId:options.sourceCanvasId??""}],
       created_from:options.sourceSurface,...(options.sourceCanvasItemIds?.length?{source_canvas_item_ids:options.sourceCanvasItemIds}:{}),
@@ -136,7 +236,7 @@ export function artifactContextEvents(artifact: DocumentArtifact, options: Artif
 export function imageOutputContextEvents(output: CreativeOutput, options: ImageOutputContextOptions): OutputContextResult {
   if(!output.mediaUrl)return{events:[],blockIds:[],sourceItemIds:[],availableMemberCount:0};
   const idFactory=options.idFactory??(()=>crypto.randomUUID());const blockId=idFactory(),referenceId=idFactory();const shared={...sharedPayload(options),source_output_id:output.id,source_generation_id:output.generationId,source_document_id:output.documentId};
-  const direction=options.content??{};const title=typeof direction.title==="string"&&direction.title?direction.title:`${output.quality==="low"?"Draft":"Full-quality"} image input`;const guidance=[direction.rationale,direction.scene].filter((value):value is string=>typeof value==="string"&&Boolean(value));const palette=Array.isArray(direction.palette)?direction.palette.filter((value):value is string=>typeof value==="string"):[];
+  const direction=options.content??{};const title=output.title?.trim()||(typeof direction.title==="string"&&direction.title?direction.title:`${output.quality==="low"?"Draft":"Full-quality"} image input`);const guidance=[direction.rationale,direction.scene].filter((value):value is string=>typeof value==="string"&&Boolean(value));const palette=Array.isArray(direction.palette)?direction.palette.filter((value):value is string=>typeof value==="string"):[];
   return{events:[
     {type:"ReferenceIngested",payload:{...shared,reference_id:referenceId,source_type:"generated-output",source_ref:output.mediaUrl,media_url:output.mediaUrl,media_type:output.mediaType,rights_class:"account-generated",provider:output.provider,model_id:output.modelId}},
     {type:"BlockCreated",payload:{...shared,block_id:blockId,type:"reference",handle:`reference/generated-${output.id.slice(-8)}`,position:`${options.positionPrefix??"z"}${String(options.positionStart??0).padStart(8,"0")}`,properties:{reference_id:referenceId,label:title,text:guidance.length?[...new Set(guidance)].join("\n\n"):"Use this selected generation as visual inspiration for the next output.",output_palette:palette,palette,image_caption:title,media_url:output.mediaUrl,media_type:output.mediaType,width:output.width,height:output.height,focal_point:output.focalPoint,source_output_id:output.id,source_generation_id:output.generationId,source_output_content_ref:output.contentRef,source_output_prompt_ref:output.promptRef,source_document_id:output.documentId,prompt_technique:output.promptTechnique,prompt_fan_id:output.promptFanId,pixel_reference_mode:"inspiration",intent:"include",authority:"authored",weight:.8,input_mode:"full_output",created_from:options.sourceSurface,...(options.sourceCanvasItemIds?.length?{source_canvas_item_ids:options.sourceCanvasItemIds}:{})}}},

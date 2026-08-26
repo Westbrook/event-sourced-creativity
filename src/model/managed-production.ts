@@ -3,6 +3,7 @@ import { requiredContextAdaptationFacts } from "./context-adaptation.ts";
 import type { DocumentArtifactKind } from "./document-artifacts.ts";
 import { promptFactIsActive } from "./prompt-policy.ts";
 import { inferPresentationSourceOutline } from "./presentation-source.ts";
+import type { SceneMedium } from "./scene-configuration.ts";
 import { VIDEO_ADAPTER_CONTRACT, type VideoDurationSeconds } from "./video-adapter.ts";
 
 export type ProductionMode = "manual" | "managed";
@@ -108,7 +109,19 @@ export const PRODUCTION_TEAMS: Readonly<Record<ProductionFormat, ProductionTeam>
   },
 };
 
-export const productionTeamFor = (format: ProductionFormat) => PRODUCTION_TEAMS[format];
+/** Reuse already-localized specialist labels while preserving an honest audio-only role contract. */
+const AUDIO_SCENE_PRODUCTION_TEAM: ProductionTeam = {
+  id: "audio-scene-writing-room", version: "1.0.0", label: "Writers’ room", format: "scene",
+  specialists: [
+    specialist("showrunner", "Showrunner", "Define audible dramatic purpose, escalation, and editorial focus.", "Playable audio scene structure"),
+    specialist("story-architect", "Story architect", "Turn authored context into distinct, source-attributed audible narrative beats.", "Ordered audible action and narrative continuity"),
+    specialist("dialogue-editor", "Dialogue editor", "Keep spoken dialogue purposeful, specific, and consistent with character.", "Voice and dialogue polish"),
+    specialist("continuity-editor", "Continuity editor", "Protect character voices, acoustic settings, sound cues, deliberate silence, chronology, and restrictions.", "Audible continuity and source-coverage review"),
+  ],
+};
+
+export const productionTeamFor = (format: ProductionFormat, sceneMedium?: SceneMedium) =>
+  format === "scene" && sceneMedium === "audio" ? AUDIO_SCENE_PRODUCTION_TEAM : PRODUCTION_TEAMS[format];
 
 export type ProductionClaim = {
   id: string;
@@ -225,6 +238,7 @@ export type ManagedProductionPlan = {
 export type ProductionPlanOptions = {
   references?: ProductionReference[];
   preferredSceneSeconds?: number;
+  sceneMedium?: SceneMedium;
   requestedItemCount?: number;
   requestedSlideCount?: number;
   resolution?: "480p" | "720p";
@@ -857,7 +871,7 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
     schemaVersion: 1,
     mode: "managed",
     format,
-    team: productionTeamFor(format),
+    team: productionTeamFor(format, options.sceneMedium),
     claims,
     contextGroups: groups,
     continuityBible: continuityBible(claims),

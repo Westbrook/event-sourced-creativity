@@ -130,6 +130,41 @@ test("real executive slide nine preserves complete private evidence without forc
   ]);
 });
 
+test("the real pitch comparison composes long authored use cases as a dense visual slide",()=>{
+  const rows=[
+    ["Founder","investor deck; thoughtful follow-up; product teaser"],
+    ["Product team","sales presentation; campaign storyboard; launch video"],
+    ["Educator","written lesson; visual explanation; audio-friendly companion"],
+  ];
+  const source=item({title:"Three moments. One adaptable story.",body:""});
+  source.slide.layout="comparison";
+  source.slide.kicker="CONCRETE USE CASES";
+  source.slide.bullets=[];
+  source.slide.quote=undefined;
+  source.slide.citations=[{
+    sourceId:"PRIVATE_AUTHORIZED_SOURCE_42",
+    label:"Project message",
+    anchor:"Slide 7",
+    excerpt:"Founder, product team, and educator source material remains private and complete.",
+  }];
+  source.slide.visual={
+    kind:"comparison",
+    label:"One source, tailored expressions",
+    value:"Three adaptable stories",
+    data:rows.map(([label,value])=>({label,value,weight:1})),
+  };
+
+  const plan=planSlideLayout(source);
+
+  assert.deepEqual(plan.overflow.reasons,["long-data-value"]);
+  assert.equal(plan.overflow.narrativeCharacters,35);
+  assert.equal(plan.overflow.visualCharacters,246);
+  assert.equal(plan.density,"dense","long qualitative row values need dense typography before any reading fallback");
+  assert.equal(plan.className,"presentation-slide--density-dense");
+  assert.deepEqual(plan.visibleItem.slide.visual.data.map(({label,value})=>[label,value]),rows,"layout adaptation never truncates protected authored use cases");
+  assert.deepEqual(plan.audienceCitations,[],"private production provenance does not consume visual space");
+});
+
 test("published external attributions remain compact while complete licensed evidence stays private",()=>{
   const source=item();
   source.slide.citations=[{
@@ -240,6 +275,8 @@ test("provider layout guidance protects exact authored evidence and forbids exec
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /never permission to truncate or omit a protected quotation/u);
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /chart row, authored slide, or source citation/u);
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /Budget only audience-facing title, body, bullets, chart labels and values/u);
+  assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /comparison-row values within 48 characters/u);
+  assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /otherwise preserve the complete value and choose a dense, readable visual layout/u);
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /complete authorized citation excerpts in structured source provenance/u);
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /never place full source excerpts, internal source labels, slide-number anchors, or adapter instructions on the audience artboard/u);
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /licensing, published research, quotations, or compliance/u);

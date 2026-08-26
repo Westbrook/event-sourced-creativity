@@ -5,6 +5,7 @@ import type { CreativeBlock, EventInput } from "../model/events";
 import { BLOCK_GROUPS, BLOCK_TYPES, blockTypeDefinition, suggestedSubtype, type BlockGroup, type BlockKind } from "../model/block-types";
 import { documentFocusFromRoute, withDocumentFocusInRoute, withDocumentInRoute } from "../model/routes";
 import "./context-block";
+import "./context-intelligence";
 import "./project-rail";
 import "./studio-navigation";
 import "./event-inspector";
@@ -341,7 +342,7 @@ export class FormaGuidedBrief extends AlternativeStudio {
               <label class="sr-only" for=${`brief-${field.type}`}>${this.i18n.system(field.question)}</label>
               <textarea id=${`brief-${field.type}`} form=${guidedFormId} rows="4" placeholder=${this.i18n.system(definition.prompt)} .value=${this.#drafts[field.type] ?? ""} @input=${(event: InputEvent) => { this.#drafts[field.type] = (event.target as HTMLTextAreaElement).value; this.requestUpdate(); }}></textarea>
               <small class="guided-source">${existing ? this.i18n.system("Saving will update this answer everywhere it appears.") : this.i18n.system("Saving will add this decision to the document.")}</small>
-              ${existing ? html`<forma-spatial-scope-editor .block=${existing} surface="guided"></forma-spatial-scope-editor>` : html`<small class="guided-scope-pending">Save this answer, then choose whether it affects everything or one area.</small>`}
+              ${existing ? html`<forma-spatial-scope-editor .block=${existing} surface="guided"></forma-spatial-scope-editor><forma-context-intelligence .block=${existing} surface="guided" compact></forma-context-intelligence>` : html`<small class="guided-scope-pending">Save this answer, then choose whether it affects everything or one area.</small>`}
             </section>`;
           })}
         </div>
@@ -377,6 +378,7 @@ export class FormaGuidedBrief extends AlternativeStudio {
                     <em>${String(block.properties.artifact_markdown ?? block.properties.text ?? block.properties.label ?? block.handle)}</em>
                     <i>${fieldSection >= 0 ? this.i18n.system("Review answer") : this.i18n.system("Open baseline")} ${icon("arrow")}</i>
                   </button>
+                  <forma-context-intelligence .block=${block} surface="guided" compact></forma-context-intelligence>
                 </li>`;
               })}</ul>` : html`<p>${this.i18n.system("No saved {group} yet.",{group:this.i18n.system(group.label).toLocaleLowerCase(this.i18n.locale)})}</p>`}
             </section>`;

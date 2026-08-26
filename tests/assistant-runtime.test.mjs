@@ -1918,3 +1918,108 @@ test("French, Arabic, and Japanese audio requests recognize audio as an existing
     if(locale==="ja")assert.equal(result.turn.reply.values.label,"音声");
   }
 });
+
+test("context intelligence uses grounded web evidence, user-selected addendum types, and exact paid usage",async()=>{
+  const state=await fixture({provider:true});
+  appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["BlockCreated",{block_id:"secret-audio",document_id:"doc-atmosphere",project_id:"project-atmosphere",type:"audio",handle:"audio/secret",position:"z1",properties:{text:"PRIVATE_OPTED_OUT_AUDIO",inform_generation:false,weight:1}}]]);
+  const original=globalThis.fetch,calls=[];
+  try{
+    globalThis.fetch=async(url,init)=>{
+      const address=String(url);calls.push(address);
+      if(address.startsWith("https://commons.wikimedia.org/w/api.php"))return Response.json({query:{pages:{1:{title:"File:Dog.jpg",imageinfo:[{thumburl:"https://upload.wikimedia.org/dog.jpg",descriptionurl:"https://commons.wikimedia.org/wiki/File:Dog.jpg",mime:"image/jpeg",extmetadata:{LicenseShortName:{value:"CC BY 4.0"},Artist:{value:"<b>Photographer</b>"}}}]}}}});
+      assert.equal(address,"https://api.openai.com/v1/responses");
+      const payload=JSON.parse(init.body),facts=JSON.parse(payload.input),research=Array.isArray(payload.tools);
+      assert.doesNotMatch(payload.input,/PRIVATE_OPTED_OUT_AUDIO|block-direction|project-atmosphere|doc-atmosphere/u);
+      const urls=["https://en.wikipedia.org/wiki/Dog","http://localhost/private"];
+      const data=research?{inferred:[{existing_alias:"decision_1",reason:"Existing scene context"},{existing_alias:"foreign-account-alias",reason:"Must be rejected"}],related:[],learned:[{type:"subject",subtype:"Supporting subject",text:"Newly discovered visual detail",reason:"Public reference",source_url:urls[0]},{type:"subject",subtype:"Supporting subject",text:"Unsafe private citation",reason:"Must be rejected",source_url:urls[1]},{type:"subject",subtype:"Supporting subject",text:"Uncited fabricated detail",reason:"Must be rejected",source_url:"https://example.test/not-cited"}],image_query:"dog"}:{proposals:[{type:facts.source.type==="environment"?"environment":"emotion",subtype:facts.source.type==="environment"?"Interior":"Primary affect",label:facts.source.type==="environment"?"Bar":"Quiet",text:facts.source.type==="environment"?"Bar":"Quiet",source_excerpt:facts.source.type==="environment"?"bar":"quiet",participants:[]}]};
+      const message={type:"message",content:[{type:"output_text",text:JSON.stringify(data),annotations:research?urls.map((url)=>({type:"url_citation",url})):[]}]};
+      return Response.json({model:payload.model,output:research?[{type:"web_search_call",action:{sources:urls.map((url)=>({url}))}},message]:[message],usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}});
+    };
+    const body={projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"};
+    const research=await state.request("/api/context/research",json(body));assert.equal(research.status,200,JSON.stringify(await research.clone().json()));
+    const report=(await research.json()).report;
+    assert.equal(report.searchedWeb,true);assert.equal(report.learned.length,2);assert.equal(report.learned[0].sourceUrl,"https://en.wikipedia.org/wiki/Dog");assert.equal(report.learned[1].type,"reference");assert.equal(report.learned[1].subtype,"Pixel");assert.equal(report.learned[1].license,"CC BY 4.0");assert.equal(report.learned[1].attribution,"Photographer");
+    const decomposed=await state.request("/api/context/decompose",json(body));assert.equal(decomposed.status,200);assert.equal((await decomposed.json()).plan.proposals[0].text,"Quiet");
+    const addendum=await state.request("/api/context/decompose",json({...body,addedText:"A bar",addedType:"environment"}));assert.equal(addendum.status,200);assert.equal((await addendum.json()).plan.proposals[0].type,"environment");
+    const invalidAddition=await state.request("/api/context/decompose",json({...body,addedText:"A bar"}));assert.equal(invalidAddition.status,400);assert.equal((await invalidAddition.json()).error,"context_added_block_type_invalid");
+    const denied=await state.request("/api/context/research",json({...body,blockId:"secret-audio"}));assert.equal(denied.status,403);assert.equal((await denied.json()).error,"context_block_protected");
+    const tokens=state.sqlite.prepare("SELECT used_tokens,reserved_tokens FROM budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
+    const costs=state.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
+    assert.deepEqual({...tokens},{used_tokens:3900,reserved_tokens:0});assert.deepEqual({...costs},{used_microusd:26800,reserved_microusd:0});assert.equal(calls.length,4);
+  }finally{globalThis.fetch=original;}
+});
+
+test("context intelligence rejects paid provider access for users outside the existing enrollment",async()=>{
+  const state=await fixture({provider:true});delete state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS;
+  const original=globalThis.fetch;let calls=0;
+  try{
+    globalThis.fetch=async()=>{calls+=1;throw new Error("paid dispatch must not occur");};
+    const body={projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"};
+    for(const operation of ["decompose","research"]){const result=await state.request(`/api/context/${operation}`,json(body));assert.equal(result.status,403);assert.equal((await result.json()).error,"context_provider_denied");}
+    assert.equal(calls,0);
+  }finally{globalThis.fetch=original;}
+});
+
+test("Action research retains participant roles without proposing an already-complete relationship",async()=>{
+  const state=await fixture({provider:true});
+  appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[
+    ["BlockCreated",{block_id:"context-action-person",document_id:"doc-atmosphere",project_id:"project-atmosphere",type:"subject",handle:"subject/ilya",position:"z1",properties:{text:"Ilya",subtype:"Hero subject"}}],
+    ["BlockCreated",{block_id:"context-riding-action",document_id:"doc-atmosphere",project_id:"project-atmosphere",type:"action",handle:"action/riding",position:"z2",properties:{text:"Rides with @Ilya",subtype:"Interaction",block_references:[{block_id:"context-action-person",handle:"subject/ilya",role:"actor"}]}}],
+    ["BlockRelationAdded",{relation_id:"context-action-actor",document_id:"doc-atmosphere",project_id:"project-atmosphere",from_block_id:"context-riding-action",to_block_id:"context-action-person",kind:"action_participant",properties:{participant_role:"actor",handle:"subject/ilya"}}],
+  ]);
+  const original=globalThis.fetch;
+  try{
+    globalThis.fetch=async(_url,init)=>{
+      const payload=JSON.parse(init.body),facts=JSON.parse(payload.input),participant=facts.document_blocks.find((candidate)=>candidate.handle==="subject/ilya");
+      assert.ok(participant);assert.ok(facts.relationships.some((relation)=>relation.from==="target"&&relation.to===participant.alias&&relation.kind==="action_participant"&&relation.participant_role==="actor"));
+      const proposal={inferred:[{existing_alias:participant.alias,reason:"Already participating"}],related:[],learned:[],image_query:""};
+      return Response.json({model:payload.model,output:[{type:"web_search_call",action:{sources:[]}},{type:"message",content:[{type:"output_text",text:JSON.stringify(proposal),annotations:[]}]}],usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}});
+    };
+    const result=await state.request("/api/context/research",json({projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"context-riding-action"}));
+    assert.equal(result.status,200,JSON.stringify(await result.clone().json()));assert.deepEqual((await result.json()).report.inferred,[]);
+  }finally{globalThis.fetch=original;}
+});
+
+test("context intelligence truthfully charges verified provider usage beyond its reservation",async()=>{
+  const state=await fixture({provider:true,models:"gpt-5.6-terra"}),original=globalThis.fetch;
+  try{
+    globalThis.fetch=async(_url,init)=>{const payload=JSON.parse(init.body);return Response.json({model:payload.model,output:[{type:"message",content:[{type:"output_text",text:'{"proposals":[]}'}]}],usage:{input_tokens:18000,output_tokens:1800,total_tokens:19800}});};
+    const result=await state.request("/api/context/decompose",json({projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"}));
+    assert.equal(result.status,502);assert.equal((await result.json()).error,"context_provider_budget_exceeded");
+    const tokens=state.sqlite.prepare("SELECT used_tokens,reserved_tokens FROM budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
+    const costs=state.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
+    assert.deepEqual({...tokens},{used_tokens:19800,reserved_tokens:0});assert.deepEqual({...costs},{used_microusd:57600,reserved_microusd:0});
+  }finally{globalThis.fetch=original;}
+});
+
+test("context intelligence never retries an ambiguous paid research submission",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
+  try{
+    globalThis.fetch=async()=>{calls+=1;throw new Error("synthetic network interruption");};
+    const result=await state.request("/api/context/research",json({projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"}));
+    assert.equal(result.status,502);assert.equal(calls,1);
+    const tokens=state.sqlite.prepare("SELECT used_tokens,reserved_tokens FROM budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
+    const costs=state.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
+    assert.deepEqual({...tokens},{used_tokens:14400,reserved_tokens:0});assert.deepEqual({...costs},{used_microusd:62800,reserved_microusd:0});
+  }finally{globalThis.fetch=original;}
+});
+
+test("shared context intelligence reconstructs older decisions and rejects forged Action participant ownership",async()=>{
+  const state=await sharedProjectFixture({provider:true}),body={projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"};
+  const events=Array.from({length:390},(_,index)=>["BlockPropertyEdited",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"block-direction",property_path:"text",old_value:null,new_value:`A current direction ${index}`}]);
+  appendFixtureEvents(state.sqlite,"creative:assistant-owner",events);
+  const original=globalThis.fetch;
+  try{
+    globalThis.fetch=async(_url,init)=>{const payload=JSON.parse(init.body),source=JSON.parse(payload.input).source;assert.equal(source.text,"A current direction 389");return Response.json({model:payload.model,output:[{type:"message",content:[{type:"output_text",text:JSON.stringify({proposals:[{type:"direction",subtype:"Campaign goal",label:"current direction",text:"current direction",source_excerpt:"current direction",participants:[]}]})}]}],usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}});};
+    const owner=await state.request("/api/context/decompose",json(body,state.owner));assert.equal(owner.status,200,JSON.stringify(await owner.clone().json()));assert.equal((await owner.json()).plan.sourceText,"A current direction 389");
+    const viewer=await state.request("/api/context/decompose",json(body,state.viewer));assert.equal(viewer.status,403);
+    const validId=crypto.randomUUID(),validEvents=[{type:"BlockCreated",payload:{block_id:validId,project_id:"project-atmosphere",document_id:"doc-atmosphere",scope:"document",type:"action",handle:"action/valid",position:"z8",properties:{text:"Relates to the existing direction",subtype:"Interaction",block_references:[{block_id:"block-direction",handle:"direction/nocturne",role:"target"}]} }},{type:"BlockRelationAdded",payload:{relation_id:crypto.randomUUID(),project_id:"project-atmosphere",document_id:"doc-atmosphere",from_block_id:validId,to_block_id:"block-direction",kind:"action_participant",properties:{participant_role:"target",handle:"direction/nocturne"}}}];
+    const valid=await state.request("/api/events",json({action:"batch",events:validEvents},state.owner));assert.equal(valid.status,200,JSON.stringify(await valid.clone().json()));
+    const forgedEvent={type:"BlockCreated",payload:{block_id:crypto.randomUUID(),project_id:"project-atmosphere",document_id:"doc-atmosphere",scope:"document",type:"action",handle:"action/forged",position:"z9",properties:{label:"Forged action",text:"Forged action",subtype:"Interaction",block_references:[{block_id:"FOREIGN_ACCOUNT_PRIVATE_BLOCK",handle:"foreign-private-person",role:"actor"}]}}};
+    const forged=await state.request("/api/events",json({action:"append",event:forgedEvent},state.owner));
+    assert.equal(forged.status,403);assert.equal((await forged.json()).error,"foreign_block_resource");
+    const crossedEvent={...forgedEvent,payload:{...forgedEvent.payload,block_id:crypto.randomUUID(),document_id:"",scope:"library",properties:{...forgedEvent.payload.properties,block_references:[{block_id:"block-direction",handle:"direction/current",role:"actor"}]}}};
+    const crossed=await state.request("/api/events",json({action:"append",event:crossedEvent},state.owner));
+    assert.equal(crossed.status,403);assert.equal((await crossed.json()).error,"cross_scene_action_reference");
+  }finally{globalThis.fetch=original;}
+});

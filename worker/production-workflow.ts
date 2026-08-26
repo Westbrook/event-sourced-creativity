@@ -6,12 +6,14 @@ import { foldEvents, type CreativeEvent, type CreativeOutput } from "../src/mode
 import { artifactContextEvents, imageOutputContextEvents } from "../src/model/output-context.ts";
 import {
   MAX_PRODUCTION_WORKFLOW_SOURCES,
+  productionWorkflowSceneConfiguration,
   productionWorkflows,
   productionWorkflowSourcesForStage,
   productionWorkflowSourceIdentity,
   productionWorkflowStageStates,
   type ProductionWorkflowSource,
 } from "../src/model/production-workflow.ts";
+import type { SceneConfiguration } from "../src/model/scene-configuration.ts";
 import type { ProjectExecutionScope } from "./pilot-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
@@ -231,7 +233,11 @@ export async function resolveProductionWorkflowContext(input: {
   workflowStageId?: unknown;
   workflowSources?: unknown;
   requestedFormat?: unknown;
-}) {
+}): Promise<{
+  snapshot: Record<string, unknown>;
+  sources: ProductionWorkflowSource[];
+  sceneConfiguration?: SceneConfiguration;
+}> {
   const sources = normalizedSources(input.workflowSources, input.documentId);
   if (!sources.length) {
     if (input.workflowId === undefined && input.workflowStageId === undefined) return { snapshot: input.snapshot, sources };
@@ -289,8 +295,13 @@ export async function resolveProductionWorkflowContext(input: {
     }
     resolved.push({ source: { ...source, approvalRequired: Boolean(input.scope || source.approvalRequired) }, artifact, content: retained.content });
   }
+  const sceneConfiguration = stage.format === "scene"
+    ? productionWorkflowSceneConfiguration(workflow, stage.id)
+    : null;
+
   return {
     snapshot: appendSourceContext(input.snapshot, resolved, input.workflowId, input.workflowStageId),
     sources: resolved.map((entry) => entry.source),
+    ...(sceneConfiguration ? { sceneConfiguration } : {}),
   };
 }

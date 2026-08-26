@@ -1,6 +1,7 @@
 import { html, nothing } from "lit";
-import { assistantSurfaceForRoute } from "../model/assistant-route-policy.ts";
+import { assistantInteractionForSurface, assistantSurfaceForRoute, type AssistantInteractionMode, type AssistantToolRequest } from "../model/assistant-route-policy.ts";
 import type { AssistantContext } from "../model/conversation-context.ts";
+import { withDocumentInRoute } from "../model/routes.ts";
 import { FormaElement } from "./forma-element.ts";
 import type { AssistantDisplayedMessage, AssistantDisplayedProposal, AssistantDisplayedTask, FormaAssistantPanel } from "./design-system/assistant-panel.ts";
 import "./design-system/assistant-panel.ts";
@@ -47,7 +48,14 @@ export class FormaCreativeAssistant extends FormaElement {
 
   #scope() {
     const session = this.store.session.get();
-    return [session?.user.userId ?? "", session?.permissionEpoch ?? "", session?.projectContext?.projectAccessId ?? "personal", this.store.route.get()].join("\u0000");
+    return [
+      session?.user.userId ?? "",
+      session?.permissionEpoch ?? "",
+      session?.projectContext?.organizationId ?? "personal",
+      session?.projectContext?.projectAccessId ?? "personal",
+      session?.projectContext?.projectId ?? this.store.projection.get().projectId,
+      this.store.route.get(),
+    ].join("\u0000");
   }
 
   #selection() {
@@ -129,6 +137,66 @@ export class FormaCreativeAssistant extends FormaElement {
     }
   }
 
+  #interaction() {
+    const session = this.store.session.get();
+    const surface = assistantSurfaceForRoute(this.store.route.get());
+    const context = session?.projectContext;
+    const canAuthor = Boolean(session && (!context || context.permissions.includes("project.author")));
+    const canGenerate = Boolean(session && (!context || context.permissions.includes("project.output.request")));
+    const canEditCanvas = Boolean(session && (!context || ["owner", "editor"].includes(context.role)
+      && context.permissions.includes("project.canvas.use") && context.permissions.includes("project.author")));
+    return assistantInteractionForSurface(surface, {
+      enabled: Boolean(session?.assistant?.enabled && session.policy.accepted),
+      canAuthor,
+      canGenerate,
+      canEditCanvas,
+      providerConfigured: Boolean(session?.provider.configured),
+      personal: Boolean(session && !context),
+    });
+  }
+
+  async #tool(input: { message: string; mode: Exclude<AssistantInteractionMode, "guidance"> }) {
+    const panel = this.querySelector<FormaAssistantPanel>("forma-assistant-panel");
+    const scope = this.#scope();
+    const session = this.store.session.get();
+    const surface = assistantSurfaceForRoute(this.store.route.get());
+    if (!panel || !session || !this.#interaction().modes.includes(input.mode)) {
+      panel?.resolveToolRequest(false, input.message);
+      return;
+    }
+
+    const projection = this.store.projection.get();
+    if (input.mode === "creative-chat") {
+      const accepted = await this.store.chat(input.message, false);
+      if (scope !== this.#scope()) return;
+      panel.resolveToolRequest(Boolean(accepted), input.message);
+      if (accepted) this.store.setRoute(withDocumentInRoute("/studio/chat", projection.documentId, projection.documentTitle));
+      return;
+    }
+
+    const documentId = surface.canvasId ? projection.documents[0]?.id ?? projection.documentId : projection.documentId;
+    const accepted = await new Promise<boolean>((resolve) => {
+      const detail: AssistantToolRequest = {
+        requestId: crypto.randomUUID(),
+        mode: input.mode,
+        message: input.message,
+        actorUserId: session.user.userId,
+        projectId: session.projectContext?.projectId ?? projection.projectId,
+        documentId,
+        canvasId: surface.canvasId,
+        resolve,
+      };
+      const event = new CustomEvent<AssistantToolRequest>("forma-assistant-tool-request", { detail, cancelable: true });
+      if (window.dispatchEvent(event)) resolve(false);
+    });
+    if (scope !== this.#scope()) return;
+    panel.resolveToolRequest(accepted, input.message);
+    this.#messages = [...this.#messages, {
+      id: crypto.randomUUID(), role: "assistant", key: accepted ? "assistant.mode.queued" : "assistant.mode.failed",
+    }];
+    this.requestUpdate();
+  }
+
   async #proposal(detail: { proposal: AssistantDisplayedProposal; action: "accept" | "dismiss" }) {
     const { proposal, action } = detail;
     if (proposal.kind === "navigate") {
@@ -200,7 +268,8 @@ export class FormaCreativeAssistant extends FormaElement {
   override render() {
     const session = this.store.session.get();
     const surface = assistantSurfaceForRoute(this.store.route.get());
-    if (!session?.assistant?.enabled || surface.host !== "creator" || !surface.available || !session.policy.accepted) return nothing;
+    const interaction = this.#interaction();
+    if (!session?.assistant?.enabled || surface.host !== "creator" || !surface.available || !session.policy.accepted || interaction.presentation !== "floating") return nothing;
     if (this.#open && this.#loadedScope && this.#loadedScope !== this.#scope()) {
       this.#loadedScope = "";
       this.#context = null;
@@ -211,12 +280,13 @@ export class FormaCreativeAssistant extends FormaElement {
       window.clearTimeout(this.#taskTimer);
       queueMicrotask(() => { if (this.#open) void this.#load(); });
     }
-    return html`<forma-assistant-panel .open=${this.#open} .context=${this.#context} .messages=${this.#messages} .proposals=${this.#proposals}
-      .tasks=${this.#tasks} .models=${session.assistant.models ?? []}
+    return html`<forma-assistant-panel .open=${this.#open} .conversationScope=${this.#scope()} .context=${this.#context} .messages=${this.#messages} .proposals=${this.#proposals}
+      .tasks=${this.#tasks} .models=${session.assistant.models ?? []} .modes=${interaction.modes}
       .canReconcile=${false}
       .pending=${this.#pending.size + this.#activeTasks.size} .readOnly=${Boolean(session.projectContext && !session.projectContext.permissions.includes("project.author"))}
+      .guidanceOnly=${!(session.projectContext && !session.projectContext.permissions.includes("project.author")) && (session.assistant.phase !== "actions" || !surface.documentId)}
       @forma-assistant-toggle=${(event: CustomEvent<{ open: boolean }>) => { this.#open = event.detail.open; this.requestUpdate(); if (this.#open) void this.#load(); }}
-      @forma-assistant-message=${(event: CustomEvent<{ message: string; model?: string; premiumApproval?: boolean }>) => { void this.#send(event.detail); }}
+      @forma-assistant-message=${(event: CustomEvent<{ message: string; mode?: Exclude<AssistantInteractionMode, "guidance">; model?: string; premiumApproval?: boolean }>) => { if (event.detail.mode) void this.#tool({ message: event.detail.message, mode: event.detail.mode }); else void this.#send(event.detail); }}
       @forma-assistant-proposal=${(event: CustomEvent<{ proposal: AssistantDisplayedProposal; action: "accept" | "dismiss" }>) => { void this.#proposal(event.detail); }}
       @forma-assistant-task=${(event: CustomEvent<{ task: AssistantDisplayedTask; action: "cancel" | "reconcile" }>) => { void this.#task(event.detail); }}></forma-assistant-panel>`;
   }

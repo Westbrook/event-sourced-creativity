@@ -412,19 +412,71 @@ async function assistantTurnFromRow(env: WorkerEnv, actor: AuthorizedAssistant, 
 }
 
 async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant): Promise<AssistantTurn[]> {
-  const rows = await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,authored.content AS user_content,answer.content AS assistant_content
-    FROM assistant_turns turn
-    JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.redacted_at IS NULL AND authored.expires_at>?
-    JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.redacted_at IS NULL AND answer.expires_at>?
-    WHERE turn.actor_user_id=? AND turn.scope_key=?
-    ORDER BY turn.created_at DESC LIMIT ?`)
-    .bind(new Date().toISOString(), new Date().toISOString(), actor.principal.userId, assistantScopeKey(actor), ASSISTANT_CONTEXT_LIMITS.turns)
+  if (!actor.surface.documentId) {
+    const rows = await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,authored.content AS user_content,answer.content AS assistant_content
+      FROM assistant_turns turn
+      JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.redacted_at IS NULL AND authored.expires_at>?
+      JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.redacted_at IS NULL AND answer.expires_at>?
+      WHERE turn.actor_user_id=? AND turn.scope_key=?
+      ORDER BY turn.created_at DESC LIMIT ?`)
+      .bind(new Date().toISOString(), new Date().toISOString(), actor.principal.userId, assistantScopeKey(actor), ASSISTANT_CONTEXT_LIMITS.turns)
+      .all<AssistantTurnRow>();
+    return Promise.all(rows.results.reverse().map((row) => assistantTurnFromRow(env, actor, row)));
+  }
+
+  const scope = actor.project;
+  const now = new Date().toISOString();
+  const stream = scope ? `creative:${scope.ownerUserId}` : actor.principal.streamId;
+  let guard = "";
+  const bindings: string[] = [];
+  if (scope) {
+    for (const [kind, alias] of [["event", "message"], ["event", "response"], ["content", "authored"], ["content", "answer"]] as const) {
+      guard += kind === "event"
+        ? ` AND EXISTS(SELECT 1 FROM project_event_scopes custody WHERE custody.event_id=${alias}.event_id AND custody.project_access_id=? AND custody.organization_id=? AND custody.project_id=? AND custody.owner_user_id=? AND custody.actor_user_id=?)`
+        : ` AND EXISTS(SELECT 1 FROM project_resource_scopes custody WHERE custody.resource_kind='content' AND custody.resource_id=${alias}.content_id AND custody.project_access_id=? AND custody.organization_id=? AND custody.project_id=? AND custody.owner_user_id=? AND custody.actor_user_id=? AND custody.visibility='actor_private')`;
+      bindings.push(scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId, actor.principal.userId);
+    }
+  } else {
+    guard = " AND NOT EXISTS(SELECT 1 FROM project_resource_scopes custody WHERE custody.resource_kind='content' AND custody.resource_id=authored.content_id AND custody.visibility='actor_private')"
+      + " AND NOT EXISTS(SELECT 1 FROM project_resource_scopes custody WHERE custody.resource_kind='content' AND custody.resource_id=answer.content_id AND custody.visibility='actor_private')";
+  }
+
+  const rows = await env.DB.prepare(`SELECT json_extract(message.payload,'$.turn_id') AS turn_id,metadata.proposal_json,authored.content AS user_content,answer.content AS assistant_content
+    FROM events message INDEXED BY idx_events_stream_type
+    JOIN private_content authored ON authored.content_id=json_extract(message.payload,'$.content_ref') AND authored.owner_id=?
+      AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>?
+    JOIN events response INDEXED BY idx_events_correlation ON response.correlation_id=message.correlation_id AND response.stream_id=message.stream_id
+      AND response.type='AssistantReasoned' AND json_extract(response.payload,'$.operation')='creative-chat'
+      AND json_extract(response.payload,'$.document_id')=? AND json_extract(response.payload,'$.turn_id')=json_extract(message.payload,'$.turn_id')
+    JOIN private_content answer ON answer.content_id=json_extract(response.payload,'$.content_ref') AND answer.owner_id=?
+      AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>?
+    LEFT JOIN assistant_turns metadata ON metadata.actor_user_id=? AND metadata.scope_key=? AND metadata.turn_id=json_extract(message.payload,'$.turn_id')
+    WHERE message.stream_id=? AND message.type='ChatMessageSent' AND json_extract(message.payload,'$.document_id')=?${guard}
+    ORDER BY message.sequence DESC,response.sequence DESC LIMIT ?`)
+    .bind(actor.principal.userId, now, actor.surface.documentId, actor.principal.userId, now, actor.principal.userId,
+      assistantScopeKey(actor), stream, actor.surface.documentId, ...bindings, ASSISTANT_CONTEXT_LIMITS.turns * 3)
     .all<AssistantTurnRow>();
-  return Promise.all(rows.results.reverse().map((row) => assistantTurnFromRow(env, actor, row)));
+  const seen = new Set<string>();
+  const unique = rows.results.filter((row) => {
+    const id = String(row.turn_id ?? "");
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  }).slice(0, ASSISTANT_CONTEXT_LIMITS.turns).reverse();
+  return Promise.all(unique.map((row) => assistantTurnFromRow(env, actor, row)));
 }
 
 function assistantScopeKey(actor: AuthorizedAssistant) {
-  return JSON.stringify([actor.project?.organizationId ?? "", actor.project?.projectAccessId ?? "", actor.projectId ?? "", actor.surface.documentId ?? ""]);
+  const scope = [actor.project?.organizationId ?? "", actor.project?.projectAccessId ?? "", actor.projectId ?? "", actor.surface.documentId ?? ""];
+  if (!actor.surface.documentId) scope.push(
+    actor.surface.application,
+    actor.surface.page,
+    actor.surface.canonicalFamily,
+    workspaceCapabilities(actor.surface.route)?.organizationId ?? "",
+    actor.surface.canvasId ?? "",
+    actor.surface.focusedResourceId ?? "",
+  );
+  return JSON.stringify(scope);
 }
 
 async function exactAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, turnId: string): Promise<AssistantTurn | null> {
@@ -471,7 +523,7 @@ async function assistantContext(request: Request, env: WorkerEnv, actor: Authori
   const turns = await recentAssistantTurns(env, actor);
   context.recentTurns = turns.slice(-Math.floor(ASSISTANT_CONTEXT_LIMITS.turns / 2)).flatMap((turn, index) => [
     { id: `${turn.id}:user`, role: "user" as const, text: turn.user.slice(0, ASSISTANT_CONTEXT_LIMITS.turnChars), sequence: index * 2 },
-    { id: `${turn.id}:assistant`, role: "assistant" as const, text: String(turn.reply.text ?? turn.reply.key ?? ""), sequence: index * 2 + 1 },
+    { id: `${turn.id}:assistant`, role: "assistant" as const, text: String(turn.reply.text ?? turn.reply.key ?? "").slice(0, ASSISTANT_CONTEXT_LIMITS.turnChars), sequence: index * 2 + 1 },
   ]);
   return { context:boundAssistantContext(context), turns };
 }

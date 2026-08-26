@@ -9,6 +9,7 @@ const files = {
   guided: "../src/components/forma-studio-alternatives.ts",
   spatial: "../src/components/spatial-scope-editor.ts",
   chat: "../src/components/forma-chat-studio.ts",
+  composer: "../src/components/design-system/conversation-composer.ts",
   workspace: "../src/components/forma-workspace.ts",
   shell: "../src/components/forma-shell.ts",
   governance: "../src/apps/operations/canvas-governance.ts",
@@ -73,13 +74,14 @@ test("context editors submit their own decision while classifiers, groups, and i
 });
 
 test("multiline composers preserve composition, disabled submitters, and native requestSubmit", () => {
-  for (const source of [sources.chat, sources.workspace]) {
+  for (const source of [sources.composer, sources.workspace]) {
     assert.match(source, /(?:event|e)\.isComposing/);
-    assert.match(source, /submitter&&!submitter\.disabled/);
-    assert.match(source, /submitter\.form\?\.requestSubmit\(submitter\)/);
+    assert.match(source, /submitter&&!submitter\.disabled|!submitter\s*\|\|\s*submitter\.disabled/);
+    assert.match(source, /submitter\.form\??\.requestSubmit\(submitter\)/);
   }
   assert.match(sources.chat, /<form class="chat-composer" @submit=/);
-  assert.match(sources.chat, /<button type="submit"/);
+  assert.match(sources.chat, /<forma-ui-conversation-composer/);
+  assert.match(sources.composer, /<button type="submit"/);
   assert.match(sources.workspace, /<form class="composer-command" @submit=/);
 });
 

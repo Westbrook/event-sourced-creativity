@@ -873,6 +873,7 @@ forma-output-visual { position: absolute; inset: 0; display: grid; min-width: 0;
 .document-card-preview > i > forma-output-visual > .generated-output-image,
 .document-card-preview > i > forma-output-visual > .generated-output-trigger > .generated-output-image {
   object-fit: cover;
+  object-position: var(--focal-x,50%) var(--focal-y,50%);
 }
 .document-card-preview:empty { display: grid; place-items: center; background: var(--panel-2); border-radius: 5px; }.document-card-preview:empty::after { content: "No outputs yet"; color: var(--muted); font-size: var(--type-micro); }
 .document-card-actions { position: relative; z-index: 1; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 6px; }.document-card-actions .button { min-width: 0; }.document-card-actions .document-delete-trigger { width: auto; padding-inline: 10px; }
@@ -1887,6 +1888,7 @@ forma-document-artifacts { display: block; min-width: 0; }
 .production-workflow-toggle { display: flex; min-block-size: var(--forma-hit-target,2.75rem); align-items: center; gap: .55rem; }
 .production-workflow-toggle input[type="checkbox"] { inline-size: 1.125rem; block-size: 1.125rem; accent-color: var(--accent); }
 .production-workflow-source { max-inline-size: 26rem; }
+.production-workflow-source-detail { color: var(--muted); font-size: var(--type-caption); font-weight: 400; overflow-wrap: anywhere; }
 .production-workflow-notice { display: block; overflow-wrap: anywhere; }
 .production-workflow-actions { display: flex; min-inline-size: 0; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .production-workflow-actions .icon-button { min-inline-size: var(--forma-hit-target,2.75rem); min-block-size: var(--forma-hit-target,2.75rem); }
@@ -2046,6 +2048,28 @@ forma-document-artifacts { display: block; min-width: 0; }
 .artifact-options label { display: grid; align-content: start; gap: .45rem; font-weight: 600; }
 .artifact-options label span { color: var(--muted); font-size: var(--type-caption); font-weight: 400; }
 .artifact-options :is(input,select) { width: 100%; min-width: 0; }
+.artifact-audio-goals,.artifact-audio-settings,.artifact-audio-model-details { grid-column: 1 / -1; min-inline-size: 0; }
+.artifact-audio-goals { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,13rem),1fr)); gap: .75rem; margin: 0; padding: 0; border: 0; }
+.artifact-audio-goals > legend { grid-column: 1 / -1; inline-size: 100%; margin-block-end: .45rem; font-weight: 650; }
+.artifact-options label.artifact-audio-goal { display: grid; grid-template-columns: 1.125rem minmax(0,1fr); align-items: start; gap: .35rem .65rem; min-block-size: 5.5rem; padding: .85rem; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-medium); cursor: pointer; }
+.artifact-audio-goal > input[type="radio"] { grid-row: 1 / span 2; inline-size: 1.125rem; block-size: 1.125rem; width: 1.125rem; margin: .2rem 0 0; accent-color: var(--accent); }
+.artifact-audio-goal small { grid-column: 2; color: var(--muted); line-height: 1.45; }
+.artifact-audio-goal.selected { background: var(--accent-soft); border-color: var(--accent); }
+.artifact-audio-goal:focus-within { outline: var(--forma-focus-ring-width) solid var(--forma-focus-ring-color); outline-offset: 3px; }
+.artifact-audio-goal.unavailable { color: var(--muted); background: var(--panel-2); border-style: dashed; cursor: not-allowed; }
+.artifact-audio-settings { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,14rem),1fr)); gap: 1rem 1.25rem; }
+.artifact-options label.artifact-audio-preference,.artifact-options label.artifact-audio-video-consent { grid-template-columns: 1.125rem minmax(0,1fr); align-items: start; gap: .65rem; }
+.artifact-options :is(.artifact-audio-preference,.artifact-audio-video-consent) > input[type="checkbox"] { width: 1.125rem; inline-size: 1.125rem; block-size: 1.125rem; margin-block-start: .2rem; accent-color: var(--accent); }
+.artifact-audio-video-consent { grid-column: 1 / -1; }
+.artifact-audio-video-consent > span { display: grid; gap: .35rem; }
+.artifact-audio-model-details > summary { min-block-size: var(--forma-control-min-size); color: var(--muted); cursor: pointer; }
+.artifact-scene-medium { display: grid; align-content: start; gap: .7rem; min-inline-size: 0; margin: 0; padding: 0; border: 0; }
+.artifact-scene-medium > legend { margin-block-end: .45rem; padding: 0; font-weight: 600; }
+.artifact-scene-medium > label { grid-template-columns: auto minmax(0,1fr); align-items: start; gap: .65rem; cursor: pointer; }
+.artifact-scene-medium > label > input[type="radio"] { inline-size: 1.125rem; block-size: 1.125rem; margin-block-start: .15rem; accent-color: var(--accent); }
+.artifact-scene-medium > label > span { display: grid; min-inline-size: 0; gap: .2rem; }
+.artifact-scene-medium > label > span > b { color: var(--ink); font-size: var(--type-body); font-weight: 600; }
+.artifact-scene-medium > label > span > small { line-height: 1.4; }
 .video-provider-note { margin: 0 var(--page-gutter) 1.5rem; padding-block: 1rem; border-block: 1px solid var(--line); }
 .video-provider-note p { max-width: 56rem; margin: .35rem 0 0; color: var(--muted); }
 forma-video-reference-preflight { display: block; min-width: 0; }

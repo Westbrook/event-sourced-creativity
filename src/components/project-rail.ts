@@ -1,7 +1,8 @@
 import { html, nothing } from "lit";
 import { FormaElement, icon } from "./forma-element";
-import { documentViewFromRoute, isDocumentViewRoute, libraryBaseRoute, libraryBlockEditorFromRoute, libraryBlockEditorRoute, routePathname, withDocumentInRoute } from "../model/routes";
+import { documentViewFromRoute, isDocumentViewRoute, libraryBaseRoute, libraryBlockEditorRoute, routePathname, withDocumentInRoute } from "../model/routes";
 import { generationHistoryItems } from "../model/events";
+import { projectRailDocumentCount, projectRailDocumentDestination, projectRailDocuments } from "../model/project-rail";
 import type { FormaIconName } from "./icons";
 import "./icons-history";
 import "./icons-navigation";
@@ -9,13 +10,16 @@ import "./collection-tree";
 
 type RailSurface = "studio" | "library";
 type LibraryView = "all" | "blocks" | "outputs" | "families";
+let projectRailInstances = 0;
 
 export class ProjectRail extends FormaElement {
+  #contentId = `project-rail-content-${++projectRailInstances}`;
   #compact = false;
   #hasSeenExpanded = false;
   #compactChoice: boolean | null = null;
   #compactMedia?: MediaQueryList;
   #inlineObserver?: ResizeObserver;
+  #connectionChanged = () => this.requestUpdate();
   #compactChanged = () => {
     const shell=this.closest<HTMLElement>(".app-shell");
     const rootSize=Number.parseFloat(getComputedStyle(document.documentElement).fontSize)||16;
@@ -30,6 +34,8 @@ export class ProjectRail extends FormaElement {
 
   override connectedCallback() {
     super.connectedCallback();
+    window.addEventListener("online", this.#connectionChanged);
+    window.addEventListener("offline", this.#connectionChanged);
     if (typeof matchMedia === "function") {
       this.#compactMedia = matchMedia("(max-width: 75rem), (max-height: 37.5rem)");
       this.#compact = this.#compactMedia.matches;
@@ -45,6 +51,8 @@ export class ProjectRail extends FormaElement {
   }
 
   override disconnectedCallback() {
+    window.removeEventListener("online", this.#connectionChanged);
+    window.removeEventListener("offline", this.#connectionChanged);
     this.#compactMedia?.removeEventListener("change", this.#compactChanged);
     this.#inlineObserver?.disconnect();
     super.disconnectedCallback();
@@ -72,6 +80,13 @@ export class ProjectRail extends FormaElement {
     window.scrollTo({ top: 0 });
   }
 
+  #openDocument(event: MouseEvent, documentId: string, destination: string) {
+    if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
+    event.preventDefault();
+    void this.store.openDocument(documentId, destination, "project-rail");
+    window.scrollTo({ top: 0 });
+  }
+
   #openBlockEditor(event:MouseEvent) {
     if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
     event.preventDefault();this.store.patchUi({libraryView:"blocks",focusCollectionId:""});this.store.setRoute(libraryBlockEditorRoute("",this.store.route.get()));window.scrollTo({top:0});
@@ -85,7 +100,6 @@ export class ProjectRail extends FormaElement {
     const projection = this.store.projection.get();
     const route = this.store.route.get();
     const surface = (this.getAttribute("surface") === "library" ? "library" : "studio") as RailSurface;
-    const currentView = String(this.store.ui.libraryView);
     const collapsed = this.#compact ? this.#compactChoice ?? true : Boolean(this.store.ui.projectRailCollapsed);
     const quiet = this.hasAttribute("quiet");
     const pathname = routePathname(route);
@@ -95,56 +109,58 @@ export class ProjectRail extends FormaElement {
     const libraryRoute=libraryBaseRoute(route);
     const context=this.store.session.get()?.projectContext;
     const canAuthor=!context||context.permissions.includes("project.author");
-    const documentRoute = withDocumentInRoute("/", projection.documentId, projection.documentTitle);
+    const documentDestination=projectRailDocumentDestination(route, this.getAttribute("destination"));
+    const documents=projectRailDocuments(projection);
+    const documentCount=projectRailDocumentCount(projection);
+    const initial=this.i18n.firstGrapheme(projection.projectName).toLocaleUpperCase(this.i18n.locale)||"P";
+    const resultCount=generationHistoryItems(projection.libraryOutputs).length+projection.libraryArtifacts.length;
     const projectActive = pathname.startsWith("/studio/project");
     const documentActive = isDocumentViewRoute(route);
-    const blockEditorActive = Boolean(libraryBlockEditorFromRoute(route));
-   const libraryLinks: Array<{ view: LibraryView; label: string; count?: number; iconName: FormaIconName }> = [
-     { view: "all", label: "Library overview", iconName: "home" },
-      { view: "blocks", label: quiet ? "Reusable ideas" : "Reusable blocks", count: projection.libraryBlocks.length, iconName: "grid" },
-      { view: "outputs", label: quiet ? "Recent results" : "Recent outputs", count: generationHistoryItems(projection.libraryOutputs).length + projection.libraryArtifacts.length, iconName: "image" },
-      { view: "families", label: quiet ? "Visual families" : "Aesthetic families", count: projection.families.filter((family) => !family.superseded).length, iconName: "families" },
-   ];
+    const offline=!navigator.onLine;
+    const synchronizing=Boolean(this.store.loading.get()||this.store.busy.get());
+    const libraryLinks = ([
+      { view: "blocks", label: this.i18n.t("projects.reusableBlocks", "Reusable blocks"), count: projection.libraryBlocks.length, iconName: "grid" },
+      { view: "outputs", label: this.i18n.t("shared.results", "Creative results"), count: resultCount, iconName: "image" },
+    ] satisfies Array<{ view: LibraryView; label: string; count: number; iconName: FormaIconName }>).filter((link)=>link.count>0);
+    const documentLabel=(title:string)=>canvasWorkspace?`${this.i18n.t("projects.openCreatorDocument","Open document in Creator Workspace")}: ${title}`:this.i18n.system("Open {documentTitle}",{documentTitle:title});
+    const projectIdentityRoute=projection.projectId?overviewRoute:projectsRoute;
+    const projectIdentityLabel=projection.projectId?(canvasWorkspace?this.i18n.t("projects.backToBoards","Back to project boards"):this.i18n.t("projects.railOverview","Project overview")):this.i18n.t("projects.all","All projects");
 
-    return html`<aside class=${`project-rail ${collapsed ? "collapsed" : "expanded"} ${quiet ? "quiet" : ""}`} aria-label=${quiet?this.i18n.t("projects.railNavigation","Library project navigation"):surface==="studio"?this.i18n.t("projects.railDestinations","Project destinations"):this.i18n.t("projects.railNavigation","Library project navigation")}>
+    return html`<aside class=${`project-rail ${collapsed ? "collapsed" : "expanded"} ${quiet ? "quiet" : ""}`} aria-label=${surface==="library"?this.i18n.t("projects.railNavigation","Library project navigation"):this.i18n.t("projects.railDestinations","Project destinations")} @keydown=${(event:KeyboardEvent)=>{if(event.key==="Escape"&&!collapsed&&!event.defaultPrevented){if((event.target as Element|null)?.closest("dialog[open], [popover]:popover-open"))return;event.preventDefault();this.#setCollapsed(true);queueMicrotask(()=>this.querySelector<HTMLButtonElement>(".rail-collapse-toggle")?.focus({preventScroll:true}));}}}>
       <header class="rail-toolbar">
-        <span class="rail-toolbar-context"><span>${surface==="library"?this.i18n.t("projects.libraryHeading","Project library"):this.i18n.t("projects.workspaceKind","Creative workspace")}</span></span>
-        <button class="rail-collapse-toggle" aria-controls="project-rail-content" aria-label=${this.i18n.t(collapsed?"projects.railExpand":"projects.railCollapse",collapsed?"Expand project navigation":"Collapse project navigation")} title=${this.i18n.t(collapsed?"projects.railExpand":"projects.railCollapse",collapsed?"Expand project navigation":"Collapse project navigation")} aria-expanded=${!collapsed} @click=${()=>this.#setCollapsed(!collapsed)} @keydown=${(event:KeyboardEvent)=>{if(event.key==="Escape"&&!collapsed){event.preventDefault();this.#setCollapsed(true);}}}>
+        <span class="rail-toolbar-context"><a class="rail-project-switch" href=${projectIdentityRoute} aria-label=${`${projectIdentityLabel}: ${projection.projectName}`} title=${projectIdentityLabel} @click=${(event:MouseEvent)=>this.#go(event,projectIdentityRoute)}><span class="project-monogram rail-toolbar-monogram" aria-hidden="true">${initial}</span><span class="rail-toolbar-title" dir="auto">${projection.projectName}</span></a></span>
+        <button class="rail-collapse-toggle" aria-controls=${this.#contentId} aria-label=${this.i18n.t(collapsed?"projects.railExpand":"projects.railCollapse",collapsed?"Expand project navigation":"Collapse project navigation")} title=${this.i18n.t(collapsed?"projects.railExpand":"projects.railCollapse",collapsed?"Expand project navigation":"Collapse project navigation")} aria-expanded=${!collapsed} @click=${()=>this.#setCollapsed(!collapsed)}>
           <span aria-hidden="true">${icon((collapsed?this.i18n.direction!=="rtl":this.i18n.direction==="rtl")?"next":"previous")}</span><b>${this.i18n.t(collapsed?"projects.railExpand":"projects.railCollapse",collapsed?"Expand project navigation":"Collapse project navigation")}</b>
         </button>
       </header>
 
-      ${collapsed ? html`<nav id="project-rail-content" class="rail-dock" aria-label=${this.i18n.t("projects.railShortcuts","Project shortcuts")}>
-        <a href=${projectsRoute} title=${this.i18n.t("projects.all","All projects")} @click=${(event:MouseEvent)=>this.#go(event,projectsRoute)}><span>${projection.projectName.slice(0,1).toUpperCase() || "P"}</span><small>${this.i18n.t("shell.navigation.projects","Projects")}</small></a>
-        <a href=${overviewRoute} class=${projectActive?"active":""} aria-current=${projectActive?"page":nothing} title=${canvasWorkspace?this.i18n.t("projects.backToBoards","Back to project boards"):this.i18n.system("Project overview")} @click=${(event:MouseEvent)=>this.#go(event,overviewRoute)}>${icon("folder")}<small>${canvasWorkspace?this.i18n.t("shell.navigation.canvases","Canvases"):this.i18n.system("Overview")}</small></a>
-        <a href=${documentRoute} class=${documentActive?"active":""} aria-current=${documentActive?"page":nothing} title=${canvasWorkspace?this.i18n.t("projects.openCreatorDocument","Open document in Creator Workspace"):this.i18n.system("Open {documentTitle}", { documentTitle: projection.documentTitle })} @click=${(event:MouseEvent)=>this.#go(event,documentRoute)}>${icon("document")}<small>${canvasWorkspace?this.i18n.t("projects.creatorWorkspace","Creator Workspace"):this.i18n.system("Document")}</small></a>
-        <a href=${libraryRoute} class=${surface==="library"?"active":""} aria-current=${surface==="library"?"page":nothing} title=${this.i18n.t("projects.libraryHeading","Project library")} @click=${(event:MouseEvent)=>this.#openLibrary(event,"all")}>${icon("grid")}<small>${this.i18n.t("projects.railSectionLibrary","Library")}</small></a>
-      </nav>` : html`<div id="project-rail-content" class="rail-content">
-        <section class="rail-project-card" aria-labelledby="rail-project-name">
-          <div class="rail-project-heading"><span class="project-monogram">${projection.projectName.slice(0,1).toUpperCase() || "P"}</span><div><span class="eyebrow">${this.i18n.t("projects.railCurrent","Current project")}</span><h2 id="rail-project-name" dir="auto">${projection.projectName}</h2></div>${quiet?nothing:html`<span class=${`project-status ${projection.projectState}`}>${this.i18n.t(`projects.state.${projection.projectState}`,projection.projectState)}</span>`}</div>
-          ${quiet?nothing:html`<div class="rail-project-meta"><span><b>${this.i18n.number(projection.documents.length)}</b> ${this.i18n.system(projection.documents.length===1?"document":"documents")}</span><span><b>${this.i18n.number(projection.collections.length)}</b> ${this.i18n.system(projection.collections.length===1?"collection":"collections")}</span></div>`}
-          <div class="rail-project-actions"><a href=${projectsRoute} @click=${(event:MouseEvent)=>this.#go(event,projectsRoute)}>${this.i18n.t("projects.all","All projects")}</a>${!context&&surface==="studio"&&documentViewFromRoute(route)==="document"?html`<button @click=${this.#editProject}>${icon("edit")} Edit project</button>`:nothing}</div>
+      ${collapsed ? html`<nav id=${this.#contentId} class="rail-dock" aria-label=${this.i18n.t("projects.railShortcuts","Project shortcuts")}>
+        <a href=${overviewRoute} class=${projectActive?"active":""} aria-current=${projectActive?"page":nothing} aria-label=${`${projectIdentityLabel}: ${projection.projectName}`} title=${`${projectIdentityLabel}: ${projection.projectName}`} @click=${(event:MouseEvent)=>this.#go(event,overviewRoute)}><span>${initial}</span><small>${canvasWorkspace?this.i18n.t("shell.navigation.canvases","Canvases"):this.i18n.t("projects.railOverview","Project overview")}</small></a>
+        ${documents.slice(0,3).map((document)=>{const active=documentActive&&document.id===projection.documentId;const href=withDocumentInRoute(documentDestination,document.id,document.title);return html`<a href=${href} class=${active?"active":""} aria-current=${active?"page":nothing} title=${documentLabel(document.title)} aria-label=${canvasWorkspace?documentLabel(document.title):nothing} @click=${(event:MouseEvent)=>this.#openDocument(event,document.id,documentDestination)}>${icon("document")}<small dir="auto">${document.title}</small></a>`;})}
+        ${surface==="studio"&&libraryLinks.length?html`<a href=${libraryRoute} title=${this.i18n.t("projects.openLibrary","Open project library")} @click=${(event:MouseEvent)=>this.#openLibrary(event,"all")}>${icon("grid")}<small>${this.i18n.t("projects.railSectionLibrary","Library")}</small></a>`:nothing}
+      </nav>` : html`<div id=${this.#contentId} class="rail-content">
+        <section class="rail-project-card" aria-label=${this.i18n.t("projects.railCurrent","Current project")}>
+          <div class="rail-project-heading"><a class="rail-project-overview" href=${overviewRoute} aria-current=${projectActive?"page":nothing} @click=${(event:MouseEvent)=>this.#go(event,overviewRoute)}><span aria-hidden="true">${icon("folder")}</span><span>${canvasWorkspace?this.i18n.t("projects.backToBoards","Back to project boards"):this.i18n.t("projects.railOverview","Project overview")}</span></a>${projection.projectState!=="active"?html`<span class=${`project-status ${projection.projectState}`}>${this.i18n.t(`projects.state.${projection.projectState}`,projection.projectState)}</span>`:nothing}${!context&&surface==="studio"&&documentViewFromRoute(route)==="document"&&!quiet?html`<button class="icon-button rail-project-edit" aria-label=${this.i18n.system("Edit project")} title=${this.i18n.system("Edit project")} @click=${this.#editProject}>${icon("edit")}</button>`:nothing}</div>
+          <p class="rail-project-summary"><span>${this.i18n.plural("projects.document",documentCount,"{count} document","{count} documents")}</span>${resultCount?html`<span aria-hidden="true">·</span><span>${this.i18n.t("shared.results","Creative results")}: ${this.i18n.number(resultCount)}</span>`:nothing}</p>
+          ${canAuthor&&surface==="studio"&&!quiet&&!projectActive?html`<a class="button secondary rail-primary-action" href=${libraryBlockEditorRoute("",route)} @click=${this.#openBlockEditor}>${icon("plus")}<span>${this.i18n.t("projects.newReusableBlock","New reusable block")}</span></a>`:nothing}
         </section>
 
-        <nav class="rail-links rail-destinations" aria-label=${this.i18n.t("projects.railDestinations","Project destinations")}>
-          <span class="rail-label">${this.i18n.t("projects.railSectionProject","Project")}</span>
-          <a href=${overviewRoute} class=${projectActive?"active":""} aria-current=${projectActive?"page":nothing} @click=${(event:MouseEvent)=>this.#go(event,overviewRoute)}><span><i>${icon("folder")}</i> ${canvasWorkspace?this.i18n.t("projects.backToBoards","Back to project boards"):this.i18n.system("Project overview")}</span><small>${projection.documents.length}</small></a>
-          <a href=${documentRoute} class=${documentActive?"active":""} aria-current=${documentActive?"page":nothing} @click=${(event:MouseEvent)=>this.#go(event,documentRoute)}><span><i>${icon("document")}</i> ${canvasWorkspace?this.i18n.t("projects.openCreatorDocument","Open document in Creator Workspace"):this.i18n.system("Current document")}</span><small>${icon("arrow")}</small></a>
-        </nav>
+        ${documents.length?html`<nav class="rail-links rail-destinations rail-document-links" aria-label=${this.i18n.t("workbench.documents","Documents")}>
+          <div class="rail-section-heading"><span class="rail-label">${this.i18n.t("workbench.documents","Documents")}</span>${documentCount>documents.length?html`<a class="rail-section-more" href=${overviewRoute} aria-label=${`${this.i18n.t("projects.railOverview","Project overview")} (${this.i18n.number(documentCount)})`} @click=${(event:MouseEvent)=>this.#go(event,overviewRoute)}>+${this.i18n.number(documentCount-documents.length)}</a>`:nothing}</div>
+          ${canvasWorkspace?html`<span class="rail-document-handoff">${this.i18n.t("projects.creatorWorkspace","Creator Workspace")}</span>`:nothing}
+          ${documents.map((document)=>{const active=documentActive&&document.id===projection.documentId;const href=withDocumentInRoute(documentDestination,document.id,document.title);return html`<a href=${href} class=${active?"active":""} aria-current=${active?"page":nothing} title=${documentLabel(document.title)} aria-label=${canvasWorkspace?documentLabel(document.title):nothing} @click=${(event:MouseEvent)=>this.#openDocument(event,document.id,documentDestination)}><span><i aria-hidden="true">${icon("document")}</i><span dir="auto">${document.title}</span></span>${document.id===projection.documentId?html`<small>${this.i18n.t("pattern.current","Current")}</small>`:nothing}</a>`;})}
+        </nav>`:nothing}
 
-        <section class="rail-collections" aria-label=${this.i18n.t("projects.railCollections","Authored collections")}>
+        ${projection.collections.length||canAuthor?html`<section class=${`rail-collections ${projection.collections.length?"":"rail-collections--empty"}`} aria-label=${this.i18n.t("projects.railCollections","Authored collections")}>
           <forma-collection-tree destination=${surface==="library"?libraryRoute:overviewRoute}></forma-collection-tree>
-        </section>
+        </section>`:nothing}
 
-        <nav class="rail-links rail-library-links" aria-label=${this.i18n.t("projects.railLibrary","Project library")}>
+        ${surface!=="library"&&libraryLinks.length?html`<nav class="rail-links rail-library-links" aria-label=${this.i18n.t("projects.railLibrary","Project library")}>
           <span class="rail-label">${this.i18n.t("projects.railSectionLibrary","Library")}</span>
-          ${libraryLinks.map((link) => {const active=surface === "library" && !blockEditorActive && currentView === link.view;return html`<a href=${libraryRoute} class=${active ? "active" : ""} aria-current=${active ? "page" : nothing} @click=${(event:MouseEvent)=>this.#openLibrary(event,link.view)}><span><i>${icon(link.iconName)}</i> ${this.i18n.system(link.label)}</span>${link.count === undefined ? html`<small>${icon("arrow")}</small>` : html`<small>${this.i18n.number(link.count)}</small>`}</a>`;})}
-          ${canAuthor?html`<a href=${libraryBlockEditorRoute("",route)} class=${surface==="library"&&blockEditorActive?"active":""} aria-current=${surface==="library"&&blockEditorActive?"page":nothing} @click=${this.#openBlockEditor}><span><i>${icon("edit")}</i> Block editor</span><small>${projection.libraryBlocks.filter((block)=>block.scope==="library").length}</small></a>`:nothing}
-        </nav>
+          ${libraryLinks.map((link)=>html`<a href=${libraryRoute} @click=${(event:MouseEvent)=>this.#openLibrary(event,link.view)}><span><i aria-hidden="true">${icon(link.iconName)}</i> ${link.label}</span><small>${this.i18n.number(link.count)}</small></a>`)}
+        </nav>`:nothing}
 
-        ${quiet?nothing:html`<div class="rail-note"><span>${icon("info")}</span><p><b>No auto-filing.</b> Collections are deliberate. Search and aesthetic families remain derived views.</p></div>`}
-
-        ${quiet?nothing:html`<footer class="rail-stream" role="status"><div><b>${!navigator.onLine?this.i18n.system("Offline"):this.store.loading.get()||this.store.busy.get()?this.i18n.system("Synchronizing changes"):this.i18n.system("Your work is saved")}</b><small>${!navigator.onLine?this.i18n.system("Reconnect to receive project updates"):this.store.loading.get()||this.store.busy.get()?this.i18n.system("Checking the latest project state"):this.i18n.system("Changes remain recoverable")}</small></div></footer>`}
+        ${!quiet&&(offline||synchronizing)?html`<footer class="rail-stream" role="status"><div><b>${offline?this.i18n.system("Offline"):this.i18n.system("Synchronizing changes")}</b><small>${offline?this.i18n.system("Reconnect to receive project updates"):this.i18n.system("Checking the latest project state")}</small></div></footer>`:nothing}
       </div>`}
     </aside>`;
   }

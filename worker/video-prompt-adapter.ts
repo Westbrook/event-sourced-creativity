@@ -354,7 +354,7 @@ function sourceFactDirective(snapshot: CreativeRecord = {}) {
     role: membership.role,
     target: membership.target,
   }))).filter((exclusion) => exclusion.direction);
-  const emphasis = activeFacts(snapshot).filter((fact) => !factIsNegative(fact) && ["direction", "message", "emotion", "subject", "environment", "audience", "lighting", "palette", "style", "material", "camera", "composition", "scale", "location", "wardrobe", "object", "prop"].includes(String(fact.type ?? fact.role ?? ""))).flatMap((fact) => {
+  const emphasis = activeFacts(snapshot).filter((fact) => !factIsNegative(fact) && ["direction", "message", "emotion", "subject", "environment", "action", "audience", "lighting", "palette", "style", "material", "camera", "composition", "scale", "location", "wardrobe", "object", "prop"].includes(String(fact.type ?? fact.role ?? ""))).flatMap((fact) => {
     const properties = record(fact.properties);
     const authored = [properties.text ?? properties.instruction ?? properties.description ?? properties.value ?? properties.label, ...(Array.isArray(properties.colors) ? properties.colors : []), ...(Array.isArray(properties.palette) ? properties.palette : properties.palette ? [properties.palette] : []), ...(Array.isArray(properties.materials) ? properties.materials : properties.materials ? [properties.materials] : []), properties.lighting, properties.camera_direction, properties.lens];
     const direction = text(removeAudioDirections([...new Set(authored.map((value) => text(value, 320)).filter(Boolean))].join(" · ")).text, 360);

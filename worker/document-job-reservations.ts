@@ -1,5 +1,5 @@
 import { normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
-import { AUDIO_ADAPTER_CONTRACT } from "../src/model/audio.ts";
+import { AUDIO_ADAPTER_CONTRACT, audioAdapterContractForModel, estimateAudioProviderCostMicrousd, normalizeAudioRequestProfile } from "../src/model/audio.ts";
 import { priceFalIdeogramImageBreakdownMicrousd, priceTextUsageBreakdownMicrousd, type FalIdeogramRenderingSpeed, type ProviderCostBreakdown, type ProviderUsage } from "./replay-cost.ts";
 
 type Checkpoint = Record<string, unknown>;
@@ -168,9 +168,21 @@ export function interruptedDocumentJobUsage(
   const singleVideoCostMicrousd = checkpoint.providerJobId && !sceneReceipts.length && request.artifactKind === "video"
     ? Math.max(0, normalizeVideoDurationSeconds(request.videoSeconds) * VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution] - positiveInteger(checkpoint.prepaidProviderCostMicrousd))
     : 0;
-  const singleAudioCostMicrousd = checkpoint.providerJobId && request.artifactKind === "audio"
-    ? Math.max(0, AUDIO_ADAPTER_CONTRACT.publishedCostMicrousd - positiveInteger(checkpoint.prepaidProviderCostMicrousd))
-    : 0;
+  let acceptedAudioCostMicrousd=AUDIO_ADAPTER_CONTRACT.publishedCostMicrousd;
+  if(checkpoint.providerJobId&&request.artifactKind==="audio"){
+    const receipt=checkpoint.audioInputReceipt&&typeof checkpoint.audioInputReceipt==="object"&&!Array.isArray(checkpoint.audioInputReceipt)?checkpoint.audioInputReceipt as Checkpoint:{};
+    const parameters=receipt.parameters&&typeof receipt.parameters==="object"&&!Array.isArray(receipt.parameters)?receipt.parameters as Checkpoint:{};
+    const model=String(receipt.model??checkpoint.providerModel??request.audioProviderModel??AUDIO_ADAPTER_CONTRACT.model);
+    const contract=audioAdapterContractForModel(model);
+    if(contract){
+      const original=request.audioProfile&&typeof request.audioProfile==="object"&&!Array.isArray(request.audioProfile)?request.audioProfile as Checkpoint:{};
+      const profile=normalizeAudioRequestProfile({...original,...(typeof parameters.goal==="string"?{goal:parameters.goal}:{}),...(Number(parameters.duration_seconds)>0?{durationSeconds:Number(parameters.duration_seconds)}:{})});
+      const submittedPrompt=String(receipt.submitted_prompt??"");
+      acceptedAudioCostMicrousd=estimateAudioProviderCostMicrousd(contract,profile,contract.pricing.mode==="per_1000_characters"&&submittedPrompt?{characterCount:submittedPrompt.length}:undefined);
+    }
+  }
+  const singleAudioCostMicrousd=checkpoint.providerJobId&&request.artifactKind==="audio"
+    ?Math.max(0,acceptedAudioCostMicrousd-positiveInteger(checkpoint.prepaidProviderCostMicrousd)):0;
   const plannerCostMicrousd = remainingDocumentPlannerCost(plannerModel,costedPlannerUsage,options.plannerCostAlreadyRecordedMicrousd).totalMicrousd;
   const totalCostMicrousd = plannerCostMicrousd + sceneCostMicrousd + frameCostMicrousd + anchorCostMicrousd + singleVideoCostMicrousd + singleAudioCostMicrousd;
 

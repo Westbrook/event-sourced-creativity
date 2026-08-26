@@ -5,6 +5,7 @@ import {
   MANAGED_PRODUCTION_BATCH_SIZE,
   providerFacingProductionContinuity,
   providerFacingProductionTargets,
+  productionTeamFor,
   productionSceneSnapshot,
   scoreManagedProductionPlan,
   type ManagedProductionPlan,
@@ -12,7 +13,10 @@ import {
 } from "../src/model/managed-production.ts";
 import { buildPresentationSourceContract, inferPresentationAudienceLocale, validatePresentationSourceCoverage } from "../src/model/presentation-source.ts";
 import { safePresentationCandidateIssues } from "../src/model/presentation-candidates.ts";
+import type { SceneConfiguration, SceneMedium } from "../src/model/scene-configuration.ts";
 import { VIDEO_ADAPTER_CONTRACT, type VideoAudioMode } from "../src/model/video-adapter.ts";
+import type { AudioRequestProfile } from "../src/model/audio.ts";
+import { generationRepairPages, generationValidationReceipt, type GenerationValidationObservation } from "./generation-self-healing.ts";
 import { generateCreativeImage } from "./image-adapter.ts";
 import { readGeneratedImageReference, storeGeneratedImage, storeGeneratedMedia } from "./media-api.ts";
 import {
@@ -230,7 +234,7 @@ function managedProductionValidationFailure(kind: DocumentArtifactKind, issues: 
     retryAfterMs: null,
     requestId: null,
     httpStatus: 502,
-    ...(kind==="slides"?{validationIssues:issues.flatMap((issue)=>{
+    ...(issues.length?{validationIssues:issues.flatMap((issue)=>{
       const match=/^items\.(\d+)(.*)$/u.exec(issue.path);
       const globalIndex=match?Number(match[1]):0;
       const pageIndex=Math.min(options.pageCount-1,Math.floor(globalIndex/MANAGED_PRODUCTION_BATCH_SIZE));
@@ -258,8 +262,15 @@ export async function generateManagedArtifactDraft(
     authoredSlideCount?: number;
     videoSize?: "1280x720" | "720x1280";
     videoAudioMode?: VideoAudioMode;
+    audioProfile?: AudioRequestProfile;
+    sceneMedium?: SceneMedium;
+    sceneConfiguration?: SceneConfiguration;
   } & ManagedProductionCallbacks,
 ) {
+  if (kind === "scene") {
+    // Normalize old queued plans in place so their final persisted plan matches the actual provider team.
+    input.production.team = productionTeamFor("scene", input.sceneConfiguration?.medium ?? input.sceneMedium ?? "visual");
+  }
   if (kind === "slides") {
     const plannedCount = input.production.scenes.length;
     const requestedCount = input.requestedSlideCount ?? input.production.requestedSlideCount ?? plannedCount;
@@ -282,6 +293,27 @@ export async function generateManagedArtifactDraft(
   }
   const pages: Array<Awaited<ReturnType<typeof generateDocumentArtifact>>> = [];
   const attempts: Array<Awaited<ReturnType<typeof generateDocumentArtifact>>> = [];
+  const validationObservations: GenerationValidationObservation[] = [];
+  let observedProviderAttempts = 0;
+  const recordValidationAttempt = (attempt: Awaited<ReturnType<typeof generateDocumentArtifact>>, pageIndex: number) => {
+    const validation = attempt.inputReceipt.validation;
+    observedProviderAttempts += 1;
+    validationObservations.push({
+      stage: "initial",
+      issues: validation.initial_issues,
+      pageIndex,
+      providerAttempt: observedProviderAttempts,
+    });
+    if (validation.repair_attempted) {
+      observedProviderAttempts += 1;
+      validationObservations.push({
+        stage: "repair",
+        issues: validation.repair_issues,
+        pageIndex,
+        providerAttempt: observedProviderAttempts,
+      });
+    }
+  };
   const responseIdsFor=(attempt:Awaited<ReturnType<typeof generateDocumentArtifact>>)=>{
     const validation=attempt.inputReceipt.validation;
     return Array.isArray(validation.provider_response_ids)?validation.provider_response_ids.map(String).filter(Boolean):[attempt.responseId].filter(Boolean);
@@ -347,6 +379,9 @@ export async function generateManagedArtifactDraft(
         authoredSlideCount: input.authoredSlideCount,
         videoSize: input.videoSize,
         videoAudioMode: input.videoAudioMode,
+        audioProfile: input.audioProfile,
+        sceneMedium: input.sceneMedium,
+        sceneConfiguration: input.sceneConfiguration,
         productionMode: "managed",
         productionPlan: input.production,
         productionScenes: scenes,
@@ -359,6 +394,7 @@ export async function generateManagedArtifactDraft(
     });
     pages.push(result);
     attempts.push(result);
+    recordValidationAttempt(result, pageIndex);
   }
   const assemble = (normalizeSlides = false): DocumentArtifactDraft => {
     const first = pages[0]!;
@@ -479,38 +515,43 @@ export async function generateManagedArtifactDraft(
   let output = assemble();
   const expectedGroups = combinedContextGroups(input.snapshot).map((group) => group.id);
   let finalIssues = wholeWorkIssues(output);
+  validationObservations.push({ stage: "review", issues: finalIssues });
   let repairedPages = 0;
-  if (finalIssues.length && (kind === "slides" || kind === "short_story" || kind === "scene")) {
-    const affected = [...new Set(finalIssues.flatMap((issue) => {
-      const index = /^items\.(\d+)/.exec(issue.path)?.[1];
-      return index === undefined ? [] : [Math.floor(Number(index) / pageSize)];
-    }))];
+  if (finalIssues.length) {
+    const affected = generationRepairPages(finalIssues, { pageCount, pageSize });
     for (const pageIndex of affected) {
       const index = pageIndex * pageSize;
       const scenes = input.production.scenes.slice(index, index + pageSize);
       const issues = finalIssues.filter((issue) => {
         const position = /^items\.(\d+)/.exec(issue.path)?.[1];
-        return position !== undefined && Math.floor(Number(position) / pageSize) === pageIndex;
+        return position === undefined || Math.floor(Number(position) / pageSize) === pageIndex;
       }).map((issue) => redactRepairIssue(issue.message));
       const repaired = await generateDocumentArtifact(env, ownerId, kind, {
         documentTitle: input.documentTitle,
         snapshot: combinedSceneSnapshot(input.snapshot, scenes),
-        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, outputLocale:presentationAudienceLocale,presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal,...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),onProviderAttempt:recordPaidAttempt,onBeforeProviderAttempt:input.plannerPreflight },
+        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, outputLocale:presentationAudienceLocale,presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, audioProfile: input.audioProfile, sceneMedium: input.sceneMedium, sceneConfiguration: input.sceneConfiguration, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal,...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),onProviderAttempt:recordPaidAttempt,onBeforeProviderAttempt:input.plannerPreflight },
       });
       pages[pageIndex] = repaired;
       attempts.push(repaired);
+      recordValidationAttempt(repaired, pageIndex);
       repairedPages += 1;
     }
     output = assemble();
     finalIssues = wholeWorkIssues(output);
+    validationObservations.push({ stage: "repair", issues: finalIssues });
   }
   if (finalIssues.length) throw managedProductionValidationFailure(kind, finalIssues, "review",{pageCount,providerAttempt:attempts.flatMap(responseIdsFor).length});
   if (kind === "slides") output = assemble(true);
   finalIssues = kind === "slides"
     ? wholeWorkIssues(output)
     : documentArtifactValidationIssues(kind, output, { itemCount: input.production.scenes.length, contextGroupIds: expectedGroups });
+  validationObservations.push({ stage: "assembly", issues: finalIssues });
   if (finalIssues.length) throw managedProductionValidationFailure(kind, finalIssues, "assembly",{pageCount,providerAttempt:attempts.flatMap(responseIdsFor).length});
   const first = pages[0]!;
+  const validationReceipt = generationValidationReceipt(kind, validationObservations, {
+    adapterId: "openai-document",
+    finalIssues,
+  });
   return {
     output,
     model: first.model,
@@ -520,6 +561,7 @@ export async function generateManagedArtifactDraft(
     usage: attempts.reduce((sum, page) => addUsage(sum, page.usage), { inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
     inputReceipt: {
       production_mode: "managed",
+      ...(kind==="scene"&&first.inputReceipt.scene_configuration?{scene_configuration:first.inputReceipt.scene_configuration}:{}),
       team: input.production.team,
       page_count: pages.length,
       planned_page_count: pageCount,
@@ -532,7 +574,13 @@ export async function generateManagedArtifactDraft(
       ...(input.authoredSlideCount ? { authored_slide_count: input.authoredSlideCount } : {}),
       ...(input.presentationStyle ? { presentation_style: input.presentationStyle } : {}),
       ...(input.presentationFidelity ? { presentation_fidelity: input.presentationFidelity } : {}),
-      whole_work_validation: { issues: finalIssues, repaired_pages: repairedPages, source_coverage_validated: Boolean(presentationSources) },
+      whole_work_validation: {
+        issues: finalIssues,
+        repaired_pages: repairedPages,
+        source_coverage_validated: Boolean(presentationSources),
+        ...validationReceipt,
+      },
+      adapter_reconciliation: validationReceipt.adapter_reconciliation,
       pages: pages.map((page, index) => ({ page: index + 1, response_id: page.responseId, item_count: page.output.items.length, ...page.inputReceipt })),
     },
   };

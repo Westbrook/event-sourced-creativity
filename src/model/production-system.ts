@@ -74,7 +74,7 @@ export const PRODUCTION_SYSTEMS: Readonly<Record<ProductionFormat, ProductionSys
 export const productionSystemFor = (format: ProductionFormat) => PRODUCTION_SYSTEMS[format];
 
 /** Provider-neutral, auditable work graph; delivery never advertises unsupported composition or frame locking. */
-export function productionUnitsForPlan(plan: ManagedProductionPlan): ProductionUnit[] {
+export function productionUnitsForPlan(plan: ManagedProductionPlan, options:{audioEstimatedCostMicrousd?:number}={}): ProductionUnit[] {
   const units: ProductionUnit[] = [{
     id: "production-plan",
     kind: "plan",
@@ -126,7 +126,7 @@ export function productionUnitsForPlan(plan: ManagedProductionPlan): ProductionU
     sourceClaimIds:[...new Set(plan.scenes.flatMap((scene)=>scene.sourceClaimIds))],
     contextGroupIds:[...new Set(plan.scenes.flatMap((scene)=>scene.contextGroupIds))],
     referenceIds:[...new Set(plan.scenes.flatMap((scene)=>scene.referenceIds))],
-    estimatedCostMicrousd:AUDIO_ADAPTER_CONTRACT.publishedCostMicrousd,
+    estimatedCostMicrousd:Number.isSafeInteger(options.audioEstimatedCostMicrousd)&&Number(options.audioEstimatedCostMicrousd)>=0?Number(options.audioEstimatedCostMicrousd):AUDIO_ADAPTER_CONTRACT.publishedCostMicrousd,
   });
   for (const sceneId of plan.format==="audio"?[]:plan.executionOrder) {
     const scene = plan.scenes.find((item) => item.id === sceneId)!;

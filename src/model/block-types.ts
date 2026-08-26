@@ -1,5 +1,5 @@
 export type BlockGroup = "intent" | "scene" | "craft" | "constraint" | "evidence";
-export type BlockKind = "direction" | "audience" | "message" | "emotion" | "subject" | "environment" | "motion" | "scale" | "composition" | "camera" | "lighting" | "style" | "material" | "palette" | "typography" | "audio" | "format" | "brand" | "exclusion" | "accessibility" | "reference" | "sketch";
+export type BlockKind = "direction" | "audience" | "message" | "emotion" | "subject" | "environment" | "action" | "motion" | "scale" | "composition" | "camera" | "lighting" | "style" | "material" | "palette" | "typography" | "audio" | "format" | "brand" | "exclusion" | "accessibility" | "reference" | "sketch";
 export type BlockIntent = "include" | "prefer" | "avoid" | "prohibit";
 export type ReferencePixelMode = "context_only" | "inspiration" | "preserve_composition" | "preserve_subject" | "preserve_style";
 
@@ -62,6 +62,7 @@ export const BLOCK_TYPES: readonly BlockTypeDefinition[] = [
   { type:"emotion", label:"Emotion", description:"The affect, energy, or tension the work should carry", prompt:"What should the work make someone feel?", group:"intent", subtypes:["Primary affect","Emotional contrast","Energy level","Temporal mood"] },
   { type:"subject", label:"Subject", description:"What must exist or be depicted", prompt:"What should exist in the frame?", group:"scene", subtypes:["Hero subject","Supporting subject","Human presence","Object study","Character headshot","Character sheet"] },
   { type:"environment", label:"Environment", description:"The world, place, or spatial setting", prompt:"Where does this reality take place?", group:"scene", subtypes:["Interior","Exterior","Abstract space","Social setting"] },
+  { type:"action", label:"Action", description:"Actions, interactions, and relationships between scene participants", prompt:"What happens, and who or what participates?", group:"scene", subtypes:["Interaction","Individual action","Group activity","Movement or travel","Communication","Possession or transfer","Physical contact","Cause and effect"] },
   { type:"motion", label:"Motion", description:"Movement, stillness, and change through the scene", prompt:"What moves, or deliberately stays still?", group:"scene", subtypes:["Subject motion","Camera motion","Implied motion","Stillness"] },
   { type:"scale", label:"Scale", description:"Perceived size and distance relationships", prompt:"How should scale be experienced?", group:"scene", subtypes:["Intimate","Human","Monumental","Relative contrast"] },
   { type:"composition", label:"Composition", description:"Framing, balance, and reading order", prompt:"How should the elements occupy the frame?", group:"craft", subtypes:["Focal hierarchy","Grid","Negative space","Crop"] },
@@ -76,7 +77,7 @@ export const BLOCK_TYPES: readonly BlockTypeDefinition[] = [
   { type:"brand", label:"Brand", description:"Identity cues and mandatory or forbidden treatments", prompt:"What identity rules must be carried forward?", group:"constraint", subtypes:["Identity cue","Mandatory asset","Tone rule","Forbidden treatment"] },
   { type:"exclusion", label:"Exclusion", description:"A failure mode or motif the work must avoid", prompt:"What would break the direction?", group:"constraint", subtypes:["Visual exclusion","Semantic exclusion","Safety boundary","Failure mode"] },
   { type:"accessibility", label:"Accessibility", description:"Perceptual and cultural requirements for clear access", prompt:"What must remain perceivable and understandable?", group:"constraint", subtypes:["Contrast","Legibility","Motion sensitivity","Cultural clarity"] },
-  { type:"reference", label:"Reference", description:"Owned or licensed evidence that grounds a decision", prompt:"Choose an owned or licensed reference…", group:"evidence", subtypes:["Mood","Composition","Material","Color"] },
+  { type:"reference", label:"Reference", description:"Owned or licensed evidence that grounds a decision", prompt:"Choose an owned or licensed reference…", group:"evidence", subtypes:["Mood","Composition","Material","Color","Pixel"] },
   { type:"sketch", label:"Sketch", description:"Authored marks, masks, annotations, and spatial gestures", prompt:"Draw or describe the spatial idea…", group:"evidence", subtypes:["Gesture","Layout","Mask","Annotation"] },
 ] as const;
 

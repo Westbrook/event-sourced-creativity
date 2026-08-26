@@ -51,7 +51,17 @@ test("offers four coherent deck-level styles while preserving the generated star
 
 test("removes repeated slide copy, empty bullets, and unfinished visual placeholders",()=>{
   const content=parseDocumentArtifactContent(JSON.stringify({title:"Deck",summary:"Editorially complete",content_markdown:"# Deck",presentation,items:[{title:"A New Chapter",body:"A New Chapter",notes:"Explain the change.",image_prompt:"A visual transition.",slide:{layout:"split",kicker:"A New Chapter",bullets:["","•","A New Chapter","A specific conflict","A specific conflict"],visual:{kind:"color-field",label:"A New Chapter",value:"A New Chapter",data:[{label:"A Reluctant Ally",value:"Hidden leverage",weight:.8},{label:"Point 2",value:"",weight:.6},{label:"Point 3",value:"",weight:.4}]}}}]}));
-  const item=content?.items[0];assert.ok(item?.slide);assert.equal(item.body,"");assert.equal(item.slide.kicker,"Overview");assert.deepEqual(item.slide.bullets,["A specific conflict"]);assert.equal(item.slide.visual.kind,"hero-type");assert.equal(item.slide.visual.value,"A Reluctant Ally");assert.equal(item.slide.visual.label,"Visual emphasis");assert.deepEqual(item.slide.visual.data,[]);assert.equal(slideVisualIsComplete(item.slide),true);assert.doesNotMatch(JSON.stringify(item),/Point [23]/);
+  const item=content?.items[0];assert.ok(item?.slide);assert.equal(item.body,"");assert.equal(item.slide.kicker,"Overview");assert.deepEqual(item.slide.bullets,["A specific conflict"]);assert.equal(item.slide.visual.kind,"hero-type");assert.equal(item.slide.visual.value,"A Reluctant Ally");assert.equal(item.slide.visual.label,"");assert.deepEqual(item.slide.visual.data,[]);assert.equal(slideVisualIsComplete(item.slide),true);assert.doesNotMatch(JSON.stringify(item),/Point [23]|Visual emphasis/);
+});
+
+test("preserves authored visual labels without manufacturing audience-facing visual scaffolding",()=>{
+  const hero=(label)=>normalizeSlideVisual({layout:"statement",kicker:"Authored context",visual:{kind:"hero-type",label,value:"A distinct source-grounded visual claim",data:[]}},{title:"An independently meaningful heading"});
+  for(const label of ["","Visual emphasis","VISUAL EMPHASIS","Stakeholder perspective"]){
+    const normalized=hero(label);
+    assert.equal(normalized.visual.label,"",`the ${label||"missing"} label never becomes generated slide filler`);
+    assert.equal(slideVisualIsComplete(normalized),true,"an independent label is optional when its authored visual is complete");
+  }
+  assert.equal(hero("Forma output families").visual.label,"Forma output families","a meaningful source-authored label remains untouched");
 });
 
 test("hero fallback preserves the exact source provenance of its promoted visual evidence",()=>{
@@ -204,6 +214,25 @@ test("treats punctuation, line breaks, quote fragments, and close restatements a
   const rawItem={title:"A warning",body:quote,notes:"Explain the exchange.",image_prompt:"A quiet discovery.",slide:{layout:"split",kicker:"Discovery",bullets:[echo,"The map changes their next move"],visual:{kind:"metric",label:"Trust changes",value:"One disclosed secret",data:[]}}};
   const issues=slideCopyIssues(rawItem);assert.equal(slideCopyIsDistinct(rawItem),false);assert.equal(issues.some((issue)=>issue.firstPath==="body"&&issue.secondPath==="slide.bullets.0"),true);
   const content=parseDocumentArtifactContent(JSON.stringify({title:"Deck",summary:"An edited presentation",content_markdown:"# Deck",presentation,items:[rawItem]}));const item=content?.items[0];assert.ok(item?.slide);assert.equal(item.body,quote);assert.deepEqual(item.slide.bullets,["The map changes their next move"]);assert.equal(slideCopyIsDistinct(item),true);
+});
+
+test("detects repeated substantial sentence lead-ins even when their remaining claims differ",()=>{
+  const first="Build the story once. Carry the creative foundation across every medium.";
+  const second="Build the story once. Deliver the right expression to each audience.";
+  assert.equal(slideCopyIsNearDuplicate(first,second),true,"a repeated opening sentence is visible duplication despite divergent continuations");
+  assert.equal(slideCopyIsNearDuplicate("Build the story once",second),true,"an unpunctuated heading still duplicates the sentence opening");
+  assert.equal(slideCopyIsNearDuplicate("For the team. Establish a shared starting point.","For the team. Preserve each independent decision."),false,"short generic transitions do not become false-positive duplicate prose");
+
+  const duplicated={title:first,body:second,notes:"Keep both independent claims.",image_prompt:"",slide:{layout:"statement",kicker:"Distinct invitation",bullets:["Build the story once. Meet people where they already are."],visual:{kind:"hero-type",label:"Authored direction",value:"An independently meaningful visual claim",data:[]}}};
+  const rawIssues=slideCopyIssues(duplicated);
+  assert.equal(rawIssues.some((issue)=>issue.firstPath==="title"&&issue.secondPath==="body"),true);
+  assert.equal(rawIssues.some((issue)=>issue.firstPath==="title"&&issue.secondPath==="slide.bullets.0"),true);
+
+  const normalized=normalizeSlideItem(duplicated);
+  assert.equal(normalized.title,first);
+  assert.equal(normalized.body,"Deliver the right expression to each audience.","deterministic repair retains independently meaningful body copy");
+  assert.deepEqual(normalized.slide?.bullets,["Meet people where they already are."],"deterministic repair keeps each independently meaningful bullet");
+  assert.deepEqual(slideCopyIssues(normalized),[],"repaired visible fields contain the shared opening exactly once");
 });
 
 test("preserves repeated source-authored status values across independently labeled visual rows",()=>{

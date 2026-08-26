@@ -1,4 +1,4 @@
-import { canvasIdFromRoute } from "../canvas/routes.ts";
+import { canvasIdFromRoute, canvasViewFromRoute } from "../canvas/routes.ts";
 import { applicationIdFromRoute, resolveServerRoute, routeRequiredCapabilities, type ApplicationId } from "../platform/applications.ts";
 import type { FormaCapability } from "../platform/capabilities.ts";
 import { documentContextBlockFromRoute, documentIdFromRoute, documentViewFromRoute, libraryFocusFromRoute, routePathname } from "./routes.ts";
@@ -23,6 +23,70 @@ export type AssistantSurface = {
   requiredCapabilities: readonly FormaCapability[];
   available: boolean;
 };
+
+export type AssistantInteractionMode = "guidance" | "creative-chat" | "quick-edit" | "plan-document" | "plan-board";
+export type AssistantInteractionPresentation = "floating" | "embedded" | "none";
+export type AssistantInteractionScope = "document" | "canvas" | "page" | "platform";
+
+export type AssistantInteractionOptions = {
+  enabled?: boolean;
+  canAuthor?: boolean;
+  canGenerate?: boolean;
+  canEditCanvas?: boolean;
+  providerConfigured?: boolean;
+  personal?: boolean;
+};
+
+export type AssistantInteractionContract = {
+  presentation: AssistantInteractionPresentation;
+  owner: "assistant" | "creative-chat" | "platform-assistant" | "none";
+  scope: AssistantInteractionScope;
+  modes: readonly AssistantInteractionMode[];
+};
+
+export type AssistantToolRequest = {
+  requestId: string;
+  mode: Exclude<AssistantInteractionMode, "guidance">;
+  message: string;
+  actorUserId: string;
+  projectId: string;
+  documentId: string;
+  canvasId: string | null;
+  resolve: (accepted: boolean) => void;
+};
+
+/** Exactly one authorized conversation owner coordinates every visible application surface. */
+export function assistantInteractionForSurface(surface: AssistantSurface, options: AssistantInteractionOptions = {}): AssistantInteractionContract {
+  if (!surface.available || surface.host === "public" || options.enabled === false) {
+    return { presentation: "none", owner: "none", scope: "page", modes: [] };
+  }
+  if (surface.host === "platform") {
+    return { presentation: "floating", owner: "platform-assistant", scope: "platform", modes: ["guidance"] };
+  }
+  if (surface.page === "chat" && options.canGenerate) {
+    return { presentation: "embedded", owner: "creative-chat", scope: "document", modes: ["creative-chat"] };
+  }
+
+  const modes: AssistantInteractionMode[] = ["guidance"];
+  if (surface.page === "document" && options.canAuthor) {
+    if (options.canGenerate && options.providerConfigured) modes.push("creative-chat");
+    if (options.personal) modes.push("quick-edit");
+  }
+  if (surface.page === "adaptive" && options.canAuthor && options.canGenerate && options.providerConfigured) {
+    modes.push("plan-document");
+  }
+  if (surface.page === "canvas" && surface.canvasId && canvasViewFromRoute(surface.route) === "spatial"
+    && options.canEditCanvas && options.canGenerate && options.providerConfigured) {
+    modes.push("plan-board");
+  }
+
+  return {
+    presentation: "floating",
+    owner: "assistant",
+    scope: surface.documentId ? "document" : surface.canvasId ? "canvas" : "page",
+    modes,
+  };
+}
 
 export const ASSISTANT_ROUTE_LIMITS = { pathname: 512, search: 192, hash: 64, identifier: 160 } as const;
 const safeIdentifier = (value: string | null) => value && value.length <= ASSISTANT_ROUTE_LIMITS.identifier ? value : null;

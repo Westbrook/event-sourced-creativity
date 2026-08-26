@@ -68,6 +68,26 @@ export async function readOwnedAudioReference(env: WorkerEnv, ownerId: string, m
   return { key, bytes, mimeType, metadata: object.customMetadata ?? {}, durationSeconds: Number(object.customMetadata?.durationSeconds ?? 0) || null, size: typeof object.size === "number" ? object.size : bytes.byteLength };
 }
 
+/** Read only generated, owner-bound MP4 video artifacts for separately approved audio synchronization. */
+export async function readOwnedGeneratedVideoReference(env: WorkerEnv, ownerId: string, artifactId: string, mediaUrl: unknown) {
+  const value = String(mediaUrl ?? "");
+  const prefix = "/api/media/";
+  if (!value.startsWith(prefix)) return null;
+  let key = "";
+  try { key = decodeURIComponent(value.slice(prefix.length)); } catch { return null; }
+  if (!mediaKeyMatchesOwnerNamespace(key, ownerId)) return null;
+  const object = await env.MEDIA.get(key);
+  const metadata = object?.customMetadata;
+  if (!object || !metadata || metadata.ownerId !== ownerId || metadata.artifactId !== artifactId || metadata.source !== "provider-generated-media") return null;
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  const mimeType = String(headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  if (mimeType !== "video/mp4" || typeof object.size === "number" && object.size > MAX_AUDIO_UPLOAD_BYTES) return null;
+  const bytes = new Uint8Array(await new Response(object.body).arrayBuffer());
+  if (!bytes.byteLength || bytes.byteLength > MAX_AUDIO_UPLOAD_BYTES) return null;
+  return { key, bytes, mimeType, metadata, size: bytes.byteLength };
+}
+
 /** Validate server-extracted source facts against immutable R2-owned evidence metadata. */
 export async function verifySourceDocumentEvidence(env: WorkerEnv, ownerId: string, mediaUrl: unknown, properties: Record<string, unknown>): Promise<boolean> {
   const prefix = "/api/media/";

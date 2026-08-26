@@ -114,6 +114,49 @@ translation catalog, account state, provider adapter, or private API. The
 reference at `/knowledge/design-system#forma-ui-language-picker` renders the
 actual isolated implementation without changing the workspace language.
 
+## One conversation owner per surface
+
+`<forma-ui-conversation-composer>` is the single store-independent, light-DOM
+conversation input shared by contextual Ask Forma and the expanded document Chat
+experience. Place it inside its owner's genuine native `<form>`; the host, never
+the shared component, decides whether submission requests private guidance,
+paid creative chat, a free reviewed quick edit, document planning, or
+project-wide Canvas planning.
+
+```html
+<form>
+  <forma-ui-conversation-composer
+    label="Message Forma"
+    placeholder="Describe what you want to explore…"
+    submit-label="Send message"
+    max-length="1200"
+  ></forma-ui-conversation-composer>
+</form>
+```
+
+The real textarea keeps the caller-localized accessible label, bidirectional
+authored text, visible keyboard focus, composition-safe input, and native form
+submission. Unmodified Enter submits; Shift+Enter adds a line; modified
+shortcuts and in-progress IME composition never submit. Empty, busy, and
+explicitly unauthorized actions cannot submit. `forma-input` and `forma-submit`
+expose stable `{ value }` details without loading account state, private work,
+provider adapters, or network clients. Maximum length is chosen by the actual
+operation: 1,200 characters for page assistance, 2,000 for reviewed planning,
+and 4,000 for document Chat.
+
+`assistantInteractionForSurface` gives every route exactly one conversational
+owner. An editable Chat view uses its inline document conversation; viewers
+retain safe floating guidance. Other Creator pages use floating assistance,
+adding paid, reviewed **Plan decisions** or **Explore board** modes only when
+the exact document or spatial board, authoring role, output permission, and
+provider are all available. Board suggestions and document decisions stay inert
+until their existing page explicitly applies them. Personal **Quick edit** is
+free and requires separate approval; direct **Creative chat** explains that it
+updates the document. Platform assistants remain independently scoped and
+guidance-only; public share pages never mount an assistant. Authored session
+intentions, individual creative decisions, sources, reviews, and search remain
+distinct nonconversational forms.
+
 ## Shared native dialog foundation
 
 `ensureNativeModalDialog` in `src/components/design-system/native-dialog.ts`

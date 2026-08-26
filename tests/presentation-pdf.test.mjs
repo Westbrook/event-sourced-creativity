@@ -31,6 +31,14 @@ test("builds a valid multi-page landscape PDF from normalized slide data",()=>{
   assert.equal(source.endsWith("%%EOF\n"),true);
 });
 
+test("renders each slide visual caption once without repeating it in the PDF footer",()=>{
+  const source=new TextDecoder().decode(createPresentationPdf(items,presentation,{title:"Autumn campaign",showFooterLabel:true}).bytes);
+
+  assert.equal((source.match(/\(North star\) Tj/g)??[]).length,1);
+  assert.equal((source.match(/\(Creative confidence\) Tj/g)??[]).length,1);
+  assert.equal((source.match(/\(Autumn campaign\) Tj/g)??[]).length,items.length);
+});
+
 test("normalizes filenames and still exports an empty retained deck",()=>{
   assert.equal(presentationPdfFilename("  Déjà vu / deck  "),"deja-vu-deck.pdf");
   assert.equal(presentationPdfFilename("東京の企画","ja-JP"),"東京の企画.pdf");

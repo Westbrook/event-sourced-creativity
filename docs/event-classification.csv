@@ -37,6 +37,7 @@ ContextCompiled,user_content,external_pointer_for_free_text,worker:compiler,immu
 GenerationCompleted,operational,external_blob_pointer,worker:generator_or_scout,immutable
 GenerationFailed,operational,structured_only,worker:generator_or_scout,immutable
 ObjectViewed,behavioral,structured_only,user,immutable
+OutputRenamed,user_content,structured_only,user,immutable
 ObjectSaved,behavioral,structured_only,user,immutable
 ObjectDiscarded,behavioral,structured_only,user,immutable
 ObjectPinned,behavioral,structured_only,user,immutable

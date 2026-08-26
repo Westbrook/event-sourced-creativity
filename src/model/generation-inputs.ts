@@ -1,6 +1,7 @@
 import type { DocumentArtifact } from "./document-artifacts";
 import type { CreativeEvent, CreativeOutput } from "./events";
 import type { DocumentJob } from "./document-jobs";
+import { isSceneMedium } from "./scene-configuration.ts";
 
 export type GenerationInputInspection = {
   title: string;
@@ -18,8 +19,26 @@ const textOrNull=(value:unknown)=>typeof value==="string"&&value.trim()?value:nu
 const numberOrNull=(value:unknown)=>typeof value==="number"&&Number.isFinite(value)?value:null;
 
 const GENERATION_RECEIPT_SETTING_KEYS=["item_count","requested_slide_count","authored_slide_count","predicted_slide_count","batch_count","minimum_provider_call_count","planned_provider_call_count","max_repair_call_count","maximum_provider_call_count","reservation_microusd","audience","tone","production_mode","presentation_style","presentation_fidelity","presentation_brand","brand","brand_name","brand_style","typography","font_family"] as const;
+const SCENE_CONFIGURATION_FORMATS=new Set(["image","short_story","scene","slides","storyboard","video","audio"]);
 
-/** Preserve presentation settings without copying future private references into durable metadata. */
+/** Keep alternate-version intent inspectable without trusting references hidden in request metadata. */
+function safeSceneConfiguration(value:unknown){
+  const configuration=record(value);
+  if(!isSceneMedium(configuration.medium))return null;
+  const source=configuration.source;
+  if(source!=="manual"&&source!=="production-path")return null;
+  const requestedTarget=configuration.targetFormat??configuration.target_format??null;
+  if(requestedTarget!==null&&(typeof requestedTarget!=="string"||!SCENE_CONFIGURATION_FORMATS.has(requestedTarget)))return null;
+  const requestedDownstream=configuration.downstreamFormats??configuration.downstream_formats??[];
+  if(!Array.isArray(requestedDownstream))return null;
+  const downstreamFormats=[...new Set(requestedDownstream.filter((format):format is string=>typeof format==="string"&&SCENE_CONFIGURATION_FORMATS.has(format)))];
+  const alternateMedium=configuration.medium==="audio"?"visual":"audio";
+  const requestedAlternate=configuration.alternateMedium??configuration.alternate_medium;
+  if(requestedAlternate!==undefined&&requestedAlternate!==alternateMedium)return null;
+  return{medium:configuration.medium,source,targetFormat:requestedTarget,downstreamFormats,alternateMedium};
+}
+
+/** Preserve intentional production settings without copying future private references into durable metadata. */
 function generationReceiptSettings(value:unknown,fallback:Record<string,unknown>){
   const settings=record(value);const safe:Record<string,unknown>={};
   for(const key of GENERATION_RECEIPT_SETTING_KEYS){
@@ -29,6 +48,12 @@ function generationReceiptSettings(value:unknown,fallback:Record<string,unknown>
   const palette=record(settings.brand_palette??settings.palette);
   const safePalette=Object.fromEntries(Object.entries(palette).filter(([key,value])=>/^[a-z][a-z\d_-]*$/i.test(key)&&typeof value==="string"&&/^#[\da-f]{3,8}$/i.test(value)));
   if(Object.keys(safePalette).length)safe.brand_palette=safePalette;
+  const sceneConfiguration=safeSceneConfiguration(settings.scene_configuration??fallback.scene_configuration);
+  const sceneMedium=settings.scene_medium??fallback.scene_medium??sceneConfiguration?.medium;
+  if(isSceneMedium(sceneMedium)){
+    safe.scene_medium=sceneMedium;
+    if(sceneConfiguration?.medium===sceneMedium)safe.scene_configuration=sceneConfiguration;
+  }
   return safe;
 }
 

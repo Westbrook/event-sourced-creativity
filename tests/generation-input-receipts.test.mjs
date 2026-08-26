@@ -162,6 +162,56 @@ test("does not describe metadata as complete private inputs or expose restricted
   assert.match(inspection.receipt.retention_note,/actor-private frozen input is unavailable/i);
 });
 
+test("retains safe audio/visual scene variant settings without exposing private context lineage",()=>{
+  const configuration={
+    medium:"audio",
+    source:"production-path",
+    targetFormat:"audio",
+    downstreamFormats:["audio"],
+    alternateMedium:"visual",
+    input_ref:"NEVER_EXPOSE_PRIVATE_SCENE_INPUT",
+    document_snapshot:{facts:[{properties:{text:"NEVER_EXPOSE_PRIVATE_SCENE_CONTEXT"}}]},
+    context_continuity:{source_block_ids:["NEVER_EXPOSE_PRIVATE_SCENE_BLOCK"]},
+  };
+  const receipt=generationReceipt({
+    artifact_kind:"scene",
+    settings:{scene_medium:"audio",scene_configuration:configuration},
+  });
+  const queued=job({result:{artifactKind:"scene",generationReceipt:receipt}});
+  const inspection=documentGenerationInputInspection(queued,[],{});
+  const safe=inspection.receipt.generation_receipt;
+
+  assert.equal(safe.settings.scene_medium,"audio");
+  assert.deepEqual(safe.settings.scene_configuration,{
+    medium:"audio",
+    source:"production-path",
+    targetFormat:"audio",
+    downstreamFormats:["audio"],
+    alternateMedium:"visual",
+  });
+  assert.equal(safe.source_snapshot_sha256,snapshotHash);
+  assert.doesNotMatch(JSON.stringify(inspection.receipt),/NEVER_EXPOSE_PRIVATE_SCENE/);
+});
+
+test("rejects malformed or contradictory scene variant metadata while preserving valid request fallbacks",()=>{
+  const valid={medium:"visual",source:"manual",targetFormat:null,downstreamFormats:[],alternateMedium:"audio"};
+  const authorized=privateInput({artifact_kind:"scene",request:{...privateInput().request,scene_medium:"visual",scene_configuration:valid}});
+  const queued=job({result:{artifactKind:"scene",generationReceipt:generationReceipt({artifact_kind:"scene",settings:{}})}});
+  assert.deepEqual(documentGenerationInputInspection(queued,[],authorizedContent(authorized)).receipt.generation_receipt.settings.scene_configuration,valid);
+
+  for(const invalid of [
+    {...valid,alternateMedium:"visual"},
+    {...valid,source:"client-supplied-private-context"},
+    {...valid,targetFormat:"PRIVATE_UNSAFE_TARGET"},
+    {...valid,downstreamFormats:"PRIVATE_UNSAFE_DOWNSTREAM"},
+  ]){
+    const unsafe=job({result:{artifactKind:"scene",generationReceipt:generationReceipt({artifact_kind:"scene",settings:{scene_medium:"visual",scene_configuration:invalid}})}});
+    const safe=documentGenerationInputInspection(unsafe,[],{}).receipt.generation_receipt.settings;
+    assert.equal(safe.scene_medium,"visual");
+    assert.equal("scene_configuration" in safe,false);
+  }
+});
+
 test("rejects actor-private content referencing another job or document",()=>{
   for(const foreign of [
     privateInput({job_id:"job-other-creator"}),

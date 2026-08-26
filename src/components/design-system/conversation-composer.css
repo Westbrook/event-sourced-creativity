@@ -1,0 +1,67 @@
+forma-ui-conversation-composer {
+  display: block;
+  min-inline-size: 0;
+}
+
+.forma-conversation-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--forma-space-2, .5rem);
+  min-inline-size: 0;
+}
+
+.forma-conversation-input {
+  min-inline-size: 0;
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  max-block-size: 11rem;
+  padding: var(--forma-space-2, .5rem) var(--forma-space-3, .75rem);
+  resize: vertical;
+  border: 1px solid var(--forma-color-border-strong, currentColor);
+  border-radius: var(--forma-radius-medium, .625rem);
+  background: var(--forma-color-surface, transparent);
+  color: var(--forma-color-text, inherit);
+  font: inherit;
+  line-height: var(--forma-body-line-height, 1.5);
+}
+
+.forma-conversation-input:focus-visible,
+.forma-conversation-submit:focus-visible {
+  outline: var(--forma-focus-ring-width, .1875rem) solid var(--forma-focus-ring-color, currentColor);
+  outline-offset: .125rem;
+}
+
+.forma-conversation-submit {
+  display: inline-flex;
+  min-inline-size: var(--forma-control-min-size, 2.75rem);
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  align-items: center;
+  justify-content: center;
+  gap: var(--forma-space-2, .5rem);
+  white-space: nowrap;
+}
+
+.forma-conversation-submit:disabled {
+  cursor: not-allowed;
+}
+
+.forma-conversation-help {
+  margin-block-start: var(--forma-space-1, .25rem);
+  color: var(--forma-color-text-muted, inherit);
+  font-size: var(--forma-font-size-supporting, .875rem);
+}
+
+@media (forced-colors: active) {
+  .forma-conversation-input,
+  .forma-conversation-submit {
+    border: 1px solid CanvasText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forma-conversation-input,
+  .forma-conversation-submit {
+    animation: none;
+    transition: none;
+  }
+}

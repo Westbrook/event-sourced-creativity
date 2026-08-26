@@ -1240,6 +1240,94 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/context-intelligence.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "ContextIntelligence",
+          "tagName": "forma-context-intelligence",
+          "customElement": true,
+          "summary": "Context intelligence application interface.",
+          "description": "Approval-first, account-scoped context intelligence shared by document, library, and board blocks.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "block",
+              "type": {
+                "text": "CreativeBlock"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "compact",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "compact",
+              "description": "Whether the compact presentation is requested."
+            },
+            {
+              "kind": "field",
+              "name": "surface",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"document\"",
+              "attribute": "surface"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "compact",
+              "fieldName": "compact",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether the compact presentation is requested."
+            },
+            {
+              "name": "surface",
+              "fieldName": "surface",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"document\""
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-context-intelligence",
+          "declaration": {
+            "name": "ContextIntelligence",
+            "module": "src/components/context-intelligence.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "ContextIntelligence",
+          "declaration": {
+            "name": "ContextIntelligence",
+            "module": "src/components/context-intelligence.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/design-primitives.ts",
       "declarations": [
         {
@@ -2465,6 +2553,14 @@
             },
             {
               "kind": "field",
+              "name": "conversationScope",
+              "type": {
+                "text": "string"
+              },
+              "attribute": "conversationscope"
+            },
+            {
+              "kind": "field",
               "name": "guidanceOnly",
               "type": {
                 "text": "boolean"
@@ -2484,6 +2580,13 @@
               "name": "models",
               "type": {
                 "text": "AssistantDisplayedModel[]"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "modes",
+              "type": {
+                "text": "readonly AssistantInteractionMode[]"
               }
             },
             {
@@ -2528,6 +2631,29 @@
             },
             {
               "kind": "method",
+              "name": "resolveToolRequest",
+              "parameters": [
+                {
+                  "name": "accepted",
+                  "type": {
+                    "text": "boolean"
+                  }
+                },
+                {
+                  "name": "message",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
               "name": "restoreDraft",
               "parameters": [
                 {
@@ -2557,6 +2683,13 @@
               "fieldName": "canReconcile",
               "type": {
                 "text": "boolean"
+              }
+            },
+            {
+              "name": "conversationscope",
+              "fieldName": "conversationScope",
+              "type": {
+                "text": "string"
               }
             },
             {
@@ -2600,7 +2733,7 @@
             {
               "name": "forma-assistant-message",
               "type": {
-                "text": "CustomEvent<{ premiumApproval?: true | undefined; model?: \"gpt-5.6-luna\" | \"gpt-5.6-terra\" | \"gpt-5.6-sol\" | undefined; message: string; }>"
+                "text": "CustomEvent<{ message: string; mode: \"creative-chat\" | \"quick-edit\" | \"plan-document\" | \"plan-board\"; } | { premiumApproval?: true | undefined; model?: \"gpt-5.6-luna\" | \"gpt-5.6-terra\" | \"gpt-5.6-sol\" | undefined; message: string; }>"
               },
               "description": "Bubbles and crosses component boundaries."
             },
@@ -4595,6 +4728,393 @@
           "declaration": {
             "name": "FormaComponentCatalog",
             "module": "src/components/design-system/component-catalog.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/design-system/conversation-composer.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaUiConversationComposer",
+          "tagName": "forma-ui-conversation-composer",
+          "customElement": true,
+          "summary": "Form-participating input with native validation and accessible descriptions.",
+          "description": "Form-participating input with native validation and accessible descriptions.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "busy",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "busy",
+              "description": "Whether an action is currently in progress."
+            },
+            {
+              "kind": "field",
+              "name": "buttonClass",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "button-class"
+            },
+            {
+              "kind": "field",
+              "name": "compact",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "compact",
+              "description": "Whether the compact presentation is requested."
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "fieldId",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "field-id"
+            },
+            {
+              "kind": "method",
+              "name": "focusInput",
+              "parameters": [
+                {
+                  "name": "options",
+                  "type": {
+                    "text": "FocusOptions | undefined"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "field",
+              "name": "help",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "help",
+              "description": "Author-supplied, localized supporting instructions."
+            },
+            {
+              "kind": "field",
+              "name": "inputClass",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "input-class"
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "label",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "kind": "field",
+              "name": "maxLength",
+              "type": {
+                "text": "number"
+              },
+              "default": "1_200",
+              "attribute": "max-length",
+              "description": "Maximum permitted length of an authored input value."
+            },
+            {
+              "kind": "field",
+              "name": "placeholder",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "placeholder",
+              "description": "Author-supplied, localized input hint."
+            },
+            {
+              "kind": "field",
+              "name": "rows",
+              "type": {
+                "text": "number"
+              },
+              "default": "1",
+              "attribute": "rows",
+              "description": "Number of visible native textarea rows."
+            },
+            {
+              "kind": "field",
+              "name": "showSubmitLabel",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "show-submit-label"
+            },
+            {
+              "kind": "field",
+              "name": "submitDisabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "submit-disabled"
+            },
+            {
+              "kind": "field",
+              "name": "submitLabel",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "submit-label"
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "attribute": "value",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
+            }
+          ],
+          "attributes": [
+            {
+              "name": "busy",
+              "fieldName": "busy",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether an action is currently in progress."
+            },
+            {
+              "name": "button-class",
+              "fieldName": "buttonClass",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            },
+            {
+              "name": "compact",
+              "fieldName": "compact",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether the compact presentation is requested."
+            },
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "name": "field-id",
+              "fieldName": "fieldId",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            },
+            {
+              "name": "help",
+              "fieldName": "help",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized supporting instructions."
+            },
+            {
+              "name": "input-class",
+              "fieldName": "inputClass",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            },
+            {
+              "name": "label",
+              "fieldName": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "name": "max-length",
+              "fieldName": "maxLength",
+              "type": {
+                "text": "number"
+              },
+              "default": "1_200",
+              "description": "Maximum permitted length of an authored input value."
+            },
+            {
+              "name": "placeholder",
+              "fieldName": "placeholder",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Author-supplied, localized input hint."
+            },
+            {
+              "name": "rows",
+              "fieldName": "rows",
+              "type": {
+                "text": "number"
+              },
+              "default": "1",
+              "description": "Number of visible native textarea rows."
+            },
+            {
+              "name": "show-submit-label",
+              "fieldName": "showSubmitLabel",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false"
+            },
+            {
+              "name": "submit-disabled",
+              "fieldName": "submitDisabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false"
+            },
+            {
+              "name": "submit-label",
+              "fieldName": "submitLabel",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\""
+            },
+            {
+              "name": "value",
+              "fieldName": "value",
+              "type": {
+                "text": "string"
+              },
+              "default": "\"\"",
+              "description": "Locale-invariant machine value or author-entered form value; never derive action identity from translated labels."
+            }
+          ],
+          "events": [
+            {
+              "name": "forma-input",
+              "type": {
+                "text": "CustomEvent<{ value: string }>"
+              },
+              "description": "The input value changed. Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-submit",
+              "type": {
+                "text": "CustomEvent<{ value: string }>"
+              },
+              "description": "The input value was committed. Bubbles and crosses component boundaries."
+            }
+          ],
+          "cssProperties": [
+            {
+              "name": "--forma-color-border-strong",
+              "syntax": "<color>",
+              "description": "Accessible input boundary."
+            },
+            {
+              "name": "--forma-control-min-size",
+              "syntax": "<length>",
+              "description": "Minimum input target size."
+            },
+            {
+              "name": "--forma-focus-ring-color",
+              "syntax": "<color>",
+              "description": "Focus-ring color."
+            },
+            {
+              "name": "--forma-radius-medium",
+              "syntax": "<length>",
+              "description": "Control corner radius."
+            }
+          ],
+          "demos": [
+            {
+              "url": "/knowledge/design-system#forma-ui-conversation-composer"
+            }
+          ],
+          "x-forma": {
+            "category": "molecule",
+            "renderRoot": "light",
+            "stateful": false,
+            "i18n": {
+              "documentationIdPrefix": "component.forma-ui-conversation-composer",
+              "authorTextAttributes": [
+                "help",
+                "label",
+                "placeholder"
+              ],
+              "authorOwnedSlots": []
+            }
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-ui-conversation-composer",
+          "declaration": {
+            "name": "FormaUiConversationComposer",
+            "module": "src/components/design-system/conversation-composer.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaUiConversationComposer",
+          "declaration": {
+            "name": "FormaUiConversationComposer",
+            "module": "src/components/design-system/conversation-composer.ts"
           }
         }
       ]
@@ -9863,7 +10383,7 @@
                 {
                   "name": "options",
                   "type": {
-                    "text": "{ videoSeconds?: VideoDurationSeconds; }"
+                    "text": "{ videoSeconds?: VideoDurationSeconds; sceneMedium?: SceneMedium; }"
                   }
                 }
               ],
@@ -10461,6 +10981,15 @@
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
           },
+          "events": [
+            {
+              "name": "forma-assistant-tool-request",
+              "type": {
+                "text": "CustomEvent<AssistantToolRequest>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
           "x-forma": {
             "category": "application",
             "renderRoot": "light",
@@ -10589,7 +11118,7 @@
               "kind": "field",
               "name": "view",
               "type": {
-                "text": "\"components\" | \"patterns\" | \"guidance\""
+                "text": "\"guidance\" | \"components\" | \"patterns\""
               },
               "default": "\"components\"",
               "attribute": "view"
@@ -10600,7 +11129,7 @@
               "name": "view",
               "fieldName": "view",
               "type": {
-                "text": "\"components\" | \"patterns\" | \"guidance\""
+                "text": "\"guidance\" | \"components\" | \"patterns\""
               },
               "default": "\"components\""
             }

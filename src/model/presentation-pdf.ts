@@ -232,7 +232,6 @@ const slidePage=(item:DocumentArtifactDraftItem,presentation:SlidePresentation,i
     });
   }
   if(showFooterLabel&&presentation.footerLabel)ops.push(text(presentation.footerLabel,TEXT_LEFT,32,9,palette.muted,{bold:true,maxWidth:560,maxLines:1}));
-  if(slideVisualIsComplete(slide))ops.push(text(slide.visual.label,760,32,9,palette.muted,{bold:true,maxWidth:146,maxLines:1}));
   ops.push("Q");return ops.filter(Boolean).join("\n");
 };
 

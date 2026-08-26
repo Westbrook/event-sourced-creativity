@@ -206,7 +206,7 @@ export class PresentationSlide extends FormaPresentationalElement {
 
   #supplementalData(data: PresentationDatum[], label: string) {
     if (!data.length) return nothing;
-    return html`<dl class="presentation-slide__data-list" aria-label=${label}>
+    return html`<dl class="presentation-slide__data-list" aria-label=${label || nothing}>
       ${data.map((datum) => html`
         <dt class="presentation-slide__datum-label" dir="auto">${datum.label}</dt>
         <dd class="presentation-slide__datum-value" dir="auto">${datumDisplayValue(datum) || "—"}</dd>
@@ -219,7 +219,7 @@ export class PresentationSlide extends FormaPresentationalElement {
     const citation = quote.citation
       ? presentationAudienceCitations([{ label: quote.citation, anchor: "", excerpt: "" }])[0]?.label
       : undefined;
-    return html`<figure class="presentation-slide__quote-card" aria-label=${label}>
+    return html`<figure class="presentation-slide__quote-card" aria-label=${label || nothing}>
       <blockquote><p class="presentation-slide__quote-text" dir="auto">${quote.text}</p></blockquote>
       ${quote.speaker || role || citation ? html`
         <figcaption class="presentation-slide__quote-attribution">
@@ -233,7 +233,7 @@ export class PresentationSlide extends FormaPresentationalElement {
 
   #bars(visual: PresentationVisual) {
     const data = visual.data as PresentationDatum[];
-    return html`<figure class="presentation-visual-bars" aria-label=${visual.label}>
+    return html`<figure class="presentation-visual-bars">
       ${visual.label ? html`<figcaption class="presentation-slide__caption" dir="auto">${visual.label}</figcaption>` : nothing}
       ${data.map((datum) => {
         const value = datumDisplayValue(datum);
@@ -253,13 +253,14 @@ export class PresentationSlide extends FormaPresentationalElement {
 
   #comparison(visual: PresentationVisual) {
     const data = visual.data as PresentationDatum[];
+    const caption = visual.label || visual.value;
     const hasExactValues = data.some((datum) => {
       const exactValue = datumExactValue(datum);
       return exactValue && exactValue !== datumDisplayValue(datum);
     });
     return html`<div class="presentation-slide__matrix">
       <table class="presentation-slide__table">
-        <caption class="presentation-slide__caption" dir="auto">${visual.label || visual.value}</caption>
+        ${caption ? html`<caption class="presentation-slide__caption" dir="auto">${caption}</caption>` : nothing}
         <thead><tr>
           <th scope="col">${this.#audienceText("presentation.dimension", "Dimension")}</th>
           <th scope="col">${this.#audienceText("presentation.value", "Value")}</th>
@@ -282,7 +283,7 @@ export class PresentationSlide extends FormaPresentationalElement {
     const summary=visual.value&&visual.value!==visual.label?visual.value:duration;
     return html`<figure class="presentation-slide__timeline">
       ${visual.label ? html`<figcaption class="presentation-slide__caption" dir="auto">${visual.label}</figcaption>` : nothing}
-      <ol class="presentation-visual-timeline" aria-label=${visual.label}>
+      <ol class="presentation-visual-timeline">
         ${data.map((datum) => html`<li class="presentation-slide__timeline-item">
           <i aria-hidden="true"></i>
           <span><b dir="auto">${datum.label}</b><small dir="auto">${datumDisplayValue(datum)}</small></span>
@@ -338,7 +339,7 @@ export class PresentationSlide extends FormaPresentationalElement {
     // Preserve larger evidence sets as a complete, readable semantic table.
     if (data.length > 3) return this.#comparison(visual);
 
-    return html`<figure class="presentation-visual-fields" aria-label=${visual.label}>
+    return html`<figure class="presentation-visual-fields">
       ${visual.label ? html`<figcaption class="presentation-slide__caption" dir="auto">${visual.label}</figcaption>` : nothing}
       ${data.map((datum, index) => html`<i style=${`--slide-field:${index};--slide-field-size:${Math.round(34 + datum.weight * 24)}%;--slide-field-mix:${Math.round(28 + datum.weight * 38)}%`}>
         <span dir="auto">${datum.label}${datumDisplayValue(datum) ? html`<small> ${datumDisplayValue(datum)}</small>` : nothing}</span>
@@ -401,12 +402,11 @@ export class PresentationSlide extends FormaPresentationalElement {
           ${inlineQuote ? this.#quote(inlineQuote, this.#audienceText("presentation.stakeholderQuote", "Stakeholder quotation")) : nothing}
           ${evidenceRail ? nothing : this.#citations(audienceCitations)}
         </section>
-        ${hasVisual ? html`<aside aria-label=${slide.visual.label}>${this.#visual(slide)}</aside>` : nothing}
+        ${hasVisual ? html`<aside aria-label=${this.#audienceSystem("Slide evidence")}>${this.#visual(slide)}</aside>` : nothing}
       </div>
       ${evidenceRail ? this.#citations(audienceCitations) : nothing}
       <footer>
         ${showDeckLabel ? html`<span dir="auto">${presentation.footerLabel}</span>` : nothing}
-        ${hasVisual ? html`<span dir="auto">${slide.visual.label}</span>` : nothing}
       </footer>
     </article>`;
   }

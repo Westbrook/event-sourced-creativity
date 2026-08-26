@@ -8,6 +8,7 @@ import { componentCatalog, componentLevels, type ComponentCatalogEntry, type Com
 import "../design-primitives";
 import "./atoms";
 import "./choice-card";
+import "./conversation-composer";
 import "./forms";
 import "./language-picker";
 import "./navigation";
@@ -191,6 +192,7 @@ export class FormaComponentCatalog extends FormaPresentationalElement {
       case "forma-ui-skeleton": return html`<forma-ui-skeleton lines="2"></forma-ui-skeleton>`;
       case "forma-ui-link": return html`<forma-ui-link href="#forma-ui-link" .label=${this.i18n.t("pattern.openReference", "Open reference")}></forma-ui-link>`;
       case "forma-ui-choice-card": return html`<forma-ui-choice-card .label=${this.i18n.t("sample.creativeIdea", "Creative idea")} .detail=${this.i18n.t("sample.supportingContext", "Supporting context")} icon-name="spark" value="creative-idea"></forma-ui-choice-card>`;
+      case "forma-ui-conversation-composer": return html`<form novalidate @submit=${(event:SubmitEvent)=>{event.preventDefault();this.#demo(event);}}><forma-ui-conversation-composer .label=${this.i18n.t("assistant.messageLabel")} .placeholder=${this.i18n.t("assistant.placeholder")} .submitLabel=${this.i18n.t("assistant.send")} .value=${this.i18n.t("sample.keepObjectClear", "Keep the central object clear.")} .showSubmitLabel=${true}></forma-ui-conversation-composer></form>`;
       case "forma-ui-field": return html`<form novalidate @submit=${(event:SubmitEvent)=>event.preventDefault()}><forma-ui-field .label=${this.i18n.t("lab.direction", "Creative direction")} .value=${this.i18n.t("sample.quietOpening", "A quiet opening")} .help=${this.i18n.t("sample.describeOutcome", "Describe the outcome you want.")}></forma-ui-field></form>`;
       case "forma-ui-search": return html`<form novalidate @submit=${(event:SubmitEvent)=>event.preventDefault()}><forma-ui-search .label=${this.i18n.t("sample.searchWork", "Search finished work")} .placeholder=${this.i18n.t("sample.tryLandscape", "Try landscape")}></forma-ui-search></form>`;
       case "forma-ui-textarea": return html`<form novalidate @submit=${(event:SubmitEvent)=>event.preventDefault()}><forma-ui-textarea .label=${this.i18n.t("sample.supportingContext", "Supporting context")} rows="2" .value=${this.i18n.t("sample.keepObjectClear", "Keep the central object clear.")}></forma-ui-textarea></form>`;

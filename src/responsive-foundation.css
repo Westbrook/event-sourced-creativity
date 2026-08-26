@@ -1966,9 +1966,75 @@ forma-activity-issue-panel {
   display: none;
 }
 
+.chat-view-page {
+  --forma-chat-shell-offset: calc(var(--forma-topbar-height) + var(--forma-hit-target));
+  min-block-size: 0;
+  overflow-x: clip;
+}
+
+.chat-view-page > .chat-view-main {
+  display: grid;
+  block-size: calc(100dvb - var(--forma-chat-shell-offset));
+  max-block-size: calc(100dvb - var(--forma-chat-shell-offset));
+  min-block-size: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.chat-view-page .studio-subpage-body--chat,
+.chat-view-page .chat-workspace,
+.chat-view-page .chat-conversation {
+  min-inline-size: 0;
+  min-block-size: 0;
+  min-height: 0;
+}
+
+.chat-view-page .studio-subpage-body--chat {
+  block-size: 100%;
+  overflow: hidden;
+}
+
+.chat-view-page .chat-workspace {
+  block-size: 100%;
+  max-block-size: 100%;
+  overflow: hidden;
+}
+
+.chat-view-page .chat-thread {
+  min-block-size: 0;
+  overflow-y: auto;
+}
+
+.application-creative[data-nav-posture="compact"] .chat-view-page {
+  --forma-chat-shell-offset: calc(
+    var(--forma-topbar-height) + var(--forma-hit-target) + .5625rem
+    + max(var(--forma-bottom-nav-size), var(--forma-keyboard-offset))
+  );
+}
+
+@container chat (max-width: 50rem) {
+  .chat-view-page .studio-mode-nav > :is(.context-set-trigger, .document-focus-toggle) {
+    inline-size: var(--forma-hit-target);
+    min-inline-size: var(--forma-hit-target);
+    justify-content: center;
+    overflow: hidden;
+    padding-inline: 0;
+  }
+
+  .chat-view-page .studio-mode-action-label {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
 @container chat (max-width: 52.5rem) {
   .chat-workspace {
-    block-size: min(72dvb, calc(100dvb - var(--forma-workbench-chrome)));
+    block-size: 100%;
     min-block-size: 0;
     min-height: 0;
     grid-template-columns: minmax(0, 1fr);

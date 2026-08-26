@@ -111,6 +111,8 @@ export type DocumentArtifact = {
   documentId: string;
   kind: DocumentArtifactKind;
   title: string;
+  titleSource?: "generated" | "authored";
+  createdAt?: string;
   summary: string;
   contentRef: string | null;
   inputRef?: string | null;
@@ -158,14 +160,35 @@ const placeholderText = (value: unknown) => /^(?:point|item|bullet|label|value)(
 const COPY_STOP_WORDS = new Set(["a","an","the","and","or","but","of","to","in","on","at","for","with","by","from","as","is","are","was","were","be","been","being","this","that","these","those","it","its","then"]);
 const copyTokens = (value: unknown) => contentKey(value).split(" ").filter((token) => token && !COPY_STOP_WORDS.has(token));
 const isProseCopy = (value: unknown) => /[\p{L}]/u.test(text(value)) && !/^#[0-9a-f]{3,8}$/i.test(text(value));
+const leadingCopySentence = (value: unknown) => {
+  const match=/^(.+?)(?:[.!?;:]+(?:\s+|$)|\s+[—–]\s+)/u.exec(text(value));
+  if(!match)return null;
+  const sentence=contentKey(match[1]);
+  return sentence.length>=16&&copyTokens(sentence).length>=3?{sentence,remainder:text(value).slice(match[0].length).trim()}:null;
+};
+const repeatedCopyLeadIn = (left: unknown, right: unknown) => {
+  const first=leadingCopySentence(left),second=leadingCopySentence(right);
+  return Boolean(first&&second&&first.sentence===second.sentence||first&&first.sentence===contentKey(right)||second&&second.sentence===contentKey(left));
+};
 export const slideCopyIsNearDuplicate = (left: unknown, right: unknown) => {
   const leftKey=contentKey(left),rightKey=contentKey(right);if(!leftKey||!rightKey||!isProseCopy(left)||!isProseCopy(right))return false;if(leftKey===rightKey)return true;
+  if(repeatedCopyLeadIn(left,right))return true;
   const [shortKey,longKey]=leftKey.length<=rightKey.length?[leftKey,rightKey]:[rightKey,leftKey];if(shortKey.length>=20&&longKey.includes(shortKey))return true;
   const leftTokens=new Set(copyTokens(left)),rightTokens=new Set(copyTokens(right));const smaller=Math.min(leftTokens.size,rightTokens.size),larger=Math.max(leftTokens.size,rightTokens.size);if(smaller<4)return false;
   const shared=[...leftTokens].filter((token)=>rightTokens.has(token)).length;const containment=shared/smaller;const lengthRatio=smaller/Math.max(1,larger);return containment>=.86&&lengthRatio>=.6||smaller>=6&&containment>=.8;
 };
 const repeatedText = (value: unknown, used: string[]) => used.some((candidate)=>slideCopyIsNearDuplicate(value,candidate));
-const distinctText = (value: unknown, used: string[]) => { const result=text(value);if(!result||placeholderText(result)||repeatedText(result,used))return "";used.push(result);return result; };
+const distinctText = (value: unknown, used: string[]) => {
+  let result=text(value);if(!result||placeholderText(result))return "";
+  for(const candidate of used){
+    if(!slideCopyIsNearDuplicate(result,candidate))continue;
+    const leading=leadingCopySentence(result);
+    if(!leading?.remainder||!repeatedCopyLeadIn(result,candidate)||placeholderText(leading.remainder))return "";
+    result=leading.remainder;
+  }
+  if(repeatedText(result,used))return "";
+  used.push(result);return result;
+};
 const uniqueText = (value: unknown): string[] => Array.isArray(value) ? [...new Set(value.map(text).filter(Boolean))] : [];
 const color = (value: unknown, fallback: string) => /^#[0-9a-f]{6}$/i.test(text(value)) ? text(value).toLowerCase() : fallback;
 const slideLayout = (value: unknown, index = 0): SlideLayout => SLIDE_LAYOUTS.includes(value as SlideLayout) ? value as SlideLayout : index === 0 ? "cover" : "split";
@@ -238,7 +261,7 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
     }
   }
   const citations=(Array.isArray(input.citations)?input.citations:[]).flatMap((entry)=>{const citation=normalizeSlideCitation(entry);return citation?[citation]:[];}),section=text(input.section),requestedSourceOrder=Number(input.sourceOrder??input.source_order),sourceOrder=Number.isSafeInteger(requestedSourceOrder)&&requestedSourceOrder>0?requestedSourceOrder:undefined;
-  let kind=quote&&continuations.length?"quote" as SlideVisualKind:slideVisualKind(visual.kind,index);const originalKind=kind;const valueIsVisible=kind==="hero-type"||kind==="metric"||kind==="diagram"||kind==="quote";let visualValue=kind==="quote"&&quote?quote.text:valueIsVisible?distinctText(visual.value,used):placeholderText(visual.value)?"":text(visual.value);let visualLabel=distinctText(visual.label,used);const exactValue=text(visual.exactValue??visual.exact_value),displayValue=text(visual.displayValue??visual.display_value),unit=text(visual.unit),data:SlideVisualDatum[]=[];
+  let kind=quote&&continuations.length?"quote" as SlideVisualKind:slideVisualKind(visual.kind,index);const originalKind=kind;const valueIsVisible=kind==="hero-type"||kind==="metric"||kind==="diagram"||kind==="quote";let visualValue=kind==="quote"&&quote?quote.text:valueIsVisible?distinctText(visual.value,used):placeholderText(visual.value)?"":text(visual.value);const visualLabel=/^(?:visual emphasis|stakeholder perspective)$/iu.test(contentKey(visual.label))?"":distinctText(visual.label,used);const exactValue=text(visual.exactValue??visual.exact_value),displayValue=text(visual.displayValue??visual.display_value),unit=text(visual.unit),data:SlideVisualDatum[]=[];
   for(const datum of rawData){
     const entry=record(datum);let label=text(entry.label),datumValue=text(entry.value)||text(entry.displayValue??entry.display_value)||text(entry.exactValue??entry.exact_value);if(placeholderText(label))label="";if(placeholderText(datumValue))datumValue="";if(!label&&datumValue){label=datumValue;datumValue="";}if(!label)continue;
     const weight=Number(entry.weight),datumExact=text(entry.exactValue??entry.exact_value),datumDisplay=text(entry.displayValue??entry.display_value),sourceIds=[...new Set([...uniqueText(entry.sourceIds),...uniqueText(entry.source_ids)])];
@@ -277,7 +300,6 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
     if(candidate)retainedDatumSourceIds.push(...(candidate.sourceIds??[]));
     data.splice(0,data.length);
   }
-  if(!visualLabel&&visualValue)visualLabel=kind==="quote"?"Stakeholder perspective":"Visual emphasis";
   const sourceIds=[...new Set([...rawSourceReferences(input),...retainedDatumSourceIds,...(quote?.sourceId?[quote.sourceId]:[]),...citations.flatMap((citation)=>citation.sourceId?[citation.sourceId]:[]),...data.flatMap((datum)=>datum.sourceIds??[])])];
   return{
     layout,kicker,bullets,...(quote?{quote}:{}),...(citations.length?{citations}:{}),...(sourceIds.length?{sourceIds}:{}),...(section?{section}:{}),...(sourceOrder===undefined?{}:{sourceOrder}),
@@ -286,7 +308,7 @@ export function normalizeSlideVisual(value: unknown, item: { title?: unknown; bo
 }
 
 export function normalizeSlideItem(value: unknown,index=0):DocumentArtifactDraftItem {
-  const input=record(value);const title=text(input.title);const requestedBody=text(input.body);let body=requestedBody&&!placeholderText(requestedBody)&&!slideCopyIsNearDuplicate(title,requestedBody)?requestedBody:"";
+  const input=record(value);const title=text(input.title);const requestedBody=text(input.body);let body=distinctText(requestedBody,title?[title]:[]);
   const contextGroupIds=Array.isArray(input.context_group_ids)?[...new Set(input.context_group_ids.map(text).filter(Boolean))]:[];
   let slide=input.slide?normalizeSlideVisual(input.slide,{title,body},index):null;
   if(slide&&body&&body.length<=160&&slide.visual.kind==="hero-type"&&!slide.visual.value&&!slide.quote&&!slide.visual.unit&&!slide.visual.exactValue&&!slide.visual.displayValue){

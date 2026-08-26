@@ -38,6 +38,7 @@ const typePatterns: Array<[BlockKind, RegExp]> = [
   ["audience", /\b(?:audience|customer|buyer|viewer|users?|persona|client|public)\b|(?:جمهور|ユーザー|対象者)/iu],
   ["message", /\b(?:message|tagline|headline|narrative|story|copy)\b|(?:رسالة|メッセージ)/iu],
   ["emotion", /\b(?:emotion|mood|feel|tone|energy|humeur)\b|(?:émotion|شعور|感情|雰囲気)/iu],
+  ["action", /\b(?:action|interaction|interact|activity|behavior|behaviour|conversation|discuss|carry|ride)\b|(?:تفاعل|動作|行動)/iu],
   ["subject", /\b(?:subject|character|person|object|hero|portrait|sujet|personnage)\b|(?:شخصية|被写体|キャラクター)/iu],
   ["environment", /\b(?:environment|setting|location|world|place|interior|exterior|lieu)\b|(?:décor|بيئة|環境|場所)/iu],
   ["motion", /\b(?:motion|movement|move|animate|still|mouvement)\b|(?:حركة|動き)/iu],
@@ -64,11 +65,11 @@ export function inferAssistantBlockType(value: string): BlockKind {
 }
 
 function clauses(value: string) {
-  const typeWords = "audience|customer|buyer|message|tagline|headline|emotion|mood|subject|character|environment|setting|motion|movement|scale|composition|camera|lighting|style|material|palette|colou?r|typography|font|audio|music|soundtrack|format|brand|exclusion|accessibility|sketch|direction";
+  const typeWords = "audience|customer|buyer|message|tagline|headline|emotion|mood|subject|character|environment|setting|action|interaction|motion|movement|scale|composition|camera|lighting|style|material|palette|colou?r|typography|font|audio|music|soundtrack|format|brand|exclusion|accessibility|sketch|direction";
   const nextDecision = new RegExp(`\\s+(?:and|plus|et|و|と)\\s+(?=(?:(?:a|an|the|one|un|une|le|la)\\s+)?(?:[\\p{L}][\\p{L}\\p{M}\\p{N}_-]*\\s+){0,3}(?:${typeWords})\\b)`, "giu");
   return value.split(/\n+|;|(?:\s+[•·]\s+)|(?:[.!?]\s+(?=(?:add|create|include|set|use|change|update|edit|remove|delete|exclude|avoid|ajoute|ajouter|crée|créer|modifier|supprimer)\b))/iu)
     .flatMap((part) => part.split(nextDecision))
-    .flatMap((part) => part.split(/,\s*(?=(?:audience|message|emotion|mood|subject|environment|motion|scale|composition|camera|lighting|style|material|palette|typography|audio|format|brand|exclude|accessibility|sketch)\s*:)/iu))
+    .flatMap((part) => part.split(/,\s*(?=(?:audience|message|emotion|mood|subject|environment|action|motion|scale|composition|camera|lighting|style|material|palette|typography|audio|format|brand|exclude|accessibility|sketch)\s*:)/iu))
     .map((part) => part.replace(/^\s*(?:[-*]|\d+[.)])\s*/u, "").trim())
     .filter(Boolean)
     .slice(0, 12);

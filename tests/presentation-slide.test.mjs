@@ -177,6 +177,61 @@ test("real pitch citations never print Narrative brief, structural slide metadat
   assert.match(markup,/class="presentation-visual-type"/);
 });
 
+test("each audience-facing visual label is rendered and announced only once",()=>{
+  const cases=[
+    {kind:"hero-type",layout:"statement",label:"The invitation",value:"One meaningful audience promise",data:[]},
+    {kind:"bars",layout:"bars",label:"Confidence breakdown",value:"",data:[{label:"Confidence",value:"82%",weight:.82},{label:"Clarity",value:"91%",weight:.91}]},
+    {kind:"roadmap",layout:"roadmap",label:"Forma output families",value:"Intentional adaptation",data:[{label:"Founder",value:"Investor deck",weight:1},{label:"Educator",value:"Written lesson",weight:1}]},
+    {kind:"timeline",layout:"timeline",label:"Connected work, deliberately refreshed",value:"Visible review",data:[{label:"Direction",value:"Approved",weight:1},{label:"Delivery",value:"Scheduled",weight:1}]},
+    {kind:"comparison",layout:"comparison",label:"Practices people can inspect",value:"Human review remains present",data:[{label:"Review",value:"Independent",weight:1},{label:"Approval",value:"Explicit",weight:1}]},
+    {kind:"architecture",layout:"architecture",label:"A path for the moment",value:"One source",data:[{label:"Founder",value:"Pitch",weight:1},{label:"Educator",value:"Lesson",weight:1}]},
+    {kind:"color-field",layout:"columns",label:"One adaptable creative world",value:"",data:[{label:"Narrative",value:"Available",weight:1},{label:"Visual",value:"Ready",weight:1}]},
+  ];
+
+  for(const{kind,layout,label,value,data}of cases){
+    const markup=renderSlide({layout,kicker:"Distinct authored context",bullets:[],visual:{kind,label,value,data}});
+    assert.equal(markup.split(label).length-1,1,`${kind} should not duplicate its visible caption in the footer or accessible names`);
+    assert.match(markup,/<aside aria-label=Slide evidence>/,"visuals retain a distinct accessible landmark without repeating their captions");
+  }
+});
+
+test("the real pitch slide seven remains a dense, complete semantic comparison slide",()=>{
+  const rows=[
+    ["Founder","investor deck; thoughtful follow-up; product teaser"],
+    ["Product team","sales presentation; campaign storyboard; launch video"],
+    ["Educator","written lesson; visual explanation; audio-friendly companion"],
+  ];
+  const label="One source, tailored expressions";
+  const markup=renderSlide({
+    layout:"comparison",
+    kicker:"CONCRETE USE CASES",
+    bullets:[],
+    citations:[{label:"Project message",anchor:"Slide 7",excerpt:"Private authored use-case instructions remain inspectable backstage."}],
+    visual:{kind:"comparison",label,value:"Three adaptable stories",data:rows.map(([rowLabel,rowValue])=>({label:rowLabel,value:rowValue,weight:1}))},
+  },{item:{title:"Three moments. One adaptable story.",body:""},index:6,total:9});
+
+  assert.match(markup,/presentation-slide--density-dense/);
+  assert.match(markup,/<table class="presentation-slide__table">/);
+  assert.equal((markup.match(/<th scope="row"/g)??[]).length,rows.length);
+  assert.equal(markup.split(label).length-1,1,"the table caption is not repeated in its slide footer or accessible names");
+  for(const[rowLabel,rowValue]of rows)assert.ok(markup.includes(rowLabel)&&markup.includes(rowValue),`the complete ${rowLabel} use case remains visible`);
+  assert.ok(!markup.includes("Private authored use-case instructions"));
+});
+
+test("missing visual labels do not create blank captions or empty accessible names",()=>{
+  const markup=renderSlide({
+    layout:"comparison",
+    kicker:"Authored evidence",
+    bullets:[],
+    visual:{kind:"comparison",label:"",value:"",data:[{label:"Founder",value:"Investor deck",weight:1},{label:"Educator",value:"Written lesson",weight:1}]},
+  });
+
+  assert.doesNotMatch(markup,/<caption[^>]*>\s*<\/caption>/);
+  assert.doesNotMatch(markup,/aria-label=(?:""|\s|undefined)/);
+  assert.ok(markup.includes("Founder"));
+  assert.ok(markup.includes("Investor deck"));
+});
+
 test("feedback matrix preserves all delivery rows and bullets without producer directions",()=>{
   const rows=[
     ["Exact promise","Partially delivered"],

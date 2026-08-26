@@ -12,6 +12,7 @@ import "./prompt-fan-visual";
 import "./prompt-fan-review";
 import "./document-artifacts";
 import "./design-system/choice-card";
+import "./design-system/conversation-composer";
 
 type ChatLine={id:string;role:"user"|"assistant";text:string;sequence:number};
 const CHAT_CONTEXT_STARTERS: readonly BlockKind[] = ["direction", "subject", "style", "exclusion"];
@@ -23,18 +24,18 @@ export class FormaChatStudio extends FormaElement {
   #showResult=false;
 
   #lines(documentId:string){
-    const content=this.store.content.get();const lines:ChatLine[]=[];
+    const content=this.store.content.get();const actorUserId=this.store.session.get()?.user.userId;const lines=new Map<string,ChatLine>();
     for(const event of this.store.events.get()){
       if(String(event.payload.document_id??"")!==documentId)continue;
       const isUser=event.type==="ChatMessageSent";const isAssistant=event.type==="AssistantReasoned"&&event.payload.operation==="creative-chat";if(!isUser&&!isAssistant)continue;
-      const text=String(content[String(event.payload.content_ref??"")]??"").trim();if(text)lines.push({id:event.eventId,role:isUser?"user":"assistant",text,sequence:event.sequence});
+      const eventActor=String(event.payload.actor_user_id??"");if(eventActor&&actorUserId&&eventActor!==actorUserId)continue;
+      const text=String(content[String(event.payload.content_ref??"")]??"").trim();if(!text)continue;
+      const role=isUser?"user":"assistant";const turnId=String(event.payload.turn_id??event.eventId);const key=`${turnId}:${role}`;const previous=lines.get(key);lines.set(key,{id:event.eventId,role,text,sequence:previous?.sequence??event.sequence});
     }
-    return lines;
+    return [...lines.values()].sort((left,right)=>left.sequence-right.sequence);
   }
 
   async #send(event:SubmitEvent){event.preventDefault();const message=this.#draft.trim();if(!message||this.#sending||this.store.busy.get()||this.store.documentJobActive("chat"))return;this.#sending=true;this.requestUpdate();try{const accepted=await this.store.chat(message,this.#livePreview);if(accepted){this.#draft="";await this.updateComplete;this.querySelector(".chat-thread-end")?.scrollIntoView({behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"end"});}else this.querySelector<HTMLTextAreaElement>(".chat-composer textarea")?.focus({preventScroll:true});}finally{this.#sending=false;this.requestUpdate();}}
-
-  #keydown(event:KeyboardEvent){if(event.key==="Enter"&&!event.shiftKey&&!event.isComposing&&!event.metaKey&&!event.ctrlKey&&!event.altKey){event.preventDefault();const submitter=this.querySelector<HTMLButtonElement>('.chat-composer button[type="submit"]');if(submitter&&!submitter.disabled)submitter.form?.requestSubmit(submitter);}}
 
   #prepareContext(type: BlockKind) {
     const definition = blockTypeDefinition(type);
@@ -58,10 +59,13 @@ export class FormaChatStudio extends FormaElement {
         <span class="chat-thread-end" aria-hidden="true"></span>
       </div>
       ${canGenerate?html`<form class="chat-composer" @submit=${this.#send}>
-        <label for="creative-chat-message" class="sr-only">Message Forma</label>
-        <textarea id="creative-chat-message" rows="3" maxlength="4000" placeholder="Describe what to create or change…" .value=${this.#draft} @input=${(event:InputEvent)=>{this.#draft=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}} @keydown=${this.#keydown}></textarea>
+        <forma-ui-conversation-composer .label=${this.i18n.t("assistant.messageLabel")} .fieldId=${"creative-chat-message"}
+          .placeholder=${this.i18n.t("assistant.mode.creativeChatPlaceholder")} .submitLabel=${this.i18n.t("assistant.send")}
+          .value=${this.#draft} .rows=${3} .maxLength=${4_000} .showSubmitLabel=${true}
+          .busy=${this.#sending||Boolean(busy)||chatActive}
+          @forma-input=${(event:CustomEvent<{value:string}>)=>{this.#draft=event.detail.value;this.requestUpdate();}}></forma-ui-conversation-composer>
         <p class="chat-composer-help">Shift + Enter adds a line. Your message still updates the creative plan when previewing is paused.</p>
-        <div><label class="chat-live-preview"><input type="checkbox" .checked=${this.#livePreview} @change=${(event:Event)=>{this.#livePreview=(event.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>Live preview</b><small>${this.#livePreview?this.i18n.system("Make a fast image after useful visual changes."):this.i18n.system("Keep chatting without generating an image.")}</small></span></label><button type="submit" class="button primary" ?disabled=${!this.#draft.trim()||this.#sending||Boolean(busy)||chatActive}>${this.#sending||chatActive?this.i18n.system("Forma is thinking safely…"):html`Send ${icon("arrow")}`}</button></div>
+        <div><label class="chat-live-preview"><input type="checkbox" .checked=${this.#livePreview} @change=${(event:Event)=>{this.#livePreview=(event.target as HTMLInputElement).checked;this.requestUpdate();}}><span><b>Live preview</b><small>${this.#livePreview?this.i18n.system("Make a fast image after useful visual changes."):this.i18n.system("Keep chatting without generating an image.")}</small></span></label></div>
       </form>`:html`<p role="note">${this.i18n.t("workspace.admin.readOnlyGeneration","Your project role allows reviewing outputs but not creating them.")}</p>`}
     </section>`;
     return html`<section class="workspace-page studio-subpage chat-view-page">

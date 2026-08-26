@@ -49,14 +49,15 @@ test("every privileged page gets an independent accessible platform host with no
   assert.doesNotMatch(host, /state\/store|FormaElement|forma-creative-assistant|\/api\/events|\/api\/document-jobs/u);
   assert.doesNotMatch(authorization, /foldEvents|readProjectRequestContext|requestAssistantProvider|OPENAI_API_KEY|\/api\/document-jobs/u);
   assert.match(panel, /proposal\.summaryKey \? this\.i18n\.t\(proposal\.summaryKey\)/u);
-  assert.match(panel, /this\.guidanceOnly \? html`<p[^`]*assistant\.guidanceOnly/u);
+  assert.match(panel, /this\.guidanceOnly(?: && this\.#activeMode === "guidance")? \? html`<p[^`]*assistant\.guidanceOnly/u);
 });
 
 test("the visible assistant exposes governed model choice, explicit premium approval, task progress, and safe recovery", async () => {
-  const [panel, host, policy] = await Promise.all([
+  const [panel, host, policy, composer] = await Promise.all([
     read("src/components/design-system/assistant-panel.ts"),
     read("src/components/forma-creative-assistant.ts"),
     read("worker/pilot-policy.ts"),
+    read("src/components/design-system/conversation-composer.ts"),
   ]);
   assert.match(panel, /class="forma-assistant-model"/u);
   assert.match(panel, /assistant\.model\.automatic/u);
@@ -64,7 +65,8 @@ test("the visible assistant exposes governed model choice, explicit premium appr
   assert.match(panel, /type="checkbox"/u);
   assert.match(panel, /premiumApproval:\s*true/u);
   assert.match(panel, /#premiumApproved\s*=\s*false/u);
-  assert.match(panel, /\?disabled=\$\{Boolean\(selectedModel\?\.premiumApprovalRequired && !this\.#premiumApproved\)\}/u);
+  assert.match(panel, /\.submitDisabled=\$\{Boolean\(selectedModel\?\.premiumApprovalRequired && !this\.#premiumApproved\)\}/u);
+  assert.match(composer, /\?disabled=\$\{this\.disabled \|\| this\.submitDisabled \|\| this\.busy \|\| !this\.value\.trim\(\)\}/u);
   assert.match(panel, /class="forma-assistant-task"/u);
   assert.match(panel, /assistant\.task\.estimatedCost/u);
   assert.match(panel, /assistant\.task\.cancel/u);
@@ -99,13 +101,15 @@ test("the assistant keeps all four locales and exact interpolation placeholders 
 });
 
 test("composer remains enabled for overlapping work, respects IME, and restores keyboard focus", async () => {
-  const [panel, host, styles] = await Promise.all([
+  const [panel, host, styles, composer] = await Promise.all([
     read("src/components/design-system/assistant-panel.ts"),
     read("src/components/forma-creative-assistant.ts"),
     read("src/components/design-system/assistant-panel.css"),
+    read("src/components/design-system/conversation-composer.ts"),
   ]);
-  assert.match(panel, /event\.isComposing/u);
-  assert.match(panel, /\.form\?\.requestSubmit\(\)/u);
+  assert.match(composer, /event\.isComposing/u);
+  assert.match(composer, /submitter\.form\.requestSubmit\(submitter\)/u);
+  assert.match(panel, /<forma-ui-conversation-composer/u);
   assert.match(panel, /this\.querySelector<HTMLButtonElement>\("\.forma-assistant-launcher"\)\?\.focus\(\)/u);
   assert.match(host, /#pending = new Set/u);
   assert.doesNotMatch(panel, /disabled=\$\{this\.pending/u);

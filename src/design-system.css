@@ -488,7 +488,7 @@ html[data-document-focus] .impersonation-banner {
 
 .workspace-page,
 .library-page {
-  grid-template-columns: 264px minmax(0, 1fr);
+  grid-template-columns: 15rem minmax(0, 1fr);
   background: var(--paper);
 }
 
@@ -499,21 +499,53 @@ forma-project-rail {
 
 .project-rail {
   top: 64px;
-  width: 264px;
+  width: 15rem;
   height: calc(100dvh - 64px);
   background: transparent;
 }
 
+.composer-dock { left: 15rem; }
+
+:root[dir="rtl"]:not([data-document-focus]) .application-creative:not([data-nav-posture="compact"]) .workspace-page:has(> forma-project-rail > .project-rail.expanded) > .composer-dock {
+  inset-inline-start: 15rem;
+  inset-inline-end: 0;
+}
+
 .rail-toolbar {
   height: 52px;
-  padding: .55rem .75rem;
+  padding: .4rem .625rem;
   border-bottom: 1px solid var(--line);
 }
 
 .rail-toolbar-context {
+  min-width: 0;
+  flex: 1;
   font: 600 var(--type-caption) var(--sans);
   letter-spacing: 0;
   text-transform: none;
+}
+
+.rail-project-switch {
+  display: flex;
+  min-width: 0;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: .55rem;
+  color: var(--ink);
+}
+
+.rail-toolbar-monogram {
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: 0 0 1.75rem;
+  font-size: var(--type-caption);
+}
+
+.rail-toolbar-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rail-collapse-toggle {
@@ -526,10 +558,18 @@ forma-project-rail {
 
 .rail-collapse-toggle:hover { background: var(--panel); }
 
-.rail-content { padding: 1.25rem 1rem 5rem; }
+.project-rail.expanded .rail-collapse-toggle b {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.rail-content { padding: .75rem .75rem 4rem; }
 
 .rail-project-card {
-  padding: 0 0 1.25rem;
+  padding: .15rem 0 .9rem;
   background: transparent;
   border: 0;
   border-bottom: 1px solid var(--line);
@@ -537,7 +577,64 @@ forma-project-rail {
   box-shadow: none;
 }
 
-.rail-project-heading { grid-template-columns: 2.25rem minmax(0, 1fr) auto; }
+.rail-project-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: .35rem;
+}
+
+.rail-project-overview {
+  display: flex;
+  min-width: 0;
+  min-height: 2.75rem;
+  flex: 1;
+  align-items: center;
+  gap: .5rem;
+  color: var(--ink);
+  font-size: var(--type-small);
+  font-weight: 600;
+}
+
+.rail-project-overview > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-project-overview[aria-current="page"] { color: var(--orange); }
+
+.rail-project-edit {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  flex: 0 0 auto;
+}
+
+.rail-project-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .25rem .45rem;
+  margin: .1rem 0 0;
+  color: var(--muted);
+  font-size: var(--type-caption);
+}
+
+.rail-primary-action {
+  width: 100%;
+  min-height: 2.75rem;
+  justify-content: center;
+  gap: .45rem;
+  margin-top: .85rem;
+  white-space: nowrap;
+}
+
+.rail-primary-action > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .rail-project-heading .eyebrow { display: none; }
 .rail-project-heading h2 { font-size: var(--type-body); letter-spacing: -.025em; }
 
@@ -573,6 +670,64 @@ forma-project-rail {
 .rail-links {
   border-top-color: var(--line);
 }
+
+.rail-destinations { margin-top: .85rem; }
+.rail-document-links { gap: .1rem; }
+
+.project-rail.expanded .rail-links {
+  display: grid;
+  overflow-x: visible;
+}
+
+.project-rail.expanded .rail-label { display: block; }
+.project-rail.expanded .rail-links > a { min-width: 0; }
+
+.rail-section-heading {
+  display: flex;
+  min-height: 1.75rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+}
+
+.rail-section-heading .rail-label { padding-bottom: 0; }
+
+.rail-links a.rail-section-more {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  justify-content: center;
+  padding: .1rem .4rem;
+  color: var(--muted);
+  font-size: var(--type-caption);
+}
+
+.rail-links.rail-document-links > a,
+.rail-links.rail-library-links > a { min-height: 2.75rem; }
+
+.rail-document-links > a > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: .35rem;
+}
+
+.rail-document-links > a > span > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-document-handoff {
+  padding: 0 .25rem .25rem;
+  color: var(--muted);
+  font-size: var(--type-caption);
+}
+
+.rail-collections--empty { margin-top: .8rem; }
+.rail-collections--empty .tree-heading { padding-block: .55rem .15rem; }
+.rail-collections--empty .tree-heading small,
+.rail-collections--empty .tree-empty { display: none; }
 
 .tree-heading,
 .rail-label {

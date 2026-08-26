@@ -17,6 +17,8 @@ const INTERNAL_CREATIVE_KEYS = new Set([
   "referenceId",
   "source_output_id",
   "sourceOutputId",
+  "source_block_id",
+  "sourceBlockId",
   "source_output_content_ref",
   "sourceOutputContentRef",
   "source_output_prompt_ref",
@@ -241,7 +243,9 @@ export function providerFacingCreativeContext(value: unknown): unknown {
       .filter(([key]) => !INTERNAL_CREATIVE_KEYS.has(key))
       .map(([key, item]) => [
         key,
-        (key === "facts" || key === "blocks") && Array.isArray(item)
+        key === "block_references" || key === "blockReferences"
+          ? Array.isArray(item)?item.filter(isRecord).map((reference)=>({handle:String(reference.handle??"").replace(/^@+/u,""),role:String(reference.role??"")})).filter((reference)=>reference.handle&&reference.role):[]
+          : (key === "facts" || key === "blocks") && Array.isArray(item)
           ? item.filter(promptFactIsActive).map(providerFacingCreativeContext)
           : providerFacingCreativeContext(item),
       ]),

@@ -26,6 +26,7 @@ import "./design-system/choice-card";
 import "./prompt-fan-visual";
 import "./prompt-fan-review";
 import "./output-input-editor";
+import "./context-intelligence";
 
 type EditorSection = {
   id: "brief" | "picture" | "look" | "delivery" | "references";
@@ -37,7 +38,7 @@ type EditorSection = {
 
 const EDITOR_SECTIONS: readonly EditorSection[] = [
   { id: "brief", label: "The brief", description: "What this needs to achieve and who it is for", types: ["direction", "audience", "message", "emotion"], starter: "direction" },
-  { id: "picture", label: "The picture", description: "What appears, where it happens, and how it moves", types: ["subject", "environment", "motion", "scale"], starter: "subject" },
+  { id: "picture", label: "The picture", description: "What appears, where it happens, and how it moves", types: ["subject", "environment", "action", "motion", "scale"], starter: "subject" },
   { id: "look", label: "The look", description: "How the work should be framed, lit, and styled", types: ["composition", "camera", "lighting", "style", "material", "palette", "typography", "audio"], starter: "style" },
   { id: "delivery", label: "The guardrails", description: "Where it goes and what it must protect or avoid", types: ["format", "brand", "exclusion", "accessibility"], starter: "format" },
   { id: "references", label: "Visual references", description: "Images that make the direction easier to see", types: ["reference"], starter: "reference" },
@@ -50,6 +51,7 @@ const FRIENDLY_LABELS: Record<BlockKind, string> = {
   emotion: "Feeling",
   subject: "Subject",
   environment: "Setting",
+  action: "Action",
   motion: "Movement",
   scale: "Scale",
   composition: "Framing",
@@ -455,7 +457,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
                 <button type="button" @click=${() => this.#duplicate(selected)}>Make a copy</button>
                 <button type="button" class="danger" @click=${() => this.#remove(selected)}>Remove</button>
               </div>
-            </form><forma-spatial-scope-editor .block=${selected} surface="editor"></forma-spatial-scope-editor>` : html`<div class="creative-inspector-empty"><span>${icon("spark")}</span><h2>Start anywhere</h2><p>Add a goal, subject, look, or reference. Select it on the page whenever you want to refine it.</p><button class="button primary" @click=${() => this.#openCreate()}>Add context</button></div>`}
+            </form><forma-context-intelligence .block=${selected} surface="editor"></forma-context-intelligence><forma-spatial-scope-editor .block=${selected} surface="editor"></forma-spatial-scope-editor>` : html`<div class="creative-inspector-empty"><span>${icon("spark")}</span><h2>Start anywhere</h2><p>Add a goal, subject, look, or reference. Select it on the page whenever you want to refine it.</p><button class="button primary" @click=${() => this.#openCreate()}>Add context</button></div>`}
           </aside>
         </div>
       </section>

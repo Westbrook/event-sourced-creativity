@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeAssistantActions, assistantActionEvents, ASSISTANT_SUPPORTED_BLOCK_TYPES } from "../src/model/assistant-proposals.ts";
+import { BLOCK_TYPES } from "../src/model/block-types.ts";
 
 const context = {
   scope: { projectId: "project-a", documentId: "document-a" },
@@ -16,7 +17,7 @@ test("decomposes user intent into the smallest separately approvable typed decis
   const actions = normalizeAssistantActions("Add audience: urban gardeners; Add palette: forest green; Add audio: warm analog score; Never include fire", context);
   assert.deepEqual(actions.map((action) => action.blockType), ["audience", "palette", "audio", "exclusion"]);
   assert.equal(actions[3].intent, "prohibit");
-  assert.equal(ASSISTANT_SUPPORTED_BLOCK_TYPES.length, 22);
+  assert.equal(ASSISTANT_SUPPORTED_BLOCK_TYPES.length, BLOCK_TYPES.length);
 });
 
 test("natural conversational conjunctions and separate sentences produce independently approvable decisions", () => {

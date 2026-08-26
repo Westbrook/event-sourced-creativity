@@ -51,6 +51,25 @@ export type ContextCompositionRelation = {
   properties:Record<string,unknown>;
 };
 
+/** Stable participant identities stay private; handles make relationships readable and reusable. */
+export const ACTION_REFERENCE_ROLES = ["actor", "target", "recipient", "instrument", "location", "counterparty"] as const;
+export type ActionReferenceRole = typeof ACTION_REFERENCE_ROLES[number];
+export type ActionBlockReference = { block_id:string; handle:string; role:ActionReferenceRole };
+export const ACTION_PARTICIPANT_RELATION = "action_participant";
+
+export function normalizeActionBlockReferences(value:unknown):ActionBlockReference[]{
+  if(!Array.isArray(value))return[];
+  const seen=new Set<string>();
+  return value.flatMap((candidate)=>{
+    if(!candidate||typeof candidate!=="object"||Array.isArray(candidate))return[];
+    const item=candidate as Record<string,unknown>,blockId=String(item.block_id??"").trim(),handle=String(item.handle??"").trim().replace(/^@+/u,"");
+    const participantRole=item.role as ActionReferenceRole;
+    if(!blockId||!handle||!ACTION_REFERENCE_ROLES.includes(participantRole))return[];
+    const key=`${blockId}\u0000${participantRole}`;if(seen.has(key))return[];seen.add(key);
+    return[{block_id:blockId,handle,role:participantRole}];
+  });
+}
+
 export type ContextCompositionIssue = {index:number;code:string;message:string};
 
 export const COMBINED_CONTEXT_ROLE_DEFINITIONS: ReadonlyArray<{id:CombinedContextRole;label:string;description:string}> = [
@@ -74,7 +93,7 @@ export const COMBINED_CONTEXT_APPLICATION_DEFINITIONS: ReadonlyArray<{id:Combine
 ];
 
 export function combinedContextRoleForBlockType(type:string):CombinedContextRole{
-  if(type==="subject")return"character";if(type==="environment"||type==="lighting")return"location";if(type==="motion"||type==="camera")return"sequence";if(type==="audience"||type==="message"||type==="direction")return"message";if(type==="style"||type==="palette"||type==="material"||type==="typography"||type==="brand")return"visual_system";return"custom";
+  if(type==="subject")return"character";if(type==="environment"||type==="lighting")return"location";if(type==="action")return"scene";if(type==="motion"||type==="camera")return"sequence";if(type==="audience"||type==="message"||type==="direction")return"message";if(type==="style"||type==="palette"||type==="material"||type==="typography"||type==="brand")return"visual_system";return"custom";
 }
 
 const record=(value:unknown)=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};

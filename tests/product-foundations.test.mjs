@@ -287,7 +287,9 @@ test("creation, sharing, project editing, and image inspection remain complete a
   assert.match(workspace,/retrieveFewShotExemplars\([^\n]*projectId: this\.store\.projection\.get\(\)\.projectId/);
   assert.doesNotMatch(workspace,/Proposed events · inert until accepted|Expected sequence \$\{this\.store\.head\.get\(\)\}/);
   assert.match(rail,/documentViewFromRoute\(route\)==="document"/);
-  assert.match(rail,/Your work is saved/);
+  assert.match(rail,/offline\|\|synchronizing/);
+  assert.match(rail,/this\.store\.openDocument\(documentId, destination, "project-rail"\)/);
+  assert.doesNotMatch(rail,/Your work is saved|No auto-filing/);
   assert.doesNotMatch(image,/generation event #|:active\.id\}<\/h2>/);
   assert.doesNotMatch(canvas,/generation event #/);
   assert.match(library,/exportProjectArchive\(events,projection\.projectId\)/);

@@ -54,7 +54,7 @@ const baseTypes: Record<ScenarioKey, Array<[string, string]>> = {
   "document-artifacts": [
     ["user","ProjectCreated"],["user","DocumentCreated"],["user","EmptyCanvasChosen"],["user","DocumentProductionWorkflowConfigured"],
     ...DOCUMENT_ARTIFACT_KINDS.flatMap(()=>[["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderCompleted"],["user","DocumentArtifactViewed"],["user","BlockCreated"]] as Array<[string,string]>),
-    ["user","DocumentArtifactEdited"],["user","ArtifactReviewRequested"],["user","ArtifactApproved"],["user","ArtifactChangesRequested"],
+    ["user","OutputRenamed"],["user","DocumentArtifactEdited"],["user","ArtifactReviewRequested"],["user","ArtifactApproved"],["user","ArtifactChangesRequested"],
     ["user","DocumentArtifactExported"],["user","DocumentRenderRequested"],["worker:renderer","DocumentRenderFailed"],
   ],
   "output-workbench": [
@@ -207,6 +207,7 @@ const EVENT_STORIES: Record<string,ReplayEventStory> = {
   DocumentRenderRequested:{action:"The user chose a new deliverable form for the current document and confirmed paid media work when required.",value:"The request pins the source document state, intended format, options, and originating surface before a planner or media provider begins."},
   DocumentRenderCompleted:{action:"The renderer completed a document-derived story, scene, slide deck, storyboard, or video and attached it to the source document.",value:"Every document view and project-level surface can find the same saved result, while provider identity, timings, item receipts, and private content remain inspectable."},
   DocumentProductionWorkflowConfigured:{action:"The user configured an optional document-owned production path with explicit source checkpoints and approval gates.",value:"Each useful intermediate result can inform one final deliverable without copying documents, mutating authored decisions, or silently spending production budget."},
+  OutputRenamed:{action:"The creator gave an existing generated result a more meaningful personal name.",value:"Its durable output identity, production-path references, retained content, review approval, and generation history remain unchanged while every authorized surface reflects the chosen name."},
   DocumentArtifactEdited:{action:"An authorized contributor corrected the finished deliverable without paying for another generation.",value:"The actual retained work changes atomically with an attributable, metadata-only audit receipt, and any earlier approval immediately requires a fresh review."},
   ArtifactReviewRequested:{action:"A contributor submitted a finished deliverable for an explicitly recorded review.",value:"The team can distinguish work that is awaiting approval from a draft without exposing the deliverable body in its audit history."},
   ArtifactApproved:{action:"An authorized reviewer approved the exact recorded versions of the deliverable's source context.",value:"Approval is attributable, independently permissioned, and becomes invalid when an applicable source decision changes."},
@@ -366,6 +367,7 @@ const EVENT_TRIGGERS: Record<string,string> = {
   DocumentRenderRequested:"This happens when the user selects short story, scene, slides, storyboard, or video from a document or Canvas render menu; storyboard and video additionally require an explicit paid-work confirmation.",
   DocumentRenderCompleted:"This happens after the structured planner succeeds and, when applicable, every required image frame or provider video has been saved to private media storage.",
   DocumentProductionWorkflowConfigured:"This happens when an authorized creator explicitly chooses or adjusts the optional stages, exact source outputs, and approval checkpoints for one document-owned final deliverable.",
+  OutputRenamed:"This happens when an authorized creator explicitly saves a new human-readable name for an existing image or document-derived result without regenerating it or changing its reviewed content.",
   DocumentArtifactEdited:"This happens only after an authorized contributor saves a bounded correction to the actual durable output through the guarded artifact-editing endpoint.",
   ArtifactReviewRequested:"This happens when a creator explicitly submits an existing deliverable, or a manual correction requires a new review of its current source decisions.",
   ArtifactApproved:"This happens only after an independently authorized reviewer approves a requested review against the current governed source-block versions.",
@@ -661,6 +663,7 @@ function payloadFor(type: string, i: number, key: ScenarioKey, cycle: number): R
     if(type==="DocumentArtifactViewed"){
       const kind=kindFor(viewedOrdinal);return{artifact_id:artifactId(kind),artifact_kind:kind,document_id:documentId,source_surface:kind==="video"?"canvas-artifact-gallery":"document-artifact-gallery",viewer_kind:kind==="video"?"media":kind==="storyboard"?"storyboard":"reader"};
     }
+    if(type==="OutputRenamed")return{output_id:artifactId("storyboard"),artifact_id:artifactId("storyboard"),artifact_kind:"storyboard",output_kind:"artifact",document_id:documentId,project_id:"project-long-horizon",old_title:replayOutputBrief("storyboard").title,new_title:"Approved storyboard · campaign opening",source_surface:"document-artifact-viewer"};
     if(type==="DocumentArtifactEdited"||type==="ArtifactReviewRequested"||type==="ArtifactApproved"||type==="ArtifactChangesRequested")return{artifact_id:artifactId("video"),document_id:documentId,project_id:"project-long-horizon",source_block_versions:[],reviewer_user_id:"reviewer-replay",...(type==="DocumentArtifactEdited"?{revision:1,changed_fields:["content_markdown"]}:{})};
     if(type==="DocumentArtifactExported"){const exportOrdinal=Math.max(0,patternPrefix.filter(([,eventType])=>eventType==="DocumentArtifactExported").length-1);const kind=key==="output-workbench"?kindFor(exportOrdinal):"video";return{artifact_id:artifactId(kind),artifact_kind:kind,document_id:documentId,project_id:"project-long-horizon",format:kind==="video"?"video/mp4":kind==="audio"?"audio/mpeg":kind==="slides"?"application/pdf":"markdown",source_surface:kind==="slides"?"presentation-deck":"document-artifact-viewer"};}
     if(type==="DocumentRenderFailed")return{artifact_id:`${artifactId("video")}-retry`,artifact_kind:"video",document_id:documentId,provider_job_id:`video-${cycle}-replacement`,reason:"provider_timeout",retryable:true,source_surface:"canvas",output_brief:replayOutputBrief("video")};

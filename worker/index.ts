@@ -26,6 +26,7 @@ import { processReviewReminders } from "./review-automation-api";
 import { handleProvisioning } from "./provisioning-api";
 import { negotiateMarketingLocale, renderMarketingDocument } from "./marketing-localization";
 import { parseMarketingRoute } from "../src/marketing/profiles";
+import { handleContextIntelligence } from "./context-intelligence-api";
 
 async function authorizeApplication(request: Request, env: WorkerEnv, application: ApplicationId, path: string) {
     if(application==="creative"){
@@ -114,6 +115,8 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/session")return handleSession(request,env,context);
     if(url.pathname==="/api/platform/assistant")return handlePlatformAssistant(request,env);
     if(url.pathname==="/api/assistant")return handleAssistant(request,env,context);
+    if(url.pathname==="/api/context/decompose")return handleContextIntelligence(request,env,"decompose");
+    if(url.pathname==="/api/context/research")return handleContextIntelligence(request,env,"research");
     const assistantProposal=url.pathname.match(/^\/api\/assistant\/proposals\/([^/]+)\/(accept|reject)$/);
     if(assistantProposal)return handleAssistantProposal(request,env,assistantProposal[1]!,assistantProposal[2]!);
     const assistantTask=url.pathname.match(/^\/api\/assistant\/tasks\/([^/]+)\/(cancel|reconcile)$/);

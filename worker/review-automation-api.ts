@@ -20,11 +20,12 @@ export async function handleReviewInbox(env: WorkerEnv, actor: PilotUser) {
         WHERE named_scope.project_access_id=task.project_access_id AND named_scope.organization_id=task.organization_id
           AND named.type IN('DocumentCreated','DocumentRenamed') AND json_extract(named.payload,'$.document_id')=task.document_id
         ORDER BY named_scope.project_sequence DESC LIMIT 1),'') AS document_title,
-      COALESCE((SELECT json_extract(COALESCE(secret.private_json,rendered.payload),'$.title')
+      COALESCE((SELECT CASE rendered.type WHEN 'OutputRenamed' THEN json_extract(COALESCE(secret.private_json,rendered.payload),'$.new_title')
+        ELSE json_extract(COALESCE(secret.private_json,rendered.payload),'$.title') END
         FROM project_event_scopes rendered_scope JOIN events rendered ON rendered.event_id=rendered_scope.event_id
           LEFT JOIN event_private_payloads secret ON secret.private_event_id=rendered.event_id AND secret.redacted_at IS NULL
         WHERE rendered_scope.project_access_id=task.project_access_id AND rendered_scope.organization_id=task.organization_id
-          AND rendered.type='DocumentRenderCompleted' AND json_extract(rendered.payload,'$.artifact_id')=task.artifact_id
+          AND rendered.type IN('DocumentRenderCompleted','OutputRenamed') AND json_extract(rendered.payload,'$.artifact_id')=task.artifact_id
         ORDER BY rendered_scope.project_sequence DESC LIMIT 1),'') AS artifact_title,
       COALESCE((SELECT json_extract(rendered.payload,'$.artifact_kind')
         FROM project_event_scopes rendered_scope JOIN events rendered ON rendered.event_id=rendered_scope.event_id
