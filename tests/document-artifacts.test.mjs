@@ -247,6 +247,101 @@ test("preserves short independently labeled factual statuses across different sl
   assert.equal(slideDeckCopyIssues(longNarrative).some((issue)=>issue.firstPath.endsWith(".value")&&issue.secondPath.endsWith(".value")),true,"substantive copied prose remains rejected");
 });
 
+test("preserves recurring legacy-format evidence only when each numbered source independently authorizes it",()=>{
+  const sourceId="authorized-pitch-context-feedback";
+  const sourceText=[
+    "Slide 1 — One context, infinite paths",
+    "Forma replaces fragmented .doc, .ppt, .mov, .mp3, and .psd handoffs with one living context.",
+    "Slide 2 — Context management",
+    "Collect each useful decision.",
+    "Slide 3 — Medium adaptation",
+    "Choose an appropriate medium.",
+    "Slide 4 — Message fidelity",
+    "Preserve the authored message.",
+    "Slide 5 — Delivery and trust",
+    "Visual storyboard beats: scattered .doc/.ppt/.mov/.mp3/.psd files; one unified creative context.",
+    "Slide 6 — Confident next step",
+    "Give people meaningful review.",
+  ].join("\n");
+  const snapshot=(content=sourceText)=>({facts:[{block_id:sourceId,type:"direction",properties:{text:content}}],relationships:[]});
+  const sourceContract=buildPresentationSourceContract(snapshot(),{requestedSlideCount:6,itemCount:6});
+  const claims=["Independent opening","Gathered decisions","Appropriate delivery","Protected authorship","Delivery and trust","Meaningful review"];
+  const makeOutput=(rowValue)=>parseDocumentArtifactContent(JSON.stringify({
+    title:"Pitch context feedback",
+    summary:"A faithful end-user evaluation.",
+    content_markdown:"# Pitch context feedback",
+    presentation,
+    items:claims.map((claim,index)=>({
+      title:claim,
+      body:"",
+      notes:"Retain the independently authored source.",
+      image_prompt:"Source-grounded editable evidence.",
+      context_group_ids:[],
+      slide:{
+        layout:index===4?"timeline":index===0?"cover":"statement",
+        kicker:`Evidence ${index+1}`,
+        bullets:[],
+        source_ids:[sourceId],
+        source_order:index+1,
+        visual:index===4
+          ?{kind:"timeline",label:"The delivery journey",value:"",data:[
+            {label:"Fragmented handoffs",value:rowValue,weight:1,source_ids:[sourceId]},
+            {label:"Unified Forma context",value:"one unified creative context",weight:.8,source_ids:[sourceId]},
+          ]}
+          :{kind:"hero-type",label:"Authored emphasis",value:index===0?".doc · .ppt · .mov · .mp3 · .psd":["unused","Collect useful choices","Select the right medium","Keep the message intact","unused","Support human oversight"][index],data:[]},
+      },
+    })),
+  }));
+
+  for(const rowValue of [".doc/.ppt/.mov/.mp3/.psd","scattered .doc/.ppt/.mov/.mp3/.psd files"]){
+    const output=makeOutput(rowValue);
+    assert.ok(output);
+    assert.equal(slideDeckCopyIssues(output.items).some((issue)=>issue.secondSlide===4&&issue.secondPath==="slide.visual.data.0.value"),true,"the ungrounded generic comparator remains strict");
+    assert.equal(documentArtifactValidationIssues("slides",output,{itemCount:6}).some((issue)=>issue.path==="items.4.slide.visual.data.0.value"),true,"no exemption exists without an independently authored source contract");
+    assert.deepEqual(documentArtifactValidationIssues("slides",output,{itemCount:6,sourceContract}),[]);
+    assert.equal(output.items[4]?.slide?.visual.data[0]?.value,rowValue,"the exact authored evidence must never be removed or rewritten");
+    assert.deepEqual(output.items[4]?.slide?.visual.data[0]?.sourceIds,[sourceId]);
+  }
+
+  const ungroundedContract=buildPresentationSourceContract(snapshot(sourceText.replace("scattered .doc/.ppt/.mov/.mp3/.psd files","an unrelated authored delivery milestone")),{requestedSlideCount:6,itemCount:6});
+  const ungrounded=makeOutput("scattered .doc/.ppt/.mov/.mp3/.psd files");
+  assert.equal(documentArtifactValidationIssues("slides",ungrounded,{itemCount:6,sourceContract:ungroundedContract}).some((issue)=>issue.path==="items.4.slide.visual.data.0.value"),true,"another source section cannot authorize an invented row");
+
+  const unauthorized=makeOutput("scattered .doc/.ppt/.mov/.mp3/.psd files");
+  unauthorized.items[4].slide.visual.data[0].sourceIds=["unauthorized-private-source"];
+  const unauthorizedIssues=documentArtifactValidationIssues("slides",unauthorized,{itemCount:6,sourceContract});
+  assert.equal(unauthorizedIssues.some((issue)=>issue.code==="duplicate_deck_copy"&&issue.path==="items.4.slide.visual.data.0.value"),true);
+  assert.equal(unauthorizedIssues.some((issue)=>issue.code==="incorrect_visual_source"),true,"cosmetic recurrence never authenticates a foreign source");
+});
+
+test("preserves an exact authored opening promise only on its independently authored final slide",()=>{
+  const sourceId="authorized-opening-and-closing-promise";
+  const promise="Your content. One context. Infinite paths to your target.";
+  const sourceText=Array.from({length:9},(_,index)=>index===0?`Slide 1 — ${promise}\nOpen with the exact authored promise.`:index===8?`Slide 9 — Confident delivery\nClose with the exact promise: ${promise}`:`Slide ${index+1} — Independently authored chapter ${index+1}\nAdvance the distinct customer argument ${index+1}.`).join("\n");
+  const sourceContract=buildPresentationSourceContract({facts:[{block_id:sourceId,type:"direction",properties:{text:sourceText}}],relationships:[]},{requestedSlideCount:9,itemCount:9});
+  const output=parseDocumentArtifactContent(JSON.stringify({title:"Pitch context",summary:"The opening promise resolves in the close.",content_markdown:"# Pitch context",presentation,items:Array.from({length:9},(_,index)=>({title:index===0?promise:index===8?"Confident delivery":`Authored chapter ${index+1}`,body:index===8?promise:"",notes:"Keep the exact source-authored argument.",image_prompt:"Source-grounded creative direction.",context_group_ids:[],slide:{layout:index===0?"cover":index===8?"closing":"statement",kicker:`Decision ${index+1}`,bullets:[],source_ids:[sourceId],source_order:index+1,visual:{kind:"hero-type",label:"Independent emphasis",value:["Shared creative beginning","Gather meaningful context","Choose the medium","Adapt each expression","Respect individual attention","Keep durable decisions","Follow relevant paths","Protect human control","Reach the intended audience"][index],data:[]}}}))}));
+  assert.ok(output);
+  assert.equal(documentArtifactValidationIssues("slides",output,{itemCount:9}).some((issue)=>issue.path==="items.8.body"),true);
+  assert.deepEqual(documentArtifactValidationIssues("slides",output,{itemCount:9,sourceContract}),[]);
+  assert.equal(output.items[0].title,promise);
+  assert.equal(output.items[8].body,promise);
+
+  const intermediate=structuredClone(output);
+  intermediate.items[4].body=promise;
+  const intermediateSource=sourceText.replace("Advance the distinct customer argument 5.",`Advance the distinct customer argument 5. ${promise}`);
+  const intermediateContract=buildPresentationSourceContract({facts:[{block_id:sourceId,type:"direction",properties:{text:intermediateSource}}],relationships:[]},{requestedSlideCount:9,itemCount:9});
+  assert.equal(documentArtifactValidationIssues("slides",intermediate,{itemCount:9,sourceContract:intermediateContract}).some((issue)=>issue.path==="items.4.body"),true,"an intermediate echo is not an opening-to-closing promise");
+
+  const repeatedTitle=structuredClone(output);
+  repeatedTitle.items[8].title=promise;
+  repeatedTitle.items[8].body="";
+  assert.equal(documentArtifactValidationIssues("slides",repeatedTitle,{itemCount:9,sourceContract}).some((issue)=>issue.path==="items.8.title"),true,"repeated slide titles remain invalid even when their words are authored");
+
+  const ungroundedText=sourceText.replace(`Close with the exact promise: ${promise}`,"Close with a distinct authored recommendation.");
+  const ungroundedContract=buildPresentationSourceContract({facts:[{block_id:sourceId,type:"direction",properties:{text:ungroundedText}}],relationships:[]},{requestedSlideCount:9,itemCount:9});
+  assert.equal(documentArtifactValidationIssues("slides",output,{itemCount:9,sourceContract:ungroundedContract}).some((issue)=>issue.path==="items.8.body"),true,"the opening source cannot authorize an unauthored closing claim");
+});
+
 test("preserves concise authored visual row labels inside independently meaningful slide body copy",()=>{
   const data=[
     {label:"Decision decomposition",value:"atomic",weight:1},
@@ -519,7 +614,7 @@ test("reuses a byte-verified original Fal image URL for Seedance references",asy
     throw new Error(`Unexpected request: ${url}`);
   };
   try{const prepared=[];const result=await generateCreativeVideo({FAL_KEY:"test-only",FORMA_VIDEO_PROVIDER:"fal"},"Continue the fictional fashion study.",{seconds:4,size:"1280x720",resolution:"480p",references:[{bytes:referenceBytes,mimeType:"image/png",blockId:"block-1",referenceId:"reference-1",label:"Fashion study",mode:"preserve_subject",sequence:1,shotDirection:"The fictional model turns toward the light.",cameraDirection:"Slow push in.",framePrompt:"Editorial studio.",sourceArtifactId:"storyboard-1",sourceArtifactItemId:"frame-1",sourceArtifactKind:"storyboard",storyboardTitle:"Fashion study",provider:"fal",providerModel:"ideogram/v4/fast",providerRequestId:"fal-image-1",providerMediaUrl:null}],onPrepared:(receipt)=>prepared.push(receipt)});
-    const queueCall=calls.find((call)=>call.url==="https://queue.fal.run/bytedance/seedance-2.0/reference-to-video"&&call.method==="POST");const submitted=JSON.parse(String(queueCall.body));assert.deepEqual(submitted.image_urls,["https://v3b.fal.media/files/example/original-reference.png"]);assert.equal(calls.some((call)=>call.url.includes("/storage/upload/")),false);assert.equal(prepared[0].parameters.image_transport,"original-fal-url");assert.equal(prepared[0].parameters.original_provider_asset_count,1);assert.equal(result.referenceInputs[0].transport,"original-fal-url");assert.equal(result.referenceInputs[0].original_provider_asset_reused,true);
+    const queueCall=calls.find((call)=>call.url==="https://queue.fal.run/bytedance/seedance-2.0/reference-to-video"&&call.method==="POST");const submitted=JSON.parse(String(queueCall.body));assert.deepEqual(submitted.image_urls,["https://v3b.fal.media/files/example/original-reference.png"]);assert.ok(calls.some((call)=>call.url==="https://queue.fal.run/ideogram/v4/requests/fal-image-1"));assert.equal(calls.some((call)=>call.url.includes("/fast/requests/")||call.url.endsWith("/response")),false);assert.equal(calls.some((call)=>call.url.includes("/storage/upload/")),false);assert.equal(prepared[0].parameters.image_transport,"original-fal-url");assert.equal(prepared[0].parameters.original_provider_asset_count,1);assert.equal(result.referenceInputs[0].transport,"original-fal-url");assert.equal(result.referenceInputs[0].original_provider_asset_reused,true);
   }finally{globalThis.fetch=originalFetch;}
 });
 

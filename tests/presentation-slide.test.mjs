@@ -96,20 +96,21 @@ test("real slide renderer exposes all six scorecard values and distinguishes exa
   assert.match(markup, /<i aria-hidden="true">/);
 });
 
-test("canonical full and compact slides retain complete protected citation evidence",()=>{
+test("canonical full and compact slides omit private production evidence without dropping visual data",()=>{
   const citation={label:"Approved source evidence",anchor:"Slide 1",excerpt:"The complete protected source excerpt remains visible."};
   for(const compact of [false,true]){
     const markup=renderSlide(scorecard({citations:[citation]}),{compact});
     assert.match(markup,/data-presentation-artboard="960x540"/);
     assert.match(markup,/data-layout-version=1/);
     assert.match(markup,/presentation-slide--density-compact/);
-    assert.ok(markup.includes(citation.label));
-    assert.ok(markup.includes(citation.excerpt));
+    assert.ok(!markup.includes(citation.label),"internal source labels never enter the audience slide");
+    assert.ok(!markup.includes(citation.excerpt),"complete source excerpts remain in the authorized inspector");
+    assert.doesNotMatch(markup,/presentation-slide__footnotes/);
     for(const[label,value]of SCORES)assert.ok(markup.includes(label)&&markup.includes(value));
   }
 });
 
-test("long protected source evidence renders exactly once in a full-width row after the complete visual",()=>{
+test("long private evidence never displaces the complete source-grounded audience visual",()=>{
   const excerpt="Approved model-cost evidence remains complete and attributable. ".repeat(6).trim();
   const citation={label:"Approved source evidence",anchor:"Slide 9",excerpt};
   const markup=renderSlide({
@@ -129,12 +130,111 @@ test("long protected source evidence renders exactly once in a full-width row af
     },
   },{item:{title:"Make Intelligence and Cost Understandable"}});
 
-  assert.match(markup,/presentation-slide--evidence-rail/);
-  assert.match(markup,/data-citation-placement=full-width/);
-  assert.equal(markup.split(excerpt).length-1,1,"protected citations are never duplicated in the accessibility or PDF trees");
-  assert.ok(markup.indexOf('class="presentation-slide__matrix"')<markup.indexOf('class="presentation-slide__footnotes"'),"the complete comparison precedes its full-width source evidence");
-  assert.ok(markup.indexOf('class="presentation-slide__footnotes"')<markup.lastIndexOf("<footer>"),"the source rail remains inside the canonical artboard above its footer");
+  assert.doesNotMatch(markup,/presentation-slide--evidence-rail/);
+  assert.match(markup,/data-citation-placement=inline/);
+  assert.equal(markup.split(excerpt).length-1,0,"complete private evidence remains exclusively in authorized inspection");
+  assert.match(markup,/<div class="presentation-slide__matrix">/);
+  assert.doesNotMatch(markup,/presentation-slide__footnotes/);
   for(const value of ["$0.0088","$0.0880","$0.2200"])assert.ok(markup.includes(value));
+});
+
+test("published research attribution stays visible without exposing source coordinates or licensed excerpts",()=>{
+  const citation={
+    sourceId:"private-authorized-source-must-never-be-disclosed",
+    label:"World Health Organization",
+    anchor:"Published guidance § 4",
+    excerpt:"The complete licensed passage must remain private to the authorized evidence reviewer.",
+  };
+  const markup=renderSlide(scorecard({citations:[citation]}));
+
+  assert.match(markup,/presentation-slide__footnotes/);
+  assert.ok(markup.includes("World Health Organization"));
+  assert.ok(markup.includes("Published guidance § 4"));
+  assert.ok(!markup.includes(citation.excerpt));
+  assert.ok(!markup.includes(citation.sourceId));
+  assert.doesNotMatch(markup,/presentation-slide__citation-excerpt/);
+});
+
+test("real pitch citations never print Narrative brief, structural slide metadata, or backstage excerpts",()=>{
+  const excerpt="Slide 9 — Close with the exact promise: Your content. One context. Infinite paths to your target.";
+  const markup=renderSlide({
+    layout:"closing",
+    kicker:"THE INVITATION",
+    bullets:[],
+    citations:[{label:"Narrative brief",anchor:"Slide 9",excerpt}],
+    visual:{kind:"hero-type",label:"Start with one context",value:"Build the story once",data:[]},
+  },{
+    item:{title:"Build the story once",body:"Your content. One context. Infinite paths to your target."},
+    index:8,
+    total:9,
+  });
+
+  assert.ok(markup.includes("THE INVITATION"));
+  assert.ok(markup.includes("Your content. One context. Infinite paths to your target."));
+  assert.ok(!markup.includes("Narrative brief"));
+  assert.ok(!markup.includes(excerpt));
+  assert.doesNotMatch(markup,/presentation-slide__footnotes|presentation-slide--evidence-rail/);
+  assert.match(markup,/class="presentation-visual-type"/);
+});
+
+test("feedback matrix preserves all delivery rows and bullets without producer directions",()=>{
+  const rows=[
+    ["Exact promise","Partially delivered"],
+    ["Creator agency","Clearly authored"],
+    ["Recipient agency","Clearly authored"],
+    ["Legacy formats","Five retained"],
+    ["Visible delivery","Not independently verified"],
+  ];
+  const bullets=[
+    "Exact promise preserved: Your content. One context. Infinite paths to your target.",
+    "Creator-led and recipient-led delivery remain equally explicit in the reusable story.",
+    "File fragmentation remains complete: .doc, .ppt, .mov, .mp3, and .psd.",
+    "No delivered slide made the complete promise independently visible outside its citations.",
+  ];
+  const excerpt="Slide 4 — Message capture: show all five dimensions without exposing adapter instructions.";
+  const markup=renderSlide({
+    layout:"matrix",
+    kicker:"MESSAGE FIDELITY",
+    bullets,
+    citations:[{label:"Slide 4",anchor:"Message fidelity",excerpt}],
+    visual:{kind:"matrix",label:"Five message-fidelity dimensions",value:"3/10",data:rows.map(([label,value])=>({label,value,weight:.5}))},
+  },{
+    item:{
+      title:"Capturing the intended message: 3/10",
+      body:"The exact promise appeared in the authored opening and closing, but the initial delivery never placed it in front of its audience.",
+    },
+    index:3,
+    total:6,
+  });
+
+  assert.match(markup,/presentation-slide--density-dense/);
+  assert.match(markup,/<table class="presentation-slide__table">/);
+  assert.equal((markup.match(/<th scope="row"/g)??[]).length,5);
+  for(const[label,value]of rows)assert.ok(markup.includes(label)&&markup.includes(value));
+  for(const bullet of bullets)assert.ok(markup.includes(bullet));
+  assert.ok(!markup.includes(excerpt));
+  assert.doesNotMatch(markup,/presentation-slide__footnotes|presentation-slide--evidence-rail/);
+});
+
+test("feedback recommendations remain delivered without repeating their adapter or slide instructions",()=>{
+  const recommendation="P0: Move generation to durable server-owned execution; add deterministic receipt reconciliation and safe nonduplicative recovery.";
+  const privateExcerpt=`Slide 6 — ${recommendation}`;
+  const markup=renderSlide({
+    layout:"statement",
+    kicker:"WHAT TO FIX FIRST",
+    bullets:[],
+    citations:[{label:"Slide 6",anchor:"Priority plan",excerpt:privateExcerpt}],
+    visual:{kind:"hero-type",label:"Next step",value:"Fix the trust gap",data:[]},
+  },{
+    item:{title:"Fix the friction",body:recommendation},
+    index:5,
+    total:6,
+  });
+
+  assert.ok(markup.includes(recommendation),"the actual P0 recommendation remains useful delivery content");
+  assert.ok(!markup.includes(privateExcerpt),"adapter scaffolding never duplicates the audience recommendation");
+  assert.ok(!markup.includes("Priority plan"),"the private citation anchor is not delivery content");
+  assert.doesNotMatch(markup,/presentation-slide__footnotes/);
 });
 
 test("audience-facing slide labels stay English when authored content is English and the application uses Japanese",()=>{
@@ -184,14 +284,36 @@ test("full attributed stakeholder quotations remain visible on quote and evidenc
   assert.ok(quoteMarkup.includes(QUOTE));
   assert.match(quoteMarkup, /<cite dir="auto">Amina Shah<\/cite>/);
   assert.ok(quoteMarkup.includes("Product Owner"));
-  assert.ok(quoteMarkup.includes("Authored product strategy"));
+  assert.ok(!quoteMarkup.includes("Authored product strategy"), "generic producer provenance is not public quote attribution");
   assert.ok(quoteMarkup.includes("Executive stakeholder research"));
-  assert.ok(quoteMarkup.includes("Verbatim authored stakeholder evidence."));
+  assert.ok(!quoteMarkup.includes("Verbatim authored stakeholder evidence."), "complete interview evidence remains private");
   assert.doesNotMatch(quoteMarkup, /private-(?:decision|citation|slide)-uuid/);
 
   const evidenceMarkup = renderSlide(scorecard({ quote }));
   assert.ok(evidenceMarkup.includes(QUOTE), "A protected quote must remain visible even when the visual is a scorecard.");
   assert.equal((evidenceMarkup.match(/presentation-slide__chart-row/g) ?? []).length, SCORES.length);
+});
+
+test("licensed public quotation attribution remains visible without exposing its backstage excerpt",()=>{
+  const attribution="© Licensed Acme Research";
+  const markup=renderSlide({
+    layout:"quote",
+    kicker:"Customer perspective",
+    bullets:[],
+    quote:{text:QUOTE,speaker:"Amina Shah",role:"Product Owner",citation:attribution},
+    citations:[{
+      label:"Customer interview notes",
+      anchor:"Slide 2",
+      excerpt:"A private unredacted customer interview passage remains available only to an authorized reviewer.",
+    }],
+    visual:{kind:"quote",label:"Customer perspective",value:QUOTE,data:[]},
+  });
+
+  assert.ok(markup.includes(QUOTE));
+  assert.ok(markup.includes("Amina Shah"));
+  assert.ok(markup.includes("Product Owner"));
+  assert.ok(markup.includes(attribution),"license-required quotation attribution remains audience-facing");
+  assert.ok(!markup.includes("A private unredacted customer interview passage"));
 });
 
 test("comparison, personas, roadmap, architecture, and overflow visuals expose complete semantic evidence", () => {
@@ -358,9 +480,11 @@ test("opaque internal source aliases and UUIDs never appear in visible citations
   for (const opaque of [...opaqueLabels, "source_991"]) {
     assert.ok(!markup.includes(opaque), `Opaque private identifier leaked into the rendered slide: ${opaque}`);
   }
-  assert.ok((markup.match(/Authored source/g) ?? []).length >= opaqueLabels.length);
+  assert.ok(markup.includes(QUOTE));
+  assert.ok(markup.includes("Product Owner"));
+  assert.doesNotMatch(markup,/presentation-slide__footnotes/);
   for (let index = 0; index < opaqueLabels.length; index += 1) {
-    assert.ok(markup.includes(`Authorized source excerpt ${index + 1}`), "Legitimate source excerpts must remain intact.");
+    assert.ok(!markup.includes(`Authorized source excerpt ${index + 1}`), "Complete private evidence remains available only in authorized inspection.");
   }
 });
 

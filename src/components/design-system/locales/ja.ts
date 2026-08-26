@@ -2024,6 +2024,11 @@ Object.assign(messages, {
   "context.character.review": "生成前に内容を確認して承認",
 });
 
+Object.assign(messages, {
+  "system.auto.12nuc1t.26": "より安全なフレームで続行",
+  "system.auto.1tgh5l8.255": "{total} 枚中 {saved} 枚のフレームを保存済みです。コンテキストと説明文は変更されません。拒否された処理は課金された可能性がありますが、再実行されません。修正したフレームは当初の上限 {maximum} の範囲内で新たに有料生成され、新しい予約やプランニング要求は行われません。",
+});
+
 Object.assign(messages, FORMA_RESPONSIVE_MESSAGES.ja);
 
 export default messages;

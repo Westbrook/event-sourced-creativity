@@ -1,5 +1,6 @@
-import { blockIntentFor, blockTypeDefinition } from "./block-types.ts";
+import { blockIntentFor, blockTypeDefinition, isNegativeIntent } from "./block-types.ts";
 import type { DocumentArtifact } from "./document-artifacts.ts";
+import { inferDocumentArtifactKind } from "./document-output-intent.ts";
 import type { CreativeBlock, CreativeEvent, CreativeProjection } from "./events.ts";
 import { audioRightsAllowed } from "./audio.ts";
 
@@ -26,18 +27,107 @@ const normalizedDecision = (block: CreativeBlock) =>
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 
+const placeholderDecision = /^(?:t\.?b\.?d\.?|t\.?b\.?a\.?|to[- ]?do|n\/?a|none|null|undefined|untitled(?: document)?|lorem ipsum(?:\b[\s\S]*)?|(?:add|enter|write|type)(?: (?:a|an|the|your))? (?:message|objective|direction|audience|deliverable|format)|(?:message|objective|direction|audience|deliverable|format))$/iu;
+
+const meaningfulDecision = (value: unknown): value is string => typeof value === "string"
+  && /[\p{L}\p{N}]/u.test(value)
+  && !placeholderDecision.test(value.trim());
+
+const authoredDecision = (block: CreativeBlock) => [
+  block.properties.text,
+  block.properties.description,
+  block.properties.content,
+  block.properties.label,
+].find(meaningfulDecision)?.trim() ?? "";
+
+const structuredDeliverable = (block: CreativeBlock, narrative: boolean) => [
+  block.properties.artifact_kind,
+  block.properties.output_kind,
+  block.properties.medium,
+  block.properties.deliverable,
+  block.properties.channel,
+].some(meaningfulDecision) || !narrative && Boolean(
+  block.properties.image_format
+  && typeof block.properties.image_format === "object"
+  && !Array.isArray(block.properties.image_format),
+);
+
+const narrativeDeliveryKind = (kind: string | null) => kind === "slides"
+  || kind === "short_story"
+  || kind === "scene"
+  || kind === "storyboard";
+
+const allowedProtectedPlacement = (value: unknown) => value === "opening"
+  || value === "closing"
+  || value === "opening_and_closing";
+
 /** Actionable readiness is derived from durable evidence, never a decorative score. */
 export function assessCreativeContext(projection: Pick<CreativeProjection, "blocks">, events: CreativeEvent[], now = Date.now()): ContextHealthReport {
   const blocks = projection.blocks.filter((block) => !block.removed && Number(block.properties.weight ?? .5) > 0);
   const issues: ContextHealthIssue[] = [];
   const byType = (type: string) => blocks.filter((block) => block.type === type);
+  const intendedKind = inferDocumentArtifactKind(blocks);
+  const needsNarrativeMessage = narrativeDeliveryKind(intendedKind);
+  const affirmativeByType = (type: string) => byType(type).filter((block) => !isNegativeIntent(blockIntentFor(block.type, block.properties)));
+  const meaningfulByType = (type: string) => affirmativeByType(type).filter((block) => Boolean(authoredDecision(block)));
+  const directions = meaningfulByType("direction");
+  const audiences = meaningfulByType("audience");
+  const messages = meaningfulByType("message");
+  const formats = affirmativeByType("format").filter((block) => Boolean(authoredDecision(block)) || structuredDeliverable(block, needsNarrativeMessage));
 
-  if (!byType("direction").length) issues.push({ id: "missing-direction", severity: "warning", label: "Define the objective", detail: "Explain the change or outcome this work must produce.", blockIds: [] });
-  if (!byType("audience").length) issues.push({ id: "missing-audience", severity: "warning", label: "Identify the audience", detail: "Name who needs to use, approve, or understand the result.", blockIds: [] });
-  if (!byType("format").length) issues.push({ id: "missing-deliverable", severity: "suggestion", label: "Name the deliverable", detail: "Record the intended channel, form, or production requirements.", blockIds: [] });
+  if (!directions.length) issues.push({ id: "missing-direction", severity: "warning", label: "Define the objective", detail: "Explain the change or outcome this work must produce.", blockIds: affirmativeByType("direction").map((block) => block.id) });
+  if (!audiences.length) issues.push({ id: "missing-audience", severity: "warning", label: "Identify the audience", detail: "Name who needs to use, approve, or understand the result.", blockIds: affirmativeByType("audience").map((block) => block.id) });
+  if (!formats.length) issues.push({ id: "missing-deliverable", severity: "suggestion", label: "Name the deliverable", detail: "Record the intended channel, form, or production requirements.", blockIds: affirmativeByType("format").map((block) => block.id) });
+  if (needsNarrativeMessage && !messages.length) {
+    const medium = intendedKind === "slides" ? "presentation" : intendedKind === "storyboard" ? "storyboard" : intendedKind === "scene" ? "scene" : "story";
+    issues.push({ id: "missing-message", severity: "warning", label: "Define the central message", detail: `A ${medium} needs an authored Message describing the audience takeaway, central idea, or narrative before its context is ready.`, blockIds: affirmativeByType("message").map((block) => block.id) });
+  }
   if (!blocks.some((block) => block.type === "exclusion" || blockIntentFor(block.type, block.properties) === "prohibit")) {
     issues.push({ id: "missing-boundary", severity: "suggestion", label: "Set an explicit boundary", detail: "Capture any brand, safety, legal, or accuracy failure that must never appear.", blockIds: [] });
   }
+
+  const missingProtectedMessage = new Set<string>();
+  const invalidProtectedPlacement = new Set<string>();
+  const ungroundedProtectedMessage = new Set<string>();
+  for (const message of affirmativeByType("message")) {
+    const authored = authoredDecision(message);
+    const properties = message.properties;
+    const exactSpecified = Object.hasOwn(properties, "exact_text");
+    const exact = meaningfulDecision(properties.exact_text) ? properties.exact_text.trim() : "";
+    if (exactSpecified && !exact) missingProtectedMessage.add(message.id);
+    if (exact && !authored.includes(exact)) ungroundedProtectedMessage.add(message.id);
+
+    if (Object.hasOwn(properties, "exact_placements")) {
+      const placements = properties.exact_placements;
+      if (!Array.isArray(placements) || placements.some((placement) => !allowedProtectedPlacement(placement))) {
+        invalidProtectedPlacement.add(message.id);
+      } else if (placements.length && !exact && !Array.isArray(properties.protected_phrases)) {
+        missingProtectedMessage.add(message.id);
+      }
+    }
+
+    if (Object.hasOwn(properties, "protected_phrases")) {
+      const protectedPhrases = properties.protected_phrases;
+      if (!Array.isArray(protectedPhrases)) {
+        missingProtectedMessage.add(message.id);
+      } else for (const candidate of protectedPhrases) {
+        if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+          missingProtectedMessage.add(message.id);
+          continue;
+        }
+        const phrase = candidate as Record<string, unknown>;
+        const text = meaningfulDecision(phrase.text) ? phrase.text.trim() : "";
+        if (!text) missingProtectedMessage.add(message.id);
+        else if (!authored.includes(text)) ungroundedProtectedMessage.add(message.id);
+        if (Object.hasOwn(phrase, "placement") && !allowedProtectedPlacement(phrase.placement)) {
+          invalidProtectedPlacement.add(message.id);
+        }
+      }
+    }
+  }
+  if (missingProtectedMessage.size) issues.push({ id: "missing-protected-message", severity: "warning", label: "Add the exact protected wording", detail: "An explicitly protected message or placement needs meaningful authored wording before it can be preserved.", blockIds: [...missingProtectedMessage] });
+  if (invalidProtectedPlacement.size) issues.push({ id: "invalid-protected-message-placement", severity: "warning", label: "Choose a valid protected-message placement", detail: "Protected wording can be required on the opening slide, the closing slide, or both.", blockIds: [...invalidProtectedPlacement] });
+  if (ungroundedProtectedMessage.size) issues.push({ id: "protected-message-not-in-context", severity: "warning", label: "Include protected wording in the message", detail: "The exact protected wording must also appear verbatim in its authored Message so every approved output can preserve it.", blockIds: [...ungroundedProtectedMessage] });
 
   const rights = new Set(events.filter((event) => event.type === "RightsAsserted" || event.type === "ReferenceIngested" && ["owned", "owned_or_licensed", "account-generated"].includes(String(event.payload.rights_class ?? ""))).map((event) => String(event.payload.reference_id ?? "")));
   const audioRights = new Set(events.filter((event) => (event.type === "RightsAsserted" || event.type === "ReferenceIngested") && audioRightsAllowed(event.payload.rights_class)).map((event) => String(event.payload.reference_id ?? "")));

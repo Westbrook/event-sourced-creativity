@@ -5,6 +5,7 @@
  */
 
 import { combinedContextGroups } from "./combined-context.ts";
+import { presentationAudienceText } from "./presentation-delivery.ts";
 
 export type PresentationSourceInput = string | readonly unknown[] | Record<string, unknown>;
 
@@ -66,6 +67,17 @@ export type ProtectedPresentationQuote = {
   slideNumber: number | null;
 };
 
+export type ProtectedPresentationMessagePlacement = "opening" | "closing" | "authored";
+
+export type ProtectedPresentationMessage = {
+  id: string;
+  text: string;
+  placement: ProtectedPresentationMessagePlacement;
+  sourceBlockId: string | null;
+  sourceAlias: string | null;
+  slideNumber: number;
+};
+
 export type ProtectedPresentationTerminology = {
   label: string;
   terms: string[];
@@ -112,6 +124,7 @@ export type PresentationSourceContract = {
   slideCountMismatch: boolean;
   protectedFacts: ProtectedPresentationFact[];
   protectedQuotes: ProtectedPresentationQuote[];
+  protectedMessages: ProtectedPresentationMessage[];
   protectedTerminology: ProtectedPresentationTerminology[];
   roadmaps: ProtectedPresentationRoadmap[];
   style: PresentationStyleContract;
@@ -146,7 +159,18 @@ export type PresentationSourceResolutionOptions = {
   allowDurableIds?: boolean;
 };
 
-type SourceBlock = { id: string | null; text: string; label: string; contextGroupIds: string[] };
+type AuthoredProtectedMessage = {
+  text: string;
+  placements: ProtectedPresentationMessagePlacement[];
+};
+
+type SourceBlock = {
+  id: string | null;
+  text: string;
+  label: string;
+  contextGroupIds: string[];
+  protectedMessages: AuthoredProtectedMessage[];
+};
 
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const clean = (value: unknown) => typeof value === "string" ? value.trim() : "";
@@ -228,7 +252,7 @@ function blockGroups(value: Record<string, unknown>) {
 }
 
 function sourceBlocks(input: PresentationSourceInput): SourceBlock[] {
-  if (typeof input === "string") return input.trim() ? [{ id: null, text: input.replace(/\r\n?/gu, "\n"), label: "Authored source", contextGroupIds: [] }] : [];
+  if (typeof input === "string") return input.trim() ? [{ id: null, text: input.replace(/\r\n?/gu, "\n"), label: "Authored source", contextGroupIds: [], protectedMessages: [] }] : [];
   const root = Array.isArray(input) ? {} : asRecord(input);
   const authoritativeGroups = new Map<string, string[]>();
   if (!Array.isArray(input) && Array.isArray(root.facts)) {
@@ -252,7 +276,22 @@ function sourceBlocks(input: PresentationSourceInput): SourceBlock[] {
     if (!text) return [];
     const id = clean(block.block_id ?? block.blockId ?? block.id ?? properties.block_id) || null;
     const label = compact(properties.label ?? block.label ?? block.handle ?? block.type ?? block.role) || `Authored source ${index + 1}`;
-    return [{ id, text, label, contextGroupIds: unique([...blockGroups(block), ...(id ? authoritativeGroups.get(id) ?? [] : [])]) }];
+    const exactPlacements = (Array.isArray(properties.exact_placements) ? properties.exact_placements : [])
+      .flatMap((placement): ProtectedPresentationMessagePlacement[] => placement === "opening" || placement === "closing" || placement === "authored" ? [placement] : []);
+    const exactText = clean(properties.exact_text ?? properties.protected_phrase);
+    const protectedMessages: AuthoredProtectedMessage[] = [
+      ...(exactText ? [{ text: exactText, placements: exactPlacements }] : []),
+      ...(Array.isArray(properties.protected_phrases) ? properties.protected_phrases : []).flatMap((candidate): AuthoredProtectedMessage[] => {
+        const phrase = asRecord(candidate);
+        const value = clean(phrase.text);
+        if (!value) return [];
+        const placement = clean(phrase.placement);
+        const placements: ProtectedPresentationMessagePlacement[] = placement === "opening_and_closing" ? ["opening", "closing"]
+          : placement === "opening" || placement === "closing" || placement === "authored" ? [placement] : exactPlacements;
+        return [{ text: value, placements }];
+      }),
+    ];
+    return [{ id, text, label, contextGroupIds: unique([...blockGroups(block), ...(id ? authoritativeGroups.get(id) ?? [] : [])]), protectedMessages }];
   });
 }
 
@@ -275,6 +314,15 @@ function headingTitle(content: string) {
     // Mixed-case headings such as “Opportunity: trustworthy production” retain
     // their substantive colon; prose after an earlier sentence is never a title.
     if (title && /\p{Lu}/u.test(title) && !/\p{Ll}/u.test(title)) return title;
+  }
+  if (content.includes("\n")) {
+    const heading = compact(firstLine.replace(/^\*{1,2}|\*{1,2}$/gu, ""));
+    const followingSentence = sentenceBoundary >= 0 ? firstLine.slice(sentenceBoundary + 1).trim() : "";
+    const inlineBody = /^(?:this|these|those|it|they|we|our|evidence|speaker\s+notes?|source\s+notes?|supporting\s+evidence)\b/iu.test(followingSentence);
+    // A physical line break explicitly separates the authored heading from its
+    // body. Preserve deliberate multi-sentence taglines and final punctuation;
+    // prose attached to an inline heading retains the historical title split.
+    if (heading && heading.length <= 180 && !inlineBody) return heading;
   }
   const sentence = sentenceBoundary >= 0 ? firstLine.slice(0, sentenceBoundary)
     : firstLine.replace(/[.!?]+$/u, "");
@@ -554,6 +602,85 @@ function extractProtectedQuotes(blocks: SourceBlock[], outline: PresentationSour
   return result;
 }
 
+function authoredProtectedMessageDirectives(block: SourceBlock): AuthoredProtectedMessage[] {
+  const result = [...block.protectedMessages];
+  const directives = /\b(open|start|begin|close|end|finish|conclude|preserve|retain|keep|repeat|include|use|render|show|display)\b[^:\n]{0,110}\b(exact(?:ly)?|verbatim|word[ -]for[ -]word|unchanged)\b[^:\n]{0,55}\s*[:：]\s*(?:“([^”\n]{4,500})”|"([^"\n]{4,500})"|([^\n]{4,500}))/giu;
+  for (const match of block.text.matchAll(directives)) {
+    const value = clean(match[3] ?? match[4] ?? match[5])
+      .replace(/\s+(?=slide\s+#?\s*\d{1,3}\s*[—–:.-]).*$/iu, "")
+      .replace(/\s+(?=(?:call\s+to\s+action|cta|speaker\s+notes?|visual\s+direction|production\s+notes?|supporting\s+evidence)\s*:).*$/iu, "")
+      .trim();
+    if (!value || !/\p{L}/u.test(value)) continue;
+    const verb = clean(match[1]).toLocaleLowerCase();
+    const placements: ProtectedPresentationMessagePlacement[] = /^(?:open|start|begin)$/u.test(verb) ? ["opening"]
+      : /^(?:close|end|finish|conclude)$/u.test(verb) ? ["closing"] : [];
+    result.push({ text: value, placements });
+  }
+  return result;
+}
+
+function extractProtectedMessages(blocks: SourceBlock[], outline: PresentationSourceOutline, sources: PresentationSourceAlias[], plannedSlideCount: number | null): ProtectedPresentationMessage[] {
+  const result: ProtectedPresentationMessage[] = [];
+  const seen = new Set<string>();
+  if (!outline.slides.length) {
+    const slideCount = plannedSlideCount && plannedSlideCount > 0 ? plannedSlideCount : 1;
+    for (const block of blocks) for (const authored of authoredProtectedMessageDirectives(block)) {
+      const message = clean(authored.text);
+      if (message.length < 4 || message.length > 500 || !block.text.includes(message)) continue;
+      const placements = authored.placements.length ? authored.placements : ["opening"] satisfies ProtectedPresentationMessagePlacement[];
+      for (const placement of placements) {
+        if (placement === "authored") continue;
+        const slideNumber = placement === "closing" ? slideCount : 1;
+        const key = `${slideNumber}\u0000${message}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        result.push({
+          id: `message_${String(result.length + 1).padStart(3, "0")}`,
+          text: message,
+          placement,
+          sourceBlockId: block.id,
+          sourceAlias: sourceAliasFor(sources, block.id),
+          slideNumber,
+        });
+      }
+    }
+    return result.sort((left, right) => left.slideNumber - right.slideNumber || left.text.localeCompare(right.text));
+  }
+  const opening = outline.slides[0]!;
+  const closing = outline.slides.at(-1)!;
+  for (const block of blocks) for (const authored of authoredProtectedMessageDirectives(block)) {
+    const message = clean(authored.text);
+    if (message.length < 4 || message.length > 500) continue;
+    const authoredSlides = outline.slides.filter((slide) => slide.content.includes(message));
+    const requested = new Set(authored.placements);
+    const candidates = requested.size
+      ? outline.slides.filter((slide) => requested.has(slide.number === opening.number ? "opening" : slide.number === closing.number ? "closing" : "authored"))
+      : authoredSlides;
+    // An explicitly repeated opening/closing promise is one authored message
+    // with two independently protected audience-facing placements.
+    if (opening.number !== closing.number && opening.content.includes(message) && closing.content.includes(message)) {
+      if (!candidates.includes(opening)) candidates.push(opening);
+      if (!candidates.includes(closing)) candidates.push(closing);
+    }
+    for (const slide of candidates) {
+      if (!slide.content.includes(message)) continue;
+      const placement = slide.number === opening.number ? "opening" : slide.number === closing.number ? "closing" : "authored";
+      const key = `${slide.number}\u0000${message}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({
+        id: `message_${String(result.length + 1).padStart(3, "0")}`,
+        text: message,
+        placement,
+        sourceBlockId: slide.sourceBlockId,
+        sourceAlias: sourceAliasFor(sources, slide.sourceBlockId),
+        slideNumber: slide.number,
+      });
+    }
+  }
+  return result.sort((left, right) => left.slideNumber - right.slideNumber || left.text.localeCompare(right.text));
+}
+
 function extractProtectedTerminology(blocks: SourceBlock[], sources: PresentationSourceAlias[]) {
   const patterns = [
     { label: "Product destinations", terms: ["Projects", "Work", "Explore", "Activity", "Deliver"] },
@@ -617,6 +744,7 @@ export function buildPresentationSourceContract(input: PresentationSourceInput, 
     slideCountMismatch: requestedSlideCount !== null && outline.authoredSlideCount !== null && requestedSlideCount !== outline.authoredSlideCount,
     protectedFacts: extractProtectedFacts(blocks, outline, sources),
     protectedQuotes: extractProtectedQuotes(blocks, outline, sources),
+    protectedMessages: extractProtectedMessages(blocks, outline, sources, requestedSlideCount ?? outline.authoredSlideCount),
     protectedTerminology: extractProtectedTerminology(blocks, sources),
     roadmaps: extractRoadmaps(blocks, outline, sources),
     style: inferPresentationStyleContract(input, options),
@@ -644,6 +772,7 @@ export function providerFacingPresentationSourceContract(contract: PresentationS
     sections: contract.outline.sections.map((section) => ({ title: section.title, slideNumbers: [...section.slideNumbers] })),
     protectedFacts: contract.protectedFacts.map(omitSourceBlockId),
     protectedQuotes: contract.protectedQuotes.map(omitSourceBlockId),
+    protectedMessages: contract.protectedMessages.map(omitSourceBlockId),
     protectedTerminology: contract.protectedTerminology.map(omitSourceBlockId),
     roadmaps: contract.roadmaps.map(omitSourceBlockId),
     style: contract.style,
@@ -685,19 +814,7 @@ export function resolvePresentationSourceReferences(references: readonly unknown
 }
 
 function visibleSlideText(item: Record<string, unknown>) {
-  const slide = asRecord(item.slide);
-  const visual = asRecord(slide.visual);
-  const quote = asRecord(slide.quote ?? visual.quote);
-  const citations = Array.isArray(slide.citations) ? slide.citations.map(asRecord) : [];
-  const data = Array.isArray(visual.data) ? visual.data.map(asRecord) : [];
-  return [
-    item.title, item.body, slide.kicker,
-    ...(Array.isArray(slide.bullets) ? slide.bullets : []),
-    visual.label, visual.value, visual.exactValue, visual.exact_value, visual.displayValue, visual.display_value,
-    quote.text, quote.speaker, quote.role,
-    ...data.flatMap((datum) => [datum.label, datum.value, datum.exactValue, datum.exact_value, datum.displayValue, datum.display_value]),
-    ...citations.flatMap((citation) => [citation.label, citation.anchor, citation.excerpt]),
-  ].map(clean).filter(Boolean).join("\n");
+  return presentationAudienceText(item);
 }
 
 function referenceValues(item: Record<string, unknown>) {
@@ -728,6 +845,56 @@ function relatedSlideIndex(outline: PresentationSourceSlide[], slideNumber: numb
     : sourceBlockId ? outline.findIndex((slide) => slide.sourceBlockId === sourceBlockId) : 0;
   const relative = authored < 0 ? 0 : authored - pageStart;
   return Math.max(0, Math.min(Math.max(0, length - 1), relative));
+}
+
+/**
+ * Promote a missing final promise only when both its opening and final authored
+ * slides independently authorize the exact same audience-visible wording.
+ * Internal citations are evidence, never a substitute for delivered content.
+ */
+export function repairProtectedPresentationMessages<T>(values: readonly T[], contract: PresentationSourceContract, options: { pageStart?: number } = {}): T[] {
+  const result = [...values];
+  const pageStart = Math.max(0, Math.floor(Number(options.pageStart ?? 0)));
+  const opening = contract.numberedOutline[0];
+  if (!opening) return result;
+
+  for (const message of contract.protectedMessages) {
+    if (message.placement !== "closing") continue;
+    const authoredIndex = contract.numberedOutline.findIndex((slide) => slide.number === message.slideNumber);
+    const index = authoredIndex - pageStart;
+    if (index < 0 || index >= result.length) continue;
+    const authored = contract.numberedOutline[authoredIndex];
+    const item = asRecord(result[index]);
+    if (!authored || !authored.content.includes(message.text) || visibleSlideText(item).includes(message.text)) continue;
+
+    const openingIndex = contract.numberedOutline.findIndex((slide) => slide.number === opening.number) - pageStart;
+    const openingItem = openingIndex >= 0 && openingIndex < result.length ? asRecord(result[openingIndex]) : null;
+    const assigned = asRecord(item.slide);
+    const citations = Array.isArray(assigned.citations) ? assigned.citations.map(asRecord) : [];
+    const references = [
+      ...(Array.isArray(assigned.sourceIds) ? assigned.sourceIds : []),
+      ...(Array.isArray(assigned.source_ids) ? assigned.source_ids : []),
+      ...citations.map((citation) => citation.sourceId ?? citation.source_id),
+    ].map(clean).filter(Boolean);
+    const resolved = resolvePresentationSourceReferences(references, contract, { allowDurableIds: true });
+    if (message.sourceBlockId && !resolved.blockIds.includes(message.sourceBlockId)) continue;
+    const openingDelivered = Boolean(openingItem && opening.content.includes(message.text) && visibleSlideText(openingItem).includes(message.text));
+    const assignedEvidence = citations.some((citation) => {
+      const excerpt = clean(citation.excerpt);
+      if (!excerpt.includes(message.text) || !authored.content.includes(excerpt)) return false;
+      const anchored = clean(citation.anchor).match(/\b(?:authored\s+)?slide\s+(\d+)\b/iu)?.[1];
+      if (anchored && Number(anchored) !== authored.number) return false;
+      const reference = clean(citation.sourceId ?? citation.source_id);
+      if (!reference || !message.sourceBlockId) return true;
+      return resolvePresentationSourceReferences([reference], contract, { allowDurableIds: true }).blockIds.includes(message.sourceBlockId);
+    });
+    if (!openingDelivered && !assignedEvidence) continue;
+
+    const body = clean(item.body);
+    result[index] = { ...item, body: body ? `${message.text}\n\n${body}` : message.text } as T;
+  }
+
+  return result;
 }
 
 /**
@@ -812,6 +979,16 @@ export function validatePresentationSourceCoverage(values: readonly unknown[], c
       const reversedExact = new RegExp(`\\b(?:exact|unrounded|precise)\\b[^\\d\\n]{0,50}\\b${escaped(exactFact.displayValue)}\\b`, "iu");
       const reversedDisplay = new RegExp(`\\b(?:display(?:ed)?|rounded)\\b[^\\d\\n]{0,50}\\b${escaped(exactFact.exactValue)}\\b`, "iu");
       if (reversedExact.test(visible[index] ?? "") || reversedDisplay.test(visible[index] ?? "")) add("reversed_numeric_precision", `items.${index}.slide.visual`, `Slide ${pageStart + index + 1} reverses the exact ${exactFact.exactValue} and rounded display ${exactFact.displayValue} meanings.`);
+    }
+  }
+
+  for (const message of contract.protectedMessages) {
+    const authoredIndex = contract.numberedOutline.length ? contract.numberedOutline.findIndex((slide) => slide.number === message.slideNumber) : message.slideNumber - 1;
+    const index = authoredIndex - pageStart;
+    if (index < 0 || index >= items.length) continue;
+    if (!(visible[index] ?? "").includes(message.text)) {
+      const elsewhere = visible.some((content, position) => position !== index && content.includes(message.text));
+      add(elsewhere ? "misplaced_protected_message" : "missing_protected_message", `items.${index}.body`, `The exact authored ${message.placement} message must appear in audience-facing content on slide ${message.slideNumber}.`);
     }
   }
 

@@ -395,6 +395,57 @@ test("locally repairs category-only proposal rows without submitting a second pa
   });
 });
 
+test("preserves source-authored recurring legacy formats on slide five without a paid repair",async()=>{
+  const sourceId="PRIVATE_PITCH_FEEDBACK_SOURCE_8731";
+  const authored=[
+    "Slide 1 — One context, infinite paths\nForma replaces fragmented .doc, .ppt, .mov, .mp3, and .psd handoffs with one living context.",
+    "Slide 2 — Gather meaningful context\nCollect each independently useful decision.",
+    "Slide 3 — Choose the best medium\nRespect the audience and moment.",
+    "Slide 4 — Preserve the message\nMaintain every source-authored promise.",
+    "Slide 5 — Close the trust gap\nVisual storyboard beats: scattered .doc/.ppt/.mov/.mp3/.psd files; one unified creative context.",
+    "Slide 6 — Restore human confidence\nMake each delivery reviewable.",
+  ];
+  const snapshot={facts:[{block_id:sourceId,type:"direction",properties:{label:"Authored end-user feedback",text:authored.join("\n")}}],relationships:[]};
+  const rowValue="scattered .doc/.ppt/.mov/.mp3/.psd files";
+  const titles=["One context, infinite paths","Gather meaningful context","Choose the best medium","Preserve the message","Close the trust gap","Restore human confidence"];
+  const heroValues=[".doc · .ppt · .mov · .mp3 · .psd","Collect useful decisions","Respect each audience","Keep authored intent","unused","Review every delivery"];
+  const output={title:"Pitch context feedback",summary:"An independently source-grounded end-user assessment.",content_markdown:`# Pitch context feedback\n${authored.join("\n\n")}`,presentation:presentation("field-notes"),items:titles.map((title,index)=>({title,body:"",notes:"Retain the exact independently authored evidence.",image_prompt:"Editable source-grounded visual.",context_group_ids:[],slide:{layout:index===4?"timeline":index===0?"cover":"statement",kicker:`Evidence ${index+1}`,bullets:[],source_ids:["blk_001"],source_order:index+1,visual:index===4?{kind:"timeline",label:"Creative delivery sequence",value:"",data:[{label:"Fragmented handoffs",value:rowValue,weight:1,source_ids:["blk_001"]},{label:"Unified Forma context",value:"one unified creative context",weight:.8,source_ids:["blk_001"]}]}:{kind:"hero-type",label:"Authored emphasis",value:heroValues[index],data:[]}}}))};
+
+  await withProviderResponses([output],async(requests)=>{
+    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-end-user","slides",{documentTitle:"Pitch context feedback",snapshot,options:{itemCount:6,requestedSlideCount:6,presentationStyle:"field-notes",presentationFidelity:"faithful"}});
+    assert.equal(requests.length,1,"independently authored recurring visual evidence must never trigger a second paid response");
+    assert.equal(result.inputReceipt.validation.repair_attempted,false);
+    assert.deepEqual(result.inputReceipt.validation.initial_issues,[]);
+    assert.equal(result.output.items[0].slide.visual.value,".doc · .ppt · .mov · .mp3 · .psd");
+    assert.equal(result.output.items[4].slide.visual.data[0].value,rowValue);
+    assert.deepEqual(result.output.items[4].slide.visual.data[0].sourceIds,[sourceId]);
+
+    const retained=assessStoredPresentationCandidate(JSON.stringify(output),snapshot,{itemCount:6,requestedSlideCount:6,presentationStyle:"field-notes",presentationFidelity:"faithful"});
+    assert.deepEqual(retained.issues,[],"the same grounded recurrence must allow zero-provider recovery of an already-paid draft");
+    assert.equal(retained.output.items[4].slide.visual.data[0].value,rowValue);
+    assert.equal(requests.length,1,"reassessing a retained paid response never contacts the provider");
+  });
+});
+
+test("preserves an exact authored opening-to-closing promise without a paid presentation repair",async()=>{
+  const sourceId="PRIVATE_PITCH_PROMISE_SOURCE_8731";
+  const promise="Your content. One context. Infinite paths to your target.";
+  const authored=Array.from({length:9},(_,index)=>index===0?`Slide 1 — ${promise}\nOpen with the exact approved promise.`:index===8?`Slide 9 — Confident delivery\nClose with the exact promise: ${promise}`:`Slide ${index+1} — Independently authored chapter ${index+1}\nAdvance a distinct customer decision ${index+1}.`);
+  const snapshot={facts:[{block_id:sourceId,type:"direction",properties:{label:"Authored Forma pitch",text:authored.join("\n")}}],relationships:[]};
+  const heroValues=["Shared creative beginning","Gather meaningful context","Choose relevant delivery","Adapt each expression","Respect individual attention","Keep durable decisions","Follow productive paths","Protect human control","Reach the intended audience"];
+  const output={title:"Pitch context",summary:"One exact opening promise returns in its authored closing.",content_markdown:`# Pitch context\n${authored.join("\n\n")}`,presentation:presentation("editorial"),items:heroValues.map((value,index)=>({title:index===0?promise:index===8?"Confident delivery":`Authored chapter ${index+1}`,body:index===8?promise:"",notes:"Keep the exact approved source-authored promise.",image_prompt:"Source-grounded editable creative direction.",context_group_ids:[],slide:{layout:index===0?"cover":index===8?"closing":"statement",kicker:`Decision ${index+1}`,bullets:[],source_ids:["blk_001"],source_order:index+1,visual:{kind:"hero-type",label:"Independent emphasis",value,data:[]}}}))};
+
+  await withProviderResponses([output],async(requests)=>{
+    const result=await generateDocumentArtifact({OPENAI_API_KEY:"mock-provider-key",OPENAI_MODEL:"gpt-presentation-test"},"authorized-end-user","slides",{documentTitle:"Pitch context",snapshot,options:{itemCount:9,requestedSlideCount:9,presentationStyle:"editorial",presentationFidelity:"faithful"}});
+    assert.equal(requests.length,1,"the source-authored opening and closing promise must not submit a second paid request");
+    assert.equal(result.inputReceipt.validation.repair_attempted,false);
+    assert.deepEqual(result.inputReceipt.validation.initial_issues,[]);
+    assert.equal(result.output.items[0].title,promise);
+    assert.equal(result.output.items[8].body,promise);
+    assert.equal(requests[0].input.presentation_source.outline.length,9);
+  });
+});
+
 test("repairs redundant title-and-question visuals before a second paid slideshow request",async()=>{
   for(const variant of ["row-values","row-labels"]){
     const snapshot=independentSlideSnapshot();
@@ -826,6 +877,43 @@ test("never automatically resubmits a paid OpenAI Responses request after an amb
 
   await assert.rejects(generateExecutivePresentation(),(error)=>error.detail?.httpStatus===502);
   assert.equal(submissions,1,"an ambiguous paid POST cannot be automatically replayed or billed repeatedly");
+});
+
+test("preflights a unique provider-support trace before each paid slideshow submission",async(context)=>{
+  const invalid=executivePresentation();
+  invalid.items[0].slide.source_ids=["blk_999"];
+  const preflightIds=[];
+  const submittedIds=[];
+  const completedPreflights=new Set();
+
+  context.mock.method(globalThis,"fetch",async(url,init)=>{
+    assert.equal(String(url),"https://api.openai.com/v1/responses");
+    const clientRequestId=new Headers(init.headers).get("X-Client-Request-Id");
+    assert.equal(clientRequestId,preflightIds.at(-1),"the submitted trace must exactly match the durable preflight identity");
+    assert.ok(completedPreflights.has(clientRequestId),"the provider request cannot start before its async preflight is complete");
+    assert.match(clientRequestId,/^forma-slides-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+    assert.ok(clientRequestId.length<=512,"provider support IDs must fit OpenAI's documented header limit");
+    assert.ok([...clientRequestId].every((character)=>character.charCodeAt(0)<=0x7f),"provider support IDs must contain only ASCII characters");
+    submittedIds.push(clientRequestId);
+    const output=submittedIds.length===1?invalid:executivePresentation();
+    return Response.json({
+      id:`presentation-provider-response-${submittedIds.length}`,
+      model:"gpt-presentation-test",
+      output_text:JSON.stringify(output),
+      usage:{input_tokens:120,output_tokens:80,total_tokens:200},
+    });
+  });
+
+  const result=await generateExecutivePresentation({onBeforeProviderAttempt:async({clientRequestId})=>{
+    preflightIds.push(clientRequestId);
+    await Promise.resolve();
+    completedPreflights.add(clientRequestId);
+  }});
+
+  assert.equal(result.responseId,"presentation-provider-response-2");
+  assert.equal(submittedIds.length,2,"the bounded source repair still issues its already-approved second request");
+  assert.deepEqual(submittedIds,preflightIds);
+  assert.equal(new Set(submittedIds).size,submittedIds.length,"each paid request must receive its own unique support trace");
 });
 
 test("preflights each paid slideshow request and preserves truthful accounting when its repair exceeds the ceiling",async()=>{

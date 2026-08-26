@@ -1,4 +1,5 @@
-import type { DocumentArtifactDraftItem, SlidePresentation } from "./document-artifacts.ts";
+import type { DocumentArtifactDraftItem, SlideCitation, SlidePresentation } from "./document-artifacts.ts";
+import { presentationAudienceCitations } from "./presentation-delivery.ts";
 
 /** One trusted logical artboard for browser presentation, capture, and editable export. */
 export const PRESENTATION_CANVAS_WIDTH = 960 as const;
@@ -79,7 +80,7 @@ export const PRESENTATION_LAYOUT_CAPACITIES = Object.freeze({
   minimumLabelFontPx: 12,
 });
 
-/** Provider guidance is advisory: complete protected evidence always outranks copy budgets. */
+/** Provider guidance protects complete provenance without treating it as audience delivery. */
 export const PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS = [
   `Compose each visible slide for one ${PRESENTATION_CANVAS_WIDTH} × ${PRESENTATION_CANVAS_HEIGHT}px 16:9 artboard.`,
   `Aim for a title of at most ${PRESENTATION_LAYOUT_CAPACITIES.titleCharacters} characters,`,
@@ -88,11 +89,11 @@ export const PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS = [
   `and visual labels of at most ${PRESENTATION_LAYOUT_CAPACITIES.dataLabelCharacters} characters when the source permits.`,
   `Reserve ${PRESENTATION_LAYOUT_CAPACITIES.minimumBodyFontPx}px body text and`,
   `${PRESENTATION_LAYOUT_CAPACITIES.minimumLabelFontPx}px source-label text without scrolling.`,
-  "Budget the title, body, bullets, chart labels and values, and every complete source excerpt together; avoid redundant editorial copy while retaining every exact source excerpt even when it substantiates the same claim.",
-  "Long protected source excerpts use the trusted full-width evidence rail instead of a narrow narrative-column scroll panel.",
-  "Keep citation labels and anchors concise while preserving every full authorized citation excerpt on the slide and in the complete semantic reading view.",
+  "Budget only audience-facing title, body, bullets, chart labels and values, protected exact messages, and intentionally published source attribution together; avoid redundant editorial copy.",
+  "Preserve all complete authorized citation excerpts in structured source provenance and authorized evidence inspection, but never place full source excerpts, internal source labels, slide-number anchors, or adapter instructions on the audience artboard.",
+  "Show a concise public attribution only when required for licensing, published research, quotations, or compliance; producer metadata and duplicate source passages remain backstage.",
   "These are presentation targets, never permission to truncate or omit a protected quotation, attribution, source claim, exact value, chart row, authored slide, or source citation.",
-  "When protected evidence exceeds a target, preserve the complete evidence and use the semantic layout's dense posture; never emit HTML, CSS, JavaScript, iframes, or arbitrary layout coordinates.",
+  "When protected audience-facing evidence exceeds a target, preserve the complete delivery and use the semantic layout's dense posture; never emit HTML, CSS, JavaScript, iframes, or arbitrary layout coordinates.",
 ].join(" ");
 
 export type PresentationLayoutPlan = {
@@ -107,8 +108,10 @@ export type PresentationLayoutPlan = {
   density: PresentationLayoutDensity;
   citationPlacement: PresentationCitationPlacement;
   className: `presentation-slide--density-${PresentationLayoutDensity}`;
-  /** The approved source is never mutated and no protected evidence is projected away. */
+  /** The approved source is never mutated; its complete private evidence remains inspectable. */
   visibleItem: DocumentArtifactDraftItem;
+  /** Only concise, intentionally public attributions belong on the audience artboard. */
+  audienceCitations: SlideCitation[];
   overflow: {
     hasOverflow: boolean;
     readingModeRecommended: boolean;
@@ -124,21 +127,21 @@ export type PresentationLayoutPlan = {
 
 /**
  * Classify display density without accepting provider-authored CSS, markup, or coordinates.
- * Protected quotations, chart rows, precision, bullets, identifiers, and source claims
- * always survive unchanged, including complete authorized citation excerpts on both
- * the composed slide and its complete semantic reading alternative.
+ * Protected quotations, chart rows, precision, bullets, and source claims survive unchanged.
+ * Complete authorized citation excerpts remain on the immutable canonical item, while
+ * only compact audience-approved attribution contributes to visual layout density.
  */
 export function planSlideLayout(
   item: DocumentArtifactDraftItem,
   presentation?: SlidePresentation | null,
 ): PresentationLayoutPlan {
   const slide = item.slide;
-  const citations = slide?.citations ?? [];
+  const audienceCitations = presentationAudienceCitations(slide?.citations);
   const bullets = slide?.bullets ?? [];
   const data = slide?.visual.data ?? [];
   const reasons: PresentationLayoutOverflowReason[] = [];
-  const citationExcerpts = citations.filter((citation) => citation.excerpt.trim()).length;
-  const citationCharacters = citations.reduce((total, citation) =>
+  const citationExcerpts = audienceCitations.filter((citation) => citation.excerpt.trim()).length;
+  const citationCharacters = audienceCitations.reduce((total, citation) =>
     total + citation.label.length + citation.anchor.length + citation.excerpt.length, 0);
   const narrativeCharacters = item.title.length + item.body.length
     + bullets.reduce((total, bullet) => total + bullet.length, 0)
@@ -157,8 +160,8 @@ export function planSlideLayout(
   if (data.some((datum) => (datum.displayValue ?? datum.value).length > PRESENTATION_LAYOUT_CAPACITIES.dataValueCharacters)) reasons.push("long-data-value");
   if (narrativeCharacters > PRESENTATION_LAYOUT_CAPACITIES.narrativeCharacters) reasons.push("dense-narrative");
   if (visualCharacters > PRESENTATION_LAYOUT_CAPACITIES.visualCharacters) reasons.push("dense-visual");
-  if (citations.length > PRESENTATION_LAYOUT_CAPACITIES.citationCount) reasons.push("many-citations");
-  if (citations.some((citation) => citation.excerpt.length > PRESENTATION_LAYOUT_CAPACITIES.citationExcerptCharacters)) reasons.push("long-citation-excerpt");
+  if (audienceCitations.length > PRESENTATION_LAYOUT_CAPACITIES.citationCount) reasons.push("many-citations");
+  if (audienceCitations.some((citation) => citation.excerpt.length > PRESENTATION_LAYOUT_CAPACITIES.citationExcerptCharacters)) reasons.push("long-citation-excerpt");
   if (citationExcerpts) reasons.push("citation-excerpts");
 
   const visibleItem: DocumentArtifactDraftItem = item;
@@ -168,12 +171,15 @@ export function planSlideLayout(
     ? "full-width"
     : "inline";
   const dense = contentReasons.length >= 2
+    || narrativeCharacters > PRESENTATION_LAYOUT_CAPACITIES.narrativeCharacters
+    || visualCharacters > PRESENTATION_LAYOUT_CAPACITIES.visualCharacters
+    || bullets.some((bullet) => bullet.length > PRESENTATION_LAYOUT_CAPACITIES.bulletCharacters)
     || bullets.length > PRESENTATION_LAYOUT_CAPACITIES.bulletCount
     || data.length > PRESENTATION_LAYOUT_CAPACITIES.dataPointCount
     || (slide?.quote?.text.length ?? 0) > PRESENTATION_LAYOUT_CAPACITIES.quoteCharacters;
   const density: PresentationLayoutDensity = dense
     ? "dense"
-    : contentReasons.length || bullets.length >= 4 || data.length >= 6 || citations.length >= 2
+    : contentReasons.length || bullets.length >= 4 || data.length >= 6 || audienceCitations.length >= 2
       ? "compact"
       : "comfortable";
 
@@ -190,6 +196,7 @@ export function planSlideLayout(
     citationPlacement,
     className: `presentation-slide--density-${density}`,
     visibleItem,
+    audienceCitations,
     overflow: {
       hasOverflow: reasons.length > 0,
       readingModeRecommended: dense || contentReasons.length > 0,

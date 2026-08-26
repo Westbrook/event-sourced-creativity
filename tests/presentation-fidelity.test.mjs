@@ -546,11 +546,12 @@ test("complete authored presentations validate all visible protected content and
   assert.ok(issueCodes(validate(invented)).has("unknown_source_reference"));
 });
 
-test("real editable PowerPoint exports retain exact scores, independently editable semantic shapes, full quotations, source-safe citations, and complete notes", () => {
+test("authorized presenter PowerPoint exports retain exact scores and quotes while separating private evidence from audience slides", () => {
   const { draft } = buildFaithfulDraft(executive);
   const archive = storedZipEntries(createPowerPointDocument(draft.items, draft.presentation, {
     title: draft.title,
     showFooterLabel: true,
+    includePresenterNotes: true,
   }));
 
   assert.equal([...archive.keys()].filter((name) => /^ppt\/slides\/slide\d+\.xml$/u.test(name)).length, 12);
@@ -569,8 +570,10 @@ test("real editable PowerPoint exports retain exact scores, independently editab
     const notes = archive.get(`ppt/notesSlides/notesSlide${index + 1}.xml`);
     const shapes = editableShapes(slide);
     assert.equal(shapes.find((shape) => shape.name === "Editable slide title")?.text, item.title);
-    assert.ok(shapes.some((shape) => shape.name.startsWith("Editable evidence citation")), `slide ${index + 1} has independently editable source evidence`);
+    assert.equal(shapes.some((shape) => shape.name.startsWith("Editable evidence citation")), false, `slide ${index + 1} does not expose internal source metadata to its audience`);
+    assert.doesNotMatch(slide, /Authorized executive source/u, `slide ${index + 1} keeps internal provenance backstage`);
     assert.match(notes, /\[Sources\]/u);
+    assert.match(notes, /Authorized executive source/u, `slide ${index + 1} retains full provenance in explicitly authorized presenter notes`);
     if (item.slide.quote) {
       assert.equal(shapes.find((shape) => shape.name === "Editable quotation")?.text, item.slide.quote.text);
       assert.ok(shapes.find((shape) => shape.name === "Editable quotation attribution")?.text.includes(item.slide.quote.role));
@@ -588,7 +591,7 @@ test("real editable PowerPoint exports retain exact scores, independently editab
   assert.ok(roadmapShapes.some((shape) => shape.name === "Editable timeline value 2" && shape.text === "12–16 weeks"));
 });
 
-test("programmatic presentation PDFs retain all six visible scores, both precision labels, complete searchable quotations, roadmaps, and citations", () => {
+test("programmatic presentation PDFs retain scores, precision, searchable quotations, and roadmaps without internal citations", () => {
   const { draft } = buildFaithfulDraft(executive);
   const result = createPresentationPdf(draft.items, draft.presentation, { title: draft.title, showFooterLabel: true });
   const pdf = new TextDecoder().decode(result.bytes);
@@ -608,7 +611,7 @@ test("programmatic presentation PDFs retain all six visible scores, both precisi
   }
   assert.ok(pdf.includes("4-6 weeks"));
   assert.ok(pdf.includes("12-16 weeks"));
-  assert.ok(pdf.includes("Authorized executive source"));
+  assert.equal(pdf.includes("Authorized executive source"), false, "audience-facing PDF pages do not expose internal provenance");
   for (const fact of executive.snapshot.facts) assert.equal(pdf.includes(fact.block_id), false);
 });
 

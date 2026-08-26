@@ -13,6 +13,7 @@ import {
 } from "../model/document-artifacts";
 import { localizedSourceAnchor } from "../model/source-anchor";
 import { inferPresentationAudienceLocale } from "../model/presentation-source";
+import { presentationAudienceCitations } from "../model/presentation-delivery";
 import {
   PRESENTATION_CANVAS_HEIGHT,
   PRESENTATION_CANVAS_WIDTH,
@@ -215,9 +216,9 @@ export class PresentationSlide extends FormaPresentationalElement {
 
   #quote(quote: PresentationQuote, label: string) {
     const role = quote.role && quote.role !== quote.speaker ? quote.role : "";
-    const citation = quote.citation && privateSourceLabel(quote.citation)
-      ? this.#audienceText("presentation.authoredSource", "Authored source")
-      : quote.citation;
+    const citation = quote.citation
+      ? presentationAudienceCitations([{ label: quote.citation, anchor: "", excerpt: "" }])[0]?.label
+      : undefined;
     return html`<figure class="presentation-slide__quote-card" aria-label=${label}>
       <blockquote><p class="presentation-slide__quote-text" dir="auto">${quote.text}</p></blockquote>
       ${quote.speaker || role || citation ? html`
@@ -345,10 +346,10 @@ export class PresentationSlide extends FormaPresentationalElement {
     </figure>`;
   }
 
-  #citations(slide: EnrichedSlideVisualData) {
-    if (!slide.citations?.length) return nothing;
+  #citations(citations: PresentationCitation[]) {
+    if (!citations.length) return nothing;
     return html`<section class="presentation-slide__footnotes" aria-label=${this.#audienceText("presentation.evidence", "Evidence and sources")}>
-      <ol>${slide.citations.map((citation) => {
+      <ol>${citations.map((citation) => {
         const label = privateSourceLabel(citation.label)
           ? this.#audienceText("presentation.authoredSource", "Authored source")
           : citation.label;
@@ -356,7 +357,6 @@ export class PresentationSlide extends FormaPresentationalElement {
         return html`<li class="presentation-slide__citation" dir="auto">
           ${anchor ? html`<span class="presentation-slide__citation-anchor">${localizedSourceAnchor(anchor,(source,values)=>this.#audienceSystem(source,values),(value)=>this.#audienceNumber(value))}</span> ` : nothing}
           <cite>${label}</cite>
-          ${citation.excerpt ? html`<span class="presentation-slide__citation-excerpt"> — ${citation.excerpt}</span>` : nothing}
         </li>`;
       })}</ol>
     </section>`;
@@ -372,7 +372,8 @@ export class PresentationSlide extends FormaPresentationalElement {
     const hasVisual = slideVisualIsComplete(slide) || kind === "quote" && Boolean(slide.quote?.text);
     const showDeckLabel = this.showFooterLabel && Boolean(presentation.footerLabel);
     const inlineQuote = slide.quote && kind !== "quote" ? slide.quote : null;
-    const evidenceRail = layout.citationPlacement === "full-width" && Boolean(slide.citations?.length);
+    const audienceCitations = layout.audienceCitations;
+    const evidenceRail = layout.citationPlacement === "full-width" && Boolean(audienceCitations.length);
 
     return html`<article
       class=${`presentation-slide ${layout.className}${evidenceRail ? " presentation-slide--evidence-rail" : ""} style-${presentation.stylePreset} layout-${slide.layout} visual-${kind}${hasVisual ? "" : " no-visual"}${this.compact ? " compact" : ""}`}
@@ -398,11 +399,11 @@ export class PresentationSlide extends FormaPresentationalElement {
           ${item.body ? html`<p dir="auto">${item.body}</p>` : nothing}
           ${slide.bullets.length ? html`<ul>${slide.bullets.map((bullet) => html`<li dir="auto">${bullet}</li>`)}</ul>` : nothing}
           ${inlineQuote ? this.#quote(inlineQuote, this.#audienceText("presentation.stakeholderQuote", "Stakeholder quotation")) : nothing}
-          ${evidenceRail ? nothing : this.#citations(slide)}
+          ${evidenceRail ? nothing : this.#citations(audienceCitations)}
         </section>
         ${hasVisual ? html`<aside aria-label=${slide.visual.label}>${this.#visual(slide)}</aside>` : nothing}
       </div>
-      ${evidenceRail ? this.#citations(slide) : nothing}
+      ${evidenceRail ? this.#citations(audienceCitations) : nothing}
       <footer>
         ${showDeckLabel ? html`<span dir="auto">${presentation.footerLabel}</span>` : nothing}
         ${hasVisual ? html`<span dir="auto">${slide.visual.label}</span>` : nothing}

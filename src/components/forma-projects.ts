@@ -4,45 +4,155 @@ import { ensureModalDialog } from "./modal-dialog";
 import { generationHistoryItemIsDraft, type EventInput } from "../model/events";
 import { suggestedSubtype, type BlockKind } from "../model/block-types";
 import { documentArtifactDefinition } from "../model/document-artifacts";
-import { withDocumentInRoute } from "../model/routes";
+import { documentSlug, withDocumentInRoute } from "../model/routes";
 import "./output-visual";
 import "./prompt-fan-visual";
 import "./artifact-summary";
 import "./design-primitives";
 
+type ProjectBriefDraft = {
+  projectId: string;
+  documentId: string;
+  name: string;
+  documentTitle: string;
+  objective: string;
+  audience: string;
+  message: string;
+  protectedPhrase: string;
+  deliverable: string;
+  boundary: string;
+  source: string;
+  sourceRights: boolean;
+};
+
+function projectBriefEvents(draft: ProjectBriefDraft): { events: EventInput[]; decisionCount: number; hasBrief: boolean } | null {
+  const name = draft.name.trim();
+  const source = draft.source.trim();
+  if (!name || source && !draft.sourceRights) return null;
+
+  const protectedPhrase = draft.protectedPhrase.trim();
+  const authoredMessage = draft.message.trim();
+  const protectedInstruction = protectedPhrase ? `Preserve this line exactly: ${protectedPhrase}` : "";
+  const message = protectedInstruction && !authoredMessage.includes(protectedInstruction)
+    ? [authoredMessage, protectedInstruction].filter(Boolean).join("\n\n")
+    : authoredMessage;
+  const decisions = ([
+    ["direction", draft.objective.trim()],
+    ["audience", draft.audience.trim()],
+    ["message", message],
+    ["format", draft.deliverable.trim()],
+    ["exclusion", draft.boundary.trim()],
+  ] as Array<[BlockKind, string]>).filter((entry) => Boolean(entry[1]));
+  const hasBrief = Boolean(decisions.length || source);
+  const authoredDocumentTitle = draft.documentTitle.trim();
+  const title = authoredDocumentTitle || (hasBrief ? `${name} brief` : "Untitled document");
+  const handle = authoredDocumentTitle
+    ? documentSlug(authoredDocumentTitle) || `document-${draft.documentId.slice(0, 8)}`
+    : hasBrief ? "project-brief" : "untitled";
+  const events: EventInput[] = [
+    { type: "ProjectCreated", payload: { project_id: draft.projectId, name, state: "active" } },
+    { type: "DocumentCreated", payload: { project_id: draft.projectId, document_id: draft.documentId, handle, title } },
+    { type: "EmptyCanvasChosen", payload: { project_id: draft.projectId, document_id: draft.documentId, source_surface: "projects" } },
+  ];
+
+  for (const [index, [type, text]] of decisions.entries()) {
+    events.push({
+      type: "BlockCreated",
+      payload: {
+        project_id: draft.projectId,
+        block_id: crypto.randomUUID(),
+        document_id: draft.documentId,
+        type,
+        handle: `${type}/project-brief-${index + 1}`,
+        position: `z${String(index + 1).padStart(4, "0")}`,
+        properties: {
+          text,
+          subtype: suggestedSubtype(type),
+          weight: .8,
+          authority: "authored",
+          ...(type === "exclusion" ? { intent: "prohibit" } : {}),
+          ...(type === "message" && protectedPhrase ? {
+            exact_text: protectedPhrase,
+            exact_placements: ["opening", "closing"],
+            protected_phrases: [{ text: protectedPhrase, placement: "opening_and_closing" }],
+          } : {}),
+        },
+      },
+    });
+  }
+
+  if (source) {
+    const referenceId = crypto.randomUUID();
+    const sourceMetadata = {
+      source_type: "pasted-text",
+      source_kind: "text",
+      source_mime_type: "text/plain",
+      media_type: "text/plain",
+    };
+    events.push(
+      {
+        type: "ReferenceIngested",
+        payload: {
+          project_id: draft.projectId,
+          document_id: draft.documentId,
+          reference_id: referenceId,
+          ...sourceMetadata,
+          source_ref: "authored-project-brief",
+          rights_class: "asserted",
+        },
+      },
+      {
+        type: "RightsAsserted",
+        payload: {
+          project_id: draft.projectId,
+          document_id: draft.documentId,
+          reference_id: referenceId,
+          rights_class: "owned_or_licensed",
+          assertion_method: "explicit-brief-confirmation",
+        },
+      },
+      {
+        type: "BlockCreated",
+        payload: {
+          project_id: draft.projectId,
+          block_id: crypto.randomUUID(),
+          document_id: draft.documentId,
+          type: "reference",
+          handle: "reference/project-source",
+          position: `z${String(decisions.length + 1).padStart(4, "0")}`,
+          properties: {
+            reference_id: referenceId,
+            label: "Project source excerpt",
+            text: source,
+            ...sourceMetadata,
+            source_citation: "Pasted and explicitly licensed by the project creator",
+            subtype: "Mood",
+            weight: .8,
+            authority: "authored",
+            extraction_status: "ready",
+          },
+        },
+      },
+    );
+  }
+
+  return { events, decisionCount: decisions.length + (source ? 1 : 0), hasBrief };
+}
+
 export class FormaProjects extends FormaElement {
-  #creating=false;#name="";#objective="";#audience="";#deliverable="";#boundary="";#source="";#sourceRights=false;
+  #creating=false;#name="";#documentTitle="";#objective="";#audience="";#message="";#protectedPhrase="";#deliverable="";#boundary="";#source="";#sourceRights=false;
   #inCanvas(){const route=this.store.route.get().split(/[?#]/)[0];return route==="/canvas/projects"||route.startsWith("/canvas/projects/");}
   #destination(){return this.#inCanvas()?"/canvas":"/";}
   protected override updated(){ensureModalDialog(this.querySelector<HTMLDialogElement>(".project-create-dialog"));}
-  #openCreate(){this.#creating=true;this.#name="";this.#objective="";this.#audience="";this.#deliverable="";this.#boundary="";this.#source="";this.#sourceRights=false;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLInputElement>(".project-create-dialog input")?.focus());}
+  #openCreate(){this.#creating=true;this.#name="";this.#documentTitle="";this.#objective="";this.#audience="";this.#message="";this.#protectedPhrase="";this.#deliverable="";this.#boundary="";this.#source="";this.#sourceRights=false;this.requestUpdate();void this.updateComplete.then(()=>this.querySelector<HTMLInputElement>(".project-create-dialog input")?.focus());}
   #close(){this.querySelector<HTMLDialogElement>(".project-create-dialog")?.close();this.#creating=false;this.requestUpdate();}
   async #create(event:SubmitEvent){
-    event.preventDefault();const name=this.#name.trim();const source=this.#source.trim();if(!name||source&&!this.#sourceRights)return;
-    const projectId=crypto.randomUUID();const documentId=crypto.randomUUID();
-    const decisions=([
-      ["direction",this.#objective.trim()],
-      ["audience",this.#audience.trim()],
-      ["format",this.#deliverable.trim()],
-      ["exclusion",this.#boundary.trim()],
-    ] as Array<[BlockKind,string]>).filter((entry)=>Boolean(entry[1]));
-    const hasBrief=Boolean(decisions.length||source);const title=hasBrief?`${name} brief`:"Untitled document";
-    const events:EventInput[]=[
-      {type:"ProjectCreated",payload:{project_id:projectId,name,state:"active"}},
-      {type:"DocumentCreated",payload:{project_id:projectId,document_id:documentId,handle:hasBrief?"project-brief":"untitled",title}},
-      {type:"EmptyCanvasChosen",payload:{project_id:projectId,document_id:documentId,source_surface:"projects"}},
-    ];
-    for(const [index,[type,text]] of decisions.entries())events.push({type:"BlockCreated",payload:{project_id:projectId,block_id:crypto.randomUUID(),document_id:documentId,type,handle:`${type}/project-brief-${index+1}`,position:`z${String(index+1).padStart(4,"0")}`,properties:{text,subtype:suggestedSubtype(type),weight:.8,authority:"authored",...(type==="exclusion"?{intent:"prohibit"}:{})}}});
-    if(source){
-      const referenceId=crypto.randomUUID();
-      events.push(
-        {type:"ReferenceIngested",payload:{project_id:projectId,document_id:documentId,reference_id:referenceId,source_type:"pasted-text",source_ref:"authored-project-brief",rights_class:"asserted"}},
-        {type:"RightsAsserted",payload:{project_id:projectId,document_id:documentId,reference_id:referenceId,rights_class:"owned_or_licensed",assertion_method:"explicit-brief-confirmation"}},
-        {type:"BlockCreated",payload:{project_id:projectId,block_id:crypto.randomUUID(),document_id:documentId,type:"reference",handle:"reference/project-source",position:`z${String(decisions.length+1).padStart(4,"0")}`,properties:{reference_id:referenceId,label:"Project source excerpt",text:source,source_type:"pasted-text",source_citation:"Pasted and explicitly licensed by the project creator",subtype:"Mood",weight:.8,authority:"authored",pixel_reference_mode:"context_only",extraction_status:"ready"}}},
-      );
-    }
-    const appended=await this.store.appendBatch(events);
-    if(appended.length){this.#close();this.store.setRoute(this.#destination());this.store.toast(hasBrief?(decisions.length+(source?1:0))===1?this.i18n.system("{name} created with {count} authored brief decision.",{name,count:this.i18n.number(decisions.length+(source?1:0))}):this.i18n.system("{name} created with {count} authored brief decisions.",{name,count:this.i18n.number(decisions.length+(source?1:0))}):this.i18n.system("{name} created with a blank document.",{name}));}
+    event.preventDefault();
+    const name=this.#name.trim();
+    const brief=projectBriefEvents({projectId:crypto.randomUUID(),documentId:crypto.randomUUID(),name,documentTitle:this.#documentTitle,objective:this.#objective,audience:this.#audience,message:this.#message,protectedPhrase:this.#protectedPhrase,deliverable:this.#deliverable,boundary:this.#boundary,source:this.#source,sourceRights:this.#sourceRights});
+    if(!brief)return;
+    const appended=await this.store.appendBatch(brief.events);
+    if(appended.length){this.#close();this.store.setRoute(this.#destination());this.store.toast(brief.hasBrief?brief.decisionCount===1?this.i18n.system("{name} created with {count} authored brief decision.",{name,count:this.i18n.number(brief.decisionCount)}):this.i18n.system("{name} created with {count} authored brief decisions.",{name,count:this.i18n.number(brief.decisionCount)}):this.i18n.system("{name} created with a blank document.",{name}));}
   }
   override render(){const p=this.store.projection.get();const shared=Boolean(this.store.session.get()?.projectContext);const canvas=this.#inCanvas();const destination=this.#destination();return html`<section class="projects-page page-pad">
     <header class="page-header page-header--hero"><div class="page-header-copy"><span class="eyebrow">${canvas?this.i18n.t("projects.canvasEyebrow","Canvas / All projects"):this.i18n.t("projects.creatorEyebrow","Creator Workspace / All projects")}</span><h1>${this.i18n.t("shell.navigation.projects","Projects")}</h1><p>${this.i18n.t("projects.description","Choose the project that contains your documents, collections, creative context, outputs, and boards.")}</p></div>${shared?nothing:html`<div class="page-header-actions"><forma-ui-button .label=${this.i18n.t("projects.new","New project")} icon-name="plus" variant="primary" @forma-press=${this.#openCreate}></forma-ui-button></div>`}</header>
@@ -55,7 +165,25 @@ export class FormaProjects extends FormaElement {
       <footer>${project.state==="archived"&&!shared?html`<button type="button" class="button primary" @click=${async()=>{const restored=await this.store.append({type:"ProjectStateChanged",payload:{project_id:project.id,state:"active",previous_state:"archived"}});if(restored.length)this.store.toast(this.i18n.system("{name} restored with its complete history and finished work.",{name:project.name}));}}>Restore project</button>`:html`<button class=${`button ${current?"secondary":"primary"}`} aria-label=${this.i18n.t(current?"projects.continueNamed":"projects.openNamed",current?"Continue working on {name}":"Open project {name}",{name:`\u2068${project.name}\u2069`})} @click=${()=>this.store.openProject(project.id,destination)}>${current?this.i18n.t("projects.continue","Continue working"):this.i18n.t("projects.open","Open project")} ${icon("arrow")}</button>`}${canvas?html`<button class="button ghost" aria-label=${this.i18n.t("projects.openLibraryNamed","Open project library for {name}",{name:`\u2068${project.name}\u2069`})} @click=${async()=>{await this.store.openProject(project.id,"/canvas/library");}}>${this.i18n.t("projects.openLibrary","Open project library")}</button>`:html`<button class="button ghost" @click=${async()=>{await this.store.openProject(project.id,"/studio/project");}}>View project contents</button>`}${!canvas&&this.store.session.get()?.canvas.access&&(!shared||project.id===this.store.session.get()?.projectContext?.projectId&&Boolean(this.store.session.get()?.projectContext?.permissions.includes("project.canvas.use")))?html`<button class="button ghost" aria-label=${this.i18n.t("projects.openCanvasNamed","Open in Canvas: {name}",{name:`\u2068${project.name}\u2069`})} @click=${async()=>{await this.store.openProject(project.id,"/canvas");}}>${this.i18n.t("projects.openCanvas","Open in Canvas")}</button>`:nothing}</footer>
       <div class="project-card-summary"><span><strong>${project.documentCount}</strong><small>document${project.documentCount===1?"":"s"}</small></span><p><b>${project.blockCount}</b> creative decision${project.blockCount===1?"":"s"}, <b>${project.outputCount}</b> output${project.outputCount===1?"":"s"}${project.artifactCount?(project.artifactCount===1 ? " " + this.i18n.system("including {artifactCount} narrative, presentation, or motion result", { artifactCount: this.i18n.number(project.artifactCount) }) : " " + this.i18n.system("including {artifactCount} narrative, presentation, or motion results", { artifactCount: this.i18n.number(project.artifactCount) })):""}, and <b>${project.collectionCount}</b> collection${project.collectionCount===1?"":"s"}.</p></div>
     </article>`;})}${!p.projects.length?html`<forma-ui-empty-state .heading=${this.i18n.t("projects.emptyHeading","Give your next idea a home")} .detail=${this.i18n.t("projects.emptyDetail","A project keeps its documents, references, reusable decisions, and finished work together.")} .action=${this.i18n.t("projects.emptyAction","Create your first project")} @forma-action=${this.#openCreate}></forma-ui-empty-state>`:""}</div>
-    ${this.#creating?html`<dialog class="modal project-create-dialog" closedby="any" aria-labelledby="new-project-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#close();}} @cancel=${(event:Event)=>{event.preventDefault();this.#close();}} @close=${()=>{if(this.#creating){this.#creating=false;this.requestUpdate();}}}><form class="modal-card wide" @submit=${this.#create}><button type="button" class="icon-button modal-close" aria-label=${this.i18n.t("action.close","Close")} @click=${this.#close}>${icon("close")}</button><span class="eyebrow">${this.i18n.t("projects.createEyebrow","New replayable workspace")}</span><h2 id="new-project-title">${this.i18n.t("projects.createHeading","Start with a useful project brief")}</h2><p>${this.i18n.t("projects.createDescription","Capture the decisions you already know, or leave every optional field empty for a genuinely blank document.")}</p><forma-ui-field .label=${this.i18n.t("projects.projectName","Project name")} .placeholder=${this.i18n.t("projects.projectNamePlaceholder","e.g. Autumn campaign")} max-length="80" required .value=${this.#name} @forma-input=${(event:CustomEvent<{value:string}>)=>{this.#name=event.detail.value;this.requestUpdate();}}></forma-ui-field><label>What should this work accomplish? <span>optional</span><textarea rows="2" maxlength="1200" placeholder="The outcome, decision, or change this project should create" .value=${this.#objective} @input=${(event:InputEvent)=>{this.#objective=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}}></textarea></label><label>Who needs to use or approve it? <span>optional</span><input maxlength="240" placeholder="Audience, stakeholders, or decision makers" .value=${this.#audience} @input=${(event:InputEvent)=>{this.#audience=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label><label>What needs to be delivered? <span>optional</span><input maxlength="240" placeholder="A campaign, presentation, written brief, or other finished output" .value=${this.#deliverable} @input=${(event:InputEvent)=>{this.#deliverable=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label><label>What must never appear? <span>optional</span><input maxlength="400" placeholder="Safety, brand, legal, or accuracy boundaries" .value=${this.#boundary} @input=${(event:InputEvent)=>{this.#boundary=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label><label>Owned or licensed source excerpt <span>optional</span><textarea rows="3" maxlength="5000" placeholder="Paste a source passage that should ground every output" .value=${this.#source} @input=${(event:InputEvent)=>{this.#source=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}}></textarea></label>${this.#source.trim()?html`<label class="rights-check"><input type="checkbox" .checked=${this.#sourceRights} @change=${(event:Event)=>{this.#sourceRights=(event.target as HTMLInputElement).checked;this.requestUpdate();}}><span>I own this passage or have permission to use it.</span></label>`:nothing}<footer><button type="button" class="button ghost" @click=${this.#close}>${this.i18n.t("action.cancel","Cancel")}</button><button class="button primary" ?disabled=${!this.#name.trim()||Boolean(this.#source.trim()&&!this.#sourceRights)}>${this.i18n.t("projects.createAction","Create project")}</button></footer></form></dialog>`:""}
+    ${this.#creating?html`<dialog class="modal project-create-dialog" closedby="any" aria-labelledby="new-project-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#close();}} @cancel=${(event:Event)=>{event.preventDefault();this.#close();}} @close=${()=>{if(this.#creating){this.#creating=false;this.requestUpdate();}}}>
+      <form class="modal-card wide" @submit=${this.#create}>
+        <button type="button" class="icon-button modal-close" aria-label=${this.i18n.t("action.close","Close")} @click=${this.#close}>${icon("close")}</button>
+        <span class="eyebrow">${this.i18n.t("projects.createEyebrow","New replayable workspace")}</span>
+        <h2 id="new-project-title">${this.i18n.t("projects.createHeading","Start with a useful project brief")}</h2>
+        <p>${this.i18n.t("projects.createDescription","Capture the decisions you already know, or leave every optional field empty for a genuinely blank document.")}</p>
+        <forma-ui-field .label=${this.i18n.t("projects.projectName","Project name")} .placeholder=${this.i18n.t("projects.projectNamePlaceholder","e.g. Autumn campaign")} max-length="80" required .value=${this.#name} @forma-input=${(event:CustomEvent<{value:string}>)=>{this.#name=event.detail.value;this.requestUpdate();}}></forma-ui-field>
+        <forma-ui-field .label=${this.i18n.system("Document name")} .placeholder=${this.i18n.system("New document")} .help=${this.i18n.system("Optional—Forma can derive one.")} max-length="80" .value=${this.#documentTitle} @forma-input=${(event:CustomEvent<{value:string}>)=>{this.#documentTitle=event.detail.value;this.requestUpdate();}}></forma-ui-field>
+        <label>What should this work accomplish? <span>optional</span><textarea rows="2" maxlength="1200" placeholder="The outcome, decision, or change this project should create" .value=${this.#objective} @input=${(event:InputEvent)=>{this.#objective=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}}></textarea></label>
+        <label>Who needs to use or approve it? <span>optional</span><input maxlength="240" placeholder="Audience, stakeholders, or decision makers" .value=${this.#audience} @input=${(event:InputEvent)=>{this.#audience=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label>
+        <label>${this.i18n.system("What should remain with them?")} <span>${this.i18n.system("optional")}</span><textarea rows="4" maxlength="12000" placeholder=${this.i18n.system("The idea or narrative the audience should retain")} .value=${this.#message} @input=${(event:InputEvent)=>{this.#message=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}}></textarea></label>
+        <forma-ui-field .label=${`${this.i18n.system("Message")} · ${this.i18n.system("Exact value")}`} .placeholder=${this.i18n.system("Single proposition")} max-length="500" .value=${this.#protectedPhrase} @forma-input=${(event:CustomEvent<{value:string}>)=>{this.#protectedPhrase=event.detail.value;this.requestUpdate();}}></forma-ui-field>
+        <label>What needs to be delivered? <span>optional</span><input maxlength="240" placeholder="A campaign, presentation, written brief, or other finished output" .value=${this.#deliverable} @input=${(event:InputEvent)=>{this.#deliverable=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label>
+        <label>What must never appear? <span>optional</span><input maxlength="400" placeholder="Safety, brand, legal, or accuracy boundaries" .value=${this.#boundary} @input=${(event:InputEvent)=>{this.#boundary=(event.target as HTMLInputElement).value;this.requestUpdate();}}></label>
+        <label>Owned or licensed source excerpt <span>optional</span><textarea rows="3" maxlength="5000" placeholder="Paste a source passage that should ground every output" .value=${this.#source} @input=${(event:InputEvent)=>{this.#source=(event.target as HTMLTextAreaElement).value;this.requestUpdate();}}></textarea></label>
+        ${this.#source.trim()?html`<label class="rights-check"><input type="checkbox" .checked=${this.#sourceRights} @change=${(event:Event)=>{this.#sourceRights=(event.target as HTMLInputElement).checked;this.requestUpdate();}}><span>I own this passage or have permission to use it.</span></label>`:nothing}
+        <footer><button type="button" class="button ghost" @click=${this.#close}>${this.i18n.t("action.cancel","Cancel")}</button><button class="button primary" ?disabled=${!this.#name.trim()||Boolean(this.#source.trim()&&!this.#sourceRights)}>${this.i18n.t("projects.createAction","Create project")}</button></footer>
+      </form>
+    </dialog>`:""}
   </section>`;}
 }
 customElements.define("forma-projects",FormaProjects);

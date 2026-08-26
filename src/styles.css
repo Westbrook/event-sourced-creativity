@@ -1810,9 +1810,15 @@ html[data-document-focus] .chat-view-page .studio-mode-nav { top: 0; }
 
 forma-document-generations,forma-generation-actions { display: block; min-width: 0; }
 forma-document-artifacts { display: block; min-width: 0; }
-.document-artifacts { padding: clamp(2rem,4vw,4rem) var(--page-gutter); border-block-start: 1px solid var(--line); background: var(--paper); }
-.document-artifacts > header { display: flex; align-items: end; justify-content: space-between; gap: 2rem; }
-.document-artifacts > header > div { min-width: 0; }
+.document-artifacts { min-inline-size: 0; max-inline-size: 100%; padding: clamp(2rem,4vw,4rem) var(--page-gutter); border-block-start: 1px solid var(--line); background: var(--paper); container: document-artifacts / inline-size; }
+.document-artifacts > header { display: flex; min-inline-size: 0; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: .75rem 1.25rem; }
+.document-artifacts > header > div { min-inline-size: 0; flex: 1 1 14rem; overflow-wrap: anywhere; }
+.document-artifacts > header > .button { min-inline-size: 0; max-inline-size: 100%; min-block-size: var(--forma-hit-target,var(--forma-control-min-size,2.75rem)); flex: 0 1 auto; white-space: normal; text-align: center; overflow-wrap: anywhere; }
+@container document-artifacts (max-width: 32rem) {
+  .document-artifacts > header { align-items: stretch; flex-direction: column; gap: .65rem; }
+  .document-artifacts > header > div { flex-basis: auto; }
+  .document-artifacts > header > .button { inline-size: 100%; }
+}
 .document-artifacts h2 { margin: .3rem 0; font: 600 var(--type-heading) var(--sans); letter-spacing: -.025em; }
 .document-artifacts > header p { max-width: 48rem; margin: 0; color: var(--muted); }
 .production-workflow { margin-block-start: 1.25rem; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
@@ -1984,7 +1990,8 @@ forma-document-artifacts { display: block; min-width: 0; }
 .artifact-kind-picker :is(button,label) > span { width: 1.5rem; color: var(--accent); }
 .artifact-kind-picker :is(button,label) small { color: var(--muted); line-height: 1.35; }
 .artifact-kind-picker input[type="radio"] { inline-size: 1.125rem; block-size: 1.125rem; accent-color: var(--accent); }
-.document-artifact-dialog { overflow: auto; }
+.document-artifact-dialog { grid-template-rows: none; grid-auto-rows: max-content; align-content: start; overflow: auto; overscroll-behavior: contain; }
+.document-artifact-dialog > .artifact-kind-picker { min-block-size: 10rem; }
 .artifact-options { display: grid; grid-template-columns: minmax(12rem,1.4fr) repeat(2,minmax(10rem,1fr)); gap: 1.25rem 2rem; padding: 1.75rem var(--page-gutter); }
 .artifact-option-intro h3 { margin: 0 0 .35rem; font: 600 1.2rem var(--sans); }
 .artifact-option-intro p { margin: 0; color: var(--muted); }

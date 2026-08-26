@@ -1,4 +1,5 @@
 import { authoritativeSlideDatumWeight, formatPresentationQuantity, type DocumentArtifactDraftItem, type SlidePresentation, type SlideVisualData } from "./document-artifacts.ts";
+import { presentationAudienceItem } from "./presentation-delivery.ts";
 import { PRESENTATION_CANVAS_HEIGHT, PRESENTATION_CANVAS_WIDTH } from "./presentation-layout.ts";
 import { localizedSourceAnchor } from "./source-anchor.ts";
 
@@ -251,9 +252,11 @@ function addVisualShapes(shapes:string[],nextId:()=>number,slide:SlideVisualData
 }
 const themeXml=(accent:string,locale="en-US",fontFamily?:string)=>`${XML}<a:theme xmlns:a="${A}" name="Forma"><a:themeElements><a:clrScheme name="Forma"><a:dk1><a:sysClr val="windowText" lastClr="111827"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="273449"/></a:dk2><a:lt2><a:srgbClr val="F4F5F7"/></a:lt2><a:accent1><a:srgbClr val="${accent}"/></a:accent1>${["10B981","F59E0B","EF4444","8B5CF6","06B6D4"].map((shade,index)=>`<a:accent${index+2}><a:srgbClr val="${shade}"/></a:accent${index+2}>`).join("")}<a:hlink><a:srgbClr val="2563EB"/></a:hlink><a:folHlink><a:srgbClr val="7C3AED"/></a:folHlink></a:clrScheme><a:fontScheme name="Forma"><a:majorFont><a:latin typeface="${escapeXml(fontFamily??"Aptos Display")}"/><a:ea typeface="${/^ja(?:-|$)/i.test(locale)?"Yu Gothic":""}"/><a:cs typeface=""/></a:majorFont><a:minorFont><a:latin typeface="${escapeXml(fontFamily??"Aptos")}"/><a:ea typeface="${/^ja(?:-|$)/i.test(locale)?"Yu Gothic":""}"/><a:cs typeface=""/></a:minorFont></a:fontScheme><a:fmtScheme name="Forma"><a:fillStyleLst>${'<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'.repeat(3)}</a:fillStyleLst><a:lnStyleLst>${'<a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>'.repeat(3)}</a:lnStyleLst><a:effectStyleLst>${"<a:effectStyle><a:effectLst/></a:effectStyle>".repeat(3)}</a:effectStyleLst><a:bgFillStyleLst>${'<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'.repeat(3)}</a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>`;
 
-/** Emit editable widescreen PowerPoint shapes plus independently editable speaker notes. */
-export function createPowerPointDocument(items:DocumentArtifactDraftItem[],presentation:SlidePresentation,options:{title?:string;showFooterLabel?:boolean;language?:string;direction?:"ltr"|"rtl"}&OfficeLocalization={}):Uint8Array{
+/** Emit audience-safe editable widescreen slides; presenter notes require explicit authorization. */
+export function createPowerPointDocument(items:DocumentArtifactDraftItem[],presentation:SlidePresentation,options:{title?:string;showFooterLabel?:boolean;language?:string;direction?:"ltr"|"rtl";includePresenterNotes?:boolean}&OfficeLocalization={}):Uint8Array{
   if(!items.length||items.length>100)throw new Error("invalid_presentation_slide_count");
+  const includePresenterNotes=options.includePresenterNotes===true;
+  const audienceItems=items.map((item)=>presentationAudienceItem(item,{includePresenterNotes}));
   const requestedFont=String(presentation.fontFamily??"").trim();
   const localization:OfficeLocalization={translate:options.translate,number:options.number,...(/^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,69}$/u.test(requestedFont)?{fontFamily:requestedFont}:{})};
   const translated=(source:string)=>localization.translate?.(source)??source;
@@ -276,12 +279,12 @@ export function createPowerPointDocument(items:DocumentArtifactDraftItem[],prese
     {name:"ppt/notesMasters/notesMaster1.xml",content:notesMaster},{name:"ppt/notesMasters/_rels/notesMaster1.xml.rels",content:relationships([relationship("rId1","theme","../theme/theme1.xml")])},
     {name:"ppt/theme/theme1.xml",content:themeXml(accent,locale,localization.fontFamily)},
   ];
-  items.forEach((item,index)=>{
+  audienceItems.forEach((item,index)=>{
     const slide=item.slide,bulletLines=slide?.bullets?.map((line)=>`• ${line}`)??[],layoutName=String(slide?.layout??"split"),kind=String(slide?.visual?.kind??"");
-    const sourceEntries=(slide?.citations??[]).map((citation)=>({visible:[publicSourceLabel(citation.label,translated("Authored source")),localizedSourceAnchor(publicSourceLabel(citation.anchor),localization.translate,localization.number)].filter(Boolean).join(" · ")||citation.excerpt,excerpt:citation.excerpt})).filter((citation)=>citation.visible);
+    const sourceEntries=(slide?.citations??[]).map((citation)=>({visible:[publicSourceLabel(citation.label,translated("Authored source")),localizedSourceAnchor(publicSourceLabel(citation.anchor),localization.translate,localization.number)].filter(Boolean).join(" · "),excerpt:""})).filter((citation)=>citation.visible);
     const quoteCitation=slide?.quote?.citation?publicSourceLabel(slide.quote.citation,translated("Authored source")):"";
     if(quoteCitation&&!sourceEntries.some((citation)=>citation.visible===quoteCitation))sourceEntries.push({visible:quoteCitation,excerpt:""});
-    const citationColumns=sourceEntries.length>3?2:1,citationRows=Math.ceil(sourceEntries.length/citationColumns),longestCitation=sourceEntries.reduce((length,citation)=>Math.max(length,citation.visible.length+(citation.excerpt&&citation.excerpt!==citation.visible?citation.excerpt.length+3:0)),0),citationRowHeight=Math.min(480000,185000*Math.max(1,Math.ceil(longestCitation/(citationColumns>1?58:118)))),citationHeight=citationRows*citationRowHeight,citationBottom=6230000,citationTop=citationBottom-citationHeight;
+    const citationColumns=sourceEntries.length>3?2:1,citationRows=Math.ceil(sourceEntries.length/citationColumns),longestCitation=sourceEntries.reduce((length,citation)=>Math.max(length,citation.visible.length),0),citationRowHeight=Math.min(480000,185000*Math.max(1,Math.ceil(longestCitation/(citationColumns>1?58:118)))),citationHeight=citationRows*citationRowHeight,citationBottom=6230000,citationTop=citationBottom-citationHeight;
     const hasVisual=Boolean(slide&&(slide.quote?.text||slide.visual.value||slide.visual.data.length||slide.visual.exactValue||slide.visual.displayValue));
     const richVisual=hasVisual&&(["quote","scorecard","comparison","matrix","architecture","personas","roadmap","timeline","columns"].includes(layoutName)||["quote","bars","scorecard","comparison","matrix","architecture","personas","roadmap","timeline","diagram"].includes(kind));
     const cover=(layoutName==="cover"||layoutName==="closing")&&!richVisual;
@@ -312,7 +315,7 @@ export function createPowerPointDocument(items:DocumentArtifactDraftItem[],prese
       if(bulletLines.length)shapes.push(shape(nextId(),"Editable supporting points",bulletLines.join("\n"),850000,item.body?cover?4120000:3710000:2420000,contentWidth,1560000,foreground,1650,false,locale,rtl,{},localization));
       if(hasVisual)addVisualShapes(shapes,nextId,slide!,{x:8500000,y:cover?2940000:2610000,width:2850000,height:Math.max(300000,(sourceEntries.length?citationTop:5930000)-(cover?2940000:2610000))},colors,locale,rtl,localization);
     }
-    sourceEntries.forEach((citation,ordinal)=>{const row=Math.floor(ordinal/citationColumns),column=ordinal%citationColumns,width=Math.floor(10450000/citationColumns),evidence=[citation.visible,citation.excerpt&&citation.excerpt!==citation.visible?citation.excerpt:""].filter(Boolean).join(" — ");shapes.push(shape(nextId(),`Editable evidence citation ${ordinal+1}`,`[${ordinal+1}] ${evidence}`,850000+column*width,citationTop+row*citationRowHeight,width-90000,citationRowHeight-10000,muted,1050,false,locale,rtl,{description:"Authorized source citation and evidence excerpt"},localization));});
+    sourceEntries.forEach((citation,ordinal)=>{const row=Math.floor(ordinal/citationColumns),column=ordinal%citationColumns,width=Math.floor(10450000/citationColumns);shapes.push(shape(nextId(),`Editable evidence citation ${ordinal+1}`,`[${ordinal+1}] ${citation.visible}`,850000+column*width,citationTop+row*citationRowHeight,width-90000,citationRowHeight-10000,muted,1050,false,locale,rtl,{description:"Authorized source citation and evidence excerpt"},localization));});
     if(options.showFooterLabel&&presentation.footerLabel)shapes.push(shape(nextId(),"Editable footer",presentation.footerLabel,820000,6340000,9900000,270000,muted,1100,false,locale,rtl,{},localization));
     for(const part of shapes){
       const box=part.match(/<a:off x="(-?\d+)" y="(-?\d+)"\/><a:ext cx="(\d+)" cy="(\d+)"\/>/u);
@@ -323,9 +326,15 @@ export function createPowerPointDocument(items:DocumentArtifactDraftItem[],prese
       }
     }
     const document=`${XML}<p:sld xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"><p:cSld name="${escapeXml(item.title||`${translated("Slide")} ${localization.number?.(index+1)??index+1}`)}"><p:bg><p:bgPr><a:solidFill><a:srgbClr val="${background}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg><p:spTree>${group}${shapes.join("")}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`;
-    const noteLines=String(item.notes??"").split(/\r?\n/);
-    if(slide?.quote?.text&&!noteLines.join("\n").includes(slide.quote.text)){noteLines.push("",`[${translated("Stakeholder quotation")}]`,slide.quote.text);const attribution=[slide.quote.speaker,slide.quote.role].filter((value,ordinal,values)=>value&&values.indexOf(value)===ordinal).join(" · ");if(attribution)noteLines.push(`— ${attribution}`);}
-    if(sourceEntries.length){const sourceHeading=`[${translated("Sources")}]`;if(!noteLines.some((line)=>line.trim()==="[Sources]"||line.trim()===sourceHeading))noteLines.push("",sourceHeading);sourceEntries.forEach((citation)=>{const source=[citation.visible,citation.excerpt&&citation.excerpt!==citation.visible?citation.excerpt:""].filter(Boolean).join(": ");if(!noteLines.some((line)=>line.includes(source)))noteLines.push(`- ${source}`);});}
+    const noteLines=includePresenterNotes?String(item.notes??"").split(/\r?\n/):[];
+    if(includePresenterNotes){
+      const originalSlide=items[index]?.slide;
+      if(slide?.quote?.text&&!noteLines.join("\n").includes(slide.quote.text)){noteLines.push("",`[${translated("Stakeholder quotation")}]`,slide.quote.text);const attribution=[slide.quote.speaker,slide.quote.role].filter((value,ordinal,values)=>value&&values.indexOf(value)===ordinal).join(" · ");if(attribution)noteLines.push(`— ${attribution}`);}
+      const presenterSources=(originalSlide?.citations??[]).map((citation)=>({visible:[publicSourceLabel(citation.label,translated("Authored source")),localizedSourceAnchor(publicSourceLabel(citation.anchor),localization.translate,localization.number)].filter(Boolean).join(" · "),excerpt:citation.excerpt})).filter((citation)=>citation.visible||citation.excerpt);
+      const originalQuoteCitation=originalSlide?.quote?.citation?publicSourceLabel(originalSlide.quote.citation,translated("Authored source")):"";
+      if(originalQuoteCitation&&!presenterSources.some((citation)=>citation.visible===originalQuoteCitation))presenterSources.push({visible:originalQuoteCitation,excerpt:""});
+      if(presenterSources.length){const sourceHeading=`[${translated("Sources")}]`;if(!noteLines.some((line)=>line.trim()==="[Sources]"||line.trim()===sourceHeading))noteLines.push("",sourceHeading);presenterSources.forEach((citation)=>{const source=[citation.visible,citation.excerpt&&citation.excerpt!==citation.visible?citation.excerpt:""].filter(Boolean).join(": ");if(!noteLines.some((line)=>line.includes(source)))noteLines.push(`- ${source}`);});}
+    }
     const notes=`${XML}<p:notes xmlns:a="${A}" xmlns:r="${R}" xmlns:p="${P}"><p:cSld><p:spTree>${group}<p:sp><p:nvSpPr><p:cNvPr id="2" name="${escapeXml(translated("Slide image"))}"/><p:cNvSpPr/><p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp><p:sp><p:nvSpPr><p:cNvPr id="3" name="${escapeXml(translated("Editable speaker notes"))}"/><p:cNvSpPr/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>${noteLines.map((line)=>`<a:p><a:pPr${rtl?' rtl="1" algn="r"':""}/><a:r><a:rPr lang="${locale}"/><a:t>${escapeXml(line)}</a:t></a:r></a:p>`).join("")||"<a:p/>"}</p:txBody></p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>`;
     entries.push({name:`ppt/slides/slide${index+1}.xml`,content:document},{name:`ppt/slides/_rels/slide${index+1}.xml.rels`,content:relationships([relationship("rId1","slideLayout","../slideLayouts/slideLayout1.xml"),relationship("rId2","notesSlide",`../notesSlides/notesSlide${index+1}.xml`)])},{name:`ppt/notesSlides/notesSlide${index+1}.xml`,content:notes},{name:`ppt/notesSlides/_rels/notesSlide${index+1}.xml.rels`,content:relationships([relationship("rId1","notesMaster","../notesMasters/notesMaster1.xml"),relationship("rId2","slide",`../slides/slide${index+1}.xml`)])});
   });

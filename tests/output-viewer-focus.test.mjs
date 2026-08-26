@@ -121,15 +121,24 @@ test("visual slides never acquire an outer scrollbar while review, editing, and 
   assert.match(styles,/\.presentation-deck--slideshow \.presentation-deck-stage \{[^}]*overflow:\s*hidden/);
 });
 
-test("actual measured evidence overflow overrides unsafe visual preferences without preempting adaptive dense slides",()=>{
-  assert.match(deck,/const unsafeVisualOverride=overflow&&this\.#readingOverride===false/);
-  assert.match(deck,/if\(!reading&&this\.#visualOverflow\)/);
-  assert.match(deck,/this\.#visualOverflow\|\|\(this\.#readingOverride\?\?this\.#automaticReading\)/);
+test("meaningful slide overflow remains a safe, reversible reading recommendation without trapping visual presentation",()=>{
+  assert.match(deck,/presentationUsesReadingView\(\{contentOverflows:this\.#visualOverflow,readingPreference:this\.#readingOverride,viewportRequiresReading:this\.#automaticReading\}\)/,"reading policy preserves both accessibility defaults and deliberate viewer choice");
+  assert.match(deck,/if\(overflow===this\.#visualOverflow\)return;[\s\S]*?this\.#visualOverflow=overflow;[\s\S]*?if\(this\.#readingOverride===null\)this\.requestUpdate\(\)/,"actual clipping is still measured without silently overriding a deliberate reading or slide choice");
+  assert.match(deck,/const retryVisual=sizeChanged&&this\.#visualOverflow;/,"responsive resizing retries a previously oversized visual composition");
+  assert.doesNotMatch(deck,/unsafeVisualOverride|if\(!reading&&this\.#visualOverflow\)/,"Slide view must never remain permanently disabled by stale provenance overflow");
   assert.doesNotMatch(deck,/contentNeedsReading|layout\?\.density==="dense"&&layout\.overflow\.readingModeRecommended/,"dense styling gets a real canonical fit measurement before choosing the reading view");
   assert.match(deck,/if\(view==="list"&&this\.#fullscreenActive\)[\s\S]*?document\.exitFullscreen\(\)/,"List cannot remove the last visible fullscreen exit action");
-  assert.match(shared,/if\(!reading&&this\.#presentationContentOverflow\)/);
-  assert.match(shared,/unsafeVisualOverride=overflow&&this\.#presentationReadingPreference===false/);
   assert.doesNotMatch(shared,/layout\?\.density==="dense"&&layout\.overflow\.readingModeRecommended/,"public shares also allow dense full-evidence compositions to prove that they fit");
+});
+
+test("reading mode presents audience delivery first and requires deliberate disclosure of presenter material",()=>{
+  assert.match(deck,/const delivery=presentationAudienceItem\(item\),slide=delivery\.slide/,"semantic reading uses the same safe audience projection as visual slides");
+  assert.match(deck,/<h3 dir="auto">\$\{delivery\.title\}<\/h3>\$\{delivery\.body\?html`<p dir="auto">\$\{delivery\.body\}/,"the audience reader presents real title and body instead of backstage scaffolding");
+  assert.match(deck,/<details class="presentation-deck-evidence presentation-deck-reader"><summary>Authorized source evidence<\/summary>/,"complete private evidence is inspectable only after its closed disclosure is opened");
+  assert.match(deck,/<details class="presentation-deck-notes"><summary>Speaker notes<\/summary><p dir="auto">\$\{item\.notes\}<\/p><\/details>/,"speaker notes are never automatically exposed by an adaptive reading fallback");
+  assert.doesNotMatch(deck,/<details class="presentation-deck-(?:evidence|notes)"[^>]*\bopen\b/,"private evidence and notes start closed");
+  assert.match(deck,/includePresenterNotes:productionOwner/,"exported presenter notes require a positive, authorized production-owner determination");
+  assert.match(deck,/productionOwner=Boolean\(session&&!session\.impersonation&&artifact&&\(!session\.projectContext\|\|String\(completed\?\.payload\.requested_by_user_id\?\?renderedBy\)===session\.user\.userId\)\)/,"reviewers, missing principals, impersonating sessions, and other project members cannot receive presenter notes");
 });
 
 test("review, production disclosure, private inputs, and exact export gates remain available without occupying the initial stage", () => {
@@ -219,7 +228,13 @@ test("anonymous shared presentations offer a safe full-size slideshow and comple
   assert.match(shared, /citations\.map/);
   assert.match(shared, /OPAQUE_SHARED_SOURCE_LABEL/);
   assert.match(shared, /safeLabel\(citation\.label\)/);
-  assert.match(shared, /item\.notes/);
+  assert.doesNotMatch(shared, /item\.notes|citation\.excerpt|Speaker notes/, "anonymous reading and slide views never expose private presenter notes or full source excerpts");
+  assert.match(shared, /notes:\s*""/, "anonymous presentation renderers receive an explicitly empty presenter channel");
+  assert.match(shared, /#experienceSelector\(experience\)/, "recipients can choose among already-shared expressions of the same context");
+  assert.match(shared, /result\.artifact\.contextRevision===experience\.revision/, "recipient format selection never crosses context revisions");
+  assert.match(shared, /for\(const newest of candidates\)/, "a newer single-format revision cannot hide an already approved same-context format choice");
+  assert.match(shared, /latestByKind\.size>1/, "a recipient selector appears only for independently available forms of one context revision");
+  assert.match(shared, /referenceMedium\(block\.properties\)/, "shared text and document references are not mistaken for images");
   assert.match(shared, /role="status" aria-live="polite" aria-atomic="true"/);
   assert.match(shared, /#presentationPointerUp\(event:PointerEvent\)/);
   assert.match(shared, /event\.key==="Home"\|\|event\.key==="End"/);

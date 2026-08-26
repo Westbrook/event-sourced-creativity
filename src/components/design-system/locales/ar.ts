@@ -2188,6 +2188,11 @@ Object.assign(messages, {
   "context.character.review": "المراجعة والتأكيد قبل الإنشاء",
 });
 
+Object.assign(messages, {
+  "system.auto.12nuc1t.26": "المتابعة بإطارات أكثر أمانًا",
+  "system.auto.1tgh5l8.255": "تم حفظ {saved} من {total} إطارًا. يبقى السياق والتعليقات دون تغيير. ربما فُرضت رسوم على المحاولة المرفوضة ولن تُعاد. تُعد الإطارات المعدّلة عملاً جديدًا مدفوعًا ضمن الحد الأقصى الأصلي البالغ {maximum}؛ دون حجز جديد أو طلب تخطيط جديد.",
+});
+
 Object.assign(messages, FORMA_RESPONSIVE_MESSAGES.ar);
 
 export default messages;

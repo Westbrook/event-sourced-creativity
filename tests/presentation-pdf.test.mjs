@@ -42,7 +42,7 @@ test("normalizes filenames and still exports an empty retained deck",()=>{
   assert.doesNotMatch(source,/Autumn campaign/);
 });
 
-test("preserves every scorecard row, protected precision, visible citations, and source privacy",()=>{
+test("preserves scorecard precision and compact public research attribution without exposing private evidence",()=>{
   const values=[
     ["Phone","39.75"],
     ["Tablet","53.00"],
@@ -62,7 +62,7 @@ test("preserves every scorecard row, protected precision, visible citations, and
       kicker:"Independent product assessment",
       bullets:[],
       sourceIds:["private-slide-source-id"],
-      citations:[{sourceId:"private-citation-source-id",label:"Responsive strategy assessment",anchor:"Goal scorecard",excerpt:"Six independent equal-weight goal means."}],
+      citations:[{sourceId:"private-citation-source-id",label:"Responsive strategy research",anchor:"Goal scorecard",excerpt:"Six independent equal-weight goal means."}],
       visual:{
         kind:"scorecard",
         label:"All six assessment values",
@@ -85,11 +85,12 @@ test("preserves every scorecard row, protected precision, visible citations, and
   assert.match(source,/\(Displayed: 61\.13 \/ 100\) Tj/);
   assert.doesNotMatch(source,/\(Exact: 61\.13(?: \/ 100)?\)/);
   assert.doesNotMatch(source,/\(Displayed: 61\.125(?: \/ 100)?\)/);
-  assert.match(source,/Responsive strategy assessment - Goal scorecard/);
-  assert.match(source,/Six independent equal-weight goal means/);
+  assert.match(source,/Responsive strategy research - Goal scorecard/);
+  assert.doesNotMatch(source,/Six independent equal-weight goal means/);
   assert.doesNotMatch(source,/private-(?:group|slide|citation|row)/i);
   assert.doesNotMatch(source,/PRIVATE PRESENTER NOTES/);
-  assert.equal(actualText(source).some((entry)=>entry.includes("Responsive strategy assessment - Goal scorecard: Six independent equal-weight goal means.")),true);
+  assert.equal(actualText(source).some((entry)=>entry.includes("Responsive strategy research - Goal scorecard")),true);
+  assert.equal(item.slide.citations[0].excerpt,"Six independent equal-weight goal means.","audience projection never mutates canonical source evidence");
 });
 
 test("preserves verbatim attributed quotations on quote cards and mixed roadmap slides",()=>{
@@ -155,7 +156,7 @@ test("repairs the actual native split quotation into one complete, searchable, a
   assert.doesNotMatch(source,/source-only speaker notes/);
 });
 
-test("replaces opaque provenance aliases in citation labels without altering authored evidence",()=>{
+test("suppresses internal provenance while retaining compact genuine public research attribution",()=>{
   const protectedExcerpt="Authorized excerpt refers to blk_001 as authored evidence.";
   const item={
     title:"Authorized source attribution",
@@ -178,11 +179,14 @@ test("replaces opaque provenance aliases in citation labels without altering aut
   const source=new TextDecoder().decode(createPresentationPdf([item],presentation).bytes);
   const semantic=actualText(source);
 
-  assert.equal(semantic.some((entry)=>entry.includes(`Authored source: ${protectedExcerpt}`)),true);
-  assert.equal(semantic.some((entry)=>entry.includes("Customer research: A customer-approved reference.")),true);
-  assert.equal(semantic.some((entry)=>entry.includes("source_responsive-strategy - published-strategy: An intentionally authored source label.")),true);
+  assert.equal(semantic.some((entry)=>entry.includes("Customer research")),true);
+  assert.equal(semantic.some((entry)=>entry.includes("source_responsive-strategy - published-strategy")),true);
+  assert.equal(semantic.some((entry)=>entry.includes(protectedExcerpt)),false);
+  assert.equal(semantic.some((entry)=>entry.includes("A customer-approved reference.")),false);
+  assert.equal(semantic.some((entry)=>entry.includes("An intentionally authored source label.")),false);
   assert.doesNotMatch(source,/context_group_1|df775088-e5e8-48b5-8ef9-f4e41b93137c|decision_1|source_001|grp_001|clm_001/);
-  assert.match(source,/Authorized excerpt refers to blk_001 as authored evidence/);
+  assert.doesNotMatch(source,/Authorized excerpt refers to blk_001 as authored evidence/);
+  assert.equal(item.slide.citations[0].excerpt,protectedExcerpt,"complete evidence remains untouched in the canonical artifact");
 });
 
 test("keeps complete comparison, architecture, and color-field visual data without fixed-point slicing",()=>{

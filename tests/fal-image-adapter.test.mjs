@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { generateCreativeImage, selectImageAdapter } from "../worker/image-adapter.ts";
-import { FAL_IDEOGRAM_ADAPTER_VERSION, FAL_IDEOGRAM_CAPTION_STRATEGY, FAL_IDEOGRAM_REFERENCE_STRENGTHS, falExpansionModel, falExpansionModelForRequest, falImageModelForRequest, falReferenceStrength, falRenderingSpeed } from "../worker/fal-image-adapter.ts";
+import { FAL_IDEOGRAM_ADAPTER_VERSION, FAL_IDEOGRAM_CAPTION_STRATEGY, FAL_IDEOGRAM_REFERENCE_STRENGTHS, falExpansionModel, falExpansionModelForRequest, falImageModelForRequest, falImageProviderReceipt, falReferenceStrength, falRenderingSpeed } from "../worker/fal-image-adapter.ts";
 import { buildIdeogramCaption, IDEOGRAM_CAPTION_ADAPTER_VERSION, IDEOGRAM_CAPTION_MAX_CHARS, validateIdeogramCaption } from "../worker/ideogram-caption-adapter.ts";
 import { buildIdeogramPrompt, IDEOGRAM_PROMPT_ADAPTER_VERSION, IDEOGRAM_PROMPT_MAX_CHARS } from "../worker/ideogram-prompt-adapter.ts";
 import { priceFalIdeogramImageBreakdownMicrousd } from "../worker/replay-cost.ts";
@@ -18,14 +18,29 @@ test("selects Ideogram models by quality and preserves the multi-reference contr
   assert.equal(fallback.provider,"openai");assert.match(fallback.reason,/one reference/i);
 });
 
+test("derives canonical Fal queue receipts from the application root instead of routed model endpoints",()=>{
+  for(const model of ["ideogram/v4","ideogram/v4/fast","ideogram/v4/image-to-image"]){
+    assert.deepEqual(falImageProviderReceipt(model,"fal-canonical-1"),{
+      provider:"fal",model,providerRequestId:"fal-canonical-1",
+      providerStatusUrl:"https://queue.fal.run/ideogram/v4/requests/fal-canonical-1/status",
+      providerResponseUrl:"https://queue.fal.run/ideogram/v4/requests/fal-canonical-1",
+      providerCancelUrl:"https://queue.fal.run/ideogram/v4/requests/fal-canonical-1/cancel",
+    });
+  }
+  const workflow=falImageProviderReceipt("workflows/example/app/fast","fal-workflow-1");
+  assert.equal(workflow.providerResponseUrl,"https://queue.fal.run/workflows/example/app/requests/fal-workflow-1");
+  assert.throws(()=>falImageProviderReceipt("ideogram/v4/../foreign","fal-canonical-1"),(error)=>error.detail?.code==="fal_provider_receipt_mismatch");
+  assert.throws(()=>falImageProviderReceipt("ideogram/v4/fast","foreign/request"),(error)=>error.detail?.code==="fal_provider_returned_invalid_request_id");
+});
+
 test("runs a Fal Ideogram draft through moderation, queue, result, private download, and pixel pricing",async()=>{
   const originalFetch=globalThis.fetch;const calls=[];
   globalThis.fetch=async(url,init={})=>{
     calls.push({url:String(url),init});
     if(String(url).endsWith("/moderations"))return moderationPass();
-    if(String(url)==="https://queue.fal.run/ideogram/v4/fast"&&init.method==="POST")return Response.json({request_id:"fal-request-1",status:"IN_QUEUE",status_url:"https://queue.fal.run/ideogram/v4/fast/requests/fal-request-1/status",response_url:"https://queue.fal.run/ideogram/v4/fast/requests/fal-request-1/response"});
-    if(String(url).endsWith("/requests/fal-request-1/status?logs=1"))return Response.json({request_id:"fal-request-1",status:"COMPLETED"});
-    if(String(url).endsWith("/requests/fal-request-1/response"))return Response.json({images:[{url:"https://cdn.fal.media/output.jpg",content_type:"image/jpeg",width:816,height:816}],seed:42,has_nsfw_concepts:[false],prompt:"unchanged"});
+    if(String(url)==="https://queue.fal.run/ideogram/v4/fast"&&init.method==="POST")return Response.json({request_id:"fal-request-1",status:"IN_QUEUE",status_url:"https://queue.fal.run/ideogram/v4/requests/fal-request-1/status",response_url:"https://queue.fal.run/ideogram/v4/requests/fal-request-1",cancel_url:"https://queue.fal.run/ideogram/v4/requests/fal-request-1/cancel"});
+    if(String(url)==="https://queue.fal.run/ideogram/v4/requests/fal-request-1/status?logs=1")return Response.json({request_id:"fal-request-1",status:"COMPLETED"});
+    if(String(url)==="https://queue.fal.run/ideogram/v4/requests/fal-request-1")return Response.json({images:[{url:"https://cdn.fal.media/output.jpg",content_type:"image/jpeg",width:816,height:816}],seed:42,has_nsfw_concepts:[false],prompt:"unchanged"});
     if(String(url)==="https://cdn.fal.media/output.jpg")return new Response("fal-image",{headers:{"content-type":"image/jpeg"}});
     throw new Error(`unexpected request ${url}`);
   };
@@ -33,6 +48,7 @@ test("runs a Fal Ideogram draft through moderation, queue, result, private downl
     const stages=[];const result=await generateCreativeImage({OPENAI_API_KEY:"openai-test",FAL_KEY:"fal-test",FORMA_IMAGE_PROVIDER:"fal-ideogram"},"user-1",{facts:[]},{title:"Typography study"},{quality:"low",size:"816x816",outputFormat:"jpeg",onStage:(stage)=>stages.push(stage)});
     assert.equal(result.provider,"fal");assert.equal(result.adapterVersion,"v52");assert.equal(result.model,"ideogram/v4/fast");assert.equal(result.providerRequestId,"fal-request-1");assert.equal(result.seed,42);assert.equal(result.promptAdaptation.strategy,"production_director");assert.equal(new TextDecoder().decode(result.bytes),"fal-image");
     const submitted=JSON.parse(String(calls.find((call)=>call.url==="https://queue.fal.run/ideogram/v4/fast").init.body));
+    assert.ok(calls.some((call)=>call.url==="https://queue.fal.run/ideogram/v4/requests/fal-request-1/status?logs=1"));assert.ok(calls.some((call)=>call.url==="https://queue.fal.run/ideogram/v4/requests/fal-request-1"));assert.equal(calls.some((call)=>call.url.includes("/fast/requests/")||call.url.endsWith("/response")),false);
     assert.match(submitted.prompt,/CREATIVE GOAL: Typography study/);assert.match(submitted.prompt,/TEXT: Do not render/);
     assert.equal(submitted.expansion_model,"Medium");assert.equal(submitted.rendering_speed,"BALANCED");assert.deepEqual(submitted.image_size,{width:816,height:816});assert.equal(submitted.enable_safety_checker,true);assert.equal(submitted.num_images,1);assert.equal("seed" in submitted,false);assert.equal(result.expansionModel,"Medium");assert.equal(result.promptMode,"expanded_plain");assert.equal(result.promptAdapterVersion,IDEOGRAM_PROMPT_ADAPTER_VERSION);
     assert.ok(stages.includes("safety-review"));assert.ok(stages.includes("provider-queued"));assert.ok(stages.includes("provider-download"));assert.equal(result.costBreakdown.totalMicrousd,36992);
@@ -43,8 +59,8 @@ test("passes exactly one reference image as pixels to Ideogram image-to-image",a
   const originalFetch=globalThis.fetch;let submitted;
   globalThis.fetch=async(url,init={})=>{
     if(String(url).endsWith("/moderations"))return moderationPass();
-    if(String(url)==="https://queue.fal.run/ideogram/v4/image-to-image"&&init.method==="POST"){submitted=JSON.parse(String(init.body));return Response.json({request_id:"fal-edit-1",status:"COMPLETED",response_url:"https://queue.fal.run/ideogram/v4/image-to-image/requests/fal-edit-1/response"});}
-    if(String(url).endsWith("/requests/fal-edit-1/response"))return Response.json({images:[{url:"https://cdn.fal.media/edit.png",content_type:"image/png",width:1024,height:1024}],has_nsfw_concepts:[false]});
+    if(String(url)==="https://queue.fal.run/ideogram/v4/image-to-image"&&init.method==="POST"){submitted=JSON.parse(String(init.body));return Response.json({request_id:"fal-edit-1",status:"COMPLETED",response_url:"https://queue.fal.run/ideogram/v4/requests/fal-edit-1"});}
+    if(String(url)==="https://queue.fal.run/ideogram/v4/requests/fal-edit-1")return Response.json({images:[{url:"https://cdn.fal.media/edit.png",content_type:"image/png",width:1024,height:1024}],has_nsfw_concepts:[false]});
     if(String(url)==="https://cdn.fal.media/edit.png")return new Response("edited",{headers:{"content-type":"image/png"}});
     throw new Error(`unexpected request ${url}`);
   };
@@ -60,15 +76,15 @@ test("surfaces a completed Fal queue error before attempting result retrieval",a
   globalThis.fetch=async(url,init={})=>{
     calls.push(String(url));
     if(String(url).endsWith("/moderations"))return moderationPass();
-    if(String(url)==="https://queue.fal.run/ideogram/v4"&&init.method==="POST")return Response.json({request_id:"fal-failed-1",status:"IN_QUEUE",status_url:"https://queue.fal.run/ideogram/v4/requests/fal-failed-1/status",response_url:"https://queue.fal.run/ideogram/v4/requests/fal-failed-1/response"});
-    if(String(url).endsWith("/requests/fal-failed-1/status?logs=1"))return Response.json({request_id:"fal-failed-1",status:"COMPLETED",error_type:"ValidationError",error:"Requested dimensions are unavailable for this model."});
+    if(String(url)==="https://queue.fal.run/ideogram/v4"&&init.method==="POST")return Response.json({request_id:"fal-failed-1",status:"IN_QUEUE",status_url:"https://queue.fal.run/ideogram/v4/requests/fal-failed-1/status",response_url:"https://queue.fal.run/ideogram/v4/requests/fal-failed-1"});
+    if(String(url)==="https://queue.fal.run/ideogram/v4/requests/fal-failed-1/status?logs=1")return Response.json({request_id:"fal-failed-1",status:"COMPLETED",error_type:"ValidationError",error:"Requested dimensions are unavailable for this model."});
     throw new Error(`unexpected request ${url}`);
   };
   try{
     await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"openai-test",FAL_KEY:"fal-test",FORMA_IMAGE_PROVIDER:"fal-ideogram"},"user-1",{facts:[]},{title:"Invalid"},{quality:"high",size:"1024x1024"}),(error)=>{
       assert.equal(error.detail.code,"fal_validationerror");assert.equal(error.detail.message,"Requested dimensions are unavailable for this model.");assert.equal(error.detail.requestId,"fal-failed-1");return true;
     });
-    assert.equal(calls.some((url)=>url.endsWith("/requests/fal-failed-1/response")),false);
+    assert.equal(calls.includes("https://queue.fal.run/ideogram/v4/requests/fal-failed-1"),false);
   }finally{globalThis.fetch=originalFetch;}
 });
 
@@ -76,8 +92,8 @@ test("preserves Fal validation detail and request IDs from result responses",asy
   const originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,init={})=>{
     if(String(url).endsWith("/moderations"))return moderationPass();
-    if(String(url)==="https://queue.fal.run/ideogram/v4"&&init.method==="POST")return Response.json({request_id:"fal-validation-1",status:"COMPLETED",response_url:"https://queue.fal.run/ideogram/v4/requests/fal-validation-1/response"});
-    if(String(url).endsWith("/requests/fal-validation-1/response"))return Response.json({detail:[{loc:["body","image_size"],msg:"Width is outside the supported range",type:"value_error"}]},{status:422});
+    if(String(url)==="https://queue.fal.run/ideogram/v4"&&init.method==="POST")return Response.json({request_id:"fal-validation-1",status:"COMPLETED",response_url:"https://queue.fal.run/ideogram/v4/requests/fal-validation-1"});
+    if(String(url)==="https://queue.fal.run/ideogram/v4/requests/fal-validation-1")return Response.json({detail:[{loc:["body","image_size"],msg:"Width is outside the supported range",type:"value_error"}]},{status:422});
     throw new Error(`unexpected request ${url}`);
   };
   try{
@@ -128,8 +144,8 @@ test("retains an explicitly prepared canonical prompt while submitting its provi
   const originalFetch=globalThis.fetch;let submitted;
   globalThis.fetch=async(url,init={})=>{
     if(String(url).endsWith("/moderations"))return moderationPass();
-    if(String(url)==="https://queue.fal.run/ideogram/v4/fast"&&init.method==="POST"){submitted=JSON.parse(String(init.body));return Response.json({request_id:"fal-prepared-1",status:"COMPLETED",response_url:"https://queue.fal.run/ideogram/v4/fast/requests/fal-prepared-1/response"});}
-    if(String(url).endsWith("/requests/fal-prepared-1/response"))return Response.json({images:[{url:"https://cdn.fal.media/prepared.jpg",content_type:"image/jpeg",width:1024,height:1024}]});
+    if(String(url)==="https://queue.fal.run/ideogram/v4/fast"&&init.method==="POST"){submitted=JSON.parse(String(init.body));return Response.json({request_id:"fal-prepared-1",status:"COMPLETED",response_url:"https://queue.fal.run/ideogram/v4/requests/fal-prepared-1"});}
+    if(String(url)==="https://queue.fal.run/ideogram/v4/requests/fal-prepared-1")return Response.json({images:[{url:"https://cdn.fal.media/prepared.jpg",content_type:"image/jpeg",width:1024,height:1024}]});
     if(String(url)==="https://cdn.fal.media/prepared.jpg")return new Response("prepared",{headers:{"content-type":"image/jpeg"}});
     throw new Error(`unexpected request ${url}`);
   };
@@ -165,8 +181,8 @@ test("keeps the legacy expanded-plain strategy available as an explicit comparis
   const originalFetch=globalThis.fetch;let submitted;
   globalThis.fetch=async(url,init={})=>{
     if(String(url).endsWith("/moderations"))return moderationPass();
-    if(String(url)==="https://queue.fal.run/ideogram/v4/fast"&&init.method==="POST"){submitted=JSON.parse(String(init.body));return Response.json({request_id:"fal-expanded-1",status:"COMPLETED",response_url:"https://queue.fal.run/ideogram/v4/fast/requests/fal-expanded-1/response"});}
-    if(String(url).endsWith("/requests/fal-expanded-1/response"))return Response.json({images:[{url:"https://cdn.fal.media/expanded.jpg",content_type:"image/jpeg",width:1024,height:1024}]});
+    if(String(url)==="https://queue.fal.run/ideogram/v4/fast"&&init.method==="POST"){submitted=JSON.parse(String(init.body));return Response.json({request_id:"fal-expanded-1",status:"COMPLETED",response_url:"https://queue.fal.run/ideogram/v4/requests/fal-expanded-1"});}
+    if(String(url)==="https://queue.fal.run/ideogram/v4/requests/fal-expanded-1")return Response.json({images:[{url:"https://cdn.fal.media/expanded.jpg",content_type:"image/jpeg",width:1024,height:1024}]});
     if(String(url)==="https://cdn.fal.media/expanded.jpg")return new Response("expanded",{headers:{"content-type":"image/jpeg"}});
     throw new Error(`unexpected request ${url}`);
   };

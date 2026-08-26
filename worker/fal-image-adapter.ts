@@ -21,6 +21,19 @@ type FalQueueState = {
 type FalImageFile = { url?: string; content_type?: string; width?: number; height?: number; file_size?: number };
 type FalImageResult = { images?: FalImageFile[]; timings?: Record<string,number>; seed?: number; has_nsfw_concepts?: boolean[]; prompt?: string; error?: unknown };
 
+export type FalImageProviderReceipt = {
+  provider: "fal";
+  model: string;
+  providerRequestId: string;
+  providerStatusUrl: string;
+  providerResponseUrl: string;
+  providerCancelUrl: string;
+};
+type FalCreativeImageOptions = CreativeImageOptions & {
+  providerReceipt?: FalImageProviderReceipt;
+  onProviderReceipt?: (receipt: FalImageProviderReceipt) => void | Promise<void>;
+};
+
 export const FAL_IDEOGRAM_ADAPTER_ID="fal-ideogram-v4";
 export const FAL_IDEOGRAM_ADAPTER_VERSION="v52";
 export const FAL_IDEOGRAM_CAPTION_STRATEGY="production_director" as const;
@@ -96,13 +109,45 @@ const falError=(response:Response,body:unknown,fallback:string,prompt:string,req
 };
 
 async function falJson(env:WorkerEnv,url:string,init:RequestInit,prompt:string,requestId:string|null=null){
-  let response:Response;try{response=await fetch(url,init);}catch(error){throw new ProviderRequestError(classifyProviderFailure(error),prompt);}
+  let response:Response;try{response=await fetch(url,init);}catch(error){throw new ProviderRequestError({...classifyProviderFailure(error),...(requestId?{requestId}:{})},prompt);}
   let body:unknown={};try{body=await response.clone().json();}catch{/* Keep status-level failure evidence. */}
   if(!response.ok)throw falError(response,body,`fal_image_${response.status}`,prompt,requestId);
   return body;
 }
 
-export async function generateFalCreativeImage(env:WorkerEnv,userId:string,snapshot:Record<string,unknown>,direction:Record<string,unknown>,options:CreativeImageOptions={}){
+function trustedFalQueueUrl(value:string|undefined,fallback:string,requestId:string,prompt:string,legacyPaths:string[]=[]){
+  let url:URL;try{url=new URL(value||fallback);}catch{throw new ProviderRequestError({code:"fal_provider_returned_untrusted_queue_url",category:"provider",scope:"request",action:"contact_support",message:"Fal returned an invalid queue location. The accepted request will not be polled outside its trusted provider endpoint.",retryable:false,retryAfterMs:null,requestId,httpStatus:502},prompt);}
+  const expected=new URL(fallback);
+  if(url.origin!==expected.origin||url.pathname!==expected.pathname&&!legacyPaths.includes(url.pathname)||url.username||url.password)throw new ProviderRequestError({code:"fal_provider_returned_untrusted_queue_url",category:"provider",scope:"request",action:"contact_support",message:"Fal returned a queue location outside the accepted request's trusted provider endpoint.",retryable:false,retryAfterMs:null,requestId,httpStatus:502},prompt);
+  return url.toString();
+}
+
+/** Derive a recoverable Fal queue receipt exclusively from an owned model and validated request ID. */
+export function falImageProviderReceipt(model:string,requestId:string,prompt=""):FalImageProviderReceipt{
+  if(!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(requestId)||["pending","submitted","unknown"].includes(requestId.toLowerCase()))throw new ProviderRequestError({code:"fal_provider_returned_invalid_request_id",category:"provider",scope:"request",action:"contact_support",message:"Fal returned an invalid accepted-request identifier. Automatic resubmission was stopped to prevent a duplicate charge.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:502},prompt);
+  const parts=model.split("/");const applicationLength=parts[0]==="workflows"||parts[0]==="comfy"?3:2;
+  if(parts.length<applicationLength||parts.some((part)=>!part||part==="."||part===".."||!/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(part)))throw new ProviderRequestError({code:"fal_provider_receipt_mismatch",category:"provider",scope:"request",action:"contact_support",message:"The saved image request does not identify a trusted Fal application. A second paid image request was not submitted.",retryable:false,retryAfterMs:null,requestId,httpStatus:409},prompt);
+  const requestEndpoint=`https://queue.fal.run/${parts.slice(0,applicationLength).join("/")}/requests/${encodeURIComponent(requestId)}`;
+  return{
+    provider:"fal",model,providerRequestId:requestId,
+    providerStatusUrl:`${requestEndpoint}/status`,
+    providerResponseUrl:requestEndpoint,
+    providerCancelUrl:`${requestEndpoint}/cancel`,
+  };
+}
+
+function falProviderReceipt(model:string,requestId:string,state:Pick<FalQueueState,"status_url"|"response_url"|"cancel_url">,prompt:string):FalImageProviderReceipt{
+  const canonical=falImageProviderReceipt(model,requestId,prompt);
+  const legacyEndpoint=new URL(`${falEndpoint(model)}/requests/${encodeURIComponent(requestId)}`).pathname;
+  return{
+    ...canonical,
+    providerStatusUrl:trustedFalQueueUrl(state.status_url,canonical.providerStatusUrl,requestId,prompt,[`${legacyEndpoint}/status`]),
+    providerResponseUrl:trustedFalQueueUrl(state.response_url,canonical.providerResponseUrl,requestId,prompt,[legacyEndpoint,`${legacyEndpoint}/response`]),
+    providerCancelUrl:trustedFalQueueUrl(state.cancel_url,canonical.providerCancelUrl,requestId,prompt,[`${legacyEndpoint}/cancel`]),
+  };
+}
+
+export async function generateFalCreativeImage(env:WorkerEnv,userId:string,snapshot:Record<string,unknown>,direction:Record<string,unknown>,options:FalCreativeImageOptions={}){
   if(!env.FAL_KEY)throw new ProviderRequestError({code:"fal_image_provider_not_configured",category:"authentication",scope:"account",action:"check_credentials",message:"Fal image generation is not configured for this environment.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:503});
   if(!env.OPENAI_API_KEY)throw new ProviderRequestError({code:"safety_probe_not_configured",category:"authentication",scope:"account",action:"check_credentials",message:"The image safety preflight is not configured. Fal image work cannot start without it.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:503});
   const quality=options.quality??"high";const size=options.size??"1536x1024";const sizeResult=validateFalImageSize(size);
@@ -120,17 +165,31 @@ export async function generateFalCreativeImage(env:WorkerEnv,userId:string,snaps
   const speed=falRenderingSpeed(quality);const expansionModel=falExpansionModelForRequest(env,quality,model,promptMode,options.ideogramExpansionModel);const format=outputFormat(options.outputFormat);const input:Record<string,unknown>={prompt,expansion_model:expansionModel,image_size:{width:sizeResult.width,height:sizeResult.height},rendering_speed:speed,acceleration:"none",num_images:1,sync_mode:false,enable_safety_checker:true,output_format:format};
   if(Number.isFinite(options.ideogramSeed))input.seed=Math.max(0,Math.min(2_147_483_647,Math.floor(Number(options.ideogramSeed))));
   if(references[0]){input.image_url=dataUri(references[0]);input.strength=falReferenceStrength(references[0],options.ideogramReferenceStrength);}
-  await options.onStage?.("provider-submit",`Submitting to ${model}.`);
-  const submitted=await falJson(env,falEndpoint(model),{method:"POST",headers:falHeaders(env),body:JSON.stringify(input),signal:options.signal},prompt) as FalQueueState;
-  const requestId=String(submitted.request_id??"");if(!requestId)throw new ProviderRequestError({code:"fal_provider_returned_no_request_id",category:"provider",scope:"request",action:"retry",message:"Fal accepted no durable request identifier, so the image cannot be tracked safely.",retryable:true,retryAfterMs:2_000,requestId:null,httpStatus:502},prompt);
-  const statusUrl=submitted.status_url??`${falEndpoint(model)}/requests/${encodeURIComponent(requestId)}/status`;const responseUrl=submitted.response_url??`${falEndpoint(model)}/requests/${encodeURIComponent(requestId)}/response`;
-  await options.onStage?.("provider-queued",`Ideogram accepted request ${requestId.slice(0,8)} and is preparing the image.`);
-  const deadline=Date.now()+FAL_IMAGE_TIMEOUT_MS;let state:FalQueueState=submitted;
+  let state:FalQueueState;let receipt:FalImageProviderReceipt;
+  if(options.providerReceipt){
+    const retained=options.providerReceipt;
+    if(retained.provider!=="fal"||retained.model!==model)throw new ProviderRequestError({code:"fal_provider_receipt_mismatch",category:"provider",scope:"request",action:"contact_support",message:"The saved image request does not match its original Fal model. A second paid image request was not submitted.",retryable:false,retryAfterMs:null,requestId:retained.providerRequestId||null,httpStatus:409},prompt);
+    receipt=falProviderReceipt(model,retained.providerRequestId,{status_url:retained.providerStatusUrl,response_url:retained.providerResponseUrl,cancel_url:retained.providerCancelUrl},prompt);
+    await options.onProviderReceipt?.(receipt);
+    await options.onStage?.("provider-resume",`Resuming the original Ideogram request ${receipt.providerRequestId.slice(0,8)} without submitting another image.`);
+    state=await falJson(env,`${receipt.providerStatusUrl}${receipt.providerStatusUrl.includes("?")?"&":"?"}logs=1`,{headers:falHeaders(env),signal:options.signal},prompt,receipt.providerRequestId) as FalQueueState;
+  }else{
+    await options.onStage?.("provider-submit",`Submitting to ${model}.`);
+    const submitted=await falJson(env,falEndpoint(model),{method:"POST",headers:falHeaders(env),body:JSON.stringify(input),signal:options.signal},prompt) as FalQueueState;
+    const acceptedRequestId=String(submitted.request_id??"");if(!acceptedRequestId)throw new ProviderRequestError({code:"fal_provider_returned_no_request_id",category:"provider",scope:"request",action:"contact_support",message:"Fal accepted no durable request identifier, so the image cannot be tracked or resubmitted safely.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:502},prompt);
+    receipt=falImageProviderReceipt(model,acceptedRequestId,prompt);
+    await options.onProviderReceipt?.(receipt);
+    receipt=falProviderReceipt(model,acceptedRequestId,submitted,prompt);
+    await options.onStage?.("provider-queued",`Ideogram accepted request ${receipt.providerRequestId.slice(0,8)} and is preparing the image.`);
+    state=submitted;
+  }
+  const requestId=receipt.providerRequestId,statusUrl=receipt.providerStatusUrl,responseUrl=receipt.providerResponseUrl;
+  const deadline=Date.now()+FAL_IMAGE_TIMEOUT_MS;
   while(state.status!=="COMPLETED"){
     if(state.status==="FAILED"||state.status==="CANCELLED")throw new ProviderRequestError({code:`fal_image_${state.status.toLowerCase()}`,category:"provider",scope:"request",action:"retry",message:`Fal marked image request ${requestId.slice(0,8)} as ${state.status.toLowerCase()}.`,retryable:state.status==="FAILED",retryAfterMs:2_000,requestId,httpStatus:502},prompt);
     if(Date.now()>=deadline)throw new ProviderRequestError({code:"fal_image_timeout",category:"provider",scope:"request",action:"retry",message:"Fal did not finish this image within ten minutes. The provider request ID is retained for diagnosis.",retryable:true,retryAfterMs:5_000,requestId,httpStatus:504},prompt);
     const log=state.logs?.at(-1)?.message?.trim();await options.onStage?.("provider-rendering",log?`Ideogram · ${log}`:state.status==="IN_QUEUE"?`Ideogram queued${Number.isFinite(state.queue_position)?` · ${Number(state.queue_position)+1} ahead or active`:""}.`:"Ideogram is rendering the image.");
-    await wait(1_000,options.signal);state=await falJson(env,`${statusUrl}${statusUrl.includes("?")?"&":"?"}logs=1`,{headers:falHeaders(env),signal:options.signal},prompt) as FalQueueState;
+    await wait(1_000,options.signal);state=await falJson(env,`${statusUrl}${statusUrl.includes("?")?"&":"?"}logs=1`,{headers:falHeaders(env),signal:options.signal},prompt,requestId) as FalQueueState;
   }
   if(state.error!==undefined||state.error_type){
     const message=falBodyMessage({error:state.error,error_type:state.error_type},"Fal completed the queue request with a provider error.");const rawCode=falBodyCode({error:state.error,error_type:state.error_type});const safeCode=(rawCode||"completed_with_error").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");

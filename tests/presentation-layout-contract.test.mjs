@@ -70,27 +70,31 @@ test("presentation layout plans share one versioned trusted 960 × 540 artboard"
   assert.equal(Object.hasOwn(plan, "css"), false);
 });
 
-test("visible slide plans preserve complete citation excerpts and never mutate approved protected evidence", () => {
+test("audience plans preserve complete private provenance without budgeting or displaying it", () => {
   const source = item();
+  source.slide.citations[0].label = "Narrative brief";
+  source.slide.citations[0].anchor = "Slide 2";
   const before = structuredClone(source);
   const plan = planSlideLayout(source);
 
   assert.deepEqual(source, before, "the approved durable item is never mutated");
   assert.equal(plan.visibleItem.slide.citations[0].excerpt, before.slide.citations[0].excerpt);
   assert.equal(source.slide.citations[0].excerpt, before.slide.citations[0].excerpt);
-  assert.equal(plan.visibleItem.slide.citations[0].label, "Approved interview");
-  assert.equal(plan.visibleItem.slide.citations[0].anchor, "Authored slide 2");
+  assert.equal(plan.visibleItem.slide.citations[0].label, "Narrative brief");
+  assert.equal(plan.visibleItem.slide.citations[0].anchor, "Slide 2");
   assert.equal(plan.visibleItem.slide.citations[0].sourceId, "PRIVATE_AUTHORIZED_SOURCE_42");
   assert.equal(plan.visibleItem.slide.quote.text, protectedQuote);
   assert.deepEqual(plan.visibleItem.slide.visual.data, source.slide.visual.data);
   assert.equal(plan.visibleItem.slide.visual.exactValue, "61.125");
   assert.equal(plan.visibleItem.slide.visual.displayValue, "61.13");
   assert.deepEqual(plan.visibleItem.context_group_ids, ["context_group_1"]);
-  assert.equal(plan.overflow.citationExcerpts, 1);
-  assert.ok(plan.overflow.reasons.includes("citation-excerpts"));
+  assert.deepEqual(plan.audienceCitations, [], "internal provenance never occupies the audience artboard");
+  assert.equal(plan.overflow.citationExcerpts, 0);
+  assert.equal(plan.overflow.citationCharacters, 0);
+  assert.ok(!plan.overflow.reasons.includes("citation-excerpts"));
 });
 
-test("real executive slide nine coordinates dense copy and a complete full-width source rail",()=>{
+test("real executive slide nine preserves complete private evidence without forcing an evidence rail",()=>{
   const excerpt="Make Intelligence and Cost Understandable. At 20,000 input and 4,000 output tokens, estimated model costs are Luna $0.0088, Terra $0.0880, and Sol $0.2200. Proposed Fast, Balanced, and Deep modes apply organization-approved models, spending limits, measured escalation, explicit premium approvals, and visible cost consequences.";
   const source=item({
     title:"Make Intelligence and Cost Understandable",
@@ -99,7 +103,7 @@ test("real executive slide nine coordinates dense copy and a complete full-width
   source.slide.layout="comparison";
   source.slide.bullets=["Proposed Fast, Balanced, and Deep modes apply organization-approved models, spending limits, measured escalation, explicit premium approvals, and visible cost consequences."];
   source.slide.quote=undefined;
-  source.slide.citations=[{sourceId:"PRIVATE_AUTHORIZED_SOURCE_42",label:"Approved interview",anchor:"Slide 9",excerpt}];
+  source.slide.citations=[{sourceId:"PRIVATE_AUTHORIZED_SOURCE_42",label:"Narrative brief",anchor:"Slide 9",excerpt}];
   source.slide.visual={
     kind:"comparison",
     label:"Estimated cost",
@@ -114,15 +118,80 @@ test("real executive slide nine coordinates dense copy and a complete full-width
   const plan=planSlideLayout(source,defaultSlidePresentation("field-notes"));
 
   assert.equal(plan.density,"dense","dense typography is adaptation, not an instruction to hide a fitting slide");
-  assert.equal(plan.citationPlacement,"full-width","a protected source excerpt owns the whole evidence row");
+  assert.equal(plan.citationPlacement,"inline","private evidence never creates a slide-consuming source rail");
   assert.ok(plan.overflow.reasons.includes("long-bullet"));
-  assert.ok(plan.overflow.reasons.includes("long-citation-excerpt"));
+  assert.ok(!plan.overflow.reasons.includes("long-citation-excerpt"));
   assert.ok(plan.overflow.narrativeCharacters>300);
-  assert.ok(plan.overflow.citationCharacters>300);
+  assert.equal(plan.overflow.citationCharacters,0);
+  assert.deepEqual(plan.audienceCitations,[]);
   assert.equal(plan.visibleItem.slide.citations[0].excerpt,excerpt,"the complete approved excerpt is never summarized or mutated");
   assert.deepEqual(plan.visibleItem.slide.visual.data.map(({label,value})=>[label,value]),[
     ["Luna","$0.0088"],["Terra","$0.0880"],["Sol","$0.2200"],
   ]);
+});
+
+test("published external attributions remain compact while complete licensed evidence stays private",()=>{
+  const source=item();
+  source.slide.citations=[{
+    sourceId:"PRIVATE_AUTHORIZED_SOURCE_42",
+    label:"World Health Organization",
+    anchor:"Published guidance § 4",
+    excerpt:"The complete licensed excerpt stays available only to an authorized evidence reviewer.",
+  }];
+  const before=structuredClone(source);
+  const plan=planSlideLayout(source);
+
+  assert.deepEqual(source,before,"projection never modifies the approved evidence");
+  assert.equal(plan.audienceCitations.length,1,"meaningful public attribution remains available");
+  assert.equal(plan.audienceCitations[0].label,"World Health Organization");
+  assert.equal(plan.audienceCitations[0].anchor,"Published guidance § 4");
+  assert.equal(plan.audienceCitations[0].excerpt,"","licensed evidence is never copied onto the audience artboard");
+  assert.equal(plan.audienceCitations[0].sourceId,undefined,"private source identifiers never enter the audience projection");
+  assert.equal(plan.overflow.citationExcerpts,0);
+  assert.equal(plan.overflow.citationCharacters,"World Health Organization".length+"Published guidance § 4".length);
+  assert.equal(plan.visibleItem.slide.citations[0].excerpt,before.slide.citations[0].excerpt);
+});
+
+test("feedback slide four adapts dense audience copy while retaining all five matrix rows",()=>{
+  const source=item({
+    title:"Capturing the intended message: 3/10",
+    body:"The exact promise appeared in the authored opening and closing, but the initial delivery never placed it in front of its audience.",
+  });
+  source.slide.layout="matrix";
+  source.slide.quote=undefined;
+  source.slide.bullets=[
+    "Exact promise preserved: Your content. One context. Infinite paths to your target.",
+    "Creator-led and recipient-led delivery remain equally explicit in the reusable story.",
+    "File fragmentation remains complete: .doc, .ppt, .mov, .mp3, and .psd.",
+    "No delivered slide made the complete promise independently visible outside its citations.",
+  ];
+  source.slide.citations=[{
+    sourceId:"PRIVATE_AUTHORIZED_SOURCE_42",
+    label:"Slide 4",
+    anchor:"Message fidelity",
+    excerpt:"Slide 4 — Message capture: show all five dimensions without exposing adapter instructions.",
+  }];
+  source.slide.visual={
+    kind:"matrix",
+    label:"Five message-fidelity dimensions",
+    value:"3/10",
+    data:[
+      {label:"Exact promise",value:"Partially delivered",weight:.3},
+      {label:"Creator agency",value:"Clearly authored",weight:.8},
+      {label:"Recipient agency",value:"Clearly authored",weight:.8},
+      {label:"Legacy formats",value:"Five retained",weight:1},
+      {label:"Visible delivery",value:"Not independently verified",weight:.2},
+    ],
+  };
+
+  const plan=planSlideLayout(source,defaultSlidePresentation("field-notes"));
+
+  assert.ok(plan.overflow.narrativeCharacters>PRESENTATION_LAYOUT_CAPACITIES.narrativeCharacters);
+  assert.equal(plan.density,"dense","dense audience copy receives the smaller protected slide composition");
+  assert.deepEqual(plan.audienceCitations,[],"structural slide coordinates remain backstage");
+  assert.equal(plan.overflow.citationCharacters,0);
+  assert.equal(plan.visibleItem.slide.bullets.length,4);
+  assert.equal(plan.visibleItem.slide.visual.data.length,5);
 });
 
 test("trusted layout measurements cover protected evidence and every structured visual kind",()=>{
@@ -170,8 +239,10 @@ test("provider layout guidance protects exact authored evidence and forbids exec
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /960 × 540px 16:9 artboard/u);
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /never permission to truncate or omit a protected quotation/u);
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /chart row, authored slide, or source citation/u);
-  assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /Budget the title, body, bullets, chart labels and values, and every complete source excerpt together/u);
-  assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /full-width evidence rail/u);
+  assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /Budget only audience-facing title, body, bullets, chart labels and values/u);
+  assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /complete authorized citation excerpts in structured source provenance/u);
+  assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /never place full source excerpts, internal source labels, slide-number anchors, or adapter instructions on the audience artboard/u);
+  assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /licensing, published research, quotations, or compliance/u);
   assert.match(PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS, /never emit HTML, CSS, JavaScript, iframes/u);
 });
 

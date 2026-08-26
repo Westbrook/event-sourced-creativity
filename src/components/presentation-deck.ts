@@ -4,9 +4,11 @@ import { combinedContextMemberships } from "../model/combined-context";
 import { FormaElement, icon } from "./forma-element";
 import { readSlideFooterLabelPreference, writeSlideFooterLabelPreference } from "./presentation-slide";
 import { presentationEditableExportFilename } from "../model/presentation-export";
+import { presentationAudienceItem } from "../model/presentation-delivery";
 import { authorizedPresentationCitations, presentationRequiresReadingPosture } from "../model/presentation-layout";
 import { localizedSourceAnchor } from "../model/source-anchor";
 import { inferPresentationAudienceLocale } from "../model/presentation-source";
+import { presentationUsesReadingView } from "../model/presentation-view-posture";
 import { renderSoundtrackCompanions as renderAudioCompanions, soundtrackCompanions, type SoundtrackAsset } from "./audio-playback";
 import { audioFileExtension } from "../model/audio";
 
@@ -31,26 +33,28 @@ type DeckEvidence={sources:Array<{label:string;kind:"Source decision"|"Combined 
 
 export class PresentationDeck extends FormaElement{
   static properties={items:{attribute:false},presentation:{attribute:false},preferenceKey:{type:String,attribute:"preference-key"},deckTitle:{type:String,attribute:"deck-title"},documentId:{type:String,attribute:"document-id"},sourceSurface:{type:String,attribute:"source-surface"},releaseAllowed:{type:Boolean,attribute:false}};
-  items:DocumentArtifactDraftItem[]=[];presentation:SlidePresentation|null=null;preferenceKey="";deckTitle="";documentId="";sourceSurface="presentation-deck";releaseAllowed=true;#view:DeckView=readDeckView();#index=0;#indexKey="";#showFooterLabel=readSlideFooterLabelPreference();#styleOverride:{key:string;value:SlideStylePresetId}|null=null;#exporting=false;#exportMenuId=`presentation-deck-export-${crypto.randomUUID()}`;#exportMenuOpen=false;#fullscreenActive=false;#touchStart:{x:number;y:number}|null=null;#followSoundtrackCues=false;#compactToolsOpen=false;#automaticReading=false;#visualOverflow=false;#readingOverride:boolean|null=null;#readingObserver?:ResizeObserver;#readingViewport?:HTMLElement;
+  items:DocumentArtifactDraftItem[]=[];presentation:SlidePresentation|null=null;preferenceKey="";deckTitle="";documentId="";sourceSurface="presentation-deck";releaseAllowed=true;#view:DeckView=readDeckView();#index=0;#indexKey="";#showFooterLabel=readSlideFooterLabelPreference();#styleOverride:{key:string;value:SlideStylePresetId}|null=null;#exporting=false;#exportMenuId=`presentation-deck-export-${crypto.randomUUID()}`;#exportMenuOpen=false;#fullscreenActive=false;#touchStart:{x:number;y:number}|null=null;#followSoundtrackCues=false;#compactToolsOpen=false;#automaticReading=false;#visualOverflow=false;#readingOverride:boolean|null=null;#readingObserver?:ResizeObserver;#readingViewport?:HTMLElement;#readingViewportWidth=0;#readingViewportHeight=0;
   #fullscreenChanged=()=>{this.#fullscreenActive=document.fullscreenElement===this;this.requestUpdate();};
   #syncReadingPosture=(entries:ResizeObserverEntry[])=>{
     const entry=entries.find((candidate)=>candidate.target===this.#readingViewport);
     if(!entry)return;
     const{width,height}=entry.contentRect;
     if(width<1||height<1)return;
+    const sizeChanged=Math.abs(width-this.#readingViewportWidth)>1||Math.abs(height-this.#readingViewportHeight)>1;
+    this.#readingViewportWidth=width;
+    this.#readingViewportHeight=height;
     const reading=presentationRequiresReadingPosture(width,height);
-    if(reading===this.#automaticReading)return;
+    const postureChanged=reading!==this.#automaticReading;
+    const retryVisual=sizeChanged&&this.#visualOverflow;
     this.#automaticReading=reading;
-    if(this.#readingOverride===null)this.requestUpdate();
+    if(retryVisual)this.#visualOverflow=false;
+    if((postureChanged||retryVisual)&&this.#readingOverride===null)this.requestUpdate();
   };
   #slideFit=(event:CustomEvent<{contentFits:boolean}>)=>{
     const overflow=!event.detail.contentFits;
-    const unsafeVisualOverride=overflow&&this.#readingOverride===false;
-    if(overflow===this.#visualOverflow&&!unsafeVisualOverride)return;
+    if(overflow===this.#visualOverflow)return;
     this.#visualOverflow=overflow;
-    if(unsafeVisualOverride)this.#readingOverride=null;
-    this.requestUpdate();
-    if(unsafeVisualOverride)void this.updateComplete.then(()=>this.querySelector<HTMLElement>(".presentation-deck-reading")?.focus({preventScroll:true}));
+    if(this.#readingOverride===null)this.requestUpdate();
   };
   override connectedCallback(){super.connectedCallback();document.addEventListener("fullscreenchange",this.#fullscreenChanged);}
   override disconnectedCallback(){document.removeEventListener("fullscreenchange",this.#fullscreenChanged);this.#readingObserver?.disconnect();this.#readingViewport=undefined;super.disconnectedCallback();}
@@ -59,18 +63,14 @@ export class PresentationDeck extends FormaElement{
     if(viewport===this.#readingViewport)return;
     this.#readingObserver?.disconnect();
     this.#readingViewport=viewport??undefined;
+    this.#readingViewportWidth=0;
+    this.#readingViewportHeight=0;
     if(viewport&&typeof ResizeObserver==="function"){
       this.#readingObserver??=new ResizeObserver(this.#syncReadingPosture);
       this.#readingObserver.observe(viewport);
     }
   }
   #setReading(reading:boolean){
-    if(!reading&&this.#visualOverflow){
-      this.#readingOverride=null;
-      this.requestUpdate();
-      void this.updateComplete.then(()=>this.querySelector<HTMLElement>(".presentation-deck-reading")?.focus({preventScroll:true}));
-      return;
-    }
     this.#readingOverride=reading;
     this.requestUpdate();
     void this.updateComplete.then(()=>this.querySelector<HTMLElement>(reading?".presentation-deck-reading":".presentation-deck-reading-toggle")?.focus({preventScroll:true}));
@@ -140,12 +140,12 @@ export class PresentationDeck extends FormaElement{
     return{sources,unresolved};
   }
   #reader(item:DocumentArtifactDraftItem,index:number,standalone=false){
-    const slide=item.slide as DeckVisual|null,quote=slide?.quote,evidence=this.#evidence(item),visual=slide?.visual as (DeckVisual["visual"]&{exactValue?:string;displayValue?:string;unit?:string})|undefined;
+    const delivery=presentationAudienceItem(item),slide=delivery.slide as DeckVisual|null,quote=slide?.quote,evidence=this.#evidence(item),visual=slide?.visual as (DeckVisual["visual"]&{exactValue?:string;displayValue?:string;unit?:string})|undefined;
     const attribution=quote?[...new Set([quote.speaker,quote.role].filter(Boolean))].join(" · "):"";
     const showNumericPrecision=Boolean(visual&&visual.kind!=="roadmap"&&visual.kind!=="timeline"&&(visual.exactValue||visual.displayValue));
     const visualSummary=visual?.value||(visual&&(visual.kind==="roadmap"||visual.kind==="timeline")?formatPresentationQuantity(visual.displayValue??visual.exactValue,visual.unit,{numericOnly:true}):"");
     const quoteCitation=quote?.citation?visibleSourceLabel(quote.citation,this.i18n.system("Authorized source")):"";
-    const content=html`<article class="presentation-deck-reader-content" aria-label=${this.i18n.system("Complete reading version of slide {count}", { count: this.i18n.number(index+1) })}><h3 dir="auto">${item.title}</h3>${item.body?html`<p dir="auto">${item.body}</p>`:nothing}${slide?.bullets.length?html`<ul>${slide.bullets.map((bullet)=>html`<li dir="auto">${bullet}</li>`)}</ul>`:nothing}${quote?.text?html`<blockquote><p dir="auto">${quote.text}</p>${attribution?html`<footer><cite dir="auto">${attribution}</cite></footer>`:nothing}${quoteCitation?html`<p dir="auto">${quoteCitation}</p>`:nothing}</blockquote>`:nothing}${visual&&(visualSummary||visual.data.length||showNumericPrecision)?html`<figure><figcaption dir="auto">${visual.label||this.i18n.system("Slide evidence")}</figcaption>${visualSummary?html`<p dir="auto">${visualSummary}</p>`:nothing}${showNumericPrecision?html`<dl>${visual.exactValue?html`<dt>Exact value</dt><dd>${formatPresentationQuantity(visual.exactValue,visual.unit,{numericOnly:true})}</dd>`:nothing}${visual.displayValue?html`<dt>Rounded display value</dt><dd>${formatPresentationQuantity(visual.displayValue,visual.unit,{numericOnly:true})}</dd>`:nothing}</dl>`:nothing}${visual.data.length?html`<dl>${visual.data.map((entry)=>{const datum=entry as DeckVisualDatum;return html`<dt dir="auto">${datum.label}</dt><dd dir="auto">${datum.displayValue??datum.value}${datum.exactValue&&datum.exactValue!==(datum.displayValue??datum.value)?html` <span>(exact: ${datum.exactValue})</span>`:nothing}</dd>`;})}</dl>`:nothing}</figure>`:nothing}<section class="presentation-deck-evidence"><h4>Authorized source evidence</h4>${evidence.sources.length?html`<ul>${evidence.sources.map((source)=>html`<li><span class="presentation-deck-source-chip">${this.i18n.system(source.kind)}</span> <strong dir="auto">${source.label}</strong>${source.citationLabel&&source.citationLabel!==source.label?html` <span dir="auto">${source.citationLabel}</span>`:nothing}${source.anchor?html` <span dir="auto">${localizedSourceAnchor(source.anchor,(label,values)=>this.i18n.system(label,values),(value)=>this.i18n.number(value))}</span>`:nothing}${source.excerpt?html`<p dir="auto">${source.excerpt}</p>`:nothing}</li>`)}</ul>`:html`<p>No authorized source evidence was retained for this slide.</p>`}${evidence.unresolved?html`<p role="status" aria-live="polite" aria-atomic="true">Some source references could not be verified against this document.</p>`:nothing}</section>${item.notes?html`<section><h4>Speaker notes</h4><p dir="auto">${item.notes}</p></section>`:nothing}</article>`;
+    const content=html`<article class="presentation-deck-reader-content" aria-label=${this.i18n.system("Complete reading version of slide {count}", { count: this.i18n.number(index+1) })}><h3 dir="auto">${delivery.title}</h3>${delivery.body?html`<p dir="auto">${delivery.body}</p>`:nothing}${slide?.bullets.length?html`<ul>${slide.bullets.map((bullet)=>html`<li dir="auto">${bullet}</li>`)}</ul>`:nothing}${quote?.text?html`<blockquote><p dir="auto">${quote.text}</p>${attribution?html`<footer><cite dir="auto">${attribution}</cite></footer>`:nothing}${quoteCitation?html`<p dir="auto">${quoteCitation}</p>`:nothing}</blockquote>`:nothing}${visual&&(visualSummary||visual.data.length||showNumericPrecision)?html`<figure><figcaption dir="auto">${visual.label||this.i18n.system("Slide evidence")}</figcaption>${visualSummary?html`<p dir="auto">${visualSummary}</p>`:nothing}${showNumericPrecision?html`<dl>${visual.exactValue?html`<dt>Exact value</dt><dd>${formatPresentationQuantity(visual.exactValue,visual.unit,{numericOnly:true})}</dd>`:nothing}${visual.displayValue?html`<dt>Rounded display value</dt><dd>${formatPresentationQuantity(visual.displayValue,visual.unit,{numericOnly:true})}</dd>`:nothing}</dl>`:nothing}${visual.data.length?html`<dl>${visual.data.map((entry)=>{const datum=entry as DeckVisualDatum;return html`<dt dir="auto">${datum.label}</dt><dd dir="auto">${datum.displayValue??datum.value}${datum.exactValue&&datum.exactValue!==(datum.displayValue??datum.value)?html` <span>(exact: ${datum.exactValue})</span>`:nothing}</dd>`;})}</dl>`:nothing}</figure>`:nothing}<details class="presentation-deck-evidence presentation-deck-reader"><summary>Authorized source evidence</summary>${evidence.sources.length?html`<ul>${evidence.sources.map((source)=>html`<li><span class="presentation-deck-source-chip">${this.i18n.system(source.kind)}</span> <strong dir="auto">${source.label}</strong>${source.citationLabel&&source.citationLabel!==source.label?html` <span dir="auto">${source.citationLabel}</span>`:nothing}${source.anchor?html` <span dir="auto">${localizedSourceAnchor(source.anchor,(label,values)=>this.i18n.system(label,values),(value)=>this.i18n.number(value))}</span>`:nothing}${source.excerpt?html`<p dir="auto">${source.excerpt}</p>`:nothing}</li>`)}</ul>`:html`<p>No authorized source evidence was retained for this slide.</p>`}${evidence.unresolved?html`<p role="status" aria-live="polite" aria-atomic="true">Some source references could not be verified against this document.</p>`:nothing}</details>${item.notes?html`<details class="presentation-deck-notes"><summary>Speaker notes</summary><p dir="auto">${item.notes}</p></details>`:nothing}</article>`;
     if(standalone)return html`<section class="presentation-deck-reading" tabindex="0">${content}</section>`;
     return html`<details class="presentation-deck-reader"><summary>Read slide ${index+1} and inspect evidence</summary>${content}</details>`;
   }
@@ -166,11 +166,15 @@ export class PresentationDeck extends FormaElement{
       const artifact=this.store.projection.get().libraryArtifacts.find((candidate)=>candidate.id===artifactId);
       const retained=artifact?.contentRef?this.store.content.get()[artifact.contentRef]:"";
       if(scoped&&!retained){this.store.toast("The latest approved presentation is unavailable.");return;}
-      const revision=this.store.events.get().filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifactId).length;
+      const events=this.store.events.get(),revision=events.filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifactId).length;
+      const completed=artifact?events.find((event)=>event.eventId===artifact.sourceEventId):undefined;
+      const rendered=[...events].reverse().find((event)=>event.type==="DocumentRenderRequested"&&String(event.payload.artifact_id??"")===artifactId);
+      const renderedBy=rendered?.actor.startsWith("user:")?rendered.actor.slice(5):"";
+      const session=this.store.session.get(),productionOwner=Boolean(session&&!session.impersonation&&artifact&&(!session.projectContext||String(completed?.payload.requested_by_user_id??renderedBy)===session.user.userId));
       const{createPowerPointDocument,POWERPOINT_DOCUMENT_MIME}=await import("../model/office-documents");
       if(!this.store.authorizationScopeActive(authorization))return;
       const audience=this.#audienceLocalization(items);
-      const bytes=createPowerPointDocument(items,presentation,{title:this.deckTitle.trim()||audience.translate("Slide deck"),showFooterLabel:this.#showFooterLabel,...audience});
+      const bytes=createPowerPointDocument(items,presentation,{title:this.deckTitle.trim()||audience.translate("Slide deck"),showFooterLabel:this.#showFooterLabel,includePresenterNotes:productionOwner,...audience});
       const digest=retained?Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(retained))),(byte)=>byte.toString(16).padStart(2,"0")).join(""):"";
       if(!this.store.authorizationScopeActive(authorization))return;
       const receipt={type:"DocumentArtifactExported",payload:{artifact_id:artifactId,artifact_kind:"slides",document_id:documentId,format:POWERPOINT_DOCUMENT_MIME,destination_kind:"powerpoint",page_count:items.length,artifact_revision:revision,...(digest?{content_sha256:digest}:{}),style_preset:presentation.stylePreset,render_mode:"editable-office-shapes",source_surface:this.sourceSurface}};
@@ -189,7 +193,7 @@ export class PresentationDeck extends FormaElement{
     else if(event.key==="Home"||event.key==="End"){event.preventDefault();this.#setIndex(event.key==="Home"?0:total-1,total);}
   }
   #slide(item:DocumentArtifactDraftItem,presentation:SlidePresentation,index:number,total:number){return html`<div class="presentation-deck-frame"><forma-presentation-slide .item=${item} .presentation=${presentation} .index=${index} .total=${total} .showFooterLabel=${this.#showFooterLabel}></forma-presentation-slide></div>`;}
-  override render(){const items=this.items.map((item,index)=>normalizeSlideItem(item,index)),total=items.length,generatedPresentation=normalizeSlidePresentation(this.presentation)??applySlideStylePreset(null,"gallery"),selectedStyle=this.#selectedStyle(generatedPresentation),presentation=applySlideStylePreset(generatedPresentation,selectedStyle),styleDefinition=slideStylePresetDefinition(selectedStyle),index=this.#syncIndex(total),current=items[index],preferenceFormId=`presentation-deck-preferences-${this.#styleKey()}`;const reading=this.#view==="slideshow"&&(this.#visualOverflow||(this.#readingOverride??this.#automaticReading));const readingLabel=this.i18n.system(reading?"Slide view":"Read slide");const artifact=this.store.projection.get().libraryArtifacts.find((candidate)=>candidate.id===this.preferenceKey);const soundtracks=soundtrackCompanions(artifact?.settings.soundtrack_assets);const renderSoundtrackCompanions=(value:Parameters<typeof renderAudioCompanions>[0],locale:Parameters<typeof renderAudioCompanions>[1],options:Parameters<typeof renderAudioCompanions>[2]={})=>renderAudioCompanions(value,locale,{...options,...(this.releaseAllowed?{onDownload:(asset:SoundtrackAsset)=>void this.#downloadSoundtrack(asset)}:{})});return html`<section class=${`presentation-deck presentation-deck--${this.#view}${reading?" presentation-deck--reading":""}${this.#fullscreenActive?" presentation-deck--fullscreen":""}`} aria-label="Slide deck" tabindex="0" @keydown=${(event:KeyboardEvent)=>this.#key(event,total)}>
+  override render(){const items=this.items.map((item,index)=>normalizeSlideItem(item,index)),total=items.length,generatedPresentation=normalizeSlidePresentation(this.presentation)??applySlideStylePreset(null,"gallery"),selectedStyle=this.#selectedStyle(generatedPresentation),presentation=applySlideStylePreset(generatedPresentation,selectedStyle),styleDefinition=slideStylePresetDefinition(selectedStyle),index=this.#syncIndex(total),current=items[index],preferenceFormId=`presentation-deck-preferences-${this.#styleKey()}`;const reading=this.#view==="slideshow"&&presentationUsesReadingView({contentOverflows:this.#visualOverflow,readingPreference:this.#readingOverride,viewportRequiresReading:this.#automaticReading});const readingLabel=this.i18n.system(reading?"Slide view":"Read slide");const artifact=this.store.projection.get().libraryArtifacts.find((candidate)=>candidate.id===this.preferenceKey);const soundtracks=soundtrackCompanions(artifact?.settings.soundtrack_assets);const renderSoundtrackCompanions=(value:Parameters<typeof renderAudioCompanions>[0],locale:Parameters<typeof renderAudioCompanions>[1],options:Parameters<typeof renderAudioCompanions>[2]={})=>renderAudioCompanions(value,locale,{...options,...(this.releaseAllowed?{onDownload:(asset:SoundtrackAsset)=>void this.#downloadSoundtrack(asset)}:{})});return html`<section class=${`presentation-deck presentation-deck--${this.#view}${reading?" presentation-deck--reading":""}${this.#fullscreenActive?" presentation-deck--fullscreen":""}`} aria-label="Slide deck" tabindex="0" @keydown=${(event:KeyboardEvent)=>this.#key(event,total)}>
     <form id=${preferenceFormId} hidden @submit=${(event:SubmitEvent)=>event.preventDefault()}></form>
     <header class="presentation-deck-toolbar" data-tools-open=${String(this.#compactToolsOpen)}>
       <button type="button" class="button ghost compact presentation-deck-tools-toggle" aria-label=${this.i18n.system("Slideshow controls")} title=${this.i18n.system("Slideshow controls")} aria-expanded=${String(this.#compactToolsOpen)} aria-controls=${`${this.#exportMenuId}-view ${this.#exportMenuId}-delivery`} @click=${()=>{this.#compactToolsOpen=!this.#compactToolsOpen;this.requestUpdate();}}>${icon("dots")}</button>

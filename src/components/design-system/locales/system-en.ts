@@ -6013,6 +6013,8 @@ const messages: Record<string, string> = {
   "system.auto.zj2sdp.25": "Prepared without a render",
   "system.auto.kru3qy.26": "{count} render in progress",
   "system.auto.bcxn5b.27": "{count} renders in progress",
+  "system.auto.12nuc1t.26": "Continue with safer frames",
+  "system.auto.1tgh5l8.255": "{saved} of {total} frames saved. Context and captions stay unchanged. The rejected attempt may have been charged and will not be replayed. Revised frames are new paid image work within the existing {maximum} maximum; no new reservation or planner request.",
 };
 
 export default messages;

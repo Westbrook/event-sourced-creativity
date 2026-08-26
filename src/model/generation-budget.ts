@@ -75,9 +75,9 @@ export function presentationTokenReservation(maximumProviderCalls = 2) {
 }
 
 const PRESENTATION_SERVER_OWNED_CHECKPOINT_FIELDS = [
-  "artifactId", "artifactPlan", "plannerUsage", "plannerResponseId", "plannerResponseIds", "plannerModel", "plannerLatencyMs", "plannerInput", "presentationProviderSubmission", "presentationCandidates", "presentationRecoveryOnly", "recoverablePresentationCandidate",
+  "artifactId", "artifactPlan", "plannerUsage", "plannerResponseId", "plannerResponseIds", "plannerModel", "plannerLatencyMs", "plannerInput", "presentationProviderSubmission", "presentationProviderClientRequestId", "presentationCandidates", "presentationRecoveryOnly", "recoverablePresentationCandidate",
   "reservationId", "costReservationId", "costReservationPeriod", "costReservationMicrousd", "prepaidProviderCostMicrousd",
-  "providerJobId", "providerModel", "providerStatusUrl", "providerResponseUrl", "providerCancelUrl", "videoInputReceipt", "audioInputReceipt", "renderedItems",
+  "providerJobId", "providerRequestId", "providerModel", "providerStatusUrl", "providerResponseUrl", "providerCancelUrl", "storyboardProviderSubmission", "storyboardProviderRequestedAt", "storyboardProviderAcceptedAt", "storyboardSafeRecovery", "storyboardRejectedProviderReceipt", "videoInputReceipt", "audioInputReceipt", "renderedItems",
   "productionPlan", "productionSceneReceipts", "productionFrameReceipts", "productionPrepaidSceneIds", "productionPrepaidAnchor", "productionAnchor",
 ] as const;
 

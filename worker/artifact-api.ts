@@ -1,5 +1,6 @@
 import { documentArtifactValidationIssues, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
 import { foldEvents } from "../src/model/events.ts";
+import { buildPresentationSourceContract, type PresentationSourceContract } from "../src/model/presentation-source.ts";
 import { hasCapability, requireConsent, requireUser } from "./pilot-policy.ts";
 import { appendProjectEvents, ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents, type ArtifactRevisionSnapshot, type ProjectRequestContext } from "./project-access.ts";
 import { ensureSchema, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readWorkspaceEvents, serializeEvent, streamHead, uuidV7, type WorkerEnv } from "./runtime.ts";
@@ -27,6 +28,70 @@ const contentHoldSql=(content:string,artifact:string)=>`EXISTS(SELECT 1 FROM org
       ON retention.organization_id=policy.organization_id AND retention.content_id=${content}.content_id
         AND retention.project_access_id=${artifact}.project_access_id AND retention.classification='governed-evidence'
     WHERE policy.organization_id=${artifact}.organization_id AND policy.legal_hold=1)`;
+
+/** An author's private generation receipt may authorize a revision, but never cross its custody boundary. */
+async function trustedPresentationRevisionSourceContract(
+  env:WorkerEnv,
+  completedPayload:Record<string,unknown>,
+  artifactId:string,
+  documentId:string,
+  projectId:string,
+  actorUserId:string,
+  itemCount:number,
+  project:ProjectRequestContext|null|undefined,
+  now:string,
+):Promise<PresentationSourceContract|undefined>{
+  const receiptId=typeof completedPayload.input_ref==="string"?completedPayload.input_ref:"";
+  const generatingUserId=String(completedPayload.requested_by_user_id??project?.ownerUserId??actorUserId);
+  if(!receiptId||generatingUserId!==actorUserId)return undefined;
+  const containment=project
+    ? ` AND EXISTS(SELECT 1 FROM project_resource_scopes artifact
+          JOIN project_resource_scopes evidence ON evidence.project_access_id=artifact.project_access_id
+            AND evidence.organization_id=artifact.organization_id AND evidence.project_id=artifact.project_id
+            AND evidence.owner_user_id=artifact.owner_user_id AND evidence.resource_kind='content'
+            AND evidence.resource_id=private_content.content_id AND evidence.visibility='actor_private'
+            AND evidence.actor_user_id=?
+          JOIN private_content_retention_scopes retention ON retention.content_id=private_content.content_id
+            AND retention.organization_id=artifact.organization_id AND retention.project_access_id=artifact.project_access_id
+            AND retention.project_id=artifact.project_id AND retention.actor_user_id=?
+            AND retention.classification='governed-evidence'
+          WHERE artifact.project_access_id=? AND artifact.organization_id=? AND artifact.project_id=?
+            AND artifact.owner_user_id=? AND artifact.resource_kind='artifact' AND artifact.resource_id=?)`
+    : " AND NOT EXISTS(SELECT 1 FROM project_resource_scopes evidence WHERE evidence.resource_kind='content' AND evidence.resource_id=private_content.content_id)";
+  const retained=await env.DB.prepare(`SELECT content FROM private_content
+      WHERE content_id=? AND owner_id=? AND kind='document-artifact-input' AND redacted_at IS NULL AND expires_at>?${containment}`)
+    .bind(receiptId,actorUserId,now,...(project?[actorUserId,actorUserId,project.projectAccessId,project.organizationId,project.projectId,project.ownerUserId,artifactId]:[]))
+    .first<{content:string}>();
+  if(!retained)return undefined;
+  let receipt:Record<string,unknown>;
+  try{
+    const parsed:unknown=JSON.parse(retained.content);
+    if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return undefined;
+    receipt=parsed as Record<string,unknown>;
+  }catch{return undefined;}
+  const request=receipt.request;
+  const snapshot=receipt.document_snapshot;
+  if(receipt.schema_version!==1||receipt.artifact_id!==artifactId||receipt.artifact_kind!=="slides"
+    ||receipt.document_id!==documentId||receipt.project_id!==projectId
+    ||!request||typeof request!=="object"||Array.isArray(request)
+    ||Number((request as Record<string,unknown>).item_count)!==itemCount
+    ||!snapshot||typeof snapshot!=="object"||Array.isArray(snapshot))return undefined;
+  const snapshotRecord=snapshot as Record<string,unknown>;
+  const snapshotDocument=snapshotRecord.document;
+  if(snapshotDocument&&typeof snapshotDocument==="object"&&!Array.isArray(snapshotDocument)
+    &&typeof (snapshotDocument as Record<string,unknown>).id==="string"
+    &&(snapshotDocument as Record<string,unknown>).id!==documentId)return undefined;
+  const settings=request as Record<string,unknown>;
+  const requested=Number(settings.requested_slide_count??itemCount);
+  if(!Number.isSafeInteger(requested)||requested!==itemCount)return undefined;
+  const sourceContract=buildPresentationSourceContract(snapshotRecord,{
+    requestedSlideCount:itemCount,
+    itemCount,
+    ...(typeof settings.presentation_style==="string"?{presentationStyle:settings.presentation_style}:{}),
+    fidelity:settings.presentation_fidelity==="creative"?"creative":"faithful",
+  });
+  return !sourceContract.slideCountMismatch&&sourceContract.sources.some((source)=>source.sourceKind==="block")?sourceContract:undefined;
+}
 
 /** Read recoverable, exactly scoped revisions or atomically correct/restore the real retained output. */
 export async function handleArtifactEdit(request: Request, env: WorkerEnv, artifactId: string,path:string[]=[]): Promise<Response> {
@@ -152,7 +217,14 @@ export async function handleArtifactEdit(request: Request, env: WorkerEnv, artif
   } else if (edited.items.length === 1 && ["short_story", "scene"].includes(artifact.kind)) {
     edited.items[0]!.body = markdown;
   }
-  const validation = documentArtifactValidationIssues(artifact.kind, edited, { itemCount: original.items.length, contextGroupIds: [...new Set(original.items.flatMap((item) => item.context_group_ids ?? []))] });
+  const sourceContract=artifact.kind==="slides"
+    ?await trustedPresentationRevisionSourceContract(env,completed.payload,artifactId,documentId,project?.projectId??projection.projectId,actor.userId,original.items.length,project??undefined,now)
+    :undefined;
+  const validation = documentArtifactValidationIssues(artifact.kind, edited, {
+    itemCount: original.items.length,
+    contextGroupIds: [...new Set(original.items.flatMap((item) => item.context_group_ids ?? []))],
+    ...(sourceContract?{sourceContract,requireSourceGrounding:true,requireAllProtectedContent:true}:{}),
+  });
   if (validation.length) return Response.json({ error: "invalid_artifact_revision", message: validation[0]?.message ?? "The revised output is not valid.", issues: validation }, { status: 400 });
   const serialized=restoreRequest&&historical?historical.content_json:JSON.stringify(edited);
   if(new TextEncoder().encode(serialized).length>MAX_ARTIFACT_REVISION_BYTES)return Response.json({error:"artifact_revision_too_large",message:"Recoverable output revisions cannot exceed one megabyte."},{status:400});

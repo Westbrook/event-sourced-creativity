@@ -390,6 +390,63 @@ function groupedMemberDirection(snapshot: CreativeRecord, member: { blockId: str
   return [...new Set([removeAudioDirections(text(label, 240)).text, ...colors])].filter(Boolean).join(" · ");
 }
 
+const PRODUCT_RESEARCH_OPERATIONAL_DIRECTION = /\b(?:provider(?:\s+(?:charge|charges|submission|request|failure|status))?|paid\s+generation|payment\s+settlement|private\s+identifiers?|reference\s+pixels?|(?:failed|failure)\s+(?:original\s+)?(?:slideshow|request|delivery|generation)|(?:slideshow|request|generation|delivery)\s+(?:failed|failure))\b/i;
+const NONVISUAL_PRODUCT_RESEARCH_BOUNDARY = /\b(?:provider|paid|payment|settlement|charge|charges|private\s+identifiers?|reference\s+pixels?|failed|failure|request|submission|conceal|invent\s+metrics|human\s+review|(?:claim|completed|demonstrated)\b|P[012]\b)\b/i;
+
+type ProductResearchVisualProjection = {
+  motion: string;
+  emphasis: string[];
+  continuity: string;
+  anonymousInterfaces: boolean;
+  truthfulScores: boolean;
+  protectedExclusions: Set<string>;
+};
+
+function productResearchVisualProjection(snapshot: CreativeRecord, options: VideoPromptOptions, prompt: string): ProductResearchVisualProjection | null {
+  if (options.references.length || options.productionContinuity || options.providedSoundtrack || options.generateAudio === true || options.audioMode && options.audioMode !== "silent") return null;
+  const facts = activeFacts(snapshot);
+  const authored = facts.flatMap((fact) => {
+    const properties = record(fact.properties);
+    return [properties.text, properties.instruction, properties.description, properties.value, properties.label].filter((value): value is string => typeof value === "string");
+  });
+  const source = [text(record(snapshot.document).title, 200), ...authored].join("\n");
+  if (!/\b(?:feedback|end[-\s]user|ux|research|readout|review|scorecard)\b/i.test(source)
+    || !/\b(?:product|workflow|slideshow|storyboard|creative\s+context|generation)\b/i.test(source)
+    || !PRODUCT_RESEARCH_OPERATIONAL_DIRECTION.test(source)) return null;
+
+  const directions = `${source}\n${prompt}`;
+  const formats = [...new Set([...directions.matchAll(/\.(?:doc|ppt|mov|mp3|psd)\b/gi)].map((match) => match[0].toLowerCase()))];
+  const scores = [...new Set([...directions.matchAll(/\b(?:10|[0-9])\s*\/\s*10\b/g)].map((match) => match[0].replace(/\s+/g, "")))].slice(0, 3);
+  const tagline = directions.match(/Your content\.\s*One context\.\s*Infinite paths to your target\./i)?.[0].replace(/\s+/g, " ") ?? "";
+  if (!/\bForma\b/i.test(source)
+    || !/\b(?:one|single|shared|living|reusable)[-\s]+(?:(?:living|shared|creative)[-\s]+)?context\b/i.test(source)
+    || formats.length < 2 && !tagline) return null;
+  const visualFormatEvidence = formats.length ? ` Authored legacy-format tiles: ${formats.join(", ")}.` : "";
+  const visualScoreEvidence = scores.length ? ` The only authored scorecard values are ${scores.join(", ")}.` : "";
+  const visualTagline = tagline ? ` Preserve the exact authored tagline: ${tagline}` : "";
+  const motion = `Create an abstract, high-contrast editorial product visualization: scattered creative-format tiles converge into one shared living context; a progress path briefly pauses to make real workflow friction visible, then clear delivery paths branch toward the storyteller and the recipient.${visualFormatEvidence}${visualScoreEvidence}${visualTagline}`;
+  const protectedExclusions = new Set(requiredContextAdaptationFacts(snapshot).filter((decision) => factIsNegative(decision.fact)).map((decision) => decision.direction).filter(Boolean));
+  return {
+    motion,
+    emphasis: [
+      "DIRECTION: Visually connect fractured creative formats, one reusable context, an honest interrupted workflow, practical experience improvements, and audience-led delivery.",
+      "AUDIENCE: Product teams, designers, engineers, founders, and end users evaluating a reusable creative workflow.",
+      ...(formats.length ? [`LEGACY FORMAT SYMBOLS: ${formats.join(", ")}.`] : []),
+      ...(scores.length ? [`AUTHORED SCORECARD VALUES: ${scores.join(", ")}; show no additional numerical claims.`] : []),
+      ...(tagline ? [`EXACT AUTHORED TAGLINE: ${tagline}`] : []),
+    ],
+    continuity: "Keep one continuous visual progression: scattered format tiles converge into a shared context, an incomplete progress indicator briefly interrupts the path, and clear creator-led or recipient-led delivery branches emerge.",
+    anonymousInterfaces: /\b(?:private\s+identifiers?|personal\s+(?:details|data|information)|identifiable\s+(?:people|persons?))\b/i.test(source),
+    truthfulScores: /\b(?:invent\s+metrics|fake\s+(?:metrics|statistics|quotes)|invented\s+(?:numbers|claims))\b/i.test(source),
+    protectedExclusions,
+  };
+}
+
+function productResearchVisualBoundaries(direction: string, projection: ProductResearchVisualProjection) {
+  if (projection.protectedExclusions.has(direction)) return [direction];
+  return direction.split(/\s*(?:;|,|\.\s+)\s*/).map((clause) => clause.trim()).filter((clause) => clause && !NONVISUAL_PRODUCT_RESEARCH_BOUNDARY.test(clause));
+}
+
 function compactMotionThesis(prompt: string, snapshot: CreativeRecord = {}) {
   const lead = prompt.split(/\n+/).map((line) => line.trim()).find((line) => line && !/^\s*(?:shot|beat|\d+[.)]|\d+:\d+)/i.test(line)) ?? prompt;
   const title = text(record(snapshot.document).title, 160);
@@ -492,10 +549,15 @@ export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): V
     startsAtSeconds: authoredTiming?.[index]?.startsAtSeconds ?? Math.round(index * options.seconds / beats.length * 100) / 100,
     endsAtSeconds: authoredTiming?.[index]?.endsAtSeconds ?? (index === beats.length - 1 ? options.seconds : Math.round((index + 1) * options.seconds / beats.length * 100) / 100),
   }));
+  const visualProjection = productResearchVisualProjection(snapshot, options, cleanedPrompt.text);
+  const providerMotion = visualProjection?.motion ?? cleanedPrompt.text;
   const sourceDecisions = sourceFactDirective(snapshot);
   const excluded = [...new Set([...sourceDecisions.excluded, ...(options.productionContinuity?.prohibitions ?? [])])];
   const scopedExcluded = [...sourceDecisions.scopedExcluded, ...(options.productionContinuity?.scopedTargets ?? []).flatMap((target) => target.prohibitions.map((direction) => ({ direction, role: target.role, target: target.target })))];
-  const { emphasis, affirmed } = sourceDecisions;
+  const emphasis = visualProjection
+    ? [...sourceDecisions.emphasis.filter((direction) => !/^(?:DIRECTION|MESSAGE|AUDIENCE)(?:\s+for[^:]*)?:/i.test(direction) || !PRODUCT_RESEARCH_OPERATIONAL_DIRECTION.test(direction)), ...visualProjection.emphasis]
+    : sourceDecisions.emphasis;
+  const { affirmed } = sourceDecisions;
   const interpretedHardDecisions = requiredContextAdaptationFacts(snapshot)
     .filter((decision) => !factIsNegative(decision.fact) && !(decision.type === "reference" && Number(decision.properties.storyboard_frame_index ?? 0) > 0))
     .map((decision) => {
@@ -527,7 +589,7 @@ export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): V
     {
       id: "creative-meaning",
       priority: "required",
-      content: `CREATIVE MEANING\n${compactMotionThesis(cleanedPrompt.text, snapshot)}${emphasis.length ? `\n${emphasis.join("\n")}` : ""}`,
+      content: `CREATIVE MEANING\n${compactMotionThesis(providerMotion, snapshot)}${emphasis.length ? `\n${emphasis.join("\n")}` : ""}`,
     },
   ];
 
@@ -541,14 +603,20 @@ export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): V
     }), ...affirmed].join("\n")}`,
   });
 
-  const continuityNotes = [...new Set([options.plan?.summary, ...(options.plan?.items ?? []).map((item) => item.notes)].map((value) => removeAudioDirections(text(value, 750)).text).filter(Boolean))];
+  const continuityNotes = visualProjection
+    ? [visualProjection.continuity]
+    : [...new Set([options.plan?.summary, ...(options.plan?.items ?? []).map((item) => item.notes)].map((value) => removeAudioDirections(text(value, 750)).text).filter(Boolean))];
   if (continuityNotes.length) sections.push({
     id: "production-continuity",
     priority: "required",
     content: `PRODUCTION CONTINUITY\n${continuityNotes.map((note) => text(note, 520)).join("\n")}`,
   });
 
-  const safeVisualExclusions = excluded.flatMap((value) => unsupportedAudioIntent(value) ? value.split(/\s*(?:;|,|\band\b)\s*/i).filter((part) => part && !unsupportedAudioIntent(part)) : [value]);
+  const safeVisualExclusions = [...new Set([
+    ...excluded.flatMap((value) => unsupportedAudioIntent(value) ? value.split(/\s*(?:;|,|\band\b)\s*/i).filter((part) => part && !unsupportedAudioIntent(part)) : [value]).flatMap((value) => visualProjection ? productResearchVisualBoundaries(value, visualProjection) : [value]),
+    ...(visualProjection?.anonymousInterfaces ? ["readable personal details"] : []),
+    ...(visualProjection?.truthfulScores ? ["unauthored numerical claims"] : []),
+  ])];
   if (safeVisualExclusions.length) sections.push({
     id: "authored-boundaries",
     priority: "required",
@@ -556,7 +624,7 @@ export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): V
   });
   const safeScopedVisualExclusions = scopedExcluded.flatMap((exclusion) => {
     const directions = unsupportedAudioIntent(exclusion.direction) ? exclusion.direction.split(/\s*(?:;|,|\band\b)\s*/i).filter((part) => part && !unsupportedAudioIntent(part)) : [exclusion.direction];
-    return directions.map((direction) => ({ ...exclusion, direction }));
+    return directions.flatMap((direction) => visualProjection ? productResearchVisualBoundaries(direction, visualProjection) : [direction]).map((direction) => ({ ...exclusion, direction }));
   });
   if (safeScopedVisualExclusions.length) sections.push({
     id: "target-scoped-authored-boundaries",
@@ -621,7 +689,7 @@ export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): V
     }
   }
 
-  sections.push({ id: "motion-and-story-direction", priority: "important", content: `MOTION AND STORY DIRECTION\n${cleanedPrompt.text}`, allowCompaction: true });
+  sections.push({ id: "motion-and-story-direction", priority: "important", content: `MOTION AND STORY DIRECTION\n${providerMotion}`, allowCompaction: true });
   for (const [index, beat] of scheduledBeats.entries()) if (beat.framePrompt && !beat.direction) {
     sections.push({ id: `shot-${index + 1}-${beat.sequence}-visual-detail`, priority: "optional", content: `SHOT ${beat.sequence} VISUAL DETAIL\n${removeAudioDirections(beat.framePrompt).text}`, allowCompaction: true });
   }

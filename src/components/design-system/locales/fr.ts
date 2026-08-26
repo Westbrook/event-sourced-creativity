@@ -2149,6 +2149,11 @@ Object.assign(messages, {
   "context.character.review": "Vérifier et confirmer avant de générer",
 });
 
+Object.assign(messages, {
+  "system.auto.12nuc1t.26": "Continuer avec des images plus sûres",
+  "system.auto.1tgh5l8.255": "{saved} images sur {total} enregistrées. Le contexte et les légendes restent inchangés. La tentative refusée a pu être facturée et ne sera pas relancée. Les images modifiées constituent un nouveau travail payant dans la limite initiale de {maximum} ; aucune nouvelle réservation ni demande de planification.",
+});
+
 Object.assign(messages, FORMA_RESPONSIVE_MESSAGES.fr);
 
 export default messages;

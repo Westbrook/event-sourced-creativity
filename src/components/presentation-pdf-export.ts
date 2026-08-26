@@ -8,6 +8,7 @@ import {
   type PresentationPdfSemanticNode,
 } from "../model/presentation-pdf.ts";
 import type { DocumentArtifactDraftItem, SlidePresentation } from "../model/document-artifacts";
+import { presentationAudienceItem } from "../model/presentation-delivery.ts";
 import { PRESENTATION_VISUAL_FIT_SELECTOR } from "../model/presentation-layout.ts";
 import type { PresentationSlide } from "./presentation-slide";
 
@@ -392,6 +393,7 @@ const nextFrame=()=>new Promise<void>((resolve)=>requestAnimationFrame(()=>resol
 export async function renderPresentationPdf(items:DocumentArtifactDraftItem[],presentation:SlidePresentation,options:PresentationPdfOptions={}):Promise<PresentationPdfResult>{
   if(!items.length)throw new TypeError("At least one presentation slide is required.");
   if(typeof CompressionStream==="undefined")throw new Error("This browser does not support lossless slide capture.");
+  const audienceItems=items.map((item)=>presentationAudienceItem(item));
 
   const stage=document.createElement("forma-ui-locale");
   stage.lang=options.language||document.documentElement.lang||"en";
@@ -405,13 +407,13 @@ export async function renderPresentationPdf(items:DocumentArtifactDraftItem[],pr
     let css="",fontSignature="";
     const pages:PresentationPdfRenderedPage[]=[];
 
-    for(let index=0;index<items.length;index+=1){
+    for(let index=0;index<audienceItems.length;index+=1){
       const host=document.createElement("forma-presentation-slide") as PresentationSlide;
       host.style.cssText=`display:block;width:${PRESENTATION_PDF_PAGE_WIDTH}px;height:${PRESENTATION_PDF_PAGE_HEIGHT}px;--presentation-slide-scale:1;`;
-      host.item=items[index]!;
+      host.item=audienceItems[index]!;
       host.presentation=presentation;
       host.index=index;
-      host.total=items.length;
+      host.total=audienceItems.length;
       host.compact=false;
       host.showFooterLabel=options.showFooterLabel!==false;
       stage.replaceChildren(host);
@@ -440,9 +442,9 @@ export async function renderPresentationPdf(items:DocumentArtifactDraftItem[],pr
         height:canvas.height,
         bytes:await compressedRgb(canvas),
         text:host.innerText,
-        heading:host.querySelector<HTMLElement>("h1,h2,h3,h4,h5,h6")?.innerText||items[index]!.title,
+        heading:host.querySelector<HTMLElement>("h1,h2,h3,h4,h5,h6")?.innerText||audienceItems[index]!.title,
         bullets:Array.from(host.querySelectorAll<HTMLElement>("section > ul > li,section > ol > li")).map((item)=>item.innerText.trim()).filter(Boolean),
-        structure:presentationPdfSemanticStructure(host,items[index]!.title),
+        structure:presentationPdfSemanticStructure(host,audienceItems[index]!.title),
         language:options.language||document.documentElement.lang||"en",
         direction:options.direction||(getComputedStyle(host).direction==="rtl"?"rtl":"ltr"),
       });

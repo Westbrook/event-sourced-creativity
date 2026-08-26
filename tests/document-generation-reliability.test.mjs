@@ -141,7 +141,7 @@ async function stalePresentationAttempt(fixture,job,{attemptCount=1,reserve=fals
     assert.equal(await claimCostBudgetReservation(fixture.environment,owner,cost.reservationId),true);
     Object.assign(checkpoint,{reservationId:token.reservationId,costReservationId:cost.reservationId,costReservationPeriod:token.period,costReservationMicrousd:1_000_000});
   }
-  if(pending)Object.assign(checkpoint,{presentationProviderSubmission:"pending",generationReceipt:{...checkpoint.generationReceipt,provider_request_status:"submission_unknown",source_transmission_status:"unknown",settled_cost_microusd:null,reservation_status:"executing"}});
+  if(pending)Object.assign(checkpoint,{presentationProviderSubmission:"pending",presentationProviderClientRequestId:`forma-slides-${crypto.randomUUID()}`,generationReceipt:{...checkpoint.generationReceipt,provider_request_status:"submission_unknown",source_transmission_status:"unknown",settled_cost_microusd:null,reservation_status:"executing"}});
   if(paid)Object.assign(checkpoint,{presentationProviderSubmission:"confirmed",plannerModel:"gpt-5.6-terra",plannerResponseId:"already-paid-presentation-response",plannerResponseIds:["already-paid-presentation-response"],plannerUsage:{inputTokens:1200,outputTokens:800,totalTokens:2000},generationReceipt:{...checkpoint.generationReceipt,provider_request_status:"submitted",source_transmission_status:"transmitted",actual_provider_call_count:1,reservation_status:"executing"}});
   const expired=new Date(Date.now()-120_000).toISOString();const expiresAt=renewed?new Date(Date.now()+75_000).toISOString():expired;
   fixture.sqlite.prepare("UPDATE document_jobs SET status='running',attempt_count=?,correlation_id=?,started_at=?,lease_expires_at=?,updated_at=?,result_json=? WHERE job_id=?").run(attemptCount,correlation,expired,expiresAt,renewed?new Date().toISOString():expired,JSON.stringify(checkpoint),job.jobId);
@@ -182,10 +182,11 @@ test("keeps a faithful twelve-block presentation inside its live hosted executio
   assert.equal(fixture.backgroundCount,0,"a presentation must never be claimed by response-detached waitUntil work");
 
   const entered=Promise.withResolvers();const release=Promise.withResolvers();const previousFetch=globalThis.fetch;
-  const providerRequests=[];let responseResolved=false;
+  const providerRequests=[];const providerRequestIds=[];let responseResolved=false;
   globalThis.fetch=async(url,init={})=>{
     assert.equal(String(url),"https://api.openai.com/v1/responses");
     providerRequests.push(JSON.parse(String(init.body)));
+    providerRequestIds.push(new Headers(init.headers).get("X-Client-Request-Id"));
     entered.resolve();
     await release.promise;
     return Response.json({id:"faithful-twelve-block-provider-response",model:"gpt-5.6-terra",output_text:JSON.stringify(independentProviderResponse(init.body)),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});
@@ -198,6 +199,8 @@ test("keeps a faithful twelve-block presentation inside its live hosted executio
 
     const active=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
     assert.equal(active.presentationProviderSubmission,"pending");
+    assert.match(active.presentationProviderClientRequestId,/^forma-slides-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+    assert.equal(active.presentationProviderClientRequestId,providerRequestIds[0],"the exact provider support identifier must be durable before its request is submitted");
     assert.equal(active.generationReceipt.provider_request_status,"submission_unknown");
     assert.equal(active.generationReceipt.source_transmission_status,"unknown");
     assert.equal(active.generationReceipt.settled_cost_microusd,null);
@@ -357,6 +360,9 @@ test("freezes both reservations and blocks duplicate submission when an interrup
     const failed=(await response.json()).job;
     assert.equal(failed.status,"failed");
     assert.equal(failed.errorDetail.code,"provider_submission_uncertain");
+    assert.equal(failed.errorDetail.requestId,attempt.checkpoint.presentationProviderClientRequestId);
+    assert.match(failed.errorDetail.message,new RegExp(attempt.checkpoint.presentationProviderClientRequestId));
+    assert.equal(failed.result.presentationProviderClientRequestId,attempt.checkpoint.presentationProviderClientRequestId);
     assert.equal(failed.attemptCount,1);
     assert.equal(failed.result.generationReceipt.provider_request_status,"submission_unknown");
     assert.equal(failed.result.generationReceipt.source_transmission_status,"unknown");
@@ -372,6 +378,11 @@ test("freezes both reservations and blocks duplicate submission when an interrup
     const guidance=generationFailureGuidance(failed.errorDetail,failed.error,failed);
     assert.match(guidance.summary,/duplicate charge/i);
     assert.equal(guidance.retryAllowed,false);
+    const foreignHeaders={"oai-authenticated-user-id":"other-presentation-author","oai-authenticated-user-email":"other-presentation-author@example.test"};
+    assert.equal((await fixture.request("/api/session",{headers:foreignHeaders})).status,200);
+    const foreign=await handleDocumentJobs(new Request(`http://localhost/api/document-jobs/${job.jobId}`,{headers:foreignHeaders}),fixture.environment,job.jobId);
+    assert.equal(foreign.status,404,"another authenticated creator must not learn an owner-private provider request identifier");
+    assert.doesNotMatch(await foreign.text(),new RegExp(attempt.checkpoint.presentationProviderClientRequestId));
   }finally{globalThis.fetch=previousFetch;}
 });
 
@@ -394,7 +405,7 @@ test("redacts expired uncertain presentation inputs without ever releasing their
   assert.equal(retried.status,409,JSON.stringify(await retried.clone().json()));
   const redacted=fixture.sqlite.prepare("SELECT request_json,result_json,updated_at FROM document_jobs WHERE job_id=?").get(job.jobId);
   assert.deepEqual(JSON.parse(redacted.request_json),{artifactKind:"slides"});
-  assert.deepEqual(JSON.parse(redacted.result_json),{presentationProviderSubmission:"pending",reservationId:attempt.token.reservationId,costReservationId:attempt.cost.reservationId,generationReceipt:{provider_request_status:"submission_unknown",source_transmission_status:"transmitted",settled_cost_microusd:12_000,reservation_status:"executing",actual_provider_call_count:1},plannerModel:"gpt-5.6-terra",plannerResponseId:"verified-prior-presentation-response",plannerResponseIds:["verified-prior-presentation-response"],plannerUsage:{inputTokens:1200,outputTokens:800,totalTokens:2000},costReservationPeriod:attempt.token.period,costReservationMicrousd:1_000_000});
+  assert.deepEqual(JSON.parse(redacted.result_json),{presentationProviderSubmission:"pending",presentationProviderClientRequestId:attempt.checkpoint.presentationProviderClientRequestId,reservationId:attempt.token.reservationId,costReservationId:attempt.cost.reservationId,generationReceipt:{provider_request_status:"submission_unknown",source_transmission_status:"transmitted",settled_cost_microusd:12_000,reservation_status:"executing",actual_provider_call_count:1},plannerModel:"gpt-5.6-terra",plannerResponseId:"verified-prior-presentation-response",plannerResponseIds:["verified-prior-presentation-response"],plannerUsage:{inputTokens:1200,outputTokens:800,totalTokens:2000},costReservationPeriod:attempt.token.period,costReservationMicrousd:1_000_000});
   assert.doesNotMatch(`${redacted.request_json} ${redacted.result_json}`,/EXPIRED PRIVATE SOURCE TEXT|EXPIRED PRIVATE PLANNER PROMPT|EXPIRED PRIVATE PRESENTATION DRAFT/);
 
   const subsequent=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"slides",productionMode:"manual",itemCount:12,requestKey:"post-expiry-uncertain-reservation-guard"}}));
@@ -820,6 +831,7 @@ test("rejects user-supplied slideshow recovery plans, provider receipts, and res
     {artifactId:"untrusted-artifact",renderedItems:[]},
     {presentationProviderSubmission:"pending"},
     {presentationProviderSubmission:"confirmed"},
+    {presentationProviderClientRequestId:"forma-slides-forged-provider-trace"},
     {presentationCandidates:[{contentRef:"untrusted-provider-response"}]},
     {presentationRecoveryOnly:true},
     {recoverablePresentationCandidate:true},
@@ -1032,19 +1044,27 @@ test("settles every metered initial and bounded-repair response when source-fide
   const fixture=await reliabilityWorker();
   await authoredOutline(fixture,12);
   const previousFetch=globalThis.fetch;
-  let providerCalls=0;
-  globalThis.fetch=async(url)=>{
+  let providerCalls=0;let activeJobId="";const providerRequestIds=[];
+  globalThis.fetch=async(url,init={})=>{
     assert.equal(String(url),"https://api.openai.com/v1/responses");
     providerCalls+=1;
+    const clientRequestId=new Headers(init.headers).get("X-Client-Request-Id");
+    assert.match(clientRequestId,/^forma-slides-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+    const pending=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(activeJobId).result_json);
+    assert.equal(pending.presentationProviderSubmission,"pending");
+    assert.equal(pending.presentationProviderClientRequestId,clientRequestId,"each initial or bounded-repair provider attempt requires its own durable pre-submit support reference");
+    providerRequestIds.push(clientRequestId);
     return Response.json({id:`paid-validation-response-${providerCalls}`,model:"gpt-5.6-terra",output_text:"{}",usage:{input_tokens:120,output_tokens:45,total_tokens:165}});
   };
   try{
     const accepted=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",sourceSurface:"document",payload:{artifactKind:"slides",productionMode:"manual",itemCount:12,requestKey:"paid-fidelity-failure-regression"}}));
     assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
     const {job}=await accepted.json();
+    activeJobId=job.jobId;
     await fixture.runJob(job);
 
     assert.equal(providerCalls,2,"exactly one initial response and one bounded repair may be paid");
+    assert.equal(new Set(providerRequestIds).size,2,"a bounded repair must have a distinct provider support reference from its initial attempt");
     const response=await fixture.request(`/api/document-jobs/${job.jobId}`);
     assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
     const failed=(await response.json()).job;
@@ -1341,6 +1361,92 @@ test("recovers a privately retained paid slideshow without a second provider req
     assert.equal(providerCalls,1,"a repeated recovery is idempotent");
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,1);
   }finally{globalThis.fetch=previousFetch;}
+});
+
+test("recertifies source-authored recurring file-format evidence and recovers its paid slideshow without another provider request",async()=>{
+  for(const value of [".doc/.ppt/.mov/.mp3/.psd","scattered .doc/.ppt/.mov/.mp3/.psd files"]){
+    const fixture=await reliabilityWorker();
+    const variant=value.startsWith("scattered")?"storyboard":"formats";
+    const documentId=await seedIndependentPresentation(fixture,`historical-source-evidence-recovery-${variant}`,6);
+    const scoreEvidence=`${INDEPENDENT_SLIDE_SCORES.map(([label,score])=>`${label}: ${score}`).join("; ")}. Exact equal-weight average: 61.125. Rounded display value: 61.13.`;
+    for(const[index,text]of[[1,`Slide 1 — ${INDEPENDENT_SLIDE_TITLES[0]}\nPreviously one story required fragmented .doc · .ppt · .mov · .mp3 · .psd handoffs.`],[3,`Slide 3 — ${INDEPENDENT_SLIDE_TITLES[2]}\n${scoreEvidence}`],[5,`Slide 5 — ${INDEPENDENT_SLIDE_TITLES[4]}\nIndependent evidence for context immutability preserves conversion 14.25%. Visual storyboard beats: scattered .doc/.ppt/.mov/.mp3/.psd files; one coherent Forma context; infinite delivery paths.`]]){
+      await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockPropertyEdited",{
+        project_id:"project-atmosphere",document_id:documentId,block_id:`PRIVATE_AUTHORED_SLIDE_${index}`,
+        property_path:"text",new_value:text,
+      });
+    }
+    const requestSourceJob=(path="",init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs${path?`/${path}`:""}`,init),fixture.environment,path);
+    const previousFetch=globalThis.fetch;
+    let providerCalls=0;
+    globalThis.fetch=async(url,init={})=>{
+      assert.equal(String(url),"https://api.openai.com/v1/responses");
+      providerCalls+=1;
+      const output=independentProviderResponse(init.body);
+      const opening=output.items[0],scored=output.items[2],scoreAlias=scored.slide.source_ids[0];
+      const protectedScorecard={...opening.slide.visual,data:opening.slide.visual.data.map((datum)=>({...datum,source_ids:[scoreAlias]}))};
+      opening.body="Legacy handoffs forced one story through disconnected communication mediums.";
+      opening.slide.layout="cover";
+      opening.slide.visual={kind:"hero-type",label:"Legacy format fragmentation",value:".doc · .ppt · .mov · .mp3 · .psd",data:[]};
+      scored.slide.layout="scorecard";
+      scored.slide.visual=protectedScorecard;
+      const item=output.items[4],alias=item.slide.source_ids[0];
+      item.body="Authorized editorial transition preserves conversion 14.25%.";
+      item.slide.layout="comparison";
+      item.slide.visual={kind:"comparison",label:"Storyboard transition",value:"",data:[
+        {label:"Fragmented handoffs",value,weight:1,source_ids:[alias]},
+        {label:"Unified delivery",value:"one coherent Forma context",weight:.8,source_ids:[alias]},
+      ]};
+      output.content_markdown=output.items.map((entry,index)=>`## ${index+1}. ${entry.title}\n${entry.body}`).join("\n\n");
+      return Response.json({id:`historical-source-evidence-response-${variant}-${providerCalls}`,model:"gpt-5.6-terra",output_text:JSON.stringify(output),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});
+    };
+    try{
+      const admission=presentationAdmission(documentId,`historical-source-evidence-recovery-${variant}`);
+      Object.assign(admission.payload,{itemCount:6,requestedSlideCount:6});
+      const accepted=await requestSourceJob("",json(admission));
+      assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+      const{job}=await accepted.json();
+      fixture.sqlite.exec("CREATE TRIGGER fail_source_evidence_persistence BEFORE INSERT ON private_content WHEN NEW.kind='document-artifact' BEGIN SELECT RAISE(FAIL,'forced_source_evidence_persistence_failure'); END");
+      const failedResponse=await requestSourceJob(`${job.jobId}/run`,{method:"POST"});
+      assert.equal(failedResponse.status,200,JSON.stringify(await failedResponse.clone().json()));
+      const failed=(await failedResponse.json()).job;
+      assert.equal(failed.status,"failed");
+      assert.equal(providerCalls,1,"source-authored recurring file-format evidence must not trigger a paid repair request");
+      assert.equal(failed.result.recoverablePresentationCandidate,true);
+      const settledCost=failed.result.generationReceipt.settled_cost_microusd;
+      fixture.sqlite.exec("DROP TRIGGER fail_source_evidence_persistence");
+
+      const staleCheckpoint=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+      staleCheckpoint.recoverablePresentationCandidate=false;
+      staleCheckpoint.presentationCandidates=staleCheckpoint.presentationCandidates.map((candidate)=>({...candidate,locallyRecoverable:false}));
+      fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify(staleCheckpoint),job.jobId);
+
+      const reassessed=await requestSourceJob();
+      assert.equal(reassessed.status,200,JSON.stringify(await reassessed.clone().json()));
+      const visible=(await reassessed.json()).jobs.find((candidate)=>candidate.jobId===job.jobId);
+      assert.equal(visible.result.recoverablePresentationCandidate,true,"historically rejected source-authored visual evidence must be recertified by current validation");
+      assert.equal(providerCalls,1,"dynamic candidate certification must not issue another paid provider request");
+
+      const candidates=await requestSourceJob(`${job.jobId}/presentation-candidates`);
+      assert.equal(candidates.status,200,JSON.stringify(await candidates.clone().json()));
+      assert.equal((await candidates.json()).candidates[0].complete,true,"the exact retained source-authored candidate must be independently certified");
+
+      const recoveredResponse=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+      assert.equal(recoveredResponse.status,200,JSON.stringify(await recoveredResponse.clone().json()));
+      const recovered=(await recoveredResponse.json()).job;
+      assert.equal(recovered.status,"completed");
+      assert.equal(recovered.result.generationReceipt.settled_cost_microusd,settledCost);
+      assert.equal(recovered.result.generationReceipt.recovered_without_provider_request,true);
+      assert.equal(providerCalls,1,"recovering recurring authored evidence must not create a second provider submission");
+
+      const draft=JSON.parse(fixture.sqlite.prepare("SELECT content FROM private_content WHERE kind='document-artifact' AND redacted_at IS NULL ORDER BY created_at DESC,rowid DESC LIMIT 1").get().content);
+      assert.equal(draft.items[4].slide.visual.data[0].value,value,"source-authored file-format evidence must remain completely verbatim");
+      assert.ok(draft.items[4].slide.visual.data[0].sourceIds.includes("PRIVATE_AUTHORED_SLIDE_5"),"the recovered visual row must retain its exact authorized authored source");
+      assert.equal(draft.items[0].slide.visual.value,".doc · .ppt · .mov · .mp3 · .psd","the earlier source-authored format list must also remain verbatim");
+      assert.equal(draft.items[2].slide.visual.exactValue,"61.125","cosmetic evidence allowances must never modify protected exact scores");
+      assert.equal(draft.items[2].slide.visual.displayValue,"61.13","cosmetic evidence allowances must never modify protected rounded scores");
+      assert.equal(draft.items[1].slide.quote.text,INDEPENDENT_SLIDE_QUOTE,"protected stakeholder quotations must remain verbatim");
+    }finally{globalThis.fetch=previousFetch;}
+  }
 });
 
 test("recovers a privately retained title-and-question slideshow without weakening source validation or paying again",async()=>{

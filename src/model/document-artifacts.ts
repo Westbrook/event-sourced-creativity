@@ -472,6 +472,37 @@ export type DocumentArtifactValidationOptions={
   requireAllProtectedContent?:boolean;
 };
 
+/** Preserve only independently authored visual evidence and an exact opening-to-closing promise. */
+function sourceAuthorizedRepeatedPresentationCopy(values:readonly unknown[],duplicate:SlideDeckCopyIssue,contract:PresentationSourceContract,pageStart=0){
+  const visualEvidence=duplicate.firstPath==="slide.visual.value"&&/^slide\.visual\.data\.\d+\.value$/u.test(duplicate.secondPath);
+  const opening=contract.numberedOutline[0],closing=contract.numberedOutline.at(-1);
+  const openingPromise=duplicate.firstPath==="title"
+    &&/^(?:body|slide\.visual\.value|slide\.bullets\.\d+)$/u.test(duplicate.secondPath)
+    &&opening!==undefined&&closing!==undefined&&opening.number!==closing.number
+    &&pageStart+duplicate.firstSlide+1===opening.number&&pageStart+duplicate.secondSlide+1===closing.number
+    &&text(duplicate.first)===text(duplicate.second)
+    &&contentKey(opening.content.split(/\r?\n/u,1)[0])===contentKey(duplicate.first);
+  if(!visualEvidence&&!openingPromise)return false;
+  const authoredEvidence=(slideIndex:number,value:string,datumIndex?:number)=>{
+    const authored=contract.numberedOutline.find((slide)=>slide.number===pageStart+slideIndex+1);
+    const evidenceTokens=copyTokens(value),sourceTokens=copyTokens(authored?.content??"");
+    if(!authored||evidenceTokens.length<2||evidenceTokens.length>12||text(value).length>160)return false;
+    const contiguous=sourceTokens.some((_token,index)=>evidenceTokens.every((token,offset)=>sourceTokens[index+offset]===token));
+    if(!contiguous)return false;
+    if(!authored.sourceBlockId)return true;
+    const authorizedReferences=new Set([authored.sourceBlockId,...(authored.sourceAlias?[authored.sourceAlias]:[])]);
+    const sources=slideSourceIds(values[slideIndex]);
+    if(!sources.some((source)=>authorizedReferences.has(source)))return false;
+    if(datumIndex===undefined)return true;
+    const slide=record(record(values[slideIndex]).slide),visual=record(slide.visual),data=Array.isArray(visual.data)?visual.data:[],datum=record(data[datumIndex]);
+    if(!copyTokens(datum.label).length)return false;
+    const datumSources=uniqueText(datum.sourceIds??datum.source_ids);
+    return!datumSources.length||datumSources.some((source)=>authorizedReferences.has(source));
+  };
+  const datumIndex=visualEvidence?Number(/^slide\.visual\.data\.(\d+)\.value$/u.exec(duplicate.secondPath)?.[1]):undefined;
+  return authoredEvidence(duplicate.firstSlide,duplicate.first)&&authoredEvidence(duplicate.secondSlide,duplicate.second,datumIndex);
+}
+
 export function documentArtifactValidationIssues(kind:DocumentArtifactKind,output:DocumentArtifactDraft|null,options:DocumentArtifactValidationOptions):DocumentArtifactValidationIssue[]{
   if(!output)return[{code:"invalid_json",path:"$",message:"The provider response was not a valid artifact object."}];
   const issues:DocumentArtifactValidationIssue[]=[];const add=(code:string,path:string,message:string)=>issues.push({code,path,message});const expectedGroups=options.contextGroupIds??[];const knownGroups=new Set(expectedGroups);const assignedGroups=output.items.flatMap((item)=>item.context_group_ids??[]);
@@ -511,7 +542,10 @@ export function documentArtifactValidationIssues(kind:DocumentArtifactKind,outpu
     if(!item.body.trim()&&!item.slide.bullets.length&&!item.slide.quote?.text&&!item.slide.visual.value.trim()&&!item.slide.visual.data.length)add("missing_visible_claim",path,"The slide has no body, bullets, metric, quotation, or visual claim.");
     for(const duplicate of slideCopyIssues(item))add("duplicate_slide_copy",`${path}.${duplicate.secondPath}`,`This repeats ${path}.${duplicate.firstPath}: “${duplicate.second}”.`);
   });
-  for(const duplicate of slideDeckCopyIssues(output.items))add("duplicate_deck_copy",`items.${duplicate.secondSlide}.${duplicate.secondPath}`,`This repeats items.${duplicate.firstSlide}.${duplicate.firstPath}: “${duplicate.second}”.`);
+  for(const duplicate of slideDeckCopyIssues(output.items)){
+    if(options.sourceContract&&sourceAuthorizedRepeatedPresentationCopy(output.items,duplicate,options.sourceContract,options.sourcePageStart??0))continue;
+    add("duplicate_deck_copy",`items.${duplicate.secondSlide}.${duplicate.secondPath}`,`This repeats items.${duplicate.firstSlide}.${duplicate.firstPath}: “${duplicate.second}”.`);
+  }
   if(options.sourceContract)issues.push(...validatePresentationSourceCoverage(output.items,options.sourceContract,{
     pageStart:options.sourcePageStart,
     pageSize:options.sourcePageSize,

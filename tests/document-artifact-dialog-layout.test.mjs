@@ -1,0 +1,89 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import test from "node:test";
+
+const postcss = createRequire(import.meta.resolve("vite"))("postcss");
+const [styles, component] = await Promise.all([
+  readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
+  readFile(new URL("../src/components/document-artifacts.ts", import.meta.url), "utf8"),
+]);
+const stylesheet = postcss.parse(styles, { from: "src/styles.css" });
+
+function declarations(selector, property) {
+  const results = [];
+  stylesheet.walkRules((rule) => {
+    if (!rule.selectors?.includes(selector)) return;
+    let conditional = false;
+    for (let parent = rule.parent; parent; parent = parent.parent) {
+      if (parent.type === "atrule") conditional = true;
+    }
+    if (conditional) return;
+    rule.walkDecls(property, (declaration) => results.push(declaration.value));
+  });
+  return results;
+}
+
+const winning = (selector, property) => declarations(selector, property).at(-1);
+
+test("creation dialog gives every dynamic child its intrinsic row without changing the output reader", () => {
+  const form = ".document-artifact-dialog";
+  const reader = ".document-artifact-reader";
+
+  assert.equal(winning(form, "display"), "grid");
+  assert.deepEqual(declarations(form, "grid-template-rows"), ["auto minmax(0,1fr) auto", "none"]);
+  assert.equal(winning(form, "grid-template-rows"), "none");
+  assert.equal(winning(form, "grid-auto-rows"), "max-content");
+  assert.equal(winning(form, "align-content"), "start");
+  assert.equal(winning(form, "overflow"), "auto");
+  assert.equal(winning(form, "overscroll-behavior"), "contain");
+
+  assert.equal(winning(reader, "display"), "grid");
+  assert.equal(winning(reader, "grid-template-rows"), "auto minmax(0,1fr) auto");
+  assert.equal(winning(reader, "grid-auto-rows"), undefined);
+  assert.equal(winning(reader, "overflow"), "hidden");
+  assert.match(winning(form, "max-height") ?? "", /100dvh/u);
+
+  assert.match(component, /<form class="document-artifact-dialog"[\s\S]*?<header>[\s\S]*?<fieldset class="artifact-kind-picker"[\s\S]*?<section class="artifact-options"/u);
+});
+
+test("storyboard and video choices stay visible, operable, and independently scrollable", () => {
+  const picker = ".artifact-kind-picker";
+  const formPicker = ".document-artifact-dialog > .artifact-kind-picker";
+  const label = ".artifact-kind-picker :is(button,label)";
+
+  assert.equal(winning(formPicker, "min-block-size"), "10rem");
+  assert.equal(winning(label, "min-height"), "10rem");
+  assert.equal(winning(picker, "display"), "grid");
+  assert.equal(winning(picker, "overflow"), "auto");
+  assert.match(winning(picker, "grid-template-columns") ?? "", /repeat\(6,/u);
+  assert.match(styles, /@media \(max-width:\s*720px\)[\s\S]*?\.artifact-kind-picker\s*\{\s*grid-template-columns:\s*repeat\(6,11rem\)/u);
+
+  assert.match(component, /<fieldset class="artifact-kind-picker" aria-label="Artifact type">/u);
+  assert.match(component, /<input type="radio" name="artifact-kind" value=\$\{kind\} \.checked=/u);
+  assert.match(component, /@change=\$\{\(\)=>\{this\.#selectArtifactKind\(kind\)/u);
+
+  for (const viewport of [
+    { width: 320, height: 568 },
+    { width: 390, height: 844 },
+    { width: 732, height: 805 },
+    { width: 1280, height: 800 },
+  ]) {
+    assert.ok(viewport.height - 2 * 16 >= 10 * 16, `${viewport.width}×${viewport.height} has room for the selectable format picker`);
+  }
+});
+
+test("paid confirmation footer stays sticky while the creation form scrolls", () => {
+  const footer = ".document-artifact-dialog > footer";
+
+  assert.equal(winning(footer, "position"), "sticky");
+  assert.equal(winning(footer, "inset-block-end"), "0");
+  assert.equal(winning(footer, "z-index"), "2");
+  assert.equal(winning(footer, "display"), "flex");
+  assert.match(styles, /@media \(max-width:\s*720px\)[\s\S]*?\.document-artifact-dialog > footer,\.document-artifact-reader > footer\s*\{[^}]*flex-direction:\s*column/u);
+
+  for (const selector of [footer, ".document-artifact-dialog > .artifact-kind-picker"]) {
+    assert.notEqual(winning(selector, "visibility"), "hidden");
+    assert.notEqual(winning(selector, "pointer-events"), "none");
+  }
+});

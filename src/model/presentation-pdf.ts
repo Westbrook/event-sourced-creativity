@@ -1,4 +1,5 @@
 import { applySlideStylePreset, authoritativeSlideDatumWeight, defaultSlidePresentation, normalizeSlideItem, normalizeSlidePresentation, normalizeSlideVisual, slideVisualIsComplete, type DocumentArtifactDraftItem, type SlidePresentation, type SlideVisualData } from "./document-artifacts.ts";
+import { presentationAudienceItem } from "./presentation-delivery.ts";
 import { PRESENTATION_CANVAS_HEIGHT, PRESENTATION_CANVAS_WIDTH } from "./presentation-layout.ts";
 
 export const PRESENTATION_PDF_PAGE_WIDTH=PRESENTATION_CANVAS_WIDTH;
@@ -194,7 +195,7 @@ const slidePage=(item:DocumentArtifactDraftItem,presentation:SlidePresentation,i
   const palette=presentation.palette,slide=item.slide??normalizeSlideVisual(null,item,index),ops:string[]=["q",rect(0,0,PAGE_WIDTH,PAGE_HEIGHT,palette.background)];
   const citations=(slide.citations??[]).map((citation,citationIndex)=>{
     const label=[publicCitationPart(citation.label,"Authored source"),publicCitationPart(citation.anchor)].filter(Boolean).join(" - ");
-    return`[${citationIndex+1}] ${[label,citation.excerpt].filter(Boolean).join(": ")}`.trim();
+    return label?`[${citationIndex+1}] ${label}`:"";
   }).filter(Boolean);
   const citationHeights=citations.map((citation)=>Math.max(14,wrap(citation,Math.floor(TEXT_WIDTH/(10*.53)),Number.MAX_SAFE_INTEGER).length*12+5));
   const citationSpace=citationHeights.reduce((total,height)=>total+height,0);
@@ -446,7 +447,7 @@ export function createPresentationPdfFromRenderedSlides(pages:PresentationPdfRen
 }
 
 export function createPresentationPdf(items:DocumentArtifactDraftItem[],value:SlidePresentation|null,options:PresentationPdfOptions={}):PresentationPdfResult{
-  const normalizedItems=items.map((item,index)=>normalizeSlideItem(item,index)),generated=normalizeSlidePresentation(value)??defaultSlidePresentation(),presentation=applySlideStylePreset(generated,generated.stylePreset),title=ascii(options.title)||presentation.footerLabel||normalizedItems[0]?.title||"Slide deck";
+  const normalizedItems=items.map((item,index)=>presentationAudienceItem(normalizeSlideItem(item,index))),generated=normalizeSlidePresentation(value)??defaultSlidePresentation(),presentation=applySlideStylePreset(generated,generated.stylePreset),title=ascii(options.title)||presentation.footerLabel||normalizedItems[0]?.title||"Slide deck";
   const pages=normalizedItems.map((item,index)=>slidePage(item,presentation,index,normalizedItems.length,options.showFooterLabel!==false));
   return{bytes:pdf(pages.length?pages:[slidePage({title,body:"No slide content was retained.",notes:"",image_prompt:"",slide:null},presentation,0,1,options.showFooterLabel!==false)],title),filename:presentationPdfFilename(title,options.language),pageCount:Math.max(1,pages.length)};
 }

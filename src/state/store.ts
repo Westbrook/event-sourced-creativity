@@ -404,7 +404,56 @@ export class FormaStore {
     }
   }
   async dismissDocumentJobFailure(jobId:string){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/dismiss`,{method:"POST"},"dismiss this generation issue");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job)throw new Error(body.error??"Generation issue could not be dismissed");this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast(this.session.get()?.projectContext?"Generation notice dismissed. Failure details remain available; generation inputs stay private to their author.":"Generation notice dismissed. Its retained inputs remain in this document’s failure history.");this.notify();return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"Generation issue could not be dismissed");return false;}}
-  async recoverDocumentRender(jobId:string){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/retry`,{method:"POST"},"recover this completed provider render");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job)throw new Error(body.error??"The saved provider render could not be recovered");this.documentJobs.set([body.job,...this.documentJobs.get().filter((job)=>job.jobId!==jobId)]);this.toast("Recovering the saved Fal video. No second paid video was submitted.");this.notify();this.#driveDocumentJobs(this.documentJobs.get());this.#scheduleJobPoll(800);return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}}
+  async reconcileDocumentProviderReceipt(jobId:string){
+    const authorization=this.#activeAuthorizationScope();
+    try{
+      const session=this.session.get();
+      const original=this.documentJobs.get().find((job)=>job.jobId===jobId);
+      if(!session||session.impersonation||session.projectContext&&session.projectContext.ownerUserId!==session.user.userId||!original||original.kind!=="render_document"||original.status!=="failed"||original.result?.artifactKind!=="storyboard"||original.result.storyboardProviderSubmission!=="pending"||original.result.providerJobId)throw new Error("The saved provider render could not be recovered");
+      const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/reconcile-provider`,{method:"POST"},"refresh this saved provider receipt without submitting another paid request");
+      this.#assertAuthorizationScope(authorization);
+      const body=await response.json() as {job?:DocumentJob;error?:string;reconciledProviderRequest?:boolean;providerStatus?:number;providerErrorClass?:string;providerErrorCode?:string};
+      this.#assertAuthorizationScope(authorization);
+      if(!response.ok&&body.error==="provider_receipt_lookup_failed"){
+        const status=Number.isSafeInteger(body.providerStatus)&&Number(body.providerStatus)>=400&&Number(body.providerStatus)<=599?`HTTP ${body.providerStatus}`:"";
+        const errorClass=typeof body.providerErrorClass==="string"&&["TypeError","AbortError","DOMException","Error"].includes(body.providerErrorClass)?body.providerErrorClass:"";
+        const errorCode=typeof body.providerErrorCode==="string"&&/^[A-Z][A-Z0-9_]{0,63}$/u.test(body.providerErrorCode)?body.providerErrorCode:"";
+        const diagnostic=status||[errorClass,errorCode].filter(Boolean).join(" ");
+        throw new Error(diagnostic?`${body.error} (${diagnostic})`:body.error);
+      }
+      const providerJobId=body.job?.result?.providerJobId;
+      if(!response.ok||body.reconciledProviderRequest!==true||!body.job||body.job.jobId!==jobId||body.job.documentId!==original.documentId||body.job.kind!=="render_document"||body.job.status!=="failed"||body.job.result?.artifactKind!=="storyboard"||body.job.result.storyboardProviderSubmission!=="confirmed"||!session.projectContext&&(typeof providerJobId!=="string"||!/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(providerJobId)||["pending","submitted","unknown"].includes(providerJobId.toLowerCase())))throw new Error(body.error??"The saved provider render could not be recovered");
+      this.#jobDetails.delete(jobId);
+      this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));
+      this.toast(this.#systemNotice("Paid once · replay without another provider call"));
+      this.notify();
+      return true;
+    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}
+  }
+  canContinueDocumentStoryboardWithSaferFrames(job:DocumentJob){
+    const session=this.session.get(),result=job.result,detail=job.errorDetail;
+    const providerJobId=result?.providerJobId;
+    const acceptedProviderReceipt=session?.projectContext?result?.storyboardProviderSubmission==="confirmed":result?.storyboardProviderSubmission==="confirmed"&&typeof providerJobId==="string"&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(providerJobId)&&!["pending","submitted","unknown"].includes(providerJobId.toLowerCase());
+    return Boolean(session&&!session.impersonation&&(!session.projectContext||session.projectContext.ownerUserId===session.user.userId)&&job.kind==="render_document"&&job.status==="failed"&&job.productionMode==="manual"&&result?.artifactKind==="storyboard"&&detail?.code==="fal_safety_rejected"&&detail.category==="safety"&&detail.httpStatus===422&&detail.retryable===false&&acceptedProviderReceipt&&Array.isArray(result.renderedItems)&&result.renderedItems.length>=1&&Number(result.costReservationMicrousd)>0);
+  }
+  async continueDocumentStoryboardWithSaferFrames(jobId:string){
+    const authorization=this.#activeAuthorizationScope();
+    try{
+      const original=this.documentJobs.get().find((job)=>job.jobId===jobId);
+      if(!original||!this.canContinueDocumentStoryboardWithSaferFrames(original))throw new Error("The saved provider render could not be recovered");
+      const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/continue-safer-frames`,{method:"POST"},"continue this saved storyboard with revised paid frames under its original reservation");
+      this.#assertAuthorizationScope(authorization);
+      const body=await response.json() as {job?:DocumentJob;error?:string;continuedWithSaferFrames?:boolean;reusedReservations?:boolean};
+      this.#assertAuthorizationScope(authorization);
+      if(!response.ok||body.continuedWithSaferFrames!==true||body.reusedReservations!==true||!body.job||body.job.jobId!==jobId||body.job.documentId!==original.documentId||body.job.kind!=="render_document"||body.job.status!=="queued"||body.job.result?.artifactKind!=="storyboard")throw new Error(body.error??"The saved provider render could not be recovered");
+      this.#jobDetails.delete(jobId);
+      this.documentJobs.set([body.job,...this.documentJobs.get().filter((job)=>job.jobId!==jobId)]);
+      this.toast([this.#systemNotice("Continue with safer frames"),this.#systemNotice("Reserved maximum"),formatGenerationUsd(Number(original.result?.costReservationMicrousd))].join(" · "));
+      this.notify();this.#driveDocumentJobs(this.documentJobs.get());this.#scheduleJobPoll(800);
+      return true;
+    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}
+  }
+  async recoverDocumentRender(jobId:string){const authorization=this.#activeAuthorizationScope();try{const original=this.documentJobs.get().find((job)=>job.jobId===jobId);const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/retry`,{method:"POST"},"recover this completed provider render");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job)throw new Error(body.error??"The saved provider render could not be recovered");this.documentJobs.set([body.job,...this.documentJobs.get().filter((job)=>job.jobId!==jobId)]);const medium=original?.result?.artifactKind==="storyboard"?"Storyboard":original?.result?.artifactKind==="audio"?"Audio":"Video";this.toast(medium==="Video"?"Recovering the saved Fal video. No second paid video was submitted.":[this.#systemNotice(medium),this.#systemNotice("Paid once · replay without another provider call")].join(" · "));this.notify();this.#driveDocumentJobs(this.documentJobs.get());this.#scheduleJobPoll(800);return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}}
   async recoverDocumentPresentation(jobId:string){
     const authorization=this.#activeAuthorizationScope();
     const original=this.documentJobs.get().find((job)=>job.jobId===jobId);

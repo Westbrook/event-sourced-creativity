@@ -1,6 +1,6 @@
 import { normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
 import { AUDIO_ADAPTER_CONTRACT } from "../src/model/audio.ts";
-import { priceTextUsageBreakdownMicrousd, type ProviderCostBreakdown, type ProviderUsage } from "./replay-cost.ts";
+import { priceFalIdeogramImageBreakdownMicrousd, priceTextUsageBreakdownMicrousd, type FalIdeogramRenderingSpeed, type ProviderCostBreakdown, type ProviderUsage } from "./replay-cost.ts";
 
 type Checkpoint = Record<string, unknown>;
 type PlannerUsageEvent = { type?: string; payload: Checkpoint };
@@ -23,6 +23,51 @@ export type InterruptedDocumentJobUsage = {
 };
 
 const positiveInteger = (value: unknown) => Math.max(0, Math.floor(Number(value) || 0));
+const validFalRequestId=(value:unknown):value is string=>typeof value==="string"&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(value)&&!["pending","submitted","unknown"].includes(value.toLowerCase());
+
+export type StoryboardSafeRecoveryCheckpoint={
+  enabled:true;
+  failedFrameIndex:number;
+  rejectedProviderJobId:string;
+  rejectedPromptSha256:string;
+  maxAttempts:1;
+  attemptedAt:string;
+  completedFrameBreakdowns:ProviderCostBreakdown[];
+  rejectedFrameBreakdown:ProviderCostBreakdown;
+  rejectedFrameCostMicrousd:number;
+};
+
+/** Continue only the exact worker-owned terminal rejection; never trust client-supplied pricing or provider identities. */
+export function validatedStoryboardSafeRecovery(value:unknown,rejectedValue:unknown,renderedValue:unknown,expectedModel:string):StoryboardSafeRecoveryCheckpoint|null{
+  const marker=value&&typeof value==="object"&&!Array.isArray(value)?value as Checkpoint:null;
+  const rejected=rejectedValue&&typeof rejectedValue==="object"&&!Array.isArray(rejectedValue)?rejectedValue as Checkpoint:null;
+  const rendered=Array.isArray(renderedValue)?renderedValue:null;
+  if(!marker||!rejected||!rendered||marker.enabled!==true||marker.maxAttempts!==1||!Number.isSafeInteger(marker.failedFrameIndex)||Number(marker.failedFrameIndex)<0||Number(marker.failedFrameIndex)!==rendered.length||rendered.length>11||!validFalRequestId(marker.rejectedProviderJobId)||rejected.providerJobId!==marker.rejectedProviderJobId||typeof marker.rejectedPromptSha256!=="string"||!/^[a-f0-9]{64}$/u.test(marker.rejectedPromptSha256)||rejected.promptSha256!==marker.rejectedPromptSha256||typeof marker.attemptedAt!=="string"||!Number.isFinite(Date.parse(marker.attemptedAt))||rejected.providerModel!==expectedModel)return null;
+  const dimensions=(entry:Checkpoint)=>({width:Math.floor(Number(entry.width??1536)),height:Math.floor(Number(entry.height??1024))});
+  const charge=(entry:Checkpoint)=>{
+    const {width,height}=dimensions(entry);
+    if(!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||width<256||height<256||width>4096||height>4096)return null;
+    const model=String(entry.provider_model??entry.providerModel??expectedModel);
+    const speed=entry.rendering_speed??entry.renderingSpeed??"BALANCED";
+    const expansion=entry.expansion_model??entry.expansionModel??"Medium";
+    if(model!==expectedModel||!["TURBO","BALANCED","QUALITY"].includes(String(speed))||!["None","Medium","Large"].includes(String(expansion)))return null;
+    return priceFalIdeogramImageBreakdownMicrousd(model,width,height,speed as FalIdeogramRenderingSpeed,expansion as "None"|"Medium"|"Large");
+  };
+  const completedFrameBreakdowns:ProviderCostBreakdown[]=[];
+  const providerIds=new Set<string>();
+  for(const value of rendered){
+    if(!value||typeof value!=="object"||Array.isArray(value))return null;
+    const frame=value as Checkpoint;
+    const requestId=frame.provider_request_id;
+    if(frame.provider!=="fal"||!validFalRequestId(requestId)||requestId===marker.rejectedProviderJobId||providerIds.has(requestId)||typeof frame.media_url!=="string"||!/^\/api\/media\/[A-Za-z0-9._~%+-]+$/u.test(frame.media_url))return null;
+    const breakdown=charge(frame);
+    if(!breakdown||Object.hasOwn(frame,"cost_microusd")&&positiveInteger(frame.cost_microusd)!==breakdown.totalMicrousd)return null;
+    providerIds.add(requestId);completedFrameBreakdowns.push(breakdown);
+  }
+  const rejectedFrameBreakdown=charge(rejected);
+  if(!rejectedFrameBreakdown||Object.hasOwn(rejected,"estimatedCostMicrousd")&&positiveInteger(rejected.estimatedCostMicrousd)!==rejectedFrameBreakdown.totalMicrousd)return null;
+  return{enabled:true,failedFrameIndex:Number(marker.failedFrameIndex),rejectedProviderJobId:marker.rejectedProviderJobId,rejectedPromptSha256:marker.rejectedPromptSha256,maxAttempts:1,attemptedAt:marker.attemptedAt,completedFrameBreakdowns,rejectedFrameBreakdown,rejectedFrameCostMicrousd:rejectedFrameBreakdown.totalMicrousd};
+}
 
 /** A definitive pre-acceptance HTTP rejection must not become an imaginary paid Lyria job. */
 export function audioProviderSubmissionState(options:{attempted:boolean;providerJobId?:unknown;httpStatus?:number|null}):"not_submitted"|"confirmed"|"rejected"|"unknown"{
