@@ -219,6 +219,88 @@ test("assistant is available by default to every consented user without widening
   assert.equal((await state.request(endpoint(), { headers: other })).status, 403, "another user's project remains inaccessible");
 });
 
+test("planner-only accounts retain paid creative chat when their selected image adapter is unavailable",async()=>{
+  const state=await fixture({provider:true});
+  state.env.FORMA_IMAGE_PROVIDER="fal-ideogram";
+  delete state.env.FAL_KEY;
+  const session=await(await state.request("/api/session")).json();
+  assert.equal(session.provider.plannerConfigured,true);
+  assert.equal(session.provider.configured,false);
+  const originalFetch=globalThis.fetch;
+  let calls=0;
+  globalThis.fetch=async(_url,init)=>{
+    calls+=1;
+    const body=JSON.parse(init.body);
+    return Response.json({id:"planner-only-creative-chat",model:body.model,
+      output_text:JSON.stringify({reply:"Your text-only creative plan is updated.",mutations:[],preview_worthy:false,preview_direction:""}),
+      usage:{input_tokens:80,output_tokens:20,total_tokens:100}});
+  };
+  try{
+    const accepted=await state.request("/api/document-jobs",json({kind:"chat",documentId:"doc-atmosphere",sourceSurface:"chat",payload:{message:"Clarify the creative direction without an image.",livePreview:false}}));
+    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+    const queued=await accepted.json();
+    await state.drainBackground();
+    assert.equal(calls,1);
+    assert.equal(state.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(queued.job.jobId).status,"completed");
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs WHERE kind='preview'").get().count,0);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("board planning authorizes exact live boards and retains board identity in accepted, listed, and completed jobs",async()=>{
+  const state=await fixture({provider:true});
+  appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[
+    ["CanvasCreated",{canvas_id:"assistant-board-a",project_id:"project-atmosphere",name:"Board A",slug:"board-a"}],
+    ["CanvasCreated",{canvas_id:"assistant-board-b",project_id:"project-atmosphere",name:"Board B",slug:"board-b"}],
+    ["CanvasCreated",{canvas_id:"assistant-foreign-board",project_id:"foreign-project",name:"Foreign board",slug:"foreign"}],
+  ]);
+  const submit=(canvasId)=>state.request("/api/document-jobs",json({kind:"structure_adaptive",documentId:"doc-atmosphere",sourceSurface:"canvas",payload:{prompt:"Review this board without changing it.",projectScope:true,...(canvasId?{canvasId}:{})}}));
+  const missing=await submit("");
+  assert.equal(missing.status,400);
+  assert.equal((await missing.json()).error,"canvas_context_required");
+  const foreign=await submit("assistant-foreign-board");
+  assert.equal(foreign.status,404);
+  assert.equal((await foreign.json()).error,"canvas_not_found");
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count,0);
+
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async(_url,init)=>{
+    const body=JSON.parse(init.body);
+    return Response.json({id:"board-planning-response",model:body.model,
+      output_text:JSON.stringify({interpretation:"Board A can explore a clearer subject.",active_decision:{type:"subject",label:"Choose a subject",prompt:"Who belongs here?",why:"Keep the composition grounded."},suggested_blocks:[],hidden_until_later:[]}),
+      usage:{input_tokens:80,output_tokens:30,total_tokens:110}});
+  };
+  try{
+    const accepted=await submit("assistant-board-a");
+    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+    const queued=await accepted.json();
+    assert.equal(queued.job.canvasId,"assistant-board-a");
+    await state.drainBackground();
+    const listing=await(await state.request("/api/document-jobs")).json();
+    const completed=listing.jobs.find((job)=>job.jobId===queued.job.jobId);
+    assert.equal(completed.status,"completed");
+    assert.equal(completed.canvasId,"assistant-board-a");
+    assert.equal(completed.result.structure.interpretation,"Board A can explore a clearer subject.");
+    const detail=await(await state.request(`/api/document-jobs/${queued.job.jobId}`)).json();
+    assert.equal(detail.job.canvasId,"assistant-board-a");
+
+    appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["CanvasRemoved",{canvas_id:"assistant-board-a",project_id:"project-atmosphere"}]]);
+    const removed=await submit("assistant-board-a");
+    assert.equal(removed.status,404);
+    assert.equal((await removed.json()).error,"canvas_not_found");
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("shared project owners cannot enqueue private paid chat outside their active project context",async()=>{
+  const state=await sharedProjectFixture({provider:true});
+  const {cookie,...personal}=state.owner;
+  assert.ok(cookie);
+  const before=state.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count;
+  const response=await state.request("/api/document-jobs",json({kind:"chat",documentId:"doc-atmosphere",sourceSurface:"chat",payload:{message:"This must not cross scopes.",livePreview:false}},personal));
+  assert.equal(response.status,409,JSON.stringify(await response.clone().json()));
+  assert.equal((await response.json()).error,"project_context_required");
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count,before);
+});
+
 test("controlled-pilot creators retain free scoped guidance without paid or authoring entitlements",async()=>{
   const state=await sharedProjectFixture();
   delete state.env.FORMA_ASSISTANT_INTERNAL_USER_IDS;

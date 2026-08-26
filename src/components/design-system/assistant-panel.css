@@ -2,7 +2,7 @@ forma-assistant-panel {
   position: fixed;
   inset-inline-end: max(1rem, var(--forma-safe-inline-end, 0px));
   inset-block-end: calc(max(1rem, env(safe-area-inset-bottom, 0px)) + var(--forma-keyboard-offset, 0px) + var(--forma-assistant-obstacle-offset, 0px));
-  z-index: 46;
+  z-index: 53;
   display: block;
   color: var(--ink, #18211e);
   pointer-events: none;
@@ -42,6 +42,7 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
 }
 
 .forma-assistant-panel {
+  box-sizing: border-box;
   inline-size: min(25rem, calc(100vw - 2rem));
   max-block-size: min(39rem, calc(100dvh - 7rem - var(--forma-keyboard-offset, 0px)));
   display: grid;
@@ -247,6 +248,85 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
   .forma-assistant-panel {
     inline-size: 100%;
     max-block-size: min(37rem, calc(100dvh - 3rem - max(var(--forma-bottom-nav-size, 0px), var(--forma-keyboard-offset, 0px))));
+  }
+}
+
+@media (max-height: 34rem) {
+  .forma-assistant-panel {
+    inline-size: min(36rem, calc(100vw - 2rem));
+    max-block-size: calc(100dvh - 1.5rem - max(var(--forma-bottom-nav-size, 0px), var(--forma-keyboard-offset, 0px)));
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .forma-assistant-header,
+  .forma-assistant-composer {
+    padding: .375rem .625rem;
+  }
+
+  .forma-assistant-header {
+    align-items: center;
+  }
+
+  .forma-assistant-transcript {
+    gap: .375rem;
+    padding: .5rem .625rem;
+  }
+
+  .forma-assistant-composer {
+    gap: .25rem;
+  }
+
+  .forma-assistant-modes {
+    flex-wrap: nowrap;
+    gap: .375rem;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+  }
+
+  .forma-assistant-mode {
+    flex: 0 0 auto;
+    padding-inline: .625rem;
+  }
+
+  .forma-assistant-mode-detail {
+    font-size: .75rem;
+    line-height: 1.3;
+  }
+
+  .forma-assistant-model {
+    gap: .25rem;
+  }
+
+  .forma-assistant-model > label:first-child {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: .375rem;
+  }
+
+  .forma-assistant-composer .forma-conversation-help {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@media (max-height: 34rem) and (max-width: 48rem) {
+  .forma-assistant-panel {
+    inline-size: 100%;
+  }
+}
+
+@media (max-height: 34rem) and (orientation: landscape) {
+  forma-assistant-panel {
+    inset-block-end: max(.5rem, var(--forma-keyboard-offset, 0px), env(safe-area-inset-bottom, 0px));
+  }
+
+  .forma-assistant-panel {
+    max-block-size: calc(100dvh - 1rem - max(var(--forma-keyboard-offset, 0px), env(safe-area-inset-bottom, 0px)));
   }
 }
 

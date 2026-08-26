@@ -118,3 +118,32 @@ test("composer remains enabled for overlapping work, respects IME, and restores 
   assert.match(styles, /--forma-keyboard-offset/u);
   assert.match(styles, /min-(?:inline|block)-size:\s*2\.75rem/u);
 });
+
+test("specialized assistants preserve exact scope, truthful readiness, reviewed actions, and reachable compact previews",async()=>{
+  const [host,panel,chat,adaptive,canvas,styles,panelStyles,worker]=await Promise.all([
+    read("src/components/forma-creative-assistant.ts"),read("src/components/design-system/assistant-panel.ts"),
+    read("src/components/forma-chat-studio.ts"),read("src/components/forma-studio-editor-alternatives.ts"),
+    read("src/canvas/canvas-application.ts"),read("src/responsive-foundation.css"),
+    read("src/components/design-system/assistant-panel.css"),read("worker/document-jobs-api.ts"),
+  ]);
+  assert.match(host,/#localToolMessages: AssistantDisplayedMessage\[\] = \[\]/u);
+  assert.match(host,/\.\.\.this\.#localToolMessages/u);
+  assert.match(host,/this\.#localToolMessages = \[\]/u);
+  assert.doesNotMatch(host,/scope !== this\.#scope\(\)\) \{ panel\.resolveToolRequest\(false, input\.message\)/u);
+  assert.match(host,/adaptiveSuggestionSetsFor\(documentId,surface\.canvasId\)/u);
+  for(const source of [host,chat,adaptive,canvas])assert.match(source,/plannerConfigured/u);
+  assert.match(chat,/this\.#livePreview&&Boolean\(this\.store\.session\.get\(\)\?\.provider\.configured\)/u);
+  assert.match(chat,/assistant\.previewUnavailable/u);
+  assert.match(chat,/chat-budget-disclosure/u);
+  assert.match(chat,/chat-result-close/u);
+  assert.match(panel,/\.help=\$\{this\.i18n\.t\("assistant\.composer\.help"\)\}/u);
+  assert.match(chat,/\.help=\$\{this\.i18n\.t\("assistant\.composer\.help"\)\}/u);
+  assert.match(panel,/assistant\.mode\.guidanceBudget/u);
+  assert.match(styles,/\.chat-result-toggle,\s*\.chat-result-close\s*\{\s*display:\s*none/u);
+  assert.match(styles,/\.chat-generation > footer\s*\{\s*min-block-size:\s*0;\s*overflow-y:\s*auto/u);
+  assert.match(styles,/\.chat-composer-help:not\(\.chat-budget-disclosure\)/u);
+  assert.match(panelStyles,/z-index:\s*53/u);
+  assert.match(panelStyles,/grid-template-rows:\s*auto minmax\(0, 1fr\) auto/u);
+  assert.match(worker,/error:"canvas_context_required"/u);
+  assert.match(worker,/error:"project_context_required"/u);
+});

@@ -22,6 +22,7 @@ export class FormaCreativeAssistant extends FormaElement {
   #open = false;
   #context: AssistantContext | null = null;
   #messages: AssistantDisplayedMessage[] = [];
+  #localToolMessages: AssistantDisplayedMessage[] = [];
   #proposals: AssistantDisplayedProposal[] = [];
   #tasks: AssistantDisplayedTask[] = [];
   #pending = new Set<string>();
@@ -84,10 +85,10 @@ export class FormaCreativeAssistant extends FormaElement {
       const payload = await response.json() as { context: AssistantContext; turns: AssistantServerTurn[]; tasks?: AssistantDisplayedTask[] };
       if (scope !== this.#scope() || !this.#open) return;
       this.#context = payload.context;
-      this.#messages = payload.turns.flatMap((turn) => [
+      this.#messages = [...payload.turns.flatMap((turn) => [
         { id: `${turn.id}:user`, role: "user" as const, text: turn.user },
         { id: `${turn.id}:assistant`, role: "assistant" as const, key: turn.reply.key, values: turn.reply.values, text: turn.reply.text },
-      ]);
+      ]),...this.#localToolMessages];
       this.#proposals = payload.turns.flatMap((turn) => turn.proposals ?? (turn.proposal ? [turn.proposal] : []));
       this.#tasks = payload.tasks ?? [];
       this.#activeTasks = new Set(this.#tasks.filter((task) => task.status === "queued" || task.status === "running" || task.status === "reconciling").map((task) => task.id));
@@ -175,7 +176,7 @@ export class FormaCreativeAssistant extends FormaElement {
         return;
       }
       const accepted = await this.store.chat(input.message, false);
-      if (scope !== this.#scope()) { panel.resolveToolRequest(false, input.message); return; }
+      if (scope !== this.#scope()) return;
       panel.resolveToolRequest(Boolean(accepted), input.message);
       if (accepted) this.store.setRoute(withDocumentInRoute("/studio/chat", projection.documentId, projection.documentTitle));
       return;
@@ -201,7 +202,7 @@ export class FormaCreativeAssistant extends FormaElement {
       const event = new CustomEvent<AssistantToolRequest>("forma-assistant-tool-request", { detail, cancelable: true });
       if (window.dispatchEvent(event)) resolve(false);
     });
-    if (scope !== this.#scope()) { panel.resolveToolRequest(false, input.message); return; }
+    if (scope !== this.#scope()) return;
     panel.resolveToolRequest(accepted, input.message);
     if (accepted && input.mode === "quick-edit") {
       this.#open = false;
@@ -213,12 +214,14 @@ export class FormaCreativeAssistant extends FormaElement {
       }));
       return;
     }
-    this.#messages = [...this.#messages,
+    const messages:AssistantDisplayedMessage[]=[
       ...(accepted ? [{ id: crypto.randomUUID(), role: "user" as const, text: input.message }] : []),
       { id: crypto.randomUUID(), role: "assistant", key: accepted ? "assistant.mode.queued" : "assistant.mode.failed",
         ...(accepted && ["plan-document", "plan-board"].includes(input.mode)
           ? { reviewMode: input.mode as "plan-document" | "plan-board", reviewReady: false } : {}) },
     ];
+    if(accepted&&["plan-document","plan-board"].includes(input.mode))this.#localToolMessages=[...this.#localToolMessages,...messages].slice(-12);
+    this.#messages=[...this.#messages,...messages];
     this.requestUpdate();
   }
 
@@ -313,6 +316,7 @@ export class FormaCreativeAssistant extends FormaElement {
       this.#loadedScope = "";
       this.#context = null;
       this.#messages = [];
+      this.#localToolMessages = [];
       this.#proposals = [];
       this.#tasks = [];
       this.#activeTasks.clear();
@@ -327,7 +331,7 @@ export class FormaCreativeAssistant extends FormaElement {
     const messages = this.#messages.map((message) => message.reviewMode
       ? { ...message, reviewReady: !planning && Boolean(message.reviewMode === "plan-document"
         ? this.store.adaptiveStructureFor(documentId)
-        : this.store.adaptiveSuggestionSetsFor(documentId).length) }
+        : surface.canvasId&&this.store.adaptiveSuggestionSetsFor(documentId,surface.canvasId).length) }
       : message);
     return html`<forma-assistant-panel .open=${this.#open} .conversationScope=${this.#scope()} .context=${this.#context} .messages=${messages} .proposals=${this.#proposals}
       .tasks=${this.#tasks} .models=${session.assistant.models ?? []} .modes=${interaction.modes}

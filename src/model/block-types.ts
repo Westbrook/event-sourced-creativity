@@ -49,11 +49,16 @@ export type AdaptiveStructure = {
 export type AdaptiveSuggestionSet = {
   id: string;
   documentId: string;
+  canvasId: string | null;
   intent: string;
   structure: AdaptiveStructure;
   requestedAt: string;
   completedAt: string;
 };
+
+export function adaptiveSuggestionsForCanvas(suggestions: readonly AdaptiveSuggestionSet[], canvasId: string) {
+  return canvasId ? suggestions.filter((suggestion) => suggestion.canvasId === canvasId) : [];
+}
 
 export const BLOCK_TYPES: readonly BlockTypeDefinition[] = [
   { type:"direction", label:"Direction", description:"The outcome or change the work should create", prompt:"Describe the creative outcome…", group:"intent", subtypes:["Campaign goal","Emotional outcome","Behavioral objective","Exploration question"] },

@@ -2754,7 +2754,7 @@
             {
               "name": "forma-assistant-review",
               "type": {
-                "text": "CustomEvent<{ mode: \"plan-document\" | \"plan-board\" | undefined; }>"
+                "text": "CustomEvent<{ mode: \"plan-document\" | \"plan-board\"; }>"
               },
               "description": "Bubbles and crosses component boundaries."
             },

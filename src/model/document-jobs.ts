@@ -18,6 +18,7 @@ export type GenerationFailureGuidance = {
 export type DocumentJob = {
   jobId: string;
   documentId: string;
+  canvasId?: string | null;
   kind: DocumentJobKind;
   status: DocumentJobStatus;
   sourceSurface: string;
