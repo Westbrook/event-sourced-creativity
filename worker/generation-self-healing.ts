@@ -2,8 +2,16 @@ import type { DocumentArtifactKind, DocumentArtifactValidationIssue } from "../s
 
 const MAX_RECORDED_ISSUES_PER_STAGE = 128;
 const SAFE_ISSUE_CODE = /^[a-z][a-z0-9_]{0,95}$/u;
-const SAFE_ISSUE_PATH = /^(?:\$|[A-Za-z_][A-Za-z0-9_]*(?:\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+))*)$/u;
 const SAFE_ADAPTER_IDENTIFIER = /^[A-Za-z][A-Za-z0-9._-]{0,95}$/u;
+const SAFE_ADAPTER_VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/u;
+const SAFE_ISSUE_ROOTS = new Set(["items", "presentation", "content_markdown", "title", "summary"]);
+const SAFE_ISSUE_FIELDS = new Set([
+  "title", "body", "notes", "image_prompt", "context_group_ids", "slide", "layout", "kicker", "bullets",
+  "visual", "kind", "label", "value", "data", "weight", "exact_value", "display_value", "exactValue",
+  "displayValue", "unit", "quote", "text", "speaker", "role", "citations", "citation", "section",
+  "source_ids", "sourceIds", "source_order", "sourceOrder", "presentation", "footer_label", "style_preset",
+  "theme", "mode", "palette", "background", "foreground", "accent", "muted", "surface",
+]);
 
 export type GenerationValidationStage = "initial" | "repair" | "review" | "assembly";
 
@@ -39,7 +47,12 @@ export type GenerationAdapterReconciliationReceipt = {
 
 function safeIssue(issue: DocumentArtifactValidationIssue): { code: string; path: string } {
   const code = SAFE_ISSUE_CODE.test(issue.code) ? issue.code : "generation_validation_failed";
-  const path = issue.path.length <= 256 && SAFE_ISSUE_PATH.test(issue.path) ? issue.path : "$";
+  const segments = typeof issue.path === "string" ? issue.path.split(".") : [];
+  const path = issue.path === "$" || issue.path.length <= 256
+    && SAFE_ISSUE_ROOTS.has(segments[0] ?? "")
+    && segments.slice(1).every((segment) => /^\d+$/u.test(segment) || SAFE_ISSUE_FIELDS.has(segment))
+    ? issue.path
+    : "$";
   // Authored output, source IDs, provider diagnostics, and issue prose never enter
   // reconciliation evidence. Codes and structural field paths are sufficient.
   return { code, path };
@@ -47,6 +60,10 @@ function safeIssue(issue: DocumentArtifactValidationIssue): { code: string; path
 
 function safeAdapterIdentifier(value: string | undefined, fallback: string): string {
   return value && SAFE_ADAPTER_IDENTIFIER.test(value) ? value : fallback;
+}
+
+function safeAdapterVersion(value: string | undefined): string {
+  return value && SAFE_ADAPTER_VERSION.test(value) ? value : "unknown";
 }
 
 function validIndex(value: number | undefined, minimum: number): value is number {
@@ -89,7 +106,7 @@ export function generationValidationReceipt(
       status: required ? "pending" : "not_required",
       artifact_kind: kind,
       adapter_id: safeAdapterIdentifier(options.adapterId, "document-artifact"),
-      adapter_version: options.adapterVersion ? safeAdapterIdentifier(options.adapterVersion, "unknown") : null,
+      adapter_version: options.adapterVersion ? safeAdapterVersion(options.adapterVersion) : null,
       issue_codes: issueCodes,
       issue_frequencies: Object.fromEntries(issueCodes.map((code) => [code, frequencies.get(code) ?? 0])),
       issue_fingerprints: [...new Set(recordedIssues.map((issue) => `${issue.code}@${issue.path}`))].sort(),
@@ -121,4 +138,51 @@ export function generationRepairPages(
     affected.add(pageIndex);
   }
   return [...affected].sort((left, right) => left - right);
+}
+
+/** Expose only safe operational scalars so repaired defects remain discoverable after private evidence expires. */
+export function generationReconciliationEventFields(value: unknown): Record<string, string | number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const receipt = value as Partial<GenerationAdapterReconciliationReceipt>;
+  if (receipt.required !== true || receipt.status !== "pending") return {};
+  const issueCode = Array.isArray(receipt.issue_codes)
+    ? receipt.issue_codes.find((code) => typeof code === "string" && SAFE_ISSUE_CODE.test(code))
+    : undefined;
+  if (!issueCode) return {};
+  const count = (input: unknown) => typeof input === "number" && Number.isSafeInteger(input) && input >= 0
+    ? Math.min(input, 1_000_000)
+    : 0;
+
+  return {
+    adapter_id: safeAdapterIdentifier(receipt.adapter_id, "document-artifact"),
+    ...(receipt.adapter_version
+      ? { adapter_version: safeAdapterVersion(receipt.adapter_version) }
+      : {}),
+    adapter_reconciliation_status: "pending",
+    adapter_issue_kind: issueCode,
+    adapter_issue_count: count(receipt.issue_count),
+    adapter_failed_stage_count: count(receipt.failed_stage_count),
+    adapter_final_issue_count: count(receipt.final_issue_count),
+    adapter_repair_status: receipt.self_healed === true ? "self_healed" : "unresolved",
+  };
+}
+
+/** Preserve terminal validation incidents even when no successful generation receipt can be returned. */
+export function generationFailureReconciliationEventFields(
+  kind: DocumentArtifactKind,
+  issues: readonly (DocumentArtifactValidationIssue & { stage?: "initial" | "repair" })[] | undefined,
+  options: { adapterId?: string; adapterVersion?: string } = {},
+): Record<string, string | number> {
+  if (!issues?.length) return {};
+  const initial = issues.filter((issue) => issue.stage !== "repair");
+  const repaired = issues.filter((issue) => issue.stage === "repair");
+  const observations: GenerationValidationObservation[] = [
+    ...(initial.length ? [{ stage: "initial" as const, issues: initial }] : []),
+    ...(repaired.length ? [{ stage: "repair" as const, issues: repaired }] : []),
+  ];
+  const receipt = generationValidationReceipt(kind, observations, {
+    ...options,
+    finalIssues: repaired.length ? repaired : initial,
+  });
+  return generationReconciliationEventFields(receipt.adapter_reconciliation);
 }

@@ -370,7 +370,11 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       case "OutputRenamed": {
         const id=String(p.output_id??""),documentId=String(p.document_id??""),title=typeof p.new_title==="string"?p.new_title.normalize("NFC").trim():"";
         const target=p.output_kind==="image"?outputs.get(id):p.output_kind==="artifact"?artifacts.get(id):undefined;
-        if(target&&title&&target.documentId===documentId){target.title=title;target.titleSource="authored";}
+        const identified=p.output_kind==="image"?String(p.object_id??"")===id&&!p.artifact_id:p.output_kind==="artifact"&&String(p.artifact_id??"")===id&&!p.object_id;
+        if(target&&identified&&title&&Array.from(title).length<=120&&!/\p{Cc}/u.test(title)
+          &&target.documentId===documentId&&documents.get(documentId)?.projectId===String(p.project_id??"")){
+          target.title=title;target.titleSource="authored";
+        }
         break;
       }
       case "ImageFocalPointCalculated": {

@@ -45,6 +45,7 @@ function contentDatabase() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("CREATE TABLE private_content(content_id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,kind TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL,expires_at TEXT NOT NULL,redacted_at TEXT)");
   sqlite.exec("CREATE TABLE project_resource_scopes(resource_kind TEXT,resource_id TEXT,actor_user_id TEXT,owner_user_id TEXT,visibility TEXT)");
+  sqlite.exec("CREATE TABLE private_content_retention_scopes(content_id TEXT PRIMARY KEY)");
 
   class Statement {
     constructor(sql, values = []) { this.sql = sql; this.values = values; }

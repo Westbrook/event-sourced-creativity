@@ -1,7 +1,7 @@
 forma-assistant-panel {
   position: fixed;
   inset-inline-end: max(1rem, var(--forma-safe-inline-end, 0px));
-  inset-block-end: calc(max(1rem, env(safe-area-inset-bottom, 0px)) + var(--forma-keyboard-offset, 0px));
+  inset-block-end: calc(max(1rem, env(safe-area-inset-bottom, 0px)) + var(--forma-keyboard-offset, 0px) + var(--forma-assistant-obstacle-offset, 0px));
   z-index: 46;
   display: block;
   color: var(--ink, #18211e);
@@ -22,6 +22,23 @@ forma-assistant-panel {
   gap: .5rem;
   cursor: pointer;
   pointer-events: auto;
+}
+
+forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher {
+  inline-size: var(--forma-control-min-size, 2.75rem);
+  min-inline-size: var(--forma-control-min-size, 2.75rem);
+  justify-content: center;
+  padding-inline: 0;
+}
+
+forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > span {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .forma-assistant-panel {
@@ -86,6 +103,15 @@ forma-assistant-panel {
   line-height: 1.45;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.forma-assistant-message > p {
+  margin: 0;
+}
+
+.forma-assistant-review {
+  min-block-size: var(--forma-control-min-size, 2.75rem);
+  margin-block-start: var(--forma-space-2, .5rem);
 }
 
 .forma-assistant-message--assistant {
@@ -213,7 +239,7 @@ forma-assistant-panel {
   forma-assistant-panel {
     inset-inline-start: max(.625rem, var(--forma-safe-inline-start, 0px));
     inset-inline-end: max(.625rem, var(--forma-safe-inline-end, 0px));
-    inset-block-end: calc(.625rem + max(var(--forma-bottom-nav-size, 0px), var(--forma-keyboard-offset, 0px), env(safe-area-inset-bottom, 0px)));
+    inset-block-end: calc(.625rem + max(var(--forma-bottom-nav-size, 0px), var(--forma-keyboard-offset, 0px), env(safe-area-inset-bottom, 0px)) + var(--forma-assistant-obstacle-offset, 0px));
     display: flex;
     justify-content: flex-end;
   }

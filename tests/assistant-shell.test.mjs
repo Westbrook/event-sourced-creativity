@@ -65,7 +65,7 @@ test("the visible assistant exposes governed model choice, explicit premium appr
   assert.match(panel, /type="checkbox"/u);
   assert.match(panel, /premiumApproval:\s*true/u);
   assert.match(panel, /#premiumApproved\s*=\s*false/u);
-  assert.match(panel, /\.submitDisabled=\$\{Boolean\(selectedModel\?\.premiumApprovalRequired && !this\.#premiumApproved\)\}/u);
+  assert.match(panel, /\.submitDisabled=\$\{Boolean\(selectedModel\?\.premiumApprovalRequired && !this\.#premiumApproved \|\| this\.#?busyModes\.includes\(this\.#activeMode\)\)\}/u);
   assert.match(composer, /\?disabled=\$\{this\.disabled \|\| this\.submitDisabled \|\| this\.busy \|\| !this\.value\.trim\(\)\}/u);
   assert.match(panel, /class="forma-assistant-task"/u);
   assert.match(panel, /assistant\.task\.estimatedCost/u);

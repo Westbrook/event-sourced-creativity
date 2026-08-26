@@ -20,14 +20,19 @@ export type AudioPromptAdaptation = {
 };
 
 const privateMedia = /(?:https?:\/\/[^\s"')]+|\/api\/media\/[^\s"')]+)/giu;
+const spokenMediaSource = /(?:(?:https?|file|s3|gs|r2|blob):\/\/[^\s"')]+|\/api\/media\/[^\s"')]+)/giu;
 const clean = (value: unknown) => String(value ?? "").replace(privateMedia, "[private source]").replace(/\r\n?/g, "\n").trim();
-const cleanSpokenScript = (value: unknown) => String(value ?? "").replace(privateMedia, (source) => {
-  if (source.startsWith("/api/media/")) return "[private source]";
+const cleanSpokenScript = (value: unknown) => String(value ?? "").replace(spokenMediaSource, (source) => {
+  if (source.startsWith("/api/media/") || !/^https?:\/\//iu.test(source)) return "[private source]";
   try {
     const url = new URL(source);
-    const privateHost = /^(?:localhost|127\.0\.0\.1|\[::1\])$|(?:^|\.)(?:fal\.media|fal\.run|r2\.cloudflarestorage\.com|amazonaws\.com|storage\.googleapis\.com|blob\.core\.windows\.net)$/iu.test(url.hostname);
-    const privateParameter = [...url.searchParams.keys()].some((key) => /^(?:token|access_token|authorization|signature|sig|x-amz-signature|x-goog-signature|googleaccessid)$/iu.test(key));
-    return privateHost || /(?:^|\/)api\/media\//iu.test(url.pathname) || privateParameter ? "[private source]" : source;
+    const hostname = url.hostname.replace(/\.+$/u, "");
+    const privateHost = /^(?:localhost|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|169\.254(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|\[::1\]|\[(?:fe[89ab][0-9a-f]|f[cd][0-9a-f]{2}):[^\]]+\])$|(?:^|\.)(?:localhost|local|internal|fal\.media|fal\.run|r2\.cloudflarestorage\.com|amazonaws\.com|storage\.googleapis\.com|blob\.core\.windows\.net)$/iu.test(hostname);
+    const fragmentParameters = new URLSearchParams(url.hash.replace(/^#/u, "").split("?").at(-1) ?? "");
+    const privateParameter = [...url.searchParams.keys(), ...fragmentParameters.keys()].some((key) => /token(?:$|[-_])|(?:^|[-_])(?:api[-_]?key|password|passwd|secret|jwt|credential|signature|authorization)(?:$|[-_])|^(?:sig|googleaccessid)$/iu.test(key));
+    let pathname = url.pathname;
+    for (let count = 0; count < 2; count++) pathname = decodeURIComponent(pathname);
+    return url.username || url.password || privateHost || /(?:^|\/)api\/media\//iu.test(pathname) || privateParameter ? "[private source]" : source;
   } catch { return "[private source]"; }
 }).replace(/\r\n?/g, "\n").trim();
 

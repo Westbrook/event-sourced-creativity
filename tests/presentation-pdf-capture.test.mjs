@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { deflateSync } from "node:zlib";
-import { presentationPdfSemanticStructure, presentationPdfVisualContentFits, renderPresentationPdf } from "../src/components/presentation-pdf-export.ts";
+import { fitPresentationPdfVisualContent, presentationPdfSemanticStructure, presentationPdfVisualContentFits, renderPresentationPdf } from "../src/components/presentation-pdf-export.ts";
 import { createPresentationPdfFromRenderedSlides } from "../src/model/presentation-pdf.ts";
 
 class FixtureText {
@@ -118,6 +118,66 @@ test("browser PDF capture measures nested protected tables, charts, diagrams, an
   for(const selector of [".presentation-slide__table",".presentation-visual-bars",".presentation-visual-timeline",".presentation-visual-diagram",".presentation-slide__footnotes"]){
     assert.ok(measuredSelector.includes(selector),`${selector} receives the same protected-content fit contract as the live viewer`);
   }
+});
+
+const fitFixture=(recoverable=true)=>{
+  const values=new Map();
+  const style={setProperty(name,value){values.set(name,String(value));},getPropertyValue(name){return values.get(name)??"";}};
+  const classes=new Set(["presentation-slide--density-comfortable"]);
+  const artboard={
+    clientWidth:960,clientHeight:540,scrollWidth:960,scrollHeight:540,
+    classList:{remove(...names){names.forEach((name)=>classes.delete(name));},add(...names){names.forEach((name)=>classes.add(name));}},
+    setAttribute(name,value){this[name]=value;},
+  };
+  const content={
+    clientWidth:360,scrollWidth:360,scrollHeight:180,style,
+    get clientHeight(){return recoverable?Math.round(100/(Number(style.getPropertyValue("zoom"))||1)):100;},
+    matches(){return false;},contains(candidate){return candidate===this;},
+  };
+  const host={
+    querySelector(selector){return selector===".presentation-slide"?artboard:null;},
+    querySelectorAll(selector){return selector===".presentation-slide__table,.presentation-slide__matrix"?[]:[artboard,content];},
+  };
+  return{host,artboard,content,style,classes};
+};
+
+test("adaptively fits complete protected slide evidence without resizing its canonical artboard",async()=>{
+  const fixture=fitFixture();
+  assert.equal(presentationPdfVisualContentFits(fixture.host),false);
+
+  await fitPresentationPdfVisualContent(fixture.host);
+
+  assert.equal(presentationPdfVisualContentFits(fixture.host),true);
+  assert.equal(fixture.classes.has("presentation-slide--density-dense"),true);
+  assert.equal(fixture.classes.has("presentation-slide--density-comfortable"),false);
+  assert.ok(Number(fixture.style.getPropertyValue("zoom"))<1,"only the protected content receives layout-affecting fitting");
+  assert.equal(fixture.artboard.clientWidth,960);
+  assert.equal(fixture.artboard.clientHeight,540);
+  assert.equal(fixture.artboard["data-layout-density"],"dense");
+});
+
+test("adaptive PDF fitting still refuses protected evidence that cannot be fully displayed",async()=>{
+  const fixture=fitFixture(false);
+  await assert.rejects(fitPresentationPdfVisualContent(fixture.host),/visible clipping/);
+  assert.equal(presentationPdfVisualContentFits(fixture.host),false);
+  assert.equal(fixture.artboard.clientWidth,960);
+  assert.equal(fixture.artboard.clientHeight,540);
+});
+
+test("preparing-progress cancellation stops PDF export before any slide or private evidence is staged",async()=>{
+  const controller=new AbortController();
+  const progress=[];
+  const item={title:"Approved evidence",body:"",notes:"private notes",image_prompt:"",slide:null};
+
+  await assert.rejects(
+    renderPresentationPdf([item],{}, {
+      signal:controller.signal,
+      onProgress(update){progress.push(update);controller.abort();},
+    }),
+    (error)=>error instanceof DOMException&&error.name==="AbortError",
+  );
+
+  assert.deepEqual(progress,[{stage:"preparing",completed:0,total:1}]);
 });
 
 const sixScores=[

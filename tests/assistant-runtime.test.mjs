@@ -165,6 +165,25 @@ async function sharedProjectFixture(options = {}) {
   }
   state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run("assistant-viewer");
   assert.equal((await state.request("/api/events?after=0&limit=2000&content=0", { headers: owner })).status, 200);
+  if (options.legacyConversation) {
+    const now = new Date().toISOString();
+    const expires = new Date(Date.now() + 86_400_000).toISOString();
+    const stream = "creative:assistant-owner";
+    const turn = crypto.randomUUID();
+    const correlation = crypto.randomUUID();
+    const userContent = crypto.randomUUID();
+    const assistantContent = crypto.randomUUID();
+    const insertContent = state.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)");
+    insertContent.run(userContent, "assistant-owner", "chat-user", "LEGACY PERSONAL CREATIVE QUESTION", now, expires);
+    insertContent.run(assistantContent, "assistant-owner", "chat-assistant", "LEGACY PERSONAL CREATIVE ANSWER", now, expires);
+    const insertEvent = state.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    let sequence = Number(state.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head);
+    const authored = crypto.randomUUID();
+    insertEvent.run(authored, stream, ++sequence, now, now, "user:assistant-owner", "web:chat", correlation, null, null, 1, "ChatMessageSent",
+      JSON.stringify({ project_id: "project-atmosphere", document_id: "doc-atmosphere", actor_user_id: "assistant-owner", turn_id: turn, content_ref: userContent }));
+    insertEvent.run(crypto.randomUUID(), stream, ++sequence, now, now, "model:forma-chat", "web:chat", correlation, authored, null, 1, "AssistantReasoned",
+      JSON.stringify({ operation: "creative-chat", project_id: "project-atmosphere", document_id: "doc-atmosphere", actor_user_id: "assistant-owner", turn_id: turn, content_ref: assistantContent }));
+  }
   const organizationResponse = await state.request("/api/workspaces", json({ name: "Assistant organization" }, owner));
   assert.equal(organizationResponse.status, 201);
   const organizationId = (await organizationResponse.json()).organizationId;
@@ -1022,6 +1041,22 @@ test("Luna specialist runs asynchronously against bounded page-aware views and s
     const updated = await (await state.request(endpoint())).json();
     assert.match(updated.turns.at(-1).reply.text, /already supports audio/u);
     assert.equal(updated.tasks[0].status, "completed");
+
+    let creativeProviderInput;
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      creativeProviderInput = JSON.parse(body.input);
+      return Response.json({ id: "direct-follow-up", model: body.model,
+        output_text: JSON.stringify({ reply: "Direct creative follow-up succeeded.", mutations: [], preview_worthy: false, preview_direction: "" }),
+        usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 } });
+    };
+    const direct = await state.request("/api/document-jobs", json({ kind: "chat", documentId: "doc-atmosphere", sourceSurface: "chat",
+      payload: { message: "Use what you explained", livePreview: false } }));
+    assert.equal(direct.status, 202, JSON.stringify(await direct.clone().json()));
+    await state.drainBackground();
+    assert.ok(creativeProviderInput);
+    assert.equal(creativeProviderInput.history.filter((item) => item.role === "assistant" && item.text.includes("already supports audio")).length,
+      1, JSON.stringify(creativeProviderInput.history));
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -1904,6 +1939,56 @@ test("collaborators may reuse the same turn ID without collisions or private-con
   assert.doesNotMatch(JSON.stringify(ownerHistory), /Viewer-only request/u);
   assert.match(JSON.stringify(viewerHistory), /Viewer-only request/u);
   assert.doesNotMatch(JSON.stringify(viewerHistory), /Owner-only request/u);
+});
+
+test("owner conversations remain distinct across personal and shared contexts before and after migration", async () => {
+  const { request, owner } = await sharedProjectFixture({ legacyConversation: true });
+  const { cookie: _cookie, ...personal } = owner;
+  const sharedMessage = "SHARED ORGANIZATION CREATIVE QUESTION";
+  const personalMessage = "PERSONAL OWNER CREATIVE QUESTION";
+
+  const shared = await request(endpoint(), json({ turnId: crypto.randomUUID(), message: sharedMessage }, owner));
+  assert.equal(shared.status, 201, JSON.stringify(await shared.clone().json()));
+  const individual = await request(endpoint(), json({ turnId: crypto.randomUUID(), message: personalMessage }, personal));
+  assert.equal(individual.status, 201, JSON.stringify(await individual.clone().json()));
+
+  const personalHistory = await (await request(endpoint(), { headers: personal })).json();
+  assert.match(JSON.stringify(personalHistory), /LEGACY PERSONAL CREATIVE QUESTION/u);
+  assert.match(JSON.stringify(personalHistory), /PERSONAL OWNER CREATIVE QUESTION/u);
+  assert.doesNotMatch(JSON.stringify(personalHistory), /SHARED ORGANIZATION CREATIVE QUESTION/u);
+
+  const sharedHistory = await (await request(endpoint(), { headers: owner })).json();
+  assert.match(JSON.stringify(sharedHistory), /SHARED ORGANIZATION CREATIVE QUESTION/u);
+  assert.doesNotMatch(JSON.stringify(sharedHistory), /LEGACY PERSONAL CREATIVE QUESTION|PERSONAL OWNER CREATIVE QUESTION/u);
+
+  const sharedContent = await (await request("/api/events?after=0&limit=2000&content=1", { headers: owner })).json();
+  assert.match(JSON.stringify(sharedContent.content), /SHARED ORGANIZATION CREATIVE QUESTION/u);
+  assert.doesNotMatch(JSON.stringify(sharedContent.content), /LEGACY PERSONAL CREATIVE QUESTION|PERSONAL OWNER CREATIVE QUESTION/u);
+
+  const personalContent = await (await request("/api/events?after=0&limit=2000&content=1", { headers: personal })).json();
+  assert.match(JSON.stringify(personalContent.content), /LEGACY PERSONAL CREATIVE QUESTION|PERSONAL OWNER CREATIVE QUESTION/u);
+  assert.doesNotMatch(JSON.stringify(personalContent.content), /SHARED ORGANIZATION CREATIVE QUESTION/u);
+
+  const reopened = await (await request(endpoint(), { headers: personal })).json();
+  assert.match(JSON.stringify(reopened), /LEGACY PERSONAL CREATIVE QUESTION|PERSONAL OWNER CREATIVE QUESTION/u);
+  assert.doesNotMatch(JSON.stringify(reopened), /SHARED ORGANIZATION CREATIVE QUESTION/u);
+});
+
+test("workspace conversations never cross organizations or independent workspace sections", async () => {
+  const { request, owner, organizationId } = await sharedProjectFixture();
+  const members = `/settings/workspaces/${organizationId}/members`;
+  const usage = `/settings/workspaces/${organizationId}/usage`;
+  const posted = await request(endpoint(members), json({ turnId: crypto.randomUUID(), message: "MEMBERS SECTION ONLY" }, owner));
+  assert.equal(posted.status, 201, JSON.stringify(await posted.clone().json()));
+  assert.match(JSON.stringify(await (await request(endpoint(members), { headers: owner })).json()), /MEMBERS SECTION ONLY/u);
+  assert.doesNotMatch(JSON.stringify(await (await request(endpoint(usage), { headers: owner })).json()), /MEMBERS SECTION ONLY/u);
+
+  const second = await request("/api/workspaces", json({ name: "Another private organization" }, owner));
+  assert.equal(second.status, 201, JSON.stringify(await second.clone().json()));
+  const secondOrganization = (await second.json()).organizationId;
+  const denied = await request(endpoint(`/settings/workspaces/${secondOrganization}/members`), { headers: owner });
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).error, "assistant_workspace_project_mismatch");
 });
 
 test("French, Arabic, and Japanese audio requests recognize audio as an existing capability", async () => {

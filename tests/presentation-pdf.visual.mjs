@@ -123,7 +123,10 @@ try{
   page.on("download",()=>{unexpectedDownload=true;});
   await page.getByRole("button",{name:"Export"}).click();
   await page.getByRole("button",{name:"Download PDF"}).click();
-  await page.waitForFunction(()=>document.querySelector("#status")?.value.includes("could not preserve your slide design"),null,{timeout:15_000});
+  const failure=page.locator('.presentation-deck-export-status[data-export-stage="failed"]');
+  await failure.waitFor({state:"visible",timeout:15_000});
+  if(!await failure.getByRole("button",{name:"Retry"}).count())throw new Error("The failed capture did not expose a usable retry action.");
+  if(!(await failure.innerText()).includes("The PDF could not be prepared. Please try again."))throw new Error("The failed capture did not explain the export failure accurately.");
   if(unexpectedDownload)throw new Error("A failed high-fidelity capture downloaded an incompatible PDF.");
   console.log("Verified failed captures never download an incompatible PDF.");
 }finally{

@@ -20,6 +20,7 @@ const SAFE_ANALYTICS_FIELDS=new Set([
   "project_id","document_id","block_id","generation_id","object_id","artifact_id","job_id","preflight_id","prompt_fan_id","session_id","canvas_id","episode_id",
   "draft_object_id","source_object_id","source_output_id","promoted_from_object_id","organization_action_id","presentation_action_id","history_action_id","interaction_id",
   "quality","prompt_technique","technique","artifact_kind","type","status","source_surface","surface","view","created_from","source_type","scope","resize_mode","interaction",
+  "adapter_id","adapter_version","adapter_reconciliation_status","adapter_issue_kind","adapter_issue_count","adapter_failed_stage_count","adapter_final_issue_count","adapter_repair_status",
   "development_stage_kind","used_uploaded_reference_pixels","used_locked_study_pixels","study","simulation","synthetic","mock_data_source",
   "latency_ms","input_tokens","output_tokens","total_tokens","cost_microusd","reference_input_count","estimated_cost_avoided_microusd","estimated_cost_microusd",
   "active_ms","idle_ms","friction_score","outcome_weight","weight","active","terminal_type","property_path","expires_at","capture_version",

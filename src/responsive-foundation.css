@@ -1974,8 +1974,8 @@ forma-activity-issue-panel {
 
 .chat-view-page > .chat-view-main {
   display: grid;
-  block-size: calc(100dvb - var(--forma-chat-shell-offset));
-  max-block-size: calc(100dvb - var(--forma-chat-shell-offset));
+  block-size: calc(100dvb - var(--forma-chat-shell-offset) - .5rem);
+  max-block-size: calc(100dvb - var(--forma-chat-shell-offset) - .5rem);
   min-block-size: 0;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
@@ -2001,8 +2001,20 @@ forma-activity-issue-panel {
 }
 
 .chat-view-page .chat-thread {
+  box-sizing: border-box;
   min-block-size: 0;
   overflow-y: auto;
+  padding: 1rem;
+}
+
+.chat-view-page .chat-live-preview {
+  min-block-size: var(--forma-hit-target);
+}
+
+html[data-document-focus] .chat-view-page .chat-workspace {
+  block-size: 100%;
+  height: 100%;
+  min-block-size: 0;
 }
 
 .application-creative[data-nav-posture="compact"] .chat-view-page {
@@ -2010,6 +2022,16 @@ forma-activity-issue-panel {
     var(--forma-topbar-height) + var(--forma-hit-target) + .5625rem
     + max(var(--forma-bottom-nav-size), var(--forma-keyboard-offset))
   );
+}
+
+html[data-document-focus] .application-creative .chat-view-page {
+  --forma-chat-shell-offset: max(var(--forma-keyboard-offset), env(safe-area-inset-bottom, 0px));
+}
+
+html[data-document-focus] .application-creative > #main-content:has(.chat-view-page) {
+  padding-inline-start: 0;
+  padding-inline-end: 0;
+  padding-block-end: 0;
 }
 
 @container chat (max-width: 50rem) {
@@ -2074,6 +2096,20 @@ forma-activity-issue-panel {
     gap: .5rem;
   }
 
+  .chat-view-page .chat-conversation > header {
+    padding: .75rem .875rem;
+  }
+
+  .chat-view-page .chat-conversation > header h2 {
+    font-size: clamp(1rem, 4vi, 1.375rem);
+    line-height: 1.15;
+  }
+
+  .chat-view-page .chat-conversation > header p {
+    margin-block-start: .25rem;
+    line-height: 1.35;
+  }
+
   .chat-conversation > header > p {
     grid-column: 1 / -1;
   }
@@ -2087,6 +2123,11 @@ forma-activity-issue-panel {
     min-block-size: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
+  }
+
+  .chat-view-page .chat-thread {
+    box-sizing: border-box;
+    padding: .625rem .75rem;
   }
 
   .chat-composer {
@@ -2103,6 +2144,60 @@ forma-activity-issue-panel {
     inline-size: auto;
     width: auto;
     min-block-size: var(--forma-hit-target);
+  }
+
+  .chat-view-page .chat-composer {
+    padding: .625rem;
+  }
+
+  .chat-view-page .chat-composer textarea {
+    min-block-size: 3.5rem;
+    block-size: 3.5rem;
+  }
+}
+
+@container chat (max-width: 25rem) {
+  .chat-view-page .chat-conversation > header .eyebrow,
+  .chat-view-page .chat-conversation > header > p,
+  .chat-view-page .chat-composer-help {
+    display: none;
+  }
+
+  .chat-view-page .chat-conversation > header {
+    min-block-size: var(--forma-hit-target);
+    gap: .375rem;
+    padding: .375rem .5rem;
+  }
+
+  .chat-view-page .chat-conversation > header h2 {
+    overflow: hidden;
+    font-size: 1rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chat-view-page .chat-result-toggle {
+    padding-inline: .5rem;
+    font-size: .75rem;
+  }
+
+  .chat-view-page .forma-conversation-submit {
+    inline-size: var(--forma-hit-target);
+    min-inline-size: var(--forma-hit-target);
+    padding-inline: 0;
+  }
+
+  .chat-view-page .forma-conversation-submit > span {
+    display: none;
+  }
+
+  .chat-view-page .chat-composer textarea {
+    min-block-size: 3rem;
+    block-size: 3rem;
+  }
+
+  .chat-view-page .chat-live-preview small {
+    display: none;
   }
 }
 
@@ -2477,7 +2572,12 @@ forma-activity-issue-panel {
   }
 
   .application-creative .chat-view-page {
+    --forma-chat-shell-offset: var(--forma-short-topbar-height);
     position: relative;
+  }
+
+  .application-creative .chat-view-page > .chat-view-main {
+    grid-column: 1 / -1;
   }
 
   .application-creative .chat-view-page > forma-project-rail:has(> .project-rail.collapsed) {

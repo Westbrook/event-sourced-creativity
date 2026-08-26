@@ -157,6 +157,10 @@ function semanticDetails(candidate: OutputNamingCandidate, locale: string, title
     else if (/effect/u.test(goal)) details.push(copy.effects);
     else if (/music|score/u.test(goal)) details.push(copy.music);
   }
+  if (kind === "audio" || kind === "video") {
+    const duration = Number(settings.duration_seconds ?? settings.video_seconds ?? audioProfile.duration_seconds);
+    if (Number.isFinite(duration) && duration > 0) details.push(`${new Intl.NumberFormat(locale).format(duration)} s`);
+  }
   if (kind === "slides") {
     const style = clean(settings.presentation_style ?? settings.style_preset);
     if (style && style !== "document") details.push(`${style.replace(/[-_]/gu, " ")} ${copy.style}`);
@@ -191,14 +195,14 @@ export function describeOutputs(candidates: readonly OutputNamingCandidate[], op
   const locale = options.locale || "en", copy = copyFor(locale), peers = options.peers ?? candidates;
   const events = options.events ?? [], eventDates = new Map(events.map((event) => [event.eventId, event.occurredAt]));
   const creations = new Map<string, Creation>();
-  const add = (creation: Creation) => {
+  const add = (creation: Creation, historical = false) => {
     const identifier = `${groupOf(creation.documentId, creation.kind)}\u0000${creation.id}`;
     const previous = creations.get(identifier);
-    if (!previous || creation.sequence < previous.sequence || creation.sequence === previous.sequence && creation.index < previous.index) creations.set(identifier, creation);
+    if (!previous || historical && (creation.sequence < previous.sequence || creation.sequence === previous.sequence && creation.index < previous.index)) creations.set(identifier, creation);
   };
-  for (const creation of historicalCreations(events)) add(creation);
-  for (const [index, peer] of peers.entries()) add({ id: peer.id, documentId: peer.documentId ?? "", kind: kindOf(peer), sequence: peer.sequence, index });
-  for (const [index, candidate] of candidates.entries()) add({ id: candidate.id, documentId: candidate.documentId ?? "", kind: kindOf(candidate), sequence: candidate.sequence, index });
+  for (const creation of historicalCreations(events)) add(creation, true);
+  for (const peer of peers) add({ id: peer.id, documentId: peer.documentId ?? "", kind: kindOf(peer), sequence: peer.sequence, index: 0 });
+  for (const candidate of candidates) add({ id: candidate.id, documentId: candidate.documentId ?? "", kind: kindOf(candidate), sequence: candidate.sequence, index: 0 });
 
   const populations = new Map<string, Creation[]>();
   for (const creation of creations.values()) {
@@ -210,7 +214,7 @@ export function describeOutputs(candidates: readonly OutputNamingCandidate[], op
   return candidates.map((candidate) => {
     const kind = kindOf(candidate), documentId = candidate.documentId ?? "";
     const kindLabel = options.formatKind?.(kind) ?? (kind === "image" ? copy.image : documentArtifactDefinition(kind).label);
-    const authored = clean(candidate.customTitle) || candidate.titleSource === "authored" ? clean(candidate.customTitle ?? candidate.title) : "";
+    const authored = clean(candidate.customTitle) || (candidate.titleSource === "authored" ? clean(candidate.title) : "");
     const title = authored || clean(candidate.title) || kindLabel;
     const population = populations.get(groupOf(documentId, kind)) ?? [];
     const ordinal = Math.max(1, population.findIndex((entry) => entry.id === candidate.id) + 1), total = Math.max(1, population.length);

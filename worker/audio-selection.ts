@@ -1,4 +1,5 @@
 import {
+  audioAdapterContractForModel,
   selectAudioAdapterContract,
   LYRIA_AUDIO_ADAPTER_CONTRACT,
   type AudioAdapterSelection,
@@ -23,7 +24,10 @@ export function selectAudioAdapter(
     ...(options.videoReferenceAvailable !== undefined ? { videoReferenceAvailable: options.videoReferenceAvailable } : {}),
   });
   const profile = defaultSelection.profile;
-  const preferredModel = options.preferredModel ?? (defaultSelection.contract.model === LYRIA_AUDIO_ADAPTER_CONTRACT.model ? env.FAL_AUDIO_MODEL : undefined);
+  const configuredModel = audioAdapterContractForModel(env.FAL_AUDIO_MODEL);
+  const configuredMusicModel = configuredModel?.capabilities.includes("original-music") && !configuredModel.supportsVideoReference
+    && !configuredModel.capabilities.includes("mixed-scene") ? configuredModel.model : undefined;
+  const preferredModel = options.preferredModel ?? (defaultSelection.contract.model === LYRIA_AUDIO_ADAPTER_CONTRACT.model ? configuredMusicModel : undefined);
   const selection = selectAudioAdapterContract(profile, {
     ...(preferredModel ? { preferredModel } : {}),
     ...(options.videoReferenceAvailable !== undefined ? { videoReferenceAvailable: options.videoReferenceAvailable } : {}),

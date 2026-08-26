@@ -875,6 +875,10 @@ test("long-form stories and screenplays retain later-page manuscripts and repair
       const output = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-test" }, "owner", kind, { documentTitle: "Complete work", snapshot, production, plannerAttempt: (attempt) => attempts.push(attempt) });
       assert.equal(requests.length, 3, kind);
       assert.equal(output.inputReceipt.whole_work_validation.repaired_pages, 1, kind);
+      assert.equal(output.inputReceipt.adapter_reconciliation.status,"pending",kind);
+      assert.equal(output.inputReceipt.adapter_reconciliation.self_healed,true,kind);
+      assert.ok(output.inputReceipt.whole_work_validation.validation_history.some(({stage,issue_count})=>stage==="review"&&issue_count>0),kind);
+      assert.ok(output.inputReceipt.adapter_reconciliation.issue_codes.includes("duplicate_narrative_movement"),kind);
       assert.equal(output.output.items.length, 10, kind);
       assert.match(output.output.content_markdown, /FIRST_PAGE_END_SENTINEL/);
       assert.match(output.output.content_markdown, /FINAL_MANUSCRIPT_ONLY_SENTINEL/);
@@ -912,6 +916,9 @@ test("multi-page decks retain one cover, correct repeated content, and lock the 
     assert.equal(planned.inputReceipt.provider_request_count, 3, "the receipt must include the additional bounded whole-work repair call");
     assert.equal(planned.inputReceipt.maximum_provider_request_count, production.maximumProviderCallCount);
     assert.equal(planned.inputReceipt.whole_work_validation.repaired_pages, 1);
+    assert.equal(planned.inputReceipt.adapter_reconciliation.status,"pending");
+    assert.equal(planned.inputReceipt.adapter_reconciliation.self_healed,true);
+    assert.equal(planned.inputReceipt.adapter_reconciliation.adapter_version,"2026-08-26-validated-self-healing-v3");
     assert.equal(planned.output.items.length, 10);
     assert.equal(planned.output.items.filter((item) => item.slide.layout === "cover").length, 1);
     assert.equal(planned.output.items[8].body, "Meaning 9");

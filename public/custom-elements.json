@@ -2538,6 +2538,13 @@
           "members": [
             {
               "kind": "field",
+              "name": "busyModes",
+              "type": {
+                "text": "readonly AssistantInteractionMode[]"
+              }
+            },
+            {
+              "kind": "field",
               "name": "canReconcile",
               "type": {
                 "text": "boolean"
@@ -2741,6 +2748,13 @@
               "name": "forma-assistant-proposal",
               "type": {
                 "text": "CustomEvent<{ proposal: AssistantDisplayedProposal; action: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-assistant-review",
+              "type": {
+                "text": "CustomEvent<{ mode: \"plan-document\" | \"plan-board\" | undefined; }>"
               },
               "description": "Bubbles and crosses component boundaries."
             },

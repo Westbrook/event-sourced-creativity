@@ -86,6 +86,7 @@ test("every supported end-user goal selects its capability-specific Fal adapter"
 
 test("configured original-music defaults never override specialist or long-duration capabilities", () => {
   assert.equal(selectAudioAdapter({ FAL_AUDIO_MODEL: STABLE_AUDIO_ADAPTER_CONTRACT.model }, { goal: "music" }).model, STABLE_AUDIO_ADAPTER_CONTRACT.model);
+  assert.equal(selectAudioAdapter({ FAL_AUDIO_MODEL: GEMINI_TTS_ADAPTER_CONTRACT.model }, { goal: "music" }).model, LYRIA_AUDIO_ADAPTER_CONTRACT.model);
   assert.equal(selectAudioAdapter({ FAL_AUDIO_MODEL: LYRIA_AUDIO_ADAPTER_CONTRACT.model }, { goal: "narration" }).model, GEMINI_TTS_ADAPTER_CONTRACT.model);
   assert.equal(selectAudioAdapter({ FAL_AUDIO_MODEL: LYRIA_AUDIO_ADAPTER_CONTRACT.model }, { goal: "music", durationSeconds: 500 }).model, SONILO_MUSIC_ADAPTER_CONTRACT.model);
   assert.throws(() => selectAudioAdapterContract({ goal: "music" }, { preferredModel: SEED_AUDIO_ADAPTER_CONTRACT.model }), (error) => error.code === "audio_provider_model_incompatible");
@@ -199,17 +200,52 @@ test("narration preserves approved public website copy while redacting private m
     profile: profile({ goal: "narration", transcript: "Private https://v3b.fal.media/files/secret.mp3 and /api/media/private.mp3" }), model: GEMINI_TTS_ADAPTER_CONTRACT.model,
   });
   assert.equal(privateNarration.spokenScript, "Private [private source] and [private source]");
+  for (const source of [
+    "https://v3b.fal.media./files/secret.mp3", "https://storage.googleapis.com./private.wav", "https://localhost./secret",
+    "https://10.0.0.1/private", "https://demo:secret@example.com/deals", "https://example.com/#access_token=SECRET",
+    "https://example.com/?api_key=SECRET", "https://example.com/?apikey=SECRET", "https://example.com/?password=SECRET",
+    "https://example.com/?jwt=SECRET", "https://example.com/?session_token=SECRET", "https://example.com/?X-Amz-Credential=SECRET",
+    "https://example.com/?accessToken=SECRET", "https://example.com/?sessionToken=SECRET", "https://example.com/?authToken=SECRET", "https://example.com/?oauthToken=SECRET", "https://example.com/?idToken=SECRET",
+    "https://example.com/%61pi/media/private.mp3", "https://example.com/api%2fmedia%2fprivate.mp3",
+    "https://127.0.0.2/private", "https://172.16.0.2/private", "https://192.168.1.2/private", "https://169.254.169.254/private",
+    "https://[fe80::1]/private", "https://[fd12::1]/private", "file:///Users/person/private.wav", "s3://private-bucket/recording.wav",
+  ]) {
+    const adapted = adaptAudioPrompt({ facts: [] }, documentPlan, {
+      profile: profile({ goal: "narration", transcript: "Visit " + source }), model: GEMINI_TTS_ADAPTER_CONTRACT.model,
+    });
+    assert.equal(adapted.spokenScript, "Visit [private source]", source);
+  }
 });
 
 test("protected voice imitation is rejected in tone and authored requirements before provider serialization", () => {
   const request = profile({ goal: "narration" });
-  for (const direction of ["Imitate Taylor Swift's voice exactly.", "Use Scarlett Johansson’s voice.", "Use Morgan Freeman’s voice.", "Read in the voice of Morgan Freeman.", "Narrate like Morgan Freeman."]) {
+  for (const direction of [
+    "Imitate Taylor Swift's voice exactly.", "Use Scarlett Johansson’s voice.", "Use Morgan Freeman’s voice.",
+    "Read in the voice of Morgan Freeman.", "Narrate like Morgan Freeman.", "Speak in a Morgan Freeman voice.",
+    "Voice should be Morgan Freeman.", "Use a Morgan Freeman-style voice.", "Narrate like Cher.",
+    "Celebrity voice of Beyoncé.", "Narrate like morgan freeman.", "use morgan freeman's voice.",
+    "in the voice of morgan freeman", "sound like morgan freeman", "use a morgan freeman-style delivery",
+    "Morgan Freeman style voiceover", "voice matching Morgan Freeman", "voice like Morgan Freeman",
+    "speak as the actor Morgan Freeman", "narrate in Morgan Freeman style", "voice of 花澤香菜",
+    "voice of أم كلثوم", "sounding exactly like taylor swift", "copy the vocals of taylor swift", "impersonate taylor swift",
+  ]) {
     assert.equal(audioAuthoringConflict({ facts: [] }, request, { tone: direction })?.code, "audio_originality_required", direction);
     const snapshot = { facts: [{ type: "direction", locked: true, properties: { text: direction } }] };
     assert.equal(audioAuthoringConflict(snapshot, request)?.code, "audio_originality_required", direction);
     assert.throws(() => adaptAudioPrompt({ facts: [] }, { title: "Approved narration", summary: "Original voice", content_markdown: "Welcome home.", items: [] }, {
       profile: request, model: GEMINI_TTS_ADAPTER_CONTRACT.model, tone: direction,
     }), (error) => error.code === "audio_originality_required", direction);
+  }
+  for (const direction of [
+    "Speak in a calm voice.", "Narrate like a caring friend.", "Use an original narrator's voice.", "Do not imitate Morgan Freeman.",
+    "Narrate like an experienced guide.", "Narrate like a trusted journalist.", "Narrate like a patient instructor.",
+    "Narrate like a real estate agent.", "Narrate like an excited child.", "Narrate like a bedtime story.",
+    "Read like a documentary host.", "Read like a news anchor.", "Read like a sports commentator.",
+    "Read like a nature documentary.", "Speak in an upbeat conversational voice.", "Voice should be slow and reassuring.",
+    "Voice should be joyful and energetic.", "Voice should be quiet and thoughtful.", "Use a cinematic documentary-style voice.",
+    "In the voice of an excited child.",
+  ]) {
+    assert.equal(audioAuthoringConflict({ facts: [] }, request, { tone: direction }), null, direction);
   }
 });
 
@@ -355,10 +391,32 @@ test("voice and sound-effect prohibitions block only specialists that would viol
     assert.equal(audioAuthoringConflict(forbidden, profile({ goal: "video_sound_effects" }))?.code, "audio_output_forbidden");
     assert.equal(audioAuthoringConflict(forbidden, profile({ goal: "mixed_audio" }))?.code, "audio_output_forbidden");
   }
+  for (const direction of ["No voiceover.", "No spoken words.", "No human voices.", "No talking.", "Dialogue-free.", "Speech-free."]) {
+    const forbidden = { facts: [{ type: "direction", locked: true, properties: { text: direction } }] };
+    assert.equal(audioAuthoringConflict(forbidden, profile({ goal: "music" })), null, direction);
+    assert.equal(audioAuthoringConflict(forbidden, profile({ goal: "narration" }))?.code, "audio_output_forbidden", direction);
+    assert.equal(audioAuthoringConflict(forbidden, profile({ goal: "mixed_audio" }))?.code, "audio_output_forbidden", direction);
+  }
   const speechForbidden = { facts: [{ type: "direction", locked: true, properties: { text: "No dialogue or speech." } }] };
   assert.equal(audioAuthoringConflict(speechForbidden, profile({ goal: "music" })), null);
   assert.equal(audioAuthoringConflict(speechForbidden, profile({ goal: "narration" }))?.code, "audio_output_forbidden");
   assert.equal(audioAuthoringConflict(speechForbidden, profile({ goal: "mixed_audio" }))?.code, "audio_output_forbidden");
+});
+
+test("coordinated authored prohibitions reject every affected audio modality", () => {
+  for (const [direction, forbiddenGoals, allowedGoals] of [
+    ["No sound effects or music.", ["music", "timed_music", "video_music", "sound_effects", "video_sound_effects", "mixed_audio"], ["narration"]],
+    ["No music or speech.", ["music", "timed_music", "video_music", "narration", "mixed_audio"], ["sound_effects", "video_sound_effects"]],
+    ["No speech or Foley.", ["narration", "sound_effects", "video_sound_effects", "mixed_audio"], ["music", "timed_music", "video_music"]],
+    ["No music, sound effects, or dialogue.", ["music", "timed_music", "video_music", "narration", "sound_effects", "video_sound_effects", "mixed_audio"], []],
+    ["No Foley and no voices.", ["narration", "sound_effects", "video_sound_effects", "mixed_audio"], ["music", "timed_music", "video_music"]],
+    ["No Foley; no music.", ["sound_effects", "video_sound_effects", "music", "timed_music", "video_music", "mixed_audio"], ["narration"]],
+    ["No music, but no narration.", ["music", "timed_music", "video_music", "narration", "mixed_audio"], ["sound_effects", "video_sound_effects"]],
+  ]) {
+    const snapshot = { facts: [{ type: "direction", locked: true, properties: { text: direction } }] };
+    for (const goal of forbiddenGoals) assert.equal(audioAuthoringConflict(snapshot, profile({ goal }))?.code, "audio_output_forbidden", direction + " → " + goal);
+    for (const goal of allowedGoals) assert.equal(audioAuthoringConflict(snapshot, profile({ goal })), null, direction + " → " + goal);
+  }
 });
 
 test("reused generated narration remains a voice input with every recording permission disabled", () => {

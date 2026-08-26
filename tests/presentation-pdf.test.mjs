@@ -31,6 +31,23 @@ test("builds a valid multi-page landscape PDF from normalized slide data",()=>{
   assert.equal(source.endsWith("%%EOF\n"),true);
 });
 
+test("assembles more than a thousand vector slides with byte-accurate cross-reference offsets",()=>{
+  const slideCount=1_120;
+  const slides=Array.from({length:slideCount},(_,index)=>({...items[0],title:`Approved vector slide ${index+1}`}));
+  const result=createPresentationPdf(slides,presentation,{title:"Large approved presentation"});
+  const source=Buffer.from(result.bytes).toString("latin1");
+
+  assert.equal(result.pageCount,slideCount);
+  assert.match(source,new RegExp(`\\/Count ${slideCount}(?:\\s|>)`));
+  assert.equal((source.match(/\/Type \/Page \/Parent/g)??[]).length,slideCount);
+
+  const xrefOffset=Number(source.match(/startxref\n(\d+)/)?.[1]);
+  assert.equal(source.slice(xrefOffset,xrefOffset+4),"xref");
+  const offsets=[...source.matchAll(/^(\d{10}) 00000 n $/gm)].map((match)=>Number(match[1]));
+  assert.equal(offsets.length,slideCount*2+5);
+  offsets.forEach((offset,index)=>assert.equal(source.slice(offset).startsWith(`${index+1} 0 obj\n`),true));
+});
+
 test("renders each slide visual caption once without repeating it in the PDF footer",()=>{
   const source=new TextDecoder().decode(createPresentationPdf(items,presentation,{title:"Autumn campaign",showFooterLabel:true}).bytes);
 
@@ -244,6 +261,41 @@ test("embeds lossless browser-rendered slide pixels with searchable Unicode text
   offsets.forEach((offset,index)=>assert.equal(source.slice(offset).startsWith(`${index+1} 0 obj\n`),true));
 });
 
+test("assembles more than a thousand tagged captured slides with one shared Unicode font dictionary",()=>{
+  const slideCount=1_120;
+  const pixels=deflateSync(Uint8Array.from([18,23,21]));
+  const pages=Array.from({length:slideCount},(_,index)=>{
+    const heading=`Captured slide ${index+1}`;
+    const evidence=index===slideCount-1?"Approved closing evidence 東京 😀":"Approved visible evidence";
+    return{width:1,height:1,bytes:pixels,heading,text:`${heading}\n${evidence}`,structure:[{role:"H1",text:heading},{role:"P",text:evidence}]};
+  });
+  const result=createPresentationPdfFromRenderedSlides(pages,{title:"Large tagged presentation"});
+  const source=Buffer.from(result.bytes).toString("latin1");
+
+  assert.equal(result.pageCount,slideCount);
+  assert.match(source,new RegExp(`\\/Count ${slideCount}(?:\\s|>)`));
+  assert.match(source,new RegExp(`\\/ParentTreeNextKey ${slideCount}(?:\\s|>)`));
+  assert.equal((source.match(/\/Type \/Page \/Parent/g)??[]).length,slideCount);
+  assert.equal((source.match(/\/S \/Sect /g)??[]).length,slideCount);
+  assert.equal((source.match(/\/Subtype \/Image/g)??[]).length,slideCount);
+
+  const fontReferences=[...source.matchAll(/\/Resources << \/Font (\d+) 0 R/g)].map((match)=>match[1]);
+  assert.equal(fontReferences.length,slideCount);
+  assert.equal(new Set(fontReferences).size,1,"all pages reuse the same indirect Unicode font dictionary");
+  assert.equal((source.match(/\/F1 \d+ 0 R/g)??[]).length,1);
+
+  const lastHeading=Buffer.from(`Captured slide ${slideCount}\n`,"utf16le").swap16().toString("hex").toUpperCase();
+  assert.match(source,new RegExp(`\\/ActualText <FEFF${lastHeading}>`));
+  assert.match(source,/<[0-9A-F]{2}> <D83DDE00>/);
+
+  const xrefOffset=Number(source.match(/startxref\n(\d+)/)?.[1]);
+  assert.equal(source.slice(xrefOffset,xrefOffset+4),"xref");
+  const offsets=[...source.matchAll(/^(\d{10}) 00000 n $/gm)].map((match)=>Number(match[1]));
+  const size=Number(source.slice(xrefOffset).match(/^xref\n0 (\d+)/)?.[1]);
+  assert.equal(offsets.length,size-1);
+  offsets.forEach((offset,index)=>assert.equal(source.slice(offset).startsWith(`${index+1} 0 obj\n`),true));
+});
+
 test("rejects empty or invalid browser-rendered slide pages",()=>{
   assert.throws(()=>createPresentationPdfFromRenderedSlides([]),/At least one rendered presentation slide/);
   assert.throws(()=>createPresentationPdfFromRenderedSlides([{width:0,height:2,bytes:Uint8Array.from([1])}]),/valid dimensions/);
@@ -443,6 +495,6 @@ test("exports the actual themed slide component instead of reconstructing its la
   assert.match(deck,/render_mode:"browser-slide-capture"/);
   assert.doesNotMatch(deck,/\bcreatePresentationPdf\s*\(/);
   assert.doesNotMatch(deck,/compatible-vector/);
-  assert.match(deck,/could not preserve your slide design/);
+  assert.match(deck,/presentation\.export\.pdfFailed/,"PDF failures remain accurately and accessibly localized");
   assert.match(deck,/\?selected=\$\{preset\.id===selectedStyle\}/);
 });

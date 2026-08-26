@@ -268,6 +268,9 @@ async function authorizeAssistant(request: Request, env: WorkerEnv): Promise<{ a
     if (!governance.access || project && !hasCapability(principal, "project.canvas.use", scope)) return { authorized: null, response: json({ error: "assistant_canvas_denied" }, 403) };
   }
   const workspace = workspaceCapabilities(surface.route);
+  if (workspace && project && project.organizationId !== workspace.organizationId) {
+    return { authorized: null, response: json({ error: "assistant_workspace_project_mismatch" }, 403) };
+  }
   if (workspace && (!workspace.organizationId || !workspace.capabilities.some((capability) => hasCapability(principal, capability, { organizationId: workspace.organizationId })))) {
     return { authorized: null, response: json({ error: "assistant_workspace_denied" }, 403) };
   }
@@ -436,9 +439,13 @@ async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant):
         : ` AND EXISTS(SELECT 1 FROM project_resource_scopes custody WHERE custody.resource_kind='content' AND custody.resource_id=${alias}.content_id AND custody.project_access_id=? AND custody.organization_id=? AND custody.project_id=? AND custody.owner_user_id=? AND custody.actor_user_id=? AND custody.visibility='actor_private')`;
       bindings.push(scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId, actor.principal.userId);
     }
+    for (const alias of ["authored", "answer"] as const) {
+      guard += ` AND EXISTS(SELECT 1 FROM private_content_retention_scopes custody WHERE custody.content_id=${alias}.content_id AND custody.organization_id=? AND custody.project_access_id=? AND custody.project_id=? AND custody.actor_user_id=?)`;
+      bindings.push(scope.organizationId, scope.projectAccessId, scope.projectId, actor.principal.userId);
+    }
   } else {
-    guard = " AND NOT EXISTS(SELECT 1 FROM project_resource_scopes custody WHERE custody.resource_kind='content' AND custody.resource_id=authored.content_id AND custody.visibility='actor_private')"
-      + " AND NOT EXISTS(SELECT 1 FROM project_resource_scopes custody WHERE custody.resource_kind='content' AND custody.resource_id=answer.content_id AND custody.visibility='actor_private')";
+    guard = " AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes custody WHERE custody.content_id=authored.content_id)"
+      + " AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes custody WHERE custody.content_id=answer.content_id)";
   }
 
   const rows = await env.DB.prepare(`SELECT json_extract(message.payload,'$.turn_id') AS turn_id,metadata.proposal_json,authored.content AS user_content,answer.content AS assistant_content
@@ -473,6 +480,7 @@ function assistantScopeKey(actor: AuthorizedAssistant) {
     actor.surface.page,
     actor.surface.canonicalFamily,
     workspaceCapabilities(actor.surface.route)?.organizationId ?? "",
+    actor.surface.page === "workspace" ? (new URL(actor.surface.route, "https://forma.local").pathname.split("/")[4] ?? "overview") : "",
     actor.surface.canvasId ?? "",
     actor.surface.focusedResourceId ?? "",
   );

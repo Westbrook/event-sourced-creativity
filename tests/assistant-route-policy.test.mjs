@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SITE_ROUTE_ENTRIES } from "../src/platform/applications.ts";
-import { ASSISTANT_PAGE_PLAYBOOKS, ASSISTANT_PLATFORM_ROUTE_PLAYBOOKS, assistantPlaybookForSurface, assistantSurfaceForRoute } from "../src/model/assistant-route-policy.ts";
+import { ASSISTANT_PAGE_PLAYBOOKS, ASSISTANT_PLATFORM_ROUTE_PLAYBOOKS, assistantInteractionForSurface, assistantPlaybookForSurface, assistantSurfaceForRoute } from "../src/model/assistant-route-policy.ts";
 
 test("every registered route has a bounded page-specific assistant playbook", () => {
   assert.equal(SITE_ROUTE_ENTRIES.length, 62);
@@ -50,4 +50,36 @@ test("dynamic document, focused block, canvas, and library routes retain exact i
   const library = assistantSurfaceForRoute("/library/block/block-a");
   assert.equal(library.page, "library");
   assert.equal(library.focusedBlockId, "block-a");
+});
+
+test("every registered route resolves to exactly one authorized conversation owner", () => {
+  const entitled = { enabled: true, canAuthor: true, canGenerate: true, canEditCanvas: true, providerConfigured: true, personal: true };
+  for (const entry of SITE_ROUTE_ENTRIES) {
+    const surface = assistantSurfaceForRoute(entry.path);
+    const interaction = assistantInteractionForSurface(surface, entitled);
+    if (surface.host === "public") assert.deepEqual(interaction, { presentation: "none", owner: "none", scope: "page", modes: [] }, entry.path);
+    else if (surface.host === "platform") assert.equal(interaction.owner, "platform-assistant", entry.path);
+    else if (surface.page === "chat") assert.equal(interaction.owner, "creative-chat", entry.path);
+    else assert.equal(interaction.owner, "assistant", entry.path);
+    assert.equal(new Set(interaction.modes).size, interaction.modes.length, entry.path);
+  }
+});
+
+test("specialized document, adaptive, board, and chat modes require their exact capability and provider", () => {
+  const entitled = { enabled: true, canAuthor: true, canGenerate: true, canEditCanvas: true, providerConfigured: true, personal: true };
+  const document = assistantSurfaceForRoute("/document/document-a/launch");
+  const adaptive = assistantSurfaceForRoute("/document/document-a/launch/view/adaptive");
+  const chat = assistantSurfaceForRoute("/document/document-a/launch/view/chat");
+  const board = assistantSurfaceForRoute("/canvas/canvas-a/launch");
+  assert.deepEqual(assistantInteractionForSurface(document, entitled).modes, ["guidance", "creative-chat", "quick-edit"]);
+  assert.deepEqual(assistantInteractionForSurface(adaptive, entitled).modes, ["guidance", "plan-document"]);
+  assert.deepEqual(assistantInteractionForSurface(board, entitled).modes, ["guidance", "plan-board"]);
+  assert.deepEqual(assistantInteractionForSurface(chat, entitled), { presentation: "embedded", owner: "creative-chat", scope: "document", modes: ["creative-chat"] });
+  assert.deepEqual(assistantInteractionForSurface(chat, { ...entitled, providerConfigured: false }).modes, ["guidance"]);
+  assert.equal(assistantInteractionForSurface(chat, { ...entitled, providerConfigured: false }).owner, "assistant");
+  assert.deepEqual(assistantInteractionForSurface(adaptive, { ...entitled, canGenerate: false }).modes, ["guidance"]);
+  assert.deepEqual(assistantInteractionForSurface(board, { ...entitled, canEditCanvas: false }).modes, ["guidance"]);
+  assert.deepEqual(assistantInteractionForSurface(document, { ...entitled, personal: false }).modes, ["guidance", "creative-chat"]);
+  assert.deepEqual(assistantInteractionForSurface(document, { ...entitled, providerConfigured: false }).modes, ["guidance", "quick-edit"]);
+  assert.equal(assistantInteractionForSurface(document, { ...entitled, enabled: false }).presentation, "none");
 });

@@ -2169,6 +2169,16 @@ forma-presentation-deck { display: block; width: 100%; min-width: 0; }
 .presentation-deck-export-menu[popover] { position: fixed; z-index: 80; inset: auto; top: var(--presentation-export-top,0); left: var(--presentation-export-left,0); box-sizing: border-box; inline-size: min(24rem,calc(100dvw - 1rem)); max-block-size: calc(100dvh - 1rem); overflow: auto; margin: 0; padding: .375rem; color: var(--ink); border: 1px solid var(--line-strong); border-radius: .625rem; background: var(--panel); box-shadow: var(--shadow); }
 .presentation-deck-export-menu button { display: flex; inline-size: 100%; min-block-size: var(--forma-control-min-size,2.75rem); align-items: center; padding: .55rem .75rem; color: var(--ink); border: 0; border-radius: .4rem; background: transparent; font: 650 var(--type-caption) var(--sans); text-align: start; overflow-wrap: anywhere; }
 .presentation-deck-export-menu button:hover:not(:disabled),.presentation-deck-export-menu button:focus-visible { background: var(--panel-2); }
+.presentation-deck-export-status { display: grid; min-inline-size: 0; gap: .45rem; padding: .7rem var(--page-gutter); color: var(--ink); border-block-end: 1px solid var(--line); background: var(--panel); }
+.presentation-deck-export-status-heading { display: flex; min-inline-size: 0; align-items: center; justify-content: space-between; gap: .75rem; font-size: var(--type-caption); }
+.presentation-deck-export-status-label { min-inline-size: 0; flex: 1 1 auto; overflow-wrap: anywhere; font-weight: 650; }
+.presentation-deck-export-status-count { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.presentation-deck-export-status progress { inline-size: 100%; block-size: .375rem; overflow: hidden; border: 0; border-radius: 999px; accent-color: var(--accent); background: var(--panel-2); }
+.presentation-deck-export-status progress::-webkit-progress-bar { border-radius: 999px; background: var(--panel-2); }
+.presentation-deck-export-status progress::-webkit-progress-value { border-radius: 999px; background: var(--accent); }
+.presentation-deck-export-status progress::-moz-progress-bar { border-radius: 999px; background: var(--accent); }
+.presentation-deck-export-status :is(.presentation-deck-export-cancel,.presentation-deck-export-retry) { min-block-size: var(--forma-control-min-size,2.75rem); min-inline-size: var(--forma-control-min-size,2.75rem); flex: none; }
+.presentation-deck-export-status[data-export-stage="failed"] { grid-template-columns: minmax(0,1fr) auto; align-items: center; color: var(--danger); border-color: color-mix(in srgb,var(--danger) 35%,var(--line)); background: color-mix(in srgb,var(--danger) 6%,var(--panel)); }
 .presentation-deck-frame { display: block; width: 100%; min-width: 0; overflow: hidden; aspect-ratio: 16/9; background: var(--paper); box-shadow: 0 .75rem 2.5rem color-mix(in srgb,var(--ink) 10%,transparent); }
 .presentation-deck-frame forma-presentation-slide,.presentation-deck-frame .presentation-slide { width: 100%; height: 100%; min-height: 0; }
 .presentation-deck-frame .presentation-slide { aspect-ratio: auto; }
@@ -2211,6 +2221,7 @@ forma-presentation-deck { display: block; width: 100%; min-width: 0; }
 .presentation-deck-empty { display: grid; min-height: 18rem; place-items: center; padding: 2rem; color: var(--muted); }
 .artifact-reader-slides > forma-presentation-deck { height: 100%; }
 .presentation-deck--slideshow { display: grid; height: 100%; min-height: 0; grid-template-rows: auto minmax(0,1fr); overflow: hidden; }
+.presentation-deck--slideshow.presentation-deck--export-status { grid-template-rows: auto auto minmax(0,1fr); }
 .presentation-deck--slideshow .presentation-deck-stage { height: 100%; min-height: 0; grid-template-rows: minmax(0,1fr) auto auto; overflow: hidden; padding-block: .75rem; }
 forma-presentation-deck:fullscreen { width: 100vw; height: 100dvh; background: var(--panel-2); }
 forma-presentation-deck:fullscreen > .presentation-deck,.presentation-deck:fullscreen { width: 100%; height: 100dvh; background: var(--panel-2); }
@@ -2329,7 +2340,7 @@ forma-presentation-slide > .presentation-slide[data-presentation-artboard] { pos
 .presentation-slide.no-visual .presentation-slide-body > section { width: min(100%,44rem); }
 .presentation-slide.presentation-slide--density-compact h3 { max-width: 20ch; font-size: clamp(1.5rem,4.2cqi,3rem); }
 .presentation-slide--density-compact .presentation-slide-body { gap: clamp(.75rem,2.5cqi,1.75rem); }
-.presentation-slide.presentation-slide--density-dense h3 { max-width: none; font-size: clamp(1.35rem,3.4cqi,2.4rem); line-height: var(--forma-script-heading-line-height,1.1); }
+.presentation-slide.presentation-slide--density-dense h3 { max-width: none; font-size: clamp(1.35rem,3.4cqi,2.4rem); line-height: var(--forma-script-heading-line-height,1.35); }
 .presentation-slide--density-dense p { margin-block-start: .45rem; font-size: clamp(.875rem,1.45cqi,1rem); line-height: 1.4; }
 .presentation-slide--density-dense .presentation-slide-body { gap: clamp(.65rem,2cqi,1.25rem); }
 .presentation-slide--density-dense .presentation-slide-body > section > ul { gap: .15rem; margin-block-start: .4rem; font-size: clamp(.8125rem,1.25cqi,.9rem); }
@@ -2429,6 +2440,7 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
   .document-artifact-view[data-output-focus="true"] .presentation-deck-supporting { gap: .35rem; }
   :is(.document-artifact-view,.canvas-artifact-viewer)[data-output-focus="true"] .presentation-deck-toolbar { display: none; }
   :is(.document-artifact-view,.canvas-artifact-viewer)[data-output-focus="true"] .presentation-deck--slideshow { grid-template-rows: minmax(0,1fr); }
+  :is(.document-artifact-view,.canvas-artifact-viewer)[data-output-focus="true"] .presentation-deck--slideshow.presentation-deck--export-status { grid-template-rows: auto minmax(0,1fr); }
   :is(.document-artifact-view,.canvas-artifact-viewer)[data-output-focus="true"] .presentation-deck-stage { grid-template-columns: minmax(0,1fr) minmax(0,42%); grid-template-rows: minmax(0,1fr) auto; }
   :is(.document-artifact-view,.canvas-artifact-viewer)[data-output-focus="true"] .presentation-deck-viewport { grid-column: 1 / -1; }
   :is(.document-artifact-view,.canvas-artifact-viewer)[data-output-focus="true"] .presentation-deck-stage > nav { grid-column: 1; grid-row: 2; }

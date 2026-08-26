@@ -3,7 +3,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { defaultSlidePresentation, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
-import { createOfficeArchive, createPowerPointDocument, createWordDocument, POWERPOINT_DOCUMENT_MIME, WORD_DOCUMENT_MIME } from "../src/model/office-documents.ts";
+import { createOfficeArchive, createPowerPointDocument, createPowerPointDocumentAsync, createWordDocument, POWERPOINT_DOCUMENT_MIME, WORD_DOCUMENT_MIME } from "../src/model/office-documents.ts";
 import { extractSourceDocument } from "../src/model/source-documents.ts";
 import japaneseMessages from "../src/components/design-system/locales/ja.ts";
 
@@ -97,6 +97,15 @@ test("professional Word exports preserve native editable tables and independentl
   assert.doesNotMatch(relationships,/javascript:/,"untrusted protocols never become live Office relationships");
 });
 
+test("editable Word exports preserve authored document parts above the previous two-megabyte ceiling",()=>{
+  const approvedText=`APPROVED FIRST WORD ${"customer evidence ".repeat(130_000)}APPROVED FINAL WORD`;
+  const parts=verifyOfficeArchive(createWordDocument(approvedText,{title:"Complete enterprise evidence"}));
+  const document=parts.get("word/document.xml");
+  assert.ok(new TextEncoder().encode(document).byteLength>2_000_000,"the complete Word XML part exceeds the former hard limit");
+  assert.match(document,/APPROVED FIRST WORD/);
+  assert.match(document,/APPROVED FINAL WORD/);
+});
+
 test("authorized presenter PowerPoint exports round-trip slides and explicitly include private notes",async()=>{
   const items=[
     {title:"Decision one",body:"Explain the real project boundary.",notes:"Say the private speaker context & <notes>.",image_prompt:"",slide:{layout:"cover",kicker:"Pilot",bullets:["Named participants","Fixed total spend"],visual:{kind:"metric",label:"Controlled cohort",value:"10 people",data:[]}}},
@@ -119,6 +128,54 @@ test("authorized presenter PowerPoint exports round-trip slides and explicitly i
   assert.match(archive,/<p:cNvPr id="\d+" name="Editable slide title"\/>/);
   assert.match(archive,/Forma pilot/);
   verifyOfficeArchive(bytes);
+});
+
+test("large editable PowerPoint exports retain every slide, relationship, and note beyond former slide, part, and archive ceilings",()=>{
+  const approvedBody="Approved customer evidence and product decisions. ".repeat(475);
+  const items=Array.from({length:256},(_,index)=>({title:`Approved decision ${index+1}`,body:`${approvedBody}FINAL APPROVED EVIDENCE ${index+1}`,notes:`Complete private presenter context ${index+1}`,image_prompt:"",slide:null}));
+  const bytes=createPowerPointDocument(items,defaultSlidePresentation(),{title:"Complete enterprise presentation",includePresenterNotes:true});
+  assert.ok(bytes.byteLength>5_000_000,"the complete presentation exceeds the former five-megabyte archive ceiling");
+  const parts=verifyOfficeArchive(bytes);
+  assert.equal(parts.size,13+items.length*4,"every slide, notes slide, and independently scoped relationship is retained");
+  assert.match(parts.get("ppt/slides/slide1.xml"),/FINAL APPROVED EVIDENCE 1/);
+  assert.match(parts.get("ppt/slides/slide256.xml"),/FINAL APPROVED EVIDENCE 256/);
+  assert.match(parts.get("ppt/notesSlides/notesSlide256.xml"),/Complete private presenter context 256/);
+  assert.match(parts.get("ppt/presentation.xml"),/r:id="rId258"/);
+});
+
+test("asynchronous PowerPoint generation yields to the interface and reports each complete preparation stage",async()=>{
+  const items=Array.from({length:12},(_,index)=>({title:`Approved decision ${index+1}`,body:"Complete approved evidence.",notes:`Private speaker note ${index+1}`,image_prompt:"",slide:null}));
+  const updates=[];
+  let yielded=false;
+  setTimeout(()=>{yielded=true;},0);
+  const bytes=await createPowerPointDocumentAsync(items,defaultSlidePresentation(),{includePresenterNotes:true,onProgress:(progress)=>updates.push(progress)});
+  assert.equal(yielded,true,"a real event-loop yield allows the interface to present readiness and cancellation");
+  assert.deepEqual(updates[0],{stage:"preparing",completed:0,total:12});
+  assert.deepEqual(updates.slice(1,-1),items.map((_,index)=>({stage:"rendering",completed:index+1,total:12})));
+  assert.deepEqual(updates.at(-1),{stage:"finalizing",completed:12,total:12});
+  const parts=verifyOfficeArchive(bytes);
+  assert.match(parts.get("ppt/slides/slide12.xml"),/Approved decision 12/);
+  assert.match(parts.get("ppt/notesSlides/notesSlide12.xml"),/Private speaker note 12/);
+});
+
+test("asynchronous PowerPoint exports honor cancellation before rendering, between slides, and before release",async()=>{
+  const items=Array.from({length:8},(_,index)=>({title:`Approved decision ${index+1}`,body:"Complete approved evidence.",notes:"",image_prompt:"",slide:null}));
+  const preaborted=new AbortController();
+  preaborted.abort();
+  await assert.rejects(createPowerPointDocumentAsync(items,defaultSlidePresentation(),{signal:preaborted.signal}),{name:"AbortError"});
+
+  const rendering=new AbortController(),renderingStages=[];
+  await assert.rejects(createPowerPointDocumentAsync(items,defaultSlidePresentation(),{signal:rendering.signal,onProgress:(progress)=>{
+    renderingStages.push(progress);
+    if(progress.stage==="rendering"&&progress.completed===3)rendering.abort();
+  }}),{name:"AbortError"});
+  assert.equal(renderingStages.at(-1).completed,3,"rendering stops immediately after the cancelled slide");
+  assert.ok(!renderingStages.some(({stage})=>stage==="finalizing"),"a cancelled deck never advances to release");
+
+  const finalizing=new AbortController();
+  await assert.rejects(createPowerPointDocumentAsync(items,defaultSlidePresentation(),{signal:finalizing.signal,onProgress:(progress)=>{
+    if(progress.stage==="finalizing")setTimeout(()=>finalizing.abort(),0);
+  }}),{name:"AbortError"},"cancellation during package preparation never returns a partial archive");
 });
 
 test("professional exports preserve long approved writing, complete speaker notes, intentional repeated warnings, and numbered lists",()=>{
@@ -451,14 +508,15 @@ test("professional media archives preserve ordered original binary bytes",()=>{
   assert.deepEqual(parts.get("frames/frame-002.jpg"),second);
 });
 
-test("office archives reject unsafe paths, missing slides, and oversized authored parts",()=>{
+test("office archives reject unsafe paths, missing slides, and explicitly bounded oversized authored parts",()=>{
   assert.throws(()=>createOfficeArchive([{name:"../private.xml",content:"secret"}]),/invalid_office_archive_path/);
   for(const name of ["frames//private.png","frames/./private.png","frames/../private.png","frames/\u0000private.png"])
     assert.throws(()=>createOfficeArchive([{name,content:new Uint8Array([1])}],{media:true}),/invalid_office_archive_path/);
   assert.throws(()=>createOfficeArchive([{name:"same.xml",content:"first"},{name:"same.xml",content:"second"}]),/invalid_office_archive_path/);
-  assert.throws(()=>createOfficeArchive([{name:"word/document.xml",content:"x".repeat(2_000_001)}]),/office_archive_entry_too_large/);
+  assert.throws(()=>createOfficeArchive([{name:"word/document.xml",content:"x".repeat(16*1024*1024+1)}]),/office_archive_entry_too_large/);
   assert.throws(()=>createOfficeArchive([{name:"frames/oversized.png",content:new Uint8Array(24_000_001)}],{media:true}),/office_archive_entry_too_large/);
+  assert.throws(()=>createOfficeArchive(Array.from({length:8_193},(_,index)=>({name:`parts/part-${index}.xml`,content:""}))),/invalid_office_archive/);
   assert.throws(()=>createPowerPointDocument([],defaultSlidePresentation()),/invalid_presentation_slide_count/);
   const item={title:"Within the supported slide boundary",body:"",notes:"",image_prompt:"",slide:null};
-  assert.throws(()=>createPowerPointDocument(Array.from({length:101},()=>item),defaultSlidePresentation()),/invalid_presentation_slide_count/);
+  assert.throws(()=>createPowerPointDocument(Array.from({length:2_001},()=>item),defaultSlidePresentation()),/invalid_presentation_slide_count/);
 });
