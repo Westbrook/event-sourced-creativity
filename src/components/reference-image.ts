@@ -24,6 +24,6 @@ export class ReferenceImage extends FormaElement {
   }
 }
 
-customElements.define("forma-reference-image", ReferenceImage);
+if (!customElements.get("forma-reference-image")) customElements.define("forma-reference-image", ReferenceImage);
 
 declare global { interface HTMLElementTagNameMap { "forma-reference-image": ReferenceImage } }

@@ -193,6 +193,6 @@ export class FormaFocalPointLab extends FormaPresentationalElement {
   }
 }
 
-customElements.define("forma-focal-point-lab", FormaFocalPointLab);
+if (!customElements.get("forma-focal-point-lab")) customElements.define("forma-focal-point-lab", FormaFocalPointLab);
 
 declare global { interface HTMLElementTagNameMap { "forma-focal-point-lab": FormaFocalPointLab } }

@@ -43,4 +43,4 @@ export class OutputCard extends FormaElement {
     </article>${out.mediaUrl?html`<forma-output-visual class="output-card-image-viewer" .output=${out} .viewerOnly=${true}></forma-output-visual>`:nothing}${!context?html`<forma-generation-input-dialog .open=${this.#inputsOpen} .inspection=${inspection} @generation-input-close=${()=>{this.#inputsOpen=false;this.requestUpdate();}}></forma-generation-input-dialog>`:nothing}`;
   }
 }
-customElements.define("forma-output-card", OutputCard);
+if (!customElements.get("forma-output-card")) customElements.define("forma-output-card", OutputCard);

@@ -116,4 +116,4 @@ export class FormaSessions extends FormaElement {
     </section>`;
   }
 }
-customElements.define("forma-sessions", FormaSessions);
+if (!customElements.get("forma-sessions")) customElements.define("forma-sessions", FormaSessions);

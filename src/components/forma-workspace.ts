@@ -418,4 +418,4 @@ export class FormaWorkspace extends FormaElement {
     </section>`;
   }
 }
-customElements.define("forma-workspace", FormaWorkspace);
+if (!customElements.get("forma-workspace")) customElements.define("forma-workspace", FormaWorkspace);

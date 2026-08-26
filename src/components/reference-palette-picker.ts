@@ -62,6 +62,6 @@ export class ReferencePalettePicker extends FormaElement {
   }
 }
 
-customElements.define("forma-reference-palette-picker", ReferencePalettePicker);
+if (!customElements.get("forma-reference-palette-picker")) customElements.define("forma-reference-palette-picker", ReferencePalettePicker);
 
 declare global { interface HTMLElementTagNameMap { "forma-reference-palette-picker": ReferencePalettePicker } }

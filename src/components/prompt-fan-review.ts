@@ -111,5 +111,5 @@ export class PromptFanReview extends FormaElement {
   }
 }
 
-customElements.define("forma-prompt-fan-review", PromptFanReview);
+if (!customElements.get("forma-prompt-fan-review")) customElements.define("forma-prompt-fan-review", PromptFanReview);
 declare global { interface HTMLElementTagNameMap { "forma-prompt-fan-review": PromptFanReview } }

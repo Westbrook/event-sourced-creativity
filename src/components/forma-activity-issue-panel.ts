@@ -578,5 +578,5 @@ export class FormaActivityIssuePanel extends FormaElement {
   }
 }
 
-customElements.define("forma-activity-issue-panel", FormaActivityIssuePanel);
+if (!customElements.get("forma-activity-issue-panel")) customElements.define("forma-activity-issue-panel", FormaActivityIssuePanel);
 declare global { interface HTMLElementTagNameMap { "forma-activity-issue-panel": FormaActivityIssuePanel } }

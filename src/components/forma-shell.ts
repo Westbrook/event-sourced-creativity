@@ -357,4 +357,4 @@ export class FormaShell extends FormaElement {
     </div>`;
   }
 }
-customElements.define("forma-shell", FormaShell);
+if (!customElements.get("forma-shell")) customElements.define("forma-shell", FormaShell);

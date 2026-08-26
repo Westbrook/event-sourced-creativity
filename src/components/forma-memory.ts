@@ -60,4 +60,4 @@ export class FormaMemory extends FormaElement {
     </section>`;
   }
 }
-customElements.define("forma-memory", FormaMemory);
+if (!customElements.get("forma-memory")) customElements.define("forma-memory", FormaMemory);

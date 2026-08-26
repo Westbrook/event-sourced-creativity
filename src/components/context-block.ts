@@ -498,6 +498,6 @@ export class ContextBlock extends FormaElement {
     </article>`;
   }
 }
-customElements.define("forma-context-block", ContextBlock);
+if (!customElements.get("forma-context-block")) customElements.define("forma-context-block", ContextBlock);
 
 declare global { interface HTMLElementTagNameMap { "forma-context-block": ContextBlock } }

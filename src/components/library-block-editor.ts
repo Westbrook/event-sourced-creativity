@@ -155,6 +155,6 @@ export class LibraryBlockEditor extends FormaElement {
   }
 }
 
-customElements.define("forma-library-block-editor",LibraryBlockEditor);
+if (!customElements.get("forma-library-block-editor")) customElements.define("forma-library-block-editor",LibraryBlockEditor);
 
 declare global { interface HTMLElementTagNameMap { "forma-library-block-editor": LibraryBlockEditor } }

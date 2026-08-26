@@ -247,4 +247,4 @@ export class FormaSharedView extends FormaPresentationalElement {
     </main>`;
   }
 }
-customElements.define("forma-shared-view", FormaSharedView);
+if (!customElements.get("forma-shared-view")) customElements.define("forma-shared-view", FormaSharedView);

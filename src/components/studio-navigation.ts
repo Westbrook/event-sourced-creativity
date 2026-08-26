@@ -201,6 +201,6 @@ export class DocumentContinuity extends FormaElement {
   }
 }
 
-customElements.define("forma-studio-mode-nav",StudioModeNav);
-customElements.define("forma-studio-navigator",StudioNavigator);
-customElements.define("forma-document-continuity", DocumentContinuity);
+if (!customElements.get("forma-studio-mode-nav")) customElements.define("forma-studio-mode-nav",StudioModeNav);
+if (!customElements.get("forma-studio-navigator")) customElements.define("forma-studio-navigator",StudioNavigator);
+if (!customElements.get("forma-document-continuity")) customElements.define("forma-document-continuity", DocumentContinuity);

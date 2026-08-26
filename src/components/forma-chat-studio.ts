@@ -95,4 +95,4 @@ export class FormaChatStudio extends FormaElement {
   }
 }
 
-customElements.define("forma-chat-studio",FormaChatStudio);
+if (!customElements.get("forma-chat-studio")) customElements.define("forma-chat-studio",FormaChatStudio);

@@ -65,4 +65,4 @@ export class OutputVisual extends FormaElement {
   }
 }
 
-customElements.define("forma-output-visual",OutputVisual);
+if (!customElements.get("forma-output-visual")) customElements.define("forma-output-visual",OutputVisual);

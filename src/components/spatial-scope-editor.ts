@@ -302,6 +302,6 @@ export class SpatialScopeEditor extends FormaElement {
   }
 }
 
-customElements.define("forma-spatial-scope-editor", SpatialScopeEditor);
+if (!customElements.get("forma-spatial-scope-editor")) customElements.define("forma-spatial-scope-editor", SpatialScopeEditor);
 
 declare global { interface HTMLElementTagNameMap { "forma-spatial-scope-editor": SpatialScopeEditor } }

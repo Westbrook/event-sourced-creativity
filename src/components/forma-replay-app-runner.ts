@@ -153,4 +153,4 @@ export class FormaReplayAppRunner extends FormaElement {
   }
 }
 
-customElements.define("forma-replay-app-runner", FormaReplayAppRunner);
+if (!customElements.get("forma-replay-app-runner")) customElements.define("forma-replay-app-runner", FormaReplayAppRunner);

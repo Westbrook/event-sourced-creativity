@@ -186,4 +186,4 @@ export class FormaLibrary extends FormaElement {
     </section>`;
   }
 }
-customElements.define("forma-library",FormaLibrary);
+if (!customElements.get("forma-library")) customElements.define("forma-library",FormaLibrary);

@@ -50,6 +50,6 @@ export class ReferencePixelPolicy extends FormaElement {
   }
 }
 
-customElements.define("forma-reference-pixel-policy", ReferencePixelPolicy);
+if (!customElements.get("forma-reference-pixel-policy")) customElements.define("forma-reference-pixel-policy", ReferencePixelPolicy);
 
 declare global { interface HTMLElementTagNameMap { "forma-reference-pixel-policy": ReferencePixelPolicy } }

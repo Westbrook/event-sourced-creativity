@@ -51,4 +51,4 @@ export class FormaSystem extends FormaElement {
     </div></section>`;
   }
 }
-customElements.define("forma-system", FormaSystem);
+if (!customElements.get("forma-system")) customElements.define("forma-system", FormaSystem);

@@ -24,5 +24,5 @@ export class PromptFanVisual extends FormaElement {
   }
 }
 
-customElements.define("forma-prompt-fan-visual", PromptFanVisual);
+if (!customElements.get("forma-prompt-fan-visual")) customElements.define("forma-prompt-fan-visual", PromptFanVisual);
 declare global { interface HTMLElementTagNameMap { "forma-prompt-fan-visual": PromptFanVisual } }

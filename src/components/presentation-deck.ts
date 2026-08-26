@@ -223,5 +223,5 @@ export class PresentationDeck extends FormaElement{
   </section>`;}
 }
 
-customElements.define("forma-presentation-deck",PresentationDeck);
+if (!customElements.get("forma-presentation-deck")) customElements.define("forma-presentation-deck",PresentationDeck);
 declare global{interface HTMLElementTagNameMap{"forma-presentation-deck":PresentationDeck}}

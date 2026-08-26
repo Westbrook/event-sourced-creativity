@@ -77,4 +77,4 @@ export class FormaAttentionObserver extends FormaElement {
   }
   override render(){return html``;}
 }
-customElements.define("forma-attention-observer",FormaAttentionObserver);
+if (!customElements.get("forma-attention-observer")) customElements.define("forma-attention-observer",FormaAttentionObserver);

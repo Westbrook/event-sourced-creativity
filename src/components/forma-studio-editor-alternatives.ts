@@ -284,5 +284,5 @@ export class FormaAdaptivePath extends AlternativeStudio {
     </div>`;return this.shell("adaptive","Adaptive path","Make related decisions through a surface that changes in response to both broad intent and accumulated context.",body);}
 }
 
-customElements.define("forma-reality-layers",FormaRealityLayers);
-customElements.define("forma-adaptive-path",FormaAdaptivePath);
+if (!customElements.get("forma-reality-layers")) customElements.define("forma-reality-layers",FormaRealityLayers);
+if (!customElements.get("forma-adaptive-path")) customElements.define("forma-adaptive-path",FormaAdaptivePath);

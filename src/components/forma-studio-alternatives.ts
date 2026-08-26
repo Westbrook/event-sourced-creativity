@@ -387,5 +387,5 @@ export class FormaGuidedBrief extends AlternativeStudio {
   }
 }
 
-customElements.define("forma-context-board", FormaContextBoard);
-customElements.define("forma-guided-brief", FormaGuidedBrief);
+if (!customElements.get("forma-context-board")) customElements.define("forma-context-board", FormaContextBoard);
+if (!customElements.get("forma-guided-brief")) customElements.define("forma-guided-brief", FormaGuidedBrief);

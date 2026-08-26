@@ -31,4 +31,4 @@ export class AreaNavigation extends FormaElement {
   }
 }
 
-customElements.define("forma-area-navigation", AreaNavigation);
+if (!customElements.get("forma-area-navigation")) customElements.define("forma-area-navigation", AreaNavigation);

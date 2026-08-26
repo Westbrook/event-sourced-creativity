@@ -227,5 +227,5 @@ export class GenerationActions extends FormaElement {
     return html`<div class=${`generation-actions-shell ${this.compact?"compact":""}`}>${this.compact?html`${budgetNoteVisible?html`<span id=${this.#budgetNoteId} class="sr-only">${budgetMessage}</span>`:nothing}${compactControls}${detailsDialog}`:html`<forma-image-format-editor compact surface=${this.source}></forma-image-format-editor>${productionControl}${expandedControls}${readiness()}${budgetNote()}${failures()}<forma-prompt-fan-review></forma-prompt-fan-review>`}${queueDialog}${failureDialog}${failureInput}${this.#safetyDiagnosticDialog()}</div>`;
   }
 }
-customElements.define("forma-generation-actions",GenerationActions);
+if (!customElements.get("forma-generation-actions")) customElements.define("forma-generation-actions",GenerationActions);
 declare global{interface HTMLElementTagNameMap{"forma-generation-actions":GenerationActions}}

@@ -70,5 +70,5 @@ export class DocumentGenerations extends FormaElement {
   }
 }
 
-customElements.define("forma-document-generations", DocumentGenerations);
+if (!customElements.get("forma-document-generations")) customElements.define("forma-document-generations", DocumentGenerations);
 declare global { interface HTMLElementTagNameMap { "forma-document-generations": DocumentGenerations } }

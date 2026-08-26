@@ -47,5 +47,5 @@ export class FormaDeliver extends FormaElement {
   }
 }
 
-customElements.define("forma-deliver", FormaDeliver);
+if (!customElements.get("forma-deliver")) customElements.define("forma-deliver", FormaDeliver);
 declare global { interface HTMLElementTagNameMap { "forma-deliver": FormaDeliver } }

@@ -191,4 +191,4 @@ export class FormaProjects extends FormaElement {
     </dialog>`:""}
   </section>`;}
 }
-customElements.define("forma-projects",FormaProjects);
+if (!customElements.get("forma-projects")) customElements.define("forma-projects",FormaProjects);

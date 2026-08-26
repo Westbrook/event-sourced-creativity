@@ -54,5 +54,5 @@ export class GenerationInputDialog extends FormaElement {
 }
 
 const record=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};
-customElements.define("forma-generation-input-dialog",GenerationInputDialog);
+if (!customElements.get("forma-generation-input-dialog")) customElements.define("forma-generation-input-dialog",GenerationInputDialog);
 declare global{interface HTMLElementTagNameMap{"forma-generation-input-dialog":GenerationInputDialog}}

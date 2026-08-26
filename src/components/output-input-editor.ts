@@ -159,6 +159,6 @@ export class OutputInputEditor extends FormaElement {
   }
 }
 
-customElements.define("forma-output-input-editor", OutputInputEditor);
+if (!customElements.get("forma-output-input-editor")) customElements.define("forma-output-input-editor", OutputInputEditor);
 
 declare global { interface HTMLElementTagNameMap { "forma-output-input-editor": OutputInputEditor } }

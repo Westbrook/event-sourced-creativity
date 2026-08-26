@@ -102,6 +102,6 @@ export class ReferenceFindings extends FormaElement {
   }
 }
 
-customElements.define("forma-reference-findings", ReferenceFindings);
+if (!customElements.get("forma-reference-findings")) customElements.define("forma-reference-findings", ReferenceFindings);
 
 declare global { interface HTMLElementTagNameMap { "forma-reference-findings": ReferenceFindings } }

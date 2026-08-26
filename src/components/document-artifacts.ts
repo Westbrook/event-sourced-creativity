@@ -498,5 +498,5 @@ export class DocumentArtifacts extends FormaElement {
   }
 }
 
-customElements.define("forma-document-artifacts",DocumentArtifacts);
+if (!customElements.get("forma-document-artifacts")) customElements.define("forma-document-artifacts",DocumentArtifacts);
 declare global{interface HTMLElementTagNameMap{"forma-document-artifacts":DocumentArtifacts}}

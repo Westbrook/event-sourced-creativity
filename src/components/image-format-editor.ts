@@ -62,6 +62,6 @@ export class ImageFormatEditor extends FormaElement {
   }
 }
 
-customElements.define("forma-image-format-editor", ImageFormatEditor);
+if (!customElements.get("forma-image-format-editor")) customElements.define("forma-image-format-editor", ImageFormatEditor);
 
 declare global { interface HTMLElementTagNameMap { "forma-image-format-editor": ImageFormatEditor } }

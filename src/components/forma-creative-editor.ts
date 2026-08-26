@@ -487,4 +487,4 @@ export class FormaCreativeEditor extends AlternativeStudio {
   }
 }
 
-customElements.define("forma-creative-editor", FormaCreativeEditor);
+if (!customElements.get("forma-creative-editor")) customElements.define("forma-creative-editor", FormaCreativeEditor);

@@ -38,5 +38,5 @@ export class VideoReferencePreflight extends FormaElement {
   </section>`;}
 }
 
-customElements.define("forma-video-reference-preflight",VideoReferencePreflight);
+if (!customElements.get("forma-video-reference-preflight")) customElements.define("forma-video-reference-preflight",VideoReferencePreflight);
 declare global{interface HTMLElementTagNameMap{"forma-video-reference-preflight":VideoReferencePreflight}}

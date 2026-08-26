@@ -133,5 +133,5 @@ export class FormaActivity extends FormaElement {
   }
 }
 
-customElements.define("forma-activity", FormaActivity);
+if (!customElements.get("forma-activity")) customElements.define("forma-activity", FormaActivity);
 declare global { interface HTMLElementTagNameMap { "forma-activity": FormaActivity } }

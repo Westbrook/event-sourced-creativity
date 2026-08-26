@@ -412,5 +412,5 @@ export class PresentationSlide extends FormaPresentationalElement {
   }
 }
 
-customElements.define("forma-presentation-slide", PresentationSlide);
+if (!customElements.get("forma-presentation-slide")) customElements.define("forma-presentation-slide", PresentationSlide);
 declare global { interface HTMLElementTagNameMap { "forma-presentation-slide": PresentationSlide } }

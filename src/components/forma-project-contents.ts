@@ -30,4 +30,4 @@ export class FormaProjectContents extends FormaElement {
     </section>`;
   }
 }
-customElements.define("forma-project-contents",FormaProjectContents);
+if (!customElements.get("forma-project-contents")) customElements.define("forma-project-contents",FormaProjectContents);

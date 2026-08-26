@@ -58,6 +58,8 @@ const arrayItems = (node) => ts.isArrayLiteralExpression(node)
     : [];
 const classByName = new Map();
 const registrations = new Map();
+const registrationByConstructor = new Map();
+const explicitRegistrationLocations = new Map();
 const catalogedApplicationPatterns = new Set();
 
 for (const source of sources) {
@@ -78,11 +80,54 @@ for (const source of sources) {
   visit(source);
 }
 
-function register(name, className, source) {
-  if (!name.includes("-") || !classByName.has(className)) return;
+function register(name, className, source, definition, constructor) {
+  const constructorSymbol = constructor && checker.getSymbolAtLocation(constructor);
+  const resolvedSymbol = constructorSymbol && (constructorSymbol.flags & ts.SymbolFlags.Alias)
+    ? checker.getAliasedSymbol(constructorSymbol)
+    : constructorSymbol;
+  const classDeclaration = resolvedSymbol?.declarations?.find(ts.isClassDeclaration) ?? classByName.get(className);
+  if (!name.includes("-") || !classDeclaration?.name) return;
+  const canonicalClassName = classDeclaration.name.text;
   const existing = registrations.get(name);
-  if (existing && existing.className !== className) throw new Error(`Conflicting custom element registration for ${name}`);
-  registrations.set(name, { name, className, registrationModule: modulePath(source) });
+  if (existing && existing.classDeclaration !== classDeclaration) throw new Error(`Conflicting custom element registration for ${name}`);
+
+  const existingClass = registrationByConstructor.get(classDeclaration);
+  if (existingClass && existingClass.name !== name) {
+    throw new Error(`Custom element constructor ${canonicalClassName} cannot be registered as both ${existingClass.name} and ${name}`);
+  }
+
+  if (definition) {
+    const { line } = source.getLineAndCharacterOfPosition(definition.getStart(source));
+    const location = `${modulePath(source)}:${line + 1}`;
+    const previousLocation = explicitRegistrationLocations.get(name);
+    if (previousLocation) {
+      throw new Error(`Duplicate custom element registration for ${name} in ${previousLocation} and ${location}`);
+    }
+    explicitRegistrationLocations.set(name, location);
+  }
+
+  registrationByConstructor.set(classDeclaration, { name, registrationModule: modulePath(source) });
+  registrations.set(name, { name, className: canonicalClassName, classDeclaration, registrationModule: modulePath(source) });
+}
+
+function isGuardedRegistration(node) {
+  let child = node;
+  while (child.parent) {
+    const parent = child.parent;
+    if (ts.isIfStatement(parent) && parent.thenStatement === child) {
+      const condition = parent.expression;
+      if (ts.isPrefixUnaryExpression(condition) && condition.operator === ts.SyntaxKind.ExclamationToken) {
+        const lookup = condition.operand;
+        if (ts.isCallExpression(lookup)
+          && ts.isPropertyAccessExpression(lookup.expression)
+          && lookup.expression.expression.getText() === "customElements"
+          && lookup.expression.name.text === "get"
+          && lookup.arguments[0]?.getText() === node.arguments[0]?.getText()) return true;
+      }
+    }
+    child = parent;
+  }
+  return false;
 }
 
 for (const source of sources) {
@@ -91,19 +136,23 @@ for (const source of sources) {
       && ts.isPropertyAccessExpression(node.expression)
       && node.expression.expression.getText() === "customElements"
       && node.expression.name.text === "define"
-      && node.arguments.length >= 2
-      && ts.isStringLiteralLike(node.arguments[0])
-      && ts.isIdentifier(node.arguments[1])) {
-      register(node.arguments[0].text, node.arguments[1].text, source);
+      && node.arguments.length >= 2) {
+      if (!isGuardedRegistration(node)) {
+        const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
+        throw new Error(`Unguarded custom element registration in ${modulePath(source)}:${line + 1}`);
+      }
+      if (ts.isStringLiteralLike(node.arguments[0]) && ts.isIdentifier(node.arguments[1])) {
+        register(node.arguments[0].text, node.arguments[1].text, source, node, node.arguments[1]);
+      }
     }
 
     if (ts.isArrayLiteralExpression(node) && node.elements.length >= 2
       && ts.isStringLiteralLike(node.elements[0]) && ts.isIdentifier(node.elements[1])) {
-      register(node.elements[0].text, node.elements[1].text, source);
+      register(node.elements[0].text, node.elements[1].text, source, node, node.elements[1]);
     }
 
     if (ts.isClassDeclaration(node) && node.name) {
-      for (const tag of tagsOf(node, "tag")) register(tag.split(/\s+/)[0], node.name.text, source);
+      for (const tag of tagsOf(node, "tag")) register(tag.split(/\s+/)[0], node.name.text, source, undefined, node.name);
     }
     ts.forEachChild(node, visit);
   };
@@ -447,7 +496,7 @@ const internalMessagesByTag = {
 };
 
 for (const registration of [...registrations.values()].sort((left, right) => compareMachine(left.name, right.name))) {
-  const node = classByName.get(registration.className);
+  const node = registration.classDeclaration;
   const file = modulePath(node.getSourceFile());
   const module = moduleFor(file);
   const properties = reactiveProperties(node);

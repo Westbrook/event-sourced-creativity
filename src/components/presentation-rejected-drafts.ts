@@ -217,5 +217,5 @@ export class PresentationRejectedDrafts extends FormaElement {
   }
 }
 
-customElements.define("forma-presentation-rejected-drafts", PresentationRejectedDrafts);
+if (!customElements.get("forma-presentation-rejected-drafts")) customElements.define("forma-presentation-rejected-drafts", PresentationRejectedDrafts);
 declare global { interface HTMLElementTagNameMap { "forma-presentation-rejected-drafts": PresentationRejectedDrafts } }

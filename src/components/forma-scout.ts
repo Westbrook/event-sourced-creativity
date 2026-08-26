@@ -78,4 +78,4 @@ export class FormaScout extends FormaElement {
     </section>`;
   }
 }
-customElements.define("forma-scout", FormaScout);
+if (!customElements.get("forma-scout")) customElements.define("forma-scout", FormaScout);

@@ -150,4 +150,4 @@ export class ProjectRail extends FormaElement {
   }
 }
 
-customElements.define("forma-project-rail", ProjectRail);
+if (!customElements.get("forma-project-rail")) customElements.define("forma-project-rail", ProjectRail);
