@@ -152,6 +152,213 @@ async function stalePresentationAttempt(fixture,job,{attemptCount=1,reserve=fals
 
 const flushExecution=async()=>{for(let index=0;index<8;index+=1)await new Promise(setImmediate);};
 
+test("paid audio download recovery reuses its plan and provider request with zero additional settlement",async()=>{
+  const fixture=await reliabilityWorker();fixture.environment.FAL_KEY="test-existing-fal-key";
+  const previousFetch=globalThis.fetch,calls=[],stored=[];
+  let failDownload=true;
+  fixture.environment.MEDIA.put=async(key,bytes,options)=>{stored.push({key,bytes,options});};
+  const plan={title:"Original retained score",summary:"An original instrumental piano and cello composition.",content_markdown:"Create an original instrumental score moving from restraint to quiet resolution.",presentation:null,items:[{title:"Complete arrangement",body:"Original felt piano and soft cello develop a restrained resolving motif.",notes:"No voices or artist imitation.",image_prompt:"",slide:null,context_group_ids:[]}]};
+  globalThis.fetch=async(value,init={})=>{
+    const url=String(value),method=init.method??"GET";calls.push({url,method});
+    if(url==="https://api.openai.com/v1/moderations")return Response.json({id:"audio-recovery-moderation",results:[{flagged:false,categories:{}}]});
+    if(url==="https://api.openai.com/v1/responses")return Response.json({id:"paid-audio-plan",model:"gpt-5.6-terra",output_text:JSON.stringify(plan),usage:{input_tokens:8101,output_tokens:3820,total_tokens:11921}});
+    if(url==="https://queue.fal.run/fal-ai/lyria3/pro"&&method==="POST")return Response.json({request_id:"paid-audio-edge-result"});
+    if(url.endsWith("/paid-audio-edge-result/status?logs=1"))return Response.json({status:"COMPLETED"});
+    if(url.endsWith("/paid-audio-edge-result"))return Response.json({audio:{url:"https://fal.media/paid-audio-edge.mp3",content_type:"audio/mpeg",file_size:3}});
+    if(url==="https://fal.media/paid-audio-edge.mp3"){
+      assert.equal(init.redirect,"manual");assert.equal(init.headers,undefined);
+      if(failDownload)throw new TypeError('Invalid redirect value, must be one of "follow" or "manual"');
+      return new Response(new Uint8Array([1,2,3]),{headers:{"content-type":"audio/mpeg"}});
+    }
+    throw new Error(`Unexpected request ${method} ${url}`);
+  };
+  try{
+    await fixture.drainBackground();
+    const admission=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"audio",productionMode:"manual",itemCount:1,paidMediaConfirmed:true,requestKey:"paid-audio-edge-recovery"}}));
+    assert.equal(admission.status,202,JSON.stringify(await admission.clone().json()));
+    const {job}=await admission.json();
+    const failed=(await(await fixture.runJob(job)).json()).job;
+    assert.equal(failed.status,"failed");assert.equal(failed.errorDetail.code,"provider_network_failed");
+    assert.equal(failed.result.generationReceipt.settled_cost_microusd,142_042);
+    const original=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+    assert.equal(original.providerJobId,"paid-audio-edge-result");
+    assert.ok(original.artifactPlan);assert.equal(original.audioInputReceipt.model,"fal-ai/lyria3/pro");
+    const originalCostId=original.costReservationId;
+    assert.deepEqual({...fixture.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE reservation_id=?").get(originalCostId)},{status:"settled",used_microusd:142_042});
+    const originalPosts=calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length;
+    assert.equal(originalPosts,2);
+
+    const retry=await fixture.request(`/api/document-jobs/${job.jobId}/retry`,{method:"POST"});
+    assert.equal(retry.status,202,JSON.stringify(await retry.clone().json()));
+    const resumed=(await retry.json()).job;assert.equal(resumed.jobId,job.jobId);
+    const recovery=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+    assert.equal(recovery.providerJobId,"paid-audio-edge-result");
+    assert.equal(recovery.prepaidProviderCostMicrousd,80_000);
+    failDownload=false;
+    const completed=(await(await fixture.runJob(resumed)).json()).job;
+    assert.equal(completed.status,"completed",JSON.stringify(completed.errorDetail));
+    assert.equal(completed.result.generationReceipt.settled_cost_microusd,0);
+    assert.equal(calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length,originalPosts);
+    assert.equal(stored.length,1);
+    const artifacts=fixture.sqlite.prepare("SELECT payload FROM events WHERE type='DocumentRenderCompleted'").all();
+    assert.equal(artifacts.length,1);
+    const artifact=JSON.parse(artifacts[0].payload);assert.equal(artifact.artifact_kind,"audio");assert.ok(artifact._private_ref);
+    const privateArtifact=fixture.sqlite.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id=? AND owner_id=? AND redacted_at IS NULL").get(artifact._private_ref,"dev-local-creative");
+    assert.ok(privateArtifact);
+    assert.equal(JSON.parse(privateArtifact.private_json).media_url,`/api/media/${encodeURIComponent(stored[0].key)}`);
+    assert.equal(artifact.media_url,undefined);
+    assert.equal(stored[0].options.customMetadata.providerJobId,"paid-audio-edge-result");
+    assert.equal(stored[0].options.httpMetadata.contentType,"audio/mpeg");
+    assert.deepEqual({...fixture.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE reservation_id=?").get(originalCostId)},{status:"settled",used_microusd:142_042});
+    assert.equal(fixture.sqlite.prepare("SELECT SUM(used_microusd) AS cost FROM cost_budget_reservations").get().cost,142_042);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN ('active','executing')").get().count,0);
+    await fixture.runJob(resumed);
+    assert.equal(calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length,originalPosts);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted'").get().count,1);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+for(const form of ["preview","generate","short_story","scene","storyboard","audio","video"]){
+  test(`${form} keeps paid planning in the live request and records its boundary before dispatch`,async()=>{
+    const fixture=await reliabilityWorker();fixture.environment.FAL_KEY="test-existing-fal-key";
+    const previousFetch=globalThis.fetch;
+    globalThis.fetch=async(url)=>{assert.equal(String(url),"https://api.openai.com/v1/moderations");return Response.json({id:"test-moderation",results:[{flagged:false,categories:{}}]});};
+    await fixture.drainBackground();
+    const kind=form==="preview"||form==="generate"?form:"render_document";
+    const accepted=await fixture.request("/api/document-jobs",json({kind,documentId:"doc-atmosphere",payload:{...(kind==="render_document"?{artifactKind:form,productionMode:"manual",itemCount:1,paidMediaConfirmed:true}:{}),requestKey:`foreground-${form}`}}));
+    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+    const {job}=await accepted.json();assert.equal(fixture.backgroundCount,0);
+    const entered=Promise.withResolvers(),release=Promise.withResolvers();
+    let calls=0,resolved=false,execution;
+    globalThis.fetch=async(url)=>{
+      assert.equal(String(url),"https://api.openai.com/v1/responses");calls+=1;
+      const checkpoint=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+      assert.equal(checkpoint.providerSubmissionProtocol,1);
+      assert.equal(Object.values(checkpoint.providerSubmissions)[0].status,"pending");
+      entered.resolve();await release.promise;
+      return Response.json({error:{message:"Verified original submission rejection",code:"invalid_request"}},{status:422});
+    };
+    try{
+      execution=fixture.request(`/api/document-jobs/${job.jobId}/run`,{method:"POST"}).then(response=>{resolved=true;return response;});
+      await Promise.race([entered.promise,execution.then(async response=>{throw new Error(`provider was never reached: ${JSON.stringify(await response.clone().json())}`);})]);
+      assert.equal(resolved,false);assert.equal(calls,1);
+      assert.equal((await fixture.request(`/api/document-jobs/${job.jobId}/run`,{method:"POST"})).status,202);
+      assert.equal(calls,1);
+      release.resolve();const completed=await execution;assert.equal(completed.status,200);
+      const failed=(await completed.json()).job;assert.equal(failed.status,"failed");
+      assert.equal(failed.result.generationReceipt.settled_cost_microusd,0);
+      assert.equal(failed.result.generationReceipt.source_transmission_status,"transmitted");
+    }finally{release.resolve();if(execution)await execution;globalThis.fetch=previousFetch;}
+  });
+}
+
+for(const outcome of ["network","server","malformed"]){
+  test(`non-slide ${outcome} uncertainty retains both ledgers and never purchases a retry`,async()=>{
+    const fixture=await reliabilityWorker();
+    const admission=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"short_story",productionMode:"manual",itemCount:1,requestKey:`uncertain-${outcome}`}}));
+    assert.equal(admission.status,202,JSON.stringify(await admission.clone().json()));const{job}=await admission.json();
+    const previousFetch=globalThis.fetch;let calls=0;
+    globalThis.fetch=async()=>{calls+=1;if(outcome==="network")throw new TypeError("Connection lost after dispatch");return outcome==="server"?new Response("upstream unavailable",{status:503}):new Response("not a usable provider receipt",{status:200});};
+    try{
+      const failed=(await(await fixture.runJob(job)).json()).job;
+      assert.equal(failed.status,"failed");assert.equal(failed.errorDetail.code,"provider_submission_uncertain");
+      assert.equal(failed.result.generationReceipt.provider_request_status,"submission_unknown");
+      assert.equal(failed.result.generationReceipt.settled_cost_microusd,null);
+      assert.equal(failed.result.generationReceipt.reservation_status,"executing");
+      assert.equal((await fixture.request(`/api/document-jobs/${job.jobId}/retry`,{method:"POST"})).status,409);
+      await fixture.runJob(job);
+      await reconcileFailedBudgetReservations(fixture.environment,{userId:"dev-local-creative",streamId:"creative:dev-local-creative"},Date.now()+86_400_000);
+      assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations WHERE status='active'").get().count,1);
+      assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status='executing'").get().count,1);
+      assert.equal(calls,1);
+    }finally{globalThis.fetch=previousFetch;}
+  });
+}
+
+test("generic paid evidence alone blocks racing cancellation and survives private-input expiration",async()=>{
+  for(const mode of ["immediate","racing","expired"]){
+    const fixture=await reliabilityWorker();
+    const accepted=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"short_story",itemCount:1,requestKey:`generic-${mode}`}}));
+    assert.equal(accepted.status,202);const{job}=await accepted.json();
+    const owner="dev-local-creative",stream=`creative:${owner}`,correlation=`${job.jobId}:attempt:1`,operation="document-render:short_story";
+    const tokens=await reserveBudget(fixture.environment,owner,32_000,{streamId:stream,correlationId:correlation,operation});assert.equal(tokens.ok,true);
+    const costs=await reserveCostBudget(fixture.environment,owner,1_000_000,{maximumMicrousd:1_000_000,allowUserOverage:false,streamId:stream,correlationId:correlation,operation,period:tokens.period});assert.equal(costs.ok,true);await claimCostBudgetReservation(fixture.environment,owner,costs.reservationId);
+    const pending={"pending-unit":{clientRequestId:"pending-unit",provider:"openai",operation:"planning",model:"gpt-5.6-terra",status:"pending",candidateRaw:"PRIVATE_MAP_SENTINEL"}};
+    const checkpoint={...job.result,providerSubmissionProtocol:1,providerSubmissions:mode==="racing"?{}:pending,reservationId:tokens.reservationId,costReservationId:costs.reservationId,costReservationPeriod:tokens.period,costReservationMicrousd:1_000_000,candidateRaw:"PRIVATE_DRAFT_SENTINEL"};
+    const now=new Date().toISOString(),past=new Date(Date.now()-120_000).toISOString(),future=new Date(Date.now()+75_000).toISOString();
+    fixture.sqlite.prepare("UPDATE document_jobs SET status=?,attempt_count=1,correlation_id=?,started_at=?,lease_expires_at=?,expires_at=?,updated_at=?,result_json=? WHERE job_id=?").run(mode==="expired"?"failed":"running",correlation,now,mode==="expired"?null:future,mode==="expired"?past:future,now,JSON.stringify(checkpoint),job.jobId);
+    if(mode==="racing")fixture.controls.beforeRun=async(statement)=>{if(statement.sql.startsWith("UPDATE document_jobs SET status=?,result_json=json_patch")){fixture.controls.beforeRun=null;fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify({...checkpoint,providerSubmissions:pending}),job.jobId);}};
+    if(mode!=="expired")assert.equal((await fixture.request(`/api/document-jobs/${job.jobId}/cancel`,{method:"POST"})).status,409);
+    else{
+      assert.equal((await fixture.request(`/api/document-jobs/${job.jobId}/retry`,{method:"POST"})).status,409);
+      const expired=fixture.sqlite.prepare("SELECT request_json,result_json FROM document_jobs WHERE job_id=?").get(job.jobId);
+      assert.doesNotMatch(expired.result_json,/PRIVATE_(?:MAP|DRAFT)_SENTINEL/);
+      assert.equal(JSON.parse(expired.result_json).providerSubmissions["pending-unit"].clientRequestId,"pending-unit");
+      assert.deepEqual(JSON.parse(expired.request_json),{artifactKind:"short_story"});
+    }
+    await reconcileFailedBudgetReservations(fixture.environment,{userId:owner,streamId:stream},Date.now()+86_400_000);
+    assert.equal(fixture.sqlite.prepare("SELECT status FROM budget_reservations WHERE reservation_id=?").get(tokens.reservationId).status,"active");
+    assert.equal(fixture.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(costs.reservationId).status,"executing");
+  }
+});
+
+test("stale claim and terminal recovery cannot overwrite a racing paid checkpoint",async()=>{
+  for(const mode of ["claim","fail"]){
+    const fixture=await reliabilityWorker();
+    const accepted=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"short_story",itemCount:1,requestKey:`race-${mode}`}}));
+    assert.equal(accepted.status,202);const{job}=await accepted.json();
+    const owner="dev-local-creative",stream=`creative:${owner}`,correlation=`${job.jobId}:attempt:1`,operation="document-render:short_story";
+    const tokens=await reserveBudget(fixture.environment,owner,32_000,{streamId:stream,correlationId:correlation,operation});assert.equal(tokens.ok,true);
+    const costs=await reserveCostBudget(fixture.environment,owner,1_000_000,{maximumMicrousd:1_000_000,allowUserOverage:false,streamId:stream,correlationId:correlation,operation,period:tokens.period});assert.equal(costs.ok,true);await claimCostBudgetReservation(fixture.environment,owner,costs.reservationId);
+    const entry=(id)=>({clientRequestId:id,provider:"openai",operation:"planning",model:"gpt-5.6-terra",status:"pending"});
+    const checkpoint={...job.result,providerSubmissionProtocol:1,providerSubmissions:mode==="fail"?{original:entry("original")}: {},reservationId:tokens.reservationId,costReservationId:costs.reservationId,costReservationPeriod:tokens.period,costReservationMicrousd:1_000_000};
+    const old=new Date(Date.now()-120_000).toISOString();
+    fixture.sqlite.prepare("UPDATE document_jobs SET status='running',attempt_count=1,correlation_id=?,started_at=?,lease_expires_at=?,updated_at=?,result_json=? WHERE job_id=?").run(correlation,old,old,old,JSON.stringify(checkpoint),job.jobId);
+    let raced=false;
+    fixture.controls.beforeRun=async(statement)=>{
+      const prefix=mode==="claim"?"UPDATE document_jobs SET status='running',attempt_count=attempt_count+1":"UPDATE document_jobs SET status='failed',error_message=";
+      if(raced||!statement.sql.startsWith(prefix))return;raced=true;
+      fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify({...checkpoint,providerSubmissions:{...checkpoint.providerSubmissions,racing:entry("racing")}}),job.jobId);
+    };
+    const previousFetch=globalThis.fetch;let calls=0;globalThis.fetch=async()=>{calls+=1;throw new Error("No new provider call is authorized by a stale snapshot");};
+    try{
+      assert.equal((await fixture.request(`/api/document-jobs/${job.jobId}/run`,{method:"POST"})).status,202);
+      assert.equal(raced,true);const row=fixture.sqlite.prepare("SELECT status,attempt_count,result_json FROM document_jobs WHERE job_id=?").get(job.jobId);
+      assert.equal(row.status,"running");assert.equal(row.attempt_count,1);assert.equal(JSON.parse(row.result_json).providerSubmissions.racing.status,"pending");
+      fixture.controls.beforeRun=null;assert.equal((await fixture.runJob(job)).status,200);
+      assert.equal(calls,0);assert.equal(fixture.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(costs.reservationId).status,"executing");
+    }finally{fixture.controls.beforeRun=null;globalThis.fetch=previousFetch;}
+  }
+});
+
+test("missing planner or image usage holds the original budget; failed media storage settles known work",async()=>{
+  for(const scenario of ["planning-missing","planning-empty","image-missing","image-empty","storage"]){
+    const fixture=await reliabilityWorker();const previousFetch=globalThis.fetch;let paidCalls=0;
+    const direction={title:"A quiet creative desk",rationale:"One clear decision",scene:"Blank cards arranged around a calm work surface",palette:["#ffffff","#eeeeee","#333333"],next_moves:["Review the direction","Choose the next action"]};
+    globalThis.fetch=async(url)=>{
+      if(String(url).endsWith("/moderations"))return Response.json({id:"test-moderation",results:[{flagged:false,categories:{}}]});
+      paidCalls+=1;
+      if(String(url).endsWith("/responses"))return Response.json({id:"test-paid-direction",model:"gpt-5.6-terra",output_text:JSON.stringify(direction),...(scenario==="planning-missing"?{}:{usage:scenario==="planning-empty"?{}:{input_tokens:1200,output_tokens:800,total_tokens:2000}})});
+      assert.equal(String(url),"https://api.openai.com/v1/images/generations");
+      return Response.json({data:[{b64_json:Buffer.from("test-image").toString("base64")}],...(scenario==="image-missing"?{}:{usage:scenario==="image-empty"?{}:{input_tokens:100,output_tokens:20,total_tokens:120,input_tokens_details:{text_tokens:100,image_tokens:0}}})},{headers:{"x-request-id":"test-paid-image"}});
+    };
+    if(scenario==="storage")fixture.environment.MEDIA.put=async()=>{throw new Error("test_media_storage_failure");};
+    try{
+      const admitted=await fixture.request("/api/document-jobs",json({kind:"generate",documentId:"doc-atmosphere",payload:{requestKey:`accounting-${scenario}`}}));assert.equal(admitted.status,202);const{job}=await admitted.json();
+      const result=(await(await fixture.runJob(job)).json()).job;assert.equal(result.status,"failed");
+      if(scenario==="storage"){
+        assert.ok(result.result.generationReceipt.settled_cost_microusd>12000);
+        assert.equal(result.result.generationReceipt.reservation_status,"settled");
+      }else{
+        assert.equal(result.errorDetail.code,"provider_usage_receipt_missing");
+        assert.equal(result.result.generationReceipt.settled_cost_microusd,null);
+        assert.equal(result.result.generationReceipt.reservation_status,"executing");
+      }
+      const callsBeforeRetry=paidCalls;await fixture.runJob(job);assert.equal(paidCalls,callsBeforeRetry);
+    }finally{globalThis.fetch=previousFetch;}
+  }
+});
+
 test("refuses immediate and racing cancellation of an unresolved paid Lyria submission",async()=>{
   for(const racing of [false,true]){
     const fixture=await reliabilityWorker();fixture.environment.FAL_KEY="lyria-reliability-key";addQueueBlocker(fixture);
@@ -1098,6 +1305,65 @@ test("all document media reject unpriced planning before source transmission or 
   }finally{globalThis.fetch=previousFetch;}
 });
 
+for(const artifactKind of ["short_story","storyboard"]){
+  test(`a complete multi-decision ${artifactKind} brief fits its reserved planning slice above the old 32k threshold`,async()=>{
+    const fixture=await reliabilityWorker();
+    for(let index=0;index<13;index+=1)await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:`rich-source-${index}`,type:"direction",handle:`direction/rich-${index}`,position:`z-rich-${index}`,properties:{text:`Distinct authored decision ${index}: ${"Keep human decisions, evidence, and consent visible throughout this creative journey. ".repeat(24)}`,weight:1,authority:"authored"}});
+    const previousFetch=globalThis.fetch;let calls=0;
+    globalThis.fetch=async(url,init={})=>{
+      assert.equal(String(url),"https://api.openai.com/v1/responses");calls+=1;
+      const request=JSON.parse(init.body);
+      const maximumInputTokens=new TextEncoder().encode(init.body).byteLength+4096;
+      assert.ok(maximumInputTokens+request.max_output_tokens>32_000);
+      assert.ok(maximumInputTokens+request.max_output_tokens<128_000);
+      const token=fixture.sqlite.prepare("SELECT reserved_tokens FROM budget_reservations WHERE status='active'").get();
+      const cost=fixture.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_reservations WHERE status='executing'").get();
+      assert.equal(token.reserved_tokens,artifactKind==="storyboard"?320_000:128_000);
+      assert.equal(cost.reserved_microusd,artifactKind==="storyboard"?9_000_000:1_000_000,"the approved dollar ceiling is unchanged");
+      return Response.json({error:{code:"invalid_request",message:"Definitive test rejection"}},{status:422});
+    };
+    try{
+      const admitted=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind,productionMode:"manual",itemCount:artifactKind==="storyboard"?8:1,paidMediaConfirmed:true,requestKey:`rich-${artifactKind}`}}));
+      assert.equal(admitted.status,202,await admitted.clone().text());
+      const{job}=await admitted.json();const failed=(await(await fixture.runJob(job)).json()).job;
+      assert.equal(calls,1);
+      assert.notEqual(failed.errorDetail.code,"document_token_cap_reached");
+      assert.equal(failed.result.generationReceipt.settled_cost_microusd,0);
+    }finally{globalThis.fetch=previousFetch;}
+  });
+}
+
+test("the larger planning reservation still blocks execution when the monthly token balance cannot cover it",async()=>{
+  const fixture=await reliabilityWorker();
+  const changed=fixture.sqlite.prepare("UPDATE budget_counters SET used_tokens=hard_limit_tokens-100000 WHERE scope='user' AND scope_id='dev-local-creative'").run();
+  assert.equal(changed.changes,1);
+  const response=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"short_story",itemCount:1,requestKey:"monthly-planning-limit"}}));
+  assert.equal(response.status,202,await response.clone().text());
+  const{job}=await response.json();const previousFetch=globalThis.fetch;let calls=0;
+  globalThis.fetch=async()=>{calls+=1;throw new Error("Insufficient monthly tokens cannot authorize a provider request");};
+  try{
+    const failed=(await(await fixture.runJob(job)).json()).job;
+    assert.equal(failed.status,"failed");
+    assert.equal(failed.errorDetail.code,"budget_hard_cap_reached");
+    assert.equal(failed.errorDetail.scope,"user");
+    assert.equal(calls,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations WHERE status='active'").get().count,0);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+test("a planning dollar ceiling remains authoritative even with unused reserved tokens",async()=>{
+  const fixture=await reliabilityWorker();fixture.environment.OPENAI_MODEL="gpt-5.6-sol";
+  const previousFetch=globalThis.fetch;let calls=0;
+  globalThis.fetch=async()=>{calls+=1;assert.equal(calls,1);return Response.json({id:"metered-expensive-plan",model:"gpt-5.6-sol",output_text:"{}",usage:{input_tokens:40000,output_tokens:23000,total_tokens:63000}});};
+  try{
+    const response=await handleEvents(new Request("http://localhost/api/events",json({action:"render_document",documentId:"doc-atmosphere",artifactKind:"scene",productionMode:"manual",itemCount:1,requestKey:"unchanged-dollar-ceiling"})),fixture.environment);
+    assert.equal(response.status,429,await response.clone().text());
+    assert.equal((await response.json()).error,"document_spend_cap_reached");
+    assert.equal(calls,1);
+    assert.equal(fixture.sqlite.prepare("SELECT used_microusd FROM cost_budget_reservations WHERE operation='document-render:scene'").get().used_microusd,890_000);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
 test("an oversized cross-media repair stops before another provider call and settles only its original planning usage",async()=>{
   const fixture=await reliabilityWorker();
   const previousFetch=globalThis.fetch;
@@ -1113,7 +1379,7 @@ test("an oversized cross-media repair stops before another provider call and set
         title:"",
         summary:"An invalid initial narrative plan.",
         content_markdown:"",
-        items:[{title:"Unfinished scene",body:"x".repeat(45_000),notes:"",image_prompt:"",context_group_ids:[]}],
+        items:[{title:"Unfinished scene",body:"x".repeat(135_000),notes:"",image_prompt:"",context_group_ids:[]}],
       }),
       usage:{input_tokens:100,output_tokens:50,total_tokens:150},
     });
@@ -1134,7 +1400,7 @@ test("an oversized cross-media repair stops before another provider call and set
     assert.equal(failed.error,"document_token_cap_reached");
     assert.equal(providerCalls,1,"the initial response is retained but its unsafe repair is never purchased");
     const reservation=fixture.sqlite.prepare("SELECT reserved_tokens,used_tokens,status FROM budget_reservations WHERE operation='document-render:scene'").get();
-    assert.deepEqual({...reservation},{reserved_tokens:32_000,used_tokens:150,status:"settled"});
+    assert.deepEqual({...reservation},{reserved_tokens:128_000,used_tokens:150,status:"settled"});
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN('active','executing')").get().count,0);
   }finally{globalThis.fetch=previousFetch;}
 });
@@ -1154,7 +1420,7 @@ test("storyboard repair cannot consume tokens reserved for downstream frame gene
         title:"",
         summary:"An invalid storyboard plan requiring bounded review.",
         content_markdown:"",
-        items:[{title:"Unfinished storyboard frame",body:"x".repeat(33_000),notes:"",image_prompt:"A visually distinct opening frame.",context_group_ids:[]}],
+        items:[{title:"Unfinished storyboard frame",body:"x".repeat(128_000),notes:"",image_prompt:"A visually distinct opening frame.",context_group_ids:[]}],
       }),
       usage:{input_tokens:100,output_tokens:50,total_tokens:150},
     });
@@ -1176,7 +1442,7 @@ test("storyboard repair cannot consume tokens reserved for downstream frame gene
     assert.equal(failed.error,"document_token_cap_reached");
     assert.equal(providerCalls,1,"the downstream frame reserve must not authorize an extra planning request");
     const reservation=fixture.sqlite.prepare("SELECT reserved_tokens,used_tokens,status FROM budget_reservations WHERE operation='document-render:storyboard'").get();
-    assert.deepEqual({...reservation},{reserved_tokens:56_000,used_tokens:150,status:"settled"});
+    assert.deepEqual({...reservation},{reserved_tokens:152_000,used_tokens:150,status:"settled"});
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN('active','executing')").get().count,0);
   }finally{globalThis.fetch=previousFetch;}
 });

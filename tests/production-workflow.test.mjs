@@ -703,6 +703,7 @@ test("the real worker rejects forged inputs and completes a non-mutating, source
     assert.equal(persisted.sceneMedium, "visual");
     assert.equal(job.result.generationReceipt.settings.scene_medium, "visual");
     const authoredSnapshotHash = job.result.generationReceipt.source_snapshot_sha256;
+    assert.equal((await request(`/api/document-jobs/${job.jobId}/run`, {})).status, 200);
     while (background.length) await Promise.all(background.splice(0));
     assert.equal(sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(job.jobId).status, "completed");
     assert.equal(providerRequests.length, 1);
@@ -754,6 +755,7 @@ test("the real worker rejects forged inputs and completes a non-mutating, source
     assert.equal(sonicJob.result.generationReceipt.settings.scene_medium, "audio");
     assert.equal(sonicJob.result.generationReceipt.source_snapshot_sha256, authoredSnapshotHash, "both scene variants retain the same authored source context");
 
+    assert.equal((await request(`/api/document-jobs/${sonicJob.jobId}/run`, {})).status, 200);
     while (background.length) await Promise.all(background.splice(0));
     assert.equal(sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(sonicJob.jobId).status, "completed");
     assert.equal(providerRequests.length, 2);

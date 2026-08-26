@@ -113,7 +113,7 @@ test("recovers an expired running job before advancing queued document renders",
   assert.match(jobsApi,/if \(!rowIsStale\(running\)\) return;/);
   assert.match(jobsApi,/const recovered = await runDocumentJob\(env, owner, running\.job_id\);/);
   assert.match(jobsApi,/if \(recoveryBlocker&&!requiresForegroundDocumentExecution\(recoveryBlocker\)\) context\?\.waitUntil\(driveDocumentQueue\(env, user\)\);/);
-  assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(running\)\)\{await failStaleJob\(env,owner,running,unsafePresentationRecovery\(running\)\?\?undefined\);continue;\}/);
+  assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(running\)\)\{await failStaleJob\(env,owner,running,unsafePaidRecovery\(running\)\?\?undefined\);continue;\}/);
   assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(next\)\)return;/);
   assert.match(jobsApi,/if \(context&&!requiresForegroundDocumentExecution\(existing\)\)/);
   assert.match(jobsApi,/stage: "queue-recovery"/);
@@ -126,14 +126,17 @@ test("a manual presentation bypasses only a verified video in another project",a
     readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8"),
     readFile(new URL("../src/state/store.ts",import.meta.url),"utf8"),
   ]);
-  const projectTemplate=jobsApi.match(/const documentJobProjectSql=\(alias:"target"\|"candidate"\|"active"\)=>`([\s\S]*?)`;/u)?.[1];
+  const projectTemplate=jobsApi.match(/const documentJobProjectSql=\(alias:"target"\|"candidate"\|"active"\|"document_jobs"\)=>`([\s\S]*?)`;/u)?.[1];
   const claimTemplate=jobsApi.match(/const claimSql=`([\s\S]*?)`;/u)?.[1];
   assert.ok(projectTemplate,"project identity must come from immutable document-creation events");
   assert.ok(claimTemplate,"project isolation must also hold inside the atomic claim");
+  assert.match(jobsApi,/const independentPresentation=isPresentationJob\(row\)&&queuedRequest\.productionMode==="manual";/u,
+    "broader foreground media execution must not widen the manual-slideshow exception");
   assert.match(store,/projectDocuments\.has\(job\.documentId\)/u,
     "the browser must not select an older unrelated project's running job");
   const projectExpression=(alias)=>projectTemplate.replaceAll("${alias}",alias);
-  const claimSql=claimTemplate.replaceAll('${documentJobProjectSql("active")}',projectExpression("active"));
+  const claimSql=claimTemplate.replaceAll('${documentJobProjectSql("active")}',projectExpression("active"))
+    .replaceAll('${documentJobProjectSql("document_jobs")}',projectExpression("document_jobs"));
 
   const sqlite=new DatabaseSync(":memory:");
   sqlite.exec("CREATE TABLE events(stream_id TEXT,sequence INTEGER,type TEXT,payload TEXT)");
@@ -163,16 +166,21 @@ test("a manual presentation bypasses only a verified video in another project",a
   assert.equal(lookup("presentation-one"),"presentation-project");
   assert.equal(lookup("legacy-target"),"legacy-project","legacy creation inherits its historically active project");
   assert.equal(lookup("unknown-target"),"","missing provenance fails closed");
-  const claim=(id,project="presentation-project",manual=true)=>Number(sqlite.prepare(claimSql).run(
+  const claim=(id,manual=true)=>Number(sqlite.prepare(claimSql).run(
     `${id}:attempt:1`,now,"2099-01-01T00:00:00.000Z","{}",now,id,owner,stream,now,now,
-    Number(manual),project,project,
+    `${id}:original`,"{}",Number(manual),
   ).changes);
 
+  sqlite.prepare("UPDATE document_jobs SET correlation_id='racing-attempt' WHERE job_id='presentation-one'").run();
+  assert.equal(claim("presentation-one"),0,"a concurrent attempt must keep its provider correlation");
+  sqlite.prepare("UPDATE document_jobs SET correlation_id='presentation-one:original',result_json='{\"checkpoint\":\"new\"}' WHERE job_id='presentation-one'").run();
+  assert.equal(claim("presentation-one"),0,"a concurrent paid checkpoint must not be overwritten");
+  sqlite.prepare("UPDATE document_jobs SET result_json='{}' WHERE job_id='presentation-one'").run();
   assert.equal(claim("presentation-one"),1,"a verified other-project video cannot starve a manual presentation");
   assert.equal(claim("presentation-two"),0,"presentations in the same project must remain serialized");
   sqlite.prepare("UPDATE document_jobs SET status='completed' WHERE job_id='presentation-one'").run();
-  assert.equal(claim("presentation-two","presentation-project",false),0,"the exception applies only to manual presentations");
-  assert.equal(claim("presentation-two",""),0,"an unknown target project must not bypass any active job");
+  assert.equal(claim("presentation-two",false),0,"the exception applies only to manual presentations");
+  assert.equal(claim("unknown-target"),0,"an unknown target project must not bypass any active job");
 
   add("same-project-video","presentation-one","render_document","running","video");
   assert.equal(claim("presentation-two"),0,"a same-project video remains an execution boundary");

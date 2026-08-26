@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import worker from "../dist/server/index.js";
+import { priceFalIdeogramImageBreakdownMicrousd, priceTextUsageMicrousd } from "../worker/replay-cost.ts";
 
 const workspaceRoot = new URL("../", import.meta.url).href;
 const sourceResolution = registerHooks({
@@ -113,7 +114,7 @@ async function routeFixture() {
   return { sqlite, env, route, savedMedia };
 }
 
-async function admitStoryboard(fixture) {
+async function admitStoryboard(fixture, itemCount = 4) {
   const response = await fixture.route("", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -124,7 +125,7 @@ async function admitStoryboard(fixture) {
       payload: {
         artifactKind: "storyboard",
         productionMode: "manual",
-        itemCount: 4,
+        itemCount,
         paidMediaConfirmed: true,
         requestKey: "four-frame-safe-storyboard-continuation",
       },
@@ -298,3 +299,109 @@ test("owner safely continues a four-frame storyboard after one rejected image wh
     provider.restore();
   }
 });
+
+for (const interruptAcceptedFrame of [false, true]) {
+  test(`eight-frame storyboard ${interruptAcceptedFrame ? "resumes an accepted frame" : "completes in one foreground run"} without duplicate calls or lost costs`, async () => {
+    const fixture = await routeFixture();
+    const provider = providerMock();
+    const baseFetch = globalThis.fetch;
+    let plannerCalls = 0;
+    let imagePosts = 0;
+    let interrupted = false;
+    let lastPaidCheckpoint;
+    const basePut = fixture.env.MEDIA.put;
+    fixture.env.MEDIA.put = async (...args) => {
+      await basePut(...args);
+      const row = fixture.sqlite.prepare("SELECT result_json FROM document_jobs ORDER BY requested_at DESC LIMIT 1").get();
+      lastPaidCheckpoint = JSON.parse(row.result_json);
+    };
+    const plan = {
+      ...storyboardPlan,
+      summary: "Eight ordered visual scenes retain the same approved creative direction.",
+      items: Array.from({ length: 8 }, (_, index) => ({
+        ...storyboardPlan.items[index % 4],
+        title: `Distinct storyboard moment ${index + 1}`,
+        body: [
+          "An overwhelmed creator confronts crowded controls while unfinished deliverables surround them.",
+          "Nine specialist perspectives converge around evidence, revealing calm beneath product complexity.",
+          "A spacious Canvas reveals forty four objects organized with effortless clarity.",
+          "Existing decisions and documents connect only through explicitly confirmed context groups.",
+          "One contextual next action guides completed work toward its intended outcome.",
+          "A clear consent checkpoint discloses source, provider, cost, and explicit approval.",
+          "An independent reviewer approves the exact revision before trustworthy delivery begins.",
+          "Seven expressive output formats emerge from one explicit, governed creative direction.",
+        ][index],
+        image_prompt: `Editorial scene ${index + 1}: ${storyboardPlan.items[index % 4].image_prompt}`,
+      })),
+    };
+    globalThis.fetch = async (input, init = {}) => {
+      const url = String(input);
+      if (url.endsWith("/responses")) {
+        plannerCalls += 1;
+        return Response.json({ id: "eight-frame-planner", model: "gpt-5.6-terra", output_text: JSON.stringify(plan), usage: { input_tokens: 400, output_tokens: 200, total_tokens: 600 } });
+      }
+      if (url === providerEndpoint && init.method === "POST") {
+        imagePosts += 1;
+        assert.ok(imagePosts <= 8, "an eight-frame run must not purchase a ninth frame");
+        return Response.json({ request_id: `ordinary-frame-${imagePosts}`, status: "COMPLETED" });
+      }
+      if (url.endsWith("/status?logs=1")) return Response.json({ status: "COMPLETED" });
+      if (url === queueRoot("ordinary-frame-2") && interruptAcceptedFrame && !interrupted) {
+        interrupted = true;
+        throw new TypeError("Interrupted after the second frame was accepted");
+      }
+      return baseFetch(input, init);
+    };
+    try {
+      const admitted = await admitStoryboard(fixture, 8);
+      let response = await fixture.route(`${admitted.jobId}/run`, { method: "POST" });
+      assert.equal(response.status, 200, await response.clone().text());
+      let job = (await response.json()).job;
+      const originalTokenId = job.result.reservationId ?? lastPaidCheckpoint.reservationId;
+      const originalCostId = job.result.costReservationId ?? lastPaidCheckpoint.costReservationId;
+      if (interruptAcceptedFrame) {
+        assert.equal(job.status, "failed", JSON.stringify(job));
+        assert.equal(job.result.providerJobId, "ordinary-frame-2");
+        assert.equal(job.result.renderedItems.length, 1);
+        assert.equal(imagePosts, 2);
+        assert.equal(reservationState(fixture, originalTokenId, "budget_reservations").status, "active");
+        assert.equal(reservationState(fixture, originalCostId, "cost_budget_reservations").status, "executing");
+        const retried = await fixture.route(`${admitted.jobId}/retry`, { method: "POST" });
+        assert.equal(retried.status, 202, await retried.clone().text());
+        const queued = (await retried.json()).job;
+        assert.equal(queued.result.reservationId, originalTokenId);
+        assert.equal(queued.result.costReservationId, originalCostId);
+        response = await fixture.route(`${admitted.jobId}/run`, { method: "POST" });
+        assert.equal(response.status, 200, await response.clone().text());
+        job = (await response.json()).job;
+      }
+      assert.equal(job.status, "completed", JSON.stringify(job));
+      assert.equal(plannerCalls, 1, "the paid plan must be reused on recovery");
+      assert.equal(imagePosts, 8, "each distinct frame is submitted exactly once");
+      assert.equal(fixture.savedMedia.size, 8);
+      const receipts = Object.values(lastPaidCheckpoint.providerSubmissions);
+      assert.equal(receipts.length, 9);
+      assert.ok(receipts.every((receipt) => receipt.status === "completed"));
+      const correlation = fixture.sqlite.prepare("SELECT correlation_id FROM document_jobs WHERE job_id=?").get(admitted.jobId).correlation_id;
+      const completedEvent = fixture.sqlite.prepare("SELECT payload FROM events WHERE type='DocumentRenderCompleted' AND correlation_id=?").get(correlation);
+      const artifact = JSON.parse(completedEvent.payload);
+      const content = JSON.parse(fixture.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(artifact.content_ref).content);
+      assert.equal(content.items.length, 8);
+      assert.equal(lastPaidCheckpoint.renderedItems.length, 7, "the first seven frames precede the eighth frame's storage checkpoint");
+      for (const frame of lastPaidCheckpoint.renderedItems) {
+        assert.ok(receipts.some((receipt) => receipt.clientRequestId === frame.provider_submission_id && receipt.providerRequestId === frame.provider_request_id), "saved frames retain their original canonical submission identity");
+      }
+      const plannerCost = priceTextUsageMicrousd("gpt-5.6-terra", { inputTokens: 400, outputTokens: 200, totalTokens: 600 });
+      const frameCost = priceFalIdeogramImageBreakdownMicrousd("ideogram/v4/fast", 1024, 1024, "BALANCED", "Medium").totalMicrousd;
+      const cost = fixture.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE reservation_id=?").get(originalCostId);
+      assert.equal(cost.status, "settled");
+      assert.equal(cost.used_microusd, plannerCost + 8 * frameCost, "earlier retained frames and the resumed frame are billed exactly once");
+      assert.equal(reservationState(fixture, originalTokenId, "budget_reservations").status, "settled");
+      for (const table of ["budget_reservations", "cost_budget_reservations"]) {
+        assert.equal(fixture.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE owner_id=? AND operation='document-render:storyboard'`).get(ownerId).count, 1);
+      }
+    } finally {
+      provider.restore();
+    }
+  });
+}

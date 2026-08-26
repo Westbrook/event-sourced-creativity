@@ -325,7 +325,9 @@ export async function generateCreativeAudio(env: WorkerEnv, prompt: string, opti
     if (media.protocol !== "https:" || media.hostname !== "fal.media" && !media.hostname.endsWith(".fal.media")) throw providerError("fal_audio_url_untrusted", "Fal returned audio outside its trusted media domain; that location was not requested.", submittedPrompt, { requestId: providerJobId, status: 502, action: "contact_support" });
     await options.onStage?.("downloading", "Saving the generated audio to private project storage.");
     let downloaded: Response;
-    try { downloaded = await fetch(media.toString(), { signal: options.signal, redirect: "error" }); }
+    // Workers support manual/follow only. Manual also keeps redirects from
+    // escaping the trusted media host; the non-2xx check below rejects them.
+    try { downloaded = await fetch(media.toString(), { signal: options.signal, redirect: "manual" }); }
     catch (error) { throw new ProviderRequestError({ ...classifyProviderFailure(error), requestId: providerJobId }, submittedPrompt); }
     if (!downloaded.ok) throw providerError("fal_audio_download_failed", "Fal completed the audio request but its media could not be downloaded. Resume the retained provider request.", submittedPrompt, { requestId: providerJobId, retryable: true, status: downloaded.status, category: "server" });
     const advertised = Number(audio.file_size ?? downloaded.headers.get("content-length") ?? 0);

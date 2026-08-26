@@ -1,6 +1,7 @@
 import { normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
 import { AUDIO_ADAPTER_CONTRACT, audioAdapterContractForModel, estimateAudioProviderCostMicrousd, normalizeAudioRequestProfile } from "../src/model/audio.ts";
 import { priceFalIdeogramImageBreakdownMicrousd, priceTextUsageBreakdownMicrousd, type FalIdeogramRenderingSpeed, type ProviderCostBreakdown, type ProviderUsage } from "./replay-cost.ts";
+import { providerSubmissions } from "../src/model/provider-submission.ts";
 
 type Checkpoint = Record<string, unknown>;
 type PlannerUsageEvent = { type?: string; payload: Checkpoint };
@@ -125,7 +126,8 @@ export function interruptedDocumentJobUsage(
   request: Checkpoint = {},
   options: { plannerAlreadyRecorded?: boolean; plannerTokensAlreadyRecorded?: boolean; plannerCostAlreadyRecorded?: boolean; plannerCostAlreadyRecordedMicrousd?:number } = {},
 ): InterruptedDocumentJobUsage {
-  const plannerUsage = usageFrom(checkpoint.plannerUsage);
+  const paidPlanning=providerSubmissions(checkpoint).filter((receipt)=>receipt.operation==="planning"&&receipt.status==="completed");
+  const plannerUsage = paidPlanning.length?paidPlanning.reduce((total,receipt)=>({inputTokens:total.inputTokens+positiveInteger(receipt.inputTokens),outputTokens:total.outputTokens+positiveInteger(receipt.outputTokens),totalTokens:total.totalTokens+positiveInteger(receipt.totalTokens)}),usageFrom(null)):usageFrom(checkpoint.plannerUsage);
   const plannerModel = String(checkpoint.plannerModel ?? "gpt-5.6-terra");
   const plannerResponseId = String(checkpoint.plannerResponseId ?? "");
   const billablePlannerUsage = options.plannerAlreadyRecorded||options.plannerTokensAlreadyRecorded ? usageFrom(null) : plannerUsage;
@@ -133,13 +135,19 @@ export function interruptedDocumentJobUsage(
   const prepaidSceneIds = new Set(Array.isArray(checkpoint.productionPrepaidSceneIds) ? checkpoint.productionPrepaidSceneIds.map(String) : []);
   const sceneReceipts = checkpointReceipts(checkpoint.productionSceneReceipts);
   const frameReceipts = checkpointReceipts(checkpoint.productionFrameReceipts);
+  const paid=providerSubmissions(checkpoint);
+  const knownCost=(record:Checkpoint,fallback:number)=>{
+    const receipt=paid.find((entry)=>entry.status==="completed"&&(record.providerSubmissionId===entry.clientRequestId
+      ||entry.providerRequestId&&(record.providerJobId===entry.providerRequestId||record.provider_request_id===entry.providerRequestId)));
+    return receipt&&Number.isFinite(receipt.costMicrousd)?positiveInteger(receipt.costMicrousd):fallback;
+  };
   const anchor = checkpoint.productionAnchor && typeof checkpoint.productionAnchor === "object" && !Array.isArray(checkpoint.productionAnchor)
     ? checkpoint.productionAnchor as Checkpoint
     : null;
   const prepaidAnchor = checkpoint.productionPrepaidAnchor === true || prepaidSceneIds.size > 0;
   const anchorUsage = anchor && !prepaidAnchor ? usageFrom(anchor.usage) : usageFrom(null);
   const anchorCostMicrousd = anchor && !prepaidAnchor
-    ? Object.hasOwn(anchor, "costMicrousd") ? positiveInteger(anchor.costMicrousd) : 500_000
+    ? knownCost(anchor,Object.hasOwn(anchor, "costMicrousd") ? positiveInteger(anchor.costMicrousd) : 500_000)
     : 0;
 
   let inputTokens = billablePlannerUsage.inputTokens + anchorUsage.inputTokens;
@@ -151,7 +159,7 @@ export function interruptedDocumentJobUsage(
     inputTokens += usage.inputTokens;
     outputTokens += usage.outputTokens;
     totalTokens += usage.totalTokens;
-    frameCostMicrousd += positiveInteger(frame.costMicrousd);
+    frameCostMicrousd += knownCost(frame,positiveInteger(frame.costMicrousd));
   }
 
   const sceneCostMicrousd = sceneReceipts.reduce((total, scene) => {
@@ -162,11 +170,11 @@ export function interruptedDocumentJobUsage(
       ? parameters.resolution
       : VIDEO_ADAPTER_CONTRACT.defaultResolution;
     const estimated = positiveInteger(scene.durationSeconds) * VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[resolution];
-    return total + (Object.hasOwn(scene, "costMicrousd") ? positiveInteger(scene.costMicrousd) : estimated);
+    return total + knownCost(scene,Object.hasOwn(scene, "costMicrousd") ? positiveInteger(scene.costMicrousd) : estimated);
   }, 0);
 
   const singleVideoCostMicrousd = checkpoint.providerJobId && !sceneReceipts.length && request.artifactKind === "video"
-    ? Math.max(0, normalizeVideoDurationSeconds(request.videoSeconds) * VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution] - positiveInteger(checkpoint.prepaidProviderCostMicrousd))
+    ? Math.max(0, knownCost(checkpoint,normalizeVideoDurationSeconds(request.videoSeconds) * VIDEO_ADAPTER_CONTRACT.publishedCostPerSecondMicrousd[VIDEO_ADAPTER_CONTRACT.defaultResolution]) - positiveInteger(checkpoint.prepaidProviderCostMicrousd))
     : 0;
   let acceptedAudioCostMicrousd=AUDIO_ADAPTER_CONTRACT.publishedCostMicrousd;
   if(checkpoint.providerJobId&&request.artifactKind==="audio"){
@@ -183,8 +191,18 @@ export function interruptedDocumentJobUsage(
   }
   const singleAudioCostMicrousd=checkpoint.providerJobId&&request.artifactKind==="audio"
     ?Math.max(0,acceptedAudioCostMicrousd-positiveInteger(checkpoint.prepaidProviderCostMicrousd)):0;
-  const plannerCostMicrousd = remainingDocumentPlannerCost(plannerModel,costedPlannerUsage,options.plannerCostAlreadyRecordedMicrousd).totalMicrousd;
-  const totalCostMicrousd = plannerCostMicrousd + sceneCostMicrousd + frameCostMicrousd + anchorCostMicrousd + singleVideoCostMicrousd + singleAudioCostMicrousd;
+  // The generic boundary can survive a crash before a frame/anchor receipt is saved.
+  // Count each purchase once, never once per representation of the same receipt.
+  const represented=[...frameReceipts,...sceneReceipts,...(anchor?[anchor]:[])];
+  const unattached=providerSubmissions(checkpoint).filter((receipt)=>receipt.operation!=="planning"&&receipt.status==="completed"
+    &&!(receipt.unitId==="continuity-anchor"&&prepaidAnchor)&&!prepaidSceneIds.has(String(receipt.unitId??"").replace(/^scene:/,""))
+    &&!represented.some((item)=>item.providerSubmissionId===receipt.clientRequestId||item.provider_submission_id===receipt.clientRequestId
+      ||receipt.providerRequestId&&(item.providerJobId===receipt.providerRequestId||item.provider_request_id===receipt.providerRequestId))
+    &&!(receipt.operation!=="image"&&receipt.providerRequestId&&checkpoint.providerJobId===receipt.providerRequestId));
+  for(const receipt of unattached){inputTokens+=positiveInteger(receipt.inputTokens);outputTokens+=positiveInteger(receipt.outputTokens);totalTokens+=positiveInteger(receipt.totalTokens);}
+  const unattachedMediaCostMicrousd=unattached.reduce((total,receipt)=>total+positiveInteger(receipt.costMicrousd),0);
+  const plannerCostMicrousd = paidPlanning.length?options.plannerAlreadyRecorded||options.plannerCostAlreadyRecorded?0:Math.max(0,paidPlanning.reduce((total,receipt)=>total+positiveInteger(receipt.costMicrousd),0)-positiveInteger(options.plannerCostAlreadyRecordedMicrousd)):remainingDocumentPlannerCost(plannerModel,costedPlannerUsage,options.plannerCostAlreadyRecordedMicrousd).totalMicrousd;
+  const totalCostMicrousd = plannerCostMicrousd + sceneCostMicrousd + frameCostMicrousd + anchorCostMicrousd + singleVideoCostMicrousd + singleAudioCostMicrousd + unattachedMediaCostMicrousd;
 
   return {
     plannerModel,

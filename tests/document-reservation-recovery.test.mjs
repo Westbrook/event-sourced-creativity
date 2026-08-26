@@ -234,6 +234,15 @@ test("retains exact image-anchor receipts and never bills prepaid production wor
   assert.equal(prepaid.totalCostMicrousd,0);
 });
 
+test("generic planning receipts supersede a stale per-page aggregate after an interrupted repair",()=>{
+  const planning=(id,input,output)=>({clientRequestId:id,provider:"openai",operation:"planning",model:"gpt-5.6-terra",status:"completed",providerRequestId:id,inputTokens:input,outputTokens:output,totalTokens:input+output,costMicrousd:input*2+output*12});
+  const checkpoint={plannerModel:"gpt-5.6-terra",plannerResponseId:"first",plannerUsage:{inputTokens:1000,outputTokens:2000,totalTokens:3000},providerSubmissionProtocol:1,providerSubmissions:{first:planning("first",1000,1000),second:planning("second",1000,1000),repair:planning("repair",500,500)}};
+  const usage=interruptedDocumentJobUsage(checkpoint,{artifactKind:"short_story"});
+  assert.equal(usage.totalTokens,5000);assert.equal(usage.plannerCostMicrousd,35000);
+  const remainder=interruptedDocumentJobUsage(checkpoint,{artifactKind:"short_story"},{plannerTokensAlreadyRecorded:true,plannerCostAlreadyRecordedMicrousd:30000});
+  assert.equal(remainder.totalTokens,0);assert.equal(remainder.plannerCostMicrousd,5000);
+});
+
 test("planner token receipts, dollar receipts, and partially covered costs remain independent",()=>{
   const checkpoint={plannerModel:"gpt-5.6-terra",plannerResponseId:"planner-partial",
     plannerUsage:{inputTokens:10_928,outputTokens:5_853,totalTokens:16_781}};
@@ -380,7 +389,7 @@ test("allows recovery of an internal reservation conflict without reopening a re
 });
 
 for(const cachedPlan of [true,false]){
-  test(`planner-only interrupted recovery ${cachedPlan?"reuses the paid draft":"accounts for an interrupted page before replanning"}`,async()=>{
+  test(`planner-only interrupted recovery ${cachedPlan?"reuses the paid draft":"settles the paid response without purchasing a replacement"}`,async()=>{
     const worker=await integratedProductionWorker();
     const jobId=cachedPlan?"planner-cached":"planner-restarted";
     const fixture=await integratedInterruptedRender(worker,{jobId,artifactKind:"short_story",paidProvider:false,cachedPlan});
@@ -396,25 +405,26 @@ for(const cachedPlan of [true,false]){
     try{
       assert.equal((await worker.request("/api/document-jobs")).status,200);
       await worker.drainBackground();
+      assert.equal((await worker.request(`/api/document-jobs/${jobId}/run`,{method:"POST"})).status,200);
       const job=worker.sqlite.prepare("SELECT status,error_message FROM document_jobs WHERE job_id=?").get(jobId);
-      assert.equal(job.status,"completed",job.error_message??"planner recovery should finish");
-      assert.equal(calls.length,cachedPlan?0:1,"a retained valid draft must not call the planner again");
+      assert.equal(job.status,cachedPlan?"completed":"failed",job.error_message??"planner recovery should finish");
+      if(!cachedPlan)assert.equal(job.error_message,"provider_result_recovery_unavailable");
+      assert.equal(calls.length,0,"a known paid response must never be repurchased after interruption");
       assert.deepEqual({...worker.sqlite.prepare("SELECT status,used_tokens FROM budget_reservations WHERE reservation_id=?").get(fixture.token.reservationId)},
         {status:"settled",used_tokens:oldUsage.totalTokens});
       assert.deepEqual({...worker.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE reservation_id=?").get(fixture.cost.reservationId)},
         {status:"settled",used_microusd:oldUsage.totalCostMicrousd});
       const newToken=worker.sqlite.prepare("SELECT status,used_tokens FROM budget_reservations WHERE owner_id=? AND reservation_id<>?").get(fixture.owner,fixture.token.reservationId);
       const newCost=worker.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE owner_id=? AND reservation_id<>?").get(fixture.owner,fixture.cost.reservationId);
-      assert.equal(newToken.status,cachedPlan?"released":"settled");
-      assert.equal(newCost.status,cachedPlan?"released":"settled");
-      assert.equal(newToken.used_tokens,cachedPlan?0:newPlannerUsage.totalTokens);
+      assert.equal(newToken,undefined,"recovery retains the original token reservation");
+      assert.equal(newCost,undefined,"recovery retains the original cost reservation");
       const oldReceipts=worker.sqlite.prepare("SELECT payload FROM events WHERE stream_id=? AND type='GenerationUsageRecorded' AND json_extract(payload,'$.planner_response_id')=?")
         .all(fixture.stream,fixture.checkpoint.plannerResponseId).map((event)=>JSON.parse(event.payload));
       assert.equal(oldReceipts.reduce((total,event)=>total+Number(event.total_tokens??0),0),oldUsage.totalTokens,"the interrupted planner response is billed exactly once");
       assert.equal(oldReceipts.reduce((total,event)=>total+Number(event.cost_microusd??0),0),oldUsage.totalCostMicrousd);
       assert.equal((await readBudgets(worker.environment,fixture.owner)).user.reserved,0);
       assert.equal((await readCostBudgets(worker.environment,fixture.owner)).user.reservedMicrousd,0);
-      assert.equal((await readBudgets(worker.environment,fixture.owner)).user.used,oldUsage.totalTokens+(cachedPlan?0:newPlannerUsage.totalTokens));
+      assert.equal((await readBudgets(worker.environment,fixture.owner)).user.used,oldUsage.totalTokens);
     }finally{globalThis.fetch=originalFetch;}
   });
 }
@@ -428,6 +438,7 @@ test("a stale committing render fails safely and releases both reservations with
   try{
     assert.equal((await worker.request("/api/document-jobs")).status,200);
     await worker.drainBackground();
+    assert.equal((await worker.request("/api/document-jobs/stale-commit/run",{method:"POST"})).status,200);
     const job=worker.sqlite.prepare("SELECT status,error_message FROM document_jobs WHERE job_id=?").get("stale-commit");
     assert.deepEqual({...job},{status:"failed",error_message:"execution_interrupted"});
     assert.equal(providerCalls,0);
@@ -718,6 +729,7 @@ test("the bundled worker resumes a submitted scene without a duplicate provider 
   try{
     assert.equal((await request("/api/document-jobs")).status,200);
     await drainBackground();
+    assert.equal((await request(`/api/document-jobs/${jobId}/run`,{method:"POST"})).status,200);
     const job=sqlite.prepare("SELECT status,correlation_id,error_message FROM document_jobs WHERE job_id=?").get(jobId);
     assert.equal(job.status,"completed",job.error_message??"recovered job should finish");
     assert.equal(job.correlation_id,`${jobId}:attempt:2`);

@@ -1,8 +1,9 @@
 import type { WorkerEnv } from "./runtime.ts";
 import { generateCreativeImage as generateOpenAICreativeImage, type CreativeImageOptions } from "./openai-adapter.ts";
-import { FAL_IDEOGRAM_ADAPTER_ID, FAL_IDEOGRAM_ADAPTER_VERSION, generateFalCreativeImage } from "./fal-image-adapter.ts";
+import { FAL_IDEOGRAM_ADAPTER_ID, FAL_IDEOGRAM_ADAPTER_VERSION, falImageModelForRequest, generateFalCreativeImage, type FalImageProviderReceipt } from "./fal-image-adapter.ts";
 import { ProviderRequestError } from "./provider-errors.ts";
 import { priceImageUsageBreakdownMicrousd } from "./replay-cost.ts";
+import { definitiveProviderRejection, type PaidProviderSubmission } from "../src/model/provider-submission.ts";
 
 export type ImageAdapterProvider="openai"|"fal-ideogram";
 export type ImageAdapterSelection={provider:ImageAdapterProvider;providerName:"openai"|"fal";model:string;adapterId:string;adapterVersion:string;reason:string;capabilities:string[]};
@@ -20,8 +21,38 @@ export function selectImageAdapter(env:WorkerEnv,options:CreativeImageOptions={}
 
 export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot:Record<string,unknown>,direction:Record<string,unknown>,options:CreativeImageOptions={}){
   const selection=selectImageAdapter(env,options);
-  if(selection.provider==="fal-ideogram")return generateFalCreativeImage(env,userId,snapshot,direction,options);
-  if(!env.OPENAI_API_KEY)throw new ProviderRequestError({code:"image_provider_not_configured",category:"authentication",scope:"account",action:"check_credentials",message:`The selected image request cannot use Fal (${selection.reason}), and the OpenAI image adapter is not configured.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:503});
-  const result=await generateOpenAICreativeImage(env,userId,snapshot,direction,options);
-  return{...result,provider:"openai" as const,adapterId:"openai-image",adapterVersion:"v5",providerRequestId:null,providerMediaUrl:null,costBreakdown:priceImageUsageBreakdownMicrousd(result.model,result.usage,result.usedReference),costPrecision:"provider-token-receipt" as const,adapterSelectionReason:selection.reason};
+  const falOptions=options as CreativeImageOptions&{providerReceipt?:FalImageProviderReceipt;onProviderReceipt?:(receipt:FalImageProviderReceipt)=>void|Promise<void>};
+  let submission:PaidProviderSubmission={clientRequestId:options.providerClientRequestId??`forma-image-${crypto.randomUUID()}`,provider:selection.providerName,operation:"image",model:selection.provider==="fal-ideogram"?falImageModelForRequest(env,options.quality,options.references??[],direction):selection.model,status:falOptions.providerReceipt?"accepted":"pending",...(falOptions.providerReceipt?{providerRequestId:falOptions.providerReceipt.providerRequestId}:{})};
+  let attempted=false;
+  const observedOptions={...options,providerClientRequestId:submission.clientRequestId,
+    ...(options.onProviderSubmission?{onProviderSubmission:async(receipt:PaidProviderSubmission)=>{submission=receipt;await options.onProviderSubmission?.(receipt);}}:{}),
+    onStage:async(stage:string,message:string)=>{
+      // Validation and moderation run before this exact paid-dispatch boundary.
+      if(stage==="provider-submit"){await options.onProviderSubmission?.(submission);attempted=true;}
+      await options.onStage?.(stage,message);
+    },
+    onProviderReceipt:async(receipt:FalImageProviderReceipt)=>{
+      submission={...submission,status:"accepted",providerRequestId:receipt.providerRequestId};
+      await options.onProviderSubmission?.(submission);
+      await falOptions.onProviderReceipt?.(receipt);
+    },
+  };
+  try{
+    const result=await (async()=>{
+      if(selection.provider==="fal-ideogram")return generateFalCreativeImage(env,userId,snapshot,direction,observedOptions);
+      if(!env.OPENAI_API_KEY)throw new ProviderRequestError({code:"image_provider_not_configured",category:"authentication",scope:"account",action:"check_credentials",message:`The selected image request cannot use Fal (${selection.reason}), and the OpenAI image adapter is not configured.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:503});
+      const image=await generateOpenAICreativeImage(env,userId,snapshot,direction,observedOptions);
+      return{...image,provider:"openai" as const,adapterId:"openai-image",adapterVersion:"v5",providerMediaUrl:null,costBreakdown:priceImageUsageBreakdownMicrousd(image.model,image.usage,image.usedReference),costPrecision:"provider-token-receipt" as const,adapterSelectionReason:selection.reason};
+    })();
+    const alreadyRecorded=submission.status==="completed";
+    submission={...submission,status:"completed",...(result.providerRequestId?{providerRequestId:result.providerRequestId}:{}),costMicrousd:result.costBreakdown.totalMicrousd,inputTokens:result.usage.inputTokens,outputTokens:result.usage.outputTokens,totalTokens:result.usage.totalTokens};
+    if(!alreadyRecorded)await options.onProviderSubmission?.(submission);
+    return{...result,providerSubmissionId:submission.clientRequestId};
+  }catch(error){
+    // A later poll/download rejection cannot undo an already accepted purchase.
+    if(attempted&&submission.status==="pending"&&error instanceof ProviderRequestError&&definitiveProviderRejection(Number(error.detail.httpStatus))){
+      await options.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
+    }
+    throw error;
+  }
 }

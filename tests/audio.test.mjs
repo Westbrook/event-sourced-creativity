@@ -382,13 +382,46 @@ test("Lyria recovery resumes its application-level queue without buying another 
     calls.push({ url, init });
     if (url.endsWith("/status?logs=1")) return Response.json({ status: "COMPLETED" });
     if (url === "https://queue.fal.run/fal-ai/lyria3/requests/req-existing") return Response.json({ audio: "https://fal.media/theme.mp3" });
-    if (url === "https://fal.media/theme.mp3") return new Response(new Uint8Array([1]), { headers: { "content-type": "audio/mpeg" } });
+    if (url === "https://fal.media/theme.mp3") {
+      if (init.redirect === "error") throw new TypeError('Invalid redirect value, must be one of "follow" or "manual"');
+      assert.equal(init.redirect, "manual", "The edge-compatible download must not follow redirects");
+      assert.equal(init.headers, undefined, "Provider credentials must not be sent to media storage");
+      return new Response(new Uint8Array([1]), { headers: { "content-type": "audio/mpeg" } });
+    }
     throw new Error(`Unexpected request ${url}`);
   };
   try {
     await generateCreativeAudio({ FAL_KEY: "test-secret" }, "Original music", { providerJobId: "req-existing" });
     assert.equal(calls.some((call) => call.init.method === "POST"), false);
     assert.ok(calls[0].url.startsWith("https://queue.fal.run/fal-ai/lyria3/requests/req-existing/status"));
+  } finally { globalThis.fetch = previous; }
+});
+
+test("retained audio recovery rejects redirects without following them or repurchasing music", async () => {
+  const previous = globalThis.fetch;
+  try {
+    for (const status of [301, 302, 303, 307, 308]) {
+      const calls = [];
+      globalThis.fetch = async (value, init = {}) => {
+        const url = String(value);
+        calls.push({ url, method: init.method ?? "GET", redirect: init.redirect });
+        if (init.method === "POST") throw new Error("Recovery cannot submit another paid request");
+        if (url.endsWith("/req-retained-redirect/status?logs=1")) return Response.json({ status: "COMPLETED" });
+        if (url.endsWith("/req-retained-redirect")) return Response.json({ audio: "https://fal.media/redirect.mp3" });
+        if (url === "https://fal.media/redirect.mp3") {
+          assert.equal(init.redirect, "manual");
+          return new Response(null, { status, headers: { location: "https://untrusted.example/recording.mp3" } });
+        }
+        throw new Error("The redirect target must never be requested");
+      };
+      await assert.rejects(
+        generateCreativeAudio({ FAL_KEY: "test-secret" }, "Original music", { providerJobId: "req-retained-redirect" }),
+        (error) => error.detail?.code === "fal_audio_download_failed" && error.detail?.httpStatus === status && error.detail?.requestId === "req-retained-redirect",
+      );
+      assert.equal(calls.length, 3);
+      assert.ok(calls.every((call) => call.method === "GET"));
+      assert.ok(calls.every((call) => new URL(call.url).hostname !== "untrusted.example"));
+    }
   } finally { globalThis.fetch = previous; }
 });
 

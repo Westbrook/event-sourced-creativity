@@ -69,12 +69,23 @@ export const generationBudgetPreferenceKey = (userId: string, period: string, pr
 
 export const formatGenerationUsd = (microusd: number) => `$${(Math.max(0, Number(microusd) || 0) / 1_000_000).toFixed(2)}`;
 
-/** Reserve enough for bounded slideshow repair requests before touching monthly token budgets. */
-export function presentationTokenReservation(maximumProviderCalls = 2) {
+/** Reserve a bounded planning slice for full document context and one repair. */
+export function documentPlanningTokenReservation(maximumProviderCalls = 2) {
   return Math.max(128_000, 32_000 * Math.max(1, Math.ceil(Number(maximumProviderCalls) || 0)));
 }
 
+export function presentationTokenReservation(maximumProviderCalls = 2) {
+  return documentPlanningTokenReservation(maximumProviderCalls);
+}
+
+/** Media must not consume or masquerade as the separately reserved planning slice. */
+export function documentRenderTokenReservation(kind: string, itemCount = 1, maximumProviderCalls = 2) {
+  const media = kind === "storyboard" ? Math.max(1, safeAmount(itemCount)) * 24_000 : kind === "video" ? 24_000 : 0;
+  return documentPlanningTokenReservation(maximumProviderCalls) + media;
+}
+
 const PRESENTATION_SERVER_OWNED_CHECKPOINT_FIELDS = [
+  "providerSubmissionProtocol", "providerSubmissionLegacyUncertain", "providerSubmissions",
   "artifactId", "artifactPlan", "plannerUsage", "plannerResponseId", "plannerResponseIds", "plannerModel", "plannerLatencyMs", "plannerInput", "presentationProviderSubmission", "presentationProviderClientRequestId", "presentationCandidates", "presentationRecoveryOnly", "recoverablePresentationCandidate",
   "reservationId", "costReservationId", "costReservationPeriod", "costReservationMicrousd", "prepaidProviderCostMicrousd", "audioEstimatedCostMicrousd",
   "providerJobId", "providerRequestId", "providerModel", "providerStatusUrl", "providerResponseUrl", "providerCancelUrl", "storyboardProviderSubmission", "storyboardProviderRequestedAt", "storyboardProviderAcceptedAt", "storyboardSafeRecovery", "storyboardRejectedProviderReceipt", "videoInputReceipt", "audioInputReceipt", "renderedItems",

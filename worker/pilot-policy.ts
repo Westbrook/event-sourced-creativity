@@ -1,6 +1,7 @@
 import { appendAuditEvent, ensureSchema, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
 import { MICRO_USD_PER_USD } from "./replay-cost.ts";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./document-job-reservations.ts";
+import { hasUnsettledProviderSubmission, unsettledProviderSubmissionSql } from "../src/model/provider-submission.ts";
 import { readCanvasGovernance } from "./canvas-governance-policy.ts";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
 import { AUDIO_ADAPTER_CONTRACTS, audioAdapterContractForModel } from "../src/model/audio.ts";
@@ -428,18 +429,20 @@ async function terminalReservationJob(
 export async function settleInterruptedDocumentJobReservations(
   env: WorkerEnv,
   user: PilotUser,
-  job: Pick<DocumentReservationJob,"job_id"|"stream_id"|"document_id"|"correlation_id"|"request_json"|"result_json">,
+  job: Pick<DocumentReservationJob,"job_id"|"stream_id"|"document_id"|"correlation_id"|"request_json"|"result_json">&{kind?:string},
   options: { tokenReservationId?: string; costReservationId?: string; reason: string; automatic?: boolean } = { reason: "document_job_interrupted" },
 ) {
   const checkpoint=parseDocumentReservationJson(job.result_json);
   const request=parseDocumentReservationJson(job.request_json);
-  if(request.artifactKind==="storyboard"&&(checkpoint.storyboardProviderSubmission==="pending"||checkpoint.storyboardProviderSubmission==="confirmed"))return{settled:false,usedTokens:0,releasedTokens:0,usedMicrousd:0,releasedMicrousd:0};
+  const kind=job.kind;
+  const inconclusiveLegacyImage=(kind==="preview"||kind==="generate")&&checkpoint.providerSubmissionProtocol!==1;
+  if(inconclusiveLegacyImage||hasUnsettledProviderSubmission(checkpoint)||request.artifactKind==="storyboard"&&(checkpoint.storyboardProviderSubmission==="pending"||checkpoint.storyboardProviderSubmission==="confirmed"))return{settled:false,usedTokens:0,releasedTokens:0,usedMicrousd:0,releasedMicrousd:0};
   const billingUserId=user.billingUserId??user.userId;
   const tokenReservationId=String(options.tokenReservationId??checkpoint.reservationId??"");
   const costReservationId=String(options.costReservationId??checkpoint.costReservationId??"");
   const token=tokenReservationId?await budgetReservation(env,billingUserId,tokenReservationId):null;
   const cost=costReservationId?await costBudgetReservation(env,billingUserId,costReservationId):null;
-  const expectedOperation=`document-render:${String(request.artifactKind??"unknown")}`;
+  const expectedOperation=kind==="preview"?"image-preview":kind==="generate"?"image-generation":`document-render:${String(request.artifactKind??"unknown")}`;
   const jobCorrelation=(correlation:string)=>correlation===job.correlation_id||correlation===job.job_id||correlation.startsWith(`${job.job_id}:attempt:`);
   const ownedToken=token&&token.stream_id===user.streamId&&token.operation===expectedOperation&&jobCorrelation(token.correlation_id)&&token.status==="active"?token:null;
   const scopedCost=cost&&cost.stream_id===user.streamId&&cost.operation===expectedOperation&&jobCorrelation(cost.correlation_id)&&(cost.status==="active"||cost.status==="executing")?cost:null;
@@ -508,14 +511,15 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
 
   const active=await env.DB.prepare(`SELECT * FROM budget_reservations reservation
     WHERE reservation.owner_id=? AND reservation.stream_id=? AND reservation.status='active' AND reservation.created_at<=?
-      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND (job.status IN ('queued','running','committing') OR job.status IN ('failed','canceled') AND (json_extract(COALESCE(job.result_json,'{}'),'$.presentationProviderSubmission')='pending' OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='storyboard' AND json_extract(COALESCE(job.result_json,'{}'),'$.storyboardProviderSubmission') IN ('pending','confirmed') OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='audio' AND json_extract(COALESCE(job.result_json,'{}'),'$.audioProviderSubmission')='pending'))
+      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND (job.status IN ('queued','running','committing') OR job.status IN ('failed','canceled') AND (${unsettledProviderSubmissionSql("job.result_json")} OR json_extract(COALESCE(job.result_json,'{}'),'$.presentationProviderSubmission')='pending' OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='storyboard' AND json_extract(COALESCE(job.result_json,'{}'),'$.storyboardProviderSubmission') IN ('pending','confirmed') OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='audio' AND json_extract(COALESCE(job.result_json,'{}'),'$.audioProviderSubmission')='pending'))
         AND (job.correlation_id=reservation.correlation_id OR json_extract(COALESCE(job.result_json,'{}'),'$.reservationId')=reservation.reservation_id))
     ORDER BY reservation.created_at ASC LIMIT 100`).bind(billingUserId,user.streamId,cutoff,user.streamId,user.userId).all<BudgetReservationRow>();
 
   let released=0;let count=0;let releasedMicrousd=0;let costReservationCount=0;
   for(const row of active.results){
     const job=await terminalReservationJob(env,user,row.correlation_id,row.reservation_id);
-    if(job&&row.operation.startsWith("document-render:")){
+    if(job&&hasUnsettledProviderSubmission(parseDocumentReservationJson(job.result_json)))continue;
+    if(job&&(row.operation.startsWith("document-render:")||row.operation==="image-preview"||row.operation==="image-generation")){
       const settlement=await settleInterruptedDocumentJobReservations(env,user,job,{tokenReservationId:row.reservation_id,reason:"orphaned_failed_reservation_reconciled",automatic:true});
       if(!settlement.settled)continue;
       released+=settlement.releasedTokens;count+=1;releasedMicrousd+=settlement.releasedMicrousd;if(settlement.releasedMicrousd||settlement.usedMicrousd)costReservationCount+=1;
@@ -528,14 +532,14 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
   }
 
   const activeCosts=await env.DB.prepare(`SELECT * FROM cost_budget_reservations reservation
-    WHERE reservation.owner_id=? AND reservation.stream_id=? AND reservation.operation LIKE 'document-render:%'
+    WHERE reservation.owner_id=? AND reservation.stream_id=? AND (reservation.operation LIKE 'document-render:%' OR reservation.operation IN ('image-preview','image-generation'))
       AND reservation.status IN ('active','executing') AND reservation.created_at<=?
-      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND (job.status IN ('queued','running','committing') OR job.status IN ('failed','canceled') AND (json_extract(COALESCE(job.result_json,'{}'),'$.presentationProviderSubmission')='pending' OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='storyboard' AND json_extract(COALESCE(job.result_json,'{}'),'$.storyboardProviderSubmission') IN ('pending','confirmed') OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='audio' AND json_extract(COALESCE(job.result_json,'{}'),'$.audioProviderSubmission')='pending'))
+      AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND (job.status IN ('queued','running','committing') OR job.status IN ('failed','canceled') AND (${unsettledProviderSubmissionSql("job.result_json")} OR json_extract(COALESCE(job.result_json,'{}'),'$.presentationProviderSubmission')='pending' OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='storyboard' AND json_extract(COALESCE(job.result_json,'{}'),'$.storyboardProviderSubmission') IN ('pending','confirmed') OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='audio' AND json_extract(COALESCE(job.result_json,'{}'),'$.audioProviderSubmission')='pending'))
         AND (job.correlation_id=reservation.correlation_id OR json_extract(COALESCE(job.result_json,'{}'),'$.costReservationId')=reservation.reservation_id))
     ORDER BY reservation.created_at ASC LIMIT 100`).bind(billingUserId,user.streamId,cutoff,user.streamId,user.userId).all<CostBudgetReservationRow>();
   for(const row of activeCosts.results){
     const job=await terminalReservationJob(env,user,row.correlation_id,"",row.reservation_id);
-    if(!job)continue;
+    if(!job||hasUnsettledProviderSubmission(parseDocumentReservationJson(job.result_json)))continue;
     const settlement=await settleInterruptedDocumentJobReservations(env,user,job,{costReservationId:row.reservation_id,reason:"orphaned_failed_cost_reservation_reconciled",automatic:true});
     if(!settlement.settled)continue;
     released+=settlement.releasedTokens;if(settlement.usedTokens||settlement.releasedTokens)count+=1;
