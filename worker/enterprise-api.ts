@@ -1,4 +1,5 @@
 import { cancelProjectActorJobs, projectProviderSubmissionBlockers } from "./document-jobs-api.ts";
+import { unsettledProviderSubmissionSql } from "../src/model/provider-submission";
 import { ensureOrganizationKey, openOrganizationPayload, organizationEncryptionConfigured, OrganizationCryptoUnavailable, sealOrganizationPayload } from "./organization-crypto.ts";
 import { hasCapability, POLICY_VERSION, releaseBudget, releaseCostBudget, type PilotUser } from "./pilot-policy.ts";
 import { projectContextCookie, recordOrganizationAudit } from "./project-access.ts";
@@ -1092,8 +1093,8 @@ async function handleDeletion(request: Request, env: WorkerEnv, actor: PilotUser
       OR task.status='running' AND EXISTS(SELECT 1 FROM cost_budget_reservations cost WHERE cost.reservation_id=task.cost_reservation_id AND cost.owner_id=task.actor_user_id AND cost.status='executing')))` : "";
   const documentSubmissionGuard=` AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource
     JOIN document_jobs job ON job.job_id=resource.resource_id AND job.owner_id=resource.actor_user_id
-    WHERE resource.organization_id=? AND resource.resource_kind='job' AND job.kind='render_document'
-      AND job.status IN('queued','running','committing','failed','partial') AND(
+    WHERE resource.organization_id=? AND resource.resource_kind='job'
+      AND job.status IN('queued','running','committing','failed','partial') AND(${unsettledProviderSubmissionSql("job.result_json")} OR job.kind='render_document' AND(
         json_extract(job.request_json,'$.artifactKind')='slides' AND json_extract(COALESCE(job.result_json,'{}'),'$.presentationProviderSubmission')='pending'
         OR json_extract(job.request_json,'$.artifactKind')='audio' AND json_extract(COALESCE(job.result_json,'{}'),'$.audioProviderSubmission')='pending'
           AND COALESCE(json_extract(COALESCE(job.result_json,'{}'),'$.providerJobId'),'')=''
@@ -1104,7 +1105,7 @@ async function handleDeletion(request: Request, env: WorkerEnv, actor: PilotUser
           OR json_type(COALESCE(job.result_json,'{}'),'$.productionAnchor') IS NOT NULL
           OR json_extract(COALESCE(job.result_json,'{}'),'$.generationReceipt.provider_request_status') IN('submitted','submission_unknown')
           OR EXISTS(SELECT 1 FROM json_each(COALESCE(job.result_json,'{}'),'$.productionSceneReceipts') scene
-            WHERE json_extract(scene.value,'$.status') IN('submitted','completed')))))`;
+            WHERE json_extract(scene.value,'$.status') IN('submitted','completed'))))))`;
   const executingReservationGuard=` AND NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes scoped
     JOIN cost_budget_reservations cost ON cost.reservation_id=scoped.reservation_id AND cost.owner_id=scoped.actor_user_id
     WHERE scoped.reservation_kind='usd' AND scoped.organization_id=? AND cost.status='executing')`;

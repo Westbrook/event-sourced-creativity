@@ -233,6 +233,9 @@ test("an owner reconciles the exact already-paid Fal storyboard request and comp
 
   try {
     const failed = await failedUnknownStoryboard(fixture);
+    const originalCheckpoint = JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(failed.jobId).result_json);
+    const originalSubmission = Object.values(originalCheckpoint.providerSubmissions).find((entry) => entry.status === "pending");
+    assert.equal(originalSubmission.operation, "image");
     const originalReservations = reservationStates(fixture, failed);
     const originalCorrelation = fixture.sqlite.prepare("SELECT correlation_id FROM document_jobs WHERE job_id=?").get(failed.jobId).correlation_id;
     const failedEvent = fixture.sqlite.prepare("SELECT json_extract(payload,'$.prompt_ref') AS prompt_ref FROM events WHERE correlation_id=? AND type='DocumentRenderFailed'").get(originalCorrelation);
@@ -260,6 +263,9 @@ test("an owner reconciles the exact already-paid Fal storyboard request and comp
     assert.equal(reconciled.job.result.generationReceipt.source_transmission_status, "transmitted");
     assert.equal(reconciled.job.result.generationReceipt.settled_cost_microusd, null);
     assert.deepEqual(reservationStates(fixture, reconciled.job), originalReservations);
+    const reconciledCheckpoint = JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(failed.jobId).result_json);
+    assert.equal(reconciledCheckpoint.providerSubmissions[originalSubmission.clientRequestId].status, "accepted");
+    assert.equal(reconciledCheckpoint.providerSubmissions[originalSubmission.clientRequestId].providerRequestId, recoveredProviderJobId);
 
     const histories = provider.calls.filter((call) => call.url.startsWith(`${historyEndpoint}?`));
     assert.equal(histories.length, 1);
@@ -305,3 +311,31 @@ test("an owner reconciles the exact already-paid Fal storyboard request and comp
     provider.restore();
   }
 });
+
+for (const previousEvidence of ["submission", "frame"]) {
+  test(`provider reconciliation never reassigns a request already owned by a prior ${previousEvidence}`, async () => {
+    const fixture = await routeFixture();
+    const provider = providerMock(fixture);
+    try {
+      const failed = await failedUnknownStoryboard(fixture);
+      const checkpoint = JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(failed.jobId).result_json);
+      const pending = Object.values(checkpoint.providerSubmissions).find((entry) => entry.status === "pending");
+      if (previousEvidence === "submission") {
+        checkpoint.providerSubmissions["prior-paid-frame"] = { clientRequestId: "prior-paid-frame", provider: "fal", operation: "image", model: providerModel, unitId: "previous-unit", status: "completed", providerRequestId: recoveredProviderJobId, costMicrousd: 46516 };
+      } else {
+        checkpoint.renderedItems = [{ media_url: "/api/media/prior-frame", provider_request_id: recoveredProviderJobId, cost_microusd: 46516 }];
+        pending.unitId = "frame:2";
+      }
+      fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify(checkpoint), failed.jobId);
+      const response = await fixture.route(`${failed.jobId}/reconcile-provider`, { method: "POST" });
+      assert.equal(response.status, 409, await response.clone().text());
+      assert.equal((await response.json()).error, "provider_receipt_not_found");
+      const preserved = JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(failed.jobId).result_json);
+      assert.equal(preserved.providerSubmissions[pending.clientRequestId].status, "pending");
+      assert.equal(reservationStates(fixture, failed).cost, "executing");
+      assert.equal(provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST").length, 1);
+    } finally {
+      provider.restore();
+    }
+  });
+}

@@ -65,6 +65,7 @@ export type ProductionFrameReceipt = {
   narrativeOrder: number;
   generationOrder: number;
   status: "completed";
+  providerSubmissionId?: string;
   provider: string;
   providerJobId?: string;
   providerModel: string;
@@ -79,6 +80,7 @@ export type ProductionFrameReceipt = {
 };
 
 type ManagedProductionCallbacks = {
+  onProviderSubmission?: import("../src/model/provider-submission.ts").PaidProviderSubmissionObserver;
   signal?: AbortSignal;
   progress?: (stage: string, message: string, checkpoint?: ProductionCheckpoint) => void | Promise<void>;
   checkpoint?: (state: ProductionCheckpoint) => void;
@@ -404,7 +406,7 @@ export async function generateManagedArtifactDraft(
         signal: input.signal,
         ...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),
         onProviderAttempt:recordPaidAttempt,
-        onBeforeProviderAttempt:input.plannerPreflight,
+        onProviderSubmission:input.onProviderSubmission,onBeforeProviderAttempt:input.plannerPreflight,
       },
     });
     pages.push(result);
@@ -544,7 +546,7 @@ export async function generateManagedArtifactDraft(
       const repaired = await generateDocumentArtifact(env, ownerId, kind, {
         documentTitle: input.documentTitle,
         snapshot: combinedSceneSnapshot(input.snapshot, scenes),
-        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, outputLocale:presentationAudienceLocale,presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, audioProfile: input.audioProfile, sceneMedium: input.sceneMedium, sceneConfiguration: input.sceneConfiguration, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal,...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),onProviderAttempt:recordPaidAttempt,onBeforeProviderAttempt:input.plannerPreflight },
+        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, outputLocale:presentationAudienceLocale,presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, audioProfile: input.audioProfile, sceneMedium: input.sceneMedium, sceneConfiguration: input.sceneConfiguration, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal,...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),onProviderAttempt:recordPaidAttempt,onProviderSubmission:input.onProviderSubmission,onBeforeProviderAttempt:input.plannerPreflight },
       });
       pages[pageIndex] = repaired;
       attempts.push(repaired);
@@ -742,7 +744,7 @@ export async function renderManagedVideoProduction(
       scene: `${anchorScene.imagePrompt}. Preserve this target-scoped production identity, wardrobe, location, palette, lighting, and lens: ${JSON.stringify(continuity)}.`,
       palette: continuity.palette,
       next_moves: ["Preserve subject identity", "Carry visual continuity across every scene"],
-    }, { quality: "low", size: format.size, outputFormat: "jpeg", outputCompression: 82, references: reference, signal: input.signal });
+    }, { quality: "low", size: format.size, outputFormat: "jpeg", outputCompression: 82, references: reference, signal: input.signal, onProviderSubmission:receipt=>input.onProviderSubmission?.({...receipt,unitId:"continuity-anchor"}) });
     const stored = await storeGeneratedImage(env, ownerId, `${artifactId}-continuity-anchor`, image.bytes, image.model, image.mimeType, {
       artifactId,
       artifactRole: "production-continuity-anchor",
@@ -752,7 +754,7 @@ export async function renderManagedVideoProduction(
       providerMediaUrl: image.providerMediaUrl ?? "",
       rights: "account-generated",
     });
-    anchor = { mediaUrl: stored.url, mediaType: stored.mimeType, sceneId: anchorScene.id, contextGroupIds: anchorScene.contextGroupIds, source: "account-generated", rights: "account-generated", frameGuidance: "reference-image-not-native-frame-lock",usage:image.usage,costMicrousd:image.costBreakdown.totalMicrousd,costBreakdown:image.costBreakdown,provider:image.provider,providerModel:image.model,...(image.providerRequestId?{providerJobId:image.providerRequestId}:{}) };
+    anchor = { providerSubmissionId:image.providerSubmissionId, mediaUrl: stored.url, mediaType: stored.mimeType, sceneId: anchorScene.id, contextGroupIds: anchorScene.contextGroupIds, source: "account-generated", rights: "account-generated", frameGuidance: "reference-image-not-native-frame-lock",usage:image.usage,costMicrousd:image.costBreakdown.totalMicrousd,costBreakdown:image.costBreakdown,provider:image.provider,providerModel:image.model,...(image.providerRequestId?{providerJobId:image.providerRequestId}:{}) };
     imageUsage = addUsage(imageUsage, image.usage);
     costs.push(image.costBreakdown);
     await persist("The reusable production anchor is safely stored with account-generated provenance.");
@@ -826,6 +828,7 @@ export async function renderManagedVideoProduction(
         productionContinuity: { prohibitions: providerFacingProductionContinuity({ claims: production.claims.filter((claim) => !claim.contextGroupIds.length) }).prohibitions, scopedTargets },
         references,
         signal: input.signal,
+        onProviderSubmission:receipt=>input.onProviderSubmission?.({...receipt,unitId:`scene:${scene.id}`}),
         providerJobId: existing?.providerJobId,
         providerModel: existing?.providerModel,
         providerStatusUrl: existing?.providerStatusUrl,
@@ -965,7 +968,7 @@ export async function renderManagedStoryboardProduction(
         scene: item.image_prompt,
         palette: continuity.palette,
         next_moves: [scene.transitionIn, scene.transitionOut],
-      }, { quality: "low", size: frameFormat.size, outputFormat: "jpeg", outputCompression: 78, references, signal: input.signal });
+      }, { quality: "low", size: frameFormat.size, outputFormat: "jpeg", outputCompression: 78, references, signal: input.signal, onProviderSubmission:receipt=>input.onProviderSubmission?.({...receipt,unitId:`frame:${scene.id}`}) });
       const media = await storeGeneratedImage(env, ownerId, `${artifactId}-frame-${scene.narrativeOrder}`, image.bytes, image.model, image.mimeType, {
         artifactRole: "storyboard-frame",
         artifactId,
@@ -976,8 +979,9 @@ export async function renderManagedStoryboardProduction(
         providerMediaUrl: image.providerMediaUrl ?? "",
         rights: "account-generated",
       });
-      rendered.set(scene.id, { id: `${artifactId}-frame-${scene.narrativeOrder}`, scene_id: scene.id, sequence: scene.narrativeOrder, title: item.title, media_url: media.url, media_type: media.mimeType, width: image.width, height: image.height, provider: image.provider, provider_request_id: image.providerRequestId, generation_order: production.executionOrder.indexOf(scene.id) + 1, authored_reference_count: selectedApproved.length, inherited_reference_count: inheritedReference ? 1 : 0 });
+      rendered.set(scene.id, { id: `${artifactId}-frame-${scene.narrativeOrder}`, scene_id: scene.id, sequence: scene.narrativeOrder, title: item.title, media_url: media.url, media_type: media.mimeType, width: image.width, height: image.height, provider: image.provider, provider_request_id: image.providerRequestId, provider_submission_id:image.providerSubmissionId, generation_order: production.executionOrder.indexOf(scene.id) + 1, authored_reference_count: selectedApproved.length, inherited_reference_count: inheritedReference ? 1 : 0 });
       receipts[scene.id] = {
+        providerSubmissionId:image.providerSubmissionId,
         sceneId: scene.id,
         narrativeOrder: scene.narrativeOrder,
         generationOrder: production.executionOrder.indexOf(scene.id) + 1,

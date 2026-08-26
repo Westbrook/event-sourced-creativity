@@ -183,8 +183,8 @@ test("all creative assistants exclude muted decisions while preserving editable 
 
 test("documents project attribution for every direct OpenAI request",async()=>{
   const adapter=await readFile(new URL("../worker/openai-adapter.ts",import.meta.url),"utf8");
-  assert.ok((adapter.match(/headers:openAIHeaders\(env\)|headers: openAIHeaders\(env\)/g)??[]).length>=4);
-  assert.match(adapter,/headers:openAIAuthHeaders\(env\)/);
+  assert.ok((adapter.match(/headers:\s*(?:\{\.\.\.)?openAIHeaders\(env\)/g)??[]).length>=4);
+  assert.match(adapter,/headers:\s*(?:\{\.\.\.)?openAIAuthHeaders\(env\)/);
 });
 
 test("uses the small compressed preview profile and hands multiple policy-labelled images to the high-quality edit request",async()=>{
