@@ -20,7 +20,7 @@ import { calculateImageFocalPoint, CURRENT_FOCAL_POINT_METHOD } from "../src/mod
 import { DOCUMENT_VIEWS, documentViewWorkflow } from "../src/model/document-view-signals";
 import { normalizePromptTechnique } from "../src/model/prompt-structures";
 import { promptFactIsActive } from "../src/model/prompt-policy";
-import { estimatePlannerOperationMicrousd, generationBudgetGate, presentationServerOwnedCheckpointField, presentationTokenReservation } from "../src/model/generation-budget";
+import { documentPlanningTokenReservation, documentRenderTokenReservation, estimatePlannerOperationMicrousd, generationBudgetGate, presentationServerOwnedCheckpointField } from "../src/model/generation-budget";
 import { documentImageFormat, imageFormatEventFields, normalizeImageFormat, providerRenderFormat } from "../src/model/image-format";
 import { applicationFailureDetail, classifyProviderFailure, ProviderRequestError, providerFailurePrompt, publicFailureDetail, type ProviderFailureDetail } from "./provider-errors";
 import { CANVAS_COMMUTATIVE_EVENT_TYPES, CANVAS_USER_EVENT_TYPES, validateCanvasEvent } from "./realtime/canvas-admission";
@@ -704,7 +704,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       if(gate.level==="blocked")return Response.json({error:"budget_hard_cap_reached",scope:gate.scope,gate},{status:429});
       if(account){
         const sceneCount=managed?.scenes.length??Math.max(1,Math.floor(Number(body.itemCount??6)));
-        const estimatedTokens=body.action==="chat"||body.action==="structure_adaptive"?12_000:body.action==="preview"?24_000:body.action==="render_document"&&artifactKind==="slides"?presentationTokenReservation(managed?.maximumProviderCallCount):managed?Math.max(32_000*Math.ceil(sceneCount/8),artifactKind==="storyboard"?sceneCount*24_000:artifactKind==="video"?56_000:32_000):body.action==="render_document"&&artifactKind==="storyboard"?Math.max(56_000,sceneCount*24_000):32_000;
+        const estimatedTokens=body.action==="chat"||body.action==="structure_adaptive"?12_000:body.action==="preview"?24_000:body.action==="render_document"?documentRenderTokenReservation(artifactKind,sceneCount,managed?.maximumProviderCallCount):32_000;
         const tokenScope=account.budgets.user.used+account.budgets.user.reserved+estimatedTokens>account.budgets.user.limit?"user":account.budgets.workspace.used+account.budgets.workspace.reserved+estimatedTokens>account.budgets.workspace.limit?"workspace":null;
         if(tokenScope)return Response.json({error:"budget_hard_cap_reached",scope:tokenScope},{status:429});
       }
@@ -916,7 +916,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
         maximum_provider_call_count:productionPlan?.maximumProviderCallCount??2,
         source_transmission:"authorized-active-document-context",
       }:{};
-      const prepaidProviderRecovery=(artifactKind==="video"||artifactKind==="audio")&&Boolean(body.providerJobId&&body.artifactPlan&&body.plannerResponseId)&&recordedDocumentPlannerUsage(sourceEvents,String(body.plannerResponseId??"")).tokensRecorded;const reserved=artifactKind==="slides"?presentationTokenReservation(productionPlan?.maximumProviderCallCount):productionPlan?Math.max(32_000*Math.ceil(itemCount/8),artifactKind==="storyboard"?itemCount*24_000:artifactKind==="video"?32_000+24_000:32_000):artifactKind==="storyboard"?Math.max(56_000,itemCount*24_000):prepaidProviderRecovery?1:32_000;
+      const prepaidProviderRecovery=(artifactKind==="video"||artifactKind==="audio")&&Boolean(body.providerJobId&&body.artifactPlan&&body.plannerResponseId)&&recordedDocumentPlannerUsage(sourceEvents,String(body.plannerResponseId??"")).tokensRecorded;const reserved=prepaidProviderRecovery?1:documentRenderTokenReservation(artifactKind,itemCount,productionPlan?.maximumProviderCallCount);
       const retainedPresentationDraft=execution&&body.artifactPlan&&body.plannerResponseId?parseDocumentArtifactContent(JSON.stringify(body.artifactPlan)):null;
       const resumablePresentation=Boolean(retainedPresentationDraft&&!documentArtifactValidationIssues(artifactKind,retainedPresentationDraft,artifactValidationOptions).length);
       if(artifactKind==="slides"&&execution&&(body.plannerResponseId||Array.isArray((body as Record<string,unknown>).plannerResponseIds)&&((body as Record<string,unknown>).plannerResponseIds as unknown[]).length)&&(body as Record<string,unknown>).presentationProviderSubmission==="confirmed"&&!resumablePresentation){
@@ -1014,7 +1014,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
           if(!hasKnownTextModelPricing(attempt.model))throw new ProviderRequestError({code:"document_model_pricing_unavailable",category:"quota",scope:"request",action:"review_budget",message:"The configured generation model has no verified pricing; no paid planning request was submitted.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:429});
           const recorded=recordedDocumentPlannerUsage(sourceEvents,plannerResponseId,priceTextUsageBreakdownMicrousd(attempt.model,plannerUsage).totalMicrousd);
           const pendingPlannerTokens=recorded.tokensRecorded?0:plannerUsage.totalTokens;
-          const plannerTokenCeiling=Math.min(reserved,32_000*Math.max(1,productionPlan?.providerBatchCount??1));
+          const plannerTokenCeiling=Math.min(reserved,documentPlanningTokenReservation(productionPlan?.maximumProviderCallCount));
           if(pendingPlannerTokens+attempt.maximumInputTokens+attempt.maximumOutputTokens>plannerTokenCeiling)throw new ProviderRequestError({code:"document_token_cap_reached",category:"quota",scope:"request",action:"review_budget",message:"The next generation planning request could exceed its reserved planning token budget and was not submitted.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:429});
           const previous=remainingDocumentPlannerCost(attempt.model,plannerUsage,recorded.recordedCostMicrousd).totalMicrousd;
           const maximum=priceTextUsageBreakdownMicrousd(attempt.model,{inputTokens:attempt.maximumInputTokens,outputTokens:attempt.maximumOutputTokens,totalTokens:attempt.maximumInputTokens+attempt.maximumOutputTokens}).totalMicrousd;

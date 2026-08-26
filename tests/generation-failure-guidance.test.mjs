@@ -19,6 +19,19 @@ const failedJob=(receipt,patch={})=>({kind:"render_document",status:"failed",sta
 
 const interruption=()=>failure({code:"execution_interrupted",category:"server",scope:"unknown",action:"contact_support",message:"The server lost contact with this operation before it finished.",retryable:false});
 
+test("request planning limits never masquerade as monthly exhaustion or missing audio credits",()=>{
+  for(const artifactKind of ["short_story","storyboard","audio","slides"]){
+    for(const code of ["document_token_cap_reached","document_spend_cap_reached","presentation_token_cap_reached","presentation_spend_cap_reached"]){
+      const guidance=generationFailureGuidance(failure({code,category:"quota",scope:"request",action:"review_budget",retryable:false}),"",{kind:"render_document",status:"failed",result:{artifactKind}});
+      assert.match(guidance.title,/planning allowance/);
+      assert.match(guidance.summary,/No further provider request/);
+      assert.doesNotMatch(guidance.title,/exhausted|Fal|credits/);
+      assert.equal(guidance.actionUrl,null);
+      assert.equal(guidance.retryAllowed,false);
+    }
+  }
+});
+
 test("identifies local persistence failures without implying a provider outage or exposing private diagnostics", () => {
   const privateDiagnostic = "D1_ERROR: private source text and actor-only receipt";
   const guidance = generationFailureGuidance(failure({

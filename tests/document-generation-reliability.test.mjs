@@ -1239,6 +1239,65 @@ test("all document media reject unpriced planning before source transmission or 
   }finally{globalThis.fetch=previousFetch;}
 });
 
+for(const artifactKind of ["short_story","storyboard"]){
+  test(`a complete multi-decision ${artifactKind} brief fits its reserved planning slice above the old 32k threshold`,async()=>{
+    const fixture=await reliabilityWorker();
+    for(let index=0;index<13;index+=1)await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:`rich-source-${index}`,type:"direction",handle:`direction/rich-${index}`,position:`z-rich-${index}`,properties:{text:`Distinct authored decision ${index}: ${"Keep human decisions, evidence, and consent visible throughout this creative journey. ".repeat(24)}`,weight:1,authority:"authored"}});
+    const previousFetch=globalThis.fetch;let calls=0;
+    globalThis.fetch=async(url,init={})=>{
+      assert.equal(String(url),"https://api.openai.com/v1/responses");calls+=1;
+      const request=JSON.parse(init.body);
+      const maximumInputTokens=new TextEncoder().encode(init.body).byteLength+4096;
+      assert.ok(maximumInputTokens+request.max_output_tokens>32_000);
+      assert.ok(maximumInputTokens+request.max_output_tokens<128_000);
+      const token=fixture.sqlite.prepare("SELECT reserved_tokens FROM budget_reservations WHERE status='active'").get();
+      const cost=fixture.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_reservations WHERE status='executing'").get();
+      assert.equal(token.reserved_tokens,artifactKind==="storyboard"?320_000:128_000);
+      assert.equal(cost.reserved_microusd,artifactKind==="storyboard"?9_000_000:1_000_000,"the approved dollar ceiling is unchanged");
+      return Response.json({error:{code:"invalid_request",message:"Definitive test rejection"}},{status:422});
+    };
+    try{
+      const admitted=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind,productionMode:"manual",itemCount:artifactKind==="storyboard"?8:1,paidMediaConfirmed:true,requestKey:`rich-${artifactKind}`}}));
+      assert.equal(admitted.status,202,await admitted.clone().text());
+      const{job}=await admitted.json();const failed=(await(await fixture.runJob(job)).json()).job;
+      assert.equal(calls,1);
+      assert.notEqual(failed.errorDetail.code,"document_token_cap_reached");
+      assert.equal(failed.result.generationReceipt.settled_cost_microusd,0);
+    }finally{globalThis.fetch=previousFetch;}
+  });
+}
+
+test("the larger planning reservation still blocks execution when the monthly token balance cannot cover it",async()=>{
+  const fixture=await reliabilityWorker();
+  const changed=fixture.sqlite.prepare("UPDATE budget_counters SET used_tokens=hard_limit_tokens-100000 WHERE scope='user' AND scope_id='dev-local-creative'").run();
+  assert.equal(changed.changes,1);
+  const response=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"short_story",itemCount:1,requestKey:"monthly-planning-limit"}}));
+  assert.equal(response.status,202,await response.clone().text());
+  const{job}=await response.json();const previousFetch=globalThis.fetch;let calls=0;
+  globalThis.fetch=async()=>{calls+=1;throw new Error("Insufficient monthly tokens cannot authorize a provider request");};
+  try{
+    const failed=(await(await fixture.runJob(job)).json()).job;
+    assert.equal(failed.status,"failed");
+    assert.equal(failed.errorDetail.code,"budget_hard_cap_reached");
+    assert.equal(failed.errorDetail.scope,"user");
+    assert.equal(calls,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations WHERE status='active'").get().count,0);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+test("a planning dollar ceiling remains authoritative even with unused reserved tokens",async()=>{
+  const fixture=await reliabilityWorker();fixture.environment.OPENAI_MODEL="gpt-5.6-sol";
+  const previousFetch=globalThis.fetch;let calls=0;
+  globalThis.fetch=async()=>{calls+=1;assert.equal(calls,1);return Response.json({id:"metered-expensive-plan",model:"gpt-5.6-sol",output_text:"{}",usage:{input_tokens:40000,output_tokens:23000,total_tokens:63000}});};
+  try{
+    const response=await handleEvents(new Request("http://localhost/api/events",json({action:"render_document",documentId:"doc-atmosphere",artifactKind:"scene",productionMode:"manual",itemCount:1,requestKey:"unchanged-dollar-ceiling"})),fixture.environment);
+    assert.equal(response.status,429,await response.clone().text());
+    assert.equal((await response.json()).error,"document_spend_cap_reached");
+    assert.equal(calls,1);
+    assert.equal(fixture.sqlite.prepare("SELECT used_microusd FROM cost_budget_reservations WHERE operation='document-render:scene'").get().used_microusd,890_000);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
 test("an oversized cross-media repair stops before another provider call and settles only its original planning usage",async()=>{
   const fixture=await reliabilityWorker();
   const previousFetch=globalThis.fetch;
@@ -1254,7 +1313,7 @@ test("an oversized cross-media repair stops before another provider call and set
         title:"",
         summary:"An invalid initial narrative plan.",
         content_markdown:"",
-        items:[{title:"Unfinished scene",body:"x".repeat(45_000),notes:"",image_prompt:"",context_group_ids:[]}],
+        items:[{title:"Unfinished scene",body:"x".repeat(135_000),notes:"",image_prompt:"",context_group_ids:[]}],
       }),
       usage:{input_tokens:100,output_tokens:50,total_tokens:150},
     });
@@ -1275,7 +1334,7 @@ test("an oversized cross-media repair stops before another provider call and set
     assert.equal(failed.error,"document_token_cap_reached");
     assert.equal(providerCalls,1,"the initial response is retained but its unsafe repair is never purchased");
     const reservation=fixture.sqlite.prepare("SELECT reserved_tokens,used_tokens,status FROM budget_reservations WHERE operation='document-render:scene'").get();
-    assert.deepEqual({...reservation},{reserved_tokens:32_000,used_tokens:150,status:"settled"});
+    assert.deepEqual({...reservation},{reserved_tokens:128_000,used_tokens:150,status:"settled"});
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN('active','executing')").get().count,0);
   }finally{globalThis.fetch=previousFetch;}
 });
@@ -1295,7 +1354,7 @@ test("storyboard repair cannot consume tokens reserved for downstream frame gene
         title:"",
         summary:"An invalid storyboard plan requiring bounded review.",
         content_markdown:"",
-        items:[{title:"Unfinished storyboard frame",body:"x".repeat(33_000),notes:"",image_prompt:"A visually distinct opening frame.",context_group_ids:[]}],
+        items:[{title:"Unfinished storyboard frame",body:"x".repeat(128_000),notes:"",image_prompt:"A visually distinct opening frame.",context_group_ids:[]}],
       }),
       usage:{input_tokens:100,output_tokens:50,total_tokens:150},
     });
@@ -1317,7 +1376,7 @@ test("storyboard repair cannot consume tokens reserved for downstream frame gene
     assert.equal(failed.error,"document_token_cap_reached");
     assert.equal(providerCalls,1,"the downstream frame reserve must not authorize an extra planning request");
     const reservation=fixture.sqlite.prepare("SELECT reserved_tokens,used_tokens,status FROM budget_reservations WHERE operation='document-render:storyboard'").get();
-    assert.deepEqual({...reservation},{reserved_tokens:56_000,used_tokens:150,status:"settled"});
+    assert.deepEqual({...reservation},{reserved_tokens:152_000,used_tokens:150,status:"settled"});
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN('active','executing')").get().count,0);
   }finally{globalThis.fetch=previousFetch;}
 });
