@@ -266,6 +266,75 @@ test("project documents and concrete specialist evidence precede aggregate dashb
   assert.ok(adapter.indexOf('class="adapter-preview-form"') < adapter.lastIndexOf("super.render()"));
 });
 
+test("document-card previews contain every result and keep document actions above their media", () => {
+  const preview = ".document-card-preview";
+  const frame = ".document-card-preview > i";
+  const actions = [".document-card-actions", ".document-card > .document-card-actions"];
+
+  assert.ok(projectContents.includes("html`<i><forma-artifact-summary"), "artifact previews rely on the inherited default stack position");
+  assert.ok(projectContents.includes("style=${`--stack:${index}`}"), "image previews retain their individual visual-stack offsets");
+
+  for (const [posture, viewport] of [["portrait", portrait], ["landscape", landscape], ["desktop", desktop]]) {
+    assert.equal(winning(preview, "--stack", viewport)?.value, "0", `${posture}: artifacts without an explicit stack index still fill their preview`);
+    assert.equal(winning(preview, "position", viewport)?.value, "relative", `${posture}: media positions against its own preview`);
+    assert.equal(winning(preview, "z-index", viewport)?.value, "0", `${posture}: previews own their background stacking layer`);
+    assert.equal(winning(preview, "isolation", viewport)?.value, "isolate", `${posture}: embedded media cannot escape the preview stacking context`);
+    assert.equal(winning(preview, "overflow", viewport)?.value, "hidden", `${posture}: oversized videos and image stacks stop at the preview boundary`);
+
+    assert.equal(winning(frame, "position", viewport)?.value, "absolute", `${posture}: result frames remain inside their preview`);
+    assert.equal(winning(frame, "overflow", viewport)?.value, "hidden", `${posture}: a frame also clips its own generated media`);
+    assert.equal(winning(".document-card-preview i", "position", viewport), undefined, `${posture}: nested artifact slide and icon elements never become preview frames`);
+    for (const edge of ["top", "right", "bottom", "left"]) {
+      assert.match(winning(frame, edge, viewport)?.value ?? "", /var\(--stack,\s*0\)/, `${posture}: the ${edge} edge safely defaults while honoring individual image-stack positions`);
+    }
+
+    assert.equal(winning(actions, "position", viewport)?.value, "relative", `${posture}: document actions establish their own interactive layer`);
+    const previewLayer = Number(winning(preview, "z-index", viewport)?.value);
+    const actionLayer = Number(winning(actions, "z-index", viewport)?.value);
+    assert.ok(Number.isFinite(actionLayer) && actionLayer > previewLayer, `${posture}: document actions outrank preview media for hit testing`);
+  }
+});
+
+test("project document-card results cover their complete preview without inheriting global minimum media sizes", () => {
+  const hosts = ".document-card-preview > i > :is(forma-output-visual, forma-artifact-summary)";
+  const summary = ".document-card-preview > i > forma-artifact-summary > .artifact-summary";
+  const artifactMedia = ".document-card-preview > i > forma-artifact-summary > .artifact-summary > :is(video, .artifact-summary-frames, forma-presentation-slide, .artifact-summary-copy)";
+  const imageMedia = ".document-card-preview > i > forma-output-visual > :is(.generated-output-trigger, .generated-output-image)";
+  const fittedMedia = [
+    ".document-card-preview > i > forma-artifact-summary > .artifact-summary > video",
+    ".document-card-preview > i > forma-artifact-summary > .artifact-summary > .artifact-summary-frames > img",
+    ".document-card-preview > i > forma-output-visual > .generated-output-image",
+    ".document-card-preview > i > forma-output-visual > .generated-output-trigger > .generated-output-image",
+  ];
+
+  for (const [posture, viewport] of [["portrait", portrait], ["landscape", landscape], ["desktop", desktop]]) {
+    for (const selector of [hosts, summary, artifactMedia, imageMedia]) {
+      assert.equal(winning(selector, "inline-size", viewport)?.value, "100%", `${posture}: ${selector} spans its complete preview width`);
+      assert.equal(winning(selector, "block-size", viewport)?.value, "100%", `${posture}: ${selector} spans its complete preview height`);
+      assert.equal(winning(selector, "min-inline-size", viewport)?.value, "0", `${posture}: ${selector} can shrink inside its preview`);
+      assert.equal(winning(selector, "min-block-size", viewport)?.value, "0", `${posture}: ${selector} never expands beyond its preview`);
+    }
+
+    for (const selector of fittedMedia) {
+      assert.equal(winning(selector, "object-fit", viewport)?.value, "cover", `${posture}: ${selector} fills its frame without letterboxing or restyling nested presentation artwork`);
+    }
+
+    const compactMinimum = winning(".artifact-summary.compact", "min-height", viewport);
+    const storyboardMinimum = winning(".artifact-summary-frames", "min-height", viewport);
+    assert.equal(compactMinimum?.value, "8rem", `${posture}: compact artifact summaries retain their global minimum elsewhere`);
+    assert.equal(storyboardMinimum?.value, "11rem", `${posture}: storyboard frames retain their global minimum elsewhere`);
+
+    for (const [selector, global, description] of [
+      [summary, compactMinimum, "compact artifact summaries"],
+      [artifactMedia, storyboardMinimum, "storyboard frames"],
+    ]) {
+      const scoped = winning(selector, "min-block-size", viewport);
+      const comparison = scoped.weight.map((value, index) => value - global.weight[index]).find((value) => value !== 0) ?? 0;
+      assert.ok(comparison > 0, `${posture}: scoped ${description} sizing overrides later global minimum-height rules`);
+    }
+  }
+});
+
 test("alternative creator lenses mount their real task before explanatory readiness and inherited navigation", () => {
   assert.match(alternatives, /class="studio-subpage-body">\s*\$\{body\}\s*<forma-studio-navigator/);
   assert.match(alternatives, /const body = html`\s*<div class="context-board" data-forma-content="primary">[\s\S]*?\$\{capture\}\s*\$\{readiness\}`/);
