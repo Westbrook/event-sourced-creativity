@@ -513,3 +513,23 @@ test("workflow ownership, safety, responsive layout, and localization stay integ
   assert.match(projectAccess, /DocumentProductionWorkflowConfigured/);
   for (const catalog of [english, french, arabic, japanese]) assert.match(catalog, /"workflow\.heading"/);
 });
+
+test("workflow guarantees retain their natural height when compact and mobile footers stack", async () => {
+  const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+  const footer = styles.match(/^\.production-workflow-footer\s*\{([^}]*)\}/m)?.[1] ?? "";
+  const guarantee = styles.match(/^\.production-workflow-footer\s*>\s*small\s*\{([^}]*)\}/m)?.[1] ?? "";
+  const compactFooter = styles.match(/^\.production-workflow--compact\s+\.production-workflow-footer\s*\{([^}]*)\}/m)?.[1] ?? "";
+  const mobileRules = styles.match(/@media\s*\(max-width:\s*720px\)\s*\{([\s\S]*?)^\}/m)?.[1] ?? "";
+  const mobileFooter = mobileRules.match(/^\s*\.production-workflow-footer\s*\{([^}]*)\}/m)?.[1] ?? "";
+
+  assert.match(footer, /display:\s*flex/);
+  assert.match(guarantee, /min-inline-size:\s*0/);
+  assert.match(guarantee, /flex:\s*1\s+1\s+auto/);
+  assert.match(guarantee, /overflow-wrap:\s*break-word/);
+  assert.doesNotMatch(guarantee, /flex(?:-basis)?:[^;]*\b\d+(?:\.\d+)?(?:rem|em|px|vh|vb|%)/);
+  assert.doesNotMatch(guarantee, /overflow-wrap:\s*anywhere/);
+  assert.match(compactFooter, /flex-direction:\s*column/);
+  assert.match(mobileFooter, /flex-direction:\s*column/);
+  assert.match(styles, /^\.production-workflow--compact\s+\.production-workflow-footer\s*>\s*\.button\s*\{[^}]*inline-size:\s*100%/m);
+  assert.match(mobileRules, /^\s*\.production-workflow-footer\s*>\s*\.button\s*\{[^}]*inline-size:\s*100%/m);
+});

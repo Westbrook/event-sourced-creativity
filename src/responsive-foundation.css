@@ -53,19 +53,117 @@ forma-ui-theme[density="spacious"] {
   --forma-card-inset: max(1.5rem, var(--forma-space-6, 1.5rem));
 }
 
+forma-shell,
+forma-platform-shell,
+forma-public-share {
+  display: block;
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
 .app-shell,
 .app-shell > main,
+forma-creative-application,
+forma-workspace,
 .workspace-page,
 .library-page,
 .studio-main,
+.studio-header-stack,
+.studio-header-stack > forma-studio-mode-nav,
+.studio-mode-nav,
+.document-workbench-tasks,
 .library-main,
 .chat-view-main,
 .studio-grid,
 .context-column,
 .output-column,
+.composer-dock,
+.composer,
+.composer-command,
+forma-generation-actions,
+.generation-actions,
 .forma-activity-main,
 .forma-deliver-main {
   min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+.composer-dock {
+  container: composer-dock / inline-size;
+}
+
+@container composer-dock (max-width: 48rem) {
+  .composer {
+    inline-size: 100%;
+    flex-wrap: wrap;
+  }
+
+  .composer-command {
+    inline-size: 100%;
+    min-inline-size: 0;
+    flex: 1 1 100%;
+  }
+
+  .composer-command > .button {
+    min-inline-size: 0;
+    white-space: normal;
+    overflow-wrap: break-word;
+  }
+
+  .composer > forma-generation-actions {
+    display: block;
+    inline-size: 100%;
+    min-inline-size: 0;
+    flex: 1 1 100%;
+  }
+
+  .composer .generation-actions {
+    display: grid;
+    inline-size: 100%;
+    min-inline-size: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+    gap: var(--forma-cluster-gap);
+  }
+
+  .composer .generation-actions > .button {
+    inline-size: 100%;
+    min-inline-size: 0;
+    white-space: normal;
+    overflow-wrap: break-word;
+  }
+
+  .composer .generation-actions > .generation-details-trigger {
+    inline-size: 100%;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    grid-column: 1 / -1;
+    justify-content: space-between;
+    gap: .35rem;
+    white-space: normal;
+  }
+
+  .composer .generation-actions > .generation-details-trigger > :is(span, small, b) {
+    min-inline-size: 0;
+    overflow-wrap: break-word;
+  }
+}
+
+@container composer-dock (min-width: 48rem) and (max-width: 60rem) {
+  .composer .generation-actions > .generation-details-trigger {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: .2rem .4rem;
+    white-space: normal;
+  }
+
+  .composer .generation-actions > .generation-details-trigger > :is(span, small, b) {
+    min-inline-size: 0;
+    overflow-wrap: break-word;
+  }
 }
 
 :root[dir="rtl"] forma-project-rail,
@@ -2424,8 +2522,10 @@ forma-activity-issue-panel {
 /* Document work is a bounded, content-first workbench; discovery pages keep natural scroll. */
 .application-creative[data-layout-intent="workbench"] {
   display: flex;
+  inline-size: 100%;
   block-size: 100dvb;
   min-block-size: 0;
+  max-inline-size: 100%;
   max-block-size: 100dvb;
   flex-direction: column;
   overflow: clip;
@@ -2437,15 +2537,20 @@ forma-activity-issue-panel {
 
 .application-creative[data-layout-intent="workbench"] > #main-content {
   flex: 1;
+  min-inline-size: 0;
   min-block-size: 0;
+  max-inline-size: 100%;
   overflow: clip;
 }
 
 .application-creative[data-layout-intent="workbench"] > #main-content > forma-creative-application,
 .application-creative[data-layout-intent="workbench"] > #main-content > forma-creative-application > forma-workspace {
   display: block;
+  inline-size: 100%;
   block-size: 100%;
+  min-inline-size: 0;
   min-block-size: 0;
+  max-inline-size: 100%;
 }
 
 .workspace-page[data-workbench="document"] {
@@ -2458,6 +2563,7 @@ forma-activity-issue-panel {
 .workspace-page[data-workbench="document"] > .studio-main {
   display: grid;
   min-block-size: 0;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr);
   padding-block-end: 0;
 }
@@ -2641,6 +2747,16 @@ forma-activity-issue-panel {
   flex-wrap: nowrap;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
+}
+
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-actions > * {
+  min-inline-size: var(--forma-hit-target);
+  flex: 0 0 auto;
+}
+
+.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-actions > .button {
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 .application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .studio-mode-nav,

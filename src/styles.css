@@ -150,7 +150,7 @@ forma-ui-locale:lang(ar), forma-ui-locale:lang(fa), forma-ui-locale:lang(he), fo
 }
 
 * { box-sizing: border-box; }
-html { min-width: 320px; background: var(--paper); scroll-behavior: smooth; }
+html { min-width: 0; background: var(--paper); scroll-behavior: smooth; }
 body { margin: 0; color: var(--ink); background: var(--paper); font-family: var(--forma-font-family, var(--sans)); font-size: var(--type-body); line-height: var(--forma-body-line-height, var(--leading-copy)); }
 button, input, textarea, select { font: inherit; color: inherit; }
 button, a, input, textarea, select { outline-offset: 3px; }
@@ -1822,23 +1822,23 @@ forma-document-artifacts { display: block; min-width: 0; }
 }
 .document-artifacts h2 { margin: .3rem 0; font: 600 var(--type-heading) var(--sans); letter-spacing: -.025em; }
 .document-artifacts > header p { max-width: 48rem; margin: 0; color: var(--muted); }
-.production-workflow { margin-block-start: 1.25rem; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
-.production-workflow > summary { display: flex; min-block-size: var(--forma-hit-target,2.75rem); align-items: center; justify-content: space-between; gap: 1rem; padding: .85rem 1rem; cursor: pointer; list-style: none; }
+.production-workflow { min-inline-size: 0; max-inline-size: 100%; margin-block-start: 1.25rem; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.production-workflow > summary { display: flex; min-inline-size: 0; min-block-size: var(--forma-hit-target,2.75rem); align-items: center; justify-content: space-between; gap: 1rem; padding: .85rem 1rem; cursor: pointer; list-style: none; }
 .production-workflow > summary::-webkit-details-marker { display: none; }
 .production-workflow > summary > span:first-child { display: grid; flex: 1 1 11rem; min-inline-size: 0; gap: .15rem; }
-.production-workflow-entry { color: var(--accent); font-size: var(--type-caption); overflow-wrap: anywhere; }
+.production-workflow-entry { min-inline-size: 0; color: var(--accent); font-size: var(--type-caption); overflow-wrap: break-word; }
 .production-workflow-disclosure { display: grid; flex: 0 0 1.2rem; inline-size: 1.2rem; block-size: 1.2rem; place-items: center; color: var(--muted); transition: transform 140ms ease; }
 .production-workflow[open] > summary .production-workflow-disclosure { transform: rotate(90deg); }
 .production-workflow > summary > span:first-child > small,.production-workflow-header > p,.production-workflow-stage-heading p,.production-workflow-stage-heading small,.production-workflow-stage-kicker,.production-workflow-notice,.production-workflow-footer > small { color: var(--muted); }
-.production-workflow-form { display: grid; gap: 1rem; padding: 0 1rem 1rem; }
-.production-workflow-header { display: grid; grid-template-columns: minmax(12rem,18rem) minmax(0,1fr); align-items: end; gap: .85rem 1.25rem; padding-block-start: .5rem; }
+.production-workflow-form { display: grid; min-inline-size: 0; max-inline-size: 100%; grid-template-columns: minmax(0,1fr); gap: 1rem; padding: 0 1rem 1rem; }
+.production-workflow-header { display: grid; min-inline-size: 0; grid-template-columns: minmax(12rem,18rem) minmax(0,1fr); align-items: end; gap: .85rem 1.25rem; padding-block-start: .5rem; }
 .production-workflow-header > label,.production-workflow-source { display: grid; min-inline-size: 0; gap: .4rem; font-weight: 600; }
 .production-workflow-header select,.production-workflow-source select { inline-size: 100%; min-inline-size: 0; min-block-size: var(--forma-hit-target,2.75rem); }
 .production-workflow-header > p { margin: 0; }
 .production-workflow-stages { display: grid; gap: .7rem; margin: 0; padding: 0; list-style: none; }
 .production-workflow-stage { display: grid; min-inline-size: 0; gap: .8rem; padding: .85rem; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
 .production-workflow-stage--skipped { background: var(--panel); }
-.production-workflow-stage-heading { display: grid; grid-template-columns: 1.5rem minmax(0,1fr) auto; align-items: start; gap: .8rem; }
+.production-workflow-stage-heading { display: grid; min-inline-size: 0; grid-template-columns: 1.5rem minmax(0,1fr) auto; align-items: start; gap: .8rem; }
 .production-workflow-stage-heading > div { min-inline-size: 0; }
 .production-workflow-stage-heading h4 { margin: .15rem 0; font: 600 var(--type-body) var(--sans); }
 .production-workflow-stage-heading p { margin: .2rem 0; overflow-wrap: anywhere; }
@@ -1847,12 +1847,12 @@ forma-document-artifacts { display: block; min-width: 0; }
 .production-workflow-status { justify-self: end; padding: .25rem .55rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; font-size: var(--type-caption); white-space: nowrap; }
 .production-workflow-status--approved,.production-workflow-status--selected,.production-workflow-status--complete,.production-workflow-status--ready { color: var(--forest); }
 .production-workflow-status--stale,.production-workflow-status--changes-requested,.production-workflow-status--needs-review { color: var(--accent); }
-.production-workflow-stage-controls { display: grid; gap: .7rem; padding-inline-start: 2.3rem; }
+.production-workflow-stage-controls { display: grid; min-inline-size: 0; gap: .7rem; padding-inline-start: 2.3rem; }
 .production-workflow-toggle { display: flex; min-block-size: var(--forma-hit-target,2.75rem); align-items: center; gap: .55rem; }
 .production-workflow-toggle input[type="checkbox"] { inline-size: 1.125rem; block-size: 1.125rem; accent-color: var(--accent); }
 .production-workflow-source { max-inline-size: 26rem; }
 .production-workflow-notice { display: block; overflow-wrap: anywhere; }
-.production-workflow-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.production-workflow-actions { display: flex; min-inline-size: 0; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .production-workflow-actions .icon-button { min-inline-size: var(--forma-hit-target,2.75rem); min-block-size: var(--forma-hit-target,2.75rem); }
 .production-workflow-risk { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .7rem; padding: .8rem; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
 .production-workflow-risk > p { flex: 1 1 14rem; margin: 0; overflow-wrap: anywhere; }
@@ -1862,8 +1862,9 @@ forma-document-artifacts { display: block; min-width: 0; }
 .production-workflow-deliverable > header > b { min-inline-size: 0; overflow-wrap: anywhere; }
 .production-workflow-deliverable-preview { min-inline-size: 0; overflow: hidden; border-radius: 6px; }
 .production-workflow-deliverable-preview :is(img,video) { display: block; inline-size: 100%; max-block-size: 20rem; object-fit: contain; }
-.production-workflow-footer { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; }
-.production-workflow-footer > small { flex: 1 1 18rem; overflow-wrap: anywhere; }
+.production-workflow-footer { display: flex; min-inline-size: 0; max-inline-size: 100%; flex-wrap: wrap; align-items: center; gap: .65rem; }
+.production-workflow-footer > small { min-inline-size: 0; flex: 1 1 auto; overflow-wrap: break-word; }
+.production-workflow-footer > .button { min-inline-size: 0; max-inline-size: 100%; white-space: normal; text-align: center; overflow-wrap: break-word; }
 .production-workflow--compact { margin-block-start: .75rem; }
 .production-workflow--compact > summary { flex-wrap: wrap; padding-inline: .75rem; }
 .production-workflow--compact > summary > .production-workflow-status { max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
@@ -1874,6 +1875,16 @@ forma-document-artifacts { display: block; min-width: 0; }
 .production-workflow--compact .production-workflow-stage-controls { padding-inline-start: 0; }
 .production-workflow--compact .production-workflow-footer { align-items: stretch; flex-direction: column; }
 .production-workflow--compact .production-workflow-footer > .button { inline-size: 100%; }
+@container document-artifacts (max-width: 32rem) {
+  .production-workflow > summary { flex-wrap: wrap; }
+  .production-workflow > summary > .production-workflow-status { max-inline-size: 100%; white-space: normal; overflow-wrap: break-word; }
+  .production-workflow-header { grid-template-columns: minmax(0,1fr); }
+  .production-workflow-stage-heading { grid-template-columns: 1.5rem minmax(0,1fr); }
+  .production-workflow-stage-heading > .production-workflow-status { grid-column: 2; justify-self: start; }
+  .production-workflow-stage-controls { padding-inline-start: 0; }
+  .production-workflow-footer { align-items: stretch; flex-direction: column; }
+  .production-workflow-footer > .button { inline-size: 100%; }
+}
 .production-workflow :is(summary,button,input,select):focus-visible { outline: 2px solid var(--orange); outline-offset: 3px; }
 .document-artifact-list { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,15rem),1fr)); gap: 1rem; margin-block-start: 1.5rem; }
 .document-artifact-list > button { min-width: 0; padding: 0; overflow: hidden; text-align: start; color: inherit; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); cursor: pointer; }

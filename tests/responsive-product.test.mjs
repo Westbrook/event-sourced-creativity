@@ -123,6 +123,83 @@ function winning(selectors, property, viewport, container) {
   return winner;
 }
 
+test("document workbench hosts and grid tracks remain bounded at every viewport", () => {
+  const studioMain = '.workspace-page[data-workbench="document"] > .studio-main';
+  const routeHosts = [
+    '.application-creative[data-layout-intent="workbench"] > #main-content > forma-creative-application',
+    '.application-creative[data-layout-intent="workbench"] > #main-content > forma-creative-application > forma-workspace',
+  ];
+  const boundedChildren = [
+    ".studio-header-stack",
+    ".studio-header-stack > forma-studio-mode-nav",
+    ".studio-mode-nav",
+    ".document-workbench-tasks",
+    ".studio-grid",
+    ".composer-dock",
+    ".composer",
+    ".composer-command",
+    "forma-generation-actions",
+    ".generation-actions",
+  ];
+  const compactHeaderActions = '.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-actions > *';
+  const compactHeaderButtons = '.application-creative[data-nav-posture="compact"][data-layout-intent="workbench"] .page-header--document .page-header-actions > .button';
+
+  for (const viewport of viewports) {
+    assert.equal(winning("html", "min-width", viewport)?.value, "0", `${viewport.name}: root sizing leaves room for a visible scrollbar`);
+
+    for (const selector of ["forma-shell", "forma-platform-shell", "forma-public-share"]) {
+      assert.equal(winning(selector, "display", viewport)?.value, "block", `${viewport.name}: ${selector} is a measurable block host`);
+      assert.equal(winning(selector, "inline-size", viewport)?.value, "100%", `${viewport.name}: ${selector} uses the available viewport`);
+      assert.equal(winning(selector, "min-inline-size", viewport)?.value, "0", `${viewport.name}: ${selector} may shrink`);
+      assert.equal(winning(selector, "max-inline-size", viewport)?.value, "100%", `${viewport.name}: ${selector} stays bounded`);
+    }
+
+    assert.equal(winning(studioMain, "grid-template-columns", viewport)?.value, "minmax(0, 1fr)", `${viewport.name}: navigation cannot inflate the implicit workbench column`);
+
+    for (const selector of [...routeHosts, ...boundedChildren]) {
+      assert.equal(winning(selector, "min-inline-size", viewport)?.value, "0", `${viewport.name}: ${selector} may shrink`);
+      assert.equal(winning(selector, "max-inline-size", viewport)?.value, "100%", `${viewport.name}: ${selector} stays bounded`);
+    }
+
+    assert.equal(winning(compactHeaderActions, "flex", viewport)?.value, "0 0 auto", `${viewport.name}: compact toolbar actions keep their natural width`);
+    assert.match(winning(compactHeaderActions, "min-inline-size", viewport)?.value ?? "", /--forma-hit-target/, `${viewport.name}: compact toolbar actions remain touch-sized`);
+    assert.equal(winning(compactHeaderButtons, "white-space", viewport)?.value, "nowrap", `${viewport.name}: short toolbar labels never collapse letter by letter`);
+    assert.equal(winning(compactHeaderButtons, "overflow-wrap", viewport)?.value, "normal", `${viewport.name}: compact toolbar labels scroll inside their strip`);
+  }
+
+  assert.equal(winning(".document-workbench-tasks", "overflow-x", viewports[0])?.value, "auto", "overflowing task choices scroll inside their bounded strip");
+});
+
+test("fixed generation controls respond to their dock instead of overflowing narrow panes", () => {
+  const desktop = viewports.find((viewport) => viewport.name === "large monitor");
+  const narrowDock = { name: "composer-dock", width: 560 };
+  const tabletDock = { name: "composer-dock", width: 937 };
+  const details = ".composer .generation-actions > .generation-details-trigger";
+
+  assert.equal(winning(".composer-dock", "container", desktop)?.value, "composer-dock / inline-size");
+  assert.equal(winning(".composer", "flex-wrap", desktop, narrowDock)?.value, "wrap");
+  assert.equal(winning(details, "flex-wrap", desktop, tabletDock)?.value, "wrap", "tablet-sized docks wrap long generation labels without inflating the complete composer");
+  assert.equal(winning(".composer-command", "flex", desktop, narrowDock)?.value, "1 1 100%");
+  assert.equal(winning(".composer > forma-generation-actions", "flex", desktop, narrowDock)?.value, "1 1 100%");
+  assert.equal(winning(".composer .generation-actions", "grid-template-columns", desktop, narrowDock)?.value, "repeat(2, minmax(0, 1fr))");
+  assert.equal(winning(details, "grid-column", desktop, narrowDock)?.value, "1 / -1");
+  assert.equal(winning(details, "white-space", desktop, narrowDock)?.value, "normal");
+  assert.equal(winning(details, "max-inline-size", desktop, narrowDock)?.value, "100%");
+});
+
+test("production workflows adapt to their actual artifact pane instead of the outer viewport", () => {
+  const desktop = viewports.find((viewport) => viewport.name === "large monitor");
+  const narrowPane = { name: "document-artifacts", width: 480 };
+
+  assert.equal(winning(".document-artifacts", "container", desktop)?.value, "document-artifacts / inline-size");
+  assert.equal(winning(".production-workflow-form", "grid-template-columns", desktop, narrowPane)?.value, "minmax(0,1fr)");
+  assert.equal(winning(".production-workflow-header", "grid-template-columns", desktop, narrowPane)?.value, "minmax(0,1fr)");
+  assert.equal(winning(".production-workflow-footer", "flex-direction", desktop, narrowPane)?.value, "column");
+  assert.equal(winning(".production-workflow-footer > .button", "inline-size", desktop, narrowPane)?.value, "100%");
+  assert.equal(winning(".production-workflow-footer > .button", "white-space", desktop, narrowPane)?.value, "normal");
+  assert.equal(winning(".production-workflow-footer > small", "flex", desktop, narrowPane)?.value, "1 1 auto");
+});
+
 test("every posture keeps text, actions, and trailing icons inside a shared logical edge inset", () => {
   const insetCases = [
     [[".context-next-actions>button", ".context-column > .context-next-actions > button"], "--forma-pane-inset"],
