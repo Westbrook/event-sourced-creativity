@@ -17,7 +17,7 @@ export const AUDIO_ADAPTER_CONTRACT = {
   model: "fal-ai/lyria3/pro",
   output: "audio" as const,
   label: "Lyria 3 Pro",
-  maxPromptCharacters: 12_000,
+  maxPromptCharacters: 5_000,
   maximumAdvertisedDurationSeconds: 180,
   publishedCostMicrousd: 80_000,
   supportedOutputMimeTypes: ["audio/mpeg"] as const,

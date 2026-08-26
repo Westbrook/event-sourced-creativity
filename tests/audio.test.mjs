@@ -68,6 +68,41 @@ test("approved audio descriptions inform composition without exposing private me
   assert.doesNotMatch(JSON.stringify(providerFacingCreativeContext(snapshot)), /\/api\/media|private-sha256|inform_generation/);
 });
 
+test("Lyria compacts lengthy musical context to its documented prompt limit without losing locked requirements", () => {
+  assert.equal(AUDIO_ADAPTER_CONTRACT.maxPromptCharacters, 5_000);
+  const lockedDirection = "Keep the final felt-piano motif gentle and wholly original.";
+  const snapshot = {
+    facts: [
+      { block_id: "locked-composition", type: "direction", locked: true, properties: { text: lockedDirection } },
+      audioFact({ inform_generation: true, description: "Quiet surf rises underneath an original melody. ".repeat(200) }),
+    ],
+  };
+  const detailedPlan = { ...plan, content_markdown: "Develop a gentle original motif through changing textures. ".repeat(200) };
+  const adaptation = adaptAudioPrompt(snapshot, detailedPlan);
+
+  assert.equal(adaptation.compilation.valid, true);
+  assert.equal(adaptation.compilation.limit, 5_000);
+  assert.equal(adaptation.compilation.compacted, true);
+  assert.ok(adaptation.prompt.length <= 5_000);
+  assert.match(adaptation.prompt, /Compose wholly original music and sound design/);
+  assert.ok(adaptation.prompt.includes(lockedDirection));
+});
+
+test("Lyria prompt-budget overrides cannot exceed the provider ceiling but may impose a smaller budget", () => {
+  const detailedPlan = { ...plan, content_markdown: "Develop a gentle original motif through changing textures. ".repeat(200) };
+  const oversizedOverride = adaptAudioPrompt({ facts: [] }, detailedPlan, { maxPromptCharacters: 10_000 });
+
+  assert.equal(oversizedOverride.compilation.valid, true);
+  assert.equal(oversizedOverride.compilation.limit, AUDIO_ADAPTER_CONTRACT.maxPromptCharacters);
+  assert.ok(oversizedOverride.prompt.length <= AUDIO_ADAPTER_CONTRACT.maxPromptCharacters);
+
+  const smallerOverride = adaptAudioPrompt({ facts: [] }, detailedPlan, { maxPromptCharacters: 800 });
+
+  assert.equal(smallerOverride.compilation.valid, true);
+  assert.equal(smallerOverride.compilation.limit, 800);
+  assert.ok(smallerOverride.prompt.length <= 800);
+});
+
 test("audio cues reject invalid ranges and preserve authored chronology", () => {
   const cues = normalizeAudioCues([
     { start_seconds: 18, end_seconds: 22, label: "Resolution", target_kind: "slide", target_id: "slide-4" },
@@ -255,6 +290,55 @@ test("locked silence always overrides an explicitly requested soundtrack", () =>
   assert.throws(() => validateCreativeVideoAudioReferences(VIDEO_ADAPTER_CONTRACT.model, [image], [soundtrack], snapshot), (error) => error.detail?.code === "video_audio_forbidden");
 });
 
+test("Lyria rejects oversized fresh prompts locally before preparation, staging, or provider submission", async () => {
+  const previous = globalThis.fetch;
+  const fetchCalls = [];
+  const prepared = [];
+  const stages = [];
+  globalThis.fetch = async (...args) => {
+    fetchCalls.push(args);
+    throw new Error("An oversized music prompt must never reach the provider.");
+  };
+
+  try {
+    await assert.rejects(
+      generateCreativeAudio({ FAL_KEY: "test-secret" }, "m".repeat(AUDIO_ADAPTER_CONTRACT.maxPromptCharacters + 1), {
+        onPrepared: (receipt) => prepared.push(receipt),
+        onStage: (stage) => stages.push(stage),
+      }),
+      (error) => error.detail?.code === "audio_prompt_too_long" && error.detail?.httpStatus === 400,
+    );
+    assert.deepEqual(fetchCalls, []);
+    assert.deepEqual(prepared, []);
+    assert.deepEqual(stages, []);
+  } finally { globalThis.fetch = previous; }
+});
+
+test("Lyria accepts a prompt exactly at the provider's documented character limit", async () => {
+  const previous = globalThis.fetch;
+  const submitted = [];
+  const boundaryPrompt = "m".repeat(AUDIO_ADAPTER_CONTRACT.maxPromptCharacters);
+  globalThis.fetch = async (value, init = {}) => {
+    const url = String(value);
+    if (url === "https://queue.fal.run/fal-ai/lyria3/pro") {
+      submitted.push(JSON.parse(String(init.body)));
+      return Response.json({ request_id: "req-audio-boundary" });
+    }
+    if (url.endsWith("/req-audio-boundary/status?logs=1")) return Response.json({ status: "COMPLETED" });
+    if (url.endsWith("/req-audio-boundary")) return Response.json({ audio: "https://fal.media/boundary.mp3" });
+    if (url === "https://fal.media/boundary.mp3") return new Response(new Uint8Array([1]), { headers: { "content-type": "audio/mpeg" } });
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    const audio = await generateCreativeAudio({ FAL_KEY: "test-secret" }, boundaryPrompt);
+
+    assert.equal(submitted.length, 1);
+    assert.equal(submitted[0].prompt, boundaryPrompt);
+    assert.equal(audio.submittedPrompt, boundaryPrompt);
+  } finally { globalThis.fetch = previous; }
+});
+
 for (const shape of ["file", "string"]) {
   test(`Lyria submits only its real schema and accepts ${shape} audio responses`, async () => {
     const calls = [];
@@ -305,6 +389,44 @@ test("Lyria recovery resumes its application-level queue without buying another 
     await generateCreativeAudio({ FAL_KEY: "test-secret" }, "Original music", { providerJobId: "req-existing" });
     assert.equal(calls.some((call) => call.init.method === "POST"), false);
     assert.ok(calls[0].url.startsWith("https://queue.fal.run/fal-ai/lyria3/requests/req-existing/status"));
+  } finally { globalThis.fetch = previous; }
+});
+
+test("Lyria resumes previously accepted oversized prompts unchanged without submitting a second paid request", async () => {
+  const previous = globalThis.fetch;
+  const calls = [];
+  const historicalPrompt = "m".repeat(AUDIO_ADAPTER_CONTRACT.maxPromptCharacters + 1);
+  const retainedReceipt = {
+    provider: "fal",
+    model: AUDIO_ADAPTER_CONTRACT.model,
+    submittedPrompt: historicalPrompt,
+    parameters: { accepted_fields: ["prompt"] },
+    imageReference: null,
+    sourceAudioTreatment: "none",
+    audioWaveformSubmitted: false,
+  };
+  globalThis.fetch = async (value, init = {}) => {
+    const url = String(value);
+    calls.push({ url, init });
+    if (url.endsWith("/req-existing-oversized/status?logs=1")) return Response.json({ status: "COMPLETED" });
+    if (url.endsWith("/req-existing-oversized")) return Response.json({ audio: "https://fal.media/historical.mp3" });
+    if (url === "https://fal.media/historical.mp3") return new Response(new Uint8Array([1]), { headers: { "content-type": "audio/mpeg" } });
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    const prepared = [];
+    const audio = await generateCreativeAudio({ FAL_KEY: "test-secret" }, "A newly adapted, shorter composition brief.", {
+      providerJobId: "req-existing-oversized",
+      retainedReceipt,
+      onPrepared: (receipt) => prepared.push(receipt),
+    });
+
+    assert.equal(audio.submittedPrompt, historicalPrompt);
+    assert.deepEqual(audio.preparedReceipt, retainedReceipt);
+    assert.deepEqual(prepared, [retainedReceipt]);
+    assert.equal(calls.some((call) => call.init.method === "POST"), false);
+    assert.ok(calls[0].url.includes("/req-existing-oversized/status"));
   } finally { globalThis.fetch = previous; }
 });
 

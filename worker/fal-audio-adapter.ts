@@ -106,6 +106,11 @@ export async function generateCreativeAudio(env: WorkerEnv, prompt: string, opti
   if (!submittedPrompt) throw providerError("audio_prompt_required", "The document did not produce a usable music direction.", prompt);
   const model = options.providerModel ?? options.retainedReceipt?.model ?? env.FAL_AUDIO_MODEL ?? AUDIO_ADAPTER_CONTRACT.model;
   if (model !== AUDIO_ADAPTER_CONTRACT.model || options.retainedReceipt && options.providerModel && options.providerModel !== options.retainedReceipt.model) throw providerError("audio_provider_model_unsupported", "Only the price-verified Lyria 3 Pro music model is authorized for this generation.", submittedPrompt);
+  if (!options.providerJobId && submittedPrompt.length > AUDIO_ADAPTER_CONTRACT.maxPromptCharacters) throw providerError(
+    "audio_prompt_too_long",
+    `The music direction exceeds Lyria 3 Pro’s ${AUDIO_ADAPTER_CONTRACT.maxPromptCharacters.toLocaleString()}-character limit. Shorten the required composition direction and try again.`,
+    submittedPrompt,
+  );
   const image = options.imageReference;
   if (image && (!image.bytes.length || !image.mimeType.startsWith("image/") || !image.blockId || !image.referenceId)) throw providerError("audio_image_reference_invalid", "Music generation can use one explicitly approved, nonempty image reference.", submittedPrompt);
   const started = Date.now();

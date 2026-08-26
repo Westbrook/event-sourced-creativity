@@ -88,7 +88,8 @@ export function adaptAudioPrompt(
       content: [options.tone ? `Emotional treatment: ${clean(options.tone)}.` : "", options.audience ? `Intended listener or creative audience: ${clean(options.audience)}.` : ""].filter(Boolean).join(" "),
     }] : []),
   ];
-  const compilation = compileContextAdaptationSections(sections, options.maxPromptCharacters ?? AUDIO_ADAPTER_CONTRACT.maxPromptCharacters);
+  const maxPromptCharacters = Math.min(options.maxPromptCharacters ?? AUDIO_ADAPTER_CONTRACT.maxPromptCharacters, AUDIO_ADAPTER_CONTRACT.maxPromptCharacters);
+  const compilation = compileContextAdaptationSections(sections, maxPromptCharacters);
   return {
     adapterId: AUDIO_ADAPTER_CONTRACT.adapterId,
     adapterVersion: AUDIO_ADAPTER_CONTRACT.adapterVersion,
