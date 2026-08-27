@@ -14,7 +14,7 @@ import { readProjectRequestContext } from "./project-access.ts";
 export const POLICY_VERSION = "pilot-2026-08-10";
 export type PilotRole = "admin" | "creator" | "agent" | "viewer";
 export type ProjectExecutionScope={organizationId:string;projectAccessId:string;projectId:string;ownerUserId:string;actorUserId:string};
-export type PilotUser = { userId: string; email: string; displayName: string; role: PilotRole; consentVersion: string | null; consentedAt: string | null; streamId: string; access: PrincipalAccess; fictional?: boolean; billingUserId?: string;projectExecution?:ProjectExecutionScope };
+export type PilotUser = { userId: string; email: string; displayName: string; role: PilotRole; consentVersion: string | null; consentedAt: string | null; streamId: string; access: PrincipalAccess; fictional?: boolean; billingUserId?: string;projectExecution?:ProjectExecutionScope; authorizationSnapshot?:{updatedAt:string;rawEpoch:string;grants:string;organizations:string;projects:string;identityPolicies:string;canvasRequirements:number} };
 export type PilotImpersonation = { impersonationId:string; personaId:string; replaySessionId:string; actor:PilotUser; fictionalUser:PilotUser; startedAt:string; expiresAt:string };
 
 const roleRank: Record<PilotRole, number> = { viewer: 0, agent: 1, creator: 2, admin: 3 };
@@ -131,7 +131,7 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
     }
     if (row.email !== identity.email || row.display_name !== identity.displayName) {
       await env.DB.prepare("UPDATE users SET email=?, display_name=?, updated_at=? WHERE user_id=?").bind(identity.email, identity.displayName, new Date().toISOString(), identity.userId).run();
-      row = { ...row, email: identity.email, display_name: identity.displayName };
+      row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
     }
   }
   if(admittedParticipant&&!admittedParticipant.user_id){
@@ -147,7 +147,8 @@ export async function requireUser(request: Request, env: WorkerEnv, minimum: Pil
   if(!Object.hasOwn(roleRank,role)||!Object.hasOwn(roleRank,minimum))return{response:Response.json({error:"invalid_account_role"},{status:403}),user:null,principal:null,impersonation:null};
   const access=await principalAccessFromRow(row??{},role,{email:identity.email,source:identity.source,subject:identity.userId});
   if(access.identityPolicyDeniedCustody)return{response:Response.json({error:"organization_identity_policy_required"},{status:403}),user:null,principal:null,impersonation:null};
-  const principal: PilotUser = { userId: String(row?.user_id), email: String(row?.email), displayName: String(row?.display_name), role, consentVersion: row?.consent_version ? String(row?.consent_version) : null, consentedAt: row?.consented_at ? String(row.consented_at) : null, streamId: `creative:${identity.userId}`, access };
+  const principal: PilotUser = { userId: String(row?.user_id), email: String(row?.email), displayName: String(row?.display_name), role, consentVersion: row?.consent_version ? String(row?.consent_version) : null, consentedAt: row?.consented_at ? String(row.consented_at) : null, streamId: `creative:${identity.userId}`, access,
+    authorizationSnapshot:{updatedAt:String(row?.updated_at??""),rawEpoch:String(row?.permission_epoch??""),grants:String(row?.grants_json??"[]"),organizations:String(row?.organizations_json??"[]"),projects:String(row?.projects_json??"[]"),identityPolicies:String(row?.identity_policies_json??"[]"),canvasRequirements:Number(row?.approved_canvas_requirements??0)} };
   if (roleRank[principal.role] < roleRank[minimum]) return { response: Response.json({ error: "insufficient_role", required: minimum, role: principal.role }, { status: 403 }), user: null, principal, impersonation:null };
   const principalOnly=options.account==="principal";
   const checkPrincipalImpersonation=principalOnly&&new URL(request.url).pathname!=="/api/impersonation"&&Boolean(decodedCookieValue(request,"forma_impersonation"));
@@ -511,6 +512,7 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
 
   const active=await env.DB.prepare(`SELECT * FROM budget_reservations reservation
     WHERE reservation.owner_id=? AND reservation.stream_id=? AND reservation.status='active' AND reservation.created_at<=?
+      AND NOT EXISTS (SELECT 1 FROM consequential_execution_steps step WHERE step.token_reservation_id=reservation.reservation_id AND step.status IN('reserved','submitting','uncertain','usage-recorded'))
       AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND (job.status IN ('queued','running','committing') OR job.status IN ('failed','canceled') AND (${unsettledProviderSubmissionSql("job.result_json")} OR json_extract(COALESCE(job.result_json,'{}'),'$.presentationProviderSubmission')='pending' OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='storyboard' AND json_extract(COALESCE(job.result_json,'{}'),'$.storyboardProviderSubmission') IN ('pending','confirmed') OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='audio' AND json_extract(COALESCE(job.result_json,'{}'),'$.audioProviderSubmission')='pending'))
         AND (job.correlation_id=reservation.correlation_id OR json_extract(COALESCE(job.result_json,'{}'),'$.reservationId')=reservation.reservation_id))
     ORDER BY reservation.created_at ASC LIMIT 100`).bind(billingUserId,user.streamId,cutoff,user.streamId,user.userId).all<BudgetReservationRow>();
@@ -960,10 +962,10 @@ export async function releaseCostReservationsForCorrelation(env: WorkerEnv, user
 export const DURABLE_WORK_RETENTION_END = "9999-12-31T23:59:59.999Z";
 export const DEFAULT_EVIDENCE_RETENTION_DAYS = 365;
 
-type PrivateContentKind = "prompt" | "provider-output" | "provider-response" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input" | "activity-issue-note";
+type PrivateContentKind = "prompt" | "provider-output" | "provider-response" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "ideation-prompt" | "document-artifact" | "document-artifact-input" | "activity-issue-note" | "execution-consent" | "context-proposal";
 
 export function privateContentRetentionClass(kind: PrivateContentKind): "durable-work" | "governed-evidence" | "transient-private" {
-  return kind === "document-artifact" ? "durable-work" : kind === "document-artifact-input" || kind === "activity-issue-note" ? "governed-evidence" : "transient-private";
+  return kind === "document-artifact" ? "durable-work" : ["document-artifact-input","activity-issue-note","execution-consent","context-proposal"].includes(kind) ? "governed-evidence" : "transient-private";
 }
 
 export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope) {
@@ -1021,7 +1023,7 @@ export async function loadPrivateContent(env: WorkerEnv, ownerId: string, scope:
     " AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id AND resource.actor_user_id=private_content.owner_id AND resource.owner_user_id!=private_content.owner_id AND resource.visibility='actor_private')"
     + " AND(private_content.kind NOT IN('chat-user','chat-assistant') OR NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id=private_content.content_id))";
   const bindings=projectScope?[ownerId,now,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,ownerId,ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId]:[ownerId,now];
-  const rows=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>? AND kind NOT IN('provider-response','activity-issue-note')${restricted}${containment}`).bind(...bindings).all<{content_id:string;content:string}>();
+  const rows=await env.DB.prepare(`SELECT content_id,content FROM private_content WHERE owner_id=? AND redacted_at IS NULL AND expires_at>? AND kind NOT IN('provider-response','activity-issue-note','execution-consent','context-proposal')${restricted}${containment}`).bind(...bindings).all<{content_id:string;content:string}>();
   return Object.fromEntries(rows.results.map((row) => [row.content_id, row.content]));
 }
 

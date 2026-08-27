@@ -9,20 +9,26 @@ const resolution = registerHooks({ resolve(specifier, context, nextResolve) {
   const source = typeof context.parentURL === "string" && context.parentURL.startsWith(root) && !context.parentURL.includes("/node_modules/");
   return nextResolve(source && specifier.startsWith(".") && !/\.[a-z0-9]+$/iu.test(specifier) ? `${specifier}.ts` : specifier, context);
 } });
-const [{ default: worker }, { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL }] = await Promise.all([
+const [{ default: worker }, { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL,PRINCIPAL_WITH_ACCESS_SQL }, {requireUser,reconcileFailedBudgetReservations}] = await Promise.all([
   import("../worker/index.ts"),
   import("../worker/access-policy.ts"),
+  import("../worker/pilot-policy.ts"),
 ]).finally(() => resolution.deregister());
 
 function database() {
   const sqlite = new DatabaseSync(":memory:");
   const controls = { failAssistantTurnInsert: false, failAssistantActionCommit: false, failAssistantBillingAudit: false,
     failAssistantBillingCostSettlement: false, failPlatformAssistantCommit: false, forbidCreatorContentReads: false,
-    failPlatformPrivacyErase: false, beforePlatformCommit: null, beforeDeletionClaim: null, skipAssistantTaskClaimOnce: false, lastDatabaseError: "" };
+    failPlatformPrivacyErase: false, beforePlatformCommit: null, beforeDeletionClaim: null, beforeConsequentialClaim:null, beforeConsequentialSubmit:null,beforeConsequentialResultRead:null,failAfterConsequentialComplete:false,failNextConsequentialPrincipalRead:false, skipAssistantTaskClaimOnce: false, lastDatabaseError: "" };
   class Statement {
     constructor(sql, values = []) { this.sql = sql; this.values = values; }
     bind(...values) { assert.ok(values.length <= 100); return new Statement(this.sql, values); }
     execute(kind) {
+      if(controls.failNextConsequentialPrincipalRead&&this.sql===PRINCIPAL_WITH_ACCESS_SQL){controls.failNextConsequentialPrincipalRead=false;throw new Error("injected_post_complete_read_failure");}
+      if(controls.failAfterConsequentialComplete&&/^\s*UPDATE consequential_executions SET status='completed'/iu.test(this.sql)){controls.failAfterConsequentialComplete=false;controls.failNextConsequentialPrincipalRead=true;}
+      for(const [key,pattern] of [["beforeConsequentialClaim",/^\s*UPDATE consequential_executions SET status='reserved'/iu],["beforeConsequentialSubmit",/^\s*UPDATE consequential_execution_steps SET status='submitting'/iu],["beforeConsequentialResultRead",/^\s*SELECT content FROM private_content WHERE .*kind='context-proposal'/iu]]){
+        if(controls[key]&&pattern.test(this.sql)){const callback=controls[key];controls[key]=null;callback();}
+      }
       if (controls.failAssistantTurnInsert && /^\s*INSERT INTO assistant_turns\b/iu.test(this.sql)) {
         controls.failAssistantTurnInsert = false;
         throw new Error("injected_assistant_turn_failure");
@@ -110,13 +116,19 @@ async function fixture({ enabled = true, actions = false, provider = false, mode
   };
   const context = { waitUntil(promise) { background.push(promise); } };
   const request = (path, init) => worker.fetch(new Request(`http://localhost${path}`, init), env, context);
+  const approvedContextRequest=async(path,init)=>{
+    const body=JSON.parse(init.body),quoted=await request(path,{...init,body:JSON.stringify({...body,action:"quote"})});
+    if(!quoted.ok)return quoted;
+    const {quote}=await quoted.json();
+    return request(path,{...init,body:JSON.stringify({...body,action:"execute",executionId:quote.executionId,approvedBindingHash:quote.bindingHash})});
+  };
   assert.equal((await request("/api/session")).status, 200);
   db.sqlite.prepare("UPDATE users SET consent_version=?").run("pilot-2026-08-10");
   assert.equal((await request("/api/events?after=0&limit=2000&content=0")).status, 200);
   const drainBackground = async () => {
     while (background.length) await Promise.all(background.splice(0));
   };
-  return { ...db, env, request, background, drainBackground };
+  return { ...db, env, request, approvedContextRequest, background, drainBackground };
 }
 
 const json = (body, headers = {}) => ({ method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -2128,24 +2140,26 @@ test("context intelligence uses grounded web evidence, user-selected addendum ty
       const address=String(url);calls.push(address);
       if(address.startsWith("https://commons.wikimedia.org/w/api.php"))return Response.json({query:{pages:{1:{title:"File:Dog.jpg",imageinfo:[{thumburl:"https://upload.wikimedia.org/dog.jpg",descriptionurl:"https://commons.wikimedia.org/wiki/File:Dog.jpg",mime:"image/jpeg",extmetadata:{LicenseShortName:{value:"CC BY 4.0"},Artist:{value:"<b>Photographer</b>"}}}]}}}});
       assert.equal(address,"https://api.openai.com/v1/responses");
-      const payload=JSON.parse(init.body),facts=JSON.parse(payload.input),research=Array.isArray(payload.tools);
+      const payload=JSON.parse(init.body);
+      if(payload.tools){assert.equal(payload.input,"dog");assert.doesNotMatch(JSON.stringify(payload),/PRIVATE_OPTED_OUT_AUDIO|block-direction|project-atmosphere|doc-atmosphere|quiet/iu);return Response.json({model:payload.model,output:[{type:"web_search_call",action:{sources:[{url:"https://en.wikipedia.org/wiki/Dog"}]}},{type:"message",content:[{type:"output_text",text:"A public visual reference",annotations:[{type:"url_citation",url:"https://en.wikipedia.org/wiki/Dog"}]}]}],usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}});}
+      const facts=JSON.parse(payload.input),research=Boolean(facts.target);assert.equal(payload.tools,undefined);
       assert.doesNotMatch(payload.input,/PRIVATE_OPTED_OUT_AUDIO|block-direction|project-atmosphere|doc-atmosphere/u);
       const urls=["https://en.wikipedia.org/wiki/Dog","http://localhost/private"];
       const data=research?{inferred:[{existing_alias:"decision_1",reason:"Existing scene context"},{existing_alias:"foreign-account-alias",reason:"Must be rejected"}],related:[],learned:[{type:"subject",subtype:"Supporting subject",text:"Newly discovered visual detail",reason:"Public reference",source_url:urls[0]},{type:"subject",subtype:"Supporting subject",text:"Unsafe private citation",reason:"Must be rejected",source_url:urls[1]},{type:"subject",subtype:"Supporting subject",text:"Uncited fabricated detail",reason:"Must be rejected",source_url:"https://example.test/not-cited"}],image_query:"dog"}:{proposals:[{type:facts.source.type==="environment"?"environment":"emotion",subtype:facts.source.type==="environment"?"Interior":"Primary affect",label:facts.source.type==="environment"?"Bar":"Quiet",text:facts.source.type==="environment"?"Bar":"Quiet",source_excerpt:facts.source.type==="environment"?"bar":"quiet",participants:[]}]};
       const message={type:"message",content:[{type:"output_text",text:JSON.stringify(data),annotations:research?urls.map((url)=>({type:"url_citation",url})):[]}]};
-      return Response.json({model:payload.model,output:research?[{type:"web_search_call",action:{sources:urls.map((url)=>({url}))}},message]:[message],usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}});
+      return Response.json({model:payload.model,output:[message],usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}});
     };
     const body={projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"};
-    const research=await state.request("/api/context/research",json(body));assert.equal(research.status,200,JSON.stringify(await research.clone().json()));
+    const research=await state.approvedContextRequest("/api/context/research",json({...body,publicQuery:"dog"}));assert.equal(research.status,200,JSON.stringify(await research.clone().json()));
     const report=(await research.json()).report;
     assert.equal(report.searchedWeb,true);assert.equal(report.learned.length,2);assert.equal(report.learned[0].sourceUrl,"https://en.wikipedia.org/wiki/Dog");assert.equal(report.learned[1].type,"reference");assert.equal(report.learned[1].subtype,"Pixel");assert.equal(report.learned[1].license,"CC BY 4.0");assert.equal(report.learned[1].attribution,"Photographer");
-    const decomposed=await state.request("/api/context/decompose",json(body));assert.equal(decomposed.status,200);assert.equal((await decomposed.json()).plan.proposals[0].text,"Quiet");
-    const addendum=await state.request("/api/context/decompose",json({...body,addedText:"A bar",addedType:"environment"}));assert.equal(addendum.status,200);assert.equal((await addendum.json()).plan.proposals[0].type,"environment");
-    const invalidAddition=await state.request("/api/context/decompose",json({...body,addedText:"A bar"}));assert.equal(invalidAddition.status,400);assert.equal((await invalidAddition.json()).error,"context_added_block_type_invalid");
-    const denied=await state.request("/api/context/research",json({...body,blockId:"secret-audio"}));assert.equal(denied.status,403);assert.equal((await denied.json()).error,"context_block_protected");
+    const decomposed=await state.approvedContextRequest("/api/context/decompose",json(body));assert.equal(decomposed.status,200);assert.equal((await decomposed.json()).plan.proposals[0].text,"Quiet");
+    const addendum=await state.approvedContextRequest("/api/context/decompose",json({...body,addedText:"A bar",addedType:"environment"}));assert.equal(addendum.status,200);assert.equal((await addendum.json()).plan.proposals[0].type,"environment");
+    const invalidAddition=await state.approvedContextRequest("/api/context/decompose",json({...body,addedText:"A bar"}));assert.equal(invalidAddition.status,400);assert.equal((await invalidAddition.json()).error,"context_added_block_type_invalid");
+    const denied=await state.approvedContextRequest("/api/context/research",json({...body,blockId:"secret-audio"}));assert.equal(denied.status,403);assert.equal((await denied.json()).error,"context_block_protected");
     const tokens=state.sqlite.prepare("SELECT used_tokens,reserved_tokens FROM budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
     const costs=state.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
-    assert.deepEqual({...tokens},{used_tokens:3900,reserved_tokens:0});assert.deepEqual({...costs},{used_microusd:26800,reserved_microusd:0});assert.equal(calls.length,4);
+    assert.deepEqual({...tokens},{used_tokens:5200,reserved_tokens:0});assert.deepEqual({...costs},{used_microusd:32400,reserved_microusd:0});assert.equal(calls.length,5);
   }finally{globalThis.fetch=original;}
 });
 
@@ -2165,22 +2179,22 @@ test("decomposes rich authored context while preserving research, addendum, and 
       return Response.json({model:payload.model,output:[{type:"message",content:[{type:"output_text",text:'{"proposals":[]}'}]}],usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}});
     };
     const body={projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"};
-    const decomposed=await state.request("/api/context/decompose",json(body));
+    const decomposed=await state.approvedContextRequest("/api/context/decompose",json(body));
     assert.equal(decomposed.status,200,JSON.stringify(await decomposed.clone().json()));
     assert.equal((await decomposed.json()).plan.sourceText,source);
 
-    const research=await state.request("/api/context/research",json(body));
+    const research=await state.approvedContextRequest("/api/context/research",json(body));
     assert.equal(research.status,413);
     assert.equal((await research.json()).error,"context_source_too_large");
 
-    const addition=await state.request("/api/context/decompose",json({...body,addedType:"direction",addedText:"x".repeat(1801)}));
+    const addition=await state.approvedContextRequest("/api/context/decompose",json({...body,addedType:"direction",addedText:"x".repeat(1801)}));
     assert.equal(addition.status,413);
     assert.equal((await addition.json()).error,"context_source_too_large");
 
     appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[
       ["BlockPropertyEdited",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"block-direction",property_path:"text",old_value:source,new_value:"x".repeat(6001)}],
     ]);
-    const oversized=await state.request("/api/context/decompose",json(body));
+    const oversized=await state.approvedContextRequest("/api/context/decompose",json(body));
     assert.equal(oversized.status,413);
     assert.equal((await oversized.json()).error,"context_source_too_large");
     assert.equal(calls,1,"rejected sources must never submit a paid provider request");
@@ -2193,7 +2207,7 @@ test("context intelligence rejects paid provider access for users outside the ex
   try{
     globalThis.fetch=async()=>{calls+=1;throw new Error("paid dispatch must not occur");};
     const body={projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"};
-    for(const operation of ["decompose","research"]){const result=await state.request(`/api/context/${operation}`,json(body));assert.equal(result.status,403);assert.equal((await result.json()).error,"context_provider_denied");}
+    for(const operation of ["decompose","research"]){const result=await state.approvedContextRequest(`/api/context/${operation}`,json(body));assert.equal(result.status,403);assert.equal((await result.json()).error,"context_provider_denied");}
     assert.equal(calls,0);
   }finally{globalThis.fetch=original;}
 });
@@ -2211,9 +2225,9 @@ test("Action research retains participant roles without proposing an already-com
       const payload=JSON.parse(init.body),facts=JSON.parse(payload.input),participant=facts.document_blocks.find((candidate)=>candidate.handle==="subject/ilya");
       assert.ok(participant);assert.ok(facts.relationships.some((relation)=>relation.from==="target"&&relation.to===participant.alias&&relation.kind==="action_participant"&&relation.participant_role==="actor"));
       const proposal={inferred:[{existing_alias:participant.alias,reason:"Already participating"}],related:[],learned:[],image_query:""};
-      return Response.json({model:payload.model,output:[{type:"web_search_call",action:{sources:[]}},{type:"message",content:[{type:"output_text",text:JSON.stringify(proposal),annotations:[]}]}],usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}});
+      return Response.json({model:payload.model,output:[{type:"message",content:[{type:"output_text",text:JSON.stringify(proposal),annotations:[]}]}],usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}});
     };
-    const result=await state.request("/api/context/research",json({projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"context-riding-action"}));
+    const result=await state.approvedContextRequest("/api/context/research",json({projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"context-riding-action"}));
     assert.equal(result.status,200,JSON.stringify(await result.clone().json()));assert.deepEqual((await result.json()).report.inferred,[]);
   }finally{globalThis.fetch=original;}
 });
@@ -2221,12 +2235,12 @@ test("Action research retains participant roles without proposing an already-com
 test("context intelligence truthfully charges verified provider usage beyond its reservation",async()=>{
   const state=await fixture({provider:true,models:"gpt-5.6-terra"}),original=globalThis.fetch;
   try{
-    globalThis.fetch=async(_url,init)=>{const payload=JSON.parse(init.body);return Response.json({model:payload.model,output:[{type:"message",content:[{type:"output_text",text:'{"proposals":[]}'}]}],usage:{input_tokens:18000,output_tokens:1800,total_tokens:19800}});};
-    const result=await state.request("/api/context/decompose",json({projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"}));
+    globalThis.fetch=async(_url,init)=>{const payload=JSON.parse(init.body);return Response.json({model:payload.model,output:[{type:"message",content:[{type:"output_text",text:'{"proposals":[]}'}]}],usage:{input_tokens:200000,output_tokens:1800,total_tokens:201800}});};
+    const result=await state.approvedContextRequest("/api/context/decompose",json({projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"}));
     assert.equal(result.status,502);assert.equal((await result.json()).error,"context_provider_budget_exceeded");
     const tokens=state.sqlite.prepare("SELECT used_tokens,reserved_tokens FROM budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
     const costs=state.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
-    assert.deepEqual({...tokens},{used_tokens:19800,reserved_tokens:0});assert.deepEqual({...costs},{used_microusd:57600,reserved_microusd:0});
+    assert.deepEqual({...tokens},{used_tokens:201800,reserved_tokens:0});assert.deepEqual({...costs},{used_microusd:421600,reserved_microusd:0});
   }finally{globalThis.fetch=original;}
 });
 
@@ -2234,11 +2248,11 @@ test("context intelligence never retries an ambiguous paid research submission",
   const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
   try{
     globalThis.fetch=async()=>{calls+=1;throw new Error("synthetic network interruption");};
-    const result=await state.request("/api/context/research",json({projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"}));
+    const result=await state.approvedContextRequest("/api/context/research",json({projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"}));
     assert.equal(result.status,502);assert.equal(calls,1);
     const tokens=state.sqlite.prepare("SELECT used_tokens,reserved_tokens FROM budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
     const costs=state.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope=? AND scope_id=?").get("user","dev-local-creative");
-    assert.deepEqual({...tokens},{used_tokens:14400,reserved_tokens:0});assert.deepEqual({...costs},{used_microusd:62800,reserved_microusd:0});
+    assert.equal(tokens.used_tokens,0);assert.ok(tokens.reserved_tokens>0);assert.equal(costs.used_microusd,0);assert.ok(costs.reserved_microusd>0);
   }finally{globalThis.fetch=original;}
 });
 
@@ -2249,8 +2263,8 @@ test("shared context intelligence reconstructs older decisions and rejects forge
   const original=globalThis.fetch;
   try{
     globalThis.fetch=async(_url,init)=>{const payload=JSON.parse(init.body),source=JSON.parse(payload.input).source;assert.equal(source.text,"A current direction 389");return Response.json({model:payload.model,output:[{type:"message",content:[{type:"output_text",text:JSON.stringify({proposals:[{type:"direction",subtype:"Campaign goal",label:"current direction",text:"current direction",source_excerpt:"current direction",participants:[]}]})}]}],usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}});};
-    const owner=await state.request("/api/context/decompose",json(body,state.owner));assert.equal(owner.status,200,JSON.stringify(await owner.clone().json()));assert.equal((await owner.json()).plan.sourceText,"A current direction 389");
-    const viewer=await state.request("/api/context/decompose",json(body,state.viewer));assert.equal(viewer.status,403);
+    const owner=await state.approvedContextRequest("/api/context/decompose",json(body,state.owner));assert.equal(owner.status,200,JSON.stringify(await owner.clone().json()));assert.equal((await owner.json()).plan.sourceText,"A current direction 389");
+    const viewer=await state.approvedContextRequest("/api/context/decompose",json(body,state.viewer));assert.equal(viewer.status,403);
     const validId=crypto.randomUUID(),validEvents=[{type:"BlockCreated",payload:{block_id:validId,project_id:"project-atmosphere",document_id:"doc-atmosphere",scope:"document",type:"action",handle:"action/valid",position:"z8",properties:{text:"Relates to the existing direction",subtype:"Interaction",block_references:[{block_id:"block-direction",handle:"direction/nocturne",role:"target"}]} }},{type:"BlockRelationAdded",payload:{relation_id:crypto.randomUUID(),project_id:"project-atmosphere",document_id:"doc-atmosphere",from_block_id:validId,to_block_id:"block-direction",kind:"action_participant",properties:{participant_role:"target",handle:"direction/nocturne"}}}];
     const valid=await state.request("/api/events",json({action:"batch",events:validEvents},state.owner));assert.equal(valid.status,200,JSON.stringify(await valid.clone().json()));
     const forgedEvent={type:"BlockCreated",payload:{block_id:crypto.randomUUID(),project_id:"project-atmosphere",document_id:"doc-atmosphere",scope:"document",type:"action",handle:"action/forged",position:"z9",properties:{label:"Forged action",text:"Forged action",subtype:"Interaction",block_references:[{block_id:"FOREIGN_ACCOUNT_PRIVATE_BLOCK",handle:"foreign-private-person",role:"actor"}]}}};
@@ -2259,5 +2273,287 @@ test("shared context intelligence reconstructs older decisions and rejects forge
     const crossedEvent={...forgedEvent,payload:{...forgedEvent.payload,block_id:crypto.randomUUID(),document_id:"",scope:"library",properties:{...forgedEvent.payload.properties,block_references:[{block_id:"block-direction",handle:"direction/current",role:"actor"}]}}};
     const crossed=await state.request("/api/events",json({action:"append",event:crossedEvent},state.owner));
     assert.equal(crossed.status,403);assert.equal((await crossed.json()).error,"cross_scene_action_reference");
+  }finally{globalThis.fetch=original;}
+});
+
+const contextBody={projectId:"project-atmosphere",documentId:"doc-atmosphere",blockId:"block-direction"};
+const contextResult=(payload)=>Response.json({id:"response-fixture",model:payload.model,service_tier:"default",output:[{type:"message",content:[{type:"output_text",text:'{"proposals":[]}'}]}],usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}});
+const quoteContext=async(state,body=contextBody,headers={})=>{
+  const result=await state.request("/api/context/decompose",json({...body,action:"quote"},headers));
+  assert.equal(result.status,200,JSON.stringify(await result.clone().json()));return(await result.json()).quote;
+};
+const executeContext=(state,quote,body=contextBody,headers={})=>state.request("/api/context/decompose",json({...body,action:"execute",executionId:quote.executionId,approvedBindingHash:quote.bindingHash},headers));
+const retrieveContext=(state,quote,body=contextBody,headers={})=>state.request("/api/context/decompose",json({...body,action:"retrieve",executionId:quote.executionId,approvedBindingHash:quote.bindingHash},headers));
+
+test("consequential consent previews are free and missing approval cannot reserve or dispatch",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
+  try{
+    globalThis.fetch=async()=>{calls++;throw new Error("must not dispatch");};
+    const quote=await quoteContext(state),same=await quoteContext(state);
+    assert.equal(same.executionId,quote.executionId);assert.equal(quote.providerCalls,1);assert.equal(quote.searchCalls,0);assert.ok(quote.maximumMicrousd>0);
+    assert.equal((await state.request("/api/context/decompose",json(contextBody))).status,428);
+    assert.equal((await executeContext(state,{...quote,bindingHash:"altered"})).status,409);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,0);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n,0);assert.equal(calls,0);
+  }finally{globalThis.fetch=original;}
+});
+
+test("consequential consent concurrent clicks and lost responses reuse exactly one paid execution",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0,release,entered;
+  const gate=new Promise((resolve)=>{release=resolve;}),started=new Promise((resolve)=>{entered=resolve;});
+  try{
+    globalThis.fetch=async(_url,init)=>{calls++;entered();await gate;return contextResult(JSON.parse(init.body));};
+    const quote=await quoteContext(state),first=executeContext(state,quote);await started;
+    const second=await executeContext(state,quote);assert.equal(second.status,202);assert.equal(calls,1);
+    release();const completed=await first;assert.equal(completed.status,200,JSON.stringify(await completed.clone().json()));
+    const retry=await executeContext(state,quote);assert.equal(retry.status,200);const {quote:receipt,...recovered}=await retry.json();assert.deepEqual(recovered,await completed.json());assert.equal(receipt.executionId,quote.executionId);assert.equal(calls,1);
+    assert.equal((await quoteContext(state)).executionId,quote.executionId);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n,1);
+  }finally{release();globalThis.fetch=original;}
+});
+
+test("consequential consent rejects changed source, operation inputs, expiry and execution-time revocation",async()=>{
+  for(const change of ["source","addition","expiry","permission-race"]){
+    const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
+    try{
+      globalThis.fetch=async()=>{calls++;throw new Error("must not dispatch");};const quote=await quoteContext(state);let body=contextBody;
+      if(change==="source")appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["BlockPropertyEdited",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"block-direction",property_path:"text",new_value:"Changed source"}]]);
+      if(change==="addition")body={...contextBody,addedText:"New source",addedType:"subject"};
+      if(change==="expiry")state.sqlite.prepare("UPDATE consequential_executions SET expires_at='2000-01-01T00:00:00.000Z'").run();
+      if(change==="permission-race")state.controls.beforeConsequentialClaim=()=>state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id='dev-local-creative'").run();
+      assert.equal((await executeContext(state,quote,body)).status,409,change);assert.equal(calls,0,change);
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,0,change);
+    }finally{globalThis.fetch=original;}
+  }
+});
+
+test("consequential consent atomically reuses identical pre-issued cross-session quotes and lost redirects",async()=>{
+  for(const status of ["reserved","uncertain","completed"]){
+    const state=await sharedProjectFixture({provider:true}),{cookie:_cookie,...noCookie}=state.owner,original=globalThis.fetch;let calls=0,release,entered;
+    const gate=new Promise((resolve)=>{release=resolve;}),started=new Promise((resolve)=>{entered=resolve;});
+    try{
+      globalThis.fetch=async(_url,init)=>{calls++;entered();if(status==="reserved")await gate;if(status==="uncertain")throw new Error("lost provider response");return contextResult(JSON.parse(init.body));};
+      const selected=await quoteContext(state,contextBody,state.owner),owner=await quoteContext(state,contextBody,noCookie);
+      assert.notEqual(selected.bindingHash,owner.bindingHash);assert.equal(selected.sourceHash,owner.sourceHash);
+      assert.equal(state.sqlite.prepare("SELECT COUNT(DISTINCT intent_hash) AS n FROM consequential_executions").get().n,1);
+      const first=executeContext(state,selected,contextBody,state.owner);if(status==="reserved")await started;else await first;
+      const second=await executeContext(state,owner,contextBody,noCookie),reused=await second.json();
+      assert.equal(second.status,status==="reserved"?202:status==="uncertain"?409:200,JSON.stringify(reused));
+      assert.equal(reused.executionId,selected.executionId);assert.equal(reused.bindingHash,selected.bindingHash);assert.equal(calls,1);
+      // Losing the redirect response still retrieves from the original second quote; it never purchases again.
+      const recovered=await retrieveContext(state,owner,contextBody,noCookie);assert.equal((await recovered.json()).executionId,selected.executionId);
+      assert.equal((await executeContext(state,{...owner,bindingHash:"forged"},contextBody,noCookie)).status,409);
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n,1);assert.equal(calls,1);
+      release();await first;
+      if(status==="completed"){
+        delete state.env.OPENAI_API_KEY;
+        assert.equal((await executeContext(state,owner,contextBody,noCookie)).status,200);assert.equal(calls,1);
+      }
+    }finally{release();globalThis.fetch=original;}
+  }
+});
+
+test("consequential consent intent exclusion remains atomic when a different session wins at the SQL claim boundary",async()=>{
+  const state=await sharedProjectFixture({provider:true}),{cookie:_cookie,...noCookie}=state.owner,original=globalThis.fetch;let calls=0;
+  try{
+    globalThis.fetch=async()=>{calls++;throw new Error("must not dispatch");};
+    const selected=await quoteContext(state,contextBody,state.owner),owner=await quoteContext(state,contextBody,noCookie);
+    state.controls.beforeConsequentialClaim=()=>state.sqlite.prepare("UPDATE consequential_executions SET status='reserved' WHERE execution_id=?").run(selected.executionId);
+    const second=await executeContext(state,owner,contextBody,noCookie);assert.equal(second.status,202);assert.equal((await second.json()).executionId,selected.executionId);
+    assert.equal(state.sqlite.prepare("SELECT status FROM consequential_executions WHERE execution_id=?").get(owner.executionId).status,"quoted");
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n,0);assert.equal(calls,0);
+  }finally{globalThis.fetch=original;}
+});
+
+test("consequential consent redirected reuse returns the complete original contract instead of losing-quote metadata",async()=>{
+  const state=await sharedProjectFixture({provider:true}),{cookie:_cookie,...noCookie}=state.owner,original=globalThis.fetch;let calls=0,release,entered;
+  const gate=new Promise((resolve)=>{release=resolve;}),started=new Promise((resolve)=>{entered=resolve;});
+  try{
+    globalThis.fetch=async(_url,init)=>{calls++;entered();await gate;return contextResult(JSON.parse(init.body));};
+    const selected=await quoteContext(state,contextBody,state.owner),other=await quoteContext(state,contextBody,noCookie);
+    // A retained old contract can outlive a pricing/model/account-period change. Simulate that historical quote in this private fixture only.
+    const ref=state.sqlite.prepare("SELECT consent_ref FROM consequential_executions WHERE execution_id=?").get(other.executionId).consent_ref;
+    const data=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(ref).content);
+    Object.assign(data.preview,{models:["historical-model"],maximumMicrousd:123456,period:"2001-02",expiresAt:"2001-03-01T00:00:00.000Z",privateInput:{historical:true}});
+    state.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(JSON.stringify(data),ref);
+    const first=executeContext(state,selected,contextBody,state.owner);await started;
+    const response=await executeContext(state,other,contextBody,noCookie);assert.equal(response.status,202);const result=await response.json();
+    assert.deepEqual(result.quote,{...selected,status:"reserved"});assert.notDeepEqual(result.quote.models,data.preview.models);
+    assert.equal(result.quote.maximumMicrousd,selected.maximumMicrousd);assert.equal(result.quote.period,selected.period);assert.equal(calls,1);
+    release();assert.equal((await first).status,200);
+    const read=await retrieveContext(state,other,contextBody,noCookie);assert.deepEqual((await read.json()).quote,{...selected,status:"completed"});assert.equal(calls,1);
+  }finally{release();globalThis.fetch=original;}
+});
+
+test("consequential consent keeps unconfirmed submissions held through retries and orphan reconciliation",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
+  try{
+    globalThis.fetch=async()=>{calls++;return new Response("provider or gateway rejected",{status:422});};
+    const quote=await quoteContext(state),failed=await executeContext(state,quote);assert.equal(failed.status,502);assert.equal((await failed.json()).status,"uncertain");
+    const before={...state.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id='dev-local-creative'").get()};
+    assert.equal(before.used_microusd,0);assert.ok(before.reserved_microusd>0);
+    assert.equal((await executeContext(state,quote)).status,409);assert.equal((await quoteContext(state)).executionId,quote.executionId);assert.equal(calls,1);
+    const {user}=await requireUser(new Request("http://localhost/api/session"),state.env,"viewer",{account:"principal"});
+    const reconciliation=await reconcileFailedBudgetReservations(state.env,user,Date.now()+40*86_400_000);
+    assert.equal(reconciliation.releasedTokens,0);assert.equal(reconciliation.releasedMicrousd,0);
+    assert.deepEqual({...state.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id='dev-local-creative'").get()},before);
+    assert.equal(state.sqlite.prepare("SELECT status FROM consequential_execution_steps").get().status,"uncertain");
+  }finally{globalThis.fetch=original;}
+});
+
+test("consequential consent uses tenant custody without a selected cookie and rejects inactive custody",async()=>{
+  for(const change of ["valid","one-micro-cap","migration","missing-policy","migration-owner","dispatch-race"]){
+    const state=await sharedProjectFixture({provider:true}),{cookie:_cookie,...owner}=state.owner,original=globalThis.fetch;let calls=0;
+    try{
+      globalThis.fetch=async(_url,init)=>{calls++;return contextResult(JSON.parse(init.body));};
+      if(change==="one-micro-cap")state.sqlite.prepare("UPDATE budget_scope_policies SET microusd_limit=1 WHERE organization_id=?").run(state.organizationId);
+      if(change==="migration")state.sqlite.prepare("UPDATE project_migration_states SET status='failed' WHERE project_access_id=?").run(state.projectAccessId);
+      if(change==="missing-policy")state.sqlite.prepare("DELETE FROM budget_scope_policies WHERE organization_id=?").run(state.organizationId);
+      if(change==="migration-owner")state.sqlite.prepare("UPDATE project_migration_states SET owner_user_id='wrong-owner' WHERE project_access_id=?").run(state.projectAccessId);
+      const preview=await state.request("/api/context/decompose",json({...contextBody,action:"quote"},owner));
+      if(["migration","missing-policy","migration-owner"].includes(change)){assert.equal(preview.status,403,change);assert.equal(calls,0);continue;}
+      if(change==="one-micro-cap"){assert.equal(preview.status,429);assert.equal(calls,0);continue;}
+      assert.equal(preview.status,200,JSON.stringify(await preview.clone().json()));const {quote}=await preview.json();assert.equal(quote.workspaceId,state.organizationId);
+      if(change==="dispatch-race")state.controls.beforeConsequentialSubmit=()=>state.sqlite.prepare("UPDATE project_migration_states SET status='failed' WHERE project_access_id=?").run(state.projectAccessId);
+      const executed=await executeContext(state,quote,contextBody,owner);
+      if(change==="dispatch-race"){assert.equal(executed.status,502);assert.equal(calls,0);assert.equal(state.sqlite.prepare("SELECT SUM(reserved_microusd) AS n FROM cost_budget_counters").get().n,0);continue;}
+      assert.equal(executed.status,200,JSON.stringify(await executed.clone().json()));assert.equal(calls,1);
+      const reservations=state.sqlite.prepare("SELECT workspace_id,owner_id FROM cost_budget_reservations").all();
+      assert.deepEqual(reservations.map((row)=>({...row})),[{workspace_id:state.organizationId,owner_id:"assistant-owner"}]);
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_budget_reservation_scopes WHERE organization_id=?").get(state.organizationId).n,2);
+    }finally{globalThis.fetch=original;}
+  }
+});
+
+test("consequential consent free retrieval ignores new-spend headroom and provider availability",async()=>{
+  for(const status of ["completed","uncertain"])for(const unavailable of ["budget","key","enrollment","model"]){
+    const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
+    try{
+      globalThis.fetch=async(_url,init)=>{calls++;if(status==="uncertain")throw new Error("lost provider response");return contextResult(JSON.parse(init.body));};
+      const quote=await quoteContext(state),first=await executeContext(state,quote);assert.equal(first.status,status==="completed"?200:502);
+      if(unavailable==="budget")state.sqlite.prepare("UPDATE cost_budget_counters SET used_microusd=hard_limit_microusd-reserved_microusd WHERE scope='user'").run();
+      if(unavailable==="key")delete state.env.OPENAI_API_KEY;
+      if(unavailable==="enrollment")state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS="";
+      if(unavailable==="model")state.env.FORMA_ASSISTANT_ALLOWED_MODELS="gpt-5.6-luna";
+      const reopened=await quoteContext(state);assert.equal(reopened.executionId,quote.executionId,`${status}/${unavailable}`);assert.equal(reopened.status,status);
+      const read=await retrieveContext(state,reopened);assert.equal(read.status,status==="completed"?200:409,JSON.stringify(await read.clone().json()));
+      assert.equal(calls,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n,1);
+      if(status==="completed")assert.ok((await read.json()).plan);else assert.equal((await read.json()).status,"uncertain");
+    }finally{globalThis.fetch=original;}
+  }
+});
+
+test("consequential consent retrieval cannot consume an unused quote after transport loss",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
+  try{
+    globalThis.fetch=async()=>{calls++;throw new Error("must not dispatch");};const quote=await quoteContext(state),read=await retrieveContext(state,quote);
+    assert.equal(read.status,409);assert.equal((await read.json()).submission,"not-submitted");assert.equal(calls,0);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,0);
+    assert.equal(state.sqlite.prepare("SELECT status FROM consequential_executions").get().status,"quoted");
+  }finally{globalThis.fetch=original;}
+});
+
+test("consequential consent session revocation at dispatch and cached-result reads fails closed",async()=>{
+  for(const stage of ["dispatch","result-read"]){
+    const state=await sharedProjectFixture({provider:true}),original=globalThis.fetch;let calls=0;
+    try{
+      globalThis.fetch=async(_url,init)=>{calls++;return contextResult(JSON.parse(init.body));};
+      const quote=await quoteContext(state,contextBody,state.owner);
+      const revoke=()=>state.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE principal_user_id='assistant-owner'").run(new Date().toISOString());
+      if(stage==="dispatch")state.controls.beforeConsequentialSubmit=revoke;
+      const first=await executeContext(state,quote,contextBody,state.owner);
+      if(stage==="dispatch"){
+        assert.equal(first.status,502);assert.equal(calls,0);assert.equal(state.sqlite.prepare("SELECT SUM(reserved_microusd) AS n FROM cost_budget_counters").get().n,0);
+      }else{
+        assert.equal(first.status,200);state.controls.beforeConsequentialResultRead=revoke;
+        const read=await retrieveContext(state,quote,contextBody,state.owner);assert.equal(read.status,403);assert.doesNotMatch(await read.text(),/quiet interior|sourceText/u);assert.equal(calls,1);
+      }
+    }finally{globalThis.fetch=original;}
+  }
+});
+
+test("consequential consent finishes a saved verified ledger settlement exactly once without repurchase",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
+  try{
+    globalThis.fetch=async(_url,init)=>{calls++;return contextResult(JSON.parse(init.body));};const quote=await quoteContext(state);
+    state.controls.failAssistantBillingCostSettlement=true;
+    const first=await executeContext(state,quote);assert.equal(first.status,200,JSON.stringify(await first.clone().json()));assert.equal((await first.json()).billingStatus,"pending");
+    assert.equal(state.sqlite.prepare("SELECT status FROM consequential_execution_steps").get().status,"usage-recorded");
+    for(let attempt=0;attempt<2;attempt++){
+      const read=await retrieveContext(state,quote);assert.equal(read.status,200);assert.equal((await read.json()).billingStatus,"settled");
+      assert.deepEqual({...state.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id='dev-local-creative'").get()},{used_microusd:5600,reserved_microusd:0});
+      assert.deepEqual({...state.sqlite.prepare("SELECT used_tokens,reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id='dev-local-creative'").get()},{used_tokens:1300,reserved_tokens:0});
+    }
+    assert.equal(calls,1);
+  }finally{globalThis.fetch=original;}
+});
+
+test("consequential consent preserves paid results when concurrent retrieval wins either ledger settlement",async()=>{
+  for(const ledger of ["budget_reservations","cost_budget_reservations"]){
+    const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0,release,entered,paused=false;
+    const gate=new Promise((resolve)=>{release=resolve;}),started=new Promise((resolve)=>{entered=resolve;});
+    const prepare=state.env.DB.prepare.bind(state.env.DB);
+    try{
+      globalThis.fetch=async(_url,init)=>{calls++;return contextResult(JSON.parse(init.body));};const quote=await quoteContext(state);
+      state.env.DB.prepare=(sql)=>{
+        const statement=prepare(sql),bind=statement.bind.bind(statement);
+        statement.bind=(...values)=>{
+          const bound=bind(...values),first=bound.first.bind(bound);
+          bound.first=async()=>{
+            const result=await first();
+            if(!paused&&sql===`SELECT * FROM ${ledger} WHERE reservation_id=? AND owner_id=?`&&["active","executing"].includes(result?.status)
+              &&state.sqlite.prepare("SELECT 1 FROM consequential_execution_steps WHERE status='usage-recorded'").get()){
+              paused=true;entered();await gate;
+            }
+            return result;
+          };return bound;
+        };return statement;
+      };
+      const first=executeContext(state,quote);await started;
+      const concurrent=await retrieveContext(state,quote);assert.equal(concurrent.status,202);assert.equal(state.sqlite.prepare("SELECT status FROM consequential_execution_steps").get().status,"settled");
+      release();const completed=await first;assert.equal(completed.status,200,JSON.stringify(await completed.clone().json()));assert.equal((await completed.json()).executionId,quote.executionId);
+      assert.equal(state.sqlite.prepare("SELECT status FROM consequential_executions").get().status,"completed");
+      assert.ok(state.sqlite.prepare("SELECT result_ref FROM consequential_executions").get().result_ref);
+      assert.equal((await quoteContext(state)).executionId,quote.executionId);assert.equal((await retrieveContext(state,quote)).status,200);assert.equal(calls,1);
+      assert.deepEqual({...state.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id='dev-local-creative'").get()},{used_microusd:5600,reserved_microusd:0});
+      assert.deepEqual({...state.sqlite.prepare("SELECT used_tokens,reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id='dev-local-creative'").get()},{used_tokens:1300,reserved_tokens:0});
+    }finally{release();state.env.DB.prepare=prepare;globalThis.fetch=original;}
+  }
+});
+
+test("consequential consent never regresses a saved result after a late authorization-read failure",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
+  try{
+    globalThis.fetch=async(_url,init)=>{calls++;return contextResult(JSON.parse(init.body));};const quote=await quoteContext(state);
+    state.controls.failAfterConsequentialComplete=true;
+    const first=await executeContext(state,quote);assert.equal(first.status,502);assert.equal((await first.json()).status,"completed");
+    const row=state.sqlite.prepare("SELECT status,result_ref FROM consequential_executions").get();assert.equal(row.status,"completed");assert.ok(row.result_ref);
+    const reopened=await quoteContext(state);assert.equal(reopened.executionId,quote.executionId);
+    assert.equal((await retrieveContext(state,reopened)).status,200);assert.equal(calls,1);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM consequential_executions").get().n,1);
+  }finally{globalThis.fetch=original;}
+});
+
+test("consequential consent retained results survive a billing-month rollover without new approval or spend",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch,NativeDate=Date;let calls=0;
+  try{
+    const past=Date.now()-40*86_400_000;
+    globalThis.Date=class extends NativeDate{constructor(...args){super(...(args.length?args:[past]));}static now(){return past;}};
+    globalThis.fetch=async(_url,init)=>{calls++;return contextResult(JSON.parse(init.body));};const quote=await quoteContext(state);
+    assert.equal((await executeContext(state,quote)).status,200);globalThis.Date=NativeDate;
+    const reopened=await quoteContext(state);assert.equal(reopened.executionId,quote.executionId);assert.equal(reopened.period,quote.period);
+    assert.equal((await retrieveContext(state,reopened)).status,200);assert.equal(calls,1);
+    assert.equal(state.sqlite.prepare("SELECT period FROM cost_budget_reservations").get().period,quote.period);
+  }finally{globalThis.Date=NativeDate;globalThis.fetch=original;}
+});
+
+test("consequential consent never replaces an unknown request when its private preview expires",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
+  try{
+    globalThis.fetch=async()=>{calls++;throw new Error("lost response");};const quote=await quoteContext(state);assert.equal((await executeContext(state,quote)).status,502);
+    state.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE kind='execution-consent'").run();
+    const next=await state.request("/api/context/decompose",json({...contextBody,action:"quote"}));assert.equal(next.status,409);assert.equal((await next.json()).error,"context_existing_request_unavailable");
+    assert.equal(calls,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM consequential_executions").get().n,1);
+    assert.ok(state.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='user'").get().reserved_microusd>0);
   }finally{globalThis.fetch=original;}
 });

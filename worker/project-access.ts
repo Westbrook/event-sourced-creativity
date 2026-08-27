@@ -59,7 +59,7 @@ export async function ownerDocumentBudgetScopes(env:WorkerEnv,userId:string,docu
   if(!userId||!documentId)return[];
   const rows=await env.DB.prepare(`SELECT project.organization_id,project.project_access_id
     FROM organization_projects project
-    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.status='active'
+    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status='active'
     JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
     JOIN organization_memberships membership ON membership.organization_id=project.organization_id AND membership.user_id=?
       AND membership.status='active' AND membership.accepted_at IS NOT NULL AND membership.revoked_at IS NULL
@@ -72,6 +72,26 @@ export async function ownerDocumentBudgetScopes(env:WorkerEnv,userId:string,docu
       )))
     LIMIT 2`).bind(userId,userId,verifiedProjectId,verifiedProjectId,verifiedProjectId,documentId).all<{organization_id:string;project_access_id:string}>();
   return rows.results.map((row)=>({organizationId:String(row.organization_id),projectAccessId:String(row.project_access_id),actorUserId:userId}));
+}
+
+/** An absent context cookie is not permission to bill tenant work to a personal account. */
+export async function resolveOwnerExecutionScope(env:WorkerEnv,user:PilotUser,documentId:string,projectId:string){
+  const custody=await env.DB.prepare(`SELECT project_access_id,organization_id,owner_user_id FROM organization_projects
+    WHERE project_id=? AND (owner_user_id=? OR EXISTS(SELECT 1 FROM project_resource_scopes resource
+      WHERE resource.project_access_id=organization_projects.project_access_id AND resource.resource_kind='document'
+        AND resource.resource_id=? AND resource.owner_user_id=?)) LIMIT 2`)
+    .bind(projectId,user.userId,documentId,user.userId).all<{project_access_id:string;organization_id:string;owner_user_id:string}>();
+  const resources=await env.DB.prepare("SELECT DISTINCT project_access_id,organization_id,project_id FROM project_resource_scopes WHERE owner_user_id=? AND resource_kind='document' AND resource_id=? LIMIT 2")
+    .bind(user.userId,documentId).all<{project_access_id:string;organization_id:string;project_id:string}>();
+  const eventCustody=await env.DB.prepare("SELECT DISTINCT project_access_id,organization_id FROM project_event_scopes WHERE owner_user_id=? AND project_id=? LIMIT 2")
+    .bind(user.userId,projectId).all<{project_access_id:string;organization_id:string}>();
+  if(!custody.results.length)return{scope:undefined,denied:Boolean(resources.results.length||eventCustody.results.length)};
+  if(resources.results.some((row)=>row.project_id!==projectId||row.project_access_id!==custody.results[0].project_access_id||row.organization_id!==custody.results[0].organization_id)
+    ||eventCustody.results.some((row)=>row.project_access_id!==custody.results[0].project_access_id||row.organization_id!==custody.results[0].organization_id))return{scope:undefined,denied:true};
+  const active=await ownerDocumentBudgetScopes(env,user.userId,documentId,projectId);
+  if(custody.results.length!==1||active.length!==1||active[0].projectAccessId!==custody.results[0].project_access_id
+    ||!hasCapability(user,"project.author",active[0])||!hasCapability(user,"project.output.request",active[0]))return{scope:undefined,denied:true as const};
+  return{scope:{...active[0],projectId,ownerUserId:user.userId},denied:false as const};
 }
 
 const readCookie=(request:Request,name:string)=>{

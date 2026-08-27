@@ -1006,6 +1006,16 @@ export const costBudgetReservations = sqliteTable(
   ],
 );
 
+export const consequentialExecutions = sqliteTable("consequential_executions", {
+  executionId:text("execution_id").primaryKey(),actorUserId:text("actor_user_id").notNull(),streamId:text("stream_id").notNull(),projectId:text("project_id").notNull(),documentId:text("document_id").notNull(),
+  organizationId:text("organization_id"),projectAccessId:text("project_access_id"),operation:text("operation").notNull(),intentHash:text("intent_hash").notNull(),bindingHash:text("binding_hash").notNull(),consentRef:text("consent_ref").notNull(),resultRef:text("result_ref"),
+  status:text("status").notNull(),errorCode:text("error_code"),createdAt:text("created_at").notNull(),expiresAt:text("expires_at").notNull(),updatedAt:text("updated_at").notNull(),
+},(table)=>[index("idx_consequential_executions_actor_scope").on(table.actorUserId,table.projectId,table.documentId,table.status,table.createdAt)]);
+export const consequentialExecutionSteps = sqliteTable("consequential_execution_steps",{
+  executionId:text("execution_id").notNull(),stepIndex:integer("step_index").notNull(),tokenReservationId:text("token_reservation_id").notNull(),costReservationId:text("cost_reservation_id").notNull(),
+  maximumTokens:integer("maximum_tokens").notNull(),maximumMicrousd:integer("maximum_microusd").notNull(),status:text("status").notNull(),providerRequestId:text("provider_request_id"),verifiedTokens:integer("verified_tokens"),verifiedMicrousd:integer("verified_microusd"),updatedAt:text("updated_at").notNull(),
+},(table)=>[primaryKey({columns:[table.executionId,table.stepIndex]})]);
+
 export const shares = sqliteTable(
   "shares",
   {

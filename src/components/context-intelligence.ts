@@ -5,6 +5,8 @@ import { appendDecompositionAddendum, researchBlockText, type ContextResearchAre
 import type { CreativeBlock, EventInput } from "../model/events";
 import { FormaElement, icon } from "./forma-element";
 import { ensureModalDialog } from "./modal-dialog";
+import { contextConsentAction, contextConsentFailure, type ContextConsentAction } from "../model/context-consent-state";
+import type { ConsequentialPreview } from "../../worker/consequential-consent";
 import "./context-intelligence.css";
 
 type Workflow="decompose"|"research";
@@ -26,6 +28,13 @@ export class ContextIntelligence extends FormaElement{
   #addition="";
   #additionType:BlockKind="subject";
   #request=0;
+  #quote:(ConsequentialPreview&{providerAvailable:boolean})|null=null;
+  #publicQuery="";
+  #quoteAddition="";
+  #quoteAdditionType:BlockKind="subject";
+  #executionUncertain=false;
+  #consentNotice="";
+  #billingPending=false;
 
   protected override updated(){
     const dialog=this.renderRoot.querySelector<HTMLDialogElement>(".context-intelligence-dialog");
@@ -33,33 +42,62 @@ export class ContextIntelligence extends FormaElement{
     if(!this.#open&&dialog?.open)dialog.close();
   }
 
-  #close(){this.#request+=1;this.#open=false;this.#mode=null;this.#working=false;this.#error=false;this.#plan=null;this.#report=null;this.#selected.clear();this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.requestUpdate();}
+  #close(){this.#request+=1;this.#open=false;this.#mode=null;this.#working=false;this.#error=false;this.#plan=null;this.#report=null;this.#quote=null;this.#publicQuery="";this.#quoteAddition="";this.#executionUncertain=false;this.#billingPending=false;this.#consentNotice="";this.#selected.clear();this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.requestUpdate();}
 
-  async #requestAnalysis(kind:Workflow,addedText=""){
+  async #requestAnalysis(kind:Workflow,action:"quote"|ContextConsentAction,addedText=""){
     const authorization=this.store.captureAuthorizationScope(),projection=this.store.projection.get();
     if(!authorization||!projection.projectId||!projection.documentId)return null;
     const current=++this.#request,blockId=this.block.id;
-    const response=await this.store.guardedFetch(`/api/context/${kind}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({blockId,documentId:this.block.documentId||projection.documentId,projectId:this.block.projectId||projection.projectId,...(addedText?{addedText,addedType:this.#additionType}:{})})},kind==="decompose"?this.i18n.t("context.intelligence.decompose"):this.i18n.t("context.intelligence.research"));
+    let response:Response,result:{quote?:ConsequentialPreview&{providerAvailable:boolean};plan?:DecompositionPlan;report?:ContextResearchReport;error?:string;status?:string;submission?:string;providerAvailable?:boolean;billingStatus?:string;executionId?:string;bindingHash?:string};
+    try{
+      response=await this.store.guardedFetch(`/api/context/${kind}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,blockId,documentId:this.block.documentId||projection.documentId,projectId:this.block.projectId||projection.projectId,canvasId:this.block.canvasId??null,publicQuery:this.#publicQuery,...(addedText?{addedText,addedType:this.#quoteAdditionType}:{}),...(action!=="quote"&&this.#quote?{executionId:this.#quote.executionId,approvedBindingHash:this.#quote.bindingHash}:{})})},kind==="decompose"?this.i18n.t("context.intelligence.decompose"):this.i18n.t("context.intelligence.research"));
+      if(!this.store.authorizationScopeActive(authorization)||current!==this.#request||this.block.id!==blockId)return null;
+      result=await response.json();
+    }catch(error){
+      if(!this.store.authorizationScopeActive(authorization)||current!==this.#request||this.block.id!==blockId)return null;
+      if(action!=="quote")this.#consentFailure({transport:true});throw error;
+    }
     if(!this.store.authorizationScopeActive(authorization)||current!==this.#request||this.block.id!==blockId)return null;
-    const result=await response.json() as {plan?:DecompositionPlan;report?:ContextResearchReport;error?:string};
-    if(!this.store.authorizationScopeActive(authorization)||current!==this.#request||this.block.id!==blockId)return null;
-    if(!response.ok)throw new Error(result.error??"context_intelligence_failed");
+    if(!response.ok||result.status==="reserved"){if(action!=="quote"){
+      if(result.quote)this.#quote=result.quote;
+      this.#consentFailure(result);
+    }throw new Error(result.error??"context_intelligence_failed");}
     return result;
   }
 
-  async #begin(kind:Workflow,auto=false){
+  #consentFailure(outcome:Parameters<typeof contextConsentFailure>[1]){
+    const next=contextConsentFailure(this.#quote,outcome);this.#quote=next.quote;this.#executionUncertain=next.uncertain;this.#consentNotice=next.notice;
+  }
+
+  async #begin(kind:Workflow){
     if(this.#working||this.block.locked&&kind==="decompose")return;
-    this.#mode=kind;this.#open=!auto;this.#working=true;this.#error=false;this.#plan=null;this.#report=null;this.#selected.clear();this.requestUpdate();
+    this.#mode=kind;this.#open=true;this.#working=true;this.#error=false;this.#plan=null;this.#report=null;this.#quote=null;this.#publicQuery="";this.#quoteAddition="";this.#executionUncertain=false;this.#billingPending=false;this.#selected.clear();this.requestUpdate();
+    await this.#preview();
+  }
+
+  async #preview(){
+    if(!this.#mode)return;
+    this.#working=true;this.#error=false;this.#consentNotice="";this.requestUpdate();
+    try{const result=await this.#requestAnalysis(this.#mode,"quote",this.#quoteAddition);if(result?.quote){this.#quote=result.quote;this.#executionUncertain=["reserved","submitting","uncertain"].includes(result.quote.status);this.#error=this.#executionUncertain;}}
+    catch{this.#error=true;}finally{this.#working=false;this.requestUpdate();}
+  }
+
+  async #execute(){
+    const kind=this.#mode,quote=this.#quote;if(!kind||!quote||this.#working)return;
+    this.#working=true;this.#error=false;this.requestUpdate();
     try{
-      const result=await this.#requestAnalysis(kind);if(!result)return;
+      const result=await this.#requestAnalysis(kind,contextConsentAction(quote.status,quote.providerAvailable).action,this.#quoteAddition);if(!result)return;
       if(kind==="decompose"&&result.plan){
-        this.#plan=result.plan;for(const proposal of result.plan.proposals)this.#selected.add(proposal.id);
-        if(auto){this.#working=false;await this.#applyDecomposition();return;}
+        if(this.#quoteAddition&&this.#plan){
+          const next=appendDecompositionAddendum(this.#plan,this.#quoteAddition,result.plan.proposals.length?result.plan.proposals:[{type:this.#quoteAdditionType,subtype:suggestedSubtype(this.#quoteAdditionType),label:this.#quoteAddition,text:this.#quoteAddition,source_excerpt:this.#quoteAddition,participants:[]}]);
+          for(const proposal of next.addenda.slice(this.#plan.addenda.length))this.#selected.add(proposal.id);this.#plan=next;this.#addition="";this.#quoteAddition="";
+        }else{this.#plan=result.plan;for(const proposal of result.plan.proposals)this.#selected.add(proposal.id);}
       }else if(kind==="research"&&result.report){
         this.#report=result.report;
         for(const suggestion of [...result.report.inferred,...result.report.related,...result.report.learned])if(suggestion.area!=="learned"||suggestion.type!=="reference")this.#selected.add(suggestion.id);
       }else throw new Error("context_intelligence_invalid_response");
-    }catch{this.#error=true;if(auto){this.#open=true;}}
+      this.#quote=null;this.#billingPending=result.billingStatus==="pending";
+    }catch{this.#error=true;}
     finally{this.#working=false;this.requestUpdate();}
   }
 
@@ -132,13 +170,7 @@ export class ContextIntelligence extends FormaElement{
 
   async #addBlock(event:SubmitEvent){
     event.preventDefault();const source=this.#addition.trim(),plan=this.#plan;if(!source||!plan||this.#working)return;
-    this.#working=true;this.#error=false;this.requestUpdate();
-    try{
-      const result=await this.#requestAnalysis("decompose",source);if(!result?.plan)return;
-      const candidates=result.plan.proposals.length?result.plan.proposals:[{type:this.#additionType,subtype:suggestedSubtype(this.#additionType),label:source,text:source,source_excerpt:source,participants:[]}];
-      const next=appendDecompositionAddendum(plan,source,candidates),added=next.addenda.slice(plan.addenda.length);
-      this.#plan=next;for(const proposal of added)this.#selected.add(proposal.id);this.#addition="";
-    }catch{this.#error=true;}finally{this.#working=false;this.requestUpdate();}
+    this.#quoteAddition=source;this.#quoteAdditionType=this.#additionType;this.#quote=null;await this.#preview();
   }
 
   #updateProposal(id:string,key:"type"|"subtype"|"text"|"label",value:string){
@@ -198,15 +230,26 @@ export class ContextIntelligence extends FormaElement{
     return html`<section class="context-intelligence-report-section"><header><div><h3>${this.i18n.t(`context.intelligence.${area}`)}</h3><p>${this.i18n.t(description)}</p></div><span>${this.i18n.number(suggestions.length)}</span></header>${suggestions.length?suggestions.map((suggestion)=>this.#researchSuggestion(suggestion)):html`<p>${this.i18n.t("context.intelligence.empty")}</p>`}</section>`;
   }
 
+  #consentView(){
+    if((this.#plan||this.#report)&&!this.#quoteAddition)return nothing;
+    const quote=this.#quote;
+    return html`<section class="context-consent" aria-labelledby=${`context-consent-title-${this.block.id}`}><h3 id=${`context-consent-title-${this.block.id}`}>${this.i18n.t("context.consent.title")}</h3><p>${this.i18n.t("context.consent.description")}</p>
+      ${this.#quoteAddition?html`<p dir="auto">${this.#quoteAddition}</p>`:nothing}
+      ${this.#mode==="research"?html`<label><span>${this.i18n.t("context.consent.publicQuery")}</span><input aria-label=${this.i18n.t("context.consent.publicQuery")} aria-describedby=${`context-public-hint-${this.block.id}`} maxlength="140" .value=${this.#publicQuery} ?disabled=${this.#working||Boolean(this.#quote&&["reserved","submitting","uncertain"].includes(this.#quote.status))} @input=${(event:InputEvent)=>{this.#publicQuery=(event.currentTarget as HTMLInputElement).value;this.#quote=null;this.requestUpdate();}}><small id=${`context-public-hint-${this.block.id}`}>${this.i18n.t("context.consent.publicHint")}</small></label>`:nothing}
+      ${quote&&!quote.providerAvailable?html`<p role="status">${this.i18n.t("context.consent.unavailable")}</p>`:nothing}${quote?html`<dl><div><dt>${this.i18n.t("context.consent.provider")}</dt><dd>${quote.provider} · ${quote.models.join(", ")}</dd></div><div><dt>${this.i18n.t("context.consent.reservation")}</dt><dd>USD ${(quote.maximumMicrousd/1_000_000).toFixed(4)} · ${this.i18n.t("context.consent.calls","",{count:this.i18n.number(quote.providerCalls)})}</dd></div><div><dt>${this.i18n.t("context.consent.billing")}</dt><dd>${quote.actorLabel} · ${quote.workspaceId??this.i18n.t("context.consent.personal")} · ${quote.period}</dd></div></dl><p>${this.i18n.t(quote.publicQuery?"context.consent.searchBoundary":"context.consent.noSearch")}</p><p>${this.i18n.t("context.consent.held")}</p><details><summary>${this.i18n.t("context.consent.exactInput")}</summary><p>${quote.projectId} / ${quote.documentId}${quote.canvasId?` / ${quote.canvasId}`:""}</p><p>${quote.sourceHash}</p><textarea readonly rows="10" aria-label=${this.i18n.t("context.consent.exactInput")} .value=${JSON.stringify(quote.privateInput,null,2)}></textarea><small>${this.i18n.t("context.consent.expires")} ${quote.expiresAt}</small></details>`:nothing}
+      ${!quote?html`<button type="button" class="button secondary" ?disabled=${this.#working} @click=${()=>void this.#preview()}>${this.i18n.t("context.consent.preview")}</button>`:nothing}
+    </section>`;
+  }
+
   #dialog(){
     if(!this.#open||!this.#mode)return nothing;
     const decomposition=this.#mode==="decompose",title=this.i18n.t(decomposition?"context.intelligence.review":"context.intelligence.research");
-    return html`<dialog class="context-intelligence-dialog" closedby="any" aria-labelledby=${`context-intelligence-title-${this.block.id}`} @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#close();}} @cancel=${(event:Event)=>{event.preventDefault();this.#close();}}><article><header class="context-intelligence-dialog-header"><div><h2 id=${`context-intelligence-title-${this.block.id}`}>${title}</h2><p>${this.i18n.t(decomposition?"context.intelligence.decomposeDescription":"context.intelligence.researchDescription")}</p></div><button type="button" class="icon-button" aria-label=${this.i18n.t("action.close")} @click=${()=>this.#close()}>${icon("close")}</button></header><main><section class="context-intelligence-source"><span>${this.i18n.t("context.intelligence.source")}</span><p dir="auto">${researchBlockText(this.block)}</p></section>${this.#working?html`<p class="context-intelligence-status" role="status">${this.i18n.t("context.intelligence.working")}</p>`:nothing}${this.#error?html`<p class="context-intelligence-error" role="alert">${this.i18n.t("context.intelligence.failed")}</p>`:nothing}${decomposition&&this.#plan?html`<section class="context-intelligence-report-section"><header><div><h3>${this.i18n.t("context.intelligence.proposals")}</h3><p>${this.i18n.t("context.intelligence.noChanges")}</p></div><span>${this.i18n.number(this.#plan.proposals.length)}</span></header>${this.#plan.proposals.length?this.#plan.proposals.map((proposal)=>this.#proposal(proposal)):html`<p>${this.i18n.t("context.intelligence.empty")}</p>`}</section>${this.#plan.addenda.length?html`<section class="context-intelligence-report-section"><header><div><h3>${this.i18n.t("context.intelligence.addendum")}</h3><p>${this.i18n.t("context.intelligence.addendumDescription")}</p></div><span>${this.i18n.number(this.#plan.addenda.length)}</span></header>${this.#plan.addenda.map((proposal)=>this.#proposal(proposal))}</section>`:nothing}<form class="context-intelligence-add" @submit=${(event:SubmitEvent)=>void this.#addBlock(event)}><label><span>${this.i18n.t("context.intelligence.add")}</span><input required .value=${this.#addition} placeholder=${this.i18n.t("context.intelligence.addPlaceholder")} @input=${(event:InputEvent)=>{this.#addition=(event.currentTarget as HTMLInputElement).value;}}></label><select aria-label=${this.i18n.t("field.setting")} .value=${this.#additionType} @change=${(event:Event)=>{this.#additionType=(event.currentTarget as HTMLSelectElement).value as BlockKind;}}>${BLOCK_TYPES.filter((item)=>item.type!=="reference").map((item)=>html`<option value=${item.type}>${this.i18n.system(item.label)}</option>`)}</select><button type="submit" class="button secondary compact" ?disabled=${this.#working}>${icon("plus")}</button></form>`:nothing}${!decomposition&&this.#report?html`${this.#section("inferred",this.#report.inferred)}${this.#section("related",this.#report.related)}${this.#section("learned",this.#report.learned)}${this.#report.learned.some((suggestion)=>suggestion.type==="reference")?html`<p class="context-intelligence-reference-notice">${this.i18n.t("context.intelligence.referenceNotice")}</p>`:nothing}`:nothing}</main><footer><button type="button" class="button ghost" @click=${()=>this.#close()}>${this.i18n.t("action.cancel")}</button>${decomposition?html`<button type="button" class="button secondary" ?disabled=${this.#working||!this.#plan?.proposals.length} title=${this.i18n.t("context.intelligence.autoHint")} @click=${()=>void this.#applyDecomposition()}>${this.i18n.t("context.intelligence.auto")}</button>`:nothing}<button type="button" class="button primary" ?disabled=${this.#working||!this.#selected.size||this.block.locked} @click=${()=>void(decomposition?this.#applyDecomposition():this.#applyResearch())}>${this.i18n.t("context.intelligence.apply")}</button></footer></article></dialog>`;
+    return html`<dialog class="context-intelligence-dialog" closedby="any" aria-labelledby=${`context-intelligence-title-${this.block.id}`} @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.#close();}} @cancel=${(event:Event)=>{event.preventDefault();this.#close();}}><article><header class="context-intelligence-dialog-header"><div><h2 id=${`context-intelligence-title-${this.block.id}`}>${title}</h2><p>${this.i18n.t(decomposition?"context.intelligence.decomposeDescription":"context.intelligence.researchDescription")}</p></div><button type="button" class="icon-button" aria-label=${this.i18n.t("action.close")} @click=${()=>this.#close()}>${icon("close")}</button></header><div class="context-intelligence-body"><section class="context-intelligence-source"><span>${this.i18n.t("context.intelligence.source")}</span><p dir="auto">${researchBlockText(this.block)}</p></section>${this.#consentView()}${this.#working?html`<p class="context-intelligence-status" role="status">${this.i18n.t("context.intelligence.working")}</p>`:nothing}${this.#error?html`<p class="context-intelligence-error" role="alert">${this.i18n.t(this.#executionUncertain?"context.consent.uncertain":this.#consentNotice==="refresh"?"context.consent.refresh":this.#consentNotice==="not-submitted"?"context.consent.notSubmitted":"context.intelligence.failed")}</p>`:nothing}${this.#billingPending?html`<p class="context-intelligence-status" role="status">${this.i18n.t("context.consent.billingPending")}</p>`:nothing}${decomposition&&this.#plan?html`<section class="context-intelligence-report-section"><header><div><h3>${this.i18n.t("context.intelligence.proposals")}</h3><p>${this.i18n.t("context.intelligence.noChanges")}</p></div><span>${this.i18n.number(this.#plan.proposals.length)}</span></header>${this.#plan.proposals.length?this.#plan.proposals.map((proposal)=>this.#proposal(proposal)):html`<p>${this.i18n.t("context.intelligence.empty")}</p>`}</section>${this.#plan.addenda.length?html`<section class="context-intelligence-report-section"><header><div><h3>${this.i18n.t("context.intelligence.addendum")}</h3><p>${this.i18n.t("context.intelligence.addendumDescription")}</p></div><span>${this.i18n.number(this.#plan.addenda.length)}</span></header>${this.#plan.addenda.map((proposal)=>this.#proposal(proposal))}</section>`:nothing}<form class="context-intelligence-add" @submit=${(event:SubmitEvent)=>void this.#addBlock(event)}><label><span>${this.i18n.t("context.intelligence.add")}</span><input required .value=${this.#addition} placeholder=${this.i18n.t("context.intelligence.addPlaceholder")} @input=${(event:InputEvent)=>{this.#addition=(event.currentTarget as HTMLInputElement).value;}}></label><select aria-label=${this.i18n.t("field.setting")} .value=${this.#additionType} @change=${(event:Event)=>{this.#additionType=(event.currentTarget as HTMLSelectElement).value as BlockKind;}}>${BLOCK_TYPES.filter((item)=>item.type!=="reference").map((item)=>html`<option value=${item.type}>${this.i18n.system(item.label)}</option>`)}</select><button type="submit" class="button secondary compact" ?disabled=${this.#working}>${icon("plus")}</button></form>`:nothing}${!decomposition&&this.#report?html`${this.#section("inferred",this.#report.inferred)}${this.#section("related",this.#report.related)}${this.#section("learned",this.#report.learned)}${this.#report.learned.some((suggestion)=>suggestion.type==="reference")?html`<p class="context-intelligence-reference-notice">${this.i18n.t("context.intelligence.referenceNotice")}</p>`:nothing}`:nothing}</div><footer><button type="button" class="button ghost" @click=${()=>this.#close()}>${this.i18n.t("action.cancel")}</button>${this.#quote?html`<button type="button" class="button primary" ?disabled=${this.#working||contextConsentAction(this.#quote.status,this.#quote.providerAvailable).disabled} @click=${()=>void this.#execute()}>${this.i18n.t(contextConsentAction(this.#quote.status,this.#quote.providerAvailable).label)}</button>`:nothing}<button type="button" class="button primary" ?disabled=${this.#working||Boolean(this.#quote)||Boolean(this.#quoteAddition)||!this.#selected.size||this.block.locked} @click=${()=>void(decomposition?this.#applyDecomposition():this.#applyResearch())}>${this.i18n.t("context.intelligence.apply")}</button></footer></article></dialog>`;
   }
 
   override render(){
     if(!this.block||this.block.properties.organization_context_package_binding_id||this.block.properties.source_evidence_hash)return nothing;
-    return html`<div class=${`context-intelligence-actions${this.compact?" compact":""}`}><button type="button" class="button ghost compact" ?disabled=${this.block.locked||this.#working} @click=${()=>void this.#begin("decompose")}>${icon("branch")}${this.i18n.t("context.intelligence.decompose")}</button>${this.compact?nothing:html`<button type="button" class="button ghost compact" ?disabled=${this.block.locked||this.#working} title=${this.i18n.t("context.intelligence.autoHint")} @click=${()=>void this.#begin("decompose",true)}>${this.i18n.t("context.intelligence.auto")}</button>`}<button type="button" class="button ghost compact" ?disabled=${this.#working} @click=${()=>void this.#begin("research")}>${icon("search")}${this.i18n.t("context.intelligence.research")}</button></div>${this.#dialog()}`;
+    return html`<div class=${`context-intelligence-actions${this.compact?" compact":""}`}><button type="button" class="button ghost compact" ?disabled=${this.block.locked||this.#working} @click=${()=>void this.#begin("decompose")}>${icon("branch")}${this.i18n.t("context.intelligence.decompose")}</button><button type="button" class="button ghost compact" ?disabled=${this.#working} @click=${()=>void this.#begin("research")}>${icon("search")}${this.i18n.t("context.intelligence.research")}</button></div>${this.#dialog()}`;
   }
 }
 
