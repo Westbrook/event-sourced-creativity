@@ -163,7 +163,7 @@ test("Activity issue notes remain actor-private and outside general content hydr
   assert.match(worker, /content\.owner_id=\? AND content\.kind='activity-issue-note'/u);
   assert.match(worker, /selection\.revoked_at IS NULL AND selection\.expires_at>\?/u);
   assert.match(worker, /anchor\.type='ProjectDocumentJobQueued'/u);
-  assert.match(policy, /kind NOT IN\('provider-response','activity-issue-note','execution-consent','context-proposal'\)/u);
+  assert.match(policy, /kind NOT IN\('provider-response','activity-issue-note','execution-consent','context-proposal','authoring-preview'\)/u);
   assert.doesNotMatch(worker, /ActivityIssueNoted",\{[^}]*\bbody\s*:/u);
 });
 

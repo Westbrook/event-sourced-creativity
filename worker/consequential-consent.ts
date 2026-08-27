@@ -19,7 +19,7 @@ export async function consentHash(value:unknown){
 }
 
 /** The same captured authorization must still exist at the SQL mutation boundary. */
-export function executionAdmissionGuard(user:PilotUser,binding:ConsequentialBinding,sourceHead:number,paid=false){
+export function executionAdmissionGuard(user:PilotUser,binding:ConsequentialBinding,sourceHead:number|null,paid=false){
   const snapshot=user.authorizationSnapshot;
   if(!snapshot)return{sql:"0",bindings:[] as Array<string|number|null>};
   const scope=binding.scope;
@@ -32,10 +32,10 @@ export function executionAdmissionGuard(user:PilotUser,binding:ConsequentialBind
   const now=new Date().toISOString();
   const session=binding.contextSessionId?` AND EXISTS(SELECT 1 FROM project_context_sessions selected_session WHERE selected_session.context_id=?
     AND selected_session.principal_user_id=? AND selected_session.organization_id=? AND selected_session.project_access_id=?
-    AND selected_session.revoked_at IS NULL AND selected_session.expires_at>?)`:"";
+    AND selected_session.revoked_at IS NULL AND selected_session.expires_at>? AND selected_session.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))`:"";
   const pilot=!paid?"":binding.pilotCohortId?` AND EXISTS(SELECT 1 FROM pilot_cohorts cohort JOIN pilot_participants participant
     ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
-    WHERE cohort.cohort_id=? AND cohort.organization_id=? AND cohort.status='active' AND cohort.starts_at<=? AND cohort.ends_at>?
+    WHERE cohort.cohort_id=? AND cohort.organization_id=? AND cohort.status='active' AND cohort.starts_at<=? AND cohort.ends_at>? AND cohort.ends_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
       AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL AND participant.role!='reviewer')`
     :` AND NOT EXISTS(SELECT 1 FROM pilot_cohorts cohort WHERE cohort.status IN('active','paused','closed')
       AND (cohort.organization_id=? OR EXISTS(SELECT 1 FROM pilot_participants participant WHERE participant.cohort_id=cohort.cohort_id
@@ -45,14 +45,14 @@ export function executionAdmissionGuard(user:PilotUser,binding:ConsequentialBind
     AND COALESCE(principal.grants_json,'[]')=? AND COALESCE(principal.organizations_json,'[]')=?
     AND COALESCE(principal.projects_json,'[]')=? AND COALESCE(principal.identity_policies_json,'[]')=?
     AND COALESCE(principal.approved_canvas_requirements,0)=?)
-    AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? AND ${custody}${session}${pilot}`,
-    bindings:[user.userId,user.userId,user.role,snapshot.updatedAt,POLICY_VERSION,snapshot.rawEpoch,snapshot.grants,snapshot.organizations,snapshot.projects,snapshot.identityPolicies,snapshot.canvasRequirements,binding.streamId,sourceHead,
+    ${sourceHead===null?"":"AND (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?"} AND ${custody}${session}${pilot}`,
+    bindings:[user.userId,user.userId,user.role,snapshot.updatedAt,POLICY_VERSION,snapshot.rawEpoch,snapshot.grants,snapshot.organizations,snapshot.projects,snapshot.identityPolicies,snapshot.canvasRequirements,...(sourceHead===null?[]:[binding.streamId,sourceHead]),
       ...(scope?[scope.projectAccessId,scope.organizationId,binding.projectId,scope.ownerUserId]:[user.userId,binding.projectId,user.userId,binding.documentId]),
       ...(binding.contextSessionId?[binding.contextSessionId,user.userId,scope?.organizationId??"",scope?.projectAccessId??"",now]:[]),
       ...(!paid?[]:binding.pilotCohortId?[binding.pilotCohortId,scope?.organizationId??"",now,now,user.userId]:[scope?.organizationId??"",user.userId])] as Array<string|number|null>};
 }
 
-export async function executionAuthorityCurrent(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,sourceHead:number){
+export async function executionAuthorityCurrent(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,sourceHead:number|null){
   const guard=executionAdmissionGuard(user,binding,sourceHead);
   return Boolean(await env.DB.prepare(`SELECT 1 AS authorized WHERE ${guard.sql}`).bind(...guard.bindings).first());
 }

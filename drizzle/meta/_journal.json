@@ -134,6 +134,13 @@
       "when": 1787796904509,
       "tag": "0018_consequential_consent",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1787800209711,
+      "tag": "0019_authoring_commits",
+      "breakpoints": true
     }
   ]
 }

@@ -10,6 +10,7 @@ import { creativePromptGuardrails, promptFactIsActive } from "../src/model/promp
 import { hasCapability, pilotExecutionAllowance, readAccountBudgets, requireConsent, requireUser, type ProjectExecutionScope } from "./pilot-policy.ts";
 import { readProjectEventPage, readProjectRequestContext, resolveOwnerExecutionScope } from "./project-access.ts";
 import { serializeEvent, streamHead, type WorkerEnv } from "./runtime.ts";
+import { contextSourceHash } from "./context-authoring-authority.ts";
 import { beginConsequentialStep, claimConsequentialExecution, completeConsequentialExecution, consequentialUsageSettled, consentHash, executionAuthorityCurrent, failConsequentialExecution, quoteConsequentialExecution, readConsequentialConsent, readConsequentialExecution, readConsequentialIntentExecution, readConsequentialResult, reconcileConsequentialUsage, reserveConsequentialSteps, settleConsequentialStep, type ConsequentialBinding, type ExecutionRow, type ExecutionStepLimit } from "./consequential-consent.ts";
 
 const PRIVATE_HEADERS={"cache-control":"private, no-store",vary:"Cookie, oai-authenticated-user-id, oai-authenticated-user-email"};
@@ -87,7 +88,7 @@ function resolveResearch(input:{target:CreativeBlock;documentId:string;decoded:R
   return{blockId:input.target.id,inferred,related,learned:learned.slice(0,5),searchedWeb:input.searchedWeb,query:clean(input.decoded.image_query,160)};
 }
 
-async function prepareContextIntelligence(request:Request,env:WorkerEnv,operation:"decompose"|"research",body:Record<string,unknown>){
+export async function prepareContextIntelligence(request:Request,env:WorkerEnv,operation:"decompose"|"research",body:Record<string,unknown>){
   const auth=await requireUser(request,env,"viewer",{account:"principal"});if(auth.response||!auth.user)return auth.response??response({error:"authentication_required"},401);
   const principal=auth.user,consent=requireConsent(principal);if(consent)return consent;
   let providerAvailable=Boolean(env.OPENAI_API_KEY&&(env.FORMA_ASSISTANT_PROVIDER_USER_IDS??"").split(",").map((value)=>value.trim()).includes(principal.userId));
@@ -108,6 +109,7 @@ async function prepareContextIntelligence(request:Request,env:WorkerEnv,operatio
   if(!shared){const custody=await resolveOwnerExecutionScope(env,principal,documentId,projectId);if(custody.denied)return response({error:"context_custody_unavailable"},403);scope=custody.scope;}
   const target=projection.libraryBlocks.find((block)=>block.id===blockId&&block.projectId===projectId&&!block.removed&&(block.scope==="library"||block.scope==="canvas"||block.documentId===documentId));
   if(!target)return response({error:"context_block_not_found"},404);
+  if(target.scope==="canvas"&&!(scope?hasCapability(principal,"project.canvas.use",scope):principal.access.canvasAccess))return response({error:"context_canvas_denied"},403);
   if(target.scope==="canvas"&&clean(body.canvasId,120)!==target.canvasId)return response({error:"context_canvas_required"},409);
   if(target.scope==="canvas"&&!foldCanvasEvents(events,projectId,target.canvasId).canvases.some((canvas)=>canvas.id===target.canvasId&&canvas.projectId===projectId))return response({error:"context_canvas_unavailable"},409);
   const providerEligible=(block:CreativeBlock)=>{
@@ -152,11 +154,11 @@ async function prepareContextIntelligence(request:Request,env:WorkerEnv,operatio
   const decision=permitted.model&&!permitted.blocked?permitted:selectAssistantModel("proposal",{allowedModels:ASSISTANT_MODELS,remainingMicrousd:Number.POSITIVE_INFINITY,premiumApproved:false,inputTokens,outputTokens});
   if(!decision.model)return response({error:"context_provider_denied"},403);
   const steps:ExecutionStepLimit[]=[...(publicQuery?[{name:"public-search",provider:"OpenAI",model:decision.model,inputTokens:PUBLIC_SEARCH_INPUT_TOKENS,outputTokens:2400,maximumMicrousd:searchMaximum,toolCalls:1}]:[]),{name:"private-analysis",provider:"OpenAI",model:decision.model,inputTokens,outputTokens,maximumMicrousd:Math.ceil(decision.estimatedMicrousd*1.25),toolCalls:0}];
-  const sourceHash=await consentHash({projectId,documentId,target,blocks:projection.libraryBlocks,relations:projection.libraryBlockRelations,documents:projection.documents,rights:events.filter((event)=>["RightsAsserted","ReferenceIngested"].includes(event.type)).map((event)=>({id:event.eventId,payload:event.payload}))});
+  const sourceHash=await contextSourceHash(projectId,documentId,target,projection,events);
   const canvasId=target.scope==="canvas"?target.canvasId??null:null;
   const intentHash=await consentHash({operation,actorUserId:principal.userId,streamId,projectId,documentId,canvasId,blockId,sourceHash,scope:scope??null,publicQuery,addedText,addedType});
   const binding:ConsequentialBinding={version:"context-consent-2026-08-27-v2",intentHash,operation:`context-${operation}`,actorUserId:principal.userId,permissionEpoch:principal.access.permissionEpoch,streamId,projectId,documentId,canvasId,blockId,sourceHash,period:new Date().toISOString().slice(0,7),scope:scope??null,contextSessionId:shared?.contextId??null,pilotCohortId:allowance.pilot?.cohort_id??null,steps,publicQuery,request:{payload,providerBase,addedText,addedType,searchPolicy:"explicit-public-subject-isolated-v1",pricingVersion:"openai-standard-2026-08-27"}};
-  return{principal,scope,projection,target,sourceText,sourceHead,payload,providerBase,decision,binding,aliases,alreadyRelated,providerAvailable,availableMicrousd:Math.min(budget.costBudgets.user.remainingMicrousd,budget.costBudgets.workspace.remainingMicrousd)};
+  return{principal,scope,shared,events,projection,target,sourceText,sourceHead,payload,providerBase,decision,binding,aliases,alreadyRelated,providerAvailable,availableMicrousd:Math.min(budget.costBudgets.user.remainingMicrousd,budget.costBudgets.workspace.remainingMicrousd)};
 }
 
 // One tool call permits at most the initial and post-tool model passes. Reserve their full documented context envelopes,

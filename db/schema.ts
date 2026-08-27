@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex, index, primaryKey } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text, uniqueIndex, index, primaryKey, check } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import { PHANTOM_ATTENTION_EVENT_SQL } from "./event-predicates.ts";
 
@@ -1015,6 +1015,12 @@ export const consequentialExecutionSteps = sqliteTable("consequential_execution_
   executionId:text("execution_id").notNull(),stepIndex:integer("step_index").notNull(),tokenReservationId:text("token_reservation_id").notNull(),costReservationId:text("cost_reservation_id").notNull(),
   maximumTokens:integer("maximum_tokens").notNull(),maximumMicrousd:integer("maximum_microusd").notNull(),status:text("status").notNull(),providerRequestId:text("provider_request_id"),verifiedTokens:integer("verified_tokens"),verifiedMicrousd:integer("verified_microusd"),updatedAt:text("updated_at").notNull(),
 },(table)=>[primaryKey({columns:[table.executionId,table.stepIndex]})]);
+
+export const authoringCommits=sqliteTable("authoring_commits",{
+  previewId:text("preview_id").primaryKey(),actorUserId:text("actor_user_id").notNull(),operation:text("operation").notNull(),projectId:text("project_id").notNull(),documentId:text("document_id").notNull(),
+  blockId:text("block_id").notNull(),canvasId:text("canvas_id"),
+  organizationId:text("organization_id"),projectAccessId:text("project_access_id"),approvalHash:text("approval_hash").notNull(),resultJson:text("result_json").notNull(),lastEventId:text("last_event_id").notNull(),verified:integer("verified").notNull(),createdAt:text("created_at").notNull(),
+},(table)=>[check("authoring_commit_verified",sql`${table.verified}=1`),index("idx_authoring_commits_actor_document").on(table.actorUserId,table.projectId,table.documentId)]);
 
 export const shares = sqliteTable(
   "shares",

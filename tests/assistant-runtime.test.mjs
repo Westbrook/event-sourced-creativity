@@ -19,11 +19,18 @@ function database() {
   const sqlite = new DatabaseSync(":memory:");
   const controls = { failAssistantTurnInsert: false, failAssistantActionCommit: false, failAssistantBillingAudit: false,
     failAssistantBillingCostSettlement: false, failPlatformAssistantCommit: false, forbidCreatorContentReads: false,
-    failPlatformPrivacyErase: false, beforePlatformCommit: null, beforeDeletionClaim: null, beforeConsequentialClaim:null, beforeConsequentialSubmit:null,beforeConsequentialResultRead:null,failAfterConsequentialComplete:false,failNextConsequentialPrincipalRead:false, skipAssistantTaskClaimOnce: false, lastDatabaseError: "" };
+    failPlatformPrivacyErase: false, beforePlatformCommit: null, beforeDeletionClaim: null, beforeConsequentialClaim:null, beforeConsequentialSubmit:null,beforeConsequentialResultRead:null,failAfterConsequentialComplete:false,failNextConsequentialPrincipalRead:false, beforeAuthoringCommit:null,failAuthoringCommit:false,failAuthoringEventAt:0, skipAssistantTaskClaimOnce: false, lastDatabaseError: "" };
   class Statement {
     constructor(sql, values = []) { this.sql = sql; this.values = values; }
     bind(...values) { assert.ok(values.length <= 100); return new Statement(this.sql, values); }
     execute(kind) {
+      if(/^\s*INSERT INTO authoring_commits/iu.test(this.sql)){
+        if(controls.beforeAuthoringCommit){const callback=controls.beforeAuthoringCommit;controls.beforeAuthoringCommit=null;callback();}
+        if(controls.failAuthoringCommit){controls.failAuthoringCommit=false;throw new Error("injected_authoring_receipt_failure");}
+      }
+      if(controls.failAuthoringEventAt&&/^\s*INSERT INTO event_write_stage/iu.test(this.sql)&&this.values.includes("web:context-approval")){
+        controls.failAuthoringEventAt--;if(!controls.failAuthoringEventAt)throw new Error("injected_authoring_event_failure");
+      }
       if(controls.failNextConsequentialPrincipalRead&&this.sql===PRINCIPAL_WITH_ACCESS_SQL){controls.failNextConsequentialPrincipalRead=false;throw new Error("injected_post_complete_read_failure");}
       if(controls.failAfterConsequentialComplete&&/^\s*UPDATE consequential_executions SET status='completed'/iu.test(this.sql)){controls.failAfterConsequentialComplete=false;controls.failNextConsequentialPrincipalRead=true;}
       for(const [key,pattern] of [["beforeConsequentialClaim",/^\s*UPDATE consequential_executions SET status='reserved'/iu],["beforeConsequentialSubmit",/^\s*UPDATE consequential_execution_steps SET status='submitting'/iu],["beforeConsequentialResultRead",/^\s*SELECT content FROM private_content WHERE .*kind='context-proposal'/iu]]){
@@ -80,9 +87,23 @@ function database() {
         throw error;
       }
     }
-    async first() { return this.execute("first"); }
+    async first() {
+      const authoringState=/^\s*SELECT saved.content AS preview_content,receipt.result_json AS receipt_result_json/iu.test(this.sql);
+      if(authoringState&&controls.beforeAuthoringStateRead){const callback=controls.beforeAuthoringStateRead;controls.beforeAuthoringStateRead=null;await callback();}
+      const result=this.execute("first");
+      if(authoringState&&result?.preview_content&&controls.afterAuthoringPreviewRead){
+        const callback=controls.afterAuthoringPreviewRead;controls.afterAuthoringPreviewRead=null;await callback();
+      }
+      return result;
+    }
     async all() { return this.execute("all"); }
-    async run() { return this.execute("run"); }
+    async run() {
+      const result=this.execute("run");
+      if(controls.afterAuthoringClaim&&/^\s*UPDATE private_content SET content=json_set\(content,'\$\.state','applying'/iu.test(this.sql)){
+        const callback=controls.afterAuthoringClaim;controls.afterAuthoringClaim=null;await callback();
+      }
+      return result;
+    }
   }
   return {
     sqlite,
@@ -2556,4 +2577,294 @@ test("consequential consent never replaces an unknown request when its private p
     assert.equal(calls,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM consequential_executions").get().n,1);
     assert.ok(state.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='user'").get().reserved_microusd>0);
   }finally{globalThis.fetch=original;}
+});
+
+const contextProposalResponse=(payload)=>Response.json({id:"context-proposals-fixture",model:payload.model,output:[{type:"message",content:[{type:"output_text",text:JSON.stringify({proposals:[
+  {type:"emotion",subtype:"Primary affect",label:"Quiet",text:"quiet",source_excerpt:"quiet",participants:[]},
+  {type:"environment",subtype:"Interior",label:"Interior",text:"interior",source_excerpt:"interior",participants:[]},
+]})}]}],usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}});
+const previewContextChanges=(state,selections,headers={},body=contextBody)=>state.request("/api/context/apply",json({...body,action:"preview",selections},headers));
+const applyContextChanges=(state,preview,headers={},action="apply",body=contextBody)=>state.request("/api/context/apply",json({...body,action,previewId:preview.previewId,approvalHash:preview.approvalHash},headers));
+const proposalSelection=(result,index=0,edit)=>({executionId:result.executionId,bindingHash:result.bindingHash,proposalId:result.plan.proposals[index].id,...(edit?{edit}:{})});
+const contextEventCount=(state,stream="creative:dev-local-creative")=>state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE stream_id=?").get(stream).n;
+
+test("human context approval previews exact selected edits for free and atomically applies once across owner access paths",async()=>{
+  for(const mode of ["personal","selected","owner-custody"]){
+    const state=mode==="personal"?await fixture({provider:true}):await sharedProjectFixture({provider:true}),original=globalThis.fetch;let calls=0;
+    const headers=mode==="personal"?{}:mode==="selected"?state.owner:Object.fromEntries(Object.entries(state.owner).filter(([key])=>key!=="cookie"));
+    const stream=mode==="personal"?"creative:dev-local-creative":"creative:assistant-owner";
+    try{
+      globalThis.fetch=async(_url,init)=>{calls++;return contextProposalResponse(JSON.parse(init.body));};
+      const quote=await quoteContext(state,contextBody,headers),analysis=await executeContext(state,quote,contextBody,headers),result=await analysis.json();assert.equal(analysis.status,200);assert.equal(result.plan.proposals.length,2);
+      const before=contextEventCount(state,stream),costCount=state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n;
+      delete state.env.OPENAI_API_KEY;delete state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS;
+      const response=await previewContextChanges(state,[proposalSelection(result,0,{text:"A deliberate human edit",label:"My mood"})],headers);assert.equal(response.status,200,JSON.stringify(await response.clone().json()));const {preview}=await response.json();
+      assert.equal(preview.blockCount,1);assert.equal(preview.relationCount,1);assert.equal(preview.changes.filter((item)=>item.kind==="create")[0].text,"A deliberate human edit");assert.ok(preview.changes.some((item)=>item.kind==="group"));
+      assert.equal(contextEventCount(state,stream),before);assert.equal(calls,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n,costCount);
+      assert.equal((await applyContextChanges(state,preview,headers,"retrieve")).status,200);assert.equal(contextEventCount(state,stream),before);
+      const applied=await applyContextChanges(state,preview,headers);assert.equal(applied.status,200,JSON.stringify(await applied.clone().json()));const first=await applied.json();assert.equal(first.status,"applied");
+      const after=contextEventCount(state,stream);assert.equal(after-before,3);assert.equal(first.blockIds.length,1);
+      const replay=await applyContextChanges(state,preview,headers);assert.equal(replay.status,200);assert.deepEqual((await replay.json()).blockIds,first.blockIds);assert.equal(contextEventCount(state,stream),after);
+      const saved=state.sqlite.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id=(SELECT last_event_id FROM authoring_commits WHERE preview_id=?)").get(preview.previewId);assert.ok(saved);
+      assert.equal(calls,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,1);
+    }finally{globalThis.fetch=original;}
+  }
+});
+
+test("human context approval rejects forged selections, missing confirmation and source changes before any authored mutation",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;
+  try{
+    globalThis.fetch=async(_url,init)=>contextProposalResponse(JSON.parse(init.body));const quote=await quoteContext(state),result=await(await executeContext(state,quote)).json(),selection=proposalSelection(result);
+    const before=contextEventCount(state);
+    for(const selections of [[{...selection,proposalId:"forged"}],[{...selection,bindingHash:"wrong"}],[selection,{...proposalSelection(result,1),bindingHash:"wrong"}],[{...selection,edit:{authority:"model"}}],[selection,selection]]){
+      assert.notEqual((await previewContextChanges(state,selections)).status,200);assert.equal(contextEventCount(state),before);
+    }
+    assert.equal((await state.request("/api/context/apply",json({...contextBody,action:"apply"}))).status,428);
+    const {preview}=await(await previewContextChanges(state,[selection])).json();
+    assert.notEqual((await applyContextChanges(state,{...preview,approvalHash:"0".repeat(64)})).status,200);
+    appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["BlockPropertyEdited",{...contextBody,block_id:"block-palette",property_path:"text",new_value:"A newer related decision"}]]);
+    const changed=contextEventCount(state),apply=await applyContextChanges(state,preview);assert.equal(apply.status,409);assert.equal(contextEventCount(state),changed);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,0);
+  }finally{globalThis.fetch=original;}
+});
+
+test("human context approval rolls back the entire selection if an event, receipt, or final authority check fails",async()=>{
+  for(const mode of ["personal","selected"]){for(const fault of ["event","receipt","authority"]){
+    const state=mode==="personal"?await fixture({provider:true}):await sharedProjectFixture({provider:true}),headers=mode==="personal"?{}:state.owner,original=globalThis.fetch;
+    const stream=mode==="personal"?"creative:dev-local-creative":"creative:assistant-owner",owner=mode==="personal"?"dev-local-creative":"assistant-owner";
+    try{
+      globalThis.fetch=async(_url,init)=>contextProposalResponse(JSON.parse(init.body));const quote=await quoteContext(state,contextBody,headers),result=await(await executeContext(state,quote,contextBody,headers)).json();
+      const quoted=await previewContextChanges(state,[proposalSelection(result),proposalSelection(result,1)],headers);assert.equal(quoted.status,200);const {preview}=await quoted.json(),before=contextEventCount(state,stream);
+      if(fault==="event")state.controls.failAuthoringEventAt=2;
+      if(fault==="receipt")state.controls.failAuthoringCommit=true;
+      if(fault==="authority")state.controls.beforeAuthoringCommit=()=>state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run(owner);
+      const applied=await applyContextChanges(state,preview,headers);assert.notEqual(applied.status,200,`${mode}/${fault}`);
+      assert.equal(contextEventCount(state,stream),before,`${mode}/${fault}`);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,0);
+    }finally{globalThis.fetch=original;}
+  }}
+});
+
+test("human context approval concurrent confirmations and lost responses retain one complete canonical mutation",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;
+  try{
+    globalThis.fetch=async(_url,init)=>contextProposalResponse(JSON.parse(init.body));const quote=await quoteContext(state),result=await(await executeContext(state,quote)).json();
+    const {preview}=await(await previewContextChanges(state,[proposalSelection(result),proposalSelection(result,1)])).json(),before=contextEventCount(state);
+    const responses=await Promise.all([applyContextChanges(state,preview),applyContextChanges(state,preview)]);for(const response of responses)assert.ok([200,202].includes(response.status),JSON.stringify(await response.clone().json()));
+    assert.equal(contextEventCount(state)-before,5);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,1);
+    const recovered=await applyContextChanges(state,preview,{},"retrieve");assert.equal(recovered.status,200);assert.equal((await recovered.json()).status,"applied");assert.equal(contextEventCount(state)-before,5);
+  }finally{globalThis.fetch=original;}
+});
+
+test("human context approval binds library and Canvas destinations without first-document or board aliases",async()=>{
+  for(const surface of ["library","canvas"]){
+    const state=await fixture({provider:true}),original=globalThis.fetch,blockId=`${surface}-decision`,canvasId=surface==="canvas"?"context-board":null;
+    const body={...contextBody,blockId,...(canvasId?{canvasId}:{})};
+    appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[
+      ...(canvasId?[["CanvasCreated",{project_id:contextBody.projectId,canvas_id:canvasId,name:"Exact context board"}]]:[]),
+      ["BlockCreated",{project_id:contextBody.projectId,block_id:blockId,scope:surface,...(canvasId?{canvas_id:canvasId}:{}),type:"direction",handle:"direction/quiet",position:"z8",properties:{text:"quiet interior",subtype:"Campaign goal",intent:"include"}}],
+    ]);
+    try{
+      globalThis.fetch=async(_url,init)=>contextProposalResponse(JSON.parse(init.body));
+      if(canvasId){
+        state.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id='dev-local-creative'").run();
+        assert.equal((await state.request("/api/context/decompose",json({...body,action:"quote"}))).status,403,"Canvas capability is not implied by authoring rights");
+        state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id='dev-local-creative'").run();
+      }
+      const quote=await quoteContext(state,body),result=await(await executeContext(state,quote,body)).json();
+      const response=await previewContextChanges(state,[proposalSelection(result)],{},body);assert.equal(response.status,200,JSON.stringify(await response.clone().json()));const {preview}=await response.json();
+      assert.equal(preview.canvasId,canvasId);assert.ok(preview.events.every((event)=>event.payload.scope===surface));
+      if(canvasId)assert.equal((await applyContextChanges(state,preview,{},"apply",{...body,canvasId:"another-board"})).status,409);
+      const applied=await applyContextChanges(state,preview,{},"apply",body);assert.equal(applied.status,200,JSON.stringify(await applied.clone().json()));
+    }finally{globalThis.fetch=original;}
+  }
+});
+
+test("human context approval retains original addendum identities and explicit authored provenance",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;
+  try{
+    globalThis.fetch=async(_url,init)=>contextProposalResponse(JSON.parse(init.body));
+    const base=await(await executeContext(state,await quoteContext(state))).json(),body={...contextBody,addedText:"quiet interior",addedType:"environment"};
+    const addition=await(await executeContext(state,await quoteContext(state,body),body)).json();
+    assert.equal(base.plan.proposals[0].id,addition.plan.proposals[0].id);assert.notEqual(base.executionId,addition.executionId);
+    const response=await previewContextChanges(state,[proposalSelection(base,0),proposalSelection(addition,1)]);assert.equal(response.status,200);const {preview}=await response.json();
+    const blocks=preview.events.filter((event)=>event.type==="BlockCreated");assert.equal(blocks.length,2);
+    assert.equal(blocks[0].payload.properties.source_block_id,"block-direction");assert.equal(blocks[1].payload.properties.source_block_id,undefined);
+    assert.equal(blocks[1].payload.properties.source_execution_id,addition.executionId);
+    assert.equal((await applyContextChanges(state,preview)).status,200);
+  }finally{globalThis.fetch=original;}
+});
+
+test("human context approval expiry, selected-session revocation and wrong actor never write or expose private plans",async()=>{
+  for(const reason of ["expiry","session","actor","rights"]){
+    const state=await sharedProjectFixture({provider:true}),original=globalThis.fetch,NativeDate=Date;
+    try{
+      globalThis.fetch=async(_url,init)=>contextProposalResponse(JSON.parse(init.body));const quote=await quoteContext(state,contextBody,state.owner),result=await(await executeContext(state,quote,contextBody,state.owner)).json();
+      const {preview}=await(await previewContextChanges(state,[proposalSelection(result)],state.owner)).json();
+      const before=contextEventCount(state,"creative:assistant-owner");
+      if(reason==="expiry"){const future=Date.now()+11*60_000;globalThis.Date=class extends NativeDate{constructor(...args){super(...(args.length?args:[future]));}static now(){return future;}};}
+      if(reason==="session")state.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE principal_user_id='assistant-owner'").run(new Date().toISOString());
+      if(reason==="rights")appendFixtureEvents(state.sqlite,"creative:assistant-owner",[["BlockLocked",{project_id:contextBody.projectId,document_id:contextBody.documentId,block_id:contextBody.blockId}]]);
+      const attempted=await applyContextChanges(state,preview,reason==="actor"?state.viewer:state.owner);assert.notEqual(attempted.status,200,reason);
+      assert.equal(contextEventCount(state,"creative:assistant-owner"),before+(reason==="rights"?1:0));assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,0);
+      if(reason==="actor"||reason==="session"){
+        const read=await applyContextChanges(state,preview,reason==="actor"?state.viewer:state.owner,"retrieve");assert.equal(read.status,403);assert.doesNotMatch(await read.text(),/source_excerpt|quiet|privateInput/u);
+      }
+    }finally{globalThis.Date=NativeDate;globalThis.fetch=original;}
+  }
+});
+
+test("human context free authorship needs no provider eligibility, preserves the viewer ceiling, and read-only members recover locked-source receipts",async()=>{
+  const state=await sharedProjectFixture({provider:true}),headers=state.viewer,original=globalThis.fetch;let calls=0;
+  try{
+    globalThis.fetch=async(_url,init)=>{calls++;return contextProposalResponse(JSON.parse(init.body));};
+    state.sqlite.prepare("UPDATE project_memberships SET role='editor' WHERE user_id='assistant-viewer' AND project_access_id=?").run(state.projectAccessId);
+    const quote=await quoteContext(state,contextBody,headers),analysis=await executeContext(state,quote,contextBody,headers);assert.equal(analysis.status,200);const result=await analysis.json();
+    state.sqlite.prepare("UPDATE project_memberships SET role='viewer' WHERE user_id='assistant-viewer' AND project_access_id=?").run(state.projectAccessId);
+    const now=new Date().toISOString();
+    state.sqlite.prepare("INSERT INTO capability_grants(grant_id,user_id,capability,scope_type,organization_id,project_access_id,project_id,status,granted_by_user_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(),"assistant-viewer","project.author","project",state.organizationId,state.projectAccessId,contextBody.projectId,"active","assistant-owner",now,now);
+    const auth=await requireUser(new Request("http://localhost/api/session",{headers}),state.env,"viewer",{account:"principal"});
+    assert.equal(auth.user.access.capabilities.includes("project.author"),true);assert.equal(auth.user.access.capabilities.includes("project.output.request"),false);
+    assert.equal((await previewContextChanges(state,[proposalSelection(result)],headers)).status,403,"aggregate grants must not bypass the scoped viewer ceiling");
+    state.sqlite.prepare("UPDATE project_memberships SET role='editor' WHERE user_id='assistant-viewer' AND project_access_id=?").run(state.projectAccessId);
+    delete state.env.OPENAI_API_KEY;delete state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS;
+    const response=await previewContextChanges(state,[proposalSelection(result)],headers);assert.equal(response.status,200,JSON.stringify(await response.clone().json()));const {preview}=await response.json();
+    const applied=await applyContextChanges(state,preview,headers);assert.equal(applied.status,200,JSON.stringify(await applied.clone().json()));
+    appendFixtureEvents(state.sqlite,"creative:assistant-owner",[["BlockLocked",{project_id:contextBody.projectId,document_id:contextBody.documentId,block_id:contextBody.blockId}]]);
+    state.sqlite.prepare("UPDATE capability_grants SET status='revoked' WHERE user_id='assistant-viewer'").run();
+    state.sqlite.prepare("UPDATE project_memberships SET role='viewer' WHERE user_id='assistant-viewer' AND project_access_id=?").run(state.projectAccessId);
+    const count=contextEventCount(state,"creative:assistant-owner"),resumed=await state.request("/api/context/apply",json({...contextBody,action:"resume"},headers));
+    assert.equal(resumed.status,200);const recovered=await resumed.json();assert.equal(recovered.status,"applied");assert.equal(recovered.preview.previewId,preview.previewId);
+    assert.equal((await applyContextChanges(state,preview,headers,"retrieve")).status,200);assert.notEqual((await previewContextChanges(state,[proposalSelection(result)],headers)).status,200);
+    assert.equal(contextEventCount(state,"creative:assistant-owner"),count);assert.equal(calls,1);
+  }finally{globalThis.fetch=original;}
+});
+
+test("human context reopening without any browser receipt restores unsubmitted edits and lost successful saves without a provider",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
+  try{
+    globalThis.fetch=async(_url,init)=>{calls++;return contextProposalResponse(JSON.parse(init.body));};const result=await(await executeContext(state,await quoteContext(state))).json();
+    const edit={label:"My retained title",text:"My reviewed wording"},response=await previewContextChanges(state,[proposalSelection(result,0,edit)]);assert.equal(response.status,200);const {preview}=await response.json(),before=contextEventCount(state);
+    delete state.env.OPENAI_API_KEY;
+    const resume=()=>state.request("/api/context/apply",json({...contextBody,action:"resume"}));
+    const unsubmitted=await(await resume()).json();assert.equal(unsubmitted.status,"not-applied");assert.equal(unsubmitted.preview.previewId,preview.previewId);assert.deepEqual(unsubmitted.preview.review.selections[0].edit,edit);assert.equal(contextEventCount(state),before);
+    const ignored=await applyContextChanges(state,preview);assert.equal(ignored.status,200); // Deliberately discard the response body, as after transport loss.
+    const recovered=await(await resume()).json();assert.equal(recovered.status,"applied");assert.equal(recovered.preview.previewId,preview.previewId);assert.equal(contextEventCount(state)-before,3);
+    appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["BlockLocked",{project_id:contextBody.projectId,document_id:contextBody.documentId,block_id:contextBody.blockId}]]);
+    assert.equal((await(await resume()).json()).status,"applied");
+    const other=await state.request("/api/context/apply",json({...contextBody,blockId:"block-palette",action:"resume"}));assert.equal((await other.json()).status,"none");
+    const dismissed=await applyContextChanges(state,preview,{},"dismiss");assert.equal(dismissed.status,200);assert.equal((await(await resume()).json()).status,"none");
+    assert.equal(calls,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,1);
+  }finally{globalThis.fetch=original;}
+});
+
+test("human context active saves remain pending and an expired lease is invalidated before safe retry",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;
+  let start,release;const started=new Promise((resolve)=>{start=resolve;}),barrier=new Promise((resolve)=>{release=resolve;});
+  try{
+    globalThis.fetch=async(_url,init)=>contextProposalResponse(JSON.parse(init.body));const result=await(await executeContext(state,await quoteContext(state))).json();
+    const {preview}=await(await previewContextChanges(state,[proposalSelection(result)])).json(),before=contextEventCount(state);
+    state.controls.afterAuthoringClaim=async()=>{start();await barrier;};
+    const first=applyContextChanges(state,preview);await started;
+    const active=await state.request("/api/context/apply",json({...contextBody,action:"resume"}));assert.equal((await active.json()).status,"applying");
+    assert.equal((await applyContextChanges(state,preview)).status,202);assert.equal((await applyContextChanges(state,preview,{},"dismiss")).status,409);
+    state.sqlite.prepare("UPDATE private_content SET content=json_set(content,'$.leaseExpiresAt','2000-01-01T00:00:00.000Z') WHERE content_id=?").run(preview.previewId);
+    const recovered=await state.request("/api/context/apply",json({...contextBody,action:"resume"}));assert.equal((await recovered.json()).status,"not-applied");
+    release();assert.equal((await first).status,409);assert.equal(contextEventCount(state),before);
+    const retry=await applyContextChanges(state,preview);assert.equal(retry.status,200);assert.equal(contextEventCount(state)-before,3);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,1);
+  }finally{release?.();globalThis.fetch=original;}
+});
+
+test("human context confirmation tolerates activity-only stream progress without changing its approved plan",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;
+  try{
+    globalThis.fetch=async(_url,init)=>contextProposalResponse(JSON.parse(init.body));const result=await(await executeContext(state,await quoteContext(state))).json();
+    const {preview}=await(await previewContextChanges(state,[proposalSelection(result)])).json();
+    appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["SessionOpened",{session_id:"review-navigation",project_id:contextBody.projectId,document_id:contextBody.documentId}]]);
+    const response=await applyContextChanges(state,preview);assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+    const applied=await response.json();assert.equal(applied.blockIds[0],preview.events.find((event)=>event.type==="BlockCreated").payload.block_id);
+  }finally{globalThis.fetch=original;}
+});
+
+test("human context resume atomically observes a commit landing during status inspection",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0,start,release;
+  const started=new Promise((resolve)=>{start=resolve;}),barrier=new Promise((resolve)=>{release=resolve;});
+  try{
+    globalThis.fetch=async(_url,init)=>{calls++;return contextProposalResponse(JSON.parse(init.body));};const result=await(await executeContext(state,await quoteContext(state))).json();
+    const {preview}=await(await previewContextChanges(state,[proposalSelection(result)])).json(),before=contextEventCount(state);
+    state.controls.afterAuthoringClaim=async()=>{start();await barrier;};const applying=applyContextChanges(state,preview);await started;
+    state.controls.beforeAuthoringStateRead=async()=>{release();assert.equal((await applying).status,200);};
+    const response=await state.request("/api/context/apply",json({...contextBody,action:"resume"}));assert.equal(response.status,200);const recovered=await response.json();
+    assert.equal(recovered.status,"applied");assert.equal(recovered.preview.previewId,preview.previewId);assert.equal(recovered.blockIds[0],preview.events.find((event)=>event.type==="BlockCreated").payload.block_id);
+    assert.equal(contextEventCount(state)-before,3);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,1);assert.equal(calls,1);
+  }finally{release?.();globalThis.fetch=original;}
+});
+
+test("human context live session expiry during a delayed save rolls back every event and receipt",async()=>{
+  const state=await sharedProjectFixture({provider:true}),original=globalThis.fetch;
+  try{
+    globalThis.fetch=async(_url,init)=>contextProposalResponse(JSON.parse(init.body));const result=await(await executeContext(state,await quoteContext(state,contextBody,state.owner),contextBody,state.owner)).json();
+    const {preview}=await(await previewContextChanges(state,[proposalSelection(result)],state.owner)).json(),before=contextEventCount(state,"creative:assistant-owner");
+    state.sqlite.prepare("UPDATE project_context_sessions SET expires_at=? WHERE principal_user_id='assistant-owner'").run(new Date(Date.now()+100).toISOString());
+    state.controls.afterAuthoringClaim=()=>new Promise((resolve)=>setTimeout(resolve,160));
+    const response=await applyContextChanges(state,preview,state.owner);assert.notEqual(response.status,200);
+    assert.equal(contextEventCount(state,"creative:assistant-owner"),before);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,0);
+  }finally{globalThis.fetch=original;}
+});
+
+async function assertLosingAuthoringOutcome(finalize=async()=>{}){
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0,firstRead,releaseFirst,winnerClaim,releaseWinner;
+  const readStarted=new Promise((resolve)=>{firstRead=resolve;}),firstBarrier=new Promise((resolve)=>{releaseFirst=resolve;});
+  const claimStarted=new Promise((resolve)=>{winnerClaim=resolve;}),winnerBarrier=new Promise((resolve)=>{releaseWinner=resolve;});
+  try{
+    globalThis.fetch=async(_url,init)=>{calls++;return contextProposalResponse(JSON.parse(init.body));};const result=await(await executeContext(state,await quoteContext(state))).json();
+    const {preview}=await(await previewContextChanges(state,[proposalSelection(result)])).json(),before=contextEventCount(state);
+    state.controls.afterAuthoringPreviewRead=async()=>{firstRead();await firstBarrier;};
+    const loser=applyContextChanges(state,preview);await readStarted;
+    state.controls.afterAuthoringClaim=async()=>{winnerClaim();await winnerBarrier;};
+    const winner=applyContextChanges(state,preview);await claimStarted;
+    state.controls.beforeAuthoringStateRead=async()=>{releaseWinner();assert.equal((await winner).status,200);await finalize(state,preview);};
+    releaseFirst();const response=await loser;assert.equal(response.status,200,JSON.stringify(await response.clone().json()));const receipt=await response.json();
+    assert.equal(receipt.status,"applied");assert.equal(receipt.previewId,preview.previewId);assert.equal(contextEventCount(state)-before,3);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,1);assert.equal(calls,1);
+  }finally{releaseFirst?.();releaseWinner?.();globalThis.fetch=original;}
+}
+
+test("human context losing confirmation reconciles a winner committed during catch-path inspection",()=>assertLosingAuthoringOutcome());
+
+test("human context completed receipt survives Done and private-preview expiry during losing confirmation",async()=>{
+  await assertLosingAuthoringOutcome(async(state,preview)=>{const done=await applyContextChanges(state,preview,{},"dismiss");assert.equal(done.status,200);assert.equal((await done.json()).status,"dismissed");});
+  await assertLosingAuthoringOutcome(async(state,preview)=>{state.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE content_id=?").run(preview.previewId);});
+});
+
+test("human context atomic receipt reads recheck current authorization before exposing private review content",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;
+  try{
+    globalThis.fetch=async(_url,init)=>contextProposalResponse(JSON.parse(init.body));const result=await(await executeContext(state,await quoteContext(state))).json();
+    const {preview}=await(await previewContextChanges(state,[proposalSelection(result)])).json();assert.equal((await applyContextChanges(state,preview)).status,200);
+    state.controls.afterAuthoringPreviewRead=async()=>{state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id='dev-local-creative'").run();};
+    const response=await applyContextChanges(state,preview,{},"retrieve");assert.equal(response.status,403);assert.doesNotMatch(await response.text(),/quiet|sourceText|blockIds|source_excerpt/u);
+  }finally{globalThis.fetch=original;}
+});
+
+test("human context erased or malformed private previews never block a fresh free review or resurrect erased content",async()=>{
+  for(const retention of ["redacted","malformed"]){
+    const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
+    try{
+      globalThis.fetch=async(_url,init)=>{calls++;return contextProposalResponse(JSON.parse(init.body));};
+      const result=await(await executeContext(state,await quoteContext(state))).json();
+      const {preview:old}=await(await previewContextChanges(state,[proposalSelection(result)])).json(),before=contextEventCount(state);
+      const erased=retention==="redacted"?"":"not valid JSON",redactedAt=retention==="redacted"?new Date().toISOString():null;
+      state.sqlite.prepare("UPDATE private_content SET content=?,redacted_at=? WHERE content_id=?").run(erased,redactedAt,old.previewId);
+      delete state.env.OPENAI_API_KEY;
+      const missing=await state.request("/api/context/apply",json({...contextBody,action:"resume"}));assert.equal(missing.status,200);assert.equal((await missing.json()).status,"none");
+      assert.equal((await applyContextChanges(state,old,{},"retrieve")).status,403);
+      const fresh=await previewContextChanges(state,[proposalSelection(result)]);assert.equal(fresh.status,200,JSON.stringify(await fresh.clone().json()));
+      const {preview}=await fresh.json();assert.notEqual(preview.previewId,old.previewId);assert.equal(contextEventCount(state),before);assert.equal(calls,1);
+      const retained=state.sqlite.prepare("SELECT content,redacted_at FROM private_content WHERE content_id=?").get(old.previewId);assert.equal(retained.content,erased);assert.equal(retained.redacted_at,redactedAt);
+      assert.equal((await applyContextChanges(state,preview)).status,200);assert.equal(contextEventCount(state)-before,3);
+      state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),preview.previewId);
+      const receipt=await applyContextChanges(state,preview,{},"retrieve");assert.equal(receipt.status,200);assert.equal((await receipt.json()).status,"applied");
+      assert.equal(calls,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM authoring_commits").get().n,1);
+    }finally{globalThis.fetch=original;}
+  }
 });

@@ -75,7 +75,7 @@ export async function ownerDocumentBudgetScopes(env:WorkerEnv,userId:string,docu
 }
 
 /** An absent context cookie is not permission to bill tenant work to a personal account. */
-export async function resolveOwnerExecutionScope(env:WorkerEnv,user:PilotUser,documentId:string,projectId:string){
+export async function resolveOwnerExecutionScope(env:WorkerEnv,user:PilotUser,documentId:string,projectId:string,authority:"execute"|"author"|"read"="execute"){
   const custody=await env.DB.prepare(`SELECT project_access_id,organization_id,owner_user_id FROM organization_projects
     WHERE project_id=? AND (owner_user_id=? OR EXISTS(SELECT 1 FROM project_resource_scopes resource
       WHERE resource.project_access_id=organization_projects.project_access_id AND resource.resource_kind='document'
@@ -88,9 +88,13 @@ export async function resolveOwnerExecutionScope(env:WorkerEnv,user:PilotUser,do
   if(!custody.results.length)return{scope:undefined,denied:Boolean(resources.results.length||eventCustody.results.length)};
   if(resources.results.some((row)=>row.project_id!==projectId||row.project_access_id!==custody.results[0].project_access_id||row.organization_id!==custody.results[0].organization_id)
     ||eventCustody.results.some((row)=>row.project_access_id!==custody.results[0].project_access_id||row.organization_id!==custody.results[0].organization_id))return{scope:undefined,denied:true};
-  const active=await ownerDocumentBudgetScopes(env,user.userId,documentId,projectId);
+  const active=authority==="execute"?await ownerDocumentBudgetScopes(env,user.userId,documentId,projectId):(await env.DB.prepare(`SELECT project.organization_id,project.project_access_id
+    FROM organization_projects project JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
+    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status='active'
+    JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=project.owner_user_id AND member.status='active' AND member.revoked_at IS NULL AND member.accepted_at IS NOT NULL
+    WHERE project.project_id=? AND project.owner_user_id=? AND project.status='active' LIMIT 2`).bind(projectId,user.userId).all<{organization_id:string;project_access_id:string}>()).results.map((row)=>({organizationId:row.organization_id,projectAccessId:row.project_access_id,actorUserId:user.userId}));
   if(custody.results.length!==1||active.length!==1||active[0].projectAccessId!==custody.results[0].project_access_id
-    ||!hasCapability(user,"project.author",active[0])||!hasCapability(user,"project.output.request",active[0]))return{scope:undefined,denied:true as const};
+    ||!hasCapability(user,authority==="read"?"project.read":"project.author",active[0])||authority==="execute"&&!hasCapability(user,"project.output.request",active[0]))return{scope:undefined,denied:true as const};
   return{scope:{...active[0],projectId,ownerUserId:user.userId},denied:false as const};
 }
 
@@ -814,11 +818,14 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   guardBindings?:Array<string|number|null>;
   expectedOwnerHead?:number;
   preserveGovernance?:true;
+  authoringOperation?:"context-proposal"|"document-duplicate";
   assistantAcceptance?:{proposalId:string;turnId:string;actorUserId:string;scopeKey:string;organizationId:string;projectAccessId:string;projectId:string;documentId:string};
 }){
   const action=String(body.action??"append");
   if(!["append","batch","canvas_sync"].includes(action))return Response.json({error:"project_operation_unavailable"},{status:403});
   const original=Array.isArray(body.events)?body.events:body.event?[body.event]:[];
+  if(atomicSidecars?.authoringOperation&&(!atomicSidecars.preserveGovernance||!atomicSidecars.guardSql||!atomicSidecars.buildStatements||!Number.isSafeInteger(atomicSidecars.expectedOwnerHead)
+    ||original.some((event)=>!["DocumentCreated","BlockCreated","BlockPropertyEdited","BlockLocked","BlockRelationAdded","CollectionItemAdded"].includes(String(event.type)))))return Response.json({error:"invalid_authoring_operation"},{status:403});
   const assistantAcceptance=atomicSidecars?.assistantAcceptance;
   if(assistantAcceptance){
     const accepted=original[0],mutation=original[1],payload=accepted?.payload??{};
@@ -860,13 +867,16 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
       }
     }
     if(governedBlockIds.size){
-      const placeholders=[...governedBlockIds].map(()=>"?").join(",");
+      const ids=[...governedBlockIds];
+      for(let offset=0;offset<ids.length;offset+=96){
+      const page=ids.slice(offset,offset+96),placeholders=page.map(()=>"?").join(",");
       const governed=await env.DB.prepare(`SELECT member.target_block_id FROM project_context_package_members member
         JOIN project_context_package_bindings binding ON binding.binding_id=member.binding_id
           AND binding.organization_id=member.organization_id AND binding.status='active'
         WHERE binding.project_access_id=? AND binding.organization_id=? AND member.target_block_id IN(${placeholders}) LIMIT 1`)
-        .bind(context.projectAccessId,context.organizationId,...governedBlockIds).first();
+        .bind(context.projectAccessId,context.organizationId,...page).first();
       if(governed)return Response.json({error:"organization_context_package_decision_immutable",message:"Published organization decisions and their relationships can change only by explicitly accepting an approved package version."},{status:403});
+      }
     }
   }
   if(original.some((event)=>event.type==="DocumentArtifactEdited")&&(!atomicEdit||original.length!==1||String(original[0]?.payload?.artifact_id??"")!==atomicEdit.artifactId))return Response.json({error:"artifact_edit_endpoint_required"},{status:403});
@@ -918,7 +928,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   }
   const canvasAction=action==="canvas_sync"||original.some((event)=>PROJECT_CANVAS_MUTATION_TYPES.has(String(event.type??""))||Boolean(event.payload?.canvas_id));
   if(canvasAction&&!hasCapability(principal,"project.canvas.use",{organizationId:context.organizationId,projectAccessId:context.projectAccessId}))return Response.json({error:"project_canvas_access_required"},{status:403});
-  const maximumEvents=action==="canvas_sync"?120:privilegedPackageSidecars?384:50;
+  const maximumEvents=atomicSidecars?.authoringOperation?512:action==="canvas_sync"?120:privilegedPackageSidecars?384:50;
   if(!original.length||original.length>maximumEvents)return Response.json({error:"invalid_project_event_batch",maximum:maximumEvents},{status:400});
   if(action==="canvas_sync"&&original.some((event)=>!String(event.payload?.client_event_id??"")))return Response.json({error:"client_event_id_required"},{status:400});
   if(original.some((event)=>event.type==="ArtifactApproved")&&original.some((event)=>/^(?:Block|Chip|DocumentArtifactEdited)/.test(String(event.type??""))))return Response.json({error:"review_context_changed",message:"Approve the output separately after its latest context changes have been reviewed."},{status:409});
@@ -1074,6 +1084,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     }
   }
   const ownerHead=await streamHead(env,ownerStream);
+  if(atomicSidecars?.authoringOperation&&ownerHead!==atomicSidecars.expectedOwnerHead)return Response.json({error:"authoring_source_stale"},{status:409});
   if(assistantAcceptance&&ownerHead!==atomicSidecars?.expectedOwnerHead)return Response.json({error:"assistant_proposal_stale"},{status:409});
   if(validatedOwnerHead!==null&&ownerHead!==validatedOwnerHead)return Response.json({error:"stale_review_context",message:"The project changed while this review was being checked. Refresh and review the latest version."},{status:409});
   if(releaseValidationHead!==null&&ownerHead!==releaseValidationHead)return Response.json({error:"stale_release_context",message:"The project changed while export approval was being checked. Refresh the approved output before releasing it."},{status:409});
