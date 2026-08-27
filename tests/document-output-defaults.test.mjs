@@ -39,9 +39,9 @@ test("presentation documents default to Slides and their complete authored outli
 });
 
 test("explicit output overrides, recovery, and structured production stages keep their deliberately selected medium", () => {
-  assert.match(authoringSource, /#openCreate=async\(inferKind=false\)/u);
+  assert.match(authoringSource, /#openCreate=async\(inferKind=false,required\?:CreativePreparationGuard\)/u);
   assert.match(authoringSource, /if\(kind\)this\.#selectArtifactKind\(kind\)/u);
-  assert.match(authoringSource, /await this\.#openCreate\(!kind\)/u, "explicit openRender(kind) never gets replaced by inferred document intent");
+  assert.match(authoringSource, /return this\.#openCreate\(!kind,current\)/u, "explicit openRender(kind) preserves its format and exact target guard");
   assert.match(authoringSource, /this\.#selectArtifactKind\(stage\.format\);\s*await this\.#openCreate\(\)/u, "structured workflow stages retain their selected format");
   assert.match(authoringSource, /await this\.openRender\(kind,this\.#targetDocumentId\(\)\)/u, "retry retains the original failed output medium");
   assert.match(authoringSource, /@change=\$\{\(\)=>\{this\.#selectArtifactKind\(kind\);if\(kind==="slides"\)this\.#resetPresentationCount\(\)/u, "the author can always change the suggested medium");

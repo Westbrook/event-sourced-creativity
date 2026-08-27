@@ -9,10 +9,11 @@ const resolution = registerHooks({ resolve(specifier, context, nextResolve) {
   const source = typeof context.parentURL === "string" && context.parentURL.startsWith(root) && !context.parentURL.includes("/node_modules/");
   return nextResolve(source && specifier.startsWith(".") && !/\.[a-z0-9]+$/iu.test(specifier) ? `${specifier}.ts` : specifier, context);
 } });
-const [{ default: worker }, { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL,PRINCIPAL_WITH_ACCESS_SQL }, {requireUser,reconcileFailedBudgetReservations}] = await Promise.all([
+const [{ default: worker }, { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL,PRINCIPAL_WITH_ACCESS_SQL }, {requireUser,reconcileFailedBudgetReservations,reserveBudget,reserveCostBudget}, {runDocumentJob}] = await Promise.all([
   import("../worker/index.ts"),
   import("../worker/access-policy.ts"),
   import("../worker/pilot-policy.ts"),
+  import("../worker/document-jobs-api.ts"),
 ]).finally(() => resolution.deregister());
 
 function database() {
@@ -98,7 +99,14 @@ function database() {
     }
     async all() { return this.execute("all"); }
     async run() {
+      if(controls.beforeAdaptiveInsert&&/^\s*INSERT INTO document_jobs/iu.test(this.sql)&&this.values.includes("structure_adaptive")){
+        const callback=controls.beforeAdaptiveInsert;controls.beforeAdaptiveInsert=null;await callback();
+      }
       const result=this.execute("run");
+      if(controls.afterAdaptiveCostClaim&&/^\s*UPDATE cost_budget_reservations SET status='executing'/iu.test(this.sql)&&Number(result.meta.changes)===1){
+        const reservation=sqlite.prepare("SELECT * FROM cost_budget_reservations WHERE reservation_id=?").get(this.values[1]);
+        if(reservation?.operation==="adaptive-structure"){const callback=controls.afterAdaptiveCostClaim;controls.afterAdaptiveCostClaim=null;await callback(reservation);}
+      }
       if(controls.afterAuthoringClaim&&/^\s*UPDATE private_content SET content=json_set\(content,'\$\.state','applying'/iu.test(this.sql)){
         const callback=controls.afterAuthoringClaim;controls.afterAuthoringClaim=null;await callback();
       }
@@ -279,6 +287,36 @@ test("planner-only accounts retain paid creative chat when their selected image 
   }finally{globalThis.fetch=originalFetch;}
 });
 
+test("board planning reuses only identical active requests and atomically separates board destinations",async()=>{
+  const state=await fixture({provider:true});
+  appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[...["dedup-a","dedup-b"].map((id)=>["CanvasCreated",{canvas_id:id,project_id:"project-atmosphere",name:id,slug:id}])]);
+  let release;const gate=new Promise((resolve)=>{release=resolve;});const originalFetch=globalThis.fetch;let calls=0;
+  globalThis.fetch=async(_url,init)=>{calls++;const body=JSON.parse(init.body);await gate;return Response.json({id:`adaptive-${calls}`,model:body.model,output_text:JSON.stringify({interpretation:"A private plan",active_decision:{type:"subject",label:"Subject",prompt:"Choose a subject",why:"Focus"},suggested_blocks:[],hidden_until_later:[]}),usage:{input_tokens:80,output_tokens:30,total_tokens:110}});};
+  const submit=(canvasId,prompt)=>state.request("/api/document-jobs",json({kind:"structure_adaptive",documentId:"doc-atmosphere",sourceSurface:"canvas",payload:{canvasId,projectScope:true,locale:"en",prompt,requestKey:"untrusted",idempotencyKey:"untrusted"}}));
+  try{
+    const a=await(await submit("dedup-a","Keep the moonlit courtyard.")).json();
+    const sameResponse=await submit("dedup-a","  Keep the moonlit courtyard.  ");const same=await sameResponse.json();
+    assert.equal(sameResponse.status,202);assert.equal(same.reused,true);assert.equal(same.job.jobId,a.job.jobId);
+    const changed=await submit("dedup-a","A sunny mountain instead.");assert.equal(changed.status,409);assert.equal((await changed.json()).error,"adaptive_request_in_progress");
+    for(const prompt of ["","x".repeat(2001)])assert.equal((await submit("dedup-a",prompt)).status,400);
+    const bResponse=await submit("dedup-b","Keep the moonlit courtyard.");const b=await bResponse.json();assert.equal(bResponse.status,202);assert.notEqual(b.job.jobId,a.job.jobId);assert.equal(b.job.canvasId,"dedup-b");assert.notEqual(a.job.requestKey,b.job.requestKey);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,2);
+    release();await state.drainBackground();assert.equal(calls,2);
+  }finally{release();await state.drainBackground();globalThis.fetch=originalFetch;}
+});
+
+test("identical board requests racing at insert recover one canonical job and one provider submission",async()=>{
+  const state=await fixture({provider:true});appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["CanvasCreated",{canvas_id:"dedup-race",project_id:"project-atmosphere",name:"Race",slug:"race"}]]);
+  let release;const gate=new Promise((resolve)=>{release=resolve;});const originalFetch=globalThis.fetch;let calls=0,winner;
+  globalThis.fetch=async(_url,init)=>{calls++;const body=JSON.parse(init.body);await gate;return Response.json({id:"adaptive-race",model:body.model,output_text:JSON.stringify({interpretation:"One plan",active_decision:{type:"subject",label:"Subject",prompt:"Choose",why:"Focus"},suggested_blocks:[],hidden_until_later:[]}),usage:{input_tokens:80,output_tokens:30,total_tokens:110}});};
+  const submit=()=>state.request("/api/document-jobs",json({kind:"structure_adaptive",documentId:"doc-atmosphere",sourceSurface:"canvas",payload:{canvasId:"dedup-race",projectScope:true,prompt:"One exact plan."}}));
+  try{
+    state.controls.beforeAdaptiveInsert=async()=>{winner=await(await submit()).json();};
+    const response=await submit(),loser=await response.json();assert.equal(response.status,202,JSON.stringify(loser));assert.equal(loser.reused,true);assert.equal(loser.job.jobId,winner.job.jobId);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,1);release();await state.drainBackground();assert.equal(calls,1);
+  }finally{release();await state.drainBackground();globalThis.fetch=originalFetch;}
+});
+
 test("board planning authorizes exact live boards and retains board identity in accepted, listed, and completed jobs",async()=>{
   const state=await fixture({provider:true});
   appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[
@@ -321,6 +359,85 @@ test("board planning authorizes exact live boards and retains board identity in 
     assert.equal(removed.status,404);
     assert.equal((await removed.json()).error,"canvas_not_found");
   }finally{globalThis.fetch=originalFetch;}
+});
+
+for(const seam of ["insert","provider"])for(const restored of [false,true]){
+  test(`exact board ${restored?"restoration remains usable":"removal stops planning"} at ${seam}`,async()=>{
+    const state=await fixture({provider:true}),stream="creative:dev-local-creative",board=`board-boundary-${seam}-${restored}`,projectId="project-atmosphere";
+    appendFixtureEvents(state.sqlite,stream,[["CanvasCreated",{canvas_id:board,project_id:projectId,name:"Exact board",slug:"exact-board"}]]);
+    let mutations=0,calls=0;const originalFetch=globalThis.fetch;
+    globalThis.fetch=async(url,init)=>{assert.equal(String(url),"https://api.openai.com/v1/responses");assert.equal(init.method,"POST");calls++;const body=JSON.parse(init.body);return Response.json({id:`mock-${board}`,model:body.model,output_text:JSON.stringify({interpretation:"A plan for this exact board",active_decision:{type:"subject",label:"Subject",prompt:"Choose",why:"Focus"},suggested_blocks:[],hidden_until_later:[]}),usage:{input_tokens:80,output_tokens:30,total_tokens:110}});};
+    state.controls[seam==="insert"?"beforeAdaptiveInsert":"afterAdaptiveCostClaim"]=async(reservation)=>{
+      const running=state.sqlite.prepare("SELECT status,request_json FROM document_jobs WHERE kind='structure_adaptive'").get();
+      if(seam==="provider"){assert.equal(running?.status,"running");assert.equal(JSON.parse(running.request_json).canvasId,board);assert.equal(reservation.status,"executing");}else assert.equal(running,undefined);
+      appendFixtureEvents(state.sqlite,stream,[["CanvasRemoved",{canvas_id:board,project_id:projectId}],...(restored?[["CanvasRestored",{canvas_id:board,project_id:projectId}]]:[])]);mutations++;
+    };
+    try{
+      const response=await state.request("/api/document-jobs",json({kind:"structure_adaptive",documentId:"doc-atmosphere",sourceSurface:"canvas",payload:{canvasId:board,projectScope:true,prompt:"Plan this exact board."}}));const accepted=await response.json();await state.drainBackground();assert.equal(mutations,1,"The requested race boundary must actually execute");
+      const jobs=state.sqlite.prepare("SELECT status,document_id,source_surface,request_json FROM document_jobs WHERE kind='structure_adaptive'").all();
+      if(seam==="insert"&&!restored){assert.equal(response.status,409,JSON.stringify(accepted));assert.equal(jobs.length,0);}else{assert.equal(response.status,202,JSON.stringify(accepted));assert.equal(jobs.length,1);assert.equal(accepted.job.canvasId,board);assert.equal(jobs[0].document_id,"doc-atmosphere");assert.equal(jobs[0].source_surface,"canvas");assert.equal(JSON.parse(jobs[0].request_json).canvasId,board);if(restored)assert.equal(jobs[0].status,"completed");else assert.ok(["failed","canceled"].includes(jobs[0].status));}
+      assert.equal(calls,restored?1:0,"No provider dispatch for a removed destination");
+    }finally{await state.drainBackground();globalThis.fetch=originalFetch;}
+  });
+}
+
+for(const retention of ["retained","expired-before-read","expired-after-read","redacted-after-read","replaced-after-read","access-revoked-after-read"])test(`paid board completion survives a final-row crash and board removal (${retention})`,async()=>{
+  const expired=retention!=="retained";
+  const state=await fixture({provider:true}),stream="creative:dev-local-creative",owner="dev-local-creative",canvasId="paid-completion-board";
+  const plan={interpretation:"Retained original paid plan",active_decision:{type:"subject",label:"Subject",prompt:"Choose",why:"Focus"},suggested_blocks:[],hidden_until_later:[]};
+  appendFixtureEvents(state.sqlite,stream,[["CanvasCreated",{canvas_id:canvasId,project_id:"project-atmosphere",name:"Original board",slug:"original-board"}]]);
+  let calls=0;const originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,init)=>{assert.equal(String(url),"https://api.openai.com/v1/responses");assert.equal(init.method,"POST");calls++;const request=JSON.parse(init.body);return Response.json({id:"original-paid-board-response",model:request.model,output_text:JSON.stringify(plan),usage:{input_tokens:80,output_tokens:30,total_tokens:110}});};
+  try{
+    const accepted=await state.request("/api/document-jobs",json({kind:"structure_adaptive",documentId:"doc-atmosphere",sourceSurface:"canvas",payload:{canvasId,projectScope:true,prompt:"Plan this original board."}}));assert.equal(accepted.status,202);const {job}=await accepted.json();await state.drainBackground();
+    const readJob=()=>state.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(job.jobId),original=readJob();assert.equal(original.status,"completed");assert.deepEqual(JSON.parse(original.result_json).structure,plan);assert.equal(calls,1);
+    const receipts=()=>state.sqlite.prepare("SELECT * FROM events WHERE stream_id=? AND correlation_id=? AND type IN('AssistantReasoned','GenerationUsageRecorded') ORDER BY sequence").all(stream,original.correlation_id);
+    const ledgers=()=>({tokens:state.sqlite.prepare("SELECT * FROM budget_reservations WHERE owner_id=? AND correlation_id=? ORDER BY reservation_id").all(owner,original.correlation_id),costs:state.sqlite.prepare("SELECT * FROM cost_budget_reservations WHERE owner_id=? AND correlation_id=? ORDER BY reservation_id").all(owner,original.correlation_id)});
+    const originalReceipts=receipts(),originalLedgers=ledgers();assert.equal(originalReceipts.filter(e=>e.type==="GenerationUsageRecorded").length,1);assert.equal(originalLedgers.costs.length,1);assert.equal(originalLedgers.costs[0].status,"settled");assert.ok(originalLedgers.costs[0].used_microusd>0);
+    state.sqlite.prepare("UPDATE document_jobs SET status='committing',completed_at=NULL,lease_expires_at=?,updated_at=?,result_json=? WHERE job_id=?").run("2000-01-01T00:00:00.000Z","2000-01-01T00:00:00.000Z",JSON.stringify({stage:"saving",progressMessage:"Saving the provider result and its durable receipt."}),job.jobId);
+    appendFixtureEvents(state.sqlite,stream,[["CanvasRemoved",{canvas_id:canvasId,project_id:"project-atmosphere"}]]);
+    if(retention==="expired-before-read")state.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE owner_id=? AND kind='adaptive-structure'").run(owner);
+    let retentionRace=false;
+    if(retention.endsWith("after-read")){
+      const prepare=state.env.DB.prepare.bind(state.env.DB);
+      state.env.DB.prepare=sql=>{const statement=prepare(sql),bind=statement.bind.bind(statement);statement.bind=(...values)=>{const bound=bind(...values);if(sql.startsWith("SELECT content_id,content FROM private_content")){const all=bound.all.bind(bound);bound.all=async()=>{const result=await all();const original=result.results.find(item=>item.content===JSON.stringify(plan));if(!retentionRace&&original){retentionRace=true;if(retention==="expired-after-read")state.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE content_id=?").run(original.content_id);else if(retention==="redacted-after-read")state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),original.content_id);else if(retention==="access-revoked-after-read")state.sqlite.prepare("UPDATE users SET role='viewer',updated_at=? WHERE user_id=?").run(new Date().toISOString(),owner);else state.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(JSON.stringify({...plan,interpretation:"A different retained body"}),original.content_id);}return result;};}return bound;};return statement;};
+    }
+    for(let attempt=0;attempt<(retention==="access-revoked-after-read"?1:2);attempt++){
+      const response=await state.request(`/api/document-jobs/${job.jobId}/run`,json({}));assert.ok([200,202].includes(response.status));await state.drainBackground();const recovered=readJob();assert.equal(recovered.status,"completed");assert.equal(recovered.error_message,null);assert.equal(recovered.correlation_id,original.correlation_id);assert.equal(recovered.attempt_count,original.attempt_count);assert.equal(recovered.request_json,original.request_json);
+      const result=JSON.parse(recovered.result_json);if(expired){assert.equal(result.structure,undefined);assert.equal(result.resultUnavailable,true);}else{assert.deepEqual(result.structure,plan);assert.ok(result.intentRef);}
+      assert.deepEqual(receipts(),originalReceipts);assert.deepEqual(ledgers(),originalLedgers);assert.equal(calls,1,"Recovery must reuse the original paid response");
+    }
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,1);
+    if(retention.endsWith("after-read"))assert.equal(retentionRace,true,"The private read-to-write race must execute");
+  }finally{await state.drainBackground();globalThis.fetch=originalFetch;}
+});
+
+test("late removed-board runner cannot overwrite concurrently completed paid work",async()=>{
+  const state=await fixture({provider:true}),stream="creative:dev-local-creative",canvasId="completion-race";
+  appendFixtureEvents(state.sqlite,stream,[["CanvasCreated",{canvas_id:canvasId,project_id:"project-atmosphere",name:"Completion race",slug:"completion-race"}]]);
+  let releaseProvider,providerEntered;const gate=new Promise(resolve=>releaseProvider=resolve),entered=new Promise(resolve=>providerEntered=resolve);let calls=0;const originalFetch=globalThis.fetch;
+  globalThis.fetch=async(_url,init)=>{calls++;providerEntered();await gate;const request=JSON.parse(init.body);return Response.json({id:"one-paid-completion",model:request.model,output_text:JSON.stringify({interpretation:"Preserve this completed plan",active_decision:{type:"subject",label:"Subject",prompt:"Choose",why:"Focus"},suggested_blocks:[],hidden_until_later:[]}),usage:{input_tokens:80,output_tokens:30,total_tokens:110}});};
+  try{
+    const accepted=await state.request("/api/document-jobs",json({kind:"structure_adaptive",documentId:"doc-atmosphere",sourceSurface:"canvas",payload:{canvasId,projectScope:true,prompt:"One original plan."}}));const {job}=await accepted.json();await entered;const originalWork=Promise.all([...state.background]);
+    appendFixtureEvents(state.sqlite,stream,[["CanvasRemoved",{canvas_id:canvasId,project_id:"project-atmosphere"}]]);state.sqlite.prepare("UPDATE document_jobs SET lease_expires_at='2000-01-01T00:00:00.000Z',updated_at='2000-01-01T00:00:00.000Z' WHERE job_id=?").run(job.jobId);
+    const read=()=>state.sqlite.prepare("SELECT status,result_json,error_message,completed_at FROM document_jobs WHERE job_id=?").get(job.jobId);let completedBeforeLateCheck,armed=true;const prepare=state.env.DB.prepare.bind(state.env.DB);
+    state.env.DB.prepare=sql=>{const statement=prepare(sql),bind=statement.bind.bind(statement);statement.bind=(...values)=>{const bound=bind(...values);if(armed&&/^SELECT 1 AS live_canvas /u.test(sql)){const first=bound.first.bind(bound);bound.first=async()=>{const result=await first();if(armed&&!result){armed=false;releaseProvider();await originalWork;completedBeforeLateCheck=read();assert.equal(completedBeforeLateCheck.status,"completed");assert.ok(JSON.parse(completedBeforeLateCheck.result_json).structure);}return result;};}return bound;};return statement;};
+    await state.request(`/api/document-jobs/${job.jobId}/run`,{method:"POST"});await state.drainBackground();assert.equal(armed,false,"The late board-read interleaving must execute");assert.deepEqual(read(),completedBeforeLateCheck);assert.equal(calls,1);
+  }finally{releaseProvider();await state.drainBackground();globalThis.fetch=originalFetch;}
+});
+
+for(const change of ["restored","claimed"])test(`removed-board rejection loses its CAS when the exact destination is ${change}`,async()=>{
+  const state=await fixture(),stream="creative:dev-local-creative",owner="dev-local-creative",canvasId="queued-board-cas",jobId="queued-board-job",now=new Date().toISOString();
+  appendFixtureEvents(state.sqlite,stream,[["CanvasCreated",{canvas_id:canvasId,project_id:"project-atmosphere",name:"Queued board",slug:"queued-board"}],["CanvasRemoved",{canvas_id:canvasId,project_id:"project-atmosphere"}]]);
+  const payload={canvasId,projectId:"project-atmosphere",projectScope:true,prompt:"One exact plan."};
+  state.sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,requested_at,expires_at,updated_at) VALUES(?,?,?,'doc-atmosphere','structure_adaptive','queued','canvas',?,0,?,NULL,?,?,?)").run(jobId,owner,stream,jobId,JSON.stringify(payload),now,new Date(Date.now()+86_400_000).toISOString(),now);
+  const token=await reserveBudget(state.env,owner,100,{streamId:stream,correlationId:`${jobId}:attempt:1`,operation:"adaptive-structure"});assert.equal(token.ok,true);
+  const cost=await reserveCostBudget(state.env,owner,1000,{maximumMicrousd:1000,allowUserOverage:false,streamId:stream,correlationId:`${jobId}:attempt:1`,operation:"adaptive-structure",period:token.period});assert.equal(cost.ok,true);
+  const ledger=()=>({tokens:state.sqlite.prepare("SELECT * FROM budget_reservations").all(),costs:state.sqlite.prepare("SELECT * FROM cost_budget_reservations").all()}),beforeLedger=ledger();
+  let armed=true,expected;const read=()=>state.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(jobId),prepare=state.env.DB.prepare.bind(state.env.DB);
+  state.env.DB.prepare=sql=>{const statement=prepare(sql),bind=statement.bind.bind(statement);statement.bind=(...values)=>{const bound=bind(...values);if(armed&&/^SELECT 1 AS live_canvas /u.test(sql)){const first=bound.first.bind(bound);bound.first=async()=>{const result=await first();if(armed&&!result){armed=false;if(change==="restored")appendFixtureEvents(state.sqlite,stream,[["CanvasRestored",{canvas_id:canvasId,project_id:"project-atmosphere"}]]);else state.sqlite.prepare("UPDATE document_jobs SET status='running',attempt_count=1,started_at=?,correlation_id=?,result_json=? WHERE job_id=?").run(now,`${jobId}:attempt:1`,JSON.stringify({stage:"provider",providerSubmissionStatus:"submission_unknown",reservationId:token.reservationId,costReservationId:cost.reservationId}),jobId);expected=read();}return result;};}return bound;};return statement;};
+  const auth=await requireUser(new Request("http://localhost/api/session"),state.env);assert.ok(auth.user);const originalFetch=globalThis.fetch;globalThis.fetch=()=>assert.fail("CAS loss must not dispatch work");
+  try{const result=await runDocumentJob(state.env,auth.user,jobId);assert.equal(armed,false);assert.deepEqual({...result},{...expected});assert.deepEqual(read(),expected);assert.deepEqual(ledger(),beforeLedger);}finally{globalThis.fetch=originalFetch;}
 });
 
 test("shared project owners cannot enqueue private paid chat outside their active project context",async()=>{

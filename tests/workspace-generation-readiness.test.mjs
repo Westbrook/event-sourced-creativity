@@ -120,18 +120,18 @@ test("a failed preflight never starts paid work and explains the connection prob
   });
 });
 
-test("every paid next-step recommendation uses the shared readiness dispatcher", async () => {
+test("next-step recommendations only open exact saved work or free configuration", async () => {
   const workspace = await readFile(new URL("../src/components/forma-workspace.ts", import.meta.url), "utf8");
-  assert.match(workspace, /action\.id==="make-draft"[^\n]*runReadyImageGeneration\(this\.store,"preview"/);
-  assert.match(workspace, /action\.id==="refine-image"[^\n]*runReadyImageGeneration\(this\.store,"generate"/);
-  assert.doesNotMatch(workspace, /action\.id==="(?:make-draft|refine-image)"[^\n]*this\.store\.(?:preview|generate)\(/);
+  assert.match(workspace,/followCreativeNextTarget\(action.target/);
+  assert.match(workspace,/configure:\(target\)=>this\.#prepareFormat\(target\)/);
+  assert.doesNotMatch(workspace,/runReadyImageGeneration/);
 });
 
 test("compact document controls defer hidden fan checks without skipping their safety gates", async () => {
   const controls = await readFile(new URL("../src/components/generation-actions.ts", import.meta.url), "utf8");
   assert.match(controls, /kind\.includes\("fan"\)&&this\.compact&&!this\.#detailsOpen/);
   assert.match(controls, /@toggle=\$\{warmOnOpen\}/);
-  assert.match(controls, /this\.#detailsOpen=true;this\.requestUpdate\(\);\}/);
+  assert.match(controls, /@click=\$\{\(\)=>void this\.openConfiguration\(\)\}/);
   assert.match(controls, /requiredReadinessRows=this\.compact&&!this\.#detailsOpen\?readinessRows\.slice\(0,2\):readinessRows/);
   assert.match(controls, /ensureGenerationReadiness\(row\.kind/);
   assert.match(controls, /formaGenerationFirstResolvedMs/);

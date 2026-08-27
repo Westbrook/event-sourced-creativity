@@ -3,6 +3,8 @@ import { DEFAULT_EVIDENCE_RETENTION_DAYS, POLICY_VERSION, adoptLegacyCostReserva
 import { ownerDocumentBudgetScopes, readProjectRequestContext, readProjectSourceEvents, synchronizeProjectScope } from "./project-access";
 import { appendAuditEvent, ensureSchema, EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, readCorrelatedEvents, readWorkspaceEvents, StaleSequenceError, streamHead, uuidV7, type EventRow, type WorkerEnv, type WorkerExecutionContext } from "./runtime";
 import { foldEvents } from "../src/model/events";
+import { adaptiveRequestKey, adaptiveRequestLocale } from "../src/model/adaptive-request";
+import { livePlanningBoardGuard, planningBoardCurrent } from "./planning-destination";
 import {
   DOCUMENT_JOB_HEARTBEAT_MS,
   DOCUMENT_JOB_LEASE_MS,
@@ -48,6 +50,8 @@ import { falImageProviderReceipt } from "./fal-image-adapter";
 import { definitiveProviderRejection, hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission, mergeProviderSubmissions, providerSubmissions, unresolvedProviderSubmissionSql, unsettledProviderSubmissionSql } from "../src/model/provider-submission";
 import { generationExecutionSummary } from "../src/model/generation-execution-evidence.ts";
 import { originalSourceAudioRecoveryRequested, recoverOriginalSourceAudio } from "./document-audio-recovery";
+import { privateContentScopeGuard } from "./pilot-policy";
+import { executionAdmissionGuard, executionAuthorityCurrent, type ConsequentialBinding } from "./consequential-consent";
 
 export type DocumentJobRow = {
   job_id: string; owner_id: string; stream_id: string; document_id: string; kind: DocumentJobKind; status: DocumentJobStatus;
@@ -108,11 +112,14 @@ function projectExecutionBindings(scope:ProjectExecutionScope,documentId:string)
 }
 
 const DOCUMENT_JOB_COLUMNS="job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at";
-function documentJobInsert(env:WorkerEnv,user:PilotUser,documentId:string,values:string,bindings:Array<string|number|null>,idempotency?:{kind:DocumentJobKind;key:string}){
+function documentJobInsert(env:WorkerEnv,user:PilotUser,documentId:string,values:string,bindings:Array<string|number|null>,idempotency?:{kind:DocumentJobKind;key:string;canvasId?:string;sourceSurface?:string;projectId?:string}){
   const scope=user.projectExecution;
-  const conditions=[...(scope?[activeProjectExecutionSql]:[]),...(idempotency?[`NOT EXISTS(SELECT 1 FROM document_jobs existing WHERE existing.owner_id=? AND existing.stream_id=? AND existing.document_id=? AND existing.kind=? AND existing.status IN('queued','running','committing') AND COALESCE(json_extract(existing.request_json,'$.idempotencyKey'),'')=?)`]:[])];
+  const adaptive=idempotency?.kind==="structure_adaptive";
+  const board=adaptive&&idempotency.canvasId?livePlanningBoardGuard(user.streamId,idempotency.projectId??"",idempotency.canvasId):null;
+  const conditions=[...(scope?[activeProjectExecutionSql]:[]),...(idempotency?[`NOT EXISTS(SELECT 1 FROM document_jobs existing WHERE existing.owner_id=? AND existing.stream_id=? AND existing.document_id=? AND existing.kind=? AND existing.status IN('queued','running','committing') AND ${adaptive?"existing.source_surface=? AND COALESCE(json_extract(existing.request_json,'$.canvasId'),'')=?":"COALESCE(json_extract(existing.request_json,'$.idempotencyKey'),'')=?"})`]:[])];
+  if(board)conditions.push(`(${board.sql})`);
   return env.DB.prepare(`INSERT INTO document_jobs (${DOCUMENT_JOB_COLUMNS}) ${conditions.length?`SELECT ${values} WHERE ${conditions.join(" AND ")}`:`VALUES (${values})`}`)
-    .bind(...bindings,...(scope?projectExecutionBindings(scope,documentId):[]),...(idempotency?[user.userId,user.streamId,documentId,idempotency.kind,idempotency.key]:[]));
+    .bind(...bindings,...(scope?projectExecutionBindings(scope,documentId):[]),...(idempotency?[user.userId,user.streamId,documentId,idempotency.kind,...(adaptive?[idempotency.sourceSurface??"studio",idempotency.canvasId??""]:[idempotency.key])]:[]),...(board?.bindings??[]));
 }
 
 async function activeProjectExecution(env:WorkerEnv,user:PilotUser,documentId:string,jobId="",requireAnchor=true){
@@ -301,7 +308,7 @@ function generationRequestIdentity(kind: DocumentJobKind, request: Record<string
   const documentRevision = generationRevisionFromRequest(request, documentId);
   const sourcePreviewId = typeof request.sourcePreviewId === "string" && request.sourcePreviewId ? request.sourcePreviewId : null;
   const promptTechnique = normalizePromptTechnique(request.promptTechnique); const promptFanId = typeof request.promptFanId === "string" && request.promptFanId ? request.promptFanId : null;
-  const requestKey = kind === "preview" || kind === "generate" ? String(request.requestKey || documentGenerationRequestKey(kind, documentRevision, sourcePreviewId, promptTechnique, promptFanId)) : kind === "prompt_fan" || kind === "render_document" ? String(request.requestKey ?? "") : "";
+  const requestKey = kind === "preview" || kind === "generate" ? String(request.requestKey || documentGenerationRequestKey(kind, documentRevision, sourcePreviewId, promptTechnique, promptFanId)) : kind === "prompt_fan" || kind === "render_document" || kind === "structure_adaptive" ? String(request.requestKey ?? "") : "";
   const workflowIdentity = kind === "generate" && request.workflowId && request.workflowStageId
     ? documentGenerationRevision({ workflowId: request.workflowId, workflowStageId: request.workflowStageId, sources: productionWorkflowSourceIdentity(Array.isArray(request.workflowSources) ? request.workflowSources as ProductionWorkflowSource[] : []) })
     : null;
@@ -1301,6 +1308,17 @@ function safeResult(body: Record<string, unknown>, correlatedEventIds: string[] 
   return Object.fromEntries(Object.entries(result).filter(([,value])=>value!==undefined));
 }
 
+/** Recover the original paid plan from its retained actor-private receipt, never by regenerating. */
+async function retainedAdaptiveResult(env:WorkerEnv,user:PilotUser,row:DocumentJobRow,events:Awaited<ReturnType<typeof readCorrelatedEvents>>){
+  const reasoned=events.find((event)=>event.type==="AssistantReasoned"&&event.payload.operation==="adaptive-structure");
+  const contentRef=String(reasoned?.payload.content_ref??"");
+  if(!contentRef)return null;
+  const retained=await loadPrivateContent(env,user.userId,"all",user.projectExecution),raw=retained[contentRef];
+  if(!raw)return null;
+  const binding:ConsequentialBinding={version:"adaptive-result-read-v1",intentHash:"",operation:"adaptive-result-read",actorUserId:user.userId,permissionEpoch:user.access.permissionEpoch,streamId:row.stream_id,projectId:String(reasoned?.payload.project_id??""),documentId:row.document_id,canvasId:null,blockId:"",sourceHash:"",period:"",scope:user.projectExecution??null,contextSessionId:null,pilotCohortId:null,steps:[],publicQuery:"",request:null};
+  try{const value=JSON.parse(raw) as Record<string,unknown>;return value&&typeof value==="object"&&!Array.isArray(value)&&typeof value.interpretation==="string"&&value.active_decision&&Array.isArray(value.suggested_blocks)&&Array.isArray(value.hidden_until_later)?{structure:value,contentRef,raw,binding}:null;}catch{return null;}
+}
+
 async function queueFollowupPreview(env:WorkerEnv,user:PilotUser,parent:DocumentJobRow,spec:Record<string,unknown>){
   if(spec.kind!=="preview"||String(spec.documentId??"")!==parent.document_id)return null;const payload=spec.payload&&typeof spec.payload==="object"?{...(spec.payload as Record<string,unknown>)}:{};if(!payload.directionRef||JSON.stringify(payload).length>MAX_PAYLOAD_BYTES)return null;
   if(!await activeProjectExecution(env,user,parent.document_id,parent.job_id))return null;
@@ -1325,7 +1343,6 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   }
   if (row.kind === "prompt_fan") return reconcilePromptFanParent(env, user.userId, row.job_id);
   if (documentJobTerminal({ status: row.status })) return row;
-
   const existingEvents = await readCorrelatedEvents(env, user.streamId, [row.correlation_id]);
   const finished = operationFinished(existingEvents, row);
   const queuedRequest=parseRequest(row);const queuedCheckpoint=parseResult(row);
@@ -1337,11 +1354,35 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     const failureDetail = finished.failed ? correlatedFailureDetail(finished.correlated) : null;const moderationPromptRef=finished.failed?correlatedModerationPromptRef(finished.correlated):null;
     const checkpoint=parseResult(row);
     const sceneConfiguration=row.kind==="render_document"?sceneConfigurationFromRequest(queuedRequest):null;
-    const result = { ...(finished.failed ? checkpoint : {}), ...(checkpoint.generationReceipt?{generationReceipt:checkpoint.generationReceipt}:{}), ...safeResult({ head: await streamHead(env,user.streamId),previewQueued:Boolean(followup),followupJobId:followup?.job_id,moderationPromptRef }, finished.correlated.map((event) => event.eventId)), ...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}), ...(failureDetail ? { errorDetail: failureDetail } : {}), stage: status, progressMessage: finished.failed ? failureProgressMessage(failureDetail) : "The operation finished." };
-    await finishDocumentJob(env, row, status, result, failureDetail?.message ?? (finished.failed ? "operation_failed" : null), now, false);
+    const adaptive=row.kind==="structure_adaptive",retained=adaptive&&!finished.failed?await retainedAdaptiveResult(env,user,row,finished.correlated):null,structure=retained?.structure??null;
+    if(adaptive){delete checkpoint.structure;if(!finished.failed)delete checkpoint.errorDetail;}
+    const result = { ...(finished.failed||adaptive ? checkpoint : {}), ...(checkpoint.generationReceipt?{generationReceipt:checkpoint.generationReceipt}:{}), ...safeResult({ head: await streamHead(env,user.streamId),previewQueued:Boolean(followup),followupJobId:followup?.job_id,moderationPromptRef,...(adaptive?{appended:finished.correlated,structure}: {}) }, adaptive?[]:finished.correlated.map((event) => event.eventId)), ...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}), ...(failureDetail ? { errorDetail: failureDetail } : {}), ...(adaptive&&!finished.failed&&!structure?{resultUnavailable:true}:{}), stage: status, progressMessage: finished.failed ? failureProgressMessage(failureDetail) : adaptive&&!structure?"The paid operation finished, but its private plan is no longer retained.":"The operation finished." };
+    if(adaptive){
+      const scope=privateContentScopeGuard(user.userId,user.projectExecution),authority=retained?executionAdmissionGuard(user,retained.binding,null):{sql:"0",bindings:[]};
+      const contentCurrent=retained?{sql:`EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='adaptive-structure' AND content=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${scope.sql}) AND ${authority.sql}`,bindings:[retained.contentRef,user.userId,retained.raw,...scope.bindings,...authority.bindings]}:{sql:"0",bindings:[]};
+      const unavailable=finished.failed?result:{...result,structure:undefined,resultUnavailable:true,progressMessage:"The paid operation finished, but its private plan is no longer retained."};
+      // Both the job snapshot and private retention/authority are checked at the write itself.
+      await env.DB.prepare(`UPDATE document_jobs SET status=?,result_json=CASE WHEN ${contentCurrent.sql} THEN ? ELSE ? END,error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status=? AND attempt_count=? AND request_json=? AND result_json IS ? AND updated_at=?`)
+        .bind(status,...contentCurrent.bindings,JSON.stringify(result),JSON.stringify(unavailable),failureDetail?.message??(finished.failed?"operation_failed":null),now,now,row.job_id,row.owner_id,row.stream_id,row.correlation_id,row.status,row.attempt_count,row.request_json,row.result_json,row.updated_at).run();
+      if(retained&&!await executionAuthorityCurrent(env,user,retained.binding,null))return null;
+    }else await finishDocumentJob(env, row, status, result, failureDetail?.message ?? (finished.failed ? "operation_failed" : null), now, false);
     await refreshGenerationReceipt(env,user,row,{appended:finished.correlated},failureDetail?{...failureDetail,probe:failureDetail.probe??undefined}:null);
     await reconcileParentForChild(env, row);
     return readJob(env, user.userId, jobId);
+  }
+
+  if(row.kind==="structure_adaptive"){
+    const destination=parseRequest(row),projectId=String(destination.projectId??""),canvasId=String(destination.canvasId??"");
+    if((row.source_surface==="canvas"||canvasId)&&!await planningBoardCurrent(env,user.streamId,projectId,canvasId)){
+      const board=livePlanningBoardGuard(row.stream_id,projectId,canvasId),now=new Date().toISOString();
+      const result={...parseResult(row),errorDetail:applicationFailureDetail("canvas_not_found",null,409),stage:"failed",progressMessage:"The exact planning board is no longer available."};
+      // Reject only this never-started snapshot. Paid/running work and restored boards win.
+      await env.DB.prepare(`UPDATE document_jobs SET status='failed',result_json=?,error_message='canvas_not_found',completed_at=?,lease_expires_at=NULL,updated_at=?
+        WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND kind='structure_adaptive' AND source_surface=? AND correlation_id=?
+          AND status='queued' AND attempt_count=0 AND started_at IS NULL AND request_json=? AND result_json IS ? AND NOT (${board.sql})`)
+        .bind(JSON.stringify(result),now,now,row.job_id,row.owner_id,row.stream_id,row.document_id,row.source_surface,row.correlation_id,row.request_json,row.result_json,...board.bindings).run();
+      return readJob(env,user.userId,jobId);
+    }
   }
 
   if(row.status==="committing"){
@@ -1509,7 +1550,7 @@ async function documentJobPrincipal(env:WorkerEnv,row:DocumentJobRow,current:Pil
   if(!principal||principal.consent_version!==POLICY_VERSION)return null;
   const role=String(principal.role??"");if(!["admin","creator","agent","viewer"].includes(role))return null;
   if(!project&&role!=="admin"&&role!=="creator")return null;
-  const actor:PilotUser={userId:String(principal.user_id),email:String(principal.email??""),displayName:String(principal.display_name??""),role:role as PilotUser["role"],consentVersion:String(principal.consent_version),consentedAt:principal.consented_at?String(principal.consented_at):null,streamId:row.stream_id,access:await principalAccessFromRow(principal,role),billingUserId:row.owner_id,...(project?{projectExecution:{organizationId:project.organization_id,projectAccessId:project.project_access_id,projectId:project.project_id,ownerUserId:project.owner_user_id,actorUserId:project.actor_user_id}}:{})};
+  const actor:PilotUser={userId:String(principal.user_id),email:String(principal.email??""),displayName:String(principal.display_name??""),role:role as PilotUser["role"],consentVersion:String(principal.consent_version),consentedAt:principal.consented_at?String(principal.consented_at):null,streamId:row.stream_id,access:await principalAccessFromRow(principal,role),billingUserId:row.owner_id,authorizationSnapshot:{updatedAt:String(principal.updated_at??""),rawEpoch:String(principal.permission_epoch??""),grants:String(principal.grants_json??"[]"),organizations:String(principal.organizations_json??"[]"),projects:String(principal.projects_json??"[]"),identityPolicies:String(principal.identity_policies_json??"[]"),canvasRequirements:Number(principal.approved_canvas_requirements??0)},...(project?{projectExecution:{organizationId:project.organization_id,projectAccessId:project.project_access_id,projectId:project.project_id,ownerUserId:project.owner_user_id,actorUserId:project.actor_user_id}}:{})};
   if(project&&(!hasCapability(actor,"project.output.request",{organizationId:project.organization_id,projectAccessId:project.project_access_id})||!await activeProjectExecution(env,actor,row.document_id,row.job_id)))return null;
   return actor;
 }
@@ -2461,6 +2502,17 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     return Response.json({job:project?safeScopedJob(parent!):serializeJob(parent!),accepted:true},{status:202});
   }
 
+  if(kind==="structure_adaptive"){
+    const prompt=String(payload.prompt??"").trim();
+    if(!prompt)return Response.json({error:"adaptive_intent_required"},{status:400});
+    if(prompt.length>2000)return Response.json({error:"adaptive_intent_too_long"},{status:400});
+    const sourceSurface=String(input.sourceSurface??payload.sourceSurface??"studio").slice(0,80)||"studio";
+    payload.prompt=prompt;payload.locale=adaptiveRequestLocale(payload.locale);payload.projectId=documentRecord.projectId;
+    payload.requestKey=await adaptiveRequestKey({projectId:documentRecord.projectId,documentId,canvasId:payload.canvasId,sourceSurface,projectScope:payload.projectScope,locale:payload.locale,prompt});
+    const blocks=(payload.projectScope===true?projection.libraryBlocks:projection.blocks).filter((block)=>block.projectId===documentRecord.projectId&&!block.removed);
+    const ids=new Set(blocks.map((block)=>block.id));
+    payload.idempotencyKey=await sourceSnapshotSha256({requestKey:payload.requestKey,model:env.OPENAI_MODEL??"gpt-5.6-terra",documentTitle:projection.documentTitle,blocks,relationships:projection.libraryBlockRelations.filter((relation)=>!relation.removed&&ids.has(relation.fromBlockId)&&ids.has(relation.toBlockId))});
+  }
   let active:DocumentJobRow|null=null;
   if(kind!=="extract_reference"){
     const candidates=(await env.DB.prepare(`SELECT job.* FROM document_jobs job${project?" JOIN project_resource_scopes resource ON resource.resource_kind='job' AND resource.resource_id=job.job_id AND resource.project_access_id=? AND resource.organization_id=? AND resource.actor_user_id=job.owner_id":""}
@@ -2475,8 +2527,12 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       payload.requestKey=providedRequestKey||`render:${String(payload.artifactKind??"unknown")}${sceneConfiguration?`:${sceneConfiguration.medium}`:""}:${payload.productionMode==="managed"?"managed":"manual"}:${generationRevisionFromRequest(payload,documentId)}`;
       const idempotencyKey=renderRequestIdempotencyKey(payload,documentId);payload.idempotencyKey=idempotencyKey;
       active=candidates.find((candidate)=>renderRequestIdempotencyKey(parseRequest(candidate),documentId)===idempotencyKey)??null;
-    }
-    else active=candidates[0]??null;
+    }else if(kind==="structure_adaptive"){
+      const sourceSurface=String(input.sourceSurface??payload.sourceSurface??"studio").slice(0,80)||"studio";
+      const sameSurface=(candidate:DocumentJobRow)=>candidate.source_surface===sourceSurface&&(parseRequest(candidate).canvasId??null)===(payload.canvasId??null);
+      active=candidates.find((candidate)=>sameSurface(candidate)&&parseRequest(candidate).idempotencyKey===payload.idempotencyKey)??null;
+      if(!active&&candidates.some(sameSurface))return Response.json({error:"adaptive_request_in_progress"},{status:409});
+    }else active=candidates[0]??null;
   }
   if(active)return Response.json({job:project?safeScopedJob(active):serializeJob(active),reused:true},{status:202});
 
@@ -2493,15 +2549,15 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const receipt=kind==="render_document"?await acceptedGenerationReceipt(env,user,payload,documentId,jobId,estimatedGenerationCostMicrousd,productionPlan,projectContentScope,workflowPlanningSnapshot):kind==="preview"||kind==="generate"?{artifact_kind:"image",provider:"openai",model:env.OPENAI_MODEL??"gpt-5.6-terra",reservation_microusd:estimatedGenerationCostMicrousd,settled_cost_microusd:0,reservation_status:"not_reserved",source_transmission_status:"not_transmitted",provider_request_status:"not_submitted"}:null;
   const sceneConfiguration=kind==="render_document"?sceneConfigurationFromRequest(payload):null;
   const initialResult=receipt?{artifactKind:String(payload.artifactKind??""),...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}),generationReceipt:receipt,stage:"queued",progressMessage:"The accepted generation and its private source receipt are safely recorded."}:null;
-  const inserted=documentJobInsert(env,user,documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[jobId,user.userId,user.streamId,documentId,kind,sourceSurface,jobId,requestedSequence,JSON.stringify(payload),initialResult?JSON.stringify(initialResult):null,createdAt,expiresAt,createdAt],kind==="render_document"?{kind,key:String(payload.idempotencyKey??"")}:undefined);
+  const inserted=documentJobInsert(env,user,documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[jobId,user.userId,user.streamId,documentId,kind,sourceSurface,jobId,requestedSequence,JSON.stringify(payload),initialResult?JSON.stringify(initialResult):null,createdAt,expiresAt,createdAt],kind==="render_document"||kind==="structure_adaptive"?{kind,key:String(payload.idempotencyKey??""),sourceSurface,canvasId:typeof payload.canvasId==="string"?payload.canvasId:"",projectId:documentRecord.projectId}:undefined);
   const resource=projectJobResource(env,user,jobId,documentId,createdAt);
   let created=false;
   if(resource){const results=await env.DB.batch([inserted,resource]);created=results.every((result)=>Number(result.meta.changes??0)===1);if(!created&&Number(results[0]?.meta.changes??0)!==0)return Response.json({error:"project_access_revoked"},{status:403});}
   else created=Number((await inserted.run()).meta.changes??0)===1;
   if(!created){
-    if(kind==="render_document"){
-      const duplicate=await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND document_id=? AND kind='render_document' AND status IN('queued','running','committing') AND json_extract(request_json,'$.idempotencyKey')=? ORDER BY requested_at DESC LIMIT 1`)
-        .bind(user.userId,user.streamId,documentId,String(payload.idempotencyKey??"")).first<DocumentJobRow>();
+    if(kind==="render_document"||kind==="structure_adaptive"){
+      const duplicate=await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND document_id=? AND kind=? AND status IN('queued','running','committing') AND json_extract(request_json,'$.idempotencyKey')=? ORDER BY requested_at DESC LIMIT 1`)
+        .bind(user.userId,user.streamId,documentId,kind,String(payload.idempotencyKey??"")).first<DocumentJobRow>();
       if(duplicate&&(!project||await activeProjectExecution(env,user,duplicate.document_id,duplicate.job_id)))return Response.json({job:project?safeScopedJob(duplicate):serializeJob(duplicate),reused:true},{status:202});
     }
     return Response.json({error:project?"project_access_revoked":"document_job_admission_conflict"},{status:project?403:409});

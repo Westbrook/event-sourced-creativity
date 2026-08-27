@@ -182,9 +182,10 @@ export class FormaCreativeAssistant extends FormaElement {
       return;
     }
 
-    const documentId = surface.canvasId ? projection.documents[0]?.id ?? projection.documentId : projection.documentId;
+    const documentId = surface.canvasId ? this.store.canvasPlanningDocumentId() : projection.documentId;
+    if(!documentId){this.store.toast(this.i18n.t("next.exact.chooseDocument","Choose a document"));panel.resolveToolRequest(false,input.message);return;}
     if (["plan-document", "plan-board"].includes(input.mode)
-      && this.store.documentJobActive("structure_adaptive", documentId)) {
+      && this.store.documentJobActive("structure_adaptive", documentId,surface.canvasId??null)) {
       panel.resolveToolRequest(false, input.message);
       return;
     }
@@ -324,8 +325,8 @@ export class FormaCreativeAssistant extends FormaElement {
       queueMicrotask(() => { if (this.#open) void this.#load(); });
     }
     const projection = this.store.projection.get();
-    const documentId = surface.canvasId ? projection.documents[0]?.id ?? projection.documentId : projection.documentId;
-    const planning = Boolean(documentId && this.store.documentJobActive("structure_adaptive", documentId));
+    const documentId = surface.canvasId ? this.store.canvasPlanningDocumentId() : projection.documentId;
+    const planning = Boolean(documentId && this.store.documentJobActive("structure_adaptive", documentId,surface.canvasId??null));
     const chatting = Boolean(documentId && this.store.documentJobActive("chat", documentId));
     const busyModes: AssistantInteractionMode[] = [...(planning ? ["plan-document" as const, "plan-board" as const] : []), ...(chatting ? ["creative-chat" as const] : [])];
     const messages = this.#messages.map((message) => message.reviewMode

@@ -409,7 +409,7 @@ test("keeps toast feedback above open modal dialogs",async()=>{
 
 test("explains comparison changes as creative actions instead of block ids",async()=>{
   const workspace=await readFile(new URL("../src/components/forma-workspace.ts",import.meta.url),"utf8");
-  assert.match(workspace,/Creative decisions between these results/);assert.match(workspace,/affected area moved from/);assert.match(workspace,/intent changed from/);assert.doesNotMatch(workspace,/<b>\$\{d\.id\}<\/b>/);
+  assert.match(workspace,/Recorded document changes between these results/);assert.match(workspace,/affected area moved from/);assert.match(workspace,/intent changed from/);assert.doesNotMatch(workspace,/<b>\$\{d\.id\}<\/b>/);assert.doesNotMatch(workspace,/isolates image-model variation/);
 });
 
 test("lets Reference blocks prepare, adopt, and opt pixels into image generation", async () => {

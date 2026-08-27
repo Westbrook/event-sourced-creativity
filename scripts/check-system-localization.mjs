@@ -9,6 +9,7 @@ import frenchMessages from "../src/components/design-system/locales/fr.ts";
 import arabicMessages from "../src/components/design-system/locales/ar.ts";
 import japaneseMessages from "../src/components/design-system/locales/ja.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "../src/components/design-system/locales/responsive-messages.ts";
+import { FORMA_NEXT_ACTION_MESSAGES } from "../src/components/design-system/locales/next-action-messages.ts";
 import marketingEnglish from "../src/marketing/locales/en.ts";
 import marketingFrench from "../src/marketing/locales/fr.ts";
 import marketingArabic from "../src/marketing/locales/ar.ts";
@@ -32,7 +33,8 @@ const catalogs = new Map([["fr", frenchMessages], ["ar", arabicMessages], ["ja",
 const errors = [];
 const normalize = (value) => String(value).replace(/\s+/gu, " ").trim();
 const placeholders = (value) => [...String(value).matchAll(/\{([^{}]+)\}/gu)].map((match) => match[1]).sort().join("|");
-const defaults = new Map(Object.entries(FORMA_RESPONSIVE_MESSAGES.en));
+const sharedCatalogs=[FORMA_RESPONSIVE_MESSAGES,FORMA_NEXT_ACTION_MESSAGES];
+const defaults = new Map(sharedCatalogs.flatMap((catalog)=>Object.entries(catalog.en)));
 const defaultSource = typescript.createSourceFile("localization.ts", readFileSync(resolve(root, "src/components/design-system/localization.ts"), "utf8"), typescript.ScriptTarget.Latest, true);
 
 for (const statement of defaultSource.statements) {
@@ -57,9 +59,9 @@ for (const [id, source] of Object.entries(englishMessages)) {
   }
 }
 
-for (const [id, source] of Object.entries(FORMA_RESPONSIVE_MESSAGES.en)) {
+for (const catalog of sharedCatalogs) for (const [id, source] of Object.entries(catalog.en)) {
   for (const [locale, messages] of catalogs) {
-    const translation = FORMA_RESPONSIVE_MESSAGES[locale]?.[id];
+    const translation = catalog[locale]?.[id];
     if (!translation?.trim()) errors.push(`${locale} is missing the responsive message ${id}`);
     else if (placeholders(translation) !== placeholders(source)) errors.push(`${locale} changes interpolation placeholders for responsive message ${id}`);
     else if (messages[id] !== translation) errors.push(`${locale} overrides the authoritative responsive message ${id}`);

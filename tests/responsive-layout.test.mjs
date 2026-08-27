@@ -237,7 +237,7 @@ test("keeps the fixed document composer task-focused while disclosing generation
   assert.match(workspace,/forma-generation-actions source="document"[\s\S]*?compact/);
   assert.match(actions,/generation-details-trigger/);
   assert.match(actions,/Image options, (?:\$\{ratio\}|\{ratio\}) frame, (?:\$\{statusLabel\}|\{statusLabel\})/);
-  assert.match(actions,/this\.compact&&this\.#detailsOpen\?html`<dialog class="modal generation-details-dialog"/);
+  assert.match(actions,/this\.compact&&this\.#detailsOpen&&\(!this\.#configurationCurrent\|\|this\.#configurationCurrent\(\)\)\?html`<dialog class="modal generation-details-dialog"/);
   assert.match(actions,/Output frame/);assert.match(actions,/Generation choices/);assert.match(actions,/Readiness and recovery/);assert.match(actions,/Compare prompt fans/);
   assert.match(styles,/\.modal-card\.generation-details-card\s*\{[^}]*grid-template-rows:\s*auto minmax\(0,1fr\) auto;[^}]*overflow:\s*hidden/);
   assert.match(styles,/\.generation-details-body\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*auto/);

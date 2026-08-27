@@ -1,9 +1,15 @@
 import type { ImageFocalPoint } from "./focal-point.ts";
+import type { CreativeEvent } from "./events.ts";
 import { presentationAudienceText } from "./presentation-delivery.ts";
 import { protectedPresentationScoreContradictions, validatePresentationSourceCoverage, type PresentationSourceContract } from "./presentation-source.ts";
 
 export const DOCUMENT_ARTIFACT_KINDS = ["short_story", "scene", "slides", "storyboard", "video", "audio"] as const;
 export type DocumentArtifactKind = typeof DOCUMENT_ARTIFACT_KINDS[number];
+
+/** Editable revision, distinct from the immutable generation/creation sequence. */
+export function documentArtifactRevision(events:readonly CreativeEvent[],artifactId:string):number{
+  return events.filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===artifactId).length;
+}
 
 export const SLIDE_LAYOUTS = ["cover", "statement", "split", "columns", "metric", "timeline", "closing", "quote", "scorecard", "comparison", "matrix", "architecture", "personas", "roadmap"] as const;
 export type SlideLayout = typeof SLIDE_LAYOUTS[number];

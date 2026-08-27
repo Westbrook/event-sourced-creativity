@@ -1,7 +1,9 @@
 import systemMessages from "./system-ar.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
+import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
 
 const messages: Record<string, string> = {
+  ...FORMA_NEXT_ACTION_MESSAGES.ar,
   ...FORMA_RESPONSIVE_MESSAGES.ar,
   "action.default": "إجراء",
   "action.working": "جارٍ التنفيذ",

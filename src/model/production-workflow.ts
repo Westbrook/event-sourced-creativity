@@ -1,5 +1,5 @@
 import { artifactReviewState } from "./context-health.ts";
-import { DOCUMENT_ARTIFACT_KINDS, type DocumentArtifact, type DocumentArtifactKind } from "./document-artifacts.ts";
+import { DOCUMENT_ARTIFACT_KINDS, documentArtifactRevision, type DocumentArtifact, type DocumentArtifactKind } from "./document-artifacts.ts";
 import type { CreativeEvent, CreativeOutput, CreativeProjection } from "./events.ts";
 import type { ProductionFormat } from "./managed-production.ts";
 import { createSceneConfiguration, isSceneMedium, type SceneConfiguration, type SceneMedium } from "./scene-configuration.ts";
@@ -242,9 +242,6 @@ export function productionWorkflows(events: readonly CreativeEvent[], documentId
   return [...workflows.values()];
 }
 
-const sourceRevision = (events: readonly CreativeEvent[], artifactId: string) =>
-  events.filter((event) => event.type === "DocumentArtifactEdited" && String(event.payload.artifact_id ?? "") === artifactId).length;
-
 const recordedSceneMedium = (value: unknown): SceneMedium | null =>
   value === undefined || value === null ? "visual" : isSceneMedium(value) ? value : null;
 
@@ -388,7 +385,7 @@ export function productionWorkflowStageStates(
     else if (inputFreshness === "changed") status = "stale";
     else if (stage.source.outputKind === "image") {
       status = image && image.sourceEventId === stage.source.sourceEventId ? "selected" : "stale";
-    } else if (!artifact || artifact.sourceEventId !== stage.source.sourceEventId || sourceRevision(events, artifact.id) !== stage.source.revision
+    } else if (!artifact || artifact.sourceEventId !== stage.source.sourceEventId || documentArtifactRevision(events, artifact.id) !== stage.source.revision
       || stage.format === "scene" && recordedSceneMedium(artifact.settings.scene_medium) !== expectedSceneMedium) {
       status = "stale";
     } else {

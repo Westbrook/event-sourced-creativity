@@ -621,7 +621,8 @@ test("first-time storyboards prefer coherent production without silently changin
   const component=await readFile(new URL("../src/components/document-artifacts.ts",import.meta.url),"utf8");
   assert.match(component,/#productionMode:ProductionMode="manual";#storyboardManagedDefault=false;#storyboardManualOptOut=false/);
   assert.match(component,/#selectArtifactKind\(kind:DocumentArtifactKind\)\{const selected=selectArtifactProductionKind/);
-  assert.match(component,/openRender\([^)]*\)\{[^}]*if\(kind\)this\.#selectArtifactKind\(kind\)/);
+  const opener=component.slice(component.indexOf("  async openRender("),component.indexOf("  async openArtifactById("));
+  assert.match(opener,/if\(kind\)this\.#selectArtifactKind\(kind\)/);assert.match(opener,/return this\.#openCreate\(!kind,current\)/);
   assert.match(component,/name="artifact-kind"[^\n]*@change=\$\{\(\)=>\{this\.#selectArtifactKind\(kind\)/);
   assert.match(component,/value="manual"[^\n]*@change=\$\{\(\)=>\{this\.#productionMode="manual";(?:this\.#sendSoundtrackToVideoProvider=false;)?this\.#storyboardManagedDefault=false/);
   assert.match(component,/value="manual"[^\n]*@change=\$\{\(\)=>\{this\.#productionMode="manual";this\.#sendSoundtrackToVideoProvider=false;/,"switching to manual production must revoke soundtrack-provider transfer consent");

@@ -1,7 +1,9 @@
 import systemMessages from "./system-fr.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
+import { FORMA_NEXT_ACTION_MESSAGES } from "./next-action-messages.ts";
 
 const messages: Record<string, string> = {
+  ...FORMA_NEXT_ACTION_MESSAGES.fr,
   ...FORMA_RESPONSIVE_MESSAGES.fr,
   "action.default": "Action",
   "action.working": "En cours",

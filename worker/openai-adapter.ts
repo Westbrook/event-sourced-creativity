@@ -473,16 +473,18 @@ export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{d
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output:parsed,raw:text,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
-export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input:{intent:string;documentTitle:string;blocks:Array<Record<string,unknown>>;relationships?:Array<Record<string,unknown>>;locale?:string;signal?:AbortSignal}) {
+export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input:{intent:string;documentTitle:string;blocks:Array<Record<string,unknown>>;relationships?:Array<Record<string,unknown>>;locale?:string;signal?:AbortSignal;onBeforeProviderRequest?:()=>Promise<void>}) {
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
   const responseLocale=assistantResponseLocale(input.locale);
-  const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),signal:input.signal,body:JSON.stringify({
+  const providerRequest=JSON.stringify({
     model:env.OPENAI_MODEL??"gpt-5.6-terra",
     instructions:`You structure an adaptive creative-context interface. Write every user-facing interpretation, decision label, decision prompt, explanation, suggestion label, instruction, relationship, and future suggestion in the user's selected language (${responseLocale}). Preserve user-authored titles, quoted text, names, and creative decisions verbatim; never translate machine identifiers, block type values, or structured field names. Interpret the user's broad intent together with the currently authored blocks. Propose the next useful decision and 2–6 concise context blocks across intent, scene, craft, evidence, or constraints. Use only the supplied block type vocabulary. Subtypes should match the system suggestions when practical. Explain product-facing reasons, never hidden chain-of-thought. Do not claim proposals were authored and do not mutate anything. ${creativePromptGuardrails()}`,
     input:JSON.stringify({...providerFacingAssistantContext(input),block_vocabulary:BLOCK_TYPES.map((item)=>({type:item.type,description:item.description,subtypes:item.subtypes}))}),
     text:{verbosity:"low",format:{type:"json_schema",name:"forma_adaptive_structure",strict:true,schema:adaptiveStructureSchema}},reasoning:{effort:"low"},max_output_tokens:1400,store:false,safety_identifier:await safetyIdentifier(userId),
-  })});
+  });
+  await input.onBeforeProviderRequest?.();
+  const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),signal:input.signal,body:providerRequest});
   const body=await response.json() as OpenAIResponse;if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`);
   const text=responseText(body);if(!text)throw new Error("provider_returned_no_output");
   let parsed:AdaptiveStructure;try{parsed=JSON.parse(text) as AdaptiveStructure;}catch{throw new Error("provider_returned_invalid_json");}

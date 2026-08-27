@@ -175,6 +175,8 @@ backdrop and Escape behavior, focus restoration, and reduced-motion support.
 
 ## Context creation and reusable choice cards
 
+`<forma-ui-choice-card>` also presents the shared exact next actions in Document and Canvas. The host supplies at most one primary and two alternatives, translated labels, and the immutable object target. Activating the card revalidates the current actor, project, document, board, object and source before opening saved work or free configuration. It never generates, approves, copies or exports on its own. See `src/components/next-action-cards.ts` and `src/model/workspace-intelligence.ts`; no second card or canonical data store is introduced.
+
 `<forma-ui-choice-card>` is the shared, light-DOM molecule for a real actionable
 choice. Document block types, the create-or-reuse context entry, Canvas source
 categories, Context board starters, Adaptive path answers, Creative Editor

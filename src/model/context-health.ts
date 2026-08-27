@@ -1,5 +1,5 @@
 import { blockIntentFor, blockTypeDefinition, isNegativeIntent } from "./block-types.ts";
-import type { DocumentArtifact } from "./document-artifacts.ts";
+import { documentArtifactRevision, type DocumentArtifact } from "./document-artifacts.ts";
 import { inferDocumentArtifactKind } from "./document-output-intent.ts";
 import type { CreativeBlock, CreativeEvent, CreativeProjection } from "./events.ts";
 import { audioRightsAllowed } from "./audio.ts";
@@ -243,7 +243,7 @@ function artifactReviewStateFromSources(artifact: Pick<DocumentArtifact, "id" | 
     if(!sourceId||String(source.documentId??"")!==artifact.documentId){changedBlockIds.push(`output:${sourceId||"unknown"}`);continue;}
     if(source.outputKind==="artifact"){
       const exact=sourceEvent?.type==="DocumentRenderCompleted"&&String(sourceEvent.payload.artifact_id??"")===sourceId&&String(sourceEvent.payload.document_id??"")===artifact.documentId;
-      const revision=events.filter((event)=>event.type==="DocumentArtifactEdited"&&String(event.payload.artifact_id??"")===sourceId).length;
+      const revision=documentArtifactRevision(events,sourceId);
       if(!exact||revision!==Number(source.revision??-1)){changedBlockIds.push(`output:${sourceId}`);continue;}
       const upstream=artifactReviewStateFromSources({id:sourceId,documentId:artifact.documentId,sequence:sourceEvent.sequence},blocks,events,ancestors);
       if(upstream.status==="stale"||upstream.status==="unverified"||upstream.status==="changes-requested"||source.approvalRequired===true&&upstream.status!=="approved")changedBlockIds.push(`output:${sourceId}`);

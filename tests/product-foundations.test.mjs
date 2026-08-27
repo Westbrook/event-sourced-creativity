@@ -172,18 +172,19 @@ test("document artifact rendering counts its actual source decisions without att
 });
 
 test("outcome-led guidance changes with durable creative evidence instead of exposing every control", () => {
-  assert.equal(creativeNextActions({ blocks: [], outputs: [], artifacts: [] })[0].id, "add-context");
-  const blocks = [{ removed: false, properties: { weight: .8 } }];
-  assert.equal(creativeNextActions({ blocks, outputs: [], artifacts: [] })[0].id, "make-draft");
-  assert.equal(creativeNextActions({ blocks: [{ removed: false, properties: { weight: 0 } }], outputs: [], artifacts: [] })[0].id, "add-context");
-  assert.equal(creativeNextActions({ blocks: [{ removed: false, properties: { weight: .8, active: false } }], outputs: [], artifacts: [] })[0].id, "add-context");
-  const outputs = [{ quality: "low", purpose: "ideate", saved: false, pinned: false, library: false }];
-  assert.equal(creativeNextActions({ blocks, outputs, artifacts: [] })[0].id, "refine-image");
-  assert.equal(creativeNextActions({ blocks, outputs, artifacts: [], failedOperations: 1 })[0].id, "review-failure");
+  const guide=(values)=>creativeNextActions({projectId:"p",documentId:"d",authorityKey:"actor",canRead:true,canAuthor:true,canConfigure:true,outputs:[],artifacts:[],...values});
+  assert.equal(guide({blocks:[]})[0].id,"add-context");
+  const blocks = [{ id:"b",projectId:"p",documentId:"d",type:"direction",removed: false, properties: { weight: .8 } }];
+  assert.equal(guide({blocks})[0].id,"configure-output");
+  assert.equal(guide({blocks:[{...blocks[0],properties:{weight:0}}]})[0].id,"add-context");
+  assert.equal(guide({blocks:[{...blocks[0],properties:{weight:.8,active:false}}]})[0].id,"add-context");
+  const outputs = [{id:"draft",documentId:"d",quality:"low",purpose:"ideate",saved:false,pinned:false,library:false,provider:"test-provider",mediaUrl:"/api/media/draft"}];
+  assert.equal(guide({blocks,outputs})[0].id,"read-draft");
+  assert.equal(guide({blocks,outputs,jobs:[{jobId:"optional-failure",documentId:"d",canvasId:null,status:"failed",requestedAt:"2026-08-27"}]})[0].id,"read-draft");
   const unpromotedFan=Array.from({length:4},(_,index)=>({...outputs[0],id:`member-${index}`,promptFanId:"fan-1",standalone:false}));
-  assert.equal(creativeNextActions({blocks,outputs:unpromotedFan,artifacts:[]}).some((action)=>action.id==="compare-images"),false,"a grouped fan alone cannot satisfy the standalone comparison action");
+  assert.equal(guide({blocks,outputs:unpromotedFan}).some((action)=>action.id==="compare-images"),false,"a grouped fan alone cannot satisfy the standalone comparison action");
   const promoted=[{...unpromotedFan[0],standalone:true},{...unpromotedFan[1],standalone:true}];
-  assert.equal(creativeNextActions({blocks,outputs:promoted,artifacts:[]}).find((action)=>action.id==="compare-images")?.evidence,2);
+  assert.equal(guide({blocks,outputs:promoted}).find((action)=>action.id==="compare-images")?.evidence,2);
 });
 
 test("unaccepted assistant proposals explain the actual creative change without identifiers or event machinery",()=>{

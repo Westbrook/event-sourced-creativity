@@ -1,6 +1,7 @@
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import { formaSystemMessageId } from "./system-message-id.ts";
 import { FORMA_RESPONSIVE_MESSAGES } from "./locales/responsive-messages.ts";
+import { FORMA_NEXT_ACTION_MESSAGES } from "./locales/next-action-messages.ts";
 import { FORMA_SUPPORTED_LOCALES } from "./language-options.ts";
 
 export { FORMA_SUPPORTED_LOCALES } from "./language-options.ts";
@@ -10,6 +11,7 @@ export type FormaMessageCatalog = Readonly<Record<string, string>>;
 export type FormaDirection = "ltr" | "rtl";
 
 export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
+  ...FORMA_NEXT_ACTION_MESSAGES.en,
   ...FORMA_RESPONSIVE_MESSAGES.en,
   "action.default": "Action",
   "action.working": "Working",
