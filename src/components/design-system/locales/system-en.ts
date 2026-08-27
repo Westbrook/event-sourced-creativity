@@ -6053,4 +6053,20 @@ const messages: Record<string, string> = {
   "system.auto.1bop32q.183": "Review the retained script, required voice direction, and model limits before starting a changed request. No audio render was submitted; any completed planning usage remains recorded.",
 };
 
+Object.assign(messages, {
+  "system.auto.1fbfkdy.27": "Operation already finished.",
+  "system.auto.dkozxv.18": "Operation stopped.",
+  "system.auto.12qradp.23": "Operation force-failed.",
+  "system.auto.11egqjw.30": "The stop is not yet confirmed.",
+  "system.auto.ikltxe.71": "Provider work was not submitted. A budget hold remains pending release.",
+  "system.auto.11m81nk.72": "The provider request may still be billable; its budget hold is retained.",
+  "system.auto.za29fw.36": "Unused reserved budget was released.",
+  "system.auto.1qrwzxy.58": "No budget was reserved and no provider work was submitted.",
+  "system.auto.lso8oj.64": "Verified provider usage remains charged; no budget hold remains.",
+  "system.auto.1f1dkk2.57": "Billing is not yet confirmed. Check Activity for details.",
+  "system.auto.1eape3u.21": "Planning was stopped.",
+  "system.auto.1hytdg0.74": "The existing provider request may still be billable; its hold is retained.",
+  "system.auto.ayjo92.48": "Planning was stopped before provider submission.",
+});
+
 export default messages;

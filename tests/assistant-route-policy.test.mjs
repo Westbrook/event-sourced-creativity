@@ -74,6 +74,8 @@ test("specialized document, adaptive, board, and chat modes require their exact 
   assert.deepEqual(assistantInteractionForSurface(document, entitled).modes, ["guidance", "creative-chat", "quick-edit"]);
   assert.deepEqual(assistantInteractionForSurface(adaptive, entitled).modes, ["guidance", "plan-document"]);
   assert.deepEqual(assistantInteractionForSurface(board, entitled).modes, ["guidance", "plan-board"]);
+  assert.deepEqual(assistantInteractionForSurface(adaptive, {...entitled,providerConfigured:false}).modes,["guidance","plan-document"],"free planning preview does not require a provider key");
+  assert.deepEqual(assistantInteractionForSurface(board, {...entitled,providerConfigured:false}).modes,["guidance","plan-board"]);
   assert.deepEqual(assistantInteractionForSurface(chat, entitled), { presentation: "embedded", owner: "creative-chat", scope: "document", modes: ["creative-chat"] });
   assert.deepEqual(assistantInteractionForSurface(chat, { ...entitled, providerConfigured: false }).modes, ["guidance"]);
   assert.equal(assistantInteractionForSurface(chat, { ...entitled, providerConfigured: false }).owner, "assistant");

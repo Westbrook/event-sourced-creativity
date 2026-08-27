@@ -248,7 +248,10 @@ const budgetLimits = (env: WorkerEnv) => {
 const BUDGET_RECONCILIATION_AGE_MS = 5 * 60_000;
 type BudgetReservationRow = { reservation_id: string; owner_id: string; stream_id: string; correlation_id: string; operation: string; period: string; reserved_tokens: number; used_tokens: number; status: string; settlement_reason: string | null; created_at: string; settled_at: string | null; updated_at: string };
 export type ProjectBudgetScope={organizationId:string;projectAccessId:string;actorUserId:string};
-type BudgetReservationContext = { streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string;reservationId?:string;projectScope?:ProjectBudgetScope };
+/** Internal SQL capability; never accept this guard from request JSON. */
+export type BudgetReservationGuard={sql:string;bindings:Array<string|number|null>};
+async function budgetReservationAdmitted(env:WorkerEnv,guard:BudgetReservationGuard|undefined){return !guard||Boolean(await env.DB.prepare(`SELECT 1 AS admitted WHERE ${guard.sql}`).bind(...guard.bindings).first());}
+type BudgetReservationContext = { streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string;reservationId?:string;projectScope?:ProjectBudgetScope;reservationGuard?:BudgetReservationGuard };
 
 const activeProjectBillingSql=`EXISTS(SELECT 1 FROM organization_projects project
   JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
@@ -301,6 +304,7 @@ export async function readBudgets(env: WorkerEnv, userId: string) {
 }
 
 export async function reserveBudget(env: WorkerEnv, userId: string, tokens: number, context: BudgetReservationContext = {}) {
+  const reservationGuard=context.reservationGuard;
   const amount = Math.max(0, Math.floor(tokens)); const limits = budgetLimits(env); const reservationPeriod = context.period ?? period();
   const scope=context.projectScope;
   const policy=scope?await projectBudgetPolicy(env,userId,scope):null;
@@ -314,8 +318,8 @@ export async function reserveBudget(env: WorkerEnv, userId: string, tokens: numb
       SELECT ?,?,?,?,?,?,?,0,'authorizing',NULL,?,NULL,?
       WHERE ?>0
       AND EXISTS (SELECT 1 FROM budget_counters WHERE scope='user' AND scope_id=? AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)
-      AND EXISTS (SELECT 1 FROM budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)${scopedPredicates}`)
-    .bind(reservationId,userId,context.streamId??"",context.correlationId??"",context.operation??"provider-operation",reservationPeriod,amount,now,now,amount,userId,reservationPeriod,amount,reservationPeriod,amount,...(scope&&policy?[scope.organizationId,reservationPeriod,amount,scope.organizationId,scope.organizationId,Number(policy.token_limit),userId,userId,scope.projectAccessId,scope.organizationId,userId]:[]));
+      AND EXISTS (SELECT 1 FROM budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_tokens+reserved_tokens+?<=hard_limit_tokens)${scopedPredicates}${reservationGuard?` AND (${reservationGuard.sql})`:""}`)
+    .bind(reservationId,userId,context.streamId??"",context.correlationId??"",context.operation??"provider-operation",reservationPeriod,amount,now,now,amount,userId,reservationPeriod,amount,reservationPeriod,amount,...(scope&&policy?[scope.organizationId,reservationPeriod,amount,scope.organizationId,scope.organizationId,Number(policy.token_limit),userId,userId,scope.projectAccessId,scope.organizationId,userId]:[]),...(reservationGuard?.bindings??[]));
   const statements=[
     reservationStatement,
     env.DB.prepare("UPDATE budget_counters SET reserved_tokens=reserved_tokens+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=? AND EXISTS (SELECT 1 FROM budget_reservations WHERE reservation_id=? AND status='authorizing')").bind(amount,now,userId,reservationPeriod,reservationId),
@@ -329,6 +333,7 @@ export async function reserveBudget(env: WorkerEnv, userId: string, tokens: numb
   statements.push(env.DB.prepare("UPDATE budget_reservations SET status='active',updated_at=? WHERE reservation_id=? AND owner_id=? AND status='authorizing'").bind(now,reservationId,userId));
   const results=await env.DB.batch(statements);
   if (Number(results[0]?.meta.changes ?? 0) !== 1) {
+    if(!await budgetReservationAdmitted(env,reservationGuard))return{ok:false as const,scope:"authorization" as const};
     if(context.reservationId){
       const existing=await budgetReservation(env,userId,reservationId);
       if(existing?.status==="active"&&existing.reserved_tokens===amount&&existing.period===reservationPeriod&&existing.stream_id===(context.streamId??"")&&existing.correlation_id===(context.correlationId??"")&&existing.operation===(context.operation??"provider-operation")){
@@ -512,6 +517,9 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
 
   const active=await env.DB.prepare(`SELECT * FROM budget_reservations reservation
     WHERE reservation.owner_id=? AND reservation.stream_id=? AND reservation.status='active' AND reservation.created_at<=?
+      -- Legacy planning lacks an exact non-submission boundary, including attempt-correlated orphan holds.
+      -- Only explicit proven-unused release paths may release this historical operation.
+      AND reservation.operation!='adaptive-structure'
       AND NOT EXISTS (SELECT 1 FROM consequential_execution_steps step WHERE step.token_reservation_id=reservation.reservation_id AND step.status IN('reserved','submitting','uncertain','usage-recorded'))
       AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND (job.status IN ('queued','running','committing') OR job.status IN ('failed','canceled') AND (${unsettledProviderSubmissionSql("job.result_json")} OR json_extract(COALESCE(job.result_json,'{}'),'$.presentationProviderSubmission')='pending' OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='storyboard' AND json_extract(COALESCE(job.result_json,'{}'),'$.storyboardProviderSubmission') IN ('pending','confirmed') OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='audio' AND json_extract(COALESCE(job.result_json,'{}'),'$.audioProviderSubmission')='pending'))
         AND (job.correlation_id=reservation.correlation_id OR json_extract(COALESCE(job.result_json,'{}'),'$.reservationId')=reservation.reservation_id))
@@ -678,6 +686,7 @@ export type CostBudgetReservationRow = {
 };
 
 type CostReservationOptions = {
+  reservationGuard?:BudgetReservationGuard;
   maximumMicrousd: number;
   allowUserOverage: boolean;
   reservationId?: string;
@@ -730,6 +739,7 @@ export async function costBudgetReservation(env: WorkerEnv, userId: string, rese
 }
 
 export async function reserveCostBudget(env: WorkerEnv, userId: string, requestedMicrousd: number, options: CostReservationOptions) {
+  const reservationGuard=options.reservationGuard;
   const amount = Math.max(0, Math.floor(requestedMicrousd));
   if (!amount || amount > Math.floor(options.maximumMicrousd)) return { ok: false as const, scope: "authorization" as const };
   const limits = costBudgetLimits(env);
@@ -763,8 +773,8 @@ export async function reserveCostBudget(env: WorkerEnv, userId: string, requeste
       SELECT ?,?,?,?,?,?,?,?,0,'authorizing',?,?,NULL,?
       WHERE ?>0
       AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='user' AND scope_id=? AND period=? AND (?=1 OR used_microusd+reserved_microusd+?<=hard_limit_microusd))
-      AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)${scopedPredicates}${pilotPredicates}`)
-      .bind(reservationId,userId,workspaceId,options.streamId??"",options.correlationId??"",options.operation??"provider-operation",reservationPeriod,amount,userOverageAllowed?1:0,now,now,amount,userId,reservationPeriod,userOverageAllowed?1:0,amount,reservationPeriod,amount,...(scope&&policy?[scope.organizationId,reservationPeriod,amount,scope.organizationId,scope.organizationId,Number(policy.microusd_limit),userId,userId,scope.projectAccessId,scope.organizationId,userId]:[]),...(pilot?[pilot.cohort_id,pilot.organization_id,now,now,userId,pilot.cohort_id,pilotPeriod,amount,userId,pilotPeriod,amount]:[])),
+      AND EXISTS (SELECT 1 FROM cost_budget_counters WHERE scope='workspace' AND scope_id='forma' AND period=? AND used_microusd+reserved_microusd+?<=hard_limit_microusd)${scopedPredicates}${pilotPredicates}${reservationGuard?` AND (${reservationGuard.sql})`:""}`)
+      .bind(reservationId,userId,workspaceId,options.streamId??"",options.correlationId??"",options.operation??"provider-operation",reservationPeriod,amount,userOverageAllowed?1:0,now,now,amount,userId,reservationPeriod,userOverageAllowed?1:0,amount,reservationPeriod,amount,...(scope&&policy?[scope.organizationId,reservationPeriod,amount,scope.organizationId,scope.organizationId,Number(policy.microusd_limit),userId,userId,scope.projectAccessId,scope.organizationId,userId]:[]),...(pilot?[pilot.cohort_id,pilot.organization_id,now,now,userId,pilot.cohort_id,pilotPeriod,amount,userId,pilotPeriod,amount]:[]),...(reservationGuard?.bindings??[])),
     env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='user' AND scope_id=? AND period=? AND ${authorizing}`).bind(amount, now, userId, reservationPeriod, reservationId, userId),
     env.DB.prepare(`UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd+?,updated_at=? WHERE scope='workspace' AND scope_id='forma' AND period=? AND ${authorizing}`).bind(amount, now, reservationPeriod, reservationId, userId),
   ];
@@ -785,6 +795,7 @@ export async function reserveCostBudget(env: WorkerEnv, userId: string, requeste
   const results=await env.DB.batch(statements);
   if (Number(results[0]?.meta.changes ?? 0) !== 1) {
     const existing = options.reservationId ? await costBudgetReservation(env, userId, reservationId) : null;
+    if(!await budgetReservationAdmitted(env,reservationGuard))return{ok:false as const,scope:"authorization" as const};
     if(existing?.status==="active"&&Number(existing.reserved_microusd)===amount&&existing.period===reservationPeriod&&existing.workspace_id===workspaceId&&existing.stream_id===(options.streamId??"")&&existing.correlation_id===(options.correlationId??"")&&existing.operation===(options.operation??"provider-operation")){
       if(!scope)return{ok:true as const,reservationId,reservedMicrousd:amount,period:reservationPeriod,userOverageMicrousd:0,reused:true as const};
       const bound=await env.DB.prepare("SELECT organization_id,project_access_id,actor_user_id FROM project_budget_reservation_scopes WHERE reservation_kind='usd' AND reservation_id=?").bind(reservationId).first<Record<string,unknown>>();
@@ -968,7 +979,7 @@ export function privateContentRetentionClass(kind: PrivateContentKind): "durable
   return kind === "document-artifact" ? "durable-work" : ["document-artifact-input","activity-issue-note","execution-consent","context-proposal","authoring-preview"].includes(kind) ? "governed-evidence" : "transient-private";
 }
 
-export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope) {
+export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope,guard?:BudgetReservationGuard,publish?:(stored:{contentId:string;expiresAt:string})=>Array<ReturnType<WorkerEnv["DB"]["prepare"]>>) {
   if(projectScope&&projectScope.actorUserId!==ownerId)throw new Error("project_private_content_actor_mismatch");
   const policy=projectScope?await env.DB.prepare("SELECT transient_days,evidence_days,version FROM organization_retention_policies WHERE organization_id=?")
     .bind(projectScope.organizationId).first<{transient_days:number;evidence_days:number;version:number}>():null;
@@ -981,8 +992,8 @@ export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind:
       SELECT ?,?,?,?,?,?,NULL WHERE ${activeProjectBillingSql}
         AND EXISTS(SELECT 1 FROM organization_projects WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND status='active')
         AND ((?=0 AND NOT EXISTS(SELECT 1 FROM organization_retention_policies current_policy WHERE current_policy.organization_id=?))
-          OR EXISTS(SELECT 1 FROM organization_retention_policies current_policy WHERE current_policy.organization_id=? AND current_policy.version=?))`)
-      .bind(contentId,ownerId,kind,content,now,expiresAt.toISOString(),ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,Number(policy?.version??0),projectScope.organizationId,projectScope.organizationId,Number(policy?.version??0)),
+          OR EXISTS(SELECT 1 FROM organization_retention_policies current_policy WHERE current_policy.organization_id=? AND current_policy.version=?))${guard?` AND (${guard.sql})`:""}`)
+      .bind(contentId,ownerId,kind,content,now,expiresAt.toISOString(),ownerId,ownerId,projectScope.projectAccessId,projectScope.organizationId,ownerId,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,Number(policy?.version??0),projectScope.organizationId,projectScope.organizationId,Number(policy?.version??0),...(guard?.bindings??[])),
     env.DB.prepare(`INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at)
       SELECT ?,'content',?,?,?,?,'actor_private',NULL,?,? WHERE EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)`)
       .bind(projectScope.projectAccessId,contentId,projectScope.organizationId,projectScope.projectId,projectScope.ownerUserId,ownerId,now,contentId,ownerId),
@@ -990,7 +1001,7 @@ export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind:
       SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.project_access_id=? AND resource.organization_id=?
         AND resource.project_id=? AND resource.resource_kind='content' AND resource.resource_id=? AND resource.actor_user_id=?)`)
       .bind(contentId,projectScope.organizationId,projectScope.projectAccessId,projectScope.projectId,ownerId,category,Number(policy?.version??0),expiresAt.toISOString(),now,projectScope.projectAccessId,projectScope.organizationId,projectScope.projectId,contentId,ownerId),
-  ]:[env.DB.prepare("INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES (?,?,?,?,?,?,NULL)").bind(contentId,ownerId,kind,content,now,expiresAt.toISOString())];
+  ]:[env.DB.prepare(`INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) ${guard?`SELECT ?,?,?,?,?,?,NULL WHERE ${guard.sql}`:"VALUES (?,?,?,?,?,?,NULL)"}`).bind(contentId,ownerId,kind,content,now,expiresAt.toISOString(),...(guard?.bindings??[]))];
   statements.push(projectScope?env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind!='document-artifact' AND expires_at<=?
     AND EXISTS(SELECT 1 FROM private_content_retention_scopes governed WHERE governed.content_id=private_content.content_id AND governed.organization_id=?)
     AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes governed JOIN organization_retention_policies policy ON policy.organization_id=governed.organization_id AND policy.legal_hold=1
@@ -1005,8 +1016,11 @@ export async function storePrivateContent(env: WorkerEnv, ownerId: string, kind:
     .bind(now,ownerId,now,projectScope.organizationId,contentId,ownerId):env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind!='document-artifact' AND expires_at<=?
       AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=private_content.content_id)`)
     .bind(now,ownerId,now));
+  const publicationOffset=statements.length,publications=publish?.({contentId,expiresAt:expiresAt.toISOString()})??[];
+  statements.push(...publications);
   const results=await env.DB.batch(statements);
   if(Number(results[0]?.meta.changes??0)!==1||projectScope&&(Number(results[1]?.meta.changes??0)!==1||Number(results[2]?.meta.changes??0)!==1))throw new Error("project_private_content_access_revoked");
+  if(publications.some((_,index)=>Number(results[publicationOffset+index]?.meta.changes??0)!==1))throw new Error("private_content_publication_unavailable");
   return { contentId, expiresAt: expiresAt.toISOString() };
 }
 

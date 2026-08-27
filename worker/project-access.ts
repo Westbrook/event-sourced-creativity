@@ -236,7 +236,13 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     CASE WHEN retained.content_id IS NULL THEN 0 ELSE 1 END AS private_provider_response
     FROM project_resource_scopes resource LEFT JOIN private_content retained ON resource.resource_kind='content'
       AND retained.content_id=resource.resource_id AND retained.owner_id=resource.actor_user_id
-      AND(retained.kind IN('provider-response','assistant-action') OR retained.kind IN('document-artifact-input','activity-issue-note') AND json_valid(retained.content)=1
+      AND(retained.kind IN('provider-response','assistant-action')
+        OR retained.kind IN('execution-consent','context-proposal','authoring-preview') AND resource.visibility='actor_private'
+          AND EXISTS(SELECT 1 FROM private_content_retention_scopes governed WHERE governed.content_id=retained.content_id
+            AND governed.organization_id=resource.organization_id AND governed.project_access_id=resource.project_access_id
+            AND governed.project_id=resource.project_id AND governed.actor_user_id=resource.actor_user_id
+            AND governed.classification='governed-evidence')
+        OR retained.kind IN('document-artifact-input','activity-issue-note') AND json_valid(retained.content)=1
         AND EXISTS(SELECT 1 FROM project_resource_scopes anchored JOIN document_jobs job ON job.job_id=anchored.resource_id
           WHERE anchored.resource_kind='job' AND anchored.project_access_id=resource.project_access_id
             AND anchored.organization_id=resource.organization_id AND anchored.project_id=resource.project_id

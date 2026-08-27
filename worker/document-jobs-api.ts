@@ -14,7 +14,9 @@ import {
   documentJobIsStale,
   documentJobCanRecoverProviderRender,
   documentJobTerminal,
+  documentJobStopBudgetMessage,
   documentJobMaxAttempts,
+  type DocumentJobStopBudget,
   type DocumentJobError,
   type DocumentJobKind,
   type DocumentJobStatus,
@@ -51,7 +53,9 @@ import { definitiveProviderRejection, hasUnresolvedProviderSubmission, hasUnsett
 import { generationExecutionSummary } from "../src/model/generation-execution-evidence.ts";
 import { originalSourceAudioRecoveryRequested, recoverOriginalSourceAudio } from "./document-audio-recovery";
 import { privateContentScopeGuard } from "./pilot-policy";
-import { executionAdmissionGuard, executionAuthorityCurrent, type ConsequentialBinding } from "./consequential-consent";
+import { claimConsequentialExecution, consentHash, executionAdmissionGuard, executionAuthorityCurrent, executionContentCustodyGuard, failConsequentialExecution, reconcileConsequentialUsage, type ConsequentialBinding } from "./consequential-consent";
+import { adaptiveExecutionResponse, adaptivePlanningAdmissionGuard, adaptivePlanningReviewAvailable, adaptivePriorExecutionResponse, executeApprovedAdaptivePlanning, handleAdaptivePlanning, readAdaptivePlanningJobResult, type AdaptivePlanningPorts, type AdaptivePlanningPrepared } from "./adaptive-planning";
+import type { BudgetReservationGuard } from "./pilot-policy";
 
 export type DocumentJobRow = {
   job_id: string; owner_id: string; stream_id: string; document_id: string; kind: DocumentJobKind; status: DocumentJobStatus;
@@ -62,6 +66,10 @@ export type DocumentJobRow = {
 
 const KINDS = new Set<DocumentJobKind>(["preview", "generate", "prompt_fan", "chat", "structure_adaptive", "extract_reference", "render_document"]);
 const MAX_PAYLOAD_BYTES = 750_000;
+const consentedAdaptiveJob=(row:Pick<DocumentJobRow,"kind"|"request_json">)=>row.kind==="structure_adaptive"&&parseRequest(row).adaptiveConsentVersion===1;
+const certifiedAdaptiveRows=new WeakSet<DocumentJobRow>();
+// Progress/failure writers never drop a raw paid response saved by a concurrent callback.
+const PRESERVE_ADAPTIVE_RECEIPT_SQL="json_patch(?,CASE WHEN kind='structure_adaptive' AND json_type(result_json,'$.adaptiveProviderReceipt')='object' THEN json_object('adaptiveProviderReceipt',json(json_extract(result_json,'$.adaptiveProviderReceipt'))) ELSE '{}' END)";
 // Resolve execution lanes from immutable document-creation history, never
 // client-supplied request snapshots. Older seeded documents inherit the most
 // recent project that existed when their creation event was recorded.
@@ -112,14 +120,15 @@ function projectExecutionBindings(scope:ProjectExecutionScope,documentId:string)
 }
 
 const DOCUMENT_JOB_COLUMNS="job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at";
-function documentJobInsert(env:WorkerEnv,user:PilotUser,documentId:string,values:string,bindings:Array<string|number|null>,idempotency?:{kind:DocumentJobKind;key:string;canvasId?:string;sourceSurface?:string;projectId?:string}){
+function documentJobInsert(env:WorkerEnv,user:PilotUser,documentId:string,values:string,bindings:Array<string|number|null>,idempotency?:{kind:DocumentJobKind;key:string;canvasId?:string;sourceSurface?:string;projectId?:string},guard?:BudgetReservationGuard){
   const scope=user.projectExecution;
   const adaptive=idempotency?.kind==="structure_adaptive";
   const board=adaptive&&idempotency.canvasId?livePlanningBoardGuard(user.streamId,idempotency.projectId??"",idempotency.canvasId):null;
   const conditions=[...(scope?[activeProjectExecutionSql]:[]),...(idempotency?[`NOT EXISTS(SELECT 1 FROM document_jobs existing WHERE existing.owner_id=? AND existing.stream_id=? AND existing.document_id=? AND existing.kind=? AND existing.status IN('queued','running','committing') AND ${adaptive?"existing.source_surface=? AND COALESCE(json_extract(existing.request_json,'$.canvasId'),'')=?":"COALESCE(json_extract(existing.request_json,'$.idempotencyKey'),'')=?"})`]:[])];
   if(board)conditions.push(`(${board.sql})`);
-  return env.DB.prepare(`INSERT INTO document_jobs (${DOCUMENT_JOB_COLUMNS}) ${conditions.length?`SELECT ${values} WHERE ${conditions.join(" AND ")}`:`VALUES (${values})`}`)
-    .bind(...bindings,...(scope?projectExecutionBindings(scope,documentId):[]),...(idempotency?[user.userId,user.streamId,documentId,idempotency.kind,...(adaptive?[idempotency.sourceSurface??"studio",idempotency.canvasId??""]:[idempotency.key])]:[]),...(board?.bindings??[]));
+  if(guard)conditions.push(`(${guard.sql})`);
+  return env.DB.prepare(`INSERT ${guard?"OR IGNORE ":""}INTO document_jobs (${DOCUMENT_JOB_COLUMNS}) ${conditions.length?`SELECT ${values} WHERE ${conditions.join(" AND ")}`:`VALUES (${values})`}`)
+    .bind(...bindings,...(scope?projectExecutionBindings(scope,documentId):[]),...(idempotency?[user.userId,user.streamId,documentId,idempotency.kind,...(adaptive?[idempotency.sourceSurface??"studio",idempotency.canvasId??""]:[idempotency.key])]:[]),...(board?.bindings??[]),...(guard?.bindings??[]));
 }
 
 async function activeProjectExecution(env:WorkerEnv,user:PilotUser,documentId:string,jobId="",requireAnchor=true){
@@ -133,20 +142,23 @@ async function activeProjectExecution(env:WorkerEnv,user:PilotUser,documentId:st
   return Boolean(await env.DB.prepare(`SELECT 1 AS present WHERE ${activeProjectExecutionSql}${jobSql}`).bind(...bindings).first());
 }
 
-function projectJobResource(env:WorkerEnv,user:PilotUser,jobId:string,documentId:string,createdAt:string){
+function projectJobResource(env:WorkerEnv,user:PilotUser,jobId:string,documentId:string,createdAt:string,reuse=false){
   const scope=user.projectExecution;if(!scope)return null;
-  return env.DB.prepare(`INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at)
+  return env.DB.prepare(`INSERT ${reuse?"OR IGNORE ":""}INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at)
     SELECT ?,'job',?,?,?,?,'actor_private',NULL,?,? WHERE EXISTS(SELECT 1 FROM document_jobs job
       WHERE job.job_id=? AND job.owner_id=? AND job.stream_id=? AND job.document_id=?) AND ${activeProjectExecutionSql}`)
     .bind(scope.projectAccessId,jobId,scope.organizationId,scope.projectId,scope.ownerUserId,scope.actorUserId,createdAt,jobId,user.userId,user.streamId,documentId,...projectExecutionBindings(scope,documentId));
 }
 
+function projectJobAnchorPayload(scope:ProjectExecutionScope,job:{jobId:string;kind:DocumentJobKind;documentId:string}){
+  return{job_id:job.jobId,document_id:job.documentId,kind:job.kind,organization_id:scope.organizationId,project_access_id:scope.projectAccessId,project_id:scope.projectId,history_owner_user_id:scope.ownerUserId,actor_user_id:scope.actorUserId};
+}
 async function anchorProjectJobs(env:WorkerEnv,user:PilotUser,jobs:Array<{jobId:string;kind:DocumentJobKind;documentId:string}>){
   const scope=user.projectExecution;if(!scope)return;
   try{
     for(const job of jobs){
       if(!await activeProjectExecution(env,user,job.documentId,job.jobId,false))throw new Error("project_access_revoked");
-      const event=await appendAuditEvent(env,user.streamId,`user:${user.userId}`,"ProjectDocumentJobQueued",{job_id:job.jobId,document_id:job.documentId,kind:job.kind,organization_id:scope.organizationId,project_access_id:scope.projectAccessId,project_id:scope.projectId,history_owner_user_id:scope.ownerUserId,actor_user_id:scope.actorUserId},job.jobId);
+      const event=await appendAuditEvent(env,user.streamId,`user:${user.userId}`,"ProjectDocumentJobQueued",projectJobAnchorPayload(scope,job),job.jobId);
       const anchored=await env.DB.prepare(`UPDATE project_resource_scopes SET source_event_id=? WHERE resource_kind='job' AND resource_id=? AND project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND actor_user_id=? AND source_event_id IS NULL AND ${activeProjectExecutionSql}`)
         .bind(event.eventId,job.jobId,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,scope.actorUserId,...projectExecutionBindings(scope,job.documentId)).run();
       if(Number(anchored.meta.changes??0)!==1)throw new Error("project_access_revoked");
@@ -971,8 +983,8 @@ async function finishDocumentJob(env: WorkerEnv, row: DocumentJobRow, status: "c
   const parentId = parentJobIdFromRequest(parseRequest(row));
   const bindings = documentJobCompletionBindings({ status, result, errorMessage, completedAt, parentId, jobId: row.job_id, ownerId: row.owner_id, correlationId: row.correlation_id });
   const statement = guardActive
-    ? "UPDATE document_jobs SET status=?,result_json=?,error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=? AND status IN ('running','committing')"
-    : "UPDATE document_jobs SET status=?,result_json=?,error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=?";
+    ? `UPDATE document_jobs SET status=?,result_json=${PRESERVE_ADAPTIVE_RECEIPT_SQL},error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=? AND status IN ('running','committing')`
+    : `UPDATE document_jobs SET status=?,result_json=${PRESERVE_ADAPTIVE_RECEIPT_SQL},error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND correlation_id=?`;
   return env.DB.prepare(statement).bind(...bindings).run();
 }
 
@@ -995,8 +1007,9 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   const members = Array.isArray(parsed.members) ? parsed.members : [];
   const recovery = queueRecoveryPresentation(row, recoveryBlocker);
   const errorDetail=errorDetailFromResult(parsed);
-  const privateCheckpointKeys=new Set(["providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt"]);
+  const privateCheckpointKeys=new Set(["providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt","adaptiveProviderReceipt","quote"]);
   const sanitizedResult=result?Object.fromEntries(Object.entries(result).filter(([key])=>!privateCheckpointKeys.has(key)&&(key!=="recoverablePresentationCandidate"||request.artifactKind==="slides"&&row.status==="failed"&&parsed.recoverablePresentationCandidate===true))):null;
+  if(sanitizedResult&&consentedAdaptiveJob(row)&&!certifiedAdaptiveRows.has(row)){delete sanitizedResult.structure;delete sanitizedResult.intent;}
   // Present current evidence without changing the stored receipt, checkpoint, or cost hold.
   if(sanitizedResult&&parsed.generationReceipt)sanitizedResult.generationReceipt=generationExecutionSummary(parsed,errorDetail);
   const visibleResult = row.kind === "render_document" && request.artifactKind
@@ -1007,6 +1020,7 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   return {
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
     ...(row.kind==="structure_adaptive"&&typeof request.canvasId==="string"&&request.canvasId?{canvasId:request.canvasId}:{}),
+    ...(consentedAdaptiveJob(row)?{planningExecutionId:row.job_id,planningProjectScope:request.projectScope===true,planningLocale:typeof request.locale==="string"?request.locale:"en"}:{}),
     ...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}),
     requestedSequence: Number(row.requested_sequence), documentRevision: identity.documentRevision, requestKey: identity.requestKey, sourcePreviewId: identity.sourcePreviewId, productionMode:request.productionMode==="managed"?"managed" as const:"manual" as const, promptTechnique: identity.promptTechnique, promptFanId: identity.promptFanId,
     parentJobId: parentJobIdFromRequest(request), fanKind: fanKindFromRequest(request), members, result: summarizedResult, error: row.error_message, errorDetail, moderationPromptRef: parsed.moderationPromptRef ? String(parsed.moderationPromptRef) : null, dismissedAt: parsed.dismissedAt ? String(parsed.dismissedAt) : null, attemptCount: Number(row.attempt_count),
@@ -1139,7 +1153,7 @@ async function updateJobProgress(env: WorkerEnv, row: DocumentJobRow, stage: str
     const unknown=hasUnresolvedProviderSubmission(result);
     result.generationReceipt={...receipt,...(active?{provider:active.provider,model:active.model}:{}),provider_request_status:unknown?"submission_unknown":submitted?"submitted":receipt.provider_request_status,source_transmission_status:submitted||receipt.source_transmission_status==="transmitted"?"transmitted":unknown?"unknown":receipt.source_transmission_status,settled_cost_microusd:hasUnsettledProviderSubmission(result)&&!Number(receipt.settled_cost_microusd)?null:receipt.settled_cost_microusd,reservation_status:"executing"};
   }
-  const updated=await env.DB.prepare("UPDATE document_jobs SET result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND status='running' AND correlation_id=?").bind(JSON.stringify(result), updatedAt, row.job_id, row.owner_id, row.correlation_id).run();
+  const updated=await env.DB.prepare(`UPDATE document_jobs SET result_json=${PRESERVE_ADAPTIVE_RECEIPT_SQL},updated_at=? WHERE job_id=? AND owner_id=? AND status='running' AND correlation_id=?`).bind(JSON.stringify(result), updatedAt, row.job_id, row.owner_id, row.correlation_id).run();
   if(Number(updated.meta.changes??0)!==1)throw new Error("document_job_canceled");
   row.result_json = JSON.stringify(result); row.updated_at = updatedAt;
 }
@@ -1201,6 +1215,9 @@ async function restoreLegacyCostReservation(env: WorkerEnv, user: PilotUser, row
 }
 
 async function releaseInterruptedAttempt(env: WorkerEnv, user: PilotUser, row: DocumentJobRow, reason: string) {
+  if(consentedAdaptiveJob(row)){await failConsequentialExecution(env,row.owner_id,row.job_id,reason);await reconcileConsequentialUsage(env,row.owner_id,row.job_id);return;}
+  // Historical planning has no exact non-submission boundary: do not release an uncertain legacy hold.
+  if(row.kind==="structure_adaptive"&&(row.attempt_count>0||row.started_at))return;
   if(hasUnsettledProviderSubmission(parseResult(row))||unresolvedPresentationSubmission(row)||unresolvedAudioSubmission(row)||unresolvedStoryboardSubmission(row))return;
   const checkpoint=parseResult(row);
   const activeSceneReceipts=Object.values(checkpoint.productionSceneReceipts&&typeof checkpoint.productionSceneReceipts==="object"?checkpoint.productionSceneReceipts as Record<string,Record<string,unknown>>:{});
@@ -1227,6 +1244,7 @@ async function releaseInterruptedAttempt(env: WorkerEnv, user: PilotUser, row: D
 }
 
 async function failStaleJob(env: WorkerEnv, user: PilotUser, row: DocumentJobRow,detail?:ProviderFailureDetail) {
+  if(consentedAdaptiveJob(row)){const recovered=await certifiedAdaptiveJob(env,user,row,true);if(recovered.status==="completed")return;await failConsequentialExecution(env,row.owner_id,row.job_id,"adaptive_execution_interrupted");}
   const observedResult=row.result_json;
   const timestamp=Date.now();const now = new Date(timestamp).toISOString();const staleBefore=new Date(timestamp-DOCUMENT_JOB_STALE_AFTER_MS).toISOString();
   const previousStage=String(parseResult(row).stage??"");
@@ -1304,8 +1322,83 @@ function safeResult(body: Record<string, unknown>, correlatedEventIds: string[] 
     providerJobId: body.providerJobId ? String(body.providerJobId) : undefined, provider: body.provider ? String(body.provider) : undefined,
     intentRef: adaptivePayload?.intent_ref ? String(adaptivePayload.intent_ref) : undefined,
     structure: body.structure && typeof body.structure === "object" ? body.structure : undefined,
+    ...(typeof body.executionId==="string"?{executionId:body.executionId,bindingHash:body.bindingHash,requestKey:body.requestKey,sourceHash:body.sourceHash,sourceStatus:body.sourceStatus,intent:body.intent,billingStatus:body.billingStatus,noAutomaticRetry:true,executionReceipt:body.executionReceipt,plannerModel:body.plannerModel,plannerResponseId:body.plannerResponseId,plannerUsage:body.plannerUsage,recoveredFromPaidReceipt:body.recoveredFromPaidReceipt}:{}),
   };
   return Object.fromEntries(Object.entries(result).filter(([,value])=>value!==undefined));
+}
+
+/** Read/recover only retained paid evidence. The proof is never serialized into the job. */
+async function certifiedAdaptiveJob(env:WorkerEnv,user:PilotUser,row:DocumentJobRow,persist=false,readOnly=false):Promise<DocumentJobRow>{
+  if(!consentedAdaptiveJob(row))return row;
+  let saved:Awaited<ReturnType<typeof readAdaptivePlanningJobResult>>;
+  try{saved=await readAdaptivePlanningJobResult(env,user,row,{readOnly});}catch{saved=null;}
+  const previous=parseResult(row);delete previous.structure;delete previous.intent;delete previous.quote;delete previous.planningReviewAvailable;
+  if(!saved)return{...row,result_json:JSON.stringify({...previous,planningStopBudget:await adaptiveStopBudget(env,user,row),planningReviewAvailable:await adaptivePlanningReviewAvailable(env,user,row),...(row.status==="completed"?{resultUnavailable:true,progressMessage:"The paid planning result is no longer available."}:{})})};
+  const result:Record<string,unknown>={...previous,...safeResult(saved.result),stage:"completed",progressMessage:"The approved plan is ready. No document or board decisions were applied."};delete result.resultUnavailable;delete result.errorDetail;
+  if(persist&&!readOnly&&row.status!=="completed"){
+    const now=new Date().toISOString();
+    const updated=await env.DB.prepare(`UPDATE document_jobs SET status='completed',result_json=${PRESERVE_ADAPTIVE_RECEIPT_SQL},error_message=NULL,completed_at=COALESCE(completed_at,?),lease_expires_at=NULL,updated_at=?
+      WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status=? AND attempt_count=? AND request_json=? AND result_json IS ? AND ${saved.proof.sql}`)
+      .bind(JSON.stringify(result),now,now,row.job_id,row.owner_id,row.stream_id,row.correlation_id,row.status,row.attempt_count,row.request_json,row.result_json,...saved.proof.bindings).run();
+    if(Number(updated.meta.changes??0)!==1){const fresh=await readJob(env,user.userId,row.job_id);return fresh?certifiedAdaptiveJob(env,user,fresh,false):{...row,result_json:JSON.stringify({...previous,resultUnavailable:true})};}
+    row=await readJob(env,user.userId,row.job_id)??row;
+  }
+  if(!await env.DB.prepare(`SELECT 1 AS retained WHERE ${saved.proof.sql}`).bind(...saved.proof.bindings).first())return{...row,result_json:JSON.stringify({...previous,resultUnavailable:true})};
+  const certified:DocumentJobRow={...row,status:"completed",error_message:null,result_json:JSON.stringify({...result,planningReviewAvailable:true})};certifiedAdaptiveRows.add(certified);return certified;
+}
+const adaptiveJobActor=(principal:PilotUser,binding:ConsequentialBinding):PilotUser=>({...principal,streamId:binding.streamId,billingUserId:principal.userId,...(binding.scope?{projectExecution:binding.scope}:{})});
+async function handleAdaptiveDocumentJobs(request:Request,env:WorkerEnv,context?:WorkerExecutionContext){
+  const ports:AdaptivePlanningPorts={
+    read:async(principal,binding,id)=>{
+      const actor=adaptiveJobActor(principal,binding),row=await readJob(env,principal.userId,id);
+      if(!row||row.stream_id!==binding.streamId||row.document_id!==binding.documentId||!consentedAdaptiveJob(row)||row.expires_at<=new Date().toISOString())return null;
+      if(binding.scope&&!await env.DB.prepare(`SELECT 1 FROM project_resource_scopes resource JOIN events anchor ON anchor.event_id=resource.source_event_id
+        WHERE resource.resource_kind='job' AND resource.resource_id=? AND resource.actor_user_id=? AND resource.owner_user_id=? AND resource.project_access_id=? AND resource.organization_id=? AND resource.project_id=?
+          AND anchor.stream_id=? AND anchor.actor='user:'||resource.actor_user_id AND anchor.type='ProjectDocumentJobQueued' AND json_extract(anchor.payload,'$.job_id')=resource.resource_id`).bind(id,principal.userId,binding.scope.ownerUserId,binding.scope.projectAccessId,binding.scope.organizationId,binding.projectId,binding.streamId).first())return null;
+      const certified=await certifiedAdaptiveJob(env,actor,row,true);
+      const paid=certifiedAdaptiveRows.has(certified)?await readAdaptivePlanningJobResult(env,actor,certified):null;
+      if(certifiedAdaptiveRows.has(certified)&&!paid)throw new Error("adaptive_result_unavailable");
+      return{job:binding.scope?safeScopedJob(certified):serializeJob(certified),...(paid?{proof:paid.proof}:{})};
+    },
+    admit:async(prepared:AdaptivePlanningPrepared,id:string,hash:string)=>{
+      const{binding}=prepared,actor=adaptiveJobActor(prepared.principal,binding),now=new Date().toISOString();
+      const consent=await env.DB.prepare(`SELECT content.content_id,content.content,content.expires_at FROM consequential_executions execution JOIN private_content content ON content.content_id=execution.consent_ref AND content.owner_id=execution.actor_user_id
+        WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.binding_hash=? AND content.kind='execution-consent' AND content.redacted_at IS NULL AND content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')`).bind(id,actor.userId,hash).first<{content_id:string;content:string;expires_at:string}>();
+      if(!consent||await consentHash(JSON.parse(consent.content).binding)!==hash)return Response.json({error:"context_consent_changed",submission:"not-submitted"},{status:409});
+      const requestBody={adaptiveConsentVersion:1,executionId:id,bindingHash:hash,projectId:binding.projectId,canvasId:binding.canvasId,requestKey:prepared.requestKey,locale:prepared.settings.locale,projectScope:prepared.settings.projectScope,sourceSurface:prepared.settings.sourceSurface,...(prepared.settings.replaceExecutionId?{replacesExecutionId:prepared.settings.replaceExecutionId}:{})};
+      const board=binding.canvasId?livePlanningBoardGuard(binding.streamId,binding.projectId,binding.canvasId):{sql:"1",bindings:[]};
+      const custody=executionContentCustodyGuard(binding);
+      const admission:BudgetReservationGuard={sql:`EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='execution-consent' AND content=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${custody.sql}) AND (${board.sql})
+        AND NOT EXISTS(SELECT 1 FROM document_jobs existing WHERE existing.owner_id=? AND existing.stream_id=? AND existing.document_id=? AND existing.kind='structure_adaptive' AND existing.job_id!=? AND existing.status IN('queued','running','committing') AND existing.source_surface=? AND COALESCE(json_extract(existing.request_json,'$.canvasId'),'')=?)`,bindings:[consent.content_id,actor.userId,consent.content,...custody.bindings,...board.bindings,actor.userId,binding.streamId,binding.documentId,id,prepared.settings.sourceSurface,binding.canvasId??""]};
+      const claimedGuard:BudgetReservationGuard={sql:"EXISTS(SELECT 1 FROM consequential_executions WHERE execution_id=? AND actor_user_id=? AND binding_hash=? AND status='reserved')",bindings:[id,actor.userId,hash]};
+      const inserted=documentJobInsert(env,actor,binding.documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[id,actor.userId,binding.streamId,binding.documentId,"structure_adaptive",prepared.settings.sourceSurface,id,prepared.sourceHead,JSON.stringify(requestBody),JSON.stringify({executionId:id,bindingHash:hash,requestKey:prepared.requestKey,stage:"queued",progressMessage:"This exact planning request was approved. No provider call has been made."}),now,consent.expires_at,now],undefined,claimedGuard);
+      const resource=projectJobResource(env,actor,id,binding.documentId,now,true);
+      const statements=[inserted,...(resource?[resource]:[])];
+      if(resource&&binding.scope){
+        const scope=binding.scope,anchor=makeEvent(binding.streamId,prepared.sourceHead+1,`user:${actor.userId}`,"server:document-job:structure_adaptive",id,"ProjectDocumentJobQueued",projectJobAnchorPayload(scope,{jobId:id,kind:"structure_adaptive",documentId:binding.documentId}));
+        // The same exact-source claim admits the job, resource and canonical anchor atomically.
+        statements.push(env.DB.prepare(`INSERT INTO event_write_stage (${EVENT_WRITE_COLUMNS}) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+          WHERE EXISTS(SELECT 1 FROM project_resource_scopes resource JOIN document_jobs job ON job.job_id=resource.resource_id
+            WHERE resource.resource_kind='job' AND resource.resource_id=? AND resource.actor_user_id=? AND resource.source_event_id IS NULL
+              AND resource.project_access_id=? AND resource.organization_id=? AND resource.project_id=? AND resource.owner_user_id=?
+              AND job.owner_id=resource.actor_user_id AND job.stream_id=? AND job.document_id=? AND job.status='queued')`)
+          .bind(...eventWriteBindings(anchor),id,actor.userId,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,binding.streamId,binding.documentId));
+        statements.push(env.DB.prepare(`UPDATE project_resource_scopes SET source_event_id=? WHERE resource_kind='job' AND resource_id=? AND actor_user_id=? AND source_event_id IS NULL
+          AND project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=? AND EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=?)`)
+          .bind(anchor.eventId,id,actor.userId,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,anchor.eventId,binding.streamId));
+      }
+      const intent=adaptivePlanningAdmissionGuard(prepared,id);
+      const claimed=await claimConsequentialExecution(env,prepared.principal,binding,id,hash,prepared.sourceHead,statements,{sql:`(${admission.sql}) AND (${intent.sql})`,bindings:[...admission.bindings,...intent.bindings]});
+      if(!claimed.row)return await adaptivePriorExecutionResponse(env,prepared,ports,id)??Response.json({error:claimed.error,submission:"not-submitted"},{status:claimed.status});
+      if(claimed.row.execution_id!==id)return adaptiveExecutionResponse(env,prepared,claimed.row.execution_id,ports,id);
+      const row=await readJob(env,actor.userId,id);
+      if(!row){await failConsequentialExecution(env,actor.userId,id,"adaptive_job_admission_failed");return Response.json({error:"adaptive_job_admission_failed",submission:"not-submitted"},{status:409});}
+      if(resource){const anchored=await activeProjectExecution(env,actor,binding.documentId,id);if(!anchored)await anchorProjectJobs(env,actor,[{jobId:id,kind:"structure_adaptive",documentId:binding.documentId}]);}
+      context?.waitUntil(driveDocumentQueue(env,actor));
+      return adaptiveExecutionResponse(env,prepared,id,ports);
+    },
+  };
+  return handleAdaptivePlanning(request,env,ports);
 }
 
 /** Recover the original paid plan from its retained actor-private receipt, never by regenerating. */
@@ -1342,6 +1435,10 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     return null;
   }
   if (row.kind === "prompt_fan") return reconcilePromptFanParent(env, user.userId, row.job_id);
+  if(consentedAdaptiveJob(row)){
+    const recovered=await certifiedAdaptiveJob(env,user,row,true);
+    if(recovered.status==="completed")return recovered;
+  }
   if (documentJobTerminal({ status: row.status })) return row;
   const existingEvents = await readCorrelatedEvents(env, user.streamId, [row.correlation_id]);
   const finished = operationFinished(existingEvents, row);
@@ -1371,6 +1468,14 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     return readJob(env, user.userId, jobId);
   }
 
+  if(row.kind==="structure_adaptive"&&!consentedAdaptiveJob(row)){
+    const now=new Date().toISOString(),uncertain=row.attempt_count>0||Boolean(row.started_at)||Boolean(await env.DB.prepare("SELECT 1 FROM cost_budget_reservations WHERE owner_id=? AND correlation_id=? AND status IN('active','executing') LIMIT 1").bind(row.owner_id,row.correlation_id).first());
+    const code=uncertain?"provider_submission_uncertain":"adaptive_consent_required";
+    const result={...parseResult(row),errorDetail:{...applicationFailureDetail(code,null,409),retryable:false},noAutomaticRetry:true,stage:"failed",progressMessage:uncertain?"This historical planning request may already be billable. It will not be submitted again.":"Review and approve an exact planning request before it runs."};
+    await env.DB.prepare("UPDATE document_jobs SET status='failed',result_json=?,error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=? WHERE job_id=? AND owner_id=? AND status=? AND attempt_count=? AND correlation_id=? AND request_json=? AND result_json IS ?")
+      .bind(JSON.stringify(result),code,now,now,row.job_id,row.owner_id,row.status,row.attempt_count,row.correlation_id,row.request_json,row.result_json).run();
+    return readJob(env,user.userId,jobId);
+  }
   if(row.kind==="structure_adaptive"){
     const destination=parseRequest(row),projectId=String(destination.projectId??""),canvasId=String(destination.canvasId??"");
     if((row.source_surface==="canvas"||canvasId)&&!await planningBoardCurrent(env,user.streamId,projectId,canvasId)){
@@ -1381,7 +1486,8 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
         WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND kind='structure_adaptive' AND source_surface=? AND correlation_id=?
           AND status='queued' AND attempt_count=0 AND started_at IS NULL AND request_json=? AND result_json IS ? AND NOT (${board.sql})`)
         .bind(JSON.stringify(result),now,now,row.job_id,row.owner_id,row.stream_id,row.document_id,row.source_surface,row.correlation_id,row.request_json,row.result_json,...board.bindings).run();
-      return readJob(env,user.userId,jobId);
+      const failed=await readJob(env,user.userId,jobId);if(failed?.status==="failed"&&consentedAdaptiveJob(failed))await releaseInterruptedAttempt(env,user,failed,"canvas_not_found");
+      return failed;
     }
   }
 
@@ -1427,7 +1533,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
   const handoffPaidProviderReservations = previousAttempt > 0 && row.kind === "render_document" && hasPaidProviderCheckpoint
     && Boolean(previousCheckpoint.reservationId && previousCheckpoint.costReservationId);
   const now = new Date(); const nowIso = now.toISOString(); const staleBefore = new Date(now.getTime() - DOCUMENT_JOB_STALE_AFTER_MS).toISOString(); const leaseExpiresAt = new Date(now.getTime() + DOCUMENT_JOB_LEASE_MS).toISOString();
-  const attemptCorrelationId=`${jobId}:attempt:${attempt}`;const foregroundPresentation=isPresentationJob(row);const initialResult={...previousCheckpoint,...(requiresForegroundDocumentExecution(row)?{providerSubmissionProtocol:1}:{}),stage:foregroundPresentation?"compiling":"preparing",progressMessage:foregroundPresentation?attempt>1?"Recovering the interrupted presentation and compiling its authorized document context.":"Compiling the document into the requested presentation.":attempt>1?"Recovering the interrupted operation.":"Preparing the document context."};
+  const attemptCorrelationId=consentedAdaptiveJob(row)?jobId:`${jobId}:attempt:${attempt}`;const foregroundPresentation=isPresentationJob(row);const initialResult={...previousCheckpoint,...(requiresForegroundDocumentExecution(row)?{providerSubmissionProtocol:1}:{}),stage:foregroundPresentation?"compiling":"preparing",progressMessage:foregroundPresentation?attempt>1?"Recovering the interrupted presentation and compiling its authorized document context.":"Compiling the document into the requested presentation.":attempt>1?"Recovering the interrupted operation.":"Preparing the document context."};
   const claimSql=`UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=COALESCE(started_at,?),lease_expires_at=?,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND (status='queued' OR (status='running' AND (lease_expires_at<? OR updated_at<?))) AND correlation_id=? AND result_json IS ? AND NOT EXISTS(SELECT 1 FROM document_jobs active WHERE active.stream_id=document_jobs.stream_id AND active.job_id<>document_jobs.job_id AND active.kind!='prompt_fan' AND active.status IN('running','committing')
     AND NOT (?=1 AND active.kind='render_document' AND COALESCE(json_extract(active.request_json,'$.artifactKind'),'')='video'
       AND ${documentJobProjectSql("document_jobs")}<>''
@@ -1469,6 +1575,15 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
 
   let persistedForegroundPresentation:DocumentJobRow|null=null;
   try {
+    if(consentedAdaptiveJob(row)){
+      const response=await runWithHeartbeat(env,row,user,(control)=>executeApprovedAdaptivePlanning(env,user,row!,control)),body=await response.json() as Record<string,unknown>;
+      const latest=await readJob(env,user.userId,row.job_id)??row,recovered=await certifiedAdaptiveJob(env,user,latest,true);
+      if(recovered.status==="completed")return recovered;
+      const code=String(body.error??"adaptive_result_unavailable"),detail={...applicationFailureDetail(code,null,response.status),retryable:false};
+      await releaseInterruptedAttempt(env,user,latest,code);
+      await finishDocumentJob(env,latest,"failed",{...parseResult(latest),...safeResult(body),errorDetail:detail,noAutomaticRetry:true,stage:"failed",progressMessage:"This planning result could not be confirmed. Retrieve the same request; no replacement will be purchased automatically."},code);
+      return readJob(env,user.userId,row.job_id);
+    }
     const payload = JSON.parse(row.request_json) as Record<string, unknown>;
     const sceneConfiguration=row.kind==="render_document"?sceneConfigurationFromRequest(payload):null;
     if(sceneConfiguration){payload.sceneMedium=sceneConfiguration.medium;payload.sceneConfiguration=sceneConfiguration;}
@@ -1516,6 +1631,12 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       persistedForegroundPresentation=await refreshGenerationReceipt(env,user,row,body,detail,"",saved);
     }else await refreshGenerationReceipt(env,user,row,body,detail);
   } catch (error) {
+    if(consentedAdaptiveJob(row)){
+      const latest=await readJob(env,user.userId,row.job_id)??row,recovered=await certifiedAdaptiveJob(env,user,latest,true);if(recovered.status==="completed")return recovered;
+      await releaseInterruptedAttempt(env,user,latest,"adaptive_execution_interrupted");
+      await finishDocumentJob(env,latest,"failed",{...parseResult(latest),noAutomaticRetry:true,errorDetail:{...applicationFailureDetail("adaptive_execution_interrupted",null,502),retryable:false},stage:"failed",progressMessage:"The original planning request is retained for recovery. It will not be submitted again."},"adaptive_execution_interrupted");
+      return readJob(env,user.userId,row.job_id);
+    }
     const completedAt = new Date().toISOString(); const detail = classifyDocumentJobFailure(error);
     const durableCheckpoint = parseResult(await readJob(env, user.userId, row.job_id) ?? row);
     await finishDocumentJob(env, row, "failed", { ...durableCheckpoint, errorDetail: publicFailureDetail(detail), stage: "failed", progressMessage: failureProgressMessage(detail) }, detail.message, completedAt);
@@ -1586,7 +1707,48 @@ async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
   }
 }
 
+/** One read of exact existing ledger rows; never reserves or infers a refund from job status. */
+async function adaptiveStopBudget(env:WorkerEnv,user:PilotUser,row:DocumentJobRow):Promise<DocumentJobStopBudget>{
+  const unknown:DocumentJobStopBudget={reservationStatus:"unknown",billingStatus:"unknown"};
+  const saved=await env.DB.prepare(`SELECT step.status AS step_status,step.verified_tokens,step.verified_microusd,
+      tokens.reservation_id AS token_id,tokens.status AS token_status,tokens.used_tokens,
+      cost.reservation_id AS cost_id,cost.status AS cost_status,cost.used_microusd
+    FROM consequential_executions execution JOIN consequential_execution_steps step ON step.execution_id=execution.execution_id AND step.step_index=0
+    LEFT JOIN budget_reservations tokens ON tokens.reservation_id=step.token_reservation_id
+    LEFT JOIN cost_budget_reservations cost ON cost.reservation_id=step.cost_reservation_id
+    WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.stream_id=? AND execution.operation='adaptive-structure'
+      AND step.token_reservation_id=? AND step.cost_reservation_id=?
+      AND (SELECT COUNT(*) FROM consequential_execution_steps all_steps WHERE all_steps.execution_id=execution.execution_id)=1
+      AND (tokens.reservation_id IS NULL OR tokens.owner_id=execution.actor_user_id AND tokens.stream_id=execution.stream_id AND tokens.correlation_id=execution.execution_id)
+      AND (cost.reservation_id IS NULL OR cost.owner_id=execution.actor_user_id AND cost.stream_id=execution.stream_id AND cost.correlation_id=execution.execution_id)`)
+    .bind(row.job_id,user.userId,row.stream_id,`${row.job_id}:tokens:0`,`${row.job_id}:usd:0`).first<{step_status:string;verified_tokens:number|null;verified_microusd:number|null;token_id:string|null;token_status:string|null;used_tokens:number|null;cost_id:string|null;cost_status:string|null;used_microusd:number|null}>();
+  if(!saved)return unknown;
+  const settled=saved.step_status==="settled"&&saved.token_status==="settled"&&saved.cost_status==="settled"
+    &&Number.isSafeInteger(saved.verified_tokens)&&Number.isSafeInteger(saved.verified_microusd)
+    &&saved.used_tokens===saved.verified_tokens&&saved.used_microusd===saved.verified_microusd;
+  const notIncurred=saved.step_status==="not-submitted"&&Number(saved.used_tokens??0)===0&&Number(saved.used_microusd??0)===0;
+  const statuses=[saved.token_status,saved.cost_status],held=statuses.some(status=>status==="active"||status==="executing");
+  const billingStatus:DocumentJobStopBudget["billingStatus"]=settled?"settled":notIncurred?"not-incurred":["submitting","uncertain","usage-recorded"].includes(saved.step_status)?"pending":"unknown";
+  const reservationStatus:DocumentJobStopBudget["reservationStatus"]=held?"retained":settled?"settled":notIncurred
+    ?!saved.token_id&&!saved.cost_id?"not-reserved":statuses.every(status=>status===null||status==="released")?"released":"unknown":"unknown";
+  return{reservationStatus,billingStatus};
+}
+
+async function stopAdaptivePlanningJob(env:WorkerEnv,user:PilotUser,target:DocumentJobRow,force:boolean){
+  const recovered=await certifiedAdaptiveJob(env,user,target,true);
+  if(recovered.status==="completed"||documentJobTerminal(target))return{job:recovered,stoppedCount:0,budget:await adaptiveStopBudget(env,user,recovered)};
+  // Tombstone the execution first: no reservation can arrive after cancellation becomes visible.
+  const code=force?"adaptive_force_failed":"adaptive_canceled";await failConsequentialExecution(env,user.userId,target.job_id,code);
+  const budget=await adaptiveStopBudget(env,user,target),now=new Date().toISOString();
+  const errorDetail={code,category:"canceled",scope:"request",action:"none",message:"Planning was stopped. "+documentJobStopBudgetMessage(budget),retryable:false,retryAfterMs:null,requestId:null,httpStatus:null};
+  const changed=await env.DB.prepare(`UPDATE document_jobs SET status=?,result_json=json_patch(COALESCE(result_json,'{}'),?),error_message=?,completed_at=?,lease_expires_at=NULL,notified_at=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status IN('queued','running','committing')
+    AND NOT EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.execution_id=document_jobs.job_id AND execution.actor_user_id=document_jobs.owner_id AND execution.result_ref IS NOT NULL)`)
+    .bind(force?"failed":"canceled",JSON.stringify({errorDetail,noAutomaticRetry:true,stage:force?"failed":"canceled",progressMessage:errorDetail.message}),code,now,now,now,target.job_id,user.userId,target.stream_id,target.correlation_id).run();
+  const row=await readJob(env,user.userId,target.job_id),job=row?await certifiedAdaptiveJob(env,user,row,true):null;
+  return{job,stoppedCount:Number(changed.meta.changes??0),budget:await adaptiveStopBudget(env,user,job??target)};
+}
 async function stopGenerationJob(env: WorkerEnv, user: PilotUser, target: DocumentJobRow, force: boolean) {
+  if(consentedAdaptiveJob(target))return stopAdaptivePlanningJob(env,user,target,force);
   if (target.kind !== "preview" && target.kind !== "generate" && target.kind !== "prompt_fan" && target.kind !== "render_document") return { error: "generation_job_required", status: 409 } as const;
   if (target.status === "committing") return { error: "job_finalizing", status: 409 } as const;
   if(hasUnsettledProviderSubmission(parseResult(target))||unresolvedPresentationSubmission(target)||unresolvedAudioSubmission(target)||unresolvedStoryboardSubmission(target)||unresolvedVideoSubmission(target))return{error:"provider_submission_in_flight",status:409} as const;
@@ -1670,6 +1832,11 @@ export async function cancelProjectActorJobs(env:WorkerEnv,operator:PilotUser,sc
   const jobs=await env.DB.prepare(`SELECT job.*,resource.project_access_id,resource.organization_id,resource.project_id,resource.owner_user_id FROM project_resource_scopes resource JOIN document_jobs job ON job.job_id=resource.resource_id AND job.owner_id=resource.actor_user_id AND job.stream_id='creative:'||resource.owner_user_id WHERE ${clauses.join(" AND ")} ORDER BY job.requested_at,job.job_id LIMIT 500`)
     .bind(...bindings).all<DocumentJobRow&{project_access_id:string;organization_id:string;project_id:string;owner_user_id:string}>();
   for(const row of jobs.results){
+    if(consentedAdaptiveJob(row)){
+      await failConsequentialExecution(env,row.owner_id,row.job_id,"project_access_revoked");
+      const now=new Date().toISOString();await env.DB.prepare(`UPDATE document_jobs SET status='canceled',error_message='project_access_revoked',completed_at=?,lease_expires_at=NULL,notified_at=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND correlation_id=? AND status IN('queued','running') AND NOT EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.execution_id=document_jobs.job_id AND execution.result_ref IS NOT NULL)`)
+        .bind(now,now,now,row.job_id,row.owner_id,row.stream_id,row.correlation_id).run();continue;
+    }
     if(hasUnsettledProviderSubmission(parseResult(row))||unresolvedPresentationSubmission(row)||unresolvedAudioSubmission(row)||unresolvedStoryboardSubmission(row)||unresolvedVideoSubmission(row))continue;
     if(row.kind!=="render_document"){
       const executing=await env.DB.prepare("SELECT 1 AS executing FROM cost_budget_reservations WHERE owner_id=? AND stream_id=? AND correlation_id=? AND status='executing' LIMIT 1")
@@ -1691,13 +1858,18 @@ export async function cancelProjectActorJobs(env:WorkerEnv,operator:PilotUser,sc
 
 export async function handleDocumentJobs(request: Request, env: WorkerEnv, path = "", context?: WorkerExecutionContext) {
   await ensureSchema(env);
+  if(path==="adaptive")return handleAdaptiveDocumentJobs(request,env,context);
   const scoped=/(?:^|;\s*)forma_project_context=/.test(request.headers.get("cookie")??"");
   const auth=await requireUser(request,env,scoped?"viewer":request.method==="GET"?"viewer":"creator",scoped?{account:"principal"}:{});
   if(auth.response||!auth.user)return auth.response!;
   const principal=auth.user,selected=scoped?await readProjectRequestContext(request,env,principal):{context:null,response:null};
   if(selected.response)return selected.response;
   const project=selected.context;
-  if(project&&!hasCapability(principal,"project.output.request",{organizationId:project.organizationId,projectAccessId:project.projectAccessId}))return Response.json({error:"project_read_only"},{status:403});
+  const canRequestOutputs=!project||hasCapability(principal,"project.output.request",{organizationId:project.organizationId,projectAccessId:project.projectAccessId});
+  // A current reader may find their own original planning jobs, but this grants
+  // neither queue execution nor other output/recovery mutations.
+  const readOnlyPlanning=Boolean(project&&!canRequestOutputs&&request.method==="GET"&&(!path||!path.includes("/"))&&hasCapability(principal,"project.read",{organizationId:project.organizationId,projectAccessId:project.projectAccessId}));
+  if(!canRequestOutputs&&!readOnlyPlanning)return Response.json({error:"project_read_only"},{status:403});
   const user:PilotUser=project?{...principal,streamId:`creative:${project.ownerUserId}`,projectExecution:{organizationId:project.organizationId,projectAccessId:project.projectAccessId,projectId:project.projectId,ownerUserId:project.ownerUserId,actorUserId:principal.userId}}:principal;
   if(path==="presentation-candidates"){
     if(request.method!=="GET")return new Response("Method not allowed",{status:405,headers:{"cache-control":"private, no-store"}});
@@ -1886,6 +2058,9 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   if(project&&request.method==="GET"){
     const now=new Date().toISOString(),query=new URL(request.url).searchParams,activeOnly=query.get("scope")==="active",document=query.get("document")?.trim().slice(0,160)??"";
     const requestedId=path?decodeURIComponent(path):"";
+    const readBinding:ConsequentialBinding={version:"planning-job-read-v1",operation:"adaptive-structure",intentHash:"",sourceHash:"",actorUserId:principal.userId,permissionEpoch:principal.access.permissionEpoch,streamId:user.streamId,projectId:project.projectId,documentId:"",canvasId:null,blockId:"",period:now.slice(0,7),scope:user.projectExecution!,contextSessionId:project.contextId,pilotCohortId:null,steps:[],publicQuery:"",request:{}};
+    const readGuard=executionAdmissionGuard(principal,readBinding,null);
+    const canvasReadable=hasCapability(principal,"project.canvas.use",{organizationId:project.organizationId,projectAccessId:project.projectAccessId});
     const rows=await env.DB.prepare(`SELECT job.job_id,job.owner_id,job.stream_id,job.document_id,job.kind,job.status,job.source_surface,job.correlation_id,job.requested_sequence,
       json_object('documentRevision',json_extract(job.request_json,'$.documentRevision'),'requestKey',json_extract(job.request_json,'$.requestKey'),
         'sourcePreviewId',json_extract(job.request_json,'$.sourcePreviewId'),'promptTechnique',json_extract(job.request_json,'$.promptTechnique'),
@@ -1900,15 +2075,25 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         AND document_scope.project_id=resource.project_id AND document_scope.owner_user_id=resource.owner_user_id
         AND document_scope.resource_kind='document' AND document_scope.resource_id=job.document_id
       WHERE job.owner_id=? AND job.stream_id=? AND resource.project_access_id=? AND resource.organization_id=? AND resource.project_id=?
+        AND (?=0 OR job.kind='structure_adaptive' AND json_extract(job.request_json,'$.adaptiveConsentVersion')=1
+          AND resource.visibility='actor_private' AND EXISTS(SELECT 1 FROM events anchor WHERE anchor.event_id=resource.source_event_id
+            AND anchor.stream_id=job.stream_id AND anchor.actor='user:'||resource.actor_user_id AND anchor.type='ProjectDocumentJobQueued'
+            AND json_extract(anchor.payload,'$.job_id')=job.job_id AND json_extract(anchor.payload,'$.document_id')=job.document_id
+            AND json_extract(anchor.payload,'$.organization_id')=resource.organization_id AND json_extract(anchor.payload,'$.project_access_id')=resource.project_access_id
+            AND json_extract(anchor.payload,'$.project_id')=resource.project_id AND json_extract(anchor.payload,'$.history_owner_user_id')=resource.owner_user_id
+            AND json_extract(anchor.payload,'$.actor_user_id')=resource.actor_user_id))
+        AND (job.kind!='structure_adaptive' OR COALESCE(json_extract(job.request_json,'$.canvasId'),'')='' OR ?=1)
         AND (?='' OR job.job_id=?) AND (?=0 OR job.status IN('queued','running','committing') OR job.notified_at IS NULL)
         AND (?='' OR job.status IN('queued','running','committing') OR job.notified_at IS NULL OR job.document_id=?)
-        AND (job.status IN('queued','running','committing') OR job.expires_at>?)
+        AND (job.status IN('queued','running','committing') OR job.expires_at>?) AND ${readGuard.sql}
       ORDER BY CASE WHEN job.status IN('queued','running','committing') THEN 0 ELSE 1 END,job.requested_at DESC LIMIT 120`)
-      .bind(project.ownerUserId,principal.userId,user.streamId,project.projectAccessId,project.organizationId,project.projectId,requestedId,requestedId,Number(activeOnly),document,document,now).all<DocumentJobRow>();
+      .bind(project.ownerUserId,principal.userId,user.streamId,project.projectAccessId,project.organizationId,project.projectId,Number(readOnlyPlanning),Number(canvasReadable),requestedId,requestedId,Number(activeOnly),document,document,now,...readGuard.bindings).all<DocumentJobRow>();
     if(path&&!rows.results.length)return Response.json({error:"job_not_found"},{status:404});
     const activeBlocker=[...rows.results].filter((row)=>row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
     const recoveryBlocker=activeBlocker&&rowIsStale(activeBlocker)?activeBlocker:null;
-    const certified=await freshlyRecoverablePresentationRows(env,user,rows.results,project.contextId);
+    const adaptiveCertified=await Promise.all(rows.results.map(async(row)=>row.kind==="structure_adaptive"?certifiedAdaptiveJob(env,user,await readJob(env,user.userId,row.job_id)??row,false,query.get("inspection")==="1"):row));
+    const certified=readOnlyPlanning?adaptiveCertified:await freshlyRecoverablePresentationRows(env,user,adaptiveCertified,project.contextId);
+    if(!await env.DB.prepare(`SELECT 1 WHERE ${readGuard.sql}`).bind(...readGuard.bindings).first())return Response.json({error:"project_read_access_changed"},{status:403,headers:{"cache-control":"private, no-store"}});
     return Response.json(path?{job:safeScopedJob(certified[0]!,recoveryBlocker)}:{jobs:certified.map((row)=>safeScopedJob(row,recoveryBlocker))},{headers:{"cache-control":"private, no-store"}});
   }
   if(project&&path){
@@ -1918,7 +2103,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     if(executionRequest)verifiedPathJob=target;
   }
   type DocumentJobAdmission={kind?:string;documentId?:string;sourceSurface?:string;payload?:Record<string,unknown>&{sceneMedium?:SceneMedium;sceneConfiguration?:SceneConfiguration}};let submittedInput:DocumentJobAdmission|null=null;
-  if(request.method==="POST"&&!path){const consent=requireConsent(user);if(consent)return consent;submittedInput=await request.json() as DocumentJobAdmission;const payload=submittedInput.payload;if(submittedInput.kind==="render_document"&&(payload?.artifactKind==="storyboard"||payload?.artifactKind==="video"||payload?.artifactKind==="audio")&&payload.paidMediaConfirmed!==true)return Response.json({error:"paid_media_confirmation_required",message:"Confirm paid media generation before starting this render."},{status:428});}
+  if(request.method==="POST"&&!path){const consent=requireConsent(user);if(consent)return consent;submittedInput=await request.json() as DocumentJobAdmission;if(submittedInput.kind==="structure_adaptive")return Response.json({error:"adaptive_consent_required",submission:"not-submitted"},{status:428});const payload=submittedInput.payload;if(submittedInput.kind==="render_document"&&(payload?.artifactKind==="storyboard"||payload?.artifactKind==="video"||payload?.artifactKind==="audio")&&payload.paidMediaConfirmed!==true)return Response.json({error:"paid_media_confirmation_required",message:"Confirm paid media generation before starting this render."},{status:428});}
   if(request.method==="POST"&&path.endsWith("/retry")){const target=await readJob(env,user.userId,decodeURIComponent(path.slice(0,-6).replace(/\/$/,"")));if(target?.kind==="render_document"){const payload=parseRequest(target);if((payload.artifactKind==="storyboard"||payload.artifactKind==="video"||payload.artifactKind==="audio")&&payload.paidMediaConfirmed!==true)return Response.json({error:"paid_media_confirmation_required",message:"Confirm paid media generation before recovering this render."},{status:428});}}
   const now = new Date().toISOString();
   // Neither passive polling nor an unauthorized paid request may reconcile or
@@ -1940,7 +2125,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     if ("error" in stopped) return Response.json({ error: stopped.error }, { status: stopped.status });
     if (!stopped.job) return Response.json({ error: "job_not_found" }, { status: 404 });
     context?.waitUntil(driveDocumentQueue(env, user));
-    return Response.json({ job:project?safeScopedJob(stopped.job):serializeJob(stopped.job), stoppedCount: stopped.stoppedCount ?? 0 });
+    return Response.json({ job:project?safeScopedJob(stopped.job):serializeJob(stopped.job), stoppedCount: stopped.stoppedCount ?? 0, ...("budget" in stopped?{budget:stopped.budget}:{}) });
   }
 
   if (path.endsWith("/ack") && request.method === "POST") {
@@ -2187,7 +2372,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     if(path&&query.get("inspection")==="1"){
       if(!requestedJob||requestedJob.owner_id!==user.userId||requestedJob.stream_id!==user.streamId
         ||!(Date.parse(requestedJob.expires_at)>Date.now()))return Response.json({error:"job_not_found"},{status:404,headers:{"cache-control":"private, no-store"}});
-      return Response.json({job:serializeJob(requestedJob)},{headers:{"cache-control":"private, no-store"}});
+      const certified=consentedAdaptiveJob(requestedJob)?await certifiedAdaptiveJob(env,user,requestedJob,false,true):requestedJob;
+      return Response.json({job:serializeJob(certified)},{headers:{"cache-control":"private, no-store"}});
     }
     const activeOnly = query.get("scope") === "active";
     const documentScope = query.get("document")?.trim().slice(0, 160) ?? "";
@@ -2203,7 +2389,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       ) END AS request_json,
       json_remove(result_json,'$.providerSubmissions','$.providerSubmissionProtocol','$.providerSubmissionLegacyUncertain','$.plannerInput','$.videoInputReceipt','$.audioInputReceipt','$.artifactPlan','$.presentationCandidates','$.presentationRecoveryOnly','$.productionPlan','$.productionSceneReceipts','$.productionAnchor') AS result_json,
       error_message,attempt_count,requested_at,started_at,completed_at,lease_expires_at,notified_at,expires_at,updated_at
-      FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='job' AND resource.resource_id=document_jobs.job_id) AND (status IN ('queued','running','committing') OR (notified_at IS NULL AND expires_at>?) OR (kind IN ('preview','generate','prompt_fan','render_document') AND status IN ('failed','partial') AND expires_at>?))
+      FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='job' AND resource.resource_id=document_jobs.job_id) AND (status IN ('queued','running','committing') OR (notified_at IS NULL AND expires_at>?) OR (kind IN ('preview','generate','prompt_fan','render_document','structure_adaptive') AND (status IN ('failed','partial') OR kind='structure_adaptive') AND expires_at>?))
       AND (?=0 OR status IN ('queued','running','committing') OR notified_at IS NULL)
       AND (?='' OR status IN ('queued','running','committing') OR notified_at IS NULL OR document_id=?)
       ORDER BY CASE WHEN status IN ('queued','running','committing') THEN 0 ELSE 1 END,requested_at DESC LIMIT 120`).bind(user.userId,user.streamId,now,now,Number(activeOnly),documentScope,documentScope).all<DocumentJobRow>();
@@ -2239,7 +2425,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const recoveryBlocker = activeBlocker && rowIsStale(activeBlocker) ? activeBlocker : null;
     if (recoveryBlocker&&!requiresForegroundDocumentExecution(recoveryBlocker)) context?.waitUntil(driveDocumentQueue(env, user));
     if (path && !rows.length) return Response.json({ error: "job_not_found" }, { status: 404 });
-    const certified=await freshlyRecoverablePresentationRows(env,user,rows);
+    const adaptiveCertified=await Promise.all(rows.map(async(row)=>row.kind==="structure_adaptive"?certifiedAdaptiveJob(env,user,await readJob(env,user.userId,row.job_id)??row):row));
+    const certified=await freshlyRecoverablePresentationRows(env,user,adaptiveCertified);
     return Response.json(path ? { job: serializeJob(certified[0], recoveryBlocker) } : { jobs: certified.map((row) => serializeJob(row, recoveryBlocker, false)) });
   }
 

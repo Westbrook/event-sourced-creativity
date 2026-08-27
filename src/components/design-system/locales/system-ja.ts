@@ -6047,4 +6047,20 @@ const messages: Record<string, string> = {
   "system.auto.bcxn5b.27": "{count} 件をレンダリング中",
 };
 
+Object.assign(messages, {
+  "system.auto.1fbfkdy.27": "処理はすでに終了しています。",
+  "system.auto.dkozxv.18": "処理を停止しました。",
+  "system.auto.12qradp.23": "処理を強制停止しました。",
+  "system.auto.11egqjw.30": "停止はまだ確認されていません。",
+  "system.auto.ikltxe.71": "プロバイダーへのリクエストは送信されていません。予算の確保枠は解放待ちです。",
+  "system.auto.11m81nk.72": "プロバイダーへのリクエストには料金が発生する可能性があるため、予算の確保枠は維持されています。",
+  "system.auto.za29fw.36": "未使用の予算確保枠を解放しました。",
+  "system.auto.1qrwzxy.58": "予算は確保されておらず、プロバイダーへのリクエストも送信されていません。",
+  "system.auto.lso8oj.64": "確認済みのプロバイダー利用分は引き続き請求対象です。予算の確保枠は残っていません。",
+  "system.auto.1f1dkk2.57": "請求はまだ確定していません。詳細はアクティビティで確認してください。",
+  "system.auto.1eape3u.21": "プラン作成を停止しました。",
+  "system.auto.1hytdg0.74": "既存のプロバイダーリクエストには料金が発生する可能性があるため、確保枠は維持されています。",
+  "system.auto.ayjo92.48": "プロバイダーへの送信前にプラン作成を停止しました。",
+});
+
 export default messages;

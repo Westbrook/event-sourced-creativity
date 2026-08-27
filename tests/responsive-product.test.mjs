@@ -647,6 +647,10 @@ test("Activity rejects orphan, removed, cross-tenant, unauthorized, and imperson
   assert.equal(viewer.reviews.length, 0);
   assert.equal(viewer.jobs.length, 0);
 
+  const planningJobs=[{jobId:"paid-own",planningExecutionId:"paid-own",kind:"structure_adaptive",documentId:"doc-a",status:"completed"},{jobId:"legacy",kind:"structure_adaptive",documentId:"doc-a",status:"completed"},{jobId:"foreign",planningExecutionId:"foreign",kind:"structure_adaptive",documentId:"doc-b",status:"completed"},...jobs];
+  const reader=scopedFormaActivity({...session,projectContext:{...context,permissions:["project.read"]}},projection,notifications,reviews,planningJobs);
+  assert.deepEqual(reader.jobs.map(job=>job.jobId),["paid-own"],"Current read authority exposes only exact previously authorized planning, not legacy or another project's jobs");
+
   const personal = { ...session, projectContext: undefined };
   const noPersonalProject = { ...projection, projectId: "", documents: [], libraryArtifacts: [] };
   assert.deepEqual(scopedFormaActivity(personal, noPersonalProject, notifications, reviews, jobs).reviews.map((item) => item.id), ["review-a"]);

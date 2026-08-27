@@ -382,7 +382,13 @@ test("runs document async work as durable reconnectable server jobs",async()=>{
   for(const source of [schema,runtime])assert.match(source,/document_jobs/);
   assert.match(worker,/\/api\/document-jobs/);assert.match(worker,/WorkerExecutionContext/);assert.match(worker,/context/);
   assert.match(jobs,/lease_expires_at/);assert.match(jobs,/\/run/);assert.match(jobs,/runWithHeartbeat/);assert.match(jobs,/renewJobLease/);assert.match(jobs,/documentJobMaxAttempts/);assert.match(jobs,/failStaleJob/);assert.match(jobs,/releaseInterruptedAttempt/);assert.match(jobs,/correlationId/);assert.match(jobs,/notified_at/);assert.match(jobs,/context\?\.waitUntil\(driveDocumentQueue/);assert.match(jobs,/reconcilePromptFanParent/);
-  for(const kind of ["preview","generate","prompt_fan","chat","structure_adaptive","extract_reference"])assert.match(store,new RegExp(`#startDocumentJob\\("${kind}"`));
+  for(const kind of ["preview","generate","prompt_fan","chat","extract_reference"])assert.match(store,new RegExp(`#startDocumentJob\\("${kind}"`));
+  assert.doesNotMatch(store,/#startDocumentJob\("structure_adaptive"/);
+  assert.match(store,/guardedFetch\("\/api\/document-jobs\/adaptive"/);
+  assert.match(store,/previewPlanningConsent\(\)\{return this\.#requestPlanningConsent\(this\.planningConsent\.get\(\)\?\.recoveryExecutionId\?"resume":"quote"\);\}/);
+  assert.match(store,/approvePlanningConsent\(\)/);assert.match(store,/contextConsentAction\(state\.quote\.status,state\.quote\.providerAvailable,state\.quote\.canExecute\)/);
+  assert.match(store,/executionId:state\.quote!\.executionId,approvedBindingHash:state\.quote!\.bindingHash/);
+  assert.match(jobs,/claimConsequentialExecution/);assert.match(jobs,/executeApprovedAdaptivePlanning/);assert.match(jobs,/consentedAdaptiveJob/);
   assert.match(store,/visibilitychange/);assert.match(store,/#jobResultVisible/);assert.match(store,/#pendingJobNotices/);assert.match(store,/#driveDocumentJobs/);assert.match(store,/documentJobIsStale/);assert.match(store,/documentGenerationRevision/);assert.match(store,/documentJobForRequest/);assert.match(store,/\/ack/);
   assert.match(jobs,/generationRequestIdentity/);assert.match(jobs,/requestKey/);assert.match(jobs,/candidates\.find/);
   assert.match(actions,/documentJobActionLabel/);assert.match(actions,/documentJobForRequest/);assert.match(actions,/Images in progress/);assert.match(actions,/Current document state/);assert.match(actions,/Earlier document state/);assert.match(actions,/closedby="any"/);

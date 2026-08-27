@@ -45,9 +45,9 @@ export function scopedFormaActivity(
       && context.permissions.includes("project.review.approve")
     ) : personallyAssigned;
 
-  const privateJobs = !context || context.permissions.includes("project.output.request")
-    ? jobs.filter((job) => documentIds.has(job.documentId))
-    : [];
+  const privateJobs = jobs.filter((job) => documentIds.has(job.documentId)
+    && (!context || context.permissions.includes("project.output.request")
+      || context.permissions.includes("project.read") && job.kind === "structure_adaptive" && job.planningExecutionId === job.jobId));
 
   return { documents, notifications: projectNotifications, reviews: assignedReviews, jobs: privateJobs };
 }
@@ -57,8 +57,14 @@ export function formaActivityUnread(snapshot: FormaActivitySnapshot) {
   return snapshot.notifications.filter((notification)=>!notification.readAt&&!(notification.artifactId&&assignedArtifactIds.has(notification.artifactId)&&["review_requested","review_due"].includes(notification.kind)));
 }
 
+/** A canceled approved plan still has an exact original request to inspect; cancellation is not dismissal. */
+export function formaActivityJobNeedsAttention(job:Pick<DocumentJob,"kind"|"status"|"dismissedAt"|"jobId"|"planningExecutionId">){
+  return ["failed","partial"].includes(job.status)&&!job.dismissedAt
+    ||job.status==="canceled"&&job.kind==="structure_adaptive"&&job.planningExecutionId===job.jobId;
+}
+
 export function formaActivityAttention(snapshot: FormaActivitySnapshot) {
   const unread = formaActivityUnread(snapshot).length;
-  const failures = snapshot.jobs.filter((job) => ["failed", "partial"].includes(job.status) && !job.dismissedAt).length;
+  const failures = snapshot.jobs.filter(formaActivityJobNeedsAttention).length;
   return snapshot.reviews.length + unread + failures;
 }

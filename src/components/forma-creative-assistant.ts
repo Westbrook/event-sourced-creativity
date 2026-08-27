@@ -184,11 +184,6 @@ export class FormaCreativeAssistant extends FormaElement {
 
     const documentId = surface.canvasId ? this.store.canvasPlanningDocumentId() : projection.documentId;
     if(!documentId){this.store.toast(this.i18n.t("next.exact.chooseDocument","Choose a document"));panel.resolveToolRequest(false,input.message);return;}
-    if (["plan-document", "plan-board"].includes(input.mode)
-      && this.store.documentJobActive("structure_adaptive", documentId,surface.canvasId??null)) {
-      panel.resolveToolRequest(false, input.message);
-      return;
-    }
     const accepted = await new Promise<boolean>((resolve) => {
       const detail: AssistantToolRequest = {
         requestId: crypto.randomUUID(),
@@ -217,7 +212,7 @@ export class FormaCreativeAssistant extends FormaElement {
     }
     const messages:AssistantDisplayedMessage[]=[
       ...(accepted ? [{ id: crypto.randomUUID(), role: "user" as const, text: input.message }] : []),
-      { id: crypto.randomUUID(), role: "assistant", key: accepted ? "assistant.mode.queued" : "assistant.mode.failed",
+      { id: crypto.randomUUID(), role: "assistant", key: accepted ? "assistant.mode.queued" : ["plan-document","plan-board"].includes(input.mode)?"assistant.mode.reviewClosed":"assistant.mode.failed",
         ...(accepted && ["plan-document", "plan-board"].includes(input.mode)
           ? { reviewMode: input.mode as "plan-document" | "plan-board", reviewReady: false } : {}) },
     ];
@@ -328,7 +323,7 @@ export class FormaCreativeAssistant extends FormaElement {
     const documentId = surface.canvasId ? this.store.canvasPlanningDocumentId() : projection.documentId;
     const planning = Boolean(documentId && this.store.documentJobActive("structure_adaptive", documentId,surface.canvasId??null));
     const chatting = Boolean(documentId && this.store.documentJobActive("chat", documentId));
-    const busyModes: AssistantInteractionMode[] = [...(planning ? ["plan-document" as const, "plan-board" as const] : []), ...(chatting ? ["creative-chat" as const] : [])];
+    const busyModes: AssistantInteractionMode[] = [...(this.store.planningConsent.get() ? ["plan-document" as const, "plan-board" as const] : []), ...(chatting ? ["creative-chat" as const] : [])];
     const messages = this.#messages.map((message) => message.reviewMode
       ? { ...message, reviewReady: !planning && Boolean(message.reviewMode === "plan-document"
         ? this.store.adaptiveStructureFor(documentId)

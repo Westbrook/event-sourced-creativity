@@ -6,6 +6,9 @@ import { APPLICATIONS, applicationAccessible, applicationDefinition, application
 import { formaActivityAttention, scopedFormaActivity } from "../model/activity";
 import { canvasFocusFromRoute } from "../canvas/routes";
 import { ensureModalDialog } from "./modal-dialog";
+import { consequentialPreview } from "./consequential-preview";
+import { contextConsentAction } from "../model/context-consent-state";
+import "./context-intelligence.css";
 import { beginRoutePopulation, completeRoutePopulation, recordPopulationSource } from "../performance";
 import { FORMA_SUPPORTED_LOCALES, formaLocaleFamily, setFormaLocale } from "./design-system/localization";
 import "./design-system/navigation";
@@ -234,6 +237,46 @@ export class FormaShell extends FormaElement {
     const session=this.store.session.get();const impersonation=session?.impersonation;if(!impersonation)return nothing;const action=this.store.ui.impersonationAction||this.i18n.t("impersonation.defaultAction", "change this fictional account");
     return html`<dialog class="modal impersonation-confirm-dialog" open closedby="any" aria-labelledby="impersonation-confirm-title" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)this.store.resolveImpersonatedInteraction(false);}} @cancel=${(event:Event)=>{event.preventDefault();this.store.resolveImpersonatedInteraction(false);}} @close=${()=>{if(this.store.ui.impersonationConfirmOpen)this.store.resolveImpersonatedInteraction(false);}}><div class="modal-card impersonation-confirm-card"><button class="icon-button modal-close" aria-label=${this.i18n.t("impersonation.cancelInteraction", "Cancel this interaction")} @click=${()=>this.store.resolveImpersonatedInteraction(false)}>${icon("close")}</button><span class="eyebrow">${this.i18n.t("impersonation.safeguard", "Fictional account safeguard")}</span><h2 id="impersonation-confirm-title">${this.i18n.t("impersonation.heading", "You’re acting as {name}", { name: "\u2068" + impersonation.fictionalUser.displayName + "\u2069" })}</h2><p>${this.i18n.t("impersonation.description", "You are about to {action}. This will change the saved mock account and become part of its durable history; it will not change {actor}’s regular account.", { action: "\u2068" + action + "\u2069", actor: "\u2068" + impersonation.actor.displayName + "\u2069" })}</p><div class="impersonation-confirm-note"><span>${icon("lock")}</span><div><b>${this.i18n.t("impersonation.confirmOnly", "Confirm this interaction only")}</b><p>${this.i18n.t("impersonation.confirmDetail", "Canceling, pressing Escape, closing the dialog, or clicking its backdrop prevents the interaction entirely.")}</p></div></div><footer><button class="button ghost" @click=${()=>this.store.resolveImpersonatedInteraction(false)}>${this.i18n.t("impersonation.cancel", "Cancel — do nothing")}</button><button class="button primary" @click=${()=>this.store.resolveImpersonatedInteraction(true)}>${this.i18n.t("impersonation.continue", "I understand, continue")}</button></footer></div></dialog>`;
   }
+  #planningConsent(){
+    const state=this.store.planningConsent.get();if(!state)return nothing;
+    const approved=state.submitted||Boolean(state.recoveryExecutionId)||Boolean(state.quote&&state.quote.status!=="quoted");
+    const action=state.quote?(state.submitted||state.recoveryExecutionId?{action:"retrieve",label:"context.consent.reuse",disabled:false}:contextConsentAction(state.quote.status,state.quote.providerAvailable,state.quote.canExecute)):null;
+    const canStartNew=state.quote?.status==="completed"&&state.quote.canPrepareNew&&this.store.canPreparePlanning();
+    const needsReceipt=Boolean(state.recoveredPlan&&(!state.quote||state.quote.status!=="completed"));
+    const close=async()=>{
+      if(this.store.planningConsent.get()?.id!==state.id)return;
+      const executionId=state.recoveryExecutionId??state.quote?.executionId,authorization=approved?this.store.captureAuthorizationScope():null,route=this.store.route.get();
+      this.querySelector<HTMLDialogElement>(".planning-consent-dialog")?.close();this.store.closePlanningConsent();
+      if(!approved||!executionId||!authorization)return;
+      await this.updateComplete;
+      await Promise.all([...this.querySelectorAll<HTMLElement&{updateComplete?:Promise<unknown>}>("forma-activity")].map(element=>element.updateComplete));
+      if(!this.isConnected||!this.store.authorizationScopeActive(authorization)||this.store.route.get()!==route||this.store.planningConsent.get())return;
+      const owner=this.ownerDocument,active=owner.activeElement as HTMLElement|null;
+      if(owner.querySelector?.("dialog:modal"))return;
+      // Native return already handles a still-connected opener, including free previews.
+      if(active&&active!==owner.body&&active.tagName!=="HTML"&&active.isConnected&&active.getClientRects().length)return;
+      const visible=(element:HTMLElement)=>element.isConnected&&!element.hidden&&!element.matches(":disabled")&&!element.closest("[inert],[hidden]")&&element.getClientRects().length>0;
+      const target=[...this.querySelectorAll<HTMLElement>("[data-planning-recovery-id]")].find(element=>element.getAttribute("data-planning-recovery-id")===executionId&&visible(element));
+      if(target){target.focus({preventScroll:true});return;}
+      const heading=this.querySelector<HTMLElement>("#main-content h1,main h1,[role='main'] h1")??this.querySelector<HTMLElement>("#main-content");
+      if(!heading||!visible(heading))return;
+      if(!heading.hasAttribute("tabindex")){heading.setAttribute("tabindex","-1");heading.addEventListener("blur",()=>heading.removeAttribute("tabindex"),{once:true});}
+      heading.focus({preventScroll:true});
+    };
+    return html`<dialog class="modal planning-consent-dialog" data-shell-modal open closedby="any" aria-labelledby="planning-consent-title" aria-describedby="planning-consent-description" @click=${(event:MouseEvent)=>{if(event.target===event.currentTarget)close();}} @keydown=${(event:KeyboardEvent)=>{if(event.key==="Escape"&&!event.isComposing){event.preventDefault();event.stopPropagation();close();}}} @cancel=${(event:Event)=>{event.preventDefault();close();}} @close=${(event:Event)=>{if(!(event.currentTarget as HTMLDialogElement).open&&this.store.planningConsent.get()?.id===state.id)void close();}}><section class="modal-card context-consent">
+      <button type="button" class="icon-button modal-close" aria-label=${this.i18n.t("action.close")} @click=${close}>${icon("close")}</button>
+      <h2 id="planning-consent-title">${this.i18n.t("planning.consent.title")}</h2><p id="planning-consent-description">${this.i18n.t("context.consent.description")}</p>
+      <blockquote dir="auto">${state.request.prompt}</blockquote>
+      ${state.recoveredPlan?html`<section aria-label=${this.i18n.t("planning.consent.recoveredTitle")}><h3>${this.i18n.t("planning.consent.recoveredTitle")}</h3><p role="status">${this.i18n.t("planning.consent.recoveredHint")}</p><p dir="auto">${state.recoveredPlan.interpretation}</p>${state.recoveredPlan.active_decision?html`<h4 dir="auto">${state.recoveredPlan.active_decision.label}</h4><p dir="auto">${state.recoveredPlan.active_decision.prompt}</p><p dir="auto">${state.recoveredPlan.active_decision.why}</p>`:nothing}<ol>${(state.recoveredPlan.suggested_blocks??[]).map((block)=>html`<li><strong dir="auto">${block.label}</strong><p dir="auto">${block.instruction}</p><p dir="auto">${block.reason}</p></li>`)}</ol>${state.recoveredPlan.hidden_until_later?.length?html`<details><summary>${this.i18n.t("planning.consent.later")}</summary><ul>${state.recoveredPlan.hidden_until_later.map((item)=>html`<li dir="auto">${item}</li>`)}</ul></details>`:nothing}</section>`:nothing}
+      ${state.quote?consequentialPreview(state.quote,this.i18n):nothing}
+      ${state.working?html`<p role="status">${this.i18n.t(approved?"planning.consent.checking":"planning.consent.preparing")}</p>`:nothing}
+      ${state.notice?html`<p role="alert">${this.i18n.t(state.notice==="uncertain"?"context.consent.uncertain":state.notice==="refresh"?"context.consent.refresh":state.notice==="not-submitted"?"context.consent.notSubmitted":"planning.consent.failed")}</p>`:nothing}
+      ${approved?html`<p>${this.i18n.t("planning.consent.closeHint")}</p>`:nothing}
+      <footer><button type="button" class="button ghost" @click=${close}>${this.i18n.t(approved?"planning.consent.closeReview":"action.cancel")}</button>
+        ${state.recoveredPlan&&!needsReceipt?nothing:state.quote&&action?html`<button type="button" class="button primary" ?disabled=${state.working||action.disabled} @click=${()=>void this.store.approvePlanningConsent()}>${this.i18n.t(action.action==="execute"?"planning.consent.approve":action.label)}</button>`:html`<button type="button" class="button primary" ?disabled=${state.working} @click=${()=>void this.store.previewPlanningConsent()}>${this.i18n.t(state.recoveryExecutionId?"planning.consent.retrieveExisting":"context.consent.preview")}</button>`}
+        ${canStartNew?html`<button type="button" class="button secondary" ?disabled=${state.working} @click=${()=>void this.store.newPlanningPreview()}>${this.i18n.t("planning.consent.newPreview")}</button>`:nothing}
+      </footer></section></dialog>`;
+  }
   async #generateFromCommand(){const readiness=await this.store.ensureGenerationReadiness("generate",{sourceSurface:"command-menu"});if(readiness?.status==="ready"||readiness?.status==="review"&&this.store.generationRiskAcknowledged(readiness.requestKey))return this.store.generate({sourceSurface:"command-menu"});this.store.toast(readiness?.status==="review"?"Review and acknowledge the generation warning in the document controls first.":readiness?.summary??"Generation readiness could not be confirmed.");}
   async #openContextComposer(){
     const projection=this.store.projection.get();if(!projection.documentId){this.store.toast("Open a document before adding a creative decision.");return;}
@@ -349,6 +392,7 @@ export class FormaShell extends FormaElement {
       ${this.store.ui.toast ? html`<div class="toast" role="status" aria-live="polite" popover="manual">${icon("check")} ${this.i18n.system(this.store.ui.toast)}</div>` : nothing}
       ${this.store.ui.commandOpen ? this.#commands() : nothing}
       ${this.store.ui.shareOpen&&this.store.canManageProjectShares()?this.#share():nothing}
+      ${this.#planningConsent()}
       ${this.store.ui.impersonationConfirmOpen ? this.#impersonationWarning() : nothing}
       ${session&&!session.policy.accepted&&isMaking?this.#terms():nothing}
       <forma-attention-observer></forma-attention-observer>

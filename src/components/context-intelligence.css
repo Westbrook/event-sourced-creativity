@@ -19,6 +19,11 @@ forma-context-intelligence{display:block;min-inline-size:0}
 .context-consent details{min-inline-size:0;overflow-wrap:anywhere}
 .context-consent summary{min-block-size:44px;padding-block:.6rem;cursor:pointer}
 .context-consent small{color:var(--muted);line-height:1.5}
+.planning-consent-dialog .modal-card{inline-size:min(44rem,calc(100vw - 2rem));max-block-size:88dvh;overflow:auto;overflow-wrap:anywhere}
+.planning-consent-dialog h2{padding-inline-end:3rem}
+.planning-consent-dialog blockquote{margin:0;padding:.8rem;border:1px solid var(--line);border-radius:.5rem;white-space:pre-wrap}
+.planning-consent-dialog footer{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:.5rem}
+.planning-consent-dialog :is(.button,.icon-button){min-inline-size:44px;min-block-size:44px}
 .context-intelligence-dialog .button{min-block-size:44px}
 .context-intelligence-dialog .icon-button{min-inline-size:44px;min-block-size:44px}
 .context-intelligence-proposal>label,.context-intelligence-fields>label{display:grid;gap:.35rem;font-size:var(--type-caption)}

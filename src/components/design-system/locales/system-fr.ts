@@ -6047,4 +6047,20 @@ const messages: Record<string, string> = {
   "system.auto.bcxn5b.27": "{count} générations en cours",
 };
 
+Object.assign(messages, {
+  "system.auto.1fbfkdy.27": "L’opération est déjà terminée.",
+  "system.auto.dkozxv.18": "Opération arrêtée.",
+  "system.auto.12qradp.23": "Opération interrompue de force.",
+  "system.auto.11egqjw.30": "L’arrêt n’est pas encore confirmé.",
+  "system.auto.ikltxe.71": "Aucune demande n’a été envoyée au fournisseur. Une réserve budgétaire reste bloquée en attente de libération.",
+  "system.auto.11m81nk.72": "La demande au fournisseur peut encore être facturée ; sa réserve budgétaire est maintenue.",
+  "system.auto.za29fw.36": "La réserve budgétaire inutilisée a été libérée.",
+  "system.auto.1qrwzxy.58": "Aucun budget n’a été réservé et aucune demande n’a été envoyée au fournisseur.",
+  "system.auto.lso8oj.64": "La consommation vérifiée du fournisseur reste facturée ; aucune réserve budgétaire ne subsiste.",
+  "system.auto.1f1dkk2.57": "La facturation n’est pas encore confirmée. Consultez Activité pour plus de détails.",
+  "system.auto.1eape3u.21": "La planification a été arrêtée.",
+  "system.auto.1hytdg0.74": "La demande existante au fournisseur peut encore être facturée ; sa réserve est maintenue.",
+  "system.auto.ayjo92.48": "La planification a été arrêtée avant l’envoi au fournisseur.",
+});
+
 export default messages;

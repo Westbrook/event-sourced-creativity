@@ -312,9 +312,15 @@ function providerFacingAssistantContext<T extends{blocks:Array<Record<string,unk
   const activeBlocks=input.blocks.filter(promptFactIsActive);
   const facts=activeBlocks.map((block)=>({...block,block_id:block.block_id??block.id??""}));
   const {plan}=providerFacingCombinedContextPlan({facts,relationships:input.relationships??[]});
+  // Reuse the rendering compiler's request-local labels/aliases. Typed Library
+  // references and action participants carry meaning even without a context group.
+  const semantic=providerFacingRenderingContext({facts,relationships:(input.relationships??[]).filter((relation)=>relation.removed!==true&&relation.kind!=="context_contains")}) as {relationships?:Array<Record<string,unknown>>};
+  const relationshipPlan=semantic.relationships??[];
   const assistantInput={...input};delete assistantInput.relationships;
+  const publicInput=providerFacingCreativeContext({...assistantInput,blocks:activeBlocks}) as T;
   return{
-    ...providerFacingCreativeContext({...assistantInput,blocks:activeBlocks}) as T,
+    ...publicInput,
+    ...(relationshipPlan.length?{blocks:publicInput.blocks.map((block,index)=>({...block,decision_key:`decision_${index+1}`})),relationship_plan:relationshipPlan}:{}),
     ...(plan.length?{combined_context_plan:plan}:{}),
   };
 }
@@ -473,16 +479,38 @@ export async function respondToCreativeChat(env:WorkerEnv,userId:string,input:{d
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output:parsed,raw:text,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
-export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input:{intent:string;documentTitle:string;blocks:Array<Record<string,unknown>>;relationships?:Array<Record<string,unknown>>;locale?:string;signal?:AbortSignal;onBeforeProviderRequest?:()=>Promise<void>}) {
-  if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
-  const started=Date.now();
+export type AdaptivePlanningInput={intent:string;documentTitle:string;blocks:Array<Record<string,unknown>>;relationships?:Array<Record<string,unknown>>;locale?:string};
+
+/** Exact provider request construction is free; quote and dispatch share this representation. */
+export async function buildAdaptivePlanningRequest(userId:string,input:AdaptivePlanningInput,model:string):Promise<Record<string,unknown>>{
   const responseLocale=assistantResponseLocale(input.locale);
-  const providerRequest=JSON.stringify({
-    model:env.OPENAI_MODEL??"gpt-5.6-terra",
-    instructions:`You structure an adaptive creative-context interface. Write every user-facing interpretation, decision label, decision prompt, explanation, suggestion label, instruction, relationship, and future suggestion in the user's selected language (${responseLocale}). Preserve user-authored titles, quoted text, names, and creative decisions verbatim; never translate machine identifiers, block type values, or structured field names. Interpret the user's broad intent together with the currently authored blocks. Propose the next useful decision and 2–6 concise context blocks across intent, scene, craft, evidence, or constraints. Use only the supplied block type vocabulary. Subtypes should match the system suggestions when practical. Explain product-facing reasons, never hidden chain-of-thought. Do not claim proposals were authored and do not mutate anything. ${creativePromptGuardrails()}`,
+  return{
+    model,
+    instructions:`You structure an adaptive creative-context interface. Write every user-facing interpretation, decision label, decision prompt, explanation, suggestion label, instruction, relationship, and future suggestion in the user's selected language (${responseLocale}). Preserve user-authored titles, quoted text, names, and creative decisions verbatim; never translate machine identifiers, block type values, or structured field names. Interpret the user's broad intent together with the currently authored blocks. Treat relationship_plan as binding: its target supports its source; style_reference guides treatment, subject_reference describes appearance, and action_participant preserves the participant's role and order. decision_key locates a block only within this request. Do not turn a targeted reference into global style or silently lose a typed relationship. Propose the next useful decision and 2–6 concise context blocks across intent, scene, craft, evidence, or constraints. Use only the supplied block type vocabulary. Subtypes should match the system suggestions when practical. Explain product-facing reasons, never hidden chain-of-thought. Do not claim proposals were authored and do not mutate anything. ${creativePromptGuardrails()}`,
     input:JSON.stringify({...providerFacingAssistantContext(input),block_vocabulary:BLOCK_TYPES.map((item)=>({type:item.type,description:item.description,subtypes:item.subtypes}))}),
     text:{verbosity:"low",format:{type:"json_schema",name:"forma_adaptive_structure",strict:true,schema:adaptiveStructureSchema}},reasoning:{effort:"low"},max_output_tokens:1400,store:false,safety_identifier:await safetyIdentifier(userId),
-  });
+  };
+}
+
+export const MAX_ADAPTIVE_PLANNING_RESPONSE_BYTES=64*1024;
+const adaptiveObjectWithKeys=(value:unknown,keys:readonly string[]):value is Record<string,unknown>=>value!==null&&typeof value==="object"&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every((key)=>Object.hasOwn(value,key));
+/** Pure, lossless schema validation. The caller must durably record paid usage before decoding. */
+export function decodeAdaptivePlanningResponse(rawText:string):AdaptiveStructure{
+  if(typeof rawText!=="string")throw new Error("provider_returned_invalid_adaptive_structure");
+  if(!rawText)throw new Error("provider_returned_no_output");
+  if(rawText.length>MAX_ADAPTIVE_PLANNING_RESPONSE_BYTES||new TextEncoder().encode(rawText).byteLength>MAX_ADAPTIVE_PLANNING_RESPONSE_BYTES)throw new Error("provider_returned_adaptive_structure_too_large");
+  let value:unknown;try{value=JSON.parse(rawText);}catch{throw new Error("provider_returned_invalid_json");}
+  const kind=(type:unknown)=>typeof type==="string"&&BLOCK_TYPES.some((definition)=>definition.type===type),strings=(record:Record<string,unknown>,keys:readonly string[])=>keys.every((key)=>typeof record[key]==="string");
+  if(!adaptiveObjectWithKeys(value,["interpretation","active_decision","suggested_blocks","hidden_until_later"])||typeof value.interpretation!=="string"
+    ||!adaptiveObjectWithKeys(value.active_decision,["type","label","prompt","why"])||!kind(value.active_decision.type)||!strings(value.active_decision,["label","prompt","why"])
+    ||!Array.isArray(value.suggested_blocks)||value.suggested_blocks.length<2||value.suggested_blocks.length>6||!value.suggested_blocks.every((block)=>adaptiveObjectWithKeys(block,["type","subtype","label","instruction","reason","relationship_to"])&&kind(block.type)&&strings(block,["subtype","label","instruction","reason","relationship_to"]))
+    ||!Array.isArray(value.hidden_until_later)||value.hidden_until_later.length>5||!value.hidden_until_later.every((item)=>typeof item==="string"))throw new Error("provider_returned_invalid_adaptive_structure");
+  return value as AdaptiveStructure;
+}
+
+export async function structureAdaptiveContext(env:WorkerEnv,userId:string,input:AdaptivePlanningInput&{signal?:AbortSignal;onBeforeProviderRequest?:()=>Promise<void>}) {
+  if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
+  const started=Date.now(),providerRequest=JSON.stringify(await buildAdaptivePlanningRequest(userId,input,env.OPENAI_MODEL??"gpt-5.6-terra"));
   await input.onBeforeProviderRequest?.();
   const response=await openAIRequest("https://api.openai.com/v1/responses",{method:"POST",headers:openAIHeaders(env),signal:input.signal,body:providerRequest});
   const body=await response.json() as OpenAIResponse;if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`);

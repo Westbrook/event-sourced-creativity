@@ -7,6 +7,53 @@ export type ProviderFailureAction = "edit_request" | "check_credentials" | "chec
 export type DocumentJobError = { code: string; category: ProviderFailureCategory; scope: ProviderFailureScope; action: ProviderFailureAction; message: string; retryable: boolean; retryAfterMs: number | null; requestId: string | null; httpStatus: number | null; riskCategories?: string[]; contributingBlockIds?: string[]; contributingReferenceIds?: string[]; probe?: string | null; validationIssues?: import("./presentation-candidates.ts").PresentationCandidateValidationIssue[] };
 export type PromptFanMember = { jobId: string; promptTechnique: "prose" | "bullets" | "json" | "xml"; status: Exclude<DocumentJobStatus, "partial">; error: DocumentJobError | null; moderationPromptRef: string | null; attemptCount: number; updatedAt: string };
 
+/** A stop is not a refund: these states describe existing canonical reservations only. */
+export type DocumentJobStopBudget = {
+  reservationStatus: "not-reserved" | "released" | "retained" | "settled" | "unknown";
+  billingStatus: "not-incurred" | "pending" | "settled" | "unknown";
+};
+
+/** Only an exact canonical ledger pair proves that no reservation remains held. */
+export function documentJobHasNoBudgetHold(budget?:DocumentJobStopBudget):boolean {
+  return budget?.reservationStatus === "settled" && budget.billingStatus === "settled"
+    || (budget?.reservationStatus === "released" || budget?.reservationStatus === "not-reserved") && budget.billingStatus === "not-incurred";
+}
+
+export function documentJobStopBudgetMessage(budget?: DocumentJobStopBudget): string {
+  if (budget?.reservationStatus === "retained") return budget.billingStatus === "not-incurred"
+    ? "Provider work was not submitted. A budget hold remains pending release."
+    : "The provider request may still be billable; its budget hold is retained.";
+  if (budget?.reservationStatus === "released" && budget.billingStatus === "not-incurred") return "Unused reserved budget was released.";
+  if (budget?.reservationStatus === "not-reserved" && budget.billingStatus === "not-incurred") return "No budget was reserved and no provider work was submitted.";
+  if (budget?.reservationStatus === "settled" && budget.billingStatus === "settled") return "Verified provider usage remains charged; no budget hold remains.";
+  return "Billing is not yet confirmed. Check Activity for details.";
+}
+
+/** Current response-only ledger state, separate from the historical cancellation receipt. */
+export function planningStopBudget(result:unknown):DocumentJobStopBudget|undefined{
+  const candidate=result&&typeof result==="object"?(result as Record<string,unknown>).planningStopBudget:undefined;
+  if(!candidate||typeof candidate!=="object"||Array.isArray(candidate))return;
+  const value=candidate as Record<string,unknown>;
+  if(typeof value.reservationStatus!=="string"||typeof value.billingStatus!=="string"||!["not-reserved","released","retained","settled","unknown"].includes(value.reservationStatus)||!["not-incurred","pending","settled","unknown"].includes(value.billingStatus))return;
+  return{reservationStatus:value.reservationStatus as DocumentJobStopBudget["reservationStatus"],billingStatus:value.billingStatus as DocumentJobStopBudget["billingStatus"]};
+}
+
+/** Presentation-only recognition of canonical Forma copy; never reconstructs billing state from text. */
+const DOCUMENT_JOB_STOP_EXPLANATIONS=new Set([
+  documentJobStopBudgetMessage({reservationStatus:"retained",billingStatus:"not-incurred"}),
+  documentJobStopBudgetMessage({reservationStatus:"retained",billingStatus:"pending"}),
+  documentJobStopBudgetMessage({reservationStatus:"released",billingStatus:"not-incurred"}),
+  documentJobStopBudgetMessage({reservationStatus:"not-reserved",billingStatus:"not-incurred"}),
+  documentJobStopBudgetMessage({reservationStatus:"settled",billingStatus:"settled"}),
+  documentJobStopBudgetMessage(),
+  "The existing provider request may still be billable; its hold is retained.",
+]);
+export function documentJobStopStatusParts(message:string,budget?:DocumentJobStopBudget):string[]|null{
+  if(message==="Planning was stopped before provider submission.")return budget?["Planning was stopped.",documentJobStopBudgetMessage(budget)]:[message];
+  const prefix="Planning was stopped.",explanation=message.startsWith(prefix+" ")?message.slice(prefix.length+1):"";
+  return DOCUMENT_JOB_STOP_EXPLANATIONS.has(explanation)?[prefix,budget?documentJobStopBudgetMessage(budget):explanation]:null;
+}
+
 export type GenerationFailureGuidance = {
   title: string;
   summary: string;
@@ -19,6 +66,10 @@ export type DocumentJob = {
   jobId: string;
   documentId: string;
   canvasId?: string | null;
+  /** Exact existing paid-planning identity; never a new-purchase request. */
+  planningExecutionId?: string;
+  planningProjectScope?: boolean;
+  planningLocale?: string;
   kind: DocumentJobKind;
   status: DocumentJobStatus;
   sourceSurface: string;
@@ -267,6 +318,11 @@ const TRUSTED_GENERATION_FAILURE_FALLBACKS = new Set([
 ]);
 
 export function generationFailureGuidance(detail: DocumentJobError | null, fallback = "", job?: Pick<DocumentJob,"kind"|"status"|"stage"|"result">) : GenerationFailureGuidance {
+  if(detail?.code==="adaptive_canceled"||detail?.code==="adaptive_force_failed"){
+    const budget=planningStopBudget(job?.result);
+    const summary=budget?"Planning was stopped. "+documentJobStopBudgetMessage(budget):documentJobStopStatusParts(detail.message)?.join(" ")??"Planning was stopped. "+documentJobStopBudgetMessage();
+    return{title:"Planning was stopped.",summary,actionLabel:null,actionUrl:null,retryAllowed:false};
+  }
   const result=job?.result&&typeof job.result==="object"?job.result:{};
   const receipt=result.generationReceipt&&typeof result.generationReceipt==="object"&&!Array.isArray(result.generationReceipt)?result.generationReceipt as Record<string,unknown>:{};
   const providerStatus=typeof receipt.provider_request_status==="string"?receipt.provider_request_status:"";

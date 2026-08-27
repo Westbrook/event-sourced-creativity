@@ -62,17 +62,24 @@ const allowedProtectedPlacement = (value: unknown) => value === "opening"
   || value === "opening_and_closing";
 
 /** Every declared license boundary is authoritative; malformed metadata never widens rights. */
-export function creativeContextRightsIssue(properties: Record<string, unknown>, now = Date.now()): "revoked" | "invalid" | "expired" | null {
+export function creativeContextRightsValidity(properties: Record<string, unknown>, now = Date.now()): {issue:"revoked"|"invalid"|"expired"|null;validUntil:string|null} {
   if (properties.rights_revoked === true || properties.source_rights_revoked === true
     || ["revoked", "denied", "unlicensed"].includes(String(properties.rights_class ?? "").trim().toLowerCase())
-    || ["revoked", "denied"].includes(String(properties.rights_status ?? "").trim().toLowerCase())) return "revoked";
+    || ["revoked", "denied"].includes(String(properties.rights_status ?? "").trim().toLowerCase())) return {issue:"revoked",validUntil:null};
+  let validUntil:number|null=null;
   for (const field of ["source_expires_at", "license_expires_at", "rights_expires_at"] as const) {
     const value = properties[field];
     if (value === undefined || value === null || value === "") continue;
-    if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return "invalid";
-    if (Date.parse(value) <= now) return "expired";
+    if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return {issue:"invalid",validUntil:null};
+    const deadline=Date.parse(value);
+    if (deadline <= now) return {issue:"expired",validUntil:null};
+    validUntil=validUntil===null?deadline:Math.min(validUntil,deadline);
   }
-  return null;
+  return {issue:null,validUntil:validUntil===null?null:new Date(validUntil).toISOString()};
+}
+
+export function creativeContextRightsIssue(properties: Record<string, unknown>, now = Date.now()): "revoked" | "invalid" | "expired" | null {
+  return creativeContextRightsValidity(properties,now).issue;
 }
 
 /** Actionable readiness is derived from durable evidence, never a decorative score. */

@@ -94,6 +94,14 @@ async function productionWorker() {
   return { database, environment, request, context, drainBackground };
 }
 
+function adaptivePlanningClient(request,headers,body){
+  const send=(action,quote)=>request("/api/document-jobs/adaptive",{method:"POST",headers:{...headers,"content-type":"application/json"},body:JSON.stringify({...body,action,...(quote?{executionId:quote.executionId,approvedBindingHash:quote.bindingHash}:{})})});
+  return{
+    quote:async()=>{const response=await send("quote");assert.equal(response.status,200,JSON.stringify(await response.clone().json()));return(await response.json()).quote;},
+    execute:quote=>send("execute",quote),
+  };
+}
+
 async function specialistIdentity(database,request,userId,capabilities=[]){
   const headers={"oai-authenticated-user-id":userId,"oai-authenticated-user-email":`${userId}@example.test`};
   assert.equal((await request("/api/session",{headers})).status,200);
@@ -1887,7 +1895,9 @@ test("customer workspace administration enforces verified invitations, exact pro
   assert.equal((await request(`/api/media/${encodeURIComponent(referenceKey)}`,{headers:scoped})).status,200,"existing owner references remain available inside their exact shared project");
   assert.equal((await request(`/api/media/${encodeURIComponent(secretKey)}`,{headers:scoped})).status,403);
   assert.equal((await request(`/api/workspaces/${organizationB}/projects/${projectB}/events`,{headers:scoped})).status,403);
-  for(const path of ["/api/document-jobs","/api/shares"]){database.reset();assert.equal((await request(path,{headers:scoped})).status,403,path);assert.equal(database.writeCount(),0,path);}
+  database.reset();const readerPlanningJobs=await request("/api/document-jobs",{headers:scoped});assert.equal(readerPlanningJobs.status,200);assert.deepEqual((await readerPlanningJobs.json()).jobs,[]);assert.equal(database.writeCount(),0,"a reader sees no other actor's planning jobs and polling stays read-only");
+  database.reset();assert.equal((await request("/api/shares",{headers:scoped})).status,403);assert.equal(database.writeCount(),0);
+  database.reset();assert.equal((await request("/api/document-jobs",json(scoped,{kind:"generate",documentId:"doc-atmosphere",payload:{}}))).status,403);assert.equal(database.writeCount(),0,"readable planning history never grants a new paid request");
   database.reset();assert.equal((await request("/api/generation-readiness",json(scoped,{documentId:"doc-atmosphere"}))).status,403);assert.equal(database.writeCount(),0);
   for(const path of ["/api/generation-readiness/provider/refresh","/api/generation-readiness/prompt-techniques"]){
     database.reset();assert.equal((await request(path,json(scoped,{documentId:"doc-atmosphere"}))).status,403,path);
@@ -2008,7 +2018,8 @@ test("viewer-only independent review, governed release, source attestation, arti
   const revise=(identity,markdown,expectedRevision)=>request("/api/artifacts/governed-output",json(identity,{markdown,expectedRevision},"PATCH"));
   assert.equal((await append(reviewerScope,action("ArtifactApproved"))).status,403,"viewer has no ambient approval authority");
   assert.equal((await revise(reviewerScope,"Forbidden viewer edit",0)).status,403,"read-only reviewer cannot alter the retained output");
-  assert.equal((await request("/api/document-jobs",{headers:reviewerScope})).status,403,"review access does not imply provider job access");
+  database.reset();const reviewerPlanningJobs=await request("/api/document-jobs",{headers:reviewerScope});assert.equal(reviewerPlanningJobs.status,200);assert.deepEqual((await reviewerPlanningJobs.json()).jobs,[]);assert.equal(database.writeCount(),0,"review access exposes neither another actor's jobs nor new writes");
+  database.reset();assert.equal((await request("/api/document-jobs",json(reviewerScope,{kind:"generate",documentId:"doc-atmosphere",payload:{}}))).status,403);assert.equal(database.writeCount(),0,"review access never grants paid queue admission");
   const unapprovedShare=await request("/api/shares",json(ownerScope,{resourceKind:"document",documentId:"doc-atmosphere",projectId:"project-atmosphere"}));assert.equal(unapprovedShare.status,409,JSON.stringify(await unapprovedShare.json()));
   const unapprovedExport=await append(reviewerScope,{type:"DocumentArtifactExported",payload:{artifact_id:"governed-output",document_id:"doc-atmosphere",format:"markdown"}});assert.equal(unapprovedExport.status,409);
   assert.equal((await request(memberPath,json(owner,{reviewAccess:true},"PATCH"))).status,200,"customer owner can delegate approval directly to a viewer");
@@ -2115,7 +2126,9 @@ test("shared Canvas permissions, actor-isolated outputs, removal, restoration, a
     .run(crypto.randomUUID(),"canvas-project-editor","project.output.request",organizationId,projectAccessId,"project-atmosphere","canvas-project-owner",timestamp,timestamp);
   const viewerSession=await(await request("/api/session",{headers:scoped})).json();assert.equal(viewerSession.canvas.access,true);assert.equal(viewerSession.projectContext.permissions.includes("project.canvas.use"),true);
   assert.equal(viewerSession.projectContext.permissions.includes("project.output.request"),false,"viewer membership remains a hard ceiling even after a separately supplied output grant");
-  for(const path of ["/api/generation-readiness","/api/document-jobs"]){database.reset();assert.equal((await request(path,{method:path==="/api/generation-readiness"?"POST":"GET",headers:scoped})).status,403);assert.equal(database.writeCount(),0,"an explicit output grant cannot elevate a project viewer");}
+  database.reset();assert.equal((await request("/api/generation-readiness",json(scoped,{documentId:"doc-atmosphere"}))).status,403);assert.equal(database.writeCount(),0,"an explicit output grant cannot elevate a project viewer");
+  database.reset();const viewerPlanningJobs=await request("/api/document-jobs",{headers:scoped});assert.equal(viewerPlanningJobs.status,200);assert.deepEqual((await viewerPlanningJobs.json()).jobs,[]);assert.equal(database.writeCount(),0,"the viewer can only discover their own already-approved planning jobs");
+  database.reset();assert.equal((await request("/api/document-jobs",json(scoped,{kind:"generate",documentId:"doc-atmosphere",payload:{}}))).status,403);assert.equal(database.writeCount(),0,"an explicit output grant still cannot admit a project viewer's paid request");
   assert.equal((await request("/canvas",{headers:scoped})).status,200);
   const visible=await(await request("/api/events?after=0&limit=5000&content=0",{headers:scoped})).json();assert.ok(visible.events.some((event)=>event.type==="CanvasCreated"&&event.payload.canvas_id==="shared-board"));assert.doesNotMatch(JSON.stringify(visible),/PRIVATE PROJECT CARD|private-board|private-item/);
   for(const event of [{type:"ObjectExported",payload:{object_id:"shared-output",destination_class:"download",format:"image/png"}},{type:"DocumentArtifactExported",payload:{artifact_id:"shared-artifact",document_id:"doc-atmosphere",format:"markdown"}}]){
@@ -2125,7 +2138,7 @@ test("shared Canvas permissions, actor-isolated outputs, removal, restoration, a
   const makeEvent=(type,payload,id=crypto.randomUUID())=>({type,payload:{project_id:"project-atmosphere",canvas_id:"shared-board",history_owner_id:"canvas-project-editor",client_event_id:id,...payload}});
   const register=makeEvent("CanvasRegisterSet",{item_id:"shared-item",operation:{object:{item_id:"shared-item"},prop:"x",value:120,hlc:{pt:Date.now(),c:0,site:"canvas-project-editor:device"}}},"first-collaborative-receipt");
   database.reset();assert.equal((await request("/api/events",json(scoped,{action:"canvas_sync",events:[register]}))).status,403);assert.equal(database.writeCount(),0,"Canvas viewers cannot mutate a board");
-  database.reset();assert.equal((await request("/api/document-jobs",{headers:scoped})).status,403);assert.equal(database.writeCount(),0,"project viewers cannot inspect another actor's output jobs");
+  database.reset();const isolatedViewerJobs=await request("/api/document-jobs",{headers:scoped});assert.equal(isolatedViewerJobs.status,200);assert.deepEqual((await isolatedViewerJobs.json()).jobs,[]);assert.equal(database.writeCount(),0,"project viewers cannot inspect another actor's output jobs");
   assert.equal((await request("/api/portfolio/product/insights",{headers:collaborator})).status,200,"the collaborator has real principal reporting access outside the selected project");
   database.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id=?").run("canvas-project-editor");
   assert.equal((await request("/api/analytics",{headers:collaborator})).status,200,"an authorized principal can use account analytics outside the selected project");
@@ -2402,7 +2415,7 @@ test("managed pilots enforce named participants, whole-pilot spending, prospecti
 });
 
 test("controlled pilot authorization remains atomic when enrollment changes during spending, project edits, or uploads",async()=>{
-  const {database,environment,request}=await productionWorker();
+  const {database,environment,request,drainBackground}=await productionWorker();
   const owner=await specialistIdentity(database,request,"pilot-boundary-owner"),author=await specialistIdentity(database,request,"pilot-boundary-author");
   const json=(headers,body)=>({method:"POST",headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
   for(const identity of [owner,author])assert.equal((await request("/api/events?after=0&content=0",{headers:identity})).status,200);
@@ -2434,7 +2447,40 @@ test("controlled pilot authorization remains atomic when enrollment changes duri
     try{assert.equal(await claimCostBudgetReservation(environment,"pilot-boundary-author",reservation.reservationId),false,`${condition.name} between scope inspection and execution never reaches the provider`);assert.equal(interleaved,true,condition.name);assert.equal(database.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(reservation.reservationId).status,"released",`${condition.name} releases the abandoned claim`);assert.equal(database.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=?").get("pilot-boundary-author",`pilot:${cohort.cohortId}`).reserved_microusd,0,`${condition.name} never strands fixed pilot spending`);}finally{environment.DB.prepare=previousPrepare;condition.restore();}
   }
   environment.OPENAI_API_KEY="synthetic-pilot-no-provider-calls";const originalFetch=globalThis.fetch;let providerCalls=0;globalThis.fetch=async()=>{providerCalls+=1;return Response.json({error:{message:"provider must not receive withdrawn pilot work"}},{status:500});};
-  try{for(const [action,body] of [["chat",{action:"chat",documentId:"doc-atmosphere",message:"Can you clarify this direction?",livePreview:false,budgetAcknowledged:true}],["structure_adaptive",{action:"structure_adaptive",documentId:"doc-atmosphere",prompt:"Clarify the current project decisions.",budgetAcknowledged:true}],["preview",{action:"preview",documentId:"doc-atmosphere",budgetAcknowledged:true}],["generate",{action:"generate",documentId:"doc-atmosphere",budgetAcknowledged:true}]]){const previousPrepare=environment.DB.prepare;let deniedAtExecution=false;environment.DB.prepare=function(sql){const prepared=previousPrepare.call(this,sql);if(sql.startsWith("UPDATE cost_budget_reservations SET status='executing'")){const previousBind=prepared.bind.bind(prepared);prepared.bind=(...values)=>{const bound=previousBind(...values),previousRun=bound.run.bind(bound);bound.run=async()=>{database.sqlite.prepare("UPDATE pilot_cohorts SET status='paused' WHERE cohort_id=?").run(cohort.cohortId);deniedAtExecution=true;return previousRun();};return bound;};}return prepared;};try{const response=await request("/api/events",json(owner,body));assert.equal(deniedAtExecution,true,`${action} attempts a real guarded provider claim`);assert.equal(response.status,403,`${action} stops when its cohort pauses immediately before provider execution`);assert.equal((await response.json()).error,"active_pilot_participation_required");assert.equal(providerCalls,0,`${action} never invokes an external provider after its authorization changes`);assert.equal(database.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=?").get("pilot-boundary-owner",`pilot:${cohort.cohortId}`).reserved_microusd,0,`${action} releases pilot spending`);assert.equal(database.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("pilot-boundary-owner").reserved_tokens,0,`${action} releases token spending`);}finally{environment.DB.prepare=previousPrepare;database.sqlite.prepare("UPDATE pilot_cohorts SET status='active' WHERE cohort_id=?").run(cohort.cohortId);}}}finally{globalThis.fetch=originalFetch;}
+  try{for(const [action,body] of [["chat",{action:"chat",documentId:"doc-atmosphere",message:"Can you clarify this direction?",livePreview:false,budgetAcknowledged:true}],["preview",{action:"preview",documentId:"doc-atmosphere",budgetAcknowledged:true}],["generate",{action:"generate",documentId:"doc-atmosphere",budgetAcknowledged:true}]]){const previousPrepare=environment.DB.prepare;let deniedAtExecution=false;environment.DB.prepare=function(sql){const prepared=previousPrepare.call(this,sql);if(sql.startsWith("UPDATE cost_budget_reservations SET status='executing'")){const previousBind=prepared.bind.bind(prepared);prepared.bind=(...values)=>{const bound=previousBind(...values),previousRun=bound.run.bind(bound);bound.run=async()=>{database.sqlite.prepare("UPDATE pilot_cohorts SET status='paused' WHERE cohort_id=?").run(cohort.cohortId);deniedAtExecution=true;return previousRun();};return bound;};}return prepared;};try{const response=await request("/api/events",json(owner,body));assert.equal(deniedAtExecution,true,`${action} attempts a real guarded provider claim`);assert.equal(response.status,403,`${action} stops when its cohort pauses immediately before provider execution`);assert.equal((await response.json()).error,"active_pilot_participation_required");assert.equal(providerCalls,0,`${action} never invokes an external provider after its authorization changes`);assert.equal(database.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='pilot_user' AND scope_id=? AND period=?").get("pilot-boundary-owner",`pilot:${cohort.cohortId}`).reserved_microusd,0,`${action} releases pilot spending`);assert.equal(database.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("pilot-boundary-owner").reserved_tokens,0,`${action} releases token spending`);}finally{environment.DB.prepare=previousPrepare;database.sqlite.prepare("UPDATE pilot_cohorts SET status='active' WHERE cohort_id=?").run(cohort.cohortId);}}
+    const selected=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST",headers:owner});
+    assert.equal(selected.status,200,JSON.stringify(await selected.clone().json()));
+    const ownerScoped={...owner,cookie:selected.headers.get("set-cookie")?.split(";")[0]??""};
+    const adaptive=adaptivePlanningClient(request,ownerScoped,{projectId:"project-atmosphere",documentId:"doc-atmosphere",sourceSurface:"adaptive",projectScope:false,prompt:"Clarify the current project decisions.",locale:"en"});
+    const quote=await adaptive.quote();assert.equal(quote.canExecute,true);assert.equal(quote.workspaceId,organizationId);
+    const previousPrepare=environment.DB.prepare;let deniedAtAdaptiveSubmit=false;
+    environment.DB.prepare=function(sql){
+      const statement=previousPrepare.call(this,sql);if(!/^\s*UPDATE consequential_execution_steps SET status='submitting'/u.test(sql))return statement;
+      const bind=statement.bind.bind(statement);statement.bind=(...values)=>{
+        const bound=bind(...values),run=bound.run.bind(bound);bound.run=async()=>{
+          assert.equal(deniedAtAdaptiveSubmit,false,"The original approved step has only one submission boundary");
+          assert.equal(database.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(quote.executionId+":usd:0").status,"executing");
+          assert.equal(database.sqlite.prepare("SELECT status FROM budget_reservations WHERE reservation_id=?").get(quote.executionId+":tokens:0").status,"active");
+          database.sqlite.prepare("UPDATE pilot_cohorts SET status='paused' WHERE cohort_id=?").run(cohort.cohortId);deniedAtAdaptiveSubmit=true;
+          return run();
+        };return bound;
+      };return statement;
+    };
+    try{
+      const accepted=await adaptive.execute(quote);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
+      assert.equal((await accepted.json()).job.jobId,quote.executionId);await drainBackground();
+      assert.equal(deniedAtAdaptiveSubmit,true,"Adaptive planning reaches the real guarded approved provider step");
+      const job=database.sqlite.prepare("SELECT status,correlation_id,error_message FROM document_jobs WHERE job_id=?").get(quote.executionId);
+      assert.equal(job.status,"failed");assert.equal(job.correlation_id,quote.executionId);assert.equal(job.error_message,"context_authorization_changed");
+      const execution=database.sqlite.prepare("SELECT status FROM consequential_executions WHERE execution_id=?").get(quote.executionId),step=database.sqlite.prepare("SELECT status FROM consequential_execution_steps WHERE execution_id=? AND step_index=0").get(quote.executionId);
+      assert.equal(execution.status,"failed");assert.equal(step.status,"not-submitted");
+      assert.equal(database.sqlite.prepare("SELECT status FROM budget_reservations WHERE reservation_id=?").get(quote.executionId+":tokens:0").status,"released");
+      assert.equal(database.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(quote.executionId+":usd:0").status,"released");
+      for(const[scope,scopeId]of[["pilot_user","pilot-boundary-owner"],["pilot_org",cohort.cohortId]])assert.equal(database.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope=? AND scope_id=? AND period=?").get(scope,scopeId,`pilot:${cohort.cohortId}`).reserved_microusd,0,"Paused adaptive work releases each fixed pilot envelope");
+      assert.equal(database.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=? AND period=?").get("pilot-boundary-owner",quote.period).reserved_tokens,0);
+      assert.equal(providerCalls,0,"Pausing the cohort at the last SQL boundary never invokes the provider");
+    }finally{environment.DB.prepare=previousPrepare;await drainBackground();database.sqlite.prepare("UPDATE pilot_cohorts SET status='active' WHERE cohort_id=?").run(cohort.cohortId);}
+}finally{globalThis.fetch=originalFetch;}
   const membershipId=database.sqlite.prepare("SELECT membership_id FROM project_memberships WHERE project_access_id=? AND user_id=?").get(projectAccessId,"pilot-boundary-author").membership_id;
   const reviewPermission=await request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/members/${membershipId}`,{method:"PATCH",headers:{...owner,"content-type":"application/json"},body:JSON.stringify({reviewAccess:true})});assert.equal(reviewPermission.status,200);
   database.sqlite.prepare("UPDATE pilot_participants SET role='reviewer' WHERE participant_id=?").run(participantId);
@@ -2454,7 +2500,7 @@ test("controlled pilot authorization remains atomic when enrollment changes duri
 });
 
 test("activating a controlled pilot closes existing legacy shares and excludes previously unattested source material",async()=>{
-  const {database,environment,request}=await productionWorker();const owner=await specialistIdentity(database,request,"pilot-transition-owner");
+  const {database,environment,request,drainBackground}=await productionWorker();const owner=await specialistIdentity(database,request,"pilot-transition-owner");
   assert.equal((await request("/api/events?after=0&content=0",{headers:owner})).status,200);
   const json=(headers,body)=>({method:"POST",headers:{...headers,"content-type":"application/json"},body:JSON.stringify(body)});
   const organization=await request("/api/workspaces",json(owner,{name:"Existing customer project"}));assert.equal(organization.status,201);const organizationId=(await organization.json()).organizationId;
@@ -2486,10 +2532,26 @@ test("activating a controlled pilot closes existing legacy shares and excludes p
   assert.equal((await request(sharedPath)).status,404,"an existing external link closes immediately when its legacy unapproved output enters a controlled pilot");assert.equal((await request(mediaPath)).status,404,"existing public media links obey the same upgraded pilot boundary");
   assert.equal((await request("/api/events?after=0&content=0",{headers:scoped})).status,200);
   database.reset();const reused=await append({type:"ReferenceIngested",payload:{reference_id:"another-legacy-source",document_id:"doc-atmosphere",source_type:"upload",source_ref:unattached.url,content_hash:unattached.contentHash,rights_class:"asserted"}});assert.equal(reused.status,403);assert.equal((await reused.json()).error,"pilot_non_sensitive_source_confirmation_required");assert.equal(database.writeCount(),0,"a legacy stored file cannot be newly attached without a cohort-bound source confirmation");
-  environment.OPENAI_API_KEY="synthetic-pilot-provider-never-called";for(const [endpoint,body] of [["/api/events",{action:"generate",documentId:"doc-atmosphere",budgetAcknowledged:true}],["/api/document-jobs",{kind:"generate",documentId:"doc-atmosphere",payload:{budgetAcknowledged:true}}]]){const generated=await request(endpoint,json(endpoint==="/api/events"?owner:scoped,body));assert.equal(generated.status,428,`${endpoint} excludes already-attached pre-pilot source material from paid context`);assert.equal((await generated.json()).error,"pilot_non_sensitive_source_confirmation_required");}
+  environment.OPENAI_API_KEY="synthetic-pilot-provider-never-called";const originalFetch=globalThis.fetch;let providerCalls=0;globalThis.fetch=async()=>{providerCalls++;assert.fail("Unattested sources must not reach an external provider");};try{for(const [endpoint,body] of [["/api/events",{action:"generate",documentId:"doc-atmosphere",budgetAcknowledged:true}],["/api/document-jobs",{kind:"generate",documentId:"doc-atmosphere",payload:{budgetAcknowledged:true}}]]){const generated=await request(endpoint,json(endpoint==="/api/events"?owner:scoped,body));assert.equal(generated.status,428,`${endpoint} excludes already-attached pre-pilot source material from paid context`);assert.equal((await generated.json()).error,"pilot_non_sensitive_source_confirmation_required");}
   const removedDocumentSource=await append({type:"BlockRemoved",payload:{block_id:"existing-pilot-source-block",document_id:"doc-atmosphere",reason:"remove unapproved legacy document source"}});assert.equal(removedDocumentSource.status,200,JSON.stringify(await removedDocumentSource.clone().json()));const visible=await(await request("/api/events?after=0&limit=5000&content=0",{headers:scoped})).json();const isolated=foldEvents(visible.events,Number.POSITIVE_INFINITY,"doc-atmosphere","project-atmosphere");assert.ok(!isolated.blocks.some((block)=>block.id==="legacy-library-reference-block"),"the unclassified reusable reference does not exist in the document-only provider context");assert.ok(isolated.libraryBlocks.some((block)=>block.id==="legacy-library-reference-block"),"the selected reusable context remains available in the project library");
-  for(const [label,endpoint,identity,body] of [["direct approved board context","/api/events",owner,{action:"generate",documentId:"doc-atmosphere",canvasId:"legacy-library-board",contextSetId:"legacy-library-context",budgetAcknowledged:true}],["queued approved board context","/api/document-jobs",scoped,{kind:"generate",documentId:"doc-atmosphere",payload:{canvasId:"legacy-library-board",contextSetId:"legacy-library-context",budgetAcknowledged:true}}],["direct project-wide adaptation","/api/events",owner,{action:"structure_adaptive",documentId:"doc-atmosphere",projectScope:true,prompt:"Structure this complete project.",budgetAcknowledged:true}],["queued project-wide adaptation","/api/document-jobs",scoped,{kind:"structure_adaptive",documentId:"doc-atmosphere",payload:{projectScope:true,prompt:"Structure this complete project.",budgetAcknowledged:true}}]]){const generated=await request(endpoint,json(identity,body));assert.equal(generated.status,428,`${label} validates its actual provider-facing reusable source blocks`);assert.equal((await generated.json()).error,"pilot_non_sensitive_source_confirmation_required");}
+  for(const [label,endpoint,identity,body] of [["direct approved board context","/api/events",owner,{action:"generate",documentId:"doc-atmosphere",canvasId:"legacy-library-board",contextSetId:"legacy-library-context",budgetAcknowledged:true}],["queued approved board context","/api/document-jobs",scoped,{kind:"generate",documentId:"doc-atmosphere",payload:{canvasId:"legacy-library-board",contextSetId:"legacy-library-context",budgetAcknowledged:true}}]]){const generated=await request(endpoint,json(identity,body));assert.equal(generated.status,428,`${label} validates its actual provider-facing reusable source blocks`);assert.equal((await generated.json()).error,"pilot_non_sensitive_source_confirmation_required");}
+
+    for(const identity of[owner,scoped]){
+      const adaptive=adaptivePlanningClient(request,identity,{projectId:"project-atmosphere",documentId:"doc-atmosphere",sourceSurface:"adaptive",projectScope:true,prompt:"Structure this complete project.",locale:"en"});
+      const quote=await adaptive.quote();assert.equal(quote.workspaceId,organizationId);assert.equal(quote.providerAvailable,true);assert.equal(quote.canExecute,false);
+      assert.ok(quote.unavailableReasons.includes("adaptive_pilot_source_denied"),"The free quote explains the unattested-source blocker");
+      const input=JSON.parse(quote.privateInput.providerRequest.input);
+      assert.ok(input.blocks.some(block=>block.id==="legacy-library-reference-block"),"The proposal evaluates the actual project-wide reusable source, not a smaller document-only substitute");
+      const denied=await adaptive.execute(quote);assert.equal(denied.status,403,JSON.stringify(await denied.clone().json()));assert.equal((await denied.json()).error,"adaptive_pilot_source_denied");
+    }
+    for(const[endpoint,identity,body]of[
+      ["/api/events",owner,{action:"structure_adaptive",documentId:"doc-atmosphere",projectScope:true,prompt:"Structure this complete project.",budgetAcknowledged:true}],
+      ["/api/document-jobs",scoped,{kind:"structure_adaptive",documentId:"doc-atmosphere",payload:{projectScope:true,prompt:"Structure this complete project.",budgetAcknowledged:true}}],
+    ]){const denied=await request(endpoint,json(identity,body));assert.equal(denied.status,428);assert.equal((await denied.json()).error,endpoint==="/api/events"?"pilot_non_sensitive_source_confirmation_required":"adaptive_consent_required","A legacy route cannot bypass its earliest source or approval gate");}
+    assert.equal(providerCalls,0,"Neither source disclosure nor denied approval contacts a provider");
+    assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations").get().count,0,"Unattested sources never reserve tokens");
   assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE operation!=''").get().count,0,"unclassified legacy context never reserves provider spending");assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count,0,"unclassified legacy context never creates a background provider job");assert.ok(cohortId);
+  }finally{await drainBackground();globalThis.fetch=originalFetch;}
 });
 
 test("workspace settings HTML and usage policies require exact organization-scoped server capability",async()=>{

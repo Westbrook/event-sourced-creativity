@@ -9,11 +9,12 @@ const resolution = registerHooks({ resolve(specifier, context, nextResolve) {
   const source = typeof context.parentURL === "string" && context.parentURL.startsWith(root) && !context.parentURL.includes("/node_modules/");
   return nextResolve(source && specifier.startsWith(".") && !/\.[a-z0-9]+$/iu.test(specifier) ? `${specifier}.ts` : specifier, context);
 } });
-const [{ default: worker }, { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL,PRINCIPAL_WITH_ACCESS_SQL }, {requireUser,reconcileFailedBudgetReservations,reserveBudget,reserveCostBudget}, {runDocumentJob}] = await Promise.all([
+const [{ default: worker }, { PLATFORM_PRINCIPAL_WITH_ACCESS_SQL,PRINCIPAL_WITH_ACCESS_SQL }, {requireUser,reconcileFailedBudgetReservations,reserveBudget,reserveCostBudget,settleBudget,settleCostBudget,claimCostBudgetReservation}, {runDocumentJob}, consequential] = await Promise.all([
   import("../worker/index.ts"),
   import("../worker/access-policy.ts"),
   import("../worker/pilot-policy.ts"),
   import("../worker/document-jobs-api.ts"),
+  import("../worker/consequential-consent.ts"),
 ]).finally(() => resolution.deregister());
 
 function database() {
@@ -245,6 +246,877 @@ async function sharedProjectFixture(options = {}) {
   return { ...state, owner: await open(owner), viewer: await open(viewer), organizationId, projectAccessId };
 }
 
+const adaptiveRegressionRequest = {
+  projectId: "project-atmosphere", documentId: "doc-atmosphere", canvasId: null,
+  sourceSurface: "adaptive", projectScope: false, locale: "en", prompt: "Plan my next move.",
+};
+async function adaptiveRegressionFixture(shared = false) {
+  const state = shared ? await sharedProjectFixture({ provider: true }) : await fixture({ provider: true });
+  const originalFetch = globalThis.fetch, calls = [];
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), "https://api.openai.com/v1/responses"); assert.equal(init.method, "POST");
+    const request = JSON.parse(init.body); calls.push(request);
+    return Response.json({ id: "adaptive-regression-provider-response", model: request.model,
+      output_text: JSON.stringify({ interpretation: "PRIVATE_ADAPTIVE_REGRESSION_PLAN",
+        active_decision: { type: "subject", label: "Subject", prompt: "Choose", why: "Focus" },
+        suggested_blocks: Array.from({ length: 2 }, () => ({ type: "subject", subtype: "Person", label: "Subject", instruction: "Choose", reason: "Focus", relationship_to: "" })), hidden_until_later: [] }),
+      usage: { input_tokens: 80, output_tokens: 20, total_tokens: 100 } });
+  };
+  return { ...state, adaptiveCalls: calls, async closeAdaptiveRegression() { try { await state.drainBackground(); } finally { globalThis.fetch = originalFetch; } } };
+}
+async function quoteAdaptiveRegression(state) {
+  const response = await state.request("/api/document-jobs/adaptive", json({ ...adaptiveRegressionRequest, action: "quote" }, state.owner ?? {}));
+  const body = await response.json(); assert.equal(response.status, 200, JSON.stringify(body));
+  assert.ok(body.quote?.executionId); assert.match(body.quote.bindingHash, /^[a-f0-9]{64}$/u); return body.quote;
+}
+async function executeAdaptiveRegression(state, quote) {
+  const response = await state.request("/api/document-jobs/adaptive", json({ ...adaptiveRegressionRequest, action: "execute", executionId: quote.executionId, approvedBindingHash: quote.bindingHash }, state.owner ?? {}));
+  assert.equal(response.ok, true, JSON.stringify(await response.clone().json())); await state.drainBackground();
+  return state.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(quote.executionId);
+}
+function retrieveAdaptiveRegression(state, quote) {
+  return state.request("/api/document-jobs/adaptive", json({ ...adaptiveRegressionRequest, action: "retrieve", executionId: quote.executionId, approvedBindingHash: quote.bindingHash }, state.owner ?? {}));
+}
+// R15: reuse the actual SQL-boundary zero-POST regressions; no live provider or ledger is involved.
+
+for(const phase of["released","not-reserved"])test("adaptive no-hold receipt R15 worker: "+phase+" native zero-POST receipt is not-incurred and remains unchanged by reads",{timeout:15000},async()=>{
+ const state=await fixture({provider:true}),originalFetch=globalThis.fetch;let calls=0,restore,gate,heldBody;
+ try{
+  state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id='dev-local-creative'").run();
+  globalThis.fetch=async()=>{calls++;throw new Error("This known-unused fixture must never contact a provider");};
+  const quote=await quoteAdaptiveConsent(state),path="/api/document-jobs/"+quote.executionId;
+  const request={action:"resume",executionId:quote.executionId,projectId:adaptiveConsentBody.projectId,documentId:adaptiveConsentBody.documentId,canvasId:null};
+  if(phase==="released"){
+   restore=interceptConsequentialDb(state,"run",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u,async()=>{
+    const stopped=await state.request(path+"/force-fail",json({})),stop=await stopped.json();
+    assert.equal(stopped.status,200);assert.deepEqual(stop.budget,{reservationStatus:"retained",billingStatus:"pending"});
+    const resumed=await state.request("/api/document-jobs/adaptive",json(request));heldBody=await resumed.json();
+    assert.equal(resumed.status,409);assert.equal(heldBody.quote.status,"uncertain");
+    assert.deepEqual(heldBody.job.result.planningStopBudget,{reservationStatus:"retained",billingStatus:"pending"});
+    assert.equal(calls,0);
+   },"after");
+  }else gate=gateConsequentialDb(state,"run",/^\s*UPDATE consequential_execution_steps SET status='reserved'/u);
+  const accepted=await executeAdaptiveConsent(state,quote);assert.equal(accepted.status,202);
+  if(gate){
+   await gate.entered;
+   const stopped=await state.request(path+"/force-fail",json({})),stop=await stopped.json();
+   assert.equal(stopped.status,200);assert.deepEqual(stop.budget,{reservationStatus:"not-reserved",billingStatus:"not-incurred"});
+   gate.release();
+  }
+  await state.drainBackground();restore?.();restore=null;gate?.restore();gate=null;
+  const snapshot=consequentialReceipt(state,quote.executionId);
+  assert.equal(snapshot.execution.status,"failed");assert.equal(snapshot.steps[0].status,"not-submitted");
+  assert.deepEqual(snapshot.balances,{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});
+  const detail=await state.request(path+"?inspection=1"),detailBody=await detail.json();
+  assert.equal(detail.status,200);assert.equal(detailBody.job.status,"failed");
+  assert.deepEqual(detailBody.job.result.planningStopBudget,{reservationStatus:phase,billingStatus:"not-incurred"});
+  const resumed=await state.request("/api/document-jobs/adaptive",json(request)),body=await resumed.json();
+  assert.equal(resumed.status,409);assert.equal(body.quote.status,"failed");assert.equal(body.job.status,"failed");
+  assert.equal(body.job.result.planningReviewAvailable,true);
+  assert.deepEqual(body.job.result.planningStopBudget,{reservationStatus:phase,billingStatus:"not-incurred"});
+  assert.equal(body.billingStatus,"settled");
+  assert.deepEqual(consequentialReceipt(state,quote.executionId),snapshot);
+  assert.equal(calls,0);
+ }finally{restore?.();gate?.release();gate?.restore();await state.drainBackground();globalThis.fetch=originalFetch;}
+});
+
+test("adaptive no-hold receipt R15 worker: known non-submission can still have genuine retained reservations pending release", {timeout: 15000}, async () => {
+  const state = await fixture({provider: true}), originalFetch = globalThis.fetch;
+  let gate, restore, calls = 0, inspected = 0;
+  try {
+    state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id='dev-local-creative'").run();
+    globalThis.fetch = async () => {calls++; throw new Error("Known-unused receipt fixture must never dispatch");};
+    const quote = await quoteAdaptiveConsent(state), path = "/api/document-jobs/" + quote.executionId;
+    gate = gateConsequentialDb(state, "run", /^\s*UPDATE consequential_execution_steps SET status='submitting'/u);
+    const accepted = await executeAdaptiveConsent(state, quote);
+    assert.equal(accepted.status, 202);
+    await gate.entered;
+    restore = interceptConsequentialDb(state, "batch", /^\s*UPDATE budget_reservations SET used_tokens=/u, async () => {
+      inspected++;
+      const before = consequentialReceipt(state, quote.executionId);
+      assert.equal(before.steps[0].status, "not-submitted");
+      assert.equal(before.tokens[0].status, "active");
+      assert.ok(["active", "executing"].includes(before.cost[0].status));
+      assert.ok(before.balances.tokens.reserved > 0);
+      assert.ok(before.balances.cost.reserved > 0);
+      const response = await state.request(path + "?inspection=1"), body = await response.json();
+      assert.equal(response.status, 200);
+      assert.deepEqual(body.job.result.planningStopBudget, {reservationStatus: "retained", billingStatus: "not-incurred"});
+      assert.deepEqual(consequentialReceipt(state, quote.executionId), before,
+        "Read-only inspection must not finish the pending release on the reviewer's behalf");
+      assert.equal(calls, 0);
+    });
+    const stopped = await state.request(path + "/force-fail", json({})), stop = await stopped.json();
+    assert.equal(stopped.status, 200);
+    assert.deepEqual(stop.budget, {reservationStatus: "released", billingStatus: "not-incurred"});
+    restore(); restore = null;
+    gate.release();
+    await state.drainBackground();
+    assert.equal(inspected, 1);
+    assert.equal(calls, 0);
+    assert.deepEqual(consequentialBalances(state), {tokens: {used: 0, reserved: 0}, cost: {used: 0, reserved: 0}});
+  } finally {
+    restore?.();
+    gate?.release();
+    gate?.restore();
+    await state.drainBackground();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// R14 real routed wire evidence: capture the old uncertain receipt before
+// the original already-in-flight provider response settles. No second POST.
+for (const force of [false, true]) {
+  test("adaptive terminal receipt order R14 worker: " + (force ? "failed" : "canceled") + " held409 and later settled409 belong to one original request", {timeout: 15000}, async () => {
+    const state = await fixture({provider: true}), originalFetch = globalThis.fetch;
+    const entered = Promise.withResolvers(), released = Promise.withResolvers();
+    let calls = 0;
+    try {
+      if (force) state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id='dev-local-creative'").run();
+      const quote = await quoteAdaptiveConsent(state);
+      globalThis.fetch = async (url, init) => {
+        assert.equal(String(url), "https://api.openai.com/v1/responses");
+        assert.equal(init.method, "POST");
+        calls++;
+        entered.resolve();
+        await released.promise;
+        return adaptiveFixtureResponse(JSON.parse(init.body), {outputText: "{"});
+      };
+      const accepted = await executeAdaptiveConsent(state, quote);
+      assert.equal(accepted.status, 202);
+      await entered.promise;
+      const path = "/api/document-jobs/" + quote.executionId, status = force ? "failed" : "canceled";
+      const stopped = await state.request(path + (force ? "/force-fail" : "/cancel"), json({}));
+      const stop = await stopped.json();
+      assert.equal(stopped.status, 200);
+      assert.equal(stop.job.status, status);
+      assert.deepEqual(stop.budget, {reservationStatus: "retained", billingStatus: "pending"});
+      const request = {action: "resume", executionId: quote.executionId,
+        projectId: adaptiveConsentBody.projectId, documentId: adaptiveConsentBody.documentId, canvasId: null};
+      const older = await state.request("/api/document-jobs/adaptive", json(request)), oldBody = await older.json();
+      assert.equal(older.status, 409);
+      assert.equal(oldBody.error, force ? "adaptive_force_failed" : "adaptive_canceled");
+      assert.equal(oldBody.executionId, quote.executionId);
+      assert.equal(oldBody.quote.status, "uncertain");
+      assert.equal(oldBody.billingStatus, "pending");
+      assert.equal(oldBody.job.status, status);
+      assert.equal(oldBody.job.result.planningReviewAvailable, true);
+      assert.deepEqual(oldBody.job.result.planningStopBudget, {reservationStatus: "retained", billingStatus: "pending"});
+      released.resolve();
+      await state.drainBackground();
+      const settled = consequentialReceipt(state, quote.executionId);
+      assert.equal(settled.execution.result_ref, null, "Paid malformed output is not a completed plan");
+      assert.equal(settled.steps[0].status, "settled");
+      assert.deepEqual(settled.balances, {tokens: {used: 1300, reserved: 0}, cost: {used: 5600, reserved: 0}});
+      const inspected = await state.request(path + "?inspection=1"), detail = await inspected.json();
+      assert.equal(inspected.status, 200);
+      assert.equal(detail.job.status, status);
+      assert.deepEqual(detail.job.result.planningStopBudget, {reservationStatus: "settled", billingStatus: "settled"});
+      const newer = await state.request("/api/document-jobs/adaptive", json(request)), newBody = await newer.json();
+      assert.equal(newer.status, 409);
+      assert.equal(newBody.executionId, oldBody.executionId);
+      assert.equal(newBody.quote.bindingHash, oldBody.quote.bindingHash);
+      assert.equal(newBody.quote.status, "failed");
+      assert.equal(newBody.billingStatus, "settled");
+      assert.equal(newBody.job.status, status);
+      assert.deepEqual(newBody.job.result.planningStopBudget, {reservationStatus: "settled", billingStatus: "settled"});
+      assert.deepEqual(consequentialReceipt(state, quote.executionId), settled);
+      assert.deepEqual(adaptiveLedgerCounts(state), {token: 1, cost: 1});
+      assert.equal(calls, 1);
+    } finally {
+      released.resolve();
+      await state.drainBackground();
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
+// Real routed source/receipt shape behind the R13 host ordering regressions.
+// One in-memory mocked provider response lacks usage; original-ID reads must
+// expose the retained disclosure without inferring zero charge or buying again.
+for (const shared of [false, true]) {
+  test("adaptive uncertain receipt certification R13 worker: " + (shared ? "shared" : "personal") + " original 409 has current private proof and keeps the original held ledgers", {timeout: 15000}, async () => {
+    const state = await adaptiveRegressionFixture(shared), mockFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (...args) => {
+        const response = await mockFetch(...args), body = await response.json();
+        delete body.usage;
+        return Response.json(body);
+      };
+      const quote = await quoteAdaptiveRegression(state);
+      const job = await executeAdaptiveRegression(state, quote);
+      assert.equal(job.status, "failed");
+      assert.equal(state.sqlite.prepare("SELECT status FROM consequential_executions WHERE execution_id=?").get(quote.executionId).status, "uncertain");
+      const before = adaptiveReentryFinancialState(state);
+      const response = await state.request("/api/document-jobs/adaptive", json(adaptiveReentryResumeBody(quote.executionId), state.owner ?? {}));
+      const body = await response.json();
+      assert.equal(response.status, 409, JSON.stringify(body));
+      assert.equal(body.error, "adaptive_provider_usage_unverified");
+      assert.equal(body.executionId, quote.executionId);
+      assert.equal(body.bindingHash, quote.bindingHash);
+      assert.equal(body.requestKey, body.planningRequest.requestKey);
+      assert.equal(body.planningRequest.prompt, adaptiveRegressionRequest.prompt);
+      assert.equal(body.planningRequest.documentId, adaptiveRegressionRequest.documentId);
+      assert.equal(body.quote.executionId, quote.executionId);
+      assert.equal(body.quote.bindingHash, quote.bindingHash);
+      assert.equal(body.quote.status, "uncertain");
+      assert.deepEqual(body.quote.privateInput, quote.privateInput);
+      assert.equal(body.job.jobId, quote.executionId);
+      assert.equal(body.job.planningExecutionId, quote.executionId);
+      assert.equal(body.job.requestKey, body.requestKey);
+      assert.equal(body.job.status, "failed");
+      assert.equal(body.job.result.planningReviewAvailable, true);
+      assert.notEqual(body.job.result.resultUnavailable, true);
+      assert.deepEqual(body.job.result.planningStopBudget, {reservationStatus: "retained", billingStatus: "pending"});
+      assert.equal(body.billingStatus, "pending");
+      assert.equal(body.noAutomaticRetry, true);
+      assert.equal(state.adaptiveCalls.length, 1);
+      assert.deepEqual(adaptiveReentryFinancialState(state), before);
+    } finally {
+      await state.closeAdaptiveRegression();
+    }
+  });
+}
+
+for(const shared of[false,true])for(const withdrawn of[false,true])test(`adaptive pending certification R4: ${shared?"shared":"personal"} pending review is ${withdrawn?"withdrawn only after confirmed private erasure":"readable before any generated structure exists"}`,async()=>{
+  const state=await adaptiveRegressionFixture(shared),mockFetch=globalThis.fetch,entered=Promise.withResolvers(),release=Promise.withResolvers();
+  globalThis.fetch=async(...args)=>{entered.resolve();await release.promise;return mockFetch(...args);};
+  try{
+    const quote=await quoteAdaptiveRegression(state);
+    const executed=await state.request("/api/document-jobs/adaptive",json({...adaptiveRegressionRequest,action:"execute",executionId:quote.executionId,approvedBindingHash:quote.bindingHash},state.owner??{}));
+    assert.equal(executed.status,202,JSON.stringify(await executed.clone().json()));await entered.promise;
+    const execution=await executed.json();assert.equal(execution.job.result.planningReviewAvailable,true);assert.equal(execution.job.result.structure,undefined);
+    if(withdrawn){const reference=state.sqlite.prepare("SELECT consent_ref FROM consequential_executions WHERE execution_id=?").get(quote.executionId).consent_ref;state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),reference);}
+    const before=adaptiveReentryFinancialState(state);
+    for(const url of["/api/document-jobs/"+quote.executionId+"?inspection=1","/api/document-jobs"]){
+      const response=await state.request(url,{headers:state.owner??{}}),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));
+      const job=body.job??body.jobs.find(job=>job.jobId===quote.executionId);assert.ok(job);assert.equal(job.result.planningReviewAvailable,!withdrawn);assert.equal(job.result.structure,undefined);assert.equal(job.result.intent,undefined);assert.equal(job.result.quote,undefined);assert.ok(["queued","running"].includes(job.status));
+    }
+    const resumed=await state.request("/api/document-jobs/adaptive",json(adaptiveReentryResumeBody(quote.executionId),state.owner??{})),body=await resumed.json();
+    if(withdrawn){assert.equal(resumed.status,404);assert.equal(body.error,"adaptive_execution_unavailable");}
+    else{assert.equal(resumed.status,202);assert.equal(body.job.result.planningReviewAvailable,true);assert.equal(body.quote.executionId,quote.executionId);assert.equal(body.planningRequest.prompt,adaptiveRegressionRequest.prompt);assert.equal(body.job.result.structure,undefined);}
+    assert.deepEqual(adaptiveReentryFinancialState(state),before);assert.equal(state.adaptiveCalls.length,0,"The one mocked request is still pending; reads do not start another");
+  }finally{release.resolve();await state.closeAdaptiveRegression();}
+});
+/** Mutates only the in-memory fixture at the actual SQL seam. */
+function interceptAdaptiveRegressionSql(state, matches, method, before) {
+  const originalPrepare = state.env.DB.prepare; let fired = false;
+  state.env.DB.prepare = (sql) => {
+    const statement = originalPrepare.call(state.env.DB, sql); if (!matches(sql, new Error().stack ?? "")) return statement;
+    const bind = statement.bind.bind(statement);
+    statement.bind = (...values) => { const bound = bind(...values), invoke = bound[method].bind(bound); bound[method] = async () => { if (!fired) { fired = true; await before(sql, values); } return invoke(); }; return bound; };
+    return statement;
+  };
+  return { get fired() { return fired; }, restore() { state.env.DB.prepare = originalPrepare; } };
+}
+/** Legitimate crash window after raw receipt/usage, before final private materialization. */
+function retainOnlyAdaptiveRawRegression(state, executionId) {
+  const execution = state.sqlite.prepare("SELECT result_ref FROM consequential_executions WHERE execution_id=?").get(executionId); assert.ok(execution.result_ref);
+  state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(), execution.result_ref);
+  state.sqlite.prepare("UPDATE consequential_executions SET result_ref=NULL,status='uncertain',error_code=NULL WHERE execution_id=?").run(executionId);
+  state.sqlite.prepare("UPDATE document_jobs SET status='failed',result_json=json_remove(result_json,'$.structure','$.intent','$.quote') WHERE job_id=?").run(executionId);
+  assert.ok(state.sqlite.prepare("SELECT json_extract(result_json,'$.adaptiveProviderReceipt.contentRef') AS ref FROM document_jobs WHERE job_id=?").get(executionId).ref);
+}
+
+
+// R13: use the actual routed free-quote producer for both output surfaces and
+// custody modes. A complete returned request is independent proof for B; the
+// client regression separately exercises the legacy omission of that field.
+for(const shared of[false,true])for(const canvas of[false,true])for(const intent of["same-intent","different-intent"]){
+  test("adaptive replacement wire R13: "+(shared?"shared":"personal")+" "+(canvas?"Canvas":"Document")+" "+intent+" carries an executable independent B request",{timeout:10000},async()=>{
+    const state=await adaptiveRegressionFixture(shared);
+    try{
+      const {adaptiveRequestKey}=await import("../src/model/adaptive-request.ts");
+      if(shared&&canvas){
+        // Reuse the existing shared-Canvas fixture's synthetic governance
+        // readiness. Do not promote the owner or widen scoped permissions.
+        const {IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE:evidence}=await import("../worker/image-adapter-evaluation-evidence.ts");
+        const now=new Date().toISOString(),approval=state.sqlite.prepare("INSERT INTO canvas_governance_requirements(requirement_id,status,evidence_ref,details_json,updated_at) VALUES(?,?,?,?,?)");
+        approval.run("trust_safety","approved","fixture/trust-safety","{}",now);
+        approval.run("counsel","approved","fixture/counsel","{}",now);
+        approval.run("second_image_adapter","approved",evidence.evaluationRef,JSON.stringify({
+          adapter_id:evidence.adapterId,contract_version:evidence.adapterVersion,corpus_version:evidence.corpusVersion,
+          evaluation_ref:evidence.evaluationRef,evaluation_passed:true,
+        }),now);
+        const context=await state.request("/api/workspaces/"+state.organizationId+"/projects/"+state.projectAccessId+"/context",{method:"POST",headers:state.owner});
+        assert.equal(context.status,200);state.owner={...state.owner,cookie:context.headers.get("set-cookie")?.split(";")[0]??""};
+      }
+      const ownerId=state.owner?.["oai-authenticated-user-id"]??"dev-local-creative";
+      const streamId="creative:"+ownerId,canvasId=canvas?"replacement-intent-board-r13":null;
+      if(canvas)appendFixtureEvents(state.sqlite,streamId,[["CanvasCreated",{
+        canvas_id:canvasId,project_id:adaptiveRegressionRequest.projectId,
+        name:"Replacement intent board",slug:"replacement-intent-board",
+      }]]);
+      const originalRequest={...adaptiveRegressionRequest,canvasId,sourceSurface:canvas?"canvas":"adaptive",projectScope:canvas};
+      originalRequest.requestKey=await adaptiveRequestKey(originalRequest);
+      const firstResponse=await state.request("/api/document-jobs/adaptive",json({...originalRequest,action:"quote"},state.owner??{}));
+      const first=await firstResponse.json();assert.equal(firstResponse.status,200,JSON.stringify(first));
+      const started=await state.request("/api/document-jobs/adaptive",json({...originalRequest,action:"execute",
+        executionId:first.quote.executionId,approvedBindingHash:first.quote.bindingHash},state.owner??{}));
+      assert.ok(started.ok,JSON.stringify(await started.clone().json()));await state.drainBackground();
+      const originalRow=state.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(first.quote.executionId);
+      assert.equal(originalRow.status,"completed");assert.equal(state.adaptiveCalls.length,1);
+      if(intent==="same-intent")editAdaptiveReentrySource(state,originalRow.stream_id);
+      const nextRequest={...originalRequest,prompt:intent==="same-intent"?originalRequest.prompt:"Create a genuinely different launch checklist R13."};
+      nextRequest.requestKey=await adaptiveRequestKey(nextRequest);
+      const financial=adaptiveReentryFinancialState(state);
+      const quoted=await state.request("/api/document-jobs/adaptive",json({...nextRequest,action:"quote",
+        ...(intent==="same-intent"?{replaceExecutionId:first.quote.executionId}:{})},state.owner??{}));
+      const wire=await quoted.json();
+      assert.equal(quoted.status,200,JSON.stringify(wire));assert.equal(wire.quote.status,"quoted");
+      assert.equal(wire.quote.canExecute,true);assert.notEqual(wire.quote.executionId,first.quote.executionId);
+      assert.deepEqual(wire.planningRequest,nextRequest,"A fresh free quote must return its independently prepared complete request");
+      assert.equal(wire.quote.privateInput.requestKey,await adaptiveRequestKey(wire.planningRequest));
+      assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.equal(state.adaptiveCalls.length,1);
+      if(intent==="same-intent")assert.equal(wire.planningRequest.requestKey,originalRequest.requestKey);
+      else assert.notEqual(wire.planningRequest.requestKey,originalRequest.requestKey);
+      // Consume the server-returned B request rather than a private A capture.
+      const accepted=await state.request("/api/document-jobs/adaptive",json({...wire.planningRequest,action:"execute",
+        executionId:wire.quote.executionId,approvedBindingHash:wire.quote.bindingHash},state.owner??{}));
+      const acceptance=await accepted.json();assert.ok(accepted.ok,JSON.stringify(acceptance));await state.drainBackground();
+      assert.equal(state.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(wire.quote.executionId).status,"completed");
+      assert.equal(state.adaptiveCalls.length,2,"Each separately approved plan dispatches exactly once");
+      assert.ok(JSON.stringify(state.adaptiveCalls[1]).includes(nextRequest.prompt),"B dispatch retains its exact nonempty intent");
+      const afterPaid=adaptiveReentryFinancialState(state);
+      for(const [executionId,expected]of[[first.quote.executionId,originalRequest],[wire.quote.executionId,nextRequest]]){
+        const response=await state.request("/api/document-jobs/adaptive",json({projectId:expected.projectId,
+          documentId:expected.documentId,canvasId:expected.canvasId,action:"resume",executionId},state.owner??{}));
+        const recovered=await response.json();assert.equal(response.status,200,JSON.stringify(recovered));
+        assert.equal(recovered.quote.executionId,executionId);assert.deepEqual(recovered.planningRequest,expected);
+      }
+      assert.deepEqual(adaptiveReentryFinancialState(state),afterPaid);assert.equal(state.adaptiveCalls.length,2);
+    }finally{await state.closeAdaptiveRegression();}
+  });
+}
+
+// Routed re-entry regressions: reuse existing paid work after navigation or capability changes.
+function adaptiveReentryFinancialState(state) {
+  return {
+    tokens: state.sqlite.prepare("SELECT reservation_id,owner_id,stream_id,correlation_id,operation,period,status,reserved_tokens,used_tokens FROM budget_reservations ORDER BY reservation_id").all(),
+    costs: state.sqlite.prepare("SELECT reservation_id,owner_id,stream_id,correlation_id,operation,period,status,reserved_microusd,used_microusd FROM cost_budget_reservations ORDER BY reservation_id").all(),
+    tokenCounters: state.sqlite.prepare("SELECT scope,scope_id,period,used_tokens,reserved_tokens,hard_limit_tokens FROM budget_counters ORDER BY scope,scope_id,period").all(),
+    costCounters: state.sqlite.prepare("SELECT scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters ORDER BY scope,scope_id,period").all(),
+  };
+}
+function adaptiveReentryCounts(state) {
+  return {
+    jobs: state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,
+    executions: state.sqlite.prepare("SELECT COUNT(*) AS n FROM consequential_executions").get().n,
+    calls: state.adaptiveCalls.length,
+  };
+}
+function editAdaptiveReentrySource(state, streamId = "creative:dev-local-creative") {
+  appendFixtureEvents(state.sqlite, streamId, [["BlockPropertyEdited", {
+    project_id: adaptiveRegressionRequest.projectId, document_id: adaptiveRegressionRequest.documentId,
+    block_id: "block-direction", property_path: "text", new_value: "A materially changed direction after the original paid plan.",
+  }]]);
+}
+function adaptiveReentryResumeBody(executionId) {
+  return {
+    action: "resume", executionId, projectId: adaptiveRegressionRequest.projectId,
+    documentId: adaptiveRegressionRequest.documentId, canvasId: null,
+  };
+}
+function assertOriginalAdaptiveReentry(body, quote) {
+  assert.equal(body.executionId, quote.executionId);
+  assert.equal(body.quote.executionId, quote.executionId);
+  assert.equal(body.quote.bindingHash, quote.bindingHash);
+  assert.equal(body.quote.sourceHash, quote.sourceHash);
+  assert.equal(body.quote.period, quote.period);
+  assert.deepEqual(body.quote.models, quote.models);
+  assert.deepEqual(body.quote.privateInput, quote.privateInput);
+  assert.deepEqual(body.planningRequest, {
+    ...adaptiveRegressionRequest, requestKey: quote.privateInput.requestKey,
+  });
+  assert.equal(body.structure.interpretation, "PRIVATE_ADAPTIVE_REGRESSION_PLAN");
+  assert.equal(body.sourceStatus, "original-approved-source");
+}
+/** Use the actual membership/context routes; an explicit grant never widens a viewer's ceiling. */
+async function adaptiveReentryMember(state) {
+  const administrator = state.owner, { cookie: _cookie, ...identity } = state.viewer;
+  const memberId = state.sqlite.prepare("SELECT membership_id FROM project_memberships WHERE project_access_id=? AND user_id=?")
+    .get(state.projectAccessId, "assistant-viewer").membership_id;
+  const url = "/api/workspaces/" + state.organizationId + "/projects/" + state.projectAccessId + "/members/" + memberId;
+  const setRole = async (role) => {
+    const changed = await state.request(url, { ...json({ role }, administrator), method: "PATCH" });
+    assert.equal(changed.status, 200, JSON.stringify(await changed.clone().json()));
+    const opened = await state.request("/api/workspaces/" + state.organizationId + "/projects/" + state.projectAccessId + "/context",
+      { method: "POST", headers: identity });
+    assert.equal(opened.status, 200, JSON.stringify(await opened.clone().json()));
+    state.owner = { ...identity, cookie: opened.headers.get("set-cookie").split(";")[0] };
+  };
+  await setRole("editor");
+  return { setRole, administrator };
+}
+
+test("adaptive personal reader R3: a previous creator with an unrelated viewer membership recovers the original plan without permission to replace it",{timeout:15_000},async()=>{
+  const unrelated=await sharedProjectFixture({provider:false}),state=await adaptiveRegressionFixture();
+  try{
+    const quote=await quoteAdaptiveRegression(state);assert.equal((await executeAdaptiveRegression(state,quote)).status,"completed");editAdaptiveReentrySource(state);
+    // All rows come from another real in-memory fixture. The personal plan stays
+    // outside that organization's custody; only an unrelated viewer membership is added.
+    for(const table of["users","organizations","organization_memberships","organization_projects","project_memberships"]){
+      for(const row of unrelated.sqlite.prepare("SELECT * FROM "+table).all()){
+        if(table==="users"&&row.user_id==="dev-local-creative")continue;
+        const columns=Object.keys(row);state.sqlite.prepare("INSERT OR IGNORE INTO "+table+"("+columns.join(",")+") VALUES("+columns.map(()=>"?").join(",")+")").run(...columns.map(key=>row[key]));
+      }
+    }
+    for(const table of["organization_memberships","project_memberships"]){
+      const row=unrelated.sqlite.prepare("SELECT * FROM "+table+" WHERE user_id='assistant-viewer'").get();assert.ok(row);row.user_id="dev-local-creative";row.membership_id="personal-reader-"+table;
+      const columns=Object.keys(row);state.sqlite.prepare("INSERT INTO "+table+"("+columns.join(",")+") VALUES("+columns.map(()=>"?").join(",")+")").run(...columns.map(key=>row[key]));
+    }
+    state.sqlite.prepare("UPDATE users SET role='viewer',updated_at=? WHERE user_id='dev-local-creative'").run(new Date().toISOString());
+    const sessionResponse=await state.request("/api/session"),session=await sessionResponse.json();assert.equal(sessionResponse.status,200);assert.equal(session.user.role,"viewer");assert.equal(session.projectContext??null,null);assert.ok(session.capabilities.includes("project.read"));assert.ok(!session.capabilities.includes("project.author"));assert.ok(!session.capabilities.includes("project.output.request"));
+    const financial=adaptiveReentryFinancialState(state),counts=adaptiveReentryCounts(state);
+    for(const input of[adaptiveReentryResumeBody(quote.executionId),{...adaptiveRegressionRequest,action:"quote"}]){
+      const response=await state.request("/api/document-jobs/adaptive",json(input)),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assertOriginalAdaptiveReentry(body,quote);assert.equal(body.quote.canPrepareNew,false,"Settled billing is not permission to create a new plan");assert.equal(body.quote.status,"completed","A completed receipt is retrieval, never a quoted purchase");
+      if(input.action==="resume")assert.equal(body.job.jobId,quote.executionId);
+      assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.deepEqual(adaptiveReentryCounts(state),counts);
+    }
+    const replacement=await state.request("/api/document-jobs/adaptive",json({...adaptiveRegressionRequest,action:"quote",replaceExecutionId:quote.executionId})),denied=await replacement.json();assert.equal(replacement.status,403,JSON.stringify(denied));assert.equal(denied.quote,undefined);assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.deepEqual(adaptiveReentryCounts(state),counts);assert.equal(state.adaptiveCalls.length,1,"Recovery and denied preparation cannot POST again");
+  }finally{await state.closeAdaptiveRegression();await unrelated.drainBackground();}
+});
+
+test("adaptive reentry: changed source and unavailable model/key reopen the original paid plan before new preparation", async () => {
+  const state = await adaptiveRegressionFixture();
+  try {
+    const quote = await quoteAdaptiveRegression(state);
+    assert.equal((await executeAdaptiveRegression(state, quote)).status, "completed");
+    editAdaptiveReentrySource(state);
+    delete state.env.OPENAI_API_KEY; state.env.OPENAI_MODEL = "unpriced-reentry-model";
+    const financial = adaptiveReentryFinancialState(state), counts = adaptiveReentryCounts(state);
+    const response = await state.request("/api/document-jobs/adaptive", json({ ...adaptiveRegressionRequest, action: "quote" }));
+    const body = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(body)); assert.equal(body.reused, true);
+    assertOriginalAdaptiveReentry(body, quote);
+    assert.equal(body.quote.providerAvailable, false); assert.equal(body.quote.canExecute, false);
+    assert.deepEqual(adaptiveReentryFinancialState(state), financial); assert.deepEqual(adaptiveReentryCounts(state), counts);
+    const resumed = await state.request("/api/document-jobs/adaptive", json(adaptiveReentryResumeBody(quote.executionId)));
+    const recovered = await resumed.json();
+    assert.equal(resumed.status, 200, JSON.stringify(recovered)); assertOriginalAdaptiveReentry(recovered, quote);
+    assert.equal(recovered.job.jobId, quote.executionId); assert.equal(recovered.job.status, "completed");
+    assert.deepEqual(adaptiveReentryFinancialState(state), financial); assert.deepEqual(adaptiveReentryCounts(state), counts);
+  } finally { await state.closeAdaptiveRegression(); }
+});
+
+test("adaptive reentry: Activity list/detail and hash-free resume let the current reader recover only their own paid document plan", async () => {
+  const state = await adaptiveRegressionFixture(true);
+  try {
+    const otherActorQuote = await quoteAdaptiveRegression(state);
+    assert.equal((await executeAdaptiveRegression(state, otherActorQuote)).status, "completed");
+    const member = await adaptiveReentryMember(state), quote = await quoteAdaptiveRegression(state);
+    assert.equal((await executeAdaptiveRegression(state, quote)).status, "completed");
+    await member.setRole("viewer"); delete state.env.OPENAI_API_KEY;
+    state.env.OPENAI_MODEL = "unpriced-reader-reentry-model";
+    const financial = adaptiveReentryFinancialState(state), counts = adaptiveReentryCounts(state);
+    for (const suffix of ["", "?document=" + adaptiveRegressionRequest.documentId, "?scope=active&document=" + adaptiveRegressionRequest.documentId]) {
+      const listed = await state.request("/api/document-jobs" + suffix, { headers: state.owner }), body = await listed.json();
+      assert.equal(listed.status, 200, JSON.stringify(body));
+      assert.deepEqual(body.jobs.map((job) => job.jobId), [quote.executionId]);
+      assert.equal(body.jobs[0].kind, "structure_adaptive"); assert.equal(body.jobs[0].canvasId ?? null, null);
+      assert.equal(body.jobs[0].status, "completed");
+      assert.equal(body.jobs[0].result.structure.interpretation, "PRIVATE_ADAPTIVE_REGRESSION_PLAN");
+      assert.equal(JSON.stringify(body).includes("adaptiveProviderReceipt"), false);
+    }
+    const detail = await state.request("/api/document-jobs/" + quote.executionId, { headers: state.owner }), viewed = await detail.json();
+    assert.equal(detail.status, 200, JSON.stringify(viewed)); assert.equal(viewed.job.jobId, quote.executionId);
+    const resumeRequest = adaptiveReentryResumeBody(viewed.job.jobId);
+    assert.equal(Object.hasOwn(resumeRequest, "approvedBindingHash"), false);
+    assert.equal(Object.hasOwn(resumeRequest, "prompt"), false);
+    const resumed = await state.request("/api/document-jobs/adaptive", json(resumeRequest, state.owner)), recovered = await resumed.json();
+    assert.equal(resumed.status, 200, JSON.stringify(recovered)); assertOriginalAdaptiveReentry(recovered, quote);
+    assert.equal(recovered.job.jobId, quote.executionId); assert.equal(recovered.job.status, "completed");
+    assert.equal(recovered.quote.providerAvailable, false);
+    const foreign = await state.request("/api/document-jobs/" + otherActorQuote.executionId, { headers: state.owner });
+    assert.equal(foreign.status, 404); assert.doesNotMatch(await foreign.text(), /PRIVATE_ADAPTIVE_REGRESSION_PLAN/u);
+    const foreignResume = await state.request("/api/document-jobs/adaptive", json(adaptiveReentryResumeBody(otherActorQuote.executionId), state.owner));
+    assert.ok([403, 404].includes(foreignResume.status)); assert.doesNotMatch(await foreignResume.text(), /PRIVATE_ADAPTIVE_REGRESSION_PLAN/u);
+    for (const action of ["run", "cancel"]) {
+      const denied = await state.request("/api/document-jobs/" + quote.executionId + "/" + action, json({}, state.owner));
+      assert.equal(denied.status, 403, "Read access must not grant " + action);
+    }
+    const fresh = await state.request("/api/document-jobs/adaptive", json({
+      ...adaptiveRegressionRequest, action: "quote", prompt: "A genuinely new purchase, not my saved intent.",
+    }, state.owner));
+    assert.equal(fresh.status, 403, "Read access must not grant a new paid-planning preparation");
+    assert.deepEqual(adaptiveReentryFinancialState(state), financial); assert.deepEqual(adaptiveReentryCounts(state), counts);
+  } finally { await state.closeAdaptiveRegression(); }
+});
+
+for (const withdrawal of ["erased", "expired", "resource-detached", "retention-detached"]) {
+  test("adaptive reentry: " + withdrawal + " paid consent is unavailable, never a replacement quote", async () => {
+    const state = await adaptiveRegressionFixture(true);
+    try {
+      const quote = await quoteAdaptiveRegression(state);
+      assert.equal((await executeAdaptiveRegression(state, quote)).status, "completed");
+      editAdaptiveReentrySource(state, "creative:assistant-owner");
+      const ref = state.sqlite.prepare("SELECT consent_ref FROM consequential_executions WHERE execution_id=?").get(quote.executionId).consent_ref;
+      if (withdrawal === "erased") state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(), ref);
+      else if (withdrawal === "expired") state.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE content_id=?").run(ref);
+      else if (withdrawal === "resource-detached") assert.equal(Number(state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").run(ref).changes), 1);
+      else assert.equal(Number(state.sqlite.prepare("DELETE FROM private_content_retention_scopes WHERE content_id=?").run(ref).changes), 1);
+      const financial = adaptiveReentryFinancialState(state), counts = adaptiveReentryCounts(state);
+      for (const request of [
+        { ...adaptiveRegressionRequest, action: "quote" },
+        adaptiveReentryResumeBody(quote.executionId),
+        { ...adaptiveRegressionRequest, action: "quote", replaceExecutionId: quote.executionId },
+      ]) {
+        const response = await state.request("/api/document-jobs/adaptive", json(request, state.owner)), body = await response.json();
+        assert.ok([403, 404, 409, 410].includes(response.status), JSON.stringify(body));
+        assert.equal(body.quote, undefined); assert.equal(body.structure, undefined); assert.equal(body.planningRequest, undefined);
+        assert.equal(body.noAutomaticRetry, true);
+        assert.doesNotMatch(JSON.stringify(body), /PRIVATE_ADAPTIVE_REGRESSION_PLAN/u);
+        assert.deepEqual(adaptiveReentryFinancialState(state), financial); assert.deepEqual(adaptiveReentryCounts(state), counts);
+      }
+      if (withdrawal === "erased") assert.equal(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(ref).content, "");
+      if (withdrawal === "resource-detached") assert.equal(state.sqlite.prepare("SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(ref), undefined);
+      if (withdrawal === "retention-detached") assert.equal(state.sqlite.prepare("SELECT 1 FROM private_content_retention_scopes WHERE content_id=?").get(ref), undefined);
+    } finally { await state.closeAdaptiveRegression(); }
+  });
+}
+
+
+for(const withdrawal of["consent","result"])test("adaptive withdrawn preview R4: erased "+withdrawal+" makes the real replacement quote unavailable without new spend",async()=>{
+  const state=await adaptiveRegressionFixture(true);
+  try{
+    const quote=await quoteAdaptiveRegression(state);
+    assert.equal((await executeAdaptiveRegression(state,quote)).status,"completed");
+    const original=await state.request("/api/document-jobs/adaptive",json(adaptiveReentryResumeBody(quote.executionId),state.owner)),visible=await original.json();
+    assert.equal(original.status,200);assert.match(JSON.stringify(visible),/PRIVATE_ADAPTIVE_REGRESSION_PLAN/u);
+    editAdaptiveReentrySource(state,"creative:assistant-owner");
+    const refs=state.sqlite.prepare("SELECT consent_ref,result_ref FROM consequential_executions WHERE execution_id=?").get(quote.executionId),ref=withdrawal==="consent"?refs.consent_ref:refs.result_ref;
+    assert.ok(ref);
+    assert.equal(Number(state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),ref).changes),1);
+    const financial=adaptiveReentryFinancialState(state),counts=adaptiveReentryCounts(state);
+    const response=await state.request("/api/document-jobs/adaptive",json({...adaptiveRegressionRequest,action:"quote",replaceExecutionId:quote.executionId},state.owner)),body=await response.json();
+    assert.equal(response.status,409);
+    assert.deepEqual(body,{error:withdrawal==="consent"?"adaptive_existing_request_unavailable":"adaptive_result_unavailable",noAutomaticRetry:true});
+    assert.doesNotMatch(JSON.stringify(body),/PRIVATE_ADAPTIVE_REGRESSION_PLAN/u);
+    assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.deepEqual(adaptiveReentryCounts(state),counts);
+    assert.equal(state.adaptiveCalls.length,1);
+    assert.equal(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(ref).content,"");
+    assert.equal(state.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(quote.executionId).status,"completed","Private withdrawal must not rewrite the paid execution outcome");
+  }finally{await state.closeAdaptiveRegression();}
+});
+
+test("adaptive reentry: an explicit replacement previews changed source only after settled completion and never dispatches", async () => {
+  const state = await adaptiveRegressionFixture();
+  try {
+    const quote = await quoteAdaptiveRegression(state);
+    assert.equal((await executeAdaptiveRegression(state, quote)).status, "completed");
+    const financial = adaptiveReentryFinancialState(state), counts = adaptiveReentryCounts(state);
+    const replacement = { ...adaptiveRegressionRequest, action: "quote", replaceExecutionId: quote.executionId };
+    const unchanged = await state.request("/api/document-jobs/adaptive", json(replacement)), same = await unchanged.json();
+    assert.equal(unchanged.status, 200, JSON.stringify(same)); assert.equal(same.quote.executionId, quote.executionId);
+    assert.deepEqual(adaptiveReentryCounts(state), counts);
+    editAdaptiveReentrySource(state);
+    const reopened = await state.request("/api/document-jobs/adaptive", json({ ...adaptiveRegressionRequest, action: "quote" })), original = await reopened.json();
+    assert.equal(reopened.status, 200, JSON.stringify(original)); assert.equal(original.quote.executionId, quote.executionId);
+    const changed = await state.request("/api/document-jobs/adaptive", json(replacement)), next = await changed.json();
+    assert.equal(changed.status, 200, JSON.stringify(next)); assert.equal(next.quote.status, "quoted");
+    assert.notEqual(next.quote.executionId, quote.executionId); assert.notEqual(next.quote.sourceHash, quote.sourceHash);
+    assert.equal(next.quote.privateInput.requestKey, quote.privateInput.requestKey);
+    assert.equal(next.quote.canExecute, true); assert.equal(next.job, undefined);
+    assert.equal(state.sqlite.prepare("SELECT status FROM consequential_execution_steps WHERE execution_id=?").get(next.quote.executionId).status, "quoted");
+    assert.deepEqual(adaptiveReentryFinancialState(state), financial);
+    assert.deepEqual(adaptiveReentryCounts(state), { ...counts, executions: counts.executions + 1 });
+    const originalStillSaved = await state.request("/api/document-jobs/adaptive", json(adaptiveReentryResumeBody(quote.executionId)));
+    const saved = await originalStillSaved.json(); assert.equal(originalStillSaved.status, 200); assertOriginalAdaptiveReentry(saved, quote);
+    assert.deepEqual(adaptiveReentryFinancialState(state), financial);
+    assert.equal(state.adaptiveCalls.length, 1);
+  } finally { await state.closeAdaptiveRegression(); }
+});
+
+test("adaptive reentry: an unknown submitted request cannot be replaced even after source edits", async () => {
+  const state = await adaptiveRegressionFixture();
+  try {
+    globalThis.fetch = async (url, init) => {
+      assert.equal(String(url), "https://api.openai.com/v1/responses"); assert.equal(init.method, "POST");
+      state.adaptiveCalls.push(JSON.parse(init.body)); throw new Error("Lost provider response after submission");
+    };
+    const quote = await quoteAdaptiveRegression(state);
+    assert.equal((await executeAdaptiveRegression(state, quote)).status, "failed");
+    assert.equal(state.sqlite.prepare("SELECT status FROM consequential_executions WHERE execution_id=?").get(quote.executionId).status, "uncertain");
+    assert.equal(state.sqlite.prepare("SELECT status FROM consequential_execution_steps WHERE execution_id=?").get(quote.executionId).status, "uncertain");
+    const financial = adaptiveReentryFinancialState(state), counts = adaptiveReentryCounts(state);
+    assert.equal(financial.costs[0].status, "executing"); assert.ok(financial.costs[0].reserved_microusd > 0);
+    editAdaptiveReentrySource(state); delete state.env.OPENAI_API_KEY; state.env.OPENAI_MODEL = "unpriced-unknown-reentry-model";
+    const response = await state.request("/api/document-jobs/adaptive", json({
+      ...adaptiveRegressionRequest, action: "quote", replaceExecutionId: quote.executionId,
+    })), body = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(body)); assert.equal(body.reused, true);
+    assert.equal(body.quote.executionId, quote.executionId); assert.equal(body.quote.bindingHash, quote.bindingHash);
+    assert.equal(body.quote.status, "uncertain"); assert.equal(body.quote.canExecute, false);
+    assert.deepEqual(body.planningRequest, { ...adaptiveRegressionRequest, requestKey: quote.privateInput.requestKey });
+    const resumed = await state.request("/api/document-jobs/adaptive", json(adaptiveReentryResumeBody(quote.executionId))), recovered = await resumed.json();
+    assert.equal(resumed.status, 409, JSON.stringify(recovered));
+    assert.equal(recovered.executionId, quote.executionId); assert.equal(recovered.status, "uncertain");
+    assert.equal(recovered.noAutomaticRetry, true); assert.equal(recovered.structure, undefined);
+    assert.deepEqual(adaptiveReentryFinancialState(state), financial); assert.deepEqual(adaptiveReentryCounts(state), counts);
+  } finally { await state.closeAdaptiveRegression(); }
+});
+
+for (const surface of ["resume", "activity-list", "activity-detail"]) {
+  test("adaptive reentry: final-read session revocation withholds " + surface + " private planning evidence", async () => {
+    const state = await adaptiveRegressionFixture(true); let intercept;
+    try {
+      const member = await adaptiveReentryMember(state), quote = await quoteAdaptiveRegression(state);
+      assert.equal((await executeAdaptiveRegression(state, quote)).status, "completed");
+      await member.setRole("viewer");
+      const financial = adaptiveReentryFinancialState(state), counts = adaptiveReentryCounts(state);
+      intercept = interceptAdaptiveRegressionSql(state, (sql, stack) => surface === "resume"
+        ? sql.startsWith("SELECT 1 AS retained WHERE") && /^\s+at retrieve \(/mu.test(stack)
+        : sql.startsWith("SELECT 1 WHERE") && sql.includes("project_context_sessions selected_session")
+          && /^\s+at handleDocumentJobs \(/mu.test(stack), "first", () => {
+        const revoked = state.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE principal_user_id=? AND project_access_id=? AND revoked_at IS NULL")
+          .run(new Date().toISOString(), "assistant-viewer", state.projectAccessId);
+        assert.ok(Number(revoked.changes) > 0);
+      });
+      const response = surface === "resume"
+        ? await state.request("/api/document-jobs/adaptive", json(adaptiveReentryResumeBody(quote.executionId), state.owner))
+        : await state.request("/api/document-jobs" + (surface === "activity-detail" ? "/" + quote.executionId : "?document=" + adaptiveRegressionRequest.documentId), { headers: state.owner });
+      const body = await response.json(); assert.equal(intercept.fired, true, "The final HTTP-read proof must run");
+      assert.ok([403, 404, 409, 410].includes(response.status), JSON.stringify(body));
+      assert.doesNotMatch(JSON.stringify(body), /PRIVATE_ADAPTIVE_REGRESSION_PLAN/u);
+      assert.equal(body.quote, undefined); assert.equal(body.planningRequest, undefined); assert.equal(body.structure, undefined);
+      assert.equal(body.job, undefined); assert.equal(body.jobs, undefined);
+      assert.deepEqual(adaptiveReentryFinancialState(state), financial); assert.deepEqual(adaptiveReentryCounts(state), counts);
+    } finally { intercept?.restore(); await state.closeAdaptiveRegression(); }
+  });
+}
+test("adaptive regression: a new free preview never reuses withdrawn private consent custody", async () => {
+  for(const detached of ["resource","retention"]){
+    const state=await adaptiveRegressionFixture(true);
+    try{
+      const original=await quoteAdaptiveRegression(state),ref=state.sqlite.prepare("SELECT consent_ref FROM consequential_executions WHERE execution_id=?").get(original.executionId).consent_ref;
+      const removed=detached==="resource"?state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").run(ref):state.sqlite.prepare("DELETE FROM private_content_retention_scopes WHERE content_id=?").run(ref);
+      assert.equal(Number(removed.changes),1);assert.equal((await retrieveAdaptiveRegression(state,original)).status,404);
+      const fresh=await quoteAdaptiveRegression(state);assert.notEqual(fresh.executionId,original.executionId);assert.equal(fresh.bindingHash,original.bindingHash);assert.equal(fresh.status,"quoted");
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations").get().count,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count,0);assert.equal(state.adaptiveCalls.length,0);
+    }finally{await state.closeAdaptiveRegression();}
+  }
+});
+test("adaptive regression: an exact free preview survives zero budget and a closed pilot", async () => {
+  for (const mode of ["budget", "pilot", "both"]) {
+    const state = await adaptiveRegressionFixture(true);
+    try {
+      if (mode !== "pilot") state.sqlite.prepare("UPDATE budget_scope_policies SET token_limit=0,microusd_limit=0 WHERE organization_id=?").run(state.organizationId);
+      if (mode !== "budget") {
+        const now = new Date().toISOString();
+        state.sqlite.prepare("INSERT INTO pilot_cohorts(cohort_id,organization_id,status,starts_at,ends_at,created_by_user_id,created_at,updated_at) VALUES(?,?,'closed',?,?,?,?,?)")
+          .run("adaptive-free-preview-cohort", state.organizationId, new Date(Date.now() - 86_400_000).toISOString(), new Date(Date.now() - 60_000).toISOString(), "assistant-owner", now, now);
+        state.sqlite.prepare("INSERT INTO pilot_participants(participant_id,cohort_id,organization_id,email_normalized,user_id,role,status,invited_by_user_id,created_at,revoked_at) VALUES(?,?,?,?,?,'member','active',?,?,NULL)")
+          .run("adaptive-free-preview-member", "adaptive-free-preview-cohort", state.organizationId, "assistant-owner@example.test", "assistant-owner", "assistant-owner", now);
+      }
+      const quote = await quoteAdaptiveRegression(state);
+      assert.equal(quote.canExecute, false, mode); assert.equal(quote.providerAvailable, true);
+      assert.ok(quote.privateInput.providerRequest); assert.ok(quote.maximumMicrousd > 0);
+      if (mode !== "pilot") { assert.equal(quote.budgetAvailable, false); assert.equal(quote.availableMicrousd, 0); }
+      if (mode !== "budget") assert.ok(quote.unavailableReasons.includes("adaptive_pilot_denied"));
+      for (const table of ["document_jobs", "budget_reservations", "cost_budget_reservations"]) {
+        assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM " + table).get().count, 0, mode + "/" + table);
+      }
+      assert.equal(state.adaptiveCalls.length, 0);
+    } finally { await state.closeAdaptiveRegression(); }
+  }
+});
+
+test("adaptive regression: the original actor can recover a paid raw receipt as a reader next month without a provider or spend eligibility", async () => {
+  const state = await adaptiveRegressionFixture(true), RealDate = globalThis.Date;
+  try {
+    const admin = state.owner, { cookie: _cookie, ...identity } = state.viewer;
+    const memberId = state.sqlite.prepare("SELECT membership_id FROM project_memberships WHERE project_access_id=? AND user_id=?").get(state.projectAccessId, "assistant-viewer").membership_id;
+    const memberUrl = "/api/workspaces/" + state.organizationId + "/projects/" + state.projectAccessId + "/members/" + memberId;
+    const setRole = async (role) => {
+      const response = await state.request(memberUrl, { ...json({ role }, admin), method: "PATCH" });
+      assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+    };
+    const openContext = async () => {
+      const response = await state.request("/api/workspaces/" + state.organizationId + "/projects/" + state.projectAccessId + "/context", { method: "POST", headers: identity });
+      assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+      state.owner = { ...identity, cookie: response.headers.get("set-cookie").split(";")[0] };
+    };
+    await setRole("editor"); await openContext();
+    const quote = await quoteAdaptiveRegression(state), job = await executeAdaptiveRegression(state, quote);
+    assert.equal(job.status, "completed", job.error_message); retainOnlyAdaptiveRawRegression(state, quote.executionId);
+    await setRole("viewer");
+    const current = new RealDate(), nextMonth = RealDate.UTC(current.getUTCFullYear(), current.getUTCMonth() + 1, 1, 1);
+    globalThis.Date = class extends RealDate {
+      constructor(...args) { super(...(args.length ? args : [nextMonth])); }
+      static now() { return nextMonth; }
+    };
+    await openContext(); delete state.env.OPENAI_API_KEY;
+    state.sqlite.prepare("DELETE FROM budget_scope_policies WHERE organization_id=?").run(state.organizationId);
+    state.sqlite.prepare("UPDATE cost_budget_counters SET used_microusd=hard_limit_microusd-reserved_microusd").run();
+    state.sqlite.prepare("UPDATE budget_counters SET used_tokens=hard_limit_tokens-reserved_tokens").run();
+    // Reconciliation may touch timestamps, but must not reserve, re-charge, or open a new accounting period.
+    const financialState = () => ({
+      tokens: state.sqlite.prepare("SELECT * FROM budget_reservations ORDER BY reservation_id").all(),
+      costs: state.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),
+      tokenCounters: state.sqlite.prepare("SELECT scope,scope_id,period,used_tokens,reserved_tokens,hard_limit_tokens FROM budget_counters ORDER BY scope,scope_id,period").all(),
+      costCounters: state.sqlite.prepare("SELECT scope,scope_id,period,used_microusd,reserved_microusd,hard_limit_microusd FROM cost_budget_counters ORDER BY scope,scope_id,period").all(),
+    });
+    const before = financialState();
+    assert.notEqual(new Date().toISOString().slice(0, 7), quote.period); assert.ok(quote.expiresAt < new Date().toISOString());
+    const originalPreview = await state.request("/api/document-jobs/adaptive", json({ ...adaptiveRegressionRequest, action: "quote" }, state.owner));
+    assert.equal(originalPreview.status, 200); assert.equal((await originalPreview.json()).quote.executionId, quote.executionId, "same intent returns the paid request, not a new purchase");
+    const denied = await state.request("/api/document-jobs/adaptive", json({ ...adaptiveRegressionRequest, prompt: "A genuinely new planning intent", action: "quote" }, state.owner));
+    assert.equal(denied.status, 403, "reader has no new authoring/purchase entitlement");
+    const response = await retrieveAdaptiveRegression(state, quote), body = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(body)); assert.equal(body.structure.interpretation, "PRIVATE_ADAPTIVE_REGRESSION_PLAN");
+    assert.equal(body.recoveredFromPaidReceipt, true); assert.equal(body.quote.providerAvailable, false); assert.equal(body.job.status, "completed");
+    assert.equal(body.executionId, quote.executionId); assert.equal(body.bindingHash, quote.bindingHash);
+    assert.equal(body.quote.period, quote.period); assert.deepEqual(body.quote.privateInput, quote.privateInput);
+    assert.equal(JSON.stringify(body).includes("adaptiveProviderReceipt"), false);
+    assert.deepEqual(financialState(), before); assert.equal(state.adaptiveCalls.length, 1);
+  } finally { globalThis.Date = RealDate; await state.closeAdaptiveRegression(); }
+});
+
+test("adaptive regression: detached or mismatched retention alone blocks final and raw private reads", async () => {
+  for (const kind of ["final", "raw"]) for (const mode of ["detached", "wrong-actor", "wrong-project"]) {
+    const state = await adaptiveRegressionFixture(true); let intercept;
+    try {
+      const quote = await quoteAdaptiveRegression(state); assert.equal((await executeAdaptiveRegression(state, quote)).status, "completed");
+      if (kind === "raw") retainOnlyAdaptiveRawRegression(state, quote.executionId);
+      const ref = kind === "raw"
+        ? state.sqlite.prepare("SELECT json_extract(result_json,'$.adaptiveProviderReceipt.contentRef') AS ref FROM document_jobs WHERE job_id=?").get(quote.executionId).ref
+        : state.sqlite.prepare("SELECT result_ref AS ref FROM consequential_executions WHERE execution_id=?").get(quote.executionId).ref;
+      assert.ok(ref);
+      const resource = state.sqlite.prepare("SELECT * FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(ref); assert.ok(resource);
+      // Inject after source synchronization: neither resource removal nor content erasure can explain this denial.
+      intercept = interceptAdaptiveRegressionSql(state, (sql) => kind === "raw"
+        ? sql.startsWith("SELECT job.result_json,raw.content_id,raw.content FROM document_jobs job JOIN private_content raw")
+        : sql.startsWith("SELECT content FROM private_content WHERE") && sql.includes("kind='context-proposal'"), "first", () => {
+        const changed = mode === "detached"
+          ? state.sqlite.prepare("DELETE FROM private_content_retention_scopes WHERE content_id=?").run(ref)
+          : mode === "wrong-actor"
+            ? state.sqlite.prepare("UPDATE private_content_retention_scopes SET actor_user_id='assistant-viewer' WHERE content_id=?").run(ref)
+            : state.sqlite.prepare("UPDATE private_content_retention_scopes SET project_id='wrong-project' WHERE content_id=?").run(ref);
+        assert.equal(Number(changed.changes), 1);
+      });
+      const response = await retrieveAdaptiveRegression(state, quote), body = await response.json();
+      assert.equal(intercept.fired, true); assert.ok([403, 404, 409, 410].includes(response.status), kind + "/" + mode + ": " + JSON.stringify(body));
+      assert.equal(JSON.stringify(body).includes("PRIVATE_ADAPTIVE_REGRESSION_PLAN"), false); assert.equal(JSON.stringify(body).includes("adaptiveProviderReceipt"), false);
+      assert.deepEqual(state.sqlite.prepare("SELECT * FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(ref), resource);
+      const privateRow = state.sqlite.prepare("SELECT content,redacted_at FROM private_content WHERE content_id=?").get(ref);
+      assert.ok(privateRow.content); assert.equal(privateRow.redacted_at, null); assert.equal(state.adaptiveCalls.length, 1);
+    } finally { intercept?.restore(); await state.closeAdaptiveRegression(); }
+  }
+});
+
+test("adaptive regression: lost shared admission preserves one anchored job recoverable under its original approval", async () => {
+  const state = await adaptiveRegressionFixture(true), originalBatch = state.env.DB.batch; let lost = false;
+  try {
+    const quote = await quoteAdaptiveRegression(state);
+    state.env.DB.batch = async (statements) => {
+      const results = await originalBatch.call(state.env.DB, statements);
+      if (!lost && statements.some((statement) => /^\s*UPDATE consequential_executions SET status='reserved'/u.test(statement.sql))
+        && statements.some((statement) => /^\s*INSERT (?:OR IGNORE )?INTO document_jobs/u.test(statement.sql))) {
+        lost = true; throw new Error("injected_adaptive_admission_response_lost");
+      }
+      return results;
+    };
+    const interrupted = await state.request("/api/document-jobs/adaptive", json({ ...adaptiveRegressionRequest, action: "execute", executionId: quote.executionId, approvedBindingHash: quote.bindingHash }, state.owner));
+    state.env.DB.batch = originalBatch;
+    assert.equal(lost, true); assert.equal(interrupted.ok, false); await state.drainBackground(); assert.equal(state.adaptiveCalls.length, 0);
+    const job = state.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(quote.executionId);
+    assert.equal(job.status, "queued"); assert.equal(job.correlation_id, quote.executionId);
+    const anchored = state.sqlite.prepare("SELECT resource.*,event.type,event.actor,event.stream_id,event.correlation_id,event.payload FROM project_resource_scopes resource JOIN events event ON event.event_id=resource.source_event_id WHERE resource.resource_kind='job' AND resource.resource_id=?").get(quote.executionId);
+    assert.ok(anchored); assert.equal(anchored.type, "ProjectDocumentJobQueued"); assert.equal(anchored.actor, "user:assistant-owner");
+    assert.equal(anchored.stream_id, "creative:assistant-owner"); assert.equal(anchored.correlation_id, quote.executionId);
+    const payload = JSON.parse(anchored.payload);
+    for (const [field, expected] of Object.entries({ job_id: quote.executionId, document_id: "doc-atmosphere", organization_id: state.organizationId, project_access_id: state.projectAccessId, project_id: "project-atmosphere", actor_user_id: "assistant-owner", history_owner_user_id: "assistant-owner" })) assert.equal(payload[field], expected, field);
+    const pending = await retrieveAdaptiveRegression(state, quote), pendingBody = await pending.json();
+    assert.equal(pending.status, 202, JSON.stringify(pendingBody)); assert.equal(pendingBody.executionId, quote.executionId);
+    assert.equal(pendingBody.job.jobId, quote.executionId); assert.equal(pendingBody.job.status, "queued"); assert.equal(state.adaptiveCalls.length, 0);
+    for (const table of ["budget_reservations", "cost_budget_reservations"]) assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM " + table).get().count, 0);
+    const resumed = await state.request("/api/document-jobs/" + quote.executionId + "/run", json({}, state.owner));
+    assert.equal(resumed.status, 202, JSON.stringify(await resumed.clone().json())); await state.drainBackground();
+    const recovered = await retrieveAdaptiveRegression(state, quote), body = await recovered.json();
+    assert.equal(recovered.status, 200, JSON.stringify(body)); assert.equal(body.job.status, "completed");
+    assert.equal(body.job.jobId, quote.executionId); assert.equal(body.executionId, quote.executionId); assert.equal(body.bindingHash, quote.bindingHash);
+    assert.deepEqual(state.adaptiveCalls, [quote.privateInput.providerRequest]);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs WHERE kind='structure_adaptive'").get().count, 1);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='ProjectDocumentJobQueued' AND json_extract(payload,'$.job_id')=?").get(quote.executionId).count, 1);
+    for (const table of ["budget_reservations", "cost_budget_reservations"]) assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM " + table).get().count, 1);
+  } finally { state.env.DB.batch = originalBatch; await state.closeAdaptiveRegression(); }
+});
+
+test("adaptive regression: quotes and dispatches the same complete shared source", async () => {
+  const state = await adaptiveRegressionFixture(true);
+  try {
+    appendFixtureEvents(state.sqlite, "creative:assistant-owner", [["BlockCreated", { project_id: "project-atmosphere", document_id: "doc-atmosphere", block_id: "adaptive-full-source", type: "text", handle: "full-source", properties: { text: "Preserve this authored direction.", prompt: "FULL_AUTHORED_PROMPT_MUST_NOT_DISAPPEAR" } }]]);
+    const quote = await quoteAdaptiveRegression(state);
+    assert.ok(JSON.stringify(quote.privateInput).includes("FULL_AUTHORED_PROMPT_MUST_NOT_DISAPPEAR"));
+    const job = await executeAdaptiveRegression(state, quote); assert.equal(job.status, "completed", job.error_message); assert.equal(state.adaptiveCalls.length, 1);
+    assert.ok(JSON.stringify(state.adaptiveCalls[0]).includes("FULL_AUTHORED_PROMPT_MUST_NOT_DISAPPEAR")); assert.deepEqual(state.adaptiveCalls[0], quote.privateInput.providerRequest);
+  } finally { await state.closeAdaptiveRegression(); }
+});
+test("adaptive regression: submission rechecks exact shared job custody at the submitting CAS", async () => {
+  const state = await adaptiveRegressionFixture(true);
+  try {
+    const quote = await quoteAdaptiveRegression(state); let removed = 0;
+    state.controls.beforeConsequentialSubmit = () => { removed = Number(state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE resource_kind='job' AND resource_id=?").run(quote.executionId).changes); };
+    const job = await executeAdaptiveRegression(state, quote); assert.equal(removed, 1); assert.equal(state.adaptiveCalls.length, 0); assert.notEqual(job.status, "completed");
+    const execution = state.sqlite.prepare("SELECT status,result_ref FROM consequential_executions WHERE execution_id=?").get(quote.executionId); assert.notEqual(execution.status, "completed"); assert.equal(execution.result_ref, null);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM consequential_execution_steps WHERE execution_id=? AND status IN('submitting','usage-recorded','settled')").get(quote.executionId).count, 0);
+  } finally { await state.closeAdaptiveRegression(); }
+});
+test("adaptive regression: cached final result is not leaked after recovery CAS loses to erasure", async () => {
+  const state = await adaptiveRegressionFixture(); let intercept;
+  try {
+    const quote = await quoteAdaptiveRegression(state); assert.equal((await executeAdaptiveRegression(state, quote)).status, "completed");
+    state.sqlite.prepare("UPDATE document_jobs SET status='failed' WHERE job_id=?").run(quote.executionId);
+    intercept = interceptAdaptiveRegressionSql(state, (sql) => /UPDATE document_jobs SET status='completed',result_json=/u.test(sql) && sql.includes("result_json IS ?"), "run", () => {
+      state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=(SELECT result_ref FROM consequential_executions WHERE execution_id=?)").run(new Date().toISOString(), quote.executionId);
+    });
+    const response = await retrieveAdaptiveRegression(state, quote), body = await response.json(); assert.equal(intercept.fired, true);
+    assert.ok([403, 404, 409, 410].includes(response.status), JSON.stringify(body)); assert.equal(JSON.stringify(body).includes("PRIVATE_ADAPTIVE_REGRESSION_PLAN"), false);
+    assert.equal(state.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(quote.executionId).status, "failed"); assert.equal(state.adaptiveCalls.length, 1);
+  } finally { intercept?.restore(); await state.closeAdaptiveRegression(); }
+});
+test("adaptive regression: raw-only recovery keeps private proof through the final HTTP response", async () => {
+  const state = await adaptiveRegressionFixture(); let intercept;
+  try {
+    const quote = await quoteAdaptiveRegression(state); assert.equal((await executeAdaptiveRegression(state, quote)).status, "completed"); retainOnlyAdaptiveRawRegression(state, quote.executionId);
+    intercept = interceptAdaptiveRegressionSql(state, (sql, stack) => sql.startsWith("SELECT 1 AS retained WHERE") && /^\s+at retrieve \(/mu.test(stack), "first", () => {
+      state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=(SELECT json_extract(result_json,'$.adaptiveProviderReceipt.contentRef') FROM document_jobs WHERE job_id=?)").run(new Date().toISOString(), quote.executionId);
+    });
+    const response = await retrieveAdaptiveRegression(state, quote), body = await response.json(); assert.equal(intercept.fired, true);
+    assert.ok([403, 404, 409, 410].includes(response.status), JSON.stringify(body)); assert.equal(JSON.stringify(body).includes("PRIVATE_ADAPTIVE_REGRESSION_PLAN"), false);
+    assert.equal(JSON.stringify(body).includes("adaptiveProviderReceipt"), false); assert.equal(state.adaptiveCalls.length, 1);
+  } finally { intercept?.restore(); await state.closeAdaptiveRegression(); }
+});
+test("adaptive regression: retained results require original organization-private content custody", async () => {
+  const state = await adaptiveRegressionFixture(true);
+  try {
+    const quote = await quoteAdaptiveRegression(state); assert.equal((await executeAdaptiveRegression(state, quote)).status, "completed");
+    const ref = state.sqlite.prepare("SELECT result_ref FROM consequential_executions WHERE execution_id=?").get(quote.executionId).result_ref; assert.ok(ref);
+    assert.equal(Number(state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").run(ref).changes), 1);
+    const response = await retrieveAdaptiveRegression(state, quote), body = await response.json(); assert.ok([403, 404, 409, 410].includes(response.status), JSON.stringify(body));
+    assert.equal(JSON.stringify(body).includes("PRIVATE_ADAPTIVE_REGRESSION_PLAN"), false);
+    assert.equal(state.sqlite.prepare("SELECT 1 FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(ref), undefined); assert.equal(state.adaptiveCalls.length, 1);
+  } finally { await state.closeAdaptiveRegression(); }
+});
+test("adaptive regression: retrieving a raced unused quote discovers its paid winner", { timeout: 10_000 }, async () => {
+  const state = await adaptiveRegressionFixture(), originalPrepare = state.env.DB.prepare;
+  try {
+    let arrivals = 0, release; const barrier = new Promise((resolve) => { release = resolve; });
+    state.env.DB.prepare = (sql) => {
+      const statement = originalPrepare.call(state.env.DB, sql); if (!sql.includes("SELECT execution.status,content.content FROM consequential_executions")) return statement;
+      const bind = statement.bind.bind(statement);
+      statement.bind = (...values) => { const bound = bind(...values), first = bound.first.bind(bound); bound.first = async () => { const result = await first(); if (!result) { arrivals += 1; if (arrivals === 2) release(); await barrier; } return result; }; return bound; }; return statement;
+    };
+    const [winner, unused] = await Promise.all([quoteAdaptiveRegression(state), quoteAdaptiveRegression(state)]); state.env.DB.prepare = originalPrepare;
+    assert.notEqual(winner.executionId, unused.executionId); assert.equal(winner.bindingHash, unused.bindingHash);
+    assert.equal((await executeAdaptiveRegression(state, winner)).status, "completed");
+    const response = await retrieveAdaptiveRegression(state, unused), body = await response.json(); assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.executionId, winner.executionId); assert.equal(body.bindingHash, winner.bindingHash); assert.equal(body.requestedExecutionId, unused.executionId); assert.equal(body.reusedExecutionId, winner.executionId);
+    assert.equal(body.quote.executionId, winner.executionId); assert.equal(body.quote.bindingHash, winner.bindingHash); assert.equal(body.job.jobId, winner.executionId); assert.equal(body.job.status, "completed");
+    assert.equal(body.structure.interpretation, "PRIVATE_ADAPTIVE_REGRESSION_PLAN"); assert.equal(state.adaptiveCalls.length, 1);
+  } finally { state.env.DB.prepare = originalPrepare; await state.closeAdaptiveRegression(); }
+});
+
 test("assistant is available by default to every consented user without widening project access", async () => {
   const state = await fixture({ enabled: false });
   const session = await (await state.request("/api/session")).json();
@@ -287,110 +1159,158 @@ test("planner-only accounts retain paid creative chat when their selected image 
   }finally{globalThis.fetch=originalFetch;}
 });
 
-test("board planning reuses only identical active requests and atomically separates board destinations",async()=>{
-  const state=await fixture({provider:true});
-  appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[...["dedup-a","dedup-b"].map((id)=>["CanvasCreated",{canvas_id:id,project_id:"project-atmosphere",name:id,slug:id}])]);
-  let release;const gate=new Promise((resolve)=>{release=resolve;});const originalFetch=globalThis.fetch;let calls=0;
-  globalThis.fetch=async(_url,init)=>{calls++;const body=JSON.parse(init.body);await gate;return Response.json({id:`adaptive-${calls}`,model:body.model,output_text:JSON.stringify({interpretation:"A private plan",active_decision:{type:"subject",label:"Subject",prompt:"Choose a subject",why:"Focus"},suggested_blocks:[],hidden_until_later:[]}),usage:{input_tokens:80,output_tokens:30,total_tokens:110}});};
-  const submit=(canvasId,prompt)=>state.request("/api/document-jobs",json({kind:"structure_adaptive",documentId:"doc-atmosphere",sourceSurface:"canvas",payload:{canvasId,projectScope:true,locale:"en",prompt,requestKey:"untrusted",idempotencyKey:"untrusted"}}));
+test("board planning reuses only identical approved requests and atomically separates board destinations",{timeout:15_000},async()=>{
+  const state=await fixture({provider:true}),stream="creative:dev-local-creative";
+  appendFixtureEvents(state.sqlite,stream,["dedup-a","dedup-b"].map(id=>["CanvasCreated",{canvas_id:id,project_id:"project-atmosphere",name:id,slug:id}]));
+  const released=Promise.withResolvers(),originalFetch=globalThis.fetch;let calls=0;
+  const body=(canvasId,prompt)=>({...adaptiveConsentBody,canvasId,sourceSurface:"canvas",projectScope:true,prompt});
+  globalThis.fetch=async(_url,init)=>{calls++;await released.promise;return adaptiveFixtureResponse(JSON.parse(init.body));};
   try{
-    const a=await(await submit("dedup-a","Keep the moonlit courtyard.")).json();
-    const sameResponse=await submit("dedup-a","  Keep the moonlit courtyard.  ");const same=await sameResponse.json();
-    assert.equal(sameResponse.status,202);assert.equal(same.reused,true);assert.equal(same.job.jobId,a.job.jobId);
-    const changed=await submit("dedup-a","A sunny mountain instead.");assert.equal(changed.status,409);assert.equal((await changed.json()).error,"adaptive_request_in_progress");
-    for(const prompt of ["","x".repeat(2001)])assert.equal((await submit("dedup-a",prompt)).status,400);
-    const bResponse=await submit("dedup-b","Keep the moonlit courtyard.");const b=await bResponse.json();assert.equal(bResponse.status,202);assert.notEqual(b.job.jobId,a.job.jobId);assert.equal(b.job.canvasId,"dedup-b");assert.notEqual(a.job.requestKey,b.job.requestKey);
+    const aBody=body("dedup-a","Keep the moonlit courtyard."),aQuote=await quoteAdaptiveConsent(state,aBody),first=await executeAdaptiveConsent(state,aQuote,aBody);
+    assert.equal(first.status,202,JSON.stringify(await first.clone().json()));const a=await first.json();
+    const sameBody=body("dedup-a","  Keep the moonlit courtyard.  "),sameQuote=await quoteAdaptiveConsent(state,sameBody);
+    assert.equal(sameQuote.executionId,aQuote.executionId);assert.equal(sameQuote.bindingHash,aQuote.bindingHash);
+    const sameResponse=await executeAdaptiveConsent(state,sameQuote,sameBody),same=await sameResponse.json();
+    assert.equal(sameResponse.status,202);assert.equal(same.job.jobId,a.job.jobId);assert.equal(same.executionId,aQuote.executionId);
+    const changedBody=body("dedup-a","A sunny mountain instead."),changedQuote=await quoteAdaptiveConsent(state,changedBody),changed=await executeAdaptiveConsent(state,changedQuote,changedBody);
+    assert.equal(changed.status,409);assert.equal((await changed.json()).error,"context_consent_changed");
+    assert.equal(adaptiveJob(state,changedQuote.executionId),undefined,"A different request cannot take the active exact destination");
+    for(const prompt of ["","x".repeat(2001)]){
+      const invalid=await state.request(adaptiveConsentPath,json({...body("dedup-a",prompt),action:"quote"}));
+      assert.equal(invalid.status,409);assert.equal((await invalid.json()).error,"adaptive_intent_required");
+    }
+    const forged=await state.request(adaptiveConsentPath,json({...aBody,action:"quote",requestKey:"untrusted",idempotencyKey:"untrusted"}));
+    assert.equal(forged.status,409);assert.equal((await forged.json()).error,"adaptive_request_changed");
+    const bBody=body("dedup-b",aBody.prompt),bQuote=await quoteAdaptiveConsent(state,bBody),second=await executeAdaptiveConsent(state,bQuote,bBody),b=await second.json();
+    assert.equal(second.status,202,JSON.stringify(b));assert.notEqual(b.job.jobId,a.job.jobId);assert.equal(b.job.canvasId,"dedup-b");assert.notEqual(a.job.requestKey,b.job.requestKey);
     assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,2);
-    release();await state.drainBackground();assert.equal(calls,2);
-  }finally{release();await state.drainBackground();globalThis.fetch=originalFetch;}
+    released.resolve();await state.drainBackground();
+    for(const quote of [aQuote,bQuote]){const row=adaptiveJob(state,quote.executionId);assert.equal(row.status,"completed");assert.equal(row.job_id,row.correlation_id);assert.equal(row.attempt_count,1);}
+    assert.equal(calls,2);assert.deepEqual(adaptiveLedgerCounts(state),{token:2,cost:2});
+  }finally{released.resolve();await state.drainBackground();globalThis.fetch=originalFetch;}
 });
 
-test("identical board requests racing at insert recover one canonical job and one provider submission",async()=>{
-  const state=await fixture({provider:true});appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["CanvasCreated",{canvas_id:"dedup-race",project_id:"project-atmosphere",name:"Race",slug:"race"}]]);
-  let release;const gate=new Promise((resolve)=>{release=resolve;});const originalFetch=globalThis.fetch;let calls=0,winner;
-  globalThis.fetch=async(_url,init)=>{calls++;const body=JSON.parse(init.body);await gate;return Response.json({id:"adaptive-race",model:body.model,output_text:JSON.stringify({interpretation:"One plan",active_decision:{type:"subject",label:"Subject",prompt:"Choose",why:"Focus"},suggested_blocks:[],hidden_until_later:[]}),usage:{input_tokens:80,output_tokens:30,total_tokens:110}});};
-  const submit=()=>state.request("/api/document-jobs",json({kind:"structure_adaptive",documentId:"doc-atmosphere",sourceSurface:"canvas",payload:{canvasId:"dedup-race",projectScope:true,prompt:"One exact plan."}}));
+test("identical approved board requests racing at admission recover one canonical job and one provider submission",{timeout:15_000},async()=>{
+  const state=await adaptiveCanvasFixture(),released=Promise.withResolvers(),quotesReady=Promise.withResolvers(),originalFetch=globalThis.fetch,originalPrepare=state.env.DB.prepare;
+  let calls=0,arrivals=0,races=0,restore;
+  globalThis.fetch=async(_url,init)=>{calls++;await released.promise;return adaptiveFixtureResponse(JSON.parse(init.body));};
   try{
-    state.controls.beforeAdaptiveInsert=async()=>{winner=await(await submit()).json();};
-    const response=await submit(),loser=await response.json();assert.equal(response.status,202,JSON.stringify(loser));assert.equal(loser.reused,true);assert.equal(loser.job.jobId,winner.job.jobId);
-    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,1);release();await state.drainBackground();assert.equal(calls,1);
-  }finally{release();await state.drainBackground();globalThis.fetch=originalFetch;}
+    // Both requests observe no reusable quote before either inserts its private consent.
+    state.env.DB.prepare=sql=>{
+      const statement=originalPrepare.call(state.env.DB,sql);if(!sql.includes("SELECT execution.status,content.content FROM consequential_executions"))return statement;
+      const bind=statement.bind.bind(statement);statement.bind=(...values)=>{const bound=bind(...values),first=bound.first.bind(bound);bound.first=async()=>{const result=await first();if(!result){if(++arrivals===2)quotesReady.resolve();await quotesReady.promise;}return result;};return bound;};return statement;
+    };
+    const [winner,loser]=await Promise.all([quoteAdaptiveConsent(state,state.body),quoteAdaptiveConsent(state,state.body)]);state.env.DB.prepare=originalPrepare;
+    assert.notEqual(winner.executionId,loser.executionId);assert.equal(winner.bindingHash,loser.bindingHash);
+    let won;
+    restore=interceptConsequentialDb(state,"batch",/^\s*UPDATE consequential_executions SET status='reserved'/u,async()=>{
+      races++;const response=await executeAdaptiveConsent(state,winner,state.body);assert.equal(response.status,202,JSON.stringify(await response.clone().json()));won=await response.json();
+    });
+    const raced=await executeAdaptiveConsent(state,loser,state.body),result=await raced.json();restore();restore=null;
+    assert.equal(races,1,"The second admission must win at the first request's actual atomic claim boundary");
+    assert.equal(raced.status,202,JSON.stringify(result));assert.equal(result.job.jobId,won.job.jobId);assert.equal(result.executionId,winner.executionId);assert.equal(result.requestedExecutionId,loser.executionId);assert.equal(result.reused,true);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,1);assert.equal(adaptiveJob(state,loser.executionId),undefined);
+    assert.equal(state.sqlite.prepare("SELECT status FROM consequential_executions WHERE execution_id=?").get(loser.executionId).status,"quoted");
+    released.resolve();await state.drainBackground();
+    const retained=await retrieveAdaptiveConsent(state,loser,state.body),paid=await retained.json();assert.equal(retained.status,200,JSON.stringify(paid));assert.equal(paid.executionId,winner.executionId);assert.equal(paid.job.status,"completed");assert.deepEqual(paid.structure,adaptiveFixtureStructure);
+    assert.equal(calls,1);assert.deepEqual(adaptiveLedgerCounts(state),{token:1,cost:1});assert.equal(adaptiveJob(state,winner.executionId).correlation_id,winner.executionId);
+  }finally{restore?.();state.env.DB.prepare=originalPrepare;quotesReady.resolve();released.resolve();await state.drainBackground();globalThis.fetch=originalFetch;}
 });
 
-test("board planning authorizes exact live boards and retains board identity in accepted, listed, and completed jobs",async()=>{
-  const state=await fixture({provider:true});
-  appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[
+test("board planning authorizes exact live boards and retains board identity in quoted, accepted, listed, and completed jobs",{timeout:15_000},async()=>{
+  const state=await fixture({provider:true}),stream="creative:dev-local-creative",originalFetch=globalThis.fetch;let calls=0;
+  appendFixtureEvents(state.sqlite,stream,[
     ["CanvasCreated",{canvas_id:"assistant-board-a",project_id:"project-atmosphere",name:"Board A",slug:"board-a"}],
     ["CanvasCreated",{canvas_id:"assistant-board-b",project_id:"project-atmosphere",name:"Board B",slug:"board-b"}],
     ["CanvasCreated",{canvas_id:"assistant-foreign-board",project_id:"foreign-project",name:"Foreign board",slug:"foreign"}],
   ]);
-  const submit=(canvasId)=>state.request("/api/document-jobs",json({kind:"structure_adaptive",documentId:"doc-atmosphere",sourceSurface:"canvas",payload:{prompt:"Review this board without changing it.",projectScope:true,...(canvasId?{canvasId}:{})}}));
-  const missing=await submit("");
-  assert.equal(missing.status,400);
-  assert.equal((await missing.json()).error,"canvas_context_required");
-  const foreign=await submit("assistant-foreign-board");
-  assert.equal(foreign.status,404);
-  assert.equal((await foreign.json()).error,"canvas_not_found");
-  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs").get().count,0);
-
-  const originalFetch=globalThis.fetch;
-  globalThis.fetch=async(_url,init)=>{
-    const body=JSON.parse(init.body);
-    return Response.json({id:"board-planning-response",model:body.model,
-      output_text:JSON.stringify({interpretation:"Board A can explore a clearer subject.",active_decision:{type:"subject",label:"Choose a subject",prompt:"Who belongs here?",why:"Keep the composition grounded."},suggested_blocks:[],hidden_until_later:[]}),
-      usage:{input_tokens:80,output_tokens:30,total_tokens:110}});
-  };
+  const body=canvasId=>({...adaptiveConsentBody,sourceSurface:"canvas",projectScope:true,prompt:"Review this board without changing it.",...(canvasId?{canvasId}:{})});
+  const structure={...adaptiveFixtureStructure,interpretation:"Board A can explore a clearer subject."};
+  globalThis.fetch=async(_url,init)=>{calls++;return adaptiveFixtureResponse(JSON.parse(init.body),{outputText:JSON.stringify(structure)});};
   try{
-    const accepted=await submit("assistant-board-a");
-    assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));
-    const queued=await accepted.json();
-    assert.equal(queued.job.canvasId,"assistant-board-a");
+    for(const[canvasId,error]of[["","canvas_context_required"],["assistant-foreign-board","context_canvas_unavailable"]]){
+      const denied=await state.request(adaptiveConsentPath,json({...body(canvasId),action:"quote"}));assert.equal(denied.status,409,JSON.stringify({canvasId,reply:await denied.clone().json()}));assert.equal((await denied.json()).error,error);
+    }
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,0);assert.deepEqual(adaptiveLedgerCounts(state),{token:0,cost:0});assert.equal(calls,0);
+    const approvedBody=body("assistant-board-a"),quote=await quoteAdaptiveConsent(state,approvedBody);assert.equal(quote.canvasId,"assistant-board-a");
+    const accepted=await executeAdaptiveConsent(state,quote,approvedBody);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));const queued=await accepted.json();assert.equal(queued.job.canvasId,"assistant-board-a");
     await state.drainBackground();
-    const listing=await(await state.request("/api/document-jobs")).json();
-    const completed=listing.jobs.find((job)=>job.jobId===queued.job.jobId);
-    assert.equal(completed.status,"completed");
-    assert.equal(completed.canvasId,"assistant-board-a");
-    assert.equal(completed.result.structure.interpretation,"Board A can explore a clearer subject.");
-    const detail=await(await state.request(`/api/document-jobs/${queued.job.jobId}`)).json();
-    assert.equal(detail.job.canvasId,"assistant-board-a");
-
-    appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["CanvasRemoved",{canvas_id:"assistant-board-a",project_id:"project-atmosphere"}]]);
-    const removed=await submit("assistant-board-a");
-    assert.equal(removed.status,404);
-    assert.equal((await removed.json()).error,"canvas_not_found");
-  }finally{globalThis.fetch=originalFetch;}
+    const listing=await(await state.request("/api/document-jobs")).json(),completed=listing.jobs.find(job=>job.jobId===quote.executionId);
+    assert.equal(completed.status,"completed");assert.equal(completed.canvasId,"assistant-board-a");assert.equal(completed.result.structure.interpretation,structure.interpretation);
+    const detail=await(await state.request("/api/document-jobs/"+quote.executionId)).json();assert.equal(detail.job.canvasId,"assistant-board-a");
+    appendFixtureEvents(state.sqlite,stream,[["CanvasRemoved",{canvas_id:"assistant-board-a",project_id:"project-atmosphere"}]]);
+    const reopened=await state.request(adaptiveConsentPath,json({...approvedBody,action:"quote"}));assert.equal(reopened.status,200);const original=await reopened.json();assert.equal(original.quote.executionId,quote.executionId);assert.equal(original.quote.canExecute,false);
+    const denied=await state.request(adaptiveConsentPath,json({...approvedBody,action:"quote",replaceExecutionId:quote.executionId}));assert.equal(denied.status,409);assert.equal((await denied.json()).error,"context_canvas_unavailable");
+    const retained=await retrieveAdaptiveConsent(state,quote,approvedBody);assert.equal(retained.status,200,JSON.stringify(await retained.clone().json()));assert.deepEqual((await retained.json()).structure,structure);
+    assert.equal(calls,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,1);
+  }finally{await state.drainBackground();globalThis.fetch=originalFetch;}
 });
 
-for(const seam of ["insert","provider"])for(const restored of [false,true]){
-  test(`exact board ${restored?"restoration remains usable":"removal stops planning"} at ${seam}`,async()=>{
-    const state=await fixture({provider:true}),stream="creative:dev-local-creative",board=`board-boundary-${seam}-${restored}`,projectId="project-atmosphere";
-    appendFixtureEvents(state.sqlite,stream,[["CanvasCreated",{canvas_id:board,project_id:projectId,name:"Exact board",slug:"exact-board"}]]);
-    let mutations=0,calls=0;const originalFetch=globalThis.fetch;
-    globalThis.fetch=async(url,init)=>{assert.equal(String(url),"https://api.openai.com/v1/responses");assert.equal(init.method,"POST");calls++;const body=JSON.parse(init.body);return Response.json({id:`mock-${board}`,model:body.model,output_text:JSON.stringify({interpretation:"A plan for this exact board",active_decision:{type:"subject",label:"Subject",prompt:"Choose",why:"Focus"},suggested_blocks:[],hidden_until_later:[]}),usage:{input_tokens:80,output_tokens:30,total_tokens:110}});};
-    state.controls[seam==="insert"?"beforeAdaptiveInsert":"afterAdaptiveCostClaim"]=async(reservation)=>{
-      const running=state.sqlite.prepare("SELECT status,request_json FROM document_jobs WHERE kind='structure_adaptive'").get();
-      if(seam==="provider"){assert.equal(running?.status,"running");assert.equal(JSON.parse(running.request_json).canvasId,board);assert.equal(reservation.status,"executing");}else assert.equal(running,undefined);
-      appendFixtureEvents(state.sqlite,stream,[["CanvasRemoved",{canvas_id:board,project_id:projectId}],...(restored?[["CanvasRestored",{canvas_id:board,project_id:projectId}]]:[])]);mutations++;
-    };
+for(const seam of ["claim","dispatch"])for(const restored of [false,true]){
+  test(`exact board ${restored?"restoration":"removal"} at ${seam} stops stale admission until explicit re-approval`,{timeout:15_000},async()=>{
+    const state=await adaptiveCanvasFixture(),stream="creative:dev-local-creative",body=state.body,originalFetch=globalThis.fetch;let mutations=0,calls=0,restore;
+    globalThis.fetch=async(_url,init)=>{calls++;return adaptiveFixtureResponse(JSON.parse(init.body));};
     try{
-      const response=await state.request("/api/document-jobs",json({kind:"structure_adaptive",documentId:"doc-atmosphere",sourceSurface:"canvas",payload:{canvasId:board,projectScope:true,prompt:"Plan this exact board."}}));const accepted=await response.json();await state.drainBackground();assert.equal(mutations,1,"The requested race boundary must actually execute");
-      const jobs=state.sqlite.prepare("SELECT status,document_id,source_surface,request_json FROM document_jobs WHERE kind='structure_adaptive'").all();
-      if(seam==="insert"&&!restored){assert.equal(response.status,409,JSON.stringify(accepted));assert.equal(jobs.length,0);}else{assert.equal(response.status,202,JSON.stringify(accepted));assert.equal(jobs.length,1);assert.equal(accepted.job.canvasId,board);assert.equal(jobs[0].document_id,"doc-atmosphere");assert.equal(jobs[0].source_surface,"canvas");assert.equal(JSON.parse(jobs[0].request_json).canvasId,board);if(restored)assert.equal(jobs[0].status,"completed");else assert.ok(["failed","canceled"].includes(jobs[0].status));}
-      assert.equal(calls,restored?1:0,"No provider dispatch for a removed destination");
-    }finally{await state.drainBackground();globalThis.fetch=originalFetch;}
+      const quote=await quoteAdaptiveConsent(state,body);
+      const mutate=()=>{
+        mutations++;
+        if(seam==="dispatch"){const running=adaptiveJob(state,quote.executionId);assert.equal(running.status,"running");assert.equal(JSON.parse(running.request_json).canvasId,body.canvasId);assert.equal(consequentialReceipt(state,quote.executionId).cost[0].status,"executing");}
+        else assert.equal(adaptiveJob(state,quote.executionId),undefined);
+        appendFixtureEvents(state.sqlite,stream,[["CanvasRemoved",{canvas_id:body.canvasId,project_id:body.projectId}],...(restored?[["CanvasRestored",{canvas_id:body.canvasId,project_id:body.projectId}]]:[])]);
+      };
+      if(seam==="claim")restore=interceptConsequentialDb(state,"batch",/^\s*UPDATE consequential_executions SET status='reserved'/u,mutate);
+      else state.controls.beforeConsequentialSubmit=mutate;
+      const response=await executeAdaptiveConsent(state,quote,body),result=await response.json();await state.drainBackground();restore?.();restore=null;
+      assert.equal(mutations,1,"The captured-source SQL race boundary must execute");assert.equal(calls,0,"Even restoration cannot validate the stale source-head snapshot");
+      if(seam==="claim"){assert.equal(response.status,409,JSON.stringify(result));assert.equal(adaptiveJob(state,quote.executionId),undefined);assert.deepEqual(adaptiveLedgerCounts(state),{token:0,cost:0});}
+      else{assert.equal(response.status,202,JSON.stringify(result));assert.equal(result.job.canvasId,body.canvasId);assert.equal(adaptiveJob(state,quote.executionId).status,"failed");assert.equal(consequentialReceipt(state,quote.executionId).steps[0].status,"not-submitted");}
+      assert.deepEqual(consequentialBalances(state),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});
+      if(!restored){
+        const removed=await state.request(adaptiveConsentPath,json({...body,action:"quote"}));assert.equal(removed.status,409);assert.equal((await removed.json()).error,"context_canvas_unavailable");
+        appendFixtureEvents(state.sqlite,stream,[["CanvasRestored",{canvas_id:body.canvasId,project_id:body.projectId}]]);
+      }
+      // Reuse identical unsubmitted consent where possible; only a new explicit approval may run.
+      const fresh=await quoteAdaptiveConsent(state,body);assert.equal(fresh.canvasId,body.canvasId);assert.equal(fresh.status,"quoted");assert.equal(calls,0);
+      if(seam==="dispatch")assert.notEqual(fresh.executionId,quote.executionId,"A stopped execution is not silently resurrected");
+      const approved=await executeAdaptiveConsent(state,fresh,body);assert.equal(approved.status,202,JSON.stringify(await approved.clone().json()));await state.drainBackground();
+      assert.equal(adaptiveJob(state,fresh.executionId).status,"completed");assert.equal(adaptiveJob(state,fresh.executionId).correlation_id,fresh.executionId);assert.equal(calls,1);
+      assert.deepEqual(consequentialBalances(state),{tokens:{used:1300,reserved:0},cost:{used:5600,reserved:0}});
+      if(seam==="dispatch"){assert.equal(adaptiveJob(state,quote.executionId).status,"failed");assert.equal(consequentialReceipt(state,quote.executionId).steps[0].status,"not-submitted");}
+    }finally{restore?.();state.controls.beforeConsequentialSubmit=null;await state.drainBackground();globalThis.fetch=originalFetch;}
   });
 }
 
-for(const retention of ["retained","expired-before-read","expired-after-read","redacted-after-read","replaced-after-read","access-revoked-after-read"])test(`paid board completion survives a final-row crash and board removal (${retention})`,async()=>{
+async function seedLegacyPaidAdaptiveJob(state, {canvasId, plan, jobId="legacy-paid-adaptive", owner="dev-local-creative", stream="creative:dev-local-creative"}){
+  const now=new Date().toISOString(),expiresAt=new Date(Date.now()+86400000).toISOString(),correlationId=`${jobId}:attempt:1`,intentRef=`${jobId}:intent`,contentRef=`${jobId}:plan`;
+  const payload={canvasId,projectId:"project-atmosphere",projectScope:true,prompt:"Plan this original board.",locale:"en"};
+  const token=await reserveBudget(state.env,owner,12000,{reservationId:`${jobId}:legacy-token`,streamId:stream,correlationId,operation:"adaptive-structure"});
+  assert.equal(token.ok,true);
+  const cost=await reserveCostBudget(state.env,owner,38000,{reservationId:`${jobId}:legacy-cost`,maximumMicrousd:38000,allowUserOverage:false,streamId:stream,correlationId,operation:"adaptive-structure",period:token.period});
+  assert.equal(cost.ok,true);
+  assert.equal((await settleBudget(state.env,owner,token.reservationId,110)).settled,true);
+  assert.equal((await settleCostBudget(state.env,owner,cost.reservationId,520)).settled,true);
+  for(const [contentId,kind,content]of[[intentRef,"adaptive-intent",payload.prompt],[contentRef,"adaptive-structure",JSON.stringify(plan)]])
+    state.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at)VALUES(?,?,?,?,?,?,NULL)").run(contentId,owner,kind,content,now,expiresAt);
+  let head=Number(state.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(stream).head);
+  const event=state.sqlite.prepare("INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload)VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  for(const [type,body]of[
+    ["AssistantReasoned",{operation:"adaptive-structure",project_id:"project-atmosphere",document_id:"doc-atmosphere",intent_ref:intentRef,content_ref:contentRef,model_id:"gpt-5.6-terra"}],
+    ["GenerationUsageRecorded",{operation:"adaptive-structure",project_id:"project-atmosphere",document_id:"doc-atmosphere",reservation_id:token.reservationId,cost_reservation_id:cost.reservationId,model_id:"gpt-5.6-terra",input_tokens:80,output_tokens:30,total_tokens:110,used_microusd:520}]
+  ])event.run(crypto.randomUUID(),stream,++head,now,now,"worker:planner","legacy-paid-fixture",correlationId,null,null,1,type,JSON.stringify(body));
+  state.sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,attempt_count,requested_at,started_at,completed_at,expires_at,updated_at)VALUES(?,?,?,'doc-atmosphere','structure_adaptive','completed','canvas',?,?,?,?,1,?,?,?,?,?)")
+    .run(jobId,owner,stream,correlationId,head,JSON.stringify(payload),JSON.stringify({stage:"completed",structure:plan,intentRef}),now,now,now,expiresAt,now);
+  return{jobId};
+}
+for(const retention of ["retained","expired-before-read","expired-after-read","redacted-after-read","replaced-after-read","access-revoked-after-read"])test(`paid board completion survives a final-row crash and board removal (${retention})`,{timeout:15_000},async()=>{
   const expired=retention!=="retained";
-  const state=await fixture({provider:true}),stream="creative:dev-local-creative",owner="dev-local-creative",canvasId="paid-completion-board";
+  const state=await fixture(),stream="creative:dev-local-creative",owner="dev-local-creative",canvasId="paid-completion-board";
   const plan={interpretation:"Retained original paid plan",active_decision:{type:"subject",label:"Subject",prompt:"Choose",why:"Focus"},suggested_blocks:[],hidden_until_later:[]};
   appendFixtureEvents(state.sqlite,stream,[["CanvasCreated",{canvas_id:canvasId,project_id:"project-atmosphere",name:"Original board",slug:"original-board"}]]);
   let calls=0;const originalFetch=globalThis.fetch;
-  globalThis.fetch=async(url,init)=>{assert.equal(String(url),"https://api.openai.com/v1/responses");assert.equal(init.method,"POST");calls++;const request=JSON.parse(init.body);return Response.json({id:"original-paid-board-response",model:request.model,output_text:JSON.stringify(plan),usage:{input_tokens:80,output_tokens:30,total_tokens:110}});};
+  globalThis.fetch=async()=>{calls++;assert.fail("Recovery must not submit a historical paid planning request");};
   try{
-    const accepted=await state.request("/api/document-jobs",json({kind:"structure_adaptive",documentId:"doc-atmosphere",sourceSurface:"canvas",payload:{canvasId,projectScope:true,prompt:"Plan this original board."}}));assert.equal(accepted.status,202);const {job}=await accepted.json();await state.drainBackground();
-    const readJob=()=>state.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(job.jobId),original=readJob();assert.equal(original.status,"completed");assert.deepEqual(JSON.parse(original.result_json).structure,plan);assert.equal(calls,1);
+    const job=await seedLegacyPaidAdaptiveJob(state,{canvasId,plan});
+    const readJob=()=>state.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(job.jobId),original=readJob();assert.equal(original.status,"completed");assert.deepEqual(JSON.parse(original.result_json).structure,plan);assert.equal(calls,0);
     const receipts=()=>state.sqlite.prepare("SELECT * FROM events WHERE stream_id=? AND correlation_id=? AND type IN('AssistantReasoned','GenerationUsageRecorded') ORDER BY sequence").all(stream,original.correlation_id);
     const ledgers=()=>({tokens:state.sqlite.prepare("SELECT * FROM budget_reservations WHERE owner_id=? AND correlation_id=? ORDER BY reservation_id").all(owner,original.correlation_id),costs:state.sqlite.prepare("SELECT * FROM cost_budget_reservations WHERE owner_id=? AND correlation_id=? ORDER BY reservation_id").all(owner,original.correlation_id)});
     const originalReceipts=receipts(),originalLedgers=ledgers();assert.equal(originalReceipts.filter(e=>e.type==="GenerationUsageRecorded").length,1);assert.equal(originalLedgers.costs.length,1);assert.equal(originalLedgers.costs[0].status,"settled");assert.ok(originalLedgers.costs[0].used_microusd>0);
@@ -405,39 +1325,59 @@ for(const retention of ["retained","expired-before-read","expired-after-read","r
     for(let attempt=0;attempt<(retention==="access-revoked-after-read"?1:2);attempt++){
       const response=await state.request(`/api/document-jobs/${job.jobId}/run`,json({}));assert.ok([200,202].includes(response.status));await state.drainBackground();const recovered=readJob();assert.equal(recovered.status,"completed");assert.equal(recovered.error_message,null);assert.equal(recovered.correlation_id,original.correlation_id);assert.equal(recovered.attempt_count,original.attempt_count);assert.equal(recovered.request_json,original.request_json);
       const result=JSON.parse(recovered.result_json);if(expired){assert.equal(result.structure,undefined);assert.equal(result.resultUnavailable,true);}else{assert.deepEqual(result.structure,plan);assert.ok(result.intentRef);}
-      assert.deepEqual(receipts(),originalReceipts);assert.deepEqual(ledgers(),originalLedgers);assert.equal(calls,1,"Recovery must reuse the original paid response");
+      assert.deepEqual(receipts(),originalReceipts);assert.deepEqual(ledgers(),originalLedgers);assert.equal(calls,0,"Recovery must reuse the original paid response");
     }
     assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,1);
     if(retention.endsWith("after-read"))assert.equal(retentionRace,true,"The private read-to-write race must execute");
   }finally{await state.drainBackground();globalThis.fetch=originalFetch;}
 });
 
-test("late removed-board runner cannot overwrite concurrently completed paid work",async()=>{
-  const state=await fixture({provider:true}),stream="creative:dev-local-creative",canvasId="completion-race";
-  appendFixtureEvents(state.sqlite,stream,[["CanvasCreated",{canvas_id:canvasId,project_id:"project-atmosphere",name:"Completion race",slug:"completion-race"}]]);
-  let releaseProvider,providerEntered;const gate=new Promise(resolve=>releaseProvider=resolve),entered=new Promise(resolve=>providerEntered=resolve);let calls=0;const originalFetch=globalThis.fetch;
-  globalThis.fetch=async(_url,init)=>{calls++;providerEntered();await gate;const request=JSON.parse(init.body);return Response.json({id:"one-paid-completion",model:request.model,output_text:JSON.stringify({interpretation:"Preserve this completed plan",active_decision:{type:"subject",label:"Subject",prompt:"Choose",why:"Focus"},suggested_blocks:[],hidden_until_later:[]}),usage:{input_tokens:80,output_tokens:30,total_tokens:110}});};
+test("late removed-board runner cannot overwrite concurrently completed approved paid work",{timeout:15_000},async()=>{
+  const state=await adaptiveCanvasFixture(),stream="creative:dev-local-creative",originalFetch=globalThis.fetch,entered=Promise.withResolvers(),released=Promise.withResolvers();let calls=0,checked=0,restore,completedBeforeLateCheck;
+  const read=id=>state.sqlite.prepare("SELECT status,result_json,error_message,completed_at,correlation_id,attempt_count FROM document_jobs WHERE job_id=?").get(id);
+  globalThis.fetch=async(_url,init)=>{calls++;entered.resolve();await released.promise;return adaptiveFixtureResponse(JSON.parse(init.body));};
   try{
-    const accepted=await state.request("/api/document-jobs",json({kind:"structure_adaptive",documentId:"doc-atmosphere",sourceSurface:"canvas",payload:{canvasId,projectScope:true,prompt:"One original plan."}}));const {job}=await accepted.json();await entered;const originalWork=Promise.all([...state.background]);
-    appendFixtureEvents(state.sqlite,stream,[["CanvasRemoved",{canvas_id:canvasId,project_id:"project-atmosphere"}]]);state.sqlite.prepare("UPDATE document_jobs SET lease_expires_at='2000-01-01T00:00:00.000Z',updated_at='2000-01-01T00:00:00.000Z' WHERE job_id=?").run(job.jobId);
-    const read=()=>state.sqlite.prepare("SELECT status,result_json,error_message,completed_at FROM document_jobs WHERE job_id=?").get(job.jobId);let completedBeforeLateCheck,armed=true;const prepare=state.env.DB.prepare.bind(state.env.DB);
-    state.env.DB.prepare=sql=>{const statement=prepare(sql),bind=statement.bind.bind(statement);statement.bind=(...values)=>{const bound=bind(...values);if(armed&&/^SELECT 1 AS live_canvas /u.test(sql)){const first=bound.first.bind(bound);bound.first=async()=>{const result=await first();if(armed&&!result){armed=false;releaseProvider();await originalWork;completedBeforeLateCheck=read();assert.equal(completedBeforeLateCheck.status,"completed");assert.ok(JSON.parse(completedBeforeLateCheck.result_json).structure);}return result;};}return bound;};return statement;};
-    await state.request(`/api/document-jobs/${job.jobId}/run`,{method:"POST"});await state.drainBackground();assert.equal(armed,false,"The late board-read interleaving must execute");assert.deepEqual(read(),completedBeforeLateCheck);assert.equal(calls,1);
-  }finally{releaseProvider();await state.drainBackground();globalThis.fetch=originalFetch;}
+    const quote=await quoteAdaptiveConsent(state,state.body),accepted=await executeAdaptiveConsent(state,quote,state.body);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await entered.promise;
+    const originalWork=Promise.all([...state.background]);
+    appendFixtureEvents(state.sqlite,stream,[["CanvasRemoved",{canvas_id:state.body.canvasId,project_id:state.body.projectId}]]);
+    state.sqlite.prepare("UPDATE document_jobs SET lease_expires_at='2000-01-01T00:00:00.000Z',updated_at='2000-01-01T00:00:00.000Z' WHERE job_id=?").run(quote.executionId);
+    restore=interceptConsequentialDb(state,"first",/^SELECT 1 AS live_canvas /u,async()=>{
+      checked++;released.resolve();await originalWork;completedBeforeLateCheck=read(quote.executionId);assert.equal(completedBeforeLateCheck.status,"completed");assert.deepEqual(JSON.parse(completedBeforeLateCheck.result_json).structure,adaptiveFixtureStructure);
+    },"after");
+    const auth=await requireUser(new Request("http://localhost/api/session"),state.env);assert.ok(auth.user);
+    await runDocumentJob(state.env,auth.user,quote.executionId);restore();restore=null;
+    assert.equal(checked,1,"The late board-read interleaving must execute");assert.deepEqual(read(quote.executionId),completedBeforeLateCheck);
+    const receipt=consequentialReceipt(state,quote.executionId);assert.equal(receipt.execution.status,"completed");assert.equal(receipt.steps[0].status,"settled");assert.equal(receipt.tokens[0].status,"settled");assert.equal(receipt.cost[0].status,"settled");
+    assert.deepEqual(receipt.balances,{tokens:{used:1300,reserved:0},cost:{used:5600,reserved:0}});
+    const retrieved=await retrieveAdaptiveConsent(state,quote,state.body);assert.equal(retrieved.status,200);assert.deepEqual((await retrieved.json()).structure,adaptiveFixtureStructure);assert.deepEqual(read(quote.executionId),completedBeforeLateCheck);assert.equal(calls,1);assert.deepEqual(adaptiveLedgerCounts(state),{token:1,cost:1});
+  }finally{restore?.();released.resolve();await state.drainBackground();globalThis.fetch=originalFetch;}
 });
 
-for(const change of ["restored","claimed"])test(`removed-board rejection loses its CAS when the exact destination is ${change}`,async()=>{
-  const state=await fixture(),stream="creative:dev-local-creative",owner="dev-local-creative",canvasId="queued-board-cas",jobId="queued-board-job",now=new Date().toISOString();
+for(const started of [false,true])test(`legacy unsigned board job is parked without releasing uncertain holds (${started?"started":"queued"})`,{timeout:15_000},async()=>{
+  const state=await fixture(),stream="creative:dev-local-creative",owner="dev-local-creative",canvasId="queued-board-cas",jobId="queued-board-job",now=new Date().toISOString(),correlationId=`${jobId}:attempt:1`;
   appendFixtureEvents(state.sqlite,stream,[["CanvasCreated",{canvas_id:canvasId,project_id:"project-atmosphere",name:"Queued board",slug:"queued-board"}],["CanvasRemoved",{canvas_id:canvasId,project_id:"project-atmosphere"}]]);
-  const payload={canvasId,projectId:"project-atmosphere",projectScope:true,prompt:"One exact plan."};
-  state.sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,requested_at,expires_at,updated_at) VALUES(?,?,?,'doc-atmosphere','structure_adaptive','queued','canvas',?,0,?,NULL,?,?,?)").run(jobId,owner,stream,jobId,JSON.stringify(payload),now,new Date(Date.now()+86_400_000).toISOString(),now);
-  const token=await reserveBudget(state.env,owner,100,{streamId:stream,correlationId:`${jobId}:attempt:1`,operation:"adaptive-structure"});assert.equal(token.ok,true);
-  const cost=await reserveCostBudget(state.env,owner,1000,{maximumMicrousd:1000,allowUserOverage:false,streamId:stream,correlationId:`${jobId}:attempt:1`,operation:"adaptive-structure",period:token.period});assert.equal(cost.ok,true);
-  const ledger=()=>({tokens:state.sqlite.prepare("SELECT * FROM budget_reservations").all(),costs:state.sqlite.prepare("SELECT * FROM cost_budget_reservations").all()}),beforeLedger=ledger();
-  let armed=true,expected;const read=()=>state.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(jobId),prepare=state.env.DB.prepare.bind(state.env.DB);
-  state.env.DB.prepare=sql=>{const statement=prepare(sql),bind=statement.bind.bind(statement);statement.bind=(...values)=>{const bound=bind(...values);if(armed&&/^SELECT 1 AS live_canvas /u.test(sql)){const first=bound.first.bind(bound);bound.first=async()=>{const result=await first();if(armed&&!result){armed=false;if(change==="restored")appendFixtureEvents(state.sqlite,stream,[["CanvasRestored",{canvas_id:canvasId,project_id:"project-atmosphere"}]]);else state.sqlite.prepare("UPDATE document_jobs SET status='running',attempt_count=1,started_at=?,correlation_id=?,result_json=? WHERE job_id=?").run(now,`${jobId}:attempt:1`,JSON.stringify({stage:"provider",providerSubmissionStatus:"submission_unknown",reservationId:token.reservationId,costReservationId:cost.reservationId}),jobId);expected=read();}return result;};}return bound;};return statement;};
-  const auth=await requireUser(new Request("http://localhost/api/session"),state.env);assert.ok(auth.user);const originalFetch=globalThis.fetch;globalThis.fetch=()=>assert.fail("CAS loss must not dispatch work");
-  try{const result=await runDocumentJob(state.env,auth.user,jobId);assert.equal(armed,false);assert.deepEqual({...result},{...expected});assert.deepEqual(read(),expected);assert.deepEqual(ledger(),beforeLedger);}finally{globalThis.fetch=originalFetch;}
+  const payload={canvasId,projectId:"project-atmosphere",projectScope:true,prompt:"One exact historical plan."};
+  state.sqlite.prepare("INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,attempt_count,requested_at,started_at,lease_expires_at,expires_at,updated_at)VALUES(?,?,?,'doc-atmosphere','structure_adaptive',?,'canvas',?,0,?,NULL,?,?,?,?,?,?)")
+    .run(jobId,owner,stream,started?"running":"queued",started?correlationId:jobId,JSON.stringify(payload),started?1:0,now,started?now:null,started?"2000-01-01T00:00:00.000Z":null,new Date(Date.now()+86400000).toISOString(),now);
+  const token=await reserveBudget(state.env,owner,100,{streamId:stream,correlationId,operation:"adaptive-structure"});assert.equal(token.ok,true);
+  const cost=await reserveCostBudget(state.env,owner,1000,{maximumMicrousd:1000,allowUserOverage:false,streamId:stream,correlationId,operation:"adaptive-structure",period:token.period});assert.equal(cost.ok,true);
+  if(started)assert.equal(await claimCostBudgetReservation(state.env,owner,cost.reservationId),true);
+  const ledger=()=>({tokens:state.sqlite.prepare("SELECT * FROM budget_reservations").all(),costs:state.sqlite.prepare("SELECT * FROM cost_budget_reservations").all(),tokenCounters:state.sqlite.prepare("SELECT * FROM budget_counters ORDER BY scope,scope_id,period").all(),costCounters:state.sqlite.prepare("SELECT * FROM cost_budget_counters ORDER BY scope,scope_id,period").all()}),beforeLedger=ledger(),original=adaptiveJob(state,jobId),auth=await requireUser(new Request("http://localhost/api/session"),state.env),originalFetch=globalThis.fetch;let calls=0;
+  assert.ok(auth.user);globalThis.fetch=async()=>{calls++;assert.fail("Unsigned historical work must never dispatch");};
+  try{
+    const parked=await runDocumentJob(state.env,auth.user,jobId);assert.equal(parked.status,"failed");assert.equal(parked.error_message,started?"provider_submission_uncertain":"adaptive_consent_required");
+    assert.equal(JSON.parse(parked.result_json).noAutomaticRetry,true);assert.equal(JSON.parse(parked.result_json).errorDetail.retryable,false);
+    for(const key of ["job_id","owner_id","stream_id","document_id","correlation_id","attempt_count","request_json"])assert.equal(parked[key],original[key]);
+    assert.deepEqual(ledger(),beforeLedger,"No exact non-submission proof exists for these original holds");
+    appendFixtureEvents(state.sqlite,stream,[["CanvasRestored",{canvas_id:canvasId,project_id:"project-atmosphere"}]]);
+    assert.deepEqual(await runDocumentJob(state.env,auth.user,jobId),parked,"Restoration is not retroactive approval");assert.deepEqual(adaptiveJob(state,jobId),parked);assert.deepEqual(ledger(),beforeLedger);
+    const sweep=await reconcileFailedBudgetReservations(state.env,auth.user,Date.now()+600_000);
+    assert.deepEqual(sweep,{releasedTokens:0,reservationCount:0,releasedMicrousd:0,costReservationCount:0});
+    assert.deepEqual(ledger(),beforeLedger,"The orphan sweep cannot reinterpret an unsigned original attempt as unused");
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE stream_id=? AND type='BudgetReleased'").get(stream).n,0);
+
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM consequential_executions").get().n,0);assert.equal(calls,0);
+  }finally{globalThis.fetch=originalFetch;}
 });
 
 test("shared project owners cannot enqueue private paid chat outside their active project context",async()=>{
@@ -2423,6 +3363,997 @@ const quoteContext=async(state,body=contextBody,headers={})=>{
 const executeContext=(state,quote,body=contextBody,headers={})=>state.request("/api/context/decompose",json({...body,action:"execute",executionId:quote.executionId,approvedBindingHash:quote.bindingHash},headers));
 const retrieveContext=(state,quote,body=contextBody,headers={})=>state.request("/api/context/decompose",json({...body,action:"retrieve",executionId:quote.executionId,approvedBindingHash:quote.bindingHash},headers));
 
+function interceptConsequentialDb(state,kind,pattern,effect,phase="before"){
+  const prepare=state.env.DB.prepare,batch=state.env.DB.batch;let fired=false;
+  const invoke=async(operation,statements,run)=>{const matched=!fired&&operation===kind&&statements.some((statement)=>pattern.test(statement.sql));if(matched){fired=true;if(phase==="before")await effect(statements);}const result=await run();if(matched&&phase==="after")await effect(statements);return result;};
+  const wrap=(statement)=>{const bind=statement.bind;statement.bind=(...values)=>wrap(bind.call(statement,...values));for(const method of["run","first","all"]){const original=statement[method];statement[method]=()=>invoke(method,[statement],()=>original.call(statement));}return statement;};
+  state.env.DB.prepare=(sql)=>wrap(prepare.call(state.env.DB,sql));state.env.DB.batch=(statements)=>invoke("batch",statements,()=>batch.call(state.env.DB,statements));
+  return()=>{state.env.DB.prepare=prepare;state.env.DB.batch=batch;};
+}
+function gateConsequentialDb(state,kind,pattern){const entered=Promise.withResolvers(),released=Promise.withResolvers();const restore=interceptConsequentialDb(state,kind,pattern,async()=>{entered.resolve();await released.promise;});return{entered:entered.promise,release:released.resolve,restore};}
+function consequentialDbClock(state){
+  const native=new DatabaseSync(":memory:");let now=new Date().toISOString();
+  state.sqlite.function("strftime",{varargs:true},(...args)=>{const values=args.map((value,index)=>index===1&&value==="now"?now:value);return native.prepare("SELECT strftime("+values.map(()=>"?").join(",")+") AS value").get(...values).value;});
+  return{set(value){now=value;},close(){native.close();}};
+}
+async function consequentialContractFixture({claim=true,reserve=false}={}){
+  const state=await fixture({provider:true}),quote=await quoteContext(state),row=state.sqlite.prepare("SELECT execution.*,content.content FROM consequential_executions execution JOIN private_content content ON content.content_id=execution.consent_ref WHERE execution.execution_id=?").get(quote.executionId);
+  const{binding}=JSON.parse(row.content),auth=await requireUser(new Request("http://localhost/api/session"),state.env,"viewer",{account:"principal"});assert.ok(auth.user);
+  const sourceHead=Number(state.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").get(binding.streamId).head);Object.assign(state,{quote,binding,user:auth.user,sourceHead,executionId:quote.executionId});
+  if(claim){const claimed=await consequential.claimConsequentialExecution(state.env,state.user,binding,quote.executionId,quote.bindingHash,sourceHead);assert.equal(claimed.reused,false,JSON.stringify(claimed));}
+  if(reserve)await consequential.reserveConsequentialSteps(state.env,state.user,binding,quote.executionId);return state;
+}
+function consequentialBalances(state,userId="dev-local-creative"){
+  const tokens=state.sqlite.prepare("SELECT COALESCE(SUM(used_tokens),0) AS used,COALESCE(SUM(reserved_tokens),0) AS reserved FROM budget_counters WHERE scope='user' AND scope_id=?").get(userId),cost=state.sqlite.prepare("SELECT COALESCE(SUM(used_microusd),0) AS used,COALESCE(SUM(reserved_microusd),0) AS reserved FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get(userId);
+  return{tokens:{...tokens},cost:{...cost}};
+}
+function consequentialReceipt(state,id){return{execution:{...state.sqlite.prepare("SELECT status,result_ref,error_code FROM consequential_executions WHERE execution_id=?").get(id)},steps:state.sqlite.prepare("SELECT step_index,status,verified_tokens,verified_microusd,provider_request_id FROM consequential_execution_steps WHERE execution_id=? ORDER BY step_index").all(id).map((row)=>({...row})),tokens:state.sqlite.prepare("SELECT reservation_id,status,reserved_tokens,used_tokens,period FROM budget_reservations WHERE correlation_id=? ORDER BY reservation_id").all(id).map((row)=>({...row})),cost:state.sqlite.prepare("SELECT reservation_id,status,reserved_microusd,used_microusd,period FROM cost_budget_reservations WHERE correlation_id=? ORDER BY reservation_id").all(id).map((row)=>({...row})),balances:consequentialBalances(state)};}
+
+for(const[seam,kind,pattern]of[["step claim","run",/^\s*UPDATE consequential_execution_steps SET status='reserved'/u],["token INSERT","batch",/^\s*INSERT OR IGNORE INTO budget_reservations\b/u],["cost INSERT","batch",/^\s*INSERT OR IGNORE INTO cost_budget_reservations\b/u],["begin","run",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u]]){
+  test("consequential races: cancellation before "+seam+" admits no late hold or POST",{timeout:15_000},async()=>{
+    const original=globalThis.fetch;let calls=0,gate;
+    try{globalThis.fetch=async()=>{calls++;throw new Error("unexpected paid dispatch");};const state=await consequentialContractFixture({reserve:seam==="begin"}),id=state.executionId;gate=gateConsequentialDb(state,kind,pattern);
+      const work=seam==="begin"?consequential.beginConsequentialStep(state.env,state.user,state.binding,id,0,state.sourceHead):consequential.reserveConsequentialSteps(state.env,state.user,state.binding,id),rejected=assert.rejects(work,/context_execution_not_active|context_authorization_changed/u);
+      await gate.entered;assert.equal(await consequential.failConsequentialExecution(state.env,state.user.userId,id,"context_canceled"),false);gate.release();await rejected;
+      const receipt=consequentialReceipt(state,id);assert.equal(receipt.execution.status,"failed");assert.equal(receipt.execution.result_ref,null);assert.deepEqual(receipt.steps.map((step)=>step.status),["not-submitted"]);assert.equal(receipt.tokens.length,seam==="cost INSERT"||seam==="begin"?1:0);assert.equal(receipt.cost.length,seam==="begin"?1:0);assert.ok(receipt.tokens.every((row)=>row.status==="released"));assert.ok(receipt.cost.every((row)=>row.status==="released"));assert.deepEqual(receipt.balances,{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});
+      await assert.rejects(consequential.beginConsequentialStep(state.env,state.user,state.binding,id,0,state.sourceHead),/context_authorization_changed/u);assert.equal(calls,0);
+    }finally{gate?.release();gate?.restore();globalThis.fetch=original;}
+  });
+}
+test("consequential races: a tombstone committed before a crash is cleaned up by free reconciliation",{timeout:15_000},async()=>{
+  const state=await consequentialContractFixture({reserve:true}),id=state.executionId,before=consequentialBalances(state),restore=interceptConsequentialDb(state,"batch",/^\s*UPDATE consequential_execution_steps SET status='not-submitted'/u,()=>{throw new Error("injected_after_tombstone_commit");},"after");
+  try{await assert.rejects(consequential.failConsequentialExecution(state.env,state.user.userId,id,"context_canceled"),/injected_after_tombstone_commit/u);}finally{restore();}
+  let receipt=consequentialReceipt(state,id);assert.equal(receipt.execution.status,"failed");assert.equal(receipt.steps[0].status,"not-submitted");assert.deepEqual(receipt.balances,before);assert.equal(receipt.tokens[0].status,"active");assert.equal(receipt.cost[0].status,"executing");
+  await consequential.reconcileConsequentialUsage(state.env,state.user.userId,id);receipt=consequentialReceipt(state,id);assert.equal(receipt.tokens[0].status,"released");assert.equal(receipt.cost[0].status,"released");assert.deepEqual(receipt.balances,{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});await consequential.reconcileConsequentialUsage(state.env,state.user.userId,id);assert.deepEqual(consequentialReceipt(state,id),receipt);
+});
+test("consequential races: a submitted winner stays held until its late verified response completes",{timeout:15_000},async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch,entered=Promise.withResolvers(),released=Promise.withResolvers();let calls=0;
+  try{globalThis.fetch=async(_url,init)=>{calls++;entered.resolve();await released.promise;return contextResult(JSON.parse(init.body));};const quote=await quoteContext(state),work=executeContext(state,quote);await entered.promise;
+    const before=consequentialBalances(state);assert.ok(before.tokens.reserved>0);assert.ok(before.cost.reserved>0);assert.equal(await consequential.failConsequentialExecution(state.env,"dev-local-creative",quote.executionId,"context_canceled"),true);assert.equal(consequentialReceipt(state,quote.executionId).steps[0].status,"uncertain");await consequential.reconcileConsequentialUsage(state.env,"dev-local-creative",quote.executionId);assert.deepEqual(consequentialBalances(state),before);
+    released.resolve();const completed=await work;assert.equal(completed.status,200,JSON.stringify(await completed.clone().json()));const receipt=consequentialReceipt(state,quote.executionId);assert.equal(receipt.execution.status,"completed");assert.ok(receipt.execution.result_ref);assert.equal(receipt.steps[0].status,"settled");assert.equal(receipt.steps[0].provider_request_id,"response-fixture");assert.deepEqual(receipt.balances,{tokens:{used:1300,reserved:0},cost:{used:5600,reserved:0}});
+    assert.equal((await retrieveContext(state,quote)).status,200);assert.equal((await executeContext(state,quote)).status,200);assert.deepEqual(consequentialReceipt(state,quote.executionId),receipt);assert.equal(calls,1);
+  }finally{released.resolve();globalThis.fetch=original;}
+});
+test("consequential races: completion winning before the failure transaction cannot regress",{timeout:15_000},async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch,entered=Promise.withResolvers(),released=Promise.withResolvers();let calls=0,gate;
+  try{globalThis.fetch=async(_url,init)=>{calls++;entered.resolve();await released.promise;return contextResult(JSON.parse(init.body));};const quote=await quoteContext(state),work=executeContext(state,quote);await entered.promise;gate=gateConsequentialDb(state,"batch",/^\s*UPDATE consequential_execution_steps SET status='not-submitted'/u);
+    const failure=consequential.failConsequentialExecution(state.env,"dev-local-creative",quote.executionId,"context_late_failure");await gate.entered;released.resolve();const completed=await work;assert.equal(completed.status,200,JSON.stringify(await completed.clone().json()));const receipt=consequentialReceipt(state,quote.executionId);assert.equal(receipt.execution.status,"completed");assert.ok(receipt.execution.result_ref);gate.release();assert.equal(await failure,false);assert.deepEqual(consequentialReceipt(state,quote.executionId),receipt);assert.equal((await retrieveContext(state,quote)).status,200);assert.equal(calls,1);
+  }finally{released.resolve();gate?.release();gate?.restore();globalThis.fetch=original;}
+});
+for(const[seam,kind,pattern]of[["private INSERT","batch",/^\s*INSERT INTO private_content\s*\(/u],["completion UPDATE","run",/^\s*UPDATE consequential_executions SET status='completed'/u]])for(const withdrawal of["proof","authority"]){
+  test("consequential proof: "+withdrawal+" withdrawn before "+seam+" cannot publish a paid result",{timeout:15_000},async()=>{
+    const state=await consequentialContractFixture({reserve:true}),id=state.executionId;await consequential.beginConsequentialStep(state.env,state.user,state.binding,id,0,state.sourceHead);await consequential.settleConsequentialStep(state.env,state.user.userId,id,0,1300,5600,"response-proof");
+    const before=consequentialBalances(state),consentRef=state.sqlite.prepare("SELECT consent_ref FROM consequential_executions WHERE execution_id=?").get(id).consent_ref,proof={sql:"EXISTS(SELECT 1 FROM private_content evidence WHERE evidence.content_id=? AND evidence.owner_id=? AND evidence.redacted_at IS NULL AND evidence.content!='')",bindings:[consentRef,state.user.userId]};
+    const restore=interceptConsequentialDb(state,kind,pattern,()=>{if(withdrawal==="proof")state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),consentRef);else state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run(state.user.userId);});
+    try{await assert.rejects(consequential.completeConsequentialExecution(state.env,state.user,state.binding,id,{executionId:id,plan:{proposals:[]}},proof),/project_private_content_access_revoked|context_result_not_retained/u);}finally{restore();}
+    const receipt=consequentialReceipt(state,id);assert.notEqual(receipt.execution.status,"completed");assert.equal(receipt.execution.result_ref,null);assert.equal(receipt.steps[0].status,"settled");assert.deepEqual(receipt.balances,before);if(seam==="private INSERT")assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content WHERE kind='context-proposal'").get().n,0);
+  });
+}
+test("consequential proof: erased retained bytes cannot be attached at the completion boundary",{timeout:15_000},async()=>{
+  const state=await consequentialContractFixture({reserve:true}),id=state.executionId;await consequential.beginConsequentialStep(state.env,state.user,state.binding,id,0,state.sourceHead);await consequential.settleConsequentialStep(state.env,state.user.userId,id,0,1300,5600,"response-proof");const before=consequentialBalances(state);
+  const restore=interceptConsequentialDb(state,"run",/^\s*UPDATE consequential_executions SET status='completed'/u,()=>{state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND kind='context-proposal'").run(new Date().toISOString(),state.user.userId);});
+  try{await assert.rejects(consequential.completeConsequentialExecution(state.env,state.user,state.binding,id,{executionId:id,plan:{proposals:[]}}),/context_result_not_retained/u);}finally{restore();}assert.equal(consequentialReceipt(state,id).execution.result_ref,null);assert.deepEqual(consequentialBalances(state),before);
+});
+for(const boundary of["claim","begin"])for(const change of["expiry","month"]){
+  test("consequential clock: SQLite "+change+" changing at "+boundary+" rejects a stale JS admission",{timeout:15_000},async()=>{
+    const state=await consequentialContractFixture({claim:boundary!=="claim",reserve:boundary==="begin"}),id=state.executionId,clock=consequentialDbClock(state),expiresAt=state.sqlite.prepare("SELECT expires_at FROM consequential_executions WHERE execution_id=?").get(id).expires_at,nextMonth=new Date(Date.UTC(Number(state.binding.period.slice(0,4)),Number(state.binding.period.slice(5,7)),1)),later=change==="expiry"?new Date(Date.parse(expiresAt)+1).toISOString():nextMonth.toISOString();
+    if(change==="month")state.sqlite.prepare("UPDATE consequential_executions SET expires_at=? WHERE execution_id=?").run(new Date(nextMonth.getTime()+86_400_000).toISOString(),id);
+    const pattern=boundary==="claim"?/^\s*UPDATE consequential_executions SET status='reserved'/u:/^\s*UPDATE consequential_execution_steps SET status='submitting'/u,restore=interceptConsequentialDb(state,"run",pattern,()=>clock.set(later));
+    try{if(boundary==="claim"){const result=await consequential.claimConsequentialExecution(state.env,state.user,state.binding,id,state.quote.bindingHash,state.sourceHead);assert.equal(result.status,409);assert.ok(result.error);assert.equal(consequentialReceipt(state,id).execution.status,"quoted");assert.equal(consequentialReceipt(state,id).tokens.length,0);assert.equal(consequentialReceipt(state,id).cost.length,0);}else{await assert.rejects(consequential.beginConsequentialStep(state.env,state.user,state.binding,id,0,state.sourceHead),/context_authorization_changed/u);assert.equal(await consequential.failConsequentialExecution(state.env,state.user.userId,id,"context_consent_expired"),false);assert.equal(consequentialReceipt(state,id).steps[0].status,"not-submitted");}assert.deepEqual(consequentialBalances(state),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});}finally{restore();clock.close();}
+  });
+}
+
+const adaptiveConsentPath="/api/document-jobs/adaptive";
+const adaptiveConsentBody={projectId:"project-atmosphere",documentId:"doc-atmosphere",sourceSurface:"studio",projectScope:false,prompt:"Help me choose the next meaningful creative decision.",locale:"en"};
+const adaptiveFixtureStructure={interpretation:"A private proposal, not an authored change.",active_decision:{type:"subject",label:"Choose a subject",prompt:"Which subject matters most?",why:"Focus the next decision."},suggested_blocks:[{type:"subject",subtype:"Hero subject",label:"Subject",instruction:"Choose one focal subject.",reason:"Give the work a clear focus.",relationship_to:"Current direction"},{type:"environment",subtype:"Setting",label:"Setting",instruction:"Place the subject in a quiet courtyard.",reason:"Make the setting concrete.",relationship_to:"Subject"}],hidden_until_later:["Fine lighting choices"]};
+const adaptiveFixtureResponse=(payload,{status=200,usage={input_tokens:1000,output_tokens:300,total_tokens:1300},outputText=JSON.stringify(adaptiveFixtureStructure)}={})=>Response.json({id:"adaptive-consent-response",model:payload.model,service_tier:"default",output_text:outputText,...(usage?{usage}:{})},{status});
+const quoteAdaptiveConsent=async(state,body=adaptiveConsentBody,headers={})=>{const result=await state.request(adaptiveConsentPath,json({...body,action:"quote"},headers));assert.equal(result.status,200,JSON.stringify(await result.clone().json()));return(await result.json()).quote;};
+const executeAdaptiveConsent=(state,quote,body=adaptiveConsentBody,headers={})=>state.request(adaptiveConsentPath,json({...body,action:"execute",executionId:quote.executionId,approvedBindingHash:quote.bindingHash},headers));
+const retrieveAdaptiveConsent=(state,quote,body=adaptiveConsentBody,headers={})=>state.request(adaptiveConsentPath,json({...body,action:"retrieve",executionId:quote.executionId,approvedBindingHash:quote.bindingHash},headers));
+const adaptiveJob=(state,id)=>state.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(id);
+const adaptiveAuthoredCount=(state,stream="creative:dev-local-creative")=>state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE stream_id=? AND type IN('BlockCreated','BlockPropertyEdited','BlockRemoved','BlockLocked','BlockUnlocked','BlockRelationAdded','BlockRelationRemoved','CanvasItemPlaced','CanvasItemMoved','CanvasItemRemoved')").get(stream).n;
+const adaptiveLedgerCounts=(state)=>({token:state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,cost:state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n});
+async function adaptiveCanvasFixture({provider=true}={}){const state=await fixture({provider}),canvasId="adaptive-consent-board";appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["CanvasCreated",{canvas_id:canvasId,project_id:"project-atmosphere",name:"Reusable consent board",slug:"reusable-consent-board"}]]);return{...state,body:{...adaptiveConsentBody,canvasId,sourceSurface:"canvas",projectScope:true}};}
+function changeAdaptiveAuthority(state,change,body=state.body??adaptiveConsentBody){if(change==="permission")state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id='dev-local-creative'").run();else appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[change==="board"?["CanvasRemoved",{canvas_id:body.canvasId,project_id:body.projectId}]:["BlockPropertyEdited",{project_id:body.projectId,document_id:body.documentId,block_id:"block-direction",property_path:"text",new_value:"A materially different creative direction."}]]);}
+
+async function seedAdaptiveRightsDeadline(state,source,validUntil,later,origin=null){
+  const governed=source.startsWith("governed-"),owner=governed?"assistant-owner":"dev-local-creative",stream="creative:"+owner,blockId="adaptive-license-boundary";
+  const body={...adaptiveConsentBody},headers=governed?state.owner:{},text="Retain this complete licensed source, including its protected contractual tail.";
+  if(!governed){
+    const referenceId="adaptive-license-reference";
+    appendFixtureEvents(state.sqlite,stream,[
+      ["ReferenceIngested",{project_id:body.projectId,document_id:body.documentId,reference_id:referenceId,source_type:"text",source_ref:"",rights_class:source}],
+      ["RightsAsserted",{project_id:body.projectId,document_id:body.documentId,reference_id:referenceId,rights_class:source,assertion_method:"licensed-fixture"}],
+      ["BlockCreated",{block_id:blockId,project_id:body.projectId,document_id:body.documentId,type:"reference",handle:"Licensed exact source",position:"z-rights",properties:{reference_id:referenceId,text,rights_class:source,source_expires_at:later,license_expires_at:validUntil,rights_expires_at:later,intent:"prohibit"}}],
+    ]);
+  }else{
+    const sourceDocumentId=origin?.documentId??"adaptive-rights-origin",sourceBlockId=origin?.blockId??"adaptive-rights-upstream",packageId="adaptive-rights-package",versionId="adaptive-rights-version",snapshotExpiry=source==="governed-snapshot"?validUntil:later,upstreamExpiry=source==="governed-upstream"?validUntil:later;
+    appendFixtureEvents(state.sqlite,stream,[
+      ...(!origin?[
+        ["DocumentCreated",{document_id:sourceDocumentId,project_id:body.projectId,title:"Licensed upstream source",slug:"licensed-upstream-source"}],
+        ["BlockCreated",{block_id:sourceBlockId,project_id:body.projectId,document_id:sourceDocumentId,type:"message",handle:"Original license",position:"z-origin",properties:{text:"Original upstream licensed material.",rights_class:"owned_or_licensed",license_expires_at:upstreamExpiry}}],
+      ]:[]),
+      ["BlockCreated",{block_id:blockId,project_id:body.projectId,document_id:body.documentId,type:"message",handle:"Published governed source",position:"z-rights",properties:{text,rights_class:"owned_or_licensed",license_expires_at:later,organization_context_package_id:packageId,organization_context_package_version_id:versionId}}],
+    ]);
+    // An already-reviewed immutable version: real scope/schema and byte-for-byte digest.
+    const snapshot={schema:1,organizationId:state.organizationId,sourceProjectAccessId:state.projectAccessId,sourceDocumentId,blocks:[{sourceBlockId,type:"message",properties:{text,rights_class:"owned_or_licensed",license_expires_at:later},rightsExpiresAt:snapshotExpiry}]},serialized=JSON.stringify(snapshot),digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(serialized))),byte=>byte.toString(16).padStart(2,"0")).join(""),now=new Date().toISOString();
+    state.sqlite.prepare("INSERT INTO organization_context_packages(package_id,organization_id,name,description,status,created_by_user_id,created_at,updated_at)VALUES(?,?,'Licensed package','','active',?,?,?)").run(packageId,state.organizationId,owner,now,now);
+    state.sqlite.prepare("INSERT INTO organization_context_package_versions(version_id,package_id,organization_id,version,content_sha256,source_project_access_id,source_document_id,status,created_by_user_id,approved_by_user_id,published_at,created_at,redacted_at)VALUES(?,?,?,1,?,?,?,'published',?,'assistant-viewer',?,?,NULL)").run(versionId,packageId,state.organizationId,digest,state.projectAccessId,sourceDocumentId,owner,now,now);
+    state.sqlite.prepare("INSERT INTO organization_context_package_contents(version_id,organization_id,content_json,created_at,redacted_at)VALUES(?,?,?,?,NULL)").run(versionId,state.organizationId,serialized,now);
+    state.sqlite.prepare("INSERT INTO organization_context_package_sources(version_id,organization_id,source_project_access_id,source_block_id,source_kind,content_sha256,rights_expires_at,position)VALUES(?,?,?,?,'message',?,?,0)").run(versionId,state.organizationId,state.projectAccessId,sourceBlockId,digest,snapshotExpiry);
+  }
+  return{body,headers,blockId,text,owner};
+}
+
+
+for (const source of ["owned", "owned_or_licensed", "governed-upstream", "governed-snapshot"]) {
+  test("adaptive post-CAS deadline: " + source + " expires after successful begin without dispatch", { timeout: 15_000 }, async () => {
+    const NativeDate = globalThis.Date, originalFetch = globalThis.fetch;
+    let state, clock, restore, calls = 0, interleavings = 0;
+    const wall = new NativeDate(), frozen = NativeDate.UTC(wall.getUTCFullYear(), wall.getUTCMonth(), 1);
+    let now = frozen;
+    try {
+      globalThis.fetch = async () => { calls++; throw new Error("An expired source must never reach the provider"); };
+      state = source.startsWith("governed-") ? await sharedProjectFixture({ provider: true }) : await fixture({ provider: true });
+      globalThis.Date = class extends NativeDate {
+        constructor(...args) { super(...(args.length ? args : [now])); }
+        static now() { return now; }
+      };
+      clock = consequentialDbClock(state);
+      const validUntil = new NativeDate(frozen + 1_000).toISOString(), later = new NativeDate(frozen + 300_000).toISOString();
+      const input = await seedAdaptiveRightsDeadline(state, source, validUntil, later);
+      const quote = await quoteAdaptiveConsent(state, input.body, input.headers);
+      assert.equal(quote.canExecute, true); assert.equal(quote.privateInput.sourceRightsValidUntil, validUntil);
+      const exactInput = JSON.parse(quote.privateInput.providerRequest.input);
+      assert.equal(exactInput.blocks.find(block => block.id === input.blockId)?.properties.text, input.text);
+      restore = interceptConsequentialDb(state, "run", /^\s*UPDATE consequential_execution_steps SET status='submitting'/u, statements => {
+        interleavings++;
+        assert.ok(statements.some(statement => statement.values.includes(validUntil)));
+        const submitted = consequentialReceipt(state, quote.executionId);
+        assert.equal(submitted.steps[0].status, "submitting", "The real CAS has already succeeded while the source is valid");
+        assert.equal(submitted.tokens[0].status, "active"); assert.equal(submitted.cost[0].status, "executing");
+        assert.equal(calls, 0); assert.ok(now < NativeDate.parse(validUntil));
+        now = NativeDate.parse(validUntil) + 40; clock.set(new NativeDate(now).toISOString());
+        assert.ok(now < NativeDate.parse(quote.expiresAt), "The quote itself is still live");
+        assert.equal(new NativeDate(now).toISOString().slice(0, 7), quote.period);
+        assert.ok(now < NativeDate.parse(adaptiveJob(state, quote.executionId).lease_expires_at), "This isolates source expiry, not lease expiry");
+      }, "after");
+      const accepted = await executeAdaptiveConsent(state, quote, input.body, input.headers);
+      assert.equal(accepted.status, 202, JSON.stringify(await accepted.clone().json()));
+      await state.drainBackground(); restore(); restore = null;
+      assert.equal(interleavings, 1); assert.equal(calls, 0);
+      const receipt = consequentialReceipt(state, quote.executionId);
+      assert.equal(receipt.execution.status, "failed"); assert.equal(receipt.execution.result_ref, null);
+      assert.equal(receipt.steps[0].status, "not-submitted");
+      assert.equal(receipt.steps[0].provider_request_id, null);
+      assert.equal(receipt.steps[0].verified_tokens, null); assert.equal(receipt.steps[0].verified_microusd, null);
+      assert.deepEqual(receipt.tokens.map(row => [row.status, row.used_tokens]), [["released", 0]]);
+      assert.deepEqual(receipt.cost.map(row => [row.status, row.used_microusd]), [["released", 0]]);
+      assert.deepEqual(consequentialBalances(state, input.owner), { tokens: { used: 0, reserved: 0 }, cost: { used: 0, reserved: 0 } });
+      assert.equal(adaptiveJob(state, quote.executionId).status, "failed");
+      const originalLedgers = adaptiveReentryFinancialState(state);
+      await consequential.reconcileConsequentialUsage(state.env, input.owner, quote.executionId);
+      assert.deepEqual(consequentialReceipt(state, quote.executionId), receipt);
+      assert.deepEqual(adaptiveReentryFinancialState(state), originalLedgers); assert.equal(calls, 0);
+    } finally {
+      restore?.(); await state?.drainBackground(); clock?.close();
+      globalThis.Date = NativeDate; globalThis.fetch = originalFetch;
+    }
+  });
+}
+
+for (const force of [false, true]) {
+  test("adaptive post-CAS cancellation: " + (force ? "force-stop" : "cancel") + " before the successful SQL response prevents dispatch", { timeout: 15_000 }, async () => {
+    const state = await fixture({ provider: true }), originalFetch = globalThis.fetch;
+    let calls = 0, interleavings = 0, restore;
+    try {
+      if (force) state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id='dev-local-creative'").run();
+      globalThis.fetch = async (_url, init) => { calls++; return adaptiveFixtureResponse(JSON.parse(init.body)); };
+      const quote = await quoteAdaptiveConsent(state), path = "/api/document-jobs/" + quote.executionId + (force ? "/force-fail" : "/cancel");
+      restore = interceptConsequentialDb(state, "run", /^\s*UPDATE consequential_execution_steps SET status='submitting'/u, async () => {
+        interleavings++;
+        const submitted = consequentialReceipt(state, quote.executionId);
+        assert.equal(submitted.steps[0].status, "submitting"); assert.equal(calls, 0);
+        assert.equal(submitted.tokens[0].status, "active"); assert.equal(submitted.cost[0].status, "executing");
+        const held = adaptiveReentryFinancialState(state);
+        const stopped = await state.request(path, json({})), stop = await stopped.json();
+        assert.equal(stopped.status, 200, JSON.stringify(stop));
+        assert.equal(stop.job.status, force ? "failed" : "canceled");
+        assert.deepEqual(stop.budget, { reservationStatus: "retained", billingStatus: "pending" }, "Until the winning executor proves no fetch, cancellation must retain the uncertain hold");
+        assert.deepEqual(adaptiveReentryFinancialState(state), held);
+        assert.equal(consequentialReceipt(state, quote.executionId).steps[0].status, "uncertain");
+        assert.equal(calls, 0);
+      }, "after");
+      const accepted = await executeAdaptiveConsent(state, quote);
+      assert.equal(accepted.status, 202, JSON.stringify(await accepted.clone().json()));
+      await state.drainBackground(); restore(); restore = null;
+      assert.equal(interleavings, 1); assert.equal(calls, 0, "A stopped job cannot initiate its first paid POST after cancellation");
+      const receipt = consequentialReceipt(state, quote.executionId);
+      assert.equal(receipt.execution.status, "failed"); assert.equal(receipt.execution.result_ref, null);
+      assert.equal(receipt.steps[0].status, "not-submitted"); assert.equal(receipt.steps[0].provider_request_id, null);
+      assert.deepEqual(receipt.tokens.map(row => [row.status, row.used_tokens]), [["released", 0]]);
+      assert.deepEqual(receipt.cost.map(row => [row.status, row.used_microusd]), [["released", 0]]);
+      assert.deepEqual(receipt.balances, { tokens: { used: 0, reserved: 0 }, cost: { used: 0, reserved: 0 } });
+      assert.equal(adaptiveJob(state, quote.executionId).status, force ? "failed" : "canceled");
+      const repeated = await state.request(path, json({})); assert.equal(repeated.status, 200);
+      assert.deepEqual((await repeated.json()).budget, { reservationStatus: "released", billingStatus: "not-incurred" });
+      assert.deepEqual(consequentialReceipt(state, quote.executionId), receipt);
+      await consequential.reconcileConsequentialUsage(state.env, "dev-local-creative", quote.executionId);
+      assert.deepEqual(consequentialReceipt(state, quote.executionId), receipt); assert.equal(calls, 0);
+    } finally { restore?.(); await state.drainBackground(); globalThis.fetch = originalFetch; }
+  });
+}
+
+function postCasExactReceipt(state, id) {
+  return {
+    execution: { ...state.sqlite.prepare("SELECT * FROM consequential_executions WHERE execution_id=?").get(id) },
+    steps: state.sqlite.prepare("SELECT * FROM consequential_execution_steps WHERE execution_id=? ORDER BY step_index").all(id).map(row => ({ ...row })),
+    finances: adaptiveReentryFinancialState(state),
+  };
+}
+
+for (const status of ["submitting", "uncertain"]) {
+  test("adaptive post-CAS non-submission proof: matching " + status + " winner releases only through normal failure", { timeout: 15_000 }, async () => {
+    const originalFetch = globalThis.fetch; let calls = 0;
+    try {
+      globalThis.fetch = async () => { calls++; throw new Error("No provider request belongs in the proof fixture"); };
+      const state = await consequentialContractFixture({ reserve: true }), id = state.executionId;
+      await consequential.beginConsequentialStep(state.env, state.user, state.binding, id, 0, state.sourceHead);
+      if (status === "uncertain") assert.equal(await consequential.failConsequentialExecution(state.env, state.user.userId, id, "context_canceled"), true);
+      assert.equal(consequentialReceipt(state, id).steps[0].status, status);
+      const held = adaptiveReentryFinancialState(state);
+      await consequential.proveConsequentialStepNotSubmitted(state.env, state.user.userId, id, 0, state.quote.bindingHash);
+      const proven = consequentialReceipt(state, id);
+      assert.equal(proven.steps[0].status, "not-submitted");
+      assert.equal(proven.steps[0].provider_request_id, null);
+      assert.equal(proven.steps[0].verified_tokens, null); assert.equal(proven.steps[0].verified_microusd, null);
+      assert.deepEqual(adaptiveReentryFinancialState(state), held, "The proof itself must not settle, debit, or release either ledger");
+      assert.equal(await consequential.failConsequentialExecution(state.env, state.user.userId, id, "adaptive_source_rights_unavailable"), false);
+      const released = consequentialReceipt(state, id);
+      assert.equal(released.execution.status, "failed"); assert.equal(released.execution.result_ref, null);
+      assert.deepEqual(released.tokens.map(row => [row.status, row.used_tokens]), [["released", 0]]);
+      assert.deepEqual(released.cost.map(row => [row.status, row.used_microusd]), [["released", 0]]);
+      assert.deepEqual(released.balances, { tokens: { used: 0, reserved: 0 }, cost: { used: 0, reserved: 0 } });
+      await consequential.reconcileConsequentialUsage(state.env, state.user.userId, id);
+      assert.deepEqual(consequentialReceipt(state, id), released); assert.equal(calls, 0);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+}
+
+for (const status of ["submitting", "uncertain"]) for (const guard of [
+  "verified-zero-tokens", "verified-zero-cost", "provider-id", "completed", "result-ref", "other-actor", "other-hash", "other-step",
+]) {
+  test("adaptive post-CAS non-submission proof: " + status + " preserves " + guard, { timeout: 15_000 }, async () => {
+    const originalFetch = globalThis.fetch; let calls = 0;
+    try {
+      globalThis.fetch = async () => { calls++; throw new Error("Proof guards must never dispatch"); };
+      const state = await consequentialContractFixture({ reserve: true }), id = state.executionId;
+      await consequential.beginConsequentialStep(state.env, state.user, state.binding, id, 0, state.sourceHead);
+      if (status === "uncertain") assert.equal(await consequential.failConsequentialExecution(state.env, state.user.userId, id, "context_canceled"), true);
+      // Isolate each guard, including zero as real evidence rather than a falsy absence.
+      if (guard === "verified-zero-tokens") state.sqlite.prepare("UPDATE consequential_execution_steps SET verified_tokens=0 WHERE execution_id=?").run(id);
+      if (guard === "verified-zero-cost") state.sqlite.prepare("UPDATE consequential_execution_steps SET verified_microusd=0 WHERE execution_id=?").run(id);
+      if (guard === "provider-id") state.sqlite.prepare("UPDATE consequential_execution_steps SET provider_request_id='accepted-provider-proof' WHERE execution_id=?").run(id);
+      if (guard === "completed") state.sqlite.prepare("UPDATE consequential_executions SET status='completed' WHERE execution_id=?").run(id);
+      if (guard === "result-ref") state.sqlite.prepare("UPDATE consequential_executions SET result_ref='retained-result-proof' WHERE execution_id=?").run(id);
+      const before = postCasExactReceipt(state, id);
+      await consequential.proveConsequentialStepNotSubmitted(
+        state.env, guard === "other-actor" ? "other-actor" : state.user.userId, id,
+        guard === "other-step" ? 1 : 0, guard === "other-hash" ? "0".repeat(64) : state.quote.bindingHash,
+      );
+      assert.deepEqual(postCasExactReceipt(state, id), before, "No status, evidence, timestamp, hold, or counter may change");
+      assert.equal(calls, 0);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+}
+
+test("adaptive post-CAS non-submission proof: an actual settled completion wins before the stale proof SQL", { timeout: 15_000 }, async () => {
+  const originalFetch = globalThis.fetch; let gate, calls = 0;
+  try {
+    globalThis.fetch = async () => { calls++; throw new Error("This race reuses already verified usage"); };
+    const state = await consequentialContractFixture({ reserve: true }), id = state.executionId;
+    await consequential.beginConsequentialStep(state.env, state.user, state.binding, id, 0, state.sourceHead);
+    gate = gateConsequentialDb(state, "run", /^\s*UPDATE consequential_execution_steps SET status='not-submitted',updated_at=/u);
+    const staleProof = consequential.proveConsequentialStepNotSubmitted(state.env, state.user.userId, id, 0, state.quote.bindingHash);
+    await gate.entered;
+    await consequential.settleConsequentialStep(state.env, state.user.userId, id, 0, 1300, 5600, "verified-completed-response");
+    await consequential.completeConsequentialExecution(state.env, state.user, state.binding, id, { executionId: id, plan: { proposals: [] } });
+    const completed = postCasExactReceipt(state, id), resultRef = completed.execution.result_ref;
+    assert.equal(completed.execution.status, "completed"); assert.ok(resultRef);
+    assert.equal(completed.steps[0].status, "settled"); assert.equal(completed.steps[0].provider_request_id, "verified-completed-response");
+    const privateResult = { ...state.sqlite.prepare("SELECT * FROM private_content WHERE content_id=?").get(resultRef) };
+    assert.deepEqual(consequentialBalances(state), { tokens: { used: 1300, reserved: 0 }, cost: { used: 5600, reserved: 0 } });
+    gate.release(); await staleProof; gate.restore(); gate = null;
+    assert.deepEqual(postCasExactReceipt(state, id), completed);
+    assert.equal(await consequential.failConsequentialExecution(state.env, state.user.userId, id, "late_unsubmitted_claim"), false);
+    await consequential.reconcileConsequentialUsage(state.env, state.user.userId, id);
+    assert.deepEqual(postCasExactReceipt(state, id), completed);
+    assert.deepEqual({ ...state.sqlite.prepare("SELECT * FROM private_content WHERE content_id=?").get(resultRef) }, privateResult);
+    assert.equal(calls, 0);
+  } finally { gate?.release(); gate?.restore(); globalThis.fetch = originalFetch; }
+});
+
+
+for(const source of["owned","owned_or_licensed","governed-upstream","governed-snapshot"])for(const[seam,kind,pattern]of[
+  ["step claim","run",/^\s*UPDATE consequential_execution_steps SET status='reserved'/u],
+  ["token INSERT","batch",/^\s*INSERT OR IGNORE INTO budget_reservations\b/u],
+  ["cost INSERT","batch",/^\s*INSERT OR IGNORE INTO cost_budget_reservations\b/u],
+  ["begin","run",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u],
+]){
+  test("adaptive rights deadline: "+source+" expires at "+seam+" without dispatch or stranded holds",{timeout:15_000},async()=>{
+    const NativeDate=globalThis.Date,originalFetch=globalThis.fetch;let state,clock,restore,calls=0,interleavings=0;
+    try{
+      globalThis.fetch=async()=>{calls++;throw new Error("Expired source must never reach the provider");};
+      state=source.startsWith("governed-")?await sharedProjectFixture({provider:true}):await fixture({provider:true});
+      // Keep JavaScript's preparation clock unchanged while SQLite reaches the deadline.
+      // The month's start makes consent/month/lease validity independent of wall-clock test time.
+      const wall=new NativeDate(),frozen=NativeDate.UTC(wall.getUTCFullYear(),wall.getUTCMonth(),1),validUntil=new NativeDate(frozen+60_000).toISOString(),later=new NativeDate(frozen+300_000).toISOString();
+      globalThis.Date=class extends NativeDate{constructor(...args){super(...(args.length?args:[frozen]));}static now(){return frozen;}};
+      clock=consequentialDbClock(state);
+      const input=await seedAdaptiveRightsDeadline(state,source,validUntil,later),quote=await quoteAdaptiveConsent(state,input.body,input.headers),providerInput=JSON.parse(quote.privateInput.providerRequest.input);
+      assert.equal(quote.canExecute,true);assert.equal(quote.privateInput.sourceRightsValidUntil,validUntil);assert.equal(providerInput.blocks.find(block=>block.id===input.blockId)?.properties.text,input.text,"Every licensed source remains in the exact approved input");
+      if(source.startsWith("governed-"))assert.equal(providerInput.blocks.some(block=>block.id==="adaptive-rights-upstream"),false,"A current upstream deadline must be checked even when that source block is outside the provider request");
+      const retained=state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=(SELECT consent_ref FROM consequential_executions WHERE execution_id=?)").get(quote.executionId);
+      assert.equal(JSON.parse(retained.content).binding.request.sourceRightsValidUntil,validUntil);
+      restore=interceptConsequentialDb(state,kind,pattern,statements=>{
+        interleavings++;assert.ok(statements.some(statement=>statement.values.includes(validUntil)),"The actual mutation must carry the normalized source deadline");
+        assert.ok(Date.now()<NativeDate.parse(validUntil));clock.set(validUntil);
+        const live=state.sqlite.prepare("SELECT ?>strftime('%Y-%m-%dT%H:%M:%fZ','now') AS quote_live,?=strftime('%Y-%m','now') AS month_live").get(quote.expiresAt,quote.period);
+        assert.equal(live.quote_live,1);assert.equal(live.month_live,1,"No unrelated consent/month expiry may cause the rejection");
+      });
+      const accepted=await executeAdaptiveConsent(state,quote,input.body,input.headers);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await state.drainBackground();restore();restore=null;
+      assert.equal(interleavings,1);assert.equal(calls,0);
+      const receipt=consequentialReceipt(state,quote.executionId);assert.equal(receipt.execution.status,"failed");assert.equal(receipt.execution.result_ref,null);assert.equal(receipt.steps[0].status,"not-submitted");assert.equal(receipt.steps[0].provider_request_id,null);
+      assert.equal(receipt.tokens.length,seam==="cost INSERT"||seam==="begin"?1:0);assert.equal(receipt.cost.length,seam==="begin"?1:0);
+      assert.ok(receipt.tokens.every(row=>row.status==="released"&&row.used_tokens===0));assert.ok(receipt.cost.every(row=>row.status==="released"&&row.used_microusd===0));
+      assert.deepEqual(consequentialBalances(state,input.owner),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});assert.equal(adaptiveJob(state,quote.executionId).status,"failed");
+      await consequential.reconcileConsequentialUsage(state.env,input.owner,quote.executionId);assert.deepEqual(consequentialReceipt(state,quote.executionId),receipt);assert.equal(calls,0);
+    }finally{restore?.();await state?.drainBackground();clock?.close();globalThis.Date=NativeDate;globalThis.fetch=originalFetch;}
+  });
+}
+for(const source of["owned_or_licensed","governed-upstream"])test("adaptive rights deadline: paid "+source+" receipts remain retrievable after license expiry",{timeout:15_000},async()=>{
+  const NativeDate=globalThis.Date,originalFetch=globalThis.fetch;let state,clock,calls=0;
+  try{
+    globalThis.fetch=async(_url,init)=>{calls++;return adaptiveFixtureResponse(JSON.parse(init.body));};
+    state=source.startsWith("governed-")?await sharedProjectFixture({provider:true}):await fixture({provider:true});
+    const wall=new NativeDate();let now=NativeDate.UTC(wall.getUTCFullYear(),wall.getUTCMonth(),1);
+    const validUntil=new NativeDate(now+60_000).toISOString(),later=new NativeDate(now+300_000).toISOString();
+    globalThis.Date=class extends NativeDate{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};
+    clock=consequentialDbClock(state);const input=await seedAdaptiveRightsDeadline(state,source,validUntil,later),quote=await quoteAdaptiveConsent(state,input.body,input.headers);
+    assert.equal(quote.privateInput.sourceRightsValidUntil,validUntil);const accepted=await executeAdaptiveConsent(state,quote,input.body,input.headers);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await state.drainBackground();
+    assert.equal(adaptiveJob(state,quote.executionId).status,"completed");const before=consequentialReceipt(state,quote.executionId),balances=consequentialBalances(state,input.owner);
+    now=NativeDate.parse(validUntil);clock.set(validUntil);delete state.env.OPENAI_API_KEY;
+    const retained=await retrieveAdaptiveConsent(state,quote,input.body,input.headers);assert.equal(retained.status,200,JSON.stringify(await retained.clone().json()));assert.deepEqual((await retained.json()).structure,adaptiveFixtureStructure);
+    assert.deepEqual(consequentialReceipt(state,quote.executionId),before);assert.deepEqual(consequentialBalances(state,input.owner),balances);assert.equal(calls,1);
+  }finally{await state?.drainBackground();clock?.close();globalThis.Date=NativeDate;globalThis.fetch=originalFetch;}
+});
+
+
+async function seedAdaptiveSeparateProjectGoverned(state,{sameOwner=false}={}){
+  const later=new Date(Date.now()+300_000).toISOString();
+  const sourceOwner=sameOwner?"assistant-owner":"dev-local-creative",sourceHeaders=sameOwner?state.owner:{},sourceStream="creative:"+sourceOwner,sourceProjectId="adaptive-upstream-project",sourceDocumentId="adaptive-separate-rights-origin",sourceBlockId="adaptive-separate-rights-upstream";
+  if(!sameOwner){
+    const email=state.sqlite.prepare("SELECT email FROM users WHERE user_id=?").get(sourceOwner).email;
+    const invited=await state.request("/api/workspaces/"+state.organizationId+"/members",json({email,role:"administrator"},state.owner));
+    assert.equal(invited.status,201,JSON.stringify(await invited.clone().json()));const invitation=await invited.json(),token=new URL(invitation.invitationUrl).searchParams.get("token");
+    const accepted=await state.request("/api/workspaces/"+state.organizationId+"/invitations/"+invitation.invitationId+"/accept",json({token}));
+    assert.equal(accepted.status,200,JSON.stringify(await accepted.clone().json()));
+  }
+  appendFixtureEvents(state.sqlite,sourceStream,[
+    ["ProjectCreated",{project_id:sourceProjectId,name:"Separate licensed-source project",slug:"separate-licensed-source-project"}],
+    ["DocumentCreated",{project_id:sourceProjectId,document_id:sourceDocumentId,title:"Original licensed source",slug:"original-licensed-source"}],
+    ["BlockCreated",{project_id:sourceProjectId,document_id:sourceDocumentId,block_id:sourceBlockId,type:"message",handle:"Cross-owner license",position:"a",properties:{text:"Original upstream licensed material.",rights_class:"owned_or_licensed",license_expires_at:later}}],
+  ]);
+  const registered=await state.request("/api/workspaces/"+state.organizationId+"/projects",json({projectId:sourceProjectId},sourceHeaders));
+  assert.equal(registered.status,201,JSON.stringify(await registered.clone().json()));const sourceProjectAccessId=(await registered.json()).projectAccessId;
+  const input=await seedAdaptiveRightsDeadline({...state,projectAccessId:sourceProjectAccessId},"governed-upstream",later,later,{documentId:sourceDocumentId,blockId:sourceBlockId}),packageId="adaptive-rights-package",versionId="adaptive-rights-version";
+  const {synchronizeProjectScope}=await import("../worker/project-access.ts");
+  await synchronizeProjectScope(state.env,{organizationId:state.organizationId,projectAccessId:sourceProjectAccessId,projectId:sourceProjectId,ownerUserId:sourceOwner});
+  const {governedPackageSourceRightsValidity}=await import("../worker/context-package-rights.ts");
+  const rights=()=>governedPackageSourceRightsValidity(state.env,state.organizationId,[{properties:{organization_context_package_id:packageId,organization_context_package_version_id:versionId}}]);
+  assert.equal((await rights()).current,true);assert.equal(sourceOwner===input.owner,sameOwner);assert.notEqual(sourceProjectAccessId,state.projectAccessId);
+  return{...input,sourceOwner,sourceStream,sourceProjectId,sourceProjectAccessId,sourceDocumentId,sourceBlockId,packageId,versionId,rights};
+}
+for(const mutation of["upstream revoked","package redacted"])test("adaptive governed dispatch: "+mutation+" at submitting CAS cannot dispatch old approved bytes",{timeout:15_000},async()=>{
+  const originalFetch=globalThis.fetch;let state,restore,calls=0,interleavings=0,mutations=0;
+  try{
+    globalThis.fetch=async(_url,init)=>{calls++;return adaptiveFixtureResponse(JSON.parse(init.body));};
+    state=await sharedProjectFixture({provider:true});const input=await seedAdaptiveSeparateProjectGoverned(state),quote=await quoteAdaptiveConsent(state,input.body,input.headers);
+    assert.equal(quote.canExecute,true);assert.equal(JSON.parse(quote.privateInput.providerRequest.input).blocks.find(block=>block.id===input.blockId)?.properties.text,input.text);
+    assert.equal(/dispatchDependencies|sourceRightsDispatchProof/u.test(JSON.stringify(quote)),false,"Upstream byte custody is server-only, not consent or provider content");
+    restore=interceptConsequentialDb(state,"run",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u,async statements=>{
+      interleavings++;const targetStream="creative:"+input.owner,head=()=>Number(state.sqlite.prepare("SELECT COALESCE(MAX(sequence),0) AS n FROM events WHERE stream_id=?").get(targetStream).n),before=head();
+      assert.equal((await input.rights()).current,true,"The source license is current immediately before the actual submitting mutation");
+      if(mutation==="upstream revoked"){
+        appendFixtureEvents(state.sqlite,input.sourceStream,[["BlockPropertyEdited",{project_id:input.sourceProjectId,document_id:input.sourceDocumentId,block_id:input.sourceBlockId,property_path:"rights_revoked",new_value:true}]]);
+        const {synchronizeProjectScope}=await import("../worker/project-access.ts");
+        await synchronizeProjectScope(state.env,{organizationId:state.organizationId,projectAccessId:input.sourceProjectAccessId,projectId:input.sourceProjectId,ownerUserId:input.sourceOwner});
+      }else state.sqlite.prepare("UPDATE organization_context_package_contents SET redacted_at=? WHERE version_id=?").run(new Date().toISOString(),input.versionId);
+      assert.equal(head(),before,"Neither upstream-only change may alter target sourceHead");
+      assert.equal((await input.rights()).current,false,"The exact same live validator now rejects the source");
+      assert.equal(statements.length,1);mutations++;
+    });
+    const accepted=await executeAdaptiveConsent(state,quote,input.body,input.headers);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await state.drainBackground();restore();restore=null;
+    const receipt=consequentialReceipt(state,quote.executionId);
+    assert.equal(interleavings,1);assert.equal(mutations,1,"The intended concurrent mutation must actually commit");assert.equal(calls,0);
+    assert.equal(receipt.execution.status,"failed");assert.equal(receipt.execution.error_code,"context_authorization_changed");assert.equal(receipt.execution.result_ref,null);assert.equal(receipt.steps[0].status,"not-submitted");assert.equal(receipt.steps[0].provider_request_id,null);
+    assert.equal(receipt.tokens.length,1);assert.equal(receipt.cost.length,1);assert.equal(receipt.tokens[0].status,"released");assert.equal(receipt.cost[0].status,"released");
+    assert.deepEqual(consequentialBalances(state,input.owner),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});
+  }finally{restore?.();await state?.drainBackground();globalThis.fetch=originalFetch;}
+});
+
+test("adaptive governed dispatch: a same-owner source in another project refreshes its index and completes once",{timeout:15_000},async()=>{
+  const originalFetch=globalThis.fetch;let state,restore,calls=0,reservationChecks=0,sourceBehindAtReservation=false;
+  try{
+    globalThis.fetch=async(_url,init)=>{calls++;return adaptiveFixtureResponse(JSON.parse(init.body));};
+    state=await sharedProjectFixture({provider:true});const input=await seedAdaptiveSeparateProjectGoverned(state,{sameOwner:true}),authoredBefore=adaptiveAuthoredCount(state,input.sourceStream),quote=await quoteAdaptiveConsent(state,input.body,input.headers);
+    assert.equal(quote.canExecute,true);assert.equal(JSON.parse(quote.privateInput.providerRequest.input).blocks.find(block=>block.id===input.blockId)?.properties.text,input.text);
+    const index=()=>state.sqlite.prepare("SELECT migration.last_owner_sequence AS indexed,(SELECT MAX(sequence) FROM events WHERE stream_id=?) AS live FROM project_migration_states migration WHERE migration.project_access_id=?").get(input.sourceStream,input.sourceProjectAccessId);
+    assert.equal(index().indexed,index().live,"The source index is current at quote; only the later target job anchor advances the shared stream");
+    restore=interceptConsequentialDb(state,"run",/^\s*UPDATE consequential_execution_steps SET status='reserved'/u,()=>{
+      reservationChecks++;const current=index();sourceBehindAtReservation=current.indexed<current.live;
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE stream_id=? AND type='ProjectDocumentJobQueued' AND json_extract(payload,'$.job_id')=?").get(input.sourceStream,quote.executionId).n,1);
+    });
+    const accepted=await executeAdaptiveConsent(state,quote,input.body,input.headers);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await state.drainBackground();restore();restore=null;
+    const receipt=consequentialReceipt(state,quote.executionId);
+    assert.equal(calls,1,"A target-only job anchor must not prevent this unchanged licensed source from running");
+    assert.equal(reservationChecks,1);assert.equal(sourceBehindAtReservation,false,"The source derived index must catch up before the guarded reservation");
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id WHERE scope.project_access_id=? AND event.type=\'ProjectDocumentJobQueued\' AND json_extract(event.payload,\'$.job_id\')=?").get(input.sourceProjectAccessId,quote.executionId).n,0,"Refreshing the source must not scope another project\'s job anchor into it");
+    assert.equal(adaptiveJob(state,quote.executionId).status,"completed");assert.equal(receipt.execution.status,"completed");assert.equal(receipt.steps[0].status,"settled");
+    assert.deepEqual(consequentialBalances(state,input.owner),{tokens:{used:1300,reserved:0},cost:{used:5600,reserved:0}});
+    assert.equal(adaptiveAuthoredCount(state,input.sourceStream),authoredBefore,"Refreshing a derived index must not author or remove source decisions");
+    for(let repeat=0;repeat<2;repeat++){const retained=await retrieveAdaptiveConsent(state,quote,input.body,input.headers);assert.equal(retained.status,200,JSON.stringify(await retained.clone().json()));assert.deepEqual((await retained.json()).structure,adaptiveFixtureStructure);}
+    assert.equal(calls,1);assert.deepEqual(consequentialReceipt(state,quote.executionId),receipt);
+    const {governedPackageSourceRightsValidity,sourceRightsDispatchGuard}=await import("../worker/context-package-rights.ts"),{synchronizeProjectScope}=await import("../worker/project-access.ts");
+    let refreshes=0;const refresh=source=>{refreshes++;return synchronizeProjectScope(state.env,source);},blocks=[{properties:{organization_context_package_id:input.packageId,organization_context_package_version_id:input.versionId}}],eventCount=state.sqlite.prepare("SELECT COUNT(*) AS n FROM events").get().n;
+    assert.equal((await governedPackageSourceRightsValidity(state.env,state.organizationId,blocks,refresh)).current,true);
+    refreshes=0;const stable=await governedPackageSourceRightsValidity(state.env,state.organizationId,blocks,refresh),guard=sourceRightsDispatchGuard(stable);
+    assert.equal(stable.current,true);assert.equal(refreshes,0,"An already-current source is a read-only no-op, not another derived-index rebuild");
+    assert.ok(state.sqlite.prepare("SELECT 1 AS current WHERE "+guard.sql).get(...guard.bindings));
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events").get().n,eventCount,"Rights/index refreshes never append authored or job events");
+    assert.deepEqual(consequentialReceipt(state,quote.executionId),receipt);assert.equal(calls,1);
+  }finally{restore?.();await state?.drainBackground();globalThis.fetch=originalFetch;}
+});
+
+
+
+// Separate immutable deployment configurations share the same real-worker fixture DB.
+// No test mutates an approved binding, private receipt, or authored source history.
+function adaptivePreissuedModelPort(state, model) {
+  const env = { ...state.env, OPENAI_MODEL: model };
+  const context = { waitUntil(promise) { state.background.push(promise); } };
+  return (body) => worker.fetch(new Request("http://localhost/api/document-jobs/adaptive", json(body)), env, context);
+}
+async function adaptivePreissuedQuote(port, request = adaptiveConsentBody, extra = {}) {
+  const response = await port({ ...request, ...extra, action: "quote" }), body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.ok(body.quote?.executionId); assert.equal(body.quote.status, "quoted");
+  return body.quote;
+}
+function adaptivePreissuedExecute(port, quote, request = adaptiveConsentBody) {
+  // Match native approval: exact saved identity, with no caller-supplied replacement override.
+  return port({ ...request, action: "execute", executionId: quote.executionId, approvedBindingHash: quote.bindingHash });
+}
+function adaptivePreissuedAccounting(state, id) {
+  const { balances: _aggregate, ...receipt } = consequentialReceipt(state, id);
+  return receipt;
+}
+function assertAdaptivePreissuedUnused(state, quote) {
+  assert.equal(adaptiveJob(state, quote.executionId), undefined, "A blocked pre-issued quote must not create a second job");
+  const receipt = consequentialReceipt(state, quote.executionId);
+  assert.equal(receipt.execution.status, "quoted");
+  assert.equal(receipt.steps[0].status, "quoted");
+  assert.equal(receipt.tokens.length, 0); assert.equal(receipt.cost.length, 0);
+}
+async function assertAdaptivePreissuedBlocked(response, winnerId) {
+  const body = await response.json();
+  assert.equal(response.status, 409, JSON.stringify(body));
+  if (body.job) assert.equal(body.job.jobId, winnerId, "A recovery response may expose only the existing request");
+}
+
+test("adaptive pre-issued approval: a different-model quote cannot replace the same request key after an unknown POST", { timeout: 15_000 }, async () => {
+  const state = await fixture({ provider: true }), originalFetch = globalThis.fetch, calls = [];
+  const terra = adaptivePreissuedModelPort(state, "gpt-5.6-terra"), luna = adaptivePreissuedModelPort(state, "gpt-5.6-luna");
+  try {
+    globalThis.fetch = async (url, init) => {
+      assert.equal(String(url), "https://api.openai.com/v1/responses"); assert.equal(init.method, "POST");
+      const payload = JSON.parse(init.body); calls.push(payload.model);
+      if (payload.model === "gpt-5.6-terra") throw new Error("Fixture lost original provider response after POST");
+      return adaptiveFixtureResponse(payload);
+    };
+    const first = await adaptivePreissuedQuote(terra), preissued = await adaptivePreissuedQuote(luna);
+    assert.notEqual(first.executionId, preissued.executionId); assert.notEqual(first.bindingHash, preissued.bindingHash);
+    assert.equal(first.privateInput.requestKey, preissued.privateInput.requestKey);
+    assert.equal((await adaptivePreissuedExecute(terra, first)).status, 202); await state.drainBackground();
+    const original = consequentialReceipt(state, first.executionId), authored = adaptiveAuthoredCount(state);
+    assert.equal(original.execution.status, "uncertain"); assert.equal(original.steps[0].status, "uncertain");
+    assert.equal(original.cost[0].status, "executing"); assert.ok(original.balances.cost.reserved > 0);
+    const freshResponse = await luna({ ...adaptiveConsentBody, action: "quote" }), fresh = await freshResponse.json();
+    assert.equal(freshResponse.status, 200); assert.equal(fresh.quote.executionId, first.executionId);
+    assert.equal(fresh.quote.status, "uncertain"); assert.equal(fresh.quote.canExecute, false);
+    const blocked = await adaptivePreissuedExecute(luna, preissued); await state.drainBackground();
+    assert.deepEqual(calls, ["gpt-5.6-terra"], "An earlier free review is not permission to replace an unknown original request");
+    await assertAdaptivePreissuedBlocked(blocked, first.executionId); assertAdaptivePreissuedUnused(state, preissued);
+    assert.deepEqual(consequentialReceipt(state, first.executionId), original);
+    assert.deepEqual(adaptiveLedgerCounts(state), { token: 1, cost: 1 }); assert.equal(adaptiveAuthoredCount(state), authored);
+  } finally { await state.drainBackground(); globalThis.fetch = originalFetch; }
+});
+
+test("adaptive pre-issued approval: a different-model claimant loses atomically when the same-key winner becomes unknown at its claim boundary", { timeout: 15_000 }, async () => {
+  const state = await fixture({ provider: true }), originalFetch = globalThis.fetch, calls = [];
+  const terra = adaptivePreissuedModelPort(state, "gpt-5.6-terra"), luna = adaptivePreissuedModelPort(state, "gpt-5.6-luna");
+  let restore, seams = 0, original;
+  try {
+    globalThis.fetch = async (url, init) => {
+      assert.equal(String(url), "https://api.openai.com/v1/responses"); assert.equal(init.method, "POST");
+      const payload = JSON.parse(init.body); calls.push(payload.model);
+      if (payload.model === "gpt-5.6-terra") throw new Error("Fixture winner response lost after POST");
+      return adaptiveFixtureResponse(payload);
+    };
+    const winner = await adaptivePreissuedQuote(terra), loser = await adaptivePreissuedQuote(luna);
+    assert.equal(winner.privateInput.requestKey, loser.privateInput.requestKey);
+    restore = interceptConsequentialDb(state, "batch", /^\s*UPDATE consequential_executions SET status='reserved'/u, async (statements) => {
+      seams++; assert.ok(statements.some((statement) => statement.values.includes(loser.executionId)));
+      assert.equal((await adaptivePreissuedExecute(terra, winner)).status, 202); await state.drainBackground();
+      original = consequentialReceipt(state, winner.executionId);
+      assert.equal(original.execution.status, "uncertain"); assert.equal(original.cost[0].status, "executing");
+    });
+    const blocked = await adaptivePreissuedExecute(luna, loser); restore(); restore = null;
+    await state.drainBackground(); assert.equal(seams, 1, "The actual SQL claim seam must run");
+    assert.deepEqual(calls, ["gpt-5.6-terra"], "A pre-claim JS check is insufficient after another request wins");
+    await assertAdaptivePreissuedBlocked(blocked, winner.executionId); assertAdaptivePreissuedUnused(state, loser);
+    assert.deepEqual(consequentialReceipt(state, winner.executionId), original);
+    assert.deepEqual(adaptiveLedgerCounts(state), { token: 1, cost: 1 });
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n, 1);
+  } finally { restore?.(); await state.drainBackground(); globalThis.fetch = originalFetch; }
+});
+
+test("adaptive replacement approval: the retained contract binds its exact completed settled predecessor and valid changed work still runs once", { timeout: 15_000 }, async () => {
+  const state = await fixture({ provider: true }), originalFetch = globalThis.fetch, calls = [];
+  const port = adaptivePreissuedModelPort(state, "gpt-5.6-terra");
+  try {
+    globalThis.fetch = async (url, init) => {
+      assert.equal(String(url), "https://api.openai.com/v1/responses"); assert.equal(init.method, "POST");
+      calls.push(JSON.parse(init.body)); return adaptiveFixtureResponse(calls.at(-1));
+    };
+    const first = await adaptivePreissuedQuote(port);
+    assert.equal((await adaptivePreissuedExecute(port, first)).status, 202); await state.drainBackground();
+    const original = adaptivePreissuedAccounting(state, first.executionId);
+    assert.equal(original.execution.status, "completed"); assert.equal(original.steps[0].status, "settled");
+    editAdaptiveReentrySource(state);
+    const incorrect = await port({ ...adaptiveConsentBody, action: "quote", replaceExecutionId: "not-the-approved-predecessor" }), incorrectBody = await incorrect.json();
+    if (incorrect.ok) assert.equal(incorrectBody.quote.executionId, first.executionId);
+    else assert.equal(incorrect.status, 409);
+    assert.deepEqual(adaptiveLedgerCounts(state), { token: 1, cost: 1 });
+    const replacement = await adaptivePreissuedQuote(port, adaptiveConsentBody, { replaceExecutionId: first.executionId });
+    assert.notEqual(replacement.executionId, first.executionId); assert.notEqual(replacement.sourceHash, first.sourceHash);
+    assert.equal(replacement.privateInput.requestKey, first.privateInput.requestKey);
+    const retained = state.sqlite.prepare("SELECT content.content FROM consequential_executions execution JOIN private_content content ON content.content_id=execution.consent_ref WHERE execution.execution_id=?").get(replacement.executionId);
+    const binding = JSON.parse(retained.content).binding;
+    assert.equal(binding.request.replaceExecutionId, first.executionId, "Replacement authority must be inside the hash-bound retained request, not only the quote HTTP body");
+    assert.equal(await consequential.consentHash(binding), replacement.bindingHash);
+    assert.deepEqual(adaptiveLedgerCounts(state), { token: 1, cost: 1 }, "Review alone is free");
+    assert.equal((await adaptivePreissuedExecute(port, replacement)).status, 202); await state.drainBackground();
+    assert.equal(adaptiveJob(state, replacement.executionId).status, "completed");
+    assert.equal(consequentialReceipt(state, replacement.executionId).steps[0].status, "settled");
+    assert.deepEqual(adaptivePreissuedAccounting(state, first.executionId), original);
+    assert.equal(calls.length, 2); assert.deepEqual(adaptiveLedgerCounts(state), { token: 2, cost: 2 });
+  } finally { await state.drainBackground(); globalThis.fetch = originalFetch; }
+});
+
+test("adaptive replacement approval: an older replacement cannot pass a newer same-key uncertain request", { timeout: 15_000 }, async () => {
+  const state = await fixture({ provider: true }), originalFetch = globalThis.fetch, calls = [];
+  const terra = adaptivePreissuedModelPort(state, "gpt-5.6-terra"), luna = adaptivePreissuedModelPort(state, "gpt-5.6-luna");
+  try {
+    globalThis.fetch = async (url, init) => {
+      assert.equal(String(url), "https://api.openai.com/v1/responses"); assert.equal(init.method, "POST");
+      const payload = JSON.parse(init.body); calls.push(payload.model);
+      if (calls.length === 2) throw new Error("Fixture newer replacement response lost after POST");
+      return adaptiveFixtureResponse(payload);
+    };
+    const first = await adaptivePreissuedQuote(terra);
+    assert.equal((await adaptivePreissuedExecute(terra, first)).status, 202); await state.drainBackground();
+    const settledOriginal = adaptivePreissuedAccounting(state, first.executionId);
+    editAdaptiveReentrySource(state);
+    const newer = await adaptivePreissuedQuote(terra, adaptiveConsentBody, { replaceExecutionId: first.executionId });
+    const stale = await adaptivePreissuedQuote(luna, adaptiveConsentBody, { replaceExecutionId: first.executionId });
+    assert.equal(newer.privateInput.requestKey, stale.privateInput.requestKey); assert.notEqual(newer.bindingHash, stale.bindingHash);
+    assert.equal((await adaptivePreissuedExecute(terra, newer)).status, 202); await state.drainBackground();
+    const uncertain = consequentialReceipt(state, newer.executionId);
+    assert.equal(uncertain.execution.status, "uncertain"); assert.equal(uncertain.cost[0].status, "executing");
+    const blocked = await adaptivePreissuedExecute(luna, stale); await state.drainBackground();
+    assert.deepEqual(calls, ["gpt-5.6-terra", "gpt-5.6-terra"], "A settled older predecessor cannot authorize replacement of newer unknown work");
+    await assertAdaptivePreissuedBlocked(blocked, newer.executionId); assertAdaptivePreissuedUnused(state, stale);
+    assert.deepEqual(consequentialReceipt(state, newer.executionId), uncertain);
+    assert.deepEqual(adaptivePreissuedAccounting(state, first.executionId), settledOriginal);
+    assert.deepEqual(adaptiveLedgerCounts(state), { token: 2, cost: 2 });
+  } finally { await state.drainBackground(); globalThis.fetch = originalFetch; }
+});
+
+test("adaptive pre-issued approval: a genuinely different intent remains authorized while the original request is uncertain", { timeout: 15_000 }, async () => {
+  const state = await fixture({ provider: true }), originalFetch = globalThis.fetch, calls = [];
+  const port = adaptivePreissuedModelPort(state, "gpt-5.6-terra"), different = { ...adaptiveConsentBody, prompt: "Plan a separate product-launch checklist, keeping the original creative request untouched." };
+  try {
+    globalThis.fetch = async (url, init) => {
+      assert.equal(String(url), "https://api.openai.com/v1/responses"); assert.equal(init.method, "POST");
+      const payload = JSON.parse(init.body); calls.push(payload);
+      if (calls.length === 1) throw new Error("Fixture original response lost after POST");
+      return adaptiveFixtureResponse(payload);
+    };
+    const first = await adaptivePreissuedQuote(port);
+    assert.equal((await adaptivePreissuedExecute(port, first)).status, 202); await state.drainBackground();
+    const original = adaptivePreissuedAccounting(state, first.executionId);
+    assert.equal(original.execution.status, "uncertain"); assert.equal(original.cost[0].status, "executing");
+    const next = await adaptivePreissuedQuote(port, different);
+    assert.notEqual(next.privateInput.requestKey, first.privateInput.requestKey);
+    assert.equal((await adaptivePreissuedExecute(port, next, different)).status, 202); await state.drainBackground();
+    assert.equal(adaptiveJob(state, next.executionId).status, "completed");
+    assert.equal(consequentialReceipt(state, next.executionId).steps[0].status, "settled");
+    assert.deepEqual(adaptivePreissuedAccounting(state, first.executionId), original);
+    assert.equal(calls.length, 2); assert.deepEqual(adaptiveLedgerCounts(state), { token: 2, cost: 2 });
+    const settled = consequentialReceipt(state, next.executionId);
+    assert.equal(settled.balances.cost.reserved, original.cost[0].reserved_microusd);
+    assert.equal(settled.balances.tokens.reserved, original.tokens[0].reserved_tokens);
+  } finally { await state.drainBackground(); globalThis.fetch = originalFetch; }
+});
+
+
+for (const shared of [false, true]) {
+  test("adaptive replacement lineage: three completed generations preserve every predecessor receipt (" + (shared ? "shared" : "personal") + ")", { timeout: 15_000 }, async () => {
+    const state = shared ? await sharedProjectFixture({ provider: true }) : await fixture({ provider: true });
+    const originalFetch = globalThis.fetch, headers = shared ? state.owner : {};
+    const owner = shared ? "assistant-owner" : "dev-local-creative", stream = "creative:" + owner;
+    const calls = [], quotes = [], originals = new Map();
+    const evidence = (id) => ({
+      execution: state.sqlite.prepare("SELECT * FROM consequential_executions WHERE execution_id=?").get(id),
+      steps: state.sqlite.prepare("SELECT * FROM consequential_execution_steps WHERE execution_id=? ORDER BY step_index").all(id),
+      tokens: state.sqlite.prepare("SELECT * FROM budget_reservations WHERE owner_id=? AND correlation_id=? ORDER BY reservation_id").all(owner, id),
+      cost: state.sqlite.prepare("SELECT * FROM cost_budget_reservations WHERE owner_id=? AND correlation_id=? ORDER BY reservation_id").all(owner, id),
+      job: state.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(id),
+      content: state.sqlite.prepare("SELECT * FROM private_content WHERE content_id IN(SELECT consent_ref FROM consequential_executions WHERE execution_id=? UNION SELECT result_ref FROM consequential_executions WHERE execution_id=? UNION SELECT json_extract(result_json,'$.adaptiveProviderReceipt.contentRef') FROM document_jobs WHERE job_id=?) ORDER BY content_id").all(id, id, id),
+    });
+    try {
+      globalThis.fetch = async (url, init) => {
+        assert.equal(String(url), "https://api.openai.com/v1/responses"); assert.equal(init.method, "POST");
+        const payload = JSON.parse(init.body); calls.push({ executionId: init.headers["X-Client-Request-Id"], payload });
+        const body = await adaptiveFixtureResponse(payload).json();
+        return Response.json({ ...body, id: "adaptive-replacement-chain-response-" + calls.length });
+      };
+      for (let generation = 0; generation < 3; generation++) {
+        const previous = quotes.at(-1);
+        if (previous) appendFixtureEvents(state.sqlite, stream, [["BlockPropertyEdited", {
+          project_id: adaptiveConsentBody.projectId, document_id: adaptiveConsentBody.documentId,
+          block_id: "block-direction", property_path: "text",
+          new_value: "Explicitly revised creative direction for approved replacement generation " + generation + ".",
+        }]]);
+        const authored = adaptiveAuthoredCount(state, stream);
+        const response = await state.request(adaptiveConsentPath, json({
+          ...adaptiveConsentBody, action: "quote", ...(previous ? { replaceExecutionId: previous.executionId } : {}),
+        }, headers)), body = await response.json();
+        assert.equal(response.status, 200, JSON.stringify(body));
+        const quote = body.quote; assert.ok(quote?.executionId); assert.equal(quote.status, "quoted");
+        assert.equal(calls.length, generation, "Preparing a replacement never contacts the provider");
+        if (previous) {
+          assert.notEqual(quote.executionId, previous.executionId); assert.notEqual(quote.sourceHash, previous.sourceHash);
+          assert.equal(quote.privateInput.requestKey, quotes[0].privateInput.requestKey);
+        }
+        const consent = state.sqlite.prepare("SELECT content.content FROM consequential_executions execution JOIN private_content content ON content.content_id=execution.consent_ref WHERE execution.execution_id=?").get(quote.executionId);
+        const binding = JSON.parse(consent.content).binding;
+        assert.equal(binding.request.replaceExecutionId ?? null, previous?.executionId ?? null);
+        assert.equal(await consequential.consentHash(binding), quote.bindingHash);
+        const admitted = await executeAdaptiveConsent(state, quote, adaptiveConsentBody, headers);
+        assert.equal(admitted.status, 202, JSON.stringify(await admitted.clone().json())); await state.drainBackground();
+        const current = evidence(quote.executionId);
+        assert.equal(current.job.status, "completed", current.job.error_message);
+        assert.equal(current.execution.status, "completed"); assert.ok(current.execution.result_ref);
+        assert.equal(current.steps.length, 1); assert.equal(current.steps[0].status, "settled");
+        assert.equal(current.tokens[0].status, "settled"); assert.equal(current.tokens[0].used_tokens, 1300);
+        assert.equal(current.cost[0].status, "settled"); assert.equal(current.cost[0].used_microusd, 5600);
+        assert.equal(current.job.correlation_id, quote.executionId); assert.equal(current.job.attempt_count, 1);
+        assert.equal(JSON.parse(current.job.request_json).replacesExecutionId ?? null, previous?.executionId ?? null);
+        assert.equal(calls.length, generation + 1); assert.equal(calls.at(-1).executionId, quote.executionId);
+        assert.deepEqual(calls.at(-1).payload, quote.privateInput.providerRequest);
+        assert.equal(adaptiveAuthoredCount(state, stream), authored, "Approved planning never applies source decisions");
+        if (shared) {
+          const resource = state.sqlite.prepare("SELECT * FROM project_resource_scopes WHERE resource_kind='job' AND resource_id=?").get(quote.executionId);
+          assert.equal(resource.actor_user_id, owner); assert.equal(resource.owner_user_id, owner);
+          assert.equal(resource.project_access_id, state.projectAccessId); assert.equal(resource.organization_id, state.organizationId);
+          assert.ok(resource.source_event_id);
+          assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='ProjectDocumentJobQueued' AND json_extract(payload,'$.job_id')=?").get(quote.executionId).n, 1);
+        }
+        for (const [id, original] of originals) assert.deepEqual(evidence(id), original, "A later replacement must not rewrite its ancestor's receipt or accounting");
+        quotes.push(quote); originals.set(quote.executionId, current);
+      }
+      assert.equal(new Set(quotes.map(quote => quote.executionId)).size, 3);
+      assert.deepEqual(adaptiveLedgerCounts(state), { token: 3, cost: 3 });
+      assert.deepEqual(consequentialBalances(state, owner), { tokens: { used: 3900, reserved: 0 }, cost: { used: 16800, reserved: 0 } });
+      for (const quote of quotes) {
+        const retrieved = await retrieveAdaptiveConsent(state, quote, adaptiveConsentBody, headers), body = await retrieved.json();
+        assert.equal(retrieved.status, 200, JSON.stringify(body)); assert.equal(body.executionId, quote.executionId);
+        assert.equal(body.bindingHash, quote.bindingHash); assert.equal(body.sourceHash, quote.sourceHash);
+        assert.deepEqual(body.structure, adaptiveFixtureStructure);
+        assert.deepEqual(evidence(quote.executionId), originals.get(quote.executionId));
+      }
+      assert.equal(calls.length, 3, "Retrieving any ancestor never purchases a fourth plan");
+    } finally { await state.drainBackground(); globalThis.fetch = originalFetch; }
+  });
+}
+
+test("adaptive consent API: a complete quote works without a provider and creates no job or hold",async()=>{
+  const state=await fixture(),original=globalThis.fetch;let calls=0;
+  try{globalThis.fetch=async()=>{calls++;throw new Error("free quote must not contact provider");};const before=adaptiveAuthoredCount(state),quote=await quoteAdaptiveConsent(state),same=await quoteAdaptiveConsent(state);
+    assert.equal(same.executionId,quote.executionId);assert.equal(quote.providerAvailable,false);assert.equal(quote.providerCalls,1);assert.equal(quote.searchCalls,0);assert.ok(quote.maximumMicrousd>0);assert.equal(quote.blockId,"");assert.equal(quote.canvasId,null);assert.equal(quote.privateInput.scope,"document");assert.ok(quote.privateInput.providerRequest.input);assert.equal(quote.privateInput.providerRequest.truncation,"disabled");assert.equal(quote.privateInput.providerRequest.store,false);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,0);assert.deepEqual(adaptiveLedgerCounts(state),{token:0,cost:0});
+    const missing=await executeAdaptiveConsent(state,quote);assert.equal(missing.status,503);assert.equal((await missing.json()).submission,"not-submitted");const read=await retrieveAdaptiveConsent(state,quote);assert.equal(read.status,409);assert.equal((await read.json()).submission,"not-submitted");assert.equal(adaptiveAuthoredCount(state),before);assert.equal(calls,0);assert.deepEqual(adaptiveLedgerCounts(state),{token:0,cost:0});
+  }finally{globalThis.fetch=original;}
+});
+test("adaptive consent API: legacy and missing-approval entry points cannot reserve or dispatch",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
+  try{globalThis.fetch=async()=>{calls++;throw new Error("unsigned planner request");};for(const body of[{...adaptiveConsentBody},{...adaptiveConsentBody,action:"execute"},{...adaptiveConsentBody,action:"retrieve"}]){const result=await state.request(adaptiveConsentPath,json(body));assert.equal(result.status,428,JSON.stringify(await result.clone().json()));}
+    for(const[path,body]of[["/api/events",{...adaptiveConsentBody,action:"structure_adaptive"}],["/api/document-jobs",{kind:"structure_adaptive",documentId:"doc-atmosphere",sourceSurface:"studio",payload:{prompt:adaptiveConsentBody.prompt,projectScope:false,locale:"en"}}]]){const result=await state.request(path,json(body));assert.equal(result.status,428,JSON.stringify(await result.clone().json()));}
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,0);assert.deepEqual(adaptiveLedgerCounts(state),{token:0,cost:0});assert.equal(calls,0);
+  }finally{globalThis.fetch=original;}
+});
+test("adaptive consent API: concurrent clicks and a lost response reuse the exact job, contract, and POST",{timeout:15_000},async()=>{
+  const state=await adaptiveCanvasFixture(),original=globalThis.fetch,entered=Promise.withResolvers(),released=Promise.withResolvers();let calls=0;
+  try{const before=adaptiveAuthoredCount(state),quote=await quoteAdaptiveConsent(state,state.body);
+    globalThis.fetch=async(url,init)=>{calls++;assert.equal(url,"https://api.openai.com/v1/responses");assert.equal(init.method,"POST");assert.equal(init.headers["X-Client-Request-Id"],quote.executionId);assert.equal(init.body,JSON.stringify(quote.privateInput.providerRequest));entered.resolve();await released.promise;return adaptiveFixtureResponse(JSON.parse(init.body));};
+    const first=await executeAdaptiveConsent(state,quote,state.body);assert.equal(first.status,202,JSON.stringify(await first.clone().json()));assert.equal((await first.json()).job.jobId,quote.executionId);await entered.promise;
+    const second=await executeAdaptiveConsent(state,quote,state.body);assert.equal(second.status,202);assert.equal((await second.json()).executionId,quote.executionId);const pending=await retrieveAdaptiveConsent(state,quote,state.body);assert.equal(pending.status,202);assert.equal((await pending.json()).job.jobId,quote.executionId);
+    const row=adaptiveJob(state,quote.executionId),payload=JSON.parse(row.request_json);assert.equal(row.correlation_id,quote.executionId);assert.equal(row.source_surface,"canvas");assert.equal(payload.adaptiveConsentVersion,1);assert.equal(payload.executionId,quote.executionId);assert.equal(payload.bindingHash,quote.bindingHash);assert.equal(payload.canvasId,state.body.canvasId);assert.equal(payload.requestKey,quote.privateInput.requestKey);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,1);
+    released.resolve();await state.drainBackground();const recovered=await retrieveAdaptiveConsent(state,quote,state.body);assert.equal(recovered.status,200,JSON.stringify(await recovered.clone().json()));const result=await recovered.json();assert.deepEqual(result.structure,adaptiveFixtureStructure);assert.equal(result.executionId,quote.executionId);assert.equal(result.bindingHash,quote.bindingHash);assert.equal(result.sourceHash,quote.sourceHash);assert.equal(result.executionReceipt.actualProviderCallCount,1);assert.equal(adaptiveJob(state,quote.executionId).correlation_id,quote.executionId);assert.equal(adaptiveJob(state,quote.executionId).status,"completed");
+    const receipt=consequentialReceipt(state,quote.executionId);assert.equal(receipt.tokens[0].reservation_id,quote.executionId+":tokens:0");assert.equal(receipt.cost[0].reservation_id,quote.executionId+":usd:0");assert.deepEqual(receipt.balances,{tokens:{used:1300,reserved:0},cost:{used:5600,reserved:0}});assert.equal((await executeAdaptiveConsent(state,quote,state.body)).status,200);assert.equal((await quoteAdaptiveConsent(state,state.body)).executionId,quote.executionId);assert.equal(adaptiveAuthoredCount(state),before);assert.equal(calls,1);assert.deepEqual(adaptiveLedgerCounts(state),{token:1,cost:1});
+  }finally{released.resolve();await state.drainBackground();globalThis.fetch=original;}
+});
+test("adaptive consent API: a committed admission with a lost response can be run without a new execution",{timeout:15_000},async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch,entered=Promise.withResolvers(),released=Promise.withResolvers();let calls=0,mutations=0,restore;
+  try{globalThis.fetch=async(_url,init)=>{calls++;entered.resolve();await released.promise;return adaptiveFixtureResponse(JSON.parse(init.body));};const quote=await quoteAdaptiveConsent(state);restore=interceptConsequentialDb(state,"batch",/^\s*UPDATE consequential_executions SET status='reserved'/u,()=>{mutations++;throw new Error("injected_lost_adaptive_admission_response");},"after");
+    await executeAdaptiveConsent(state,quote);restore();restore=null;assert.equal(mutations,1);assert.equal(adaptiveJob(state,quote.executionId).job_id,quote.executionId);assert.equal(adaptiveJob(state,quote.executionId).correlation_id,quote.executionId);assert.equal(state.sqlite.prepare("SELECT status FROM consequential_executions WHERE execution_id=?").get(quote.executionId).status,"reserved");
+    const read=await retrieveAdaptiveConsent(state,quote);assert.equal(read.status,202);assert.equal((await read.json()).job.jobId,quote.executionId);const run=await state.request("/api/document-jobs/"+quote.executionId+"/run",json({}));assert.ok(run.status===200||run.status===202);await entered.promise;released.resolve();await state.drainBackground();const completed=await retrieveAdaptiveConsent(state,quote);assert.equal(completed.status,200,JSON.stringify(await completed.clone().json()));assert.deepEqual((await completed.json()).structure,adaptiveFixtureStructure);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM consequential_executions").get().n,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,1);assert.deepEqual(adaptiveLedgerCounts(state),{token:1,cost:1});assert.equal(calls,1);
+  }finally{restore?.();released.resolve();await state.drainBackground();globalThis.fetch=original;}
+});
+async function adaptiveSourceCountFixture({provider=false}={}){
+  const state=await fixture({provider}),projectId="adaptive-source-project",documentId="adaptive-source-document",canvasId="adaptive-source-canvas";
+  const sources=[{id:"source-document",scope:"document",type:"direction",text:"Document: preserve “Mara” exactly.\n61.125 is not 61.13."},{id:"source-library",scope:"library",type:"subject",text:"Library: reuse the original blue ceramic bowl."},{id:"source-canvas",scope:"canvas",type:"exclusion",text:"Canvas: never crop the handwritten signature."}];
+  appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["ProjectCreated",{project_id:projectId,name:"Exact source-count project"}],["DocumentCreated",{document_id:documentId,project_id:projectId,title:"Original document"}],["CanvasCreated",{canvas_id:canvasId,project_id:projectId,name:"Original board",slug:"original-board"}],...sources.flatMap((source)=>[["BlockCreated",{block_id:source.id,project_id:projectId,scope:source.scope,...(source.scope==="document"?{document_id:documentId}:source.scope==="canvas"?{canvas_id:canvasId}:{}),type:source.type,handle:source.id,position:source.id,properties:{text:source.text,weight:1,intent:source.scope==="canvas"?"prohibit":"include"}}],["BlockLocked",{block_id:source.id,project_id:projectId}]])]);
+  return{...state,sources,body:{...adaptiveConsentBody,projectId,documentId,canvasId,sourceSurface:"canvas",projectScope:true}};
+}
+for(const provider of[false,true])test("adaptive consent API: source counts distinguish one document, Library, and Canvas; provider="+provider,{timeout:15_000},async()=>{
+  const state=await adaptiveSourceCountFixture({provider}),original=globalThis.fetch;let calls=0;
+  try{
+    globalThis.fetch=async()=>{calls++;throw new Error("source-count preview must be free");};
+    const before=adaptiveAuthoredCount(state),quote=await quoteAdaptiveConsent(state,state.body),input=JSON.parse(quote.privateInput.providerRequest.input);
+    assert.equal(quote.privateInput.scope,"whole-project");assert.equal(quote.privateInput.documentCount,1);assert.equal(quote.privateInput.blockCount,3);assert.equal(quote.privateInput.libraryBlockCount,1);assert.equal(quote.privateInput.canvasBlockCount,1);assert.equal(quote.privateInput.protectedBlockCount,3);assert.equal(quote.providerAvailable,provider);
+    assert.equal(input.blocks.length,3);for(const source of state.sources){const block=input.blocks.find((item)=>item.id===source.id);assert.ok(block,source.id);assert.equal(block.properties.text,source.text);assert.equal(block.scope,source.scope);assert.equal(block.locked,true);}
+    assert.equal(input.blocks.find((block)=>block.id==="source-canvas").intent,"prohibit");assert.equal(calls,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,0);assert.deepEqual(adaptiveLedgerCounts(state),{token:0,cost:0});assert.equal(adaptiveAuthoredCount(state),before);
+    if(provider){
+      globalThis.fetch=async(url,init)=>{calls++;assert.equal(url,"https://api.openai.com/v1/responses");assert.equal(init.method,"POST");assert.equal(init.body,JSON.stringify(quote.privateInput.providerRequest));const sent=JSON.parse(init.body);assert.deepEqual(JSON.parse(sent.input).blocks,input.blocks);return adaptiveFixtureResponse(sent);};
+      const admitted=await executeAdaptiveConsent(state,quote,state.body);assert.equal(admitted.status,202,JSON.stringify(await admitted.clone().json()));await state.drainBackground();assert.equal((await retrieveAdaptiveConsent(state,quote,state.body)).status,200);assert.equal(calls,1);assert.equal(adaptiveAuthoredCount(state),before);
+    }
+  }finally{await state.drainBackground();globalThis.fetch=original;}
+});
+test("adaptive consent API: Library and Canvas inputs alone do not invent a source document",async()=>{
+  const state=await adaptiveSourceCountFixture(),original=globalThis.fetch;let calls=0;
+  appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["BlockRehomed",{block_id:"source-document",project_id:state.body.projectId,scope:"library"}]]);
+  try{globalThis.fetch=async()=>{calls++;throw new Error("source-count preview must be free");};const quote=await quoteAdaptiveConsent(state,state.body),input=JSON.parse(quote.privateInput.providerRequest.input);assert.equal(quote.privateInput.documentCount,0);assert.equal(quote.privateInput.blockCount,3);assert.equal(quote.privateInput.libraryBlockCount,2);assert.equal(quote.privateInput.canvasBlockCount,1);assert.equal(input.blocks.length,3);for(const source of state.sources)assert.equal(input.blocks.find((block)=>block.id===source.id).properties.text,source.text);assert.equal(calls,0);assert.deepEqual(adaptiveLedgerCounts(state),{token:0,cost:0});}finally{globalThis.fetch=original;}
+});
+
+test("adaptive consent API: whole-project quote and dispatch retain full protected instructions and locks",{timeout:15_000},async()=>{
+  const state=await adaptiveCanvasFixture(),original=globalThis.fetch;let calls=0;const full="Protected contractual context ".repeat(30)+"CRITICAL TAIL MUST REMAIN VERBATIM",exact="Revenue  growth\nnever fabricate proof";
+  appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["BlockCreated",{block_id:"adaptive-protected",project_id:"project-atmosphere",document_id:"doc-atmosphere",type:"direction",handle:"Protected direction",position:"z1",properties:{text:full,intent:"prohibit",weight:.8,exact_text:exact,exact_placements:["opening","closing"],protected_phrases:[{text:exact,placement:"opening_and_closing"}]}}],["BlockLocked",{block_id:"adaptive-protected",project_id:"project-atmosphere",document_id:"doc-atmosphere"}],["DocumentCreated",{document_id:"adaptive-second-document",project_id:"project-atmosphere",title:"Second authorized document",slug:"second-authorized-document"}],["BlockCreated",{block_id:"adaptive-second-fact",project_id:"project-atmosphere",document_id:"adaptive-second-document",type:"subject",handle:"Second-document subject",position:"z2",properties:{text:"An authorized fact from the other document."}}],["BlockCreated",{block_id:"adaptive-inactive",project_id:"project-atmosphere",document_id:"doc-atmosphere",type:"direction",handle:"Inactive",position:"z3",properties:{text:"INACTIVE_FACT_MUST_NOT_BE_SENT",active:false}}],["BlockCreated",{block_id:"adaptive-foreign",project_id:"foreign-project",document_id:"foreign-document",type:"direction",handle:"Foreign",position:"z4",properties:{text:"FOREIGN_PROJECT_MUST_NOT_BE_SENT"}}]]);
+  try{const before=adaptiveAuthoredCount(state),body={...state.body,locale:"ja"},quote=await quoteAdaptiveConsent(state,body),input=JSON.parse(quote.privateInput.providerRequest.input),block=input.blocks.find((item)=>item.id==="adaptive-protected");assert.ok(block);assert.equal(block.properties.text,full);assert.equal(block.properties.exact_text,exact);assert.deepEqual(block.properties.exact_placements,["opening","closing"]);assert.deepEqual(block.properties.protected_phrases,[{text:exact,placement:"opening_and_closing"}]);assert.equal(block.locked,true);assert.equal(block.intent,"prohibit");assert.ok(input.blocks.some((item)=>item.id==="adaptive-second-fact"));assert.doesNotMatch(quote.privateInput.providerRequest.input,/INACTIVE_FACT_MUST_NOT_BE_SENT|FOREIGN_PROJECT_MUST_NOT_BE_SENT/u);assert.equal(quote.privateInput.scope,"whole-project");assert.equal(quote.privateInput.documentCount,2);assert.ok(quote.privateInput.protectedBlockCount>=1);assert.equal(quote.privateInput.inactiveBlockCount,1);assert.match(quote.privateInput.providerRequest.instructions,/\(ja\)/u);
+    globalThis.fetch=async(_url,init)=>{calls++;assert.equal(init.body,JSON.stringify(quote.privateInput.providerRequest));return adaptiveFixtureResponse(JSON.parse(init.body));};const admitted=await executeAdaptiveConsent(state,quote,body);assert.equal(admitted.status,202,JSON.stringify(await admitted.clone().json()));await state.drainBackground();assert.equal((await retrieveAdaptiveConsent(state,quote,body)).status,200);assert.equal(adaptiveAuthoredCount(state),before);assert.equal(calls,1);
+  }finally{await state.drainBackground();globalThis.fetch=original;}
+});
+for(const problem of["oversized","unlicensed"])test("adaptive consent API: "+problem+" active source is rejected rather than silently omitted",async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["BlockCreated",{block_id:"adaptive-invalid-source",project_id:"project-atmosphere",document_id:"doc-atmosphere",type:"direction",handle:"Required source",position:"z1",properties:problem==="oversized"?{text:"x".repeat(130_000),intent:"prohibit"}:{text:"Required but unlicensed source.",rights_class:"unlicensed"}}],["BlockLocked",{block_id:"adaptive-invalid-source",project_id:"project-atmosphere",document_id:"doc-atmosphere"}]]);
+  try{globalThis.fetch=async()=>{calls++;throw new Error("source rejection must be free");};const result=await state.request(adaptiveConsentPath,json({...adaptiveConsentBody,action:"quote"}));assert.equal(result.status,problem==="oversized"?413:403,JSON.stringify(await result.clone().json()));assert.equal((await result.json()).error,problem==="oversized"?"adaptive_source_too_large":"adaptive_source_rights_unavailable");assert.deepEqual(adaptiveLedgerCounts(state),{token:0,cost:0});assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,0);assert.equal(calls,0);}finally{globalThis.fetch=original;}
+});
+for(const change of["source","board","permission"])test("adaptive consent API: changed "+change+" cannot consume an earlier quote",async()=>{
+  const state=await adaptiveCanvasFixture(),original=globalThis.fetch;let calls=0;try{globalThis.fetch=async()=>{calls++;throw new Error("stale approval must not dispatch");};const quote=await quoteAdaptiveConsent(state,state.body);changeAdaptiveAuthority(state,change);const result=await executeAdaptiveConsent(state,quote,state.body);assert.equal(result.status,change==="permission"?403:409,JSON.stringify(await result.clone().json()));assert.deepEqual(adaptiveLedgerCounts(state),{token:0,cost:0});assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,0);assert.equal(calls,0);}finally{globalThis.fetch=original;}
+});
+for(const boundary of["claim","dispatch"])for(const change of["source","board","permission"])test("adaptive consent API: "+change+" changing at "+boundary+" fails closed at the SQL boundary",{timeout:15_000},async()=>{
+  const state=await adaptiveCanvasFixture(),original=globalThis.fetch;let calls=0,mutations=0,restore;try{globalThis.fetch=async()=>{calls++;throw new Error("stale boundary must not dispatch");};const quote=await quoteAdaptiveConsent(state,state.body);restore=interceptConsequentialDb(state,boundary==="claim"?"batch":"run",boundary==="claim"?/^\s*UPDATE consequential_executions SET status='reserved'/u:/^\s*UPDATE consequential_execution_steps SET status='submitting'/u,()=>{mutations++;changeAdaptiveAuthority(state,change);});const result=await executeAdaptiveConsent(state,quote,state.body);if(boundary==="claim")assert.equal(result.ok,false);else assert.equal(result.status,202,JSON.stringify(await result.clone().json()));await state.drainBackground();assert.equal(mutations,1);assert.equal(calls,0);if(boundary==="claim"){assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,0);assert.deepEqual(adaptiveLedgerCounts(state),{token:0,cost:0});}else{const receipt=consequentialReceipt(state,quote.executionId);assert.equal(receipt.steps[0].status,"not-submitted");assert.deepEqual(receipt.balances,{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});assert.equal(adaptiveJob(state,quote.executionId).status,"failed");}}finally{restore?.();await state.drainBackground();globalThis.fetch=original;}
+});
+for(const mode of["non-ok-verified","malformed-output","missing-usage","malformed-http-json"])test("adaptive consent API: "+mode+" retains truthful billing and never retries a POST",{timeout:15_000},async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;const verified=mode==="non-ok-verified"||mode==="malformed-output";
+  try{globalThis.fetch=async(_url,init)=>{calls++;const payload=JSON.parse(init.body);if(mode==="malformed-http-json")return new Response("{",{status:200,headers:{"content-type":"application/json","x-request-id":"adaptive-unparseable-response"}});return adaptiveFixtureResponse(payload,{status:mode==="non-ok-verified"?503:200,usage:mode==="missing-usage"?null:undefined,outputText:mode==="malformed-output"?"{":undefined});};
+    const quote=await quoteAdaptiveConsent(state),accepted=await executeAdaptiveConsent(state,quote);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await state.drainBackground();const receipt=consequentialReceipt(state,quote.executionId);assert.equal(receipt.execution.status,verified?"failed":"uncertain");assert.equal(receipt.steps[0].status,verified?"settled":"uncertain");assert.equal(receipt.execution.result_ref,null);assert.equal(receipt.tokens.length,1);assert.equal(receipt.cost.length,1);if(verified)assert.deepEqual(receipt.balances,{tokens:{used:1300,reserved:0},cost:{used:5600,reserved:0}});else{assert.equal(receipt.balances.tokens.used,0);assert.equal(receipt.balances.cost.used,0);assert.ok(receipt.balances.tokens.reserved>0);assert.ok(receipt.balances.cost.reserved>0);}
+    const current=await retrieveAdaptiveConsent(state,quote);assert.equal(current.status,409);assert.equal((await current.json()).status,verified?"failed":"uncertain");assert.equal((await executeAdaptiveConsent(state,quote)).status,409);const auth=await requireUser(new Request("http://localhost/api/session"),state.env,"viewer",{account:"principal"});await reconcileFailedBudgetReservations(state.env,auth.user,Date.now()+40*86_400_000);assert.deepEqual(consequentialReceipt(state,quote.executionId),receipt);assert.deepEqual(adaptiveLedgerCounts(state),{token:1,cost:1});assert.equal(calls,1);
+  }finally{await state.drainBackground();globalThis.fetch=original;}
+});
+for(const force of [false,true])for(const phase of ["not-reserved","released","retained"]){
+  test(`adaptive stop budget: ${force?"force-stop":"stop"} reports ${phase} from exact ledgers`,{timeout:15_000},async()=>{
+    const state=await fixture({provider:true}),original=globalThis.fetch,entered=Promise.withResolvers(),released=Promise.withResolvers();let calls=0,gate;
+    try{
+      if(force)state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id='dev-local-creative'").run();
+      const quote=await quoteAdaptiveConsent(state),path="/api/document-jobs/"+quote.executionId+(force?"/force-fail":"/cancel");
+      globalThis.fetch=async(url,init)=>{calls++;assert.equal(String(url),"https://api.openai.com/v1/responses");assert.equal(init.method,"POST");entered.resolve();await released.promise;return adaptiveFixtureResponse(JSON.parse(init.body));};
+      if(phase!=="retained")gate=gateConsequentialDb(state,"run",phase==="not-reserved"?/^\s*UPDATE consequential_execution_steps SET status='reserved'/u:/^\s*UPDATE consequential_execution_steps SET status='submitting'/u);
+      const admitted=await executeAdaptiveConsent(state,quote);assert.equal(admitted.status,202,JSON.stringify(await admitted.clone().json()));
+      await(gate?.entered??entered.promise);const before=consequentialBalances(state);
+      const stopped=await state.request(path,json({})),body=await stopped.json();assert.equal(stopped.status,200,JSON.stringify(body));
+      assert.equal(body.job.status,force?"failed":"canceled");assert.deepEqual(body.budget,{reservationStatus:phase,billingStatus:phase==="retained"?"pending":"not-incurred"});
+      if(phase==="retained"){
+        assert.deepEqual(consequentialBalances(state),before);assert.match(body.job.progressMessage,/hold is retained/u);assert.doesNotMatch(body.job.progressMessage,/released|before provider submission/u);
+      }else{
+        assert.deepEqual(consequentialBalances(state),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});
+        assert.equal(consequentialReceipt(state,quote.executionId).steps[0].status,"not-submitted");
+        assert.deepEqual(adaptiveLedgerCounts(state),phase==="released"?{token:1,cost:1}:{token:0,cost:0});
+      }
+      const repeated=await state.request(path,json({}));assert.equal(repeated.status,200);assert.deepEqual((await repeated.json()).budget,body.budget);
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='BudgetReleased'").get().n,0);
+      gate?.release();released.resolve();await state.drainBackground();
+      assert.equal(calls,phase==="retained"?1:0);
+      if(phase==="retained"){
+        const completed=await state.request(path,json({})),settled=await completed.json();assert.equal(completed.status,200,JSON.stringify(settled));
+        assert.equal(settled.job.status,"completed");assert.equal(settled.stoppedCount,0);assert.deepEqual(settled.budget,{reservationStatus:"settled",billingStatus:"settled"});
+        assert.deepEqual(consequentialBalances(state),{tokens:{used:1300,reserved:0},cost:{used:5600,reserved:0}});assert.equal(calls,1);
+      }
+    }finally{gate?.release();gate?.restore();released.resolve();await state.drainBackground();globalThis.fetch=original;}
+  });
+}
+
+
+// R9 routed proof for the terminal winner shapes consumed by the actual-host
+// regressions. All providers and data are in-memory fixtures. Capturing a valid
+// A-to-B progress reply before a later stop models ordinary response delivery
+// reordering; no approved private contract or canonical source is rewritten.
+for(const force of[false,true])for(const phase of["released","retained","settled"]){
+  test("adaptive terminal winner R9 routes: "+(force?"failed":"canceled")+" / "+phase+" follows an earlier valid reuse receipt",{timeout:15000},async()=>{
+    const state=await fixture({provider:true}),oldFetch=globalThis.fetch,entered=Promise.withResolvers(),released=Promise.withResolvers();
+    let gate,calls=0;
+    try{
+      if(force)state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id='dev-local-creative'").run();
+      const winnerPort=adaptivePreissuedModelPort(state,"gpt-5.6-terra"),loserPort=adaptivePreissuedModelPort(state,"gpt-5.6-luna");
+      globalThis.fetch=async(url,init)=>{
+        calls++;assert.equal(String(url),"https://api.openai.com/v1/responses");assert.equal(init.method,"POST");
+        entered.resolve();await released.promise;
+        // Known usage with malformed output must settle without inventing a plan.
+        return adaptiveFixtureResponse(JSON.parse(init.body),{outputText:"{"});
+      };
+      const winner=await adaptivePreissuedQuote(winnerPort),loser=await adaptivePreissuedQuote(loserPort);
+      assert.notEqual(winner.executionId,loser.executionId);assert.equal(winner.privateInput.requestKey,loser.privateInput.requestKey);
+      if(phase==="released")gate=gateConsequentialDb(state,"run",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u);
+      assert.equal((await adaptivePreissuedExecute(winnerPort,winner)).status,202);
+      await(gate?.entered??entered.promise);
+      const delayed=await adaptivePreissuedExecute(loserPort,loser),oldBody=await delayed.json();
+      assert.equal(delayed.status,202);assert.equal(oldBody.requestedExecutionId,loser.executionId);assert.equal(oldBody.reusedExecutionId,winner.executionId);
+      assert.equal(oldBody.job.jobId,winner.executionId);assert.equal(oldBody.job.status,"running");assert.equal(oldBody.quote.status,"reserved");
+      assert.deepEqual(oldBody.quote.privateInput,winner.privateInput);assert.equal(oldBody.quote.maximumMicrousd,winner.maximumMicrousd);
+      const stop=await state.request("/api/document-jobs/"+winner.executionId+(force?"/force-fail":"/cancel"),json({}));assert.equal(stop.status,200);
+      if(phase==="settled"){released.resolve();await state.drainBackground();}
+      const before=consequentialReceipt(state,winner.executionId);
+      const page=await state.request("/api/document-jobs");assert.equal(page.status,200);
+      const terminal=(await page.json()).jobs.find(job=>job.jobId===winner.executionId);assert.ok(terminal);
+      assert.equal(terminal.status,force?"failed":"canceled");assert.equal(terminal.result.planningReviewAvailable,true);
+      assert.deepEqual(terminal.result.planningStopBudget,{reservationStatus:phase,billingStatus:phase==="released"?"not-incurred":phase==="retained"?"pending":"settled"});
+      assert.equal(terminal.result.structure,undefined);assert.equal(Object.hasOwn(terminal.result,"quote"),false);
+      assert.deepEqual(consequentialReceipt(state,winner.executionId),before,"Reading terminal progress must not create a second charge");
+      assertAdaptivePreissuedUnused(state,loser);assert.equal(calls,phase==="released"?0:1);
+      assert.deepEqual(adaptiveLedgerCounts(state),{token:1,cost:1});
+    }finally{gate?.release();gate?.restore();released.resolve();await state.drainBackground();globalThis.fetch=oldFetch;state.sqlite.close();}
+  });
+}
+
+// R14 routed provenance for fresh 409 accounting adoption. The same terminal
+// job legitimately moves held -> settled after its one mocked provider reply;
+// no new plan, provider POST, reservation, or authored decision is created.
+for(const force of[false,true])for(const action of["resume","retrieve"]){
+  test("adaptive current billing receipt R14 routes: "+(force?"failed":"canceled")+" fresh "+action+" returns settled 409 proof",{timeout:15000},async()=>{
+    const state=await fixture({provider:true}),oldFetch=globalThis.fetch,entered=Promise.withResolvers(),released=Promise.withResolvers();let calls=0;
+    try{
+      if(force)state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id='dev-local-creative'").run();
+      globalThis.fetch=async(url,init)=>{
+        calls++;assert.equal(String(url),"https://api.openai.com/v1/responses");assert.equal(init.method,"POST");
+        entered.resolve();await released.promise;
+        return adaptiveFixtureResponse(JSON.parse(init.body),{outputText:"{"});
+      };
+      const quote=await quoteAdaptiveConsent(state);
+      assert.equal((await executeAdaptiveConsent(state,quote)).status,202);await entered.promise;
+      const stop=await state.request("/api/document-jobs/"+quote.executionId+(force?"/force-fail":"/cancel"),json({}));
+      assert.equal(stop.status,200);const held=await stop.json();
+      assert.equal(held.job.status,force?"failed":"canceled");
+      assert.deepEqual(held.job.result.planningStopBudget,{reservationStatus:"retained",billingStatus:"pending"});
+      released.resolve();await state.drainBackground();
+      const before=consequentialReceipt(state,quote.executionId),authored=adaptiveAuthoredCount(state);
+      const response=await state.request("/api/document-jobs/adaptive",json({...adaptiveConsentBody,action,executionId:quote.executionId,
+        ...(action==="retrieve"?{approvedBindingHash:quote.bindingHash}:{})}));
+      const body=await response.json();assert.equal(response.status,409);
+      assert.equal(body.error,"provider_returned_invalid_json");assert.equal(body.status,"failed");assert.equal(body.quote.status,"failed");
+      assert.equal(body.executionId,quote.executionId);assert.equal(body.bindingHash,quote.bindingHash);
+      assert.equal(body.requestKey,body.planningRequest.requestKey);assert.equal(body.planningRequest.prompt,adaptiveConsentBody.prompt);
+      assert.deepEqual(body.quote.privateInput,quote.privateInput);
+      assert.equal(body.job.jobId,quote.executionId);assert.equal(body.job.planningExecutionId,quote.executionId);
+      assert.equal(body.job.status,force?"failed":"canceled");assert.equal(body.job.result.planningReviewAvailable,true);
+      assert.deepEqual(body.job.result.planningStopBudget,{reservationStatus:"settled",billingStatus:"settled"});
+      assert.equal(body.job.result.structure,undefined);assert.equal(body.billingStatus,"settled");assert.equal(body.noAutomaticRetry,true);
+      assert.deepEqual(consequentialReceipt(state,quote.executionId),before);assert.equal(adaptiveAuthoredCount(state),authored);
+      assert.equal(calls,1);assert.deepEqual(adaptiveLedgerCounts(state),{token:1,cost:1});
+    }finally{released.resolve();await state.drainBackground();globalThis.fetch=oldFetch;state.sqlite.close();}
+  });
+}
+
+for (const force of [false, true]) {
+  test("adaptive late stop billing: " + (force ? "force-stop" : "cancel") + " exposes current settled ledgers without rewriting the retained stop receipt", { timeout: 15_000 }, async () => {
+    const state = await fixture({ provider: true }), originalFetch = globalThis.fetch;
+    const entered = Promise.withResolvers(), released = Promise.withResolvers(); let calls = 0;
+    try {
+      if (force) state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id='dev-local-creative'").run();
+      const quote = await quoteAdaptiveConsent(state);
+      globalThis.fetch = async (url, init) => {
+        assert.equal(String(url), "https://api.openai.com/v1/responses"); assert.equal(init.method, "POST");
+        calls++; entered.resolve(); await released.promise;
+        return adaptiveFixtureResponse(JSON.parse(init.body), { outputText: "{" });
+      };
+      const accepted = await executeAdaptiveConsent(state, quote);
+      assert.equal(accepted.status, 202, JSON.stringify(await accepted.clone().json())); await entered.promise;
+      const path = "/api/document-jobs/" + quote.executionId, status = force ? "failed" : "canceled";
+      const stopped = await state.request(path + (force ? "/force-fail" : "/cancel"), json({})), stop = await stopped.json();
+      assert.equal(stopped.status, 200, JSON.stringify(stop)); assert.equal(stop.job.status, status);
+      assert.deepEqual(stop.budget, { reservationStatus: "retained", billingStatus: "pending" });
+      const stored = () => state.sqlite.prepare("SELECT status,result_json,error_message FROM document_jobs WHERE job_id=?").get(quote.executionId);
+      const historical = JSON.parse(stored().result_json);
+      assert.match(historical.errorDetail.message, /hold is retained/u);
+      released.resolve(); await state.drainBackground();
+      const settled = consequentialReceipt(state, quote.executionId), afterDelivery = stored(), raw = JSON.parse(afterDelivery.result_json);
+      assert.equal(settled.execution.result_ref, null, "Malformed output must not become a saved plan");
+      assert.equal(settled.steps[0].status, "settled");
+      assert.equal(settled.tokens[0].status, "settled"); assert.equal(settled.cost[0].status, "settled");
+      assert.deepEqual(settled.balances, { tokens: { used: 1300, reserved: 0 }, cost: { used: 5600, reserved: 0 } });
+      assert.equal(afterDelivery.status, status); assert.deepEqual(raw.errorDetail, historical.errorDetail);
+      assert.equal(raw.progressMessage, historical.progressMessage); assert.equal(raw.structure, undefined);
+      assert.equal(Object.hasOwn(raw, "planningStopBudget"), false, "Live budget status is response-only, never a new stored receipt");
+      const assertLive = (job) => {
+        assert.equal(job.jobId, quote.executionId); assert.equal(job.status, status);
+        assert.deepEqual(job.result.planningStopBudget, { reservationStatus: "settled", billingStatus: "settled" });
+        assert.equal(job.result.structure, undefined); assert.equal(job.result.noAutomaticRetry, true);
+      };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const detail = await state.request(path), detailBody = await detail.json();
+        assert.equal(detail.status, 200, JSON.stringify(detailBody)); assertLive(detailBody.job);
+        for (const suffix of ["", "?document=" + adaptiveConsentBody.documentId]) {
+          const listed = await state.request("/api/document-jobs" + suffix), listBody = await listed.json();
+          assert.equal(listed.status, 200, JSON.stringify(listBody));
+          const match = listBody.jobs.find((job) => job.jobId === quote.executionId); assert.ok(match); assertLive(match);
+        }
+        const resumed = await state.request("/api/document-jobs/adaptive", json({
+          action: "resume", executionId: quote.executionId, projectId: adaptiveConsentBody.projectId,
+          documentId: adaptiveConsentBody.documentId, canvasId: null,
+        })), resumeBody = await resumed.json();
+        assert.equal(resumed.status, 409, JSON.stringify(resumeBody)); assertLive(resumeBody.job);
+        assert.equal(resumeBody.executionId, quote.executionId); assert.equal(resumeBody.structure, undefined);
+        assert.deepEqual(consequentialReceipt(state, quote.executionId), settled, "Reads cannot reserve, release, or charge again");
+        assert.deepEqual(stored(), afterDelivery, "Reads leave the exact historical stop message and raw receipt untouched");
+        assert.deepEqual(adaptiveLedgerCounts(state), { token: 1, cost: 1 }); assert.equal(calls, 1);
+      }
+    } finally { released.resolve(); await state.drainBackground(); globalThis.fetch = originalFetch; }
+  });
+}
+test("adaptive consent API: cancellation after POST keeps the hold and recovers its late paid proposal",{timeout:15_000},async()=>{
+  const state=await fixture({provider:true}),original=globalThis.fetch,entered=Promise.withResolvers(),released=Promise.withResolvers();let calls=0;
+  try{globalThis.fetch=async(_url,init)=>{calls++;entered.resolve();await released.promise;return adaptiveFixtureResponse(JSON.parse(init.body));};const quote=await quoteAdaptiveConsent(state),accepted=await executeAdaptiveConsent(state,quote);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await entered.promise;const before=consequentialBalances(state);const stopped=await state.request("/api/document-jobs/"+quote.executionId+"/cancel",json({}));assert.equal(stopped.status,200,JSON.stringify(await stopped.clone().json()));assert.deepEqual(consequentialBalances(state),before);assert.equal(consequentialReceipt(state,quote.executionId).steps[0].status,"uncertain");released.resolve();await state.drainBackground();const read=await retrieveAdaptiveConsent(state,quote);assert.equal(read.status,200,JSON.stringify(await read.clone().json()));const result=await read.json();assert.deepEqual(result.structure,adaptiveFixtureStructure);assert.equal(result.executionId,quote.executionId);assert.equal(result.status,"completed");assert.equal((await executeAdaptiveConsent(state,quote)).status,200);assert.deepEqual(consequentialBalances(state),{tokens:{used:1300,reserved:0},cost:{used:5600,reserved:0}});assert.equal(calls,1);assert.deepEqual(adaptiveLedgerCounts(state),{token:1,cost:1});}finally{released.resolve();await state.drainBackground();globalThis.fetch=original;}
+});
+test("adaptive consent API: removing the source board after dispatch retains the original paid proposal",{timeout:15_000},async()=>{
+  const state=await adaptiveCanvasFixture(),original=globalThis.fetch,entered=Promise.withResolvers(),released=Promise.withResolvers();let calls=0;
+  try{globalThis.fetch=async(_url,init)=>{calls++;entered.resolve();await released.promise;return adaptiveFixtureResponse(JSON.parse(init.body));};const quote=await quoteAdaptiveConsent(state,state.body),accepted=await executeAdaptiveConsent(state,quote,state.body);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await entered.promise;changeAdaptiveAuthority(state,"board");released.resolve();await state.drainBackground();const read=await retrieveAdaptiveConsent(state,quote,state.body);assert.equal(read.status,200,JSON.stringify(await read.clone().json()));const result=await read.json();assert.equal(result.sourceHash,quote.sourceHash);assert.equal(result.sourceStatus,"original-approved-source");assert.deepEqual(result.structure,adaptiveFixtureStructure);assert.equal(calls,1);assert.deepEqual(consequentialBalances(state),{tokens:{used:1300,reserved:0},cost:{used:5600,reserved:0}});}finally{released.resolve();await state.drainBackground();globalThis.fetch=original;}
+});
+test("adaptive consent API: retained retrieval ignores new-spend budget, key, model, source, and month",{timeout:30_000},async()=>{
+  for(const status of["completed","uncertain"])for(const unavailable of["budget","key","model","source","month"]){
+    const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0,clock,restore;
+    try{globalThis.fetch=async(_url,init)=>{calls++;if(status==="uncertain")throw new Error("provider response lost");return adaptiveFixtureResponse(JSON.parse(init.body));};const quote=await quoteAdaptiveConsent(state),accepted=await executeAdaptiveConsent(state,quote);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await state.drainBackground();
+      if(unavailable==="budget")state.sqlite.prepare("UPDATE cost_budget_counters SET used_microusd=hard_limit_microusd-reserved_microusd WHERE scope='user'").run();if(unavailable==="key")delete state.env.OPENAI_API_KEY;if(unavailable==="model")state.env.OPENAI_MODEL="unpriced-new-model";if(unavailable==="source")changeAdaptiveAuthority(state,"source",adaptiveConsentBody);if(unavailable==="month"){clock=consequentialDbClock(state);clock.set(new Date(Date.now()+40*86_400_000).toISOString());}
+      const before=consequentialReceipt(state,quote.executionId);restore=interceptConsequentialDb(state,"batch",/^\s*INSERT OR IGNORE INTO (?:cost_)?budget_reservations\b/u,()=>{throw new Error("retrieval attempted a fresh reservation");});const read=await retrieveAdaptiveConsent(state,quote);assert.equal(read.status,status==="completed"?200:409,status+"/"+unavailable+" "+JSON.stringify(await read.clone().json()));const result=await read.json();assert.equal(result.executionId,quote.executionId);assert.equal(result.quote.period,quote.period);if(status==="completed")assert.deepEqual(result.structure,adaptiveFixtureStructure);else assert.equal(result.status,"uncertain");assert.deepEqual(consequentialReceipt(state,quote.executionId),before);assert.deepEqual(adaptiveLedgerCounts(state),{token:1,cost:1});assert.equal(calls,1);
+    }finally{restore?.();clock?.close();await state.drainBackground();globalThis.fetch=original;}
+  }
+});
+test("adaptive consent API: owner custody without a selected cookie atomically binds job and billing resources",{timeout:15_000},async()=>{
+  const state=await sharedProjectFixture({provider:true}),{cookie:_cookie,...owner}=state.owner,original=globalThis.fetch;let calls=0;
+  try{globalThis.fetch=async(_url,init)=>{calls++;return adaptiveFixtureResponse(JSON.parse(init.body));};const quote=await quoteAdaptiveConsent(state,adaptiveConsentBody,owner);assert.equal(quote.workspaceId,state.organizationId);const accepted=await executeAdaptiveConsent(state,quote,adaptiveConsentBody,owner);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await state.drainBackground();const completed=await retrieveAdaptiveConsent(state,quote,adaptiveConsentBody,owner);assert.equal(completed.status,200,JSON.stringify(await completed.clone().json()));assert.deepEqual((await completed.json()).structure,adaptiveFixtureStructure);const row=adaptiveJob(state,quote.executionId);assert.equal(row.owner_id,"assistant-owner");assert.equal(row.stream_id,"creative:assistant-owner");assert.equal(row.correlation_id,quote.executionId);
+    const resource=state.sqlite.prepare("SELECT organization_id,project_access_id,project_id,owner_user_id,actor_user_id FROM project_resource_scopes WHERE resource_kind='job' AND resource_id=?").get(quote.executionId);assert.deepEqual({...resource},{organization_id:state.organizationId,project_access_id:state.projectAccessId,project_id:"project-atmosphere",owner_user_id:"assistant-owner",actor_user_id:"assistant-owner"});assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_budget_reservation_scopes WHERE organization_id=? AND project_access_id=? AND actor_user_id='assistant-owner'").get(state.organizationId,state.projectAccessId).n,2);assert.equal(state.sqlite.prepare("SELECT workspace_id FROM cost_budget_reservations WHERE reservation_id=?").get(quote.executionId+":usd:0").workspace_id,state.organizationId);
+    const viewer=await retrieveAdaptiveConsent(state,quote,adaptiveConsentBody,state.viewer);assert.ok(viewer.status===403||viewer.status===404);assert.doesNotMatch(await viewer.text(),/private proposal|Which subject|quiet courtyard/u);assert.equal(calls,1);
+  }finally{await state.drainBackground();globalThis.fetch=original;}
+});
+
 test("consequential consent previews are free and missing approval cannot reserve or dispatch",async()=>{
   const state=await fixture({provider:true}),original=globalThis.fetch;let calls=0;
   try{
@@ -2462,6 +4393,160 @@ test("consequential consent rejects changed source, operation inputs, expiry and
       assert.equal((await executeContext(state,quote,body)).status,409,change);assert.equal(calls,0,change);
       assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,0,change);
     }finally{globalThis.fetch=original;}
+  }
+});
+
+
+// R14: a fresh private quote is still an authorization-sensitive disclosure.
+// These use the real adaptive route and only in-memory SQLite interleavings;
+// no quote test calls execute, reserves a budget, or contacts a provider.
+function adaptiveQuoteMoneyR14(state){
+  return{
+    tokenReservations:state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,
+    costReservations:state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n,
+    tokens:state.sqlite.prepare("SELECT COALESCE(SUM(used_tokens),0) AS used,COALESCE(SUM(reserved_tokens),0) AS reserved FROM budget_counters").get(),
+    costs:state.sqlite.prepare("SELECT COALESCE(SUM(used_microusd),0) AS used,COALESCE(SUM(reserved_microusd),0) AS reserved FROM cost_budget_counters").get(),
+  };
+}
+function withdrawAdaptiveQuoteAuthorityR14(state,change){
+  if(change==="control")return;
+  const now=new Date().toISOString();let changed;
+  if(change==="selected-session")changed=state.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE principal_user_id=? AND project_access_id=? AND revoked_at IS NULL")
+    .run(now,"assistant-viewer",state.projectAccessId).changes;
+  else if(change==="membership")changed=state.sqlite.prepare("UPDATE project_memberships SET status='revoked',revoked_at=?,updated_at=? WHERE project_access_id=? AND user_id=? AND status='active'")
+    .run(now,now,state.projectAccessId,"assistant-viewer").changes;
+  else if(change==="project-custody")changed=state.sqlite.prepare("UPDATE organization_projects SET status='archived',updated_at=? WHERE project_access_id=? AND status='active'")
+    .run(now,state.projectAccessId).changes;
+  else{
+    // Erasure/detachment only runs after the new consent has actually been
+    // stored (or after an existing quoted consent was read), never on a fake ref.
+    const retained=state.sqlite.prepare("SELECT content_id FROM private_content WHERE owner_id=? AND kind='execution-consent' AND redacted_at IS NULL")
+      .all("assistant-viewer");
+    assert.equal(retained.length,1,"Use the actual actor-private quote source");
+    if(change==="consent-erased")changed=state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?")
+      .run(now,retained[0].content_id).changes;
+    else if(change==="consent-custody")changed=state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=? AND project_access_id=?")
+      .run(retained[0].content_id,state.projectAccessId).changes;
+    else assert.fail("Unknown authority change: "+change);
+  }
+  assert.ok(Number(changed)>0,"The requested authoritative state change must take effect");
+}
+const adaptiveQuoteBoundariesR14=[
+  {name:"authorization-check",kind:"first",pattern:/^SELECT 1 AS authorized WHERE/u,phase:"before"},
+  {name:"private-storage",kind:"batch",pattern:/^\s*INSERT INTO private_content\s*\(/u,phase:"before"},
+  {name:"quote-admission",kind:"batch",pattern:/^INSERT INTO consequential_executions\(/u,phase:"before"},
+  {name:"quote-return",kind:"batch",pattern:/^INSERT INTO consequential_executions\(/u,phase:"after"},
+];
+function assertAdaptiveQuoteNotPurchasedR14(state,before){
+  assert.deepEqual(adaptiveQuoteMoneyR14(state),before,"Quote disclosure must not reserve, settle, release, or change used money/tokens");
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM document_jobs").get().n,0);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM consequential_executions WHERE status!='quoted'").get().n,0);
+  assert.equal(state.adaptiveCalls.length,0,"No provider call is permitted in this test");
+}
+function assertAdaptiveQuoteDeniedR14(response,body){
+  assert.ok([403,404,409,410].includes(response.status),"Withdrawn authority/retention must deny disclosure, not merely disable approval: "+response.status);
+  for(const key of["quote","planningRequest","privateInput","providerRequest","structure","job"])assert.equal(body[key],undefined,key+" must not leave the revoked read");
+  assert.equal(body.canExecute,undefined);
+}
+for(const boundary of adaptiveQuoteBoundariesR14)for(const change of["control","selected-session","membership","project-custody",
+  ...(["quote-admission","quote-return"].includes(boundary.name)?["consent-erased","consent-custody"]:[])]){
+  test("adaptive quote final authority R14: "+change+" at "+boundary.name+" gates the complete fresh disclosure",{timeout:10000},async()=>{
+    const state=await adaptiveRegressionFixture(true);let restore;
+    try{
+      await adaptiveReentryMember(state);
+      const before=adaptiveQuoteMoneyR14(state);let fired=false;
+      restore=interceptConsequentialDb(state,boundary.kind,boundary.pattern,()=>{
+        fired=true;withdrawAdaptiveQuoteAuthorityR14(state,change);
+      },boundary.phase);
+      const response=await state.request("/api/document-jobs/adaptive",json({...adaptiveRegressionRequest,action:"quote"},state.owner));
+      const body=await response.json();
+      assert.equal(fired,true,"The test must reach the actual "+boundary.name+" SQL boundary");
+      assertAdaptiveQuoteNotPurchasedR14(state,before);
+      if(change==="control"){
+        assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.quote.status,"quoted");assert.equal(body.quote.canExecute,true);
+        assert.deepEqual(body.planningRequest,{...adaptiveRegressionRequest,requestKey:body.quote.privateInput.requestKey});
+        assert.ok(body.quote.privateInput.providerRequest,"The allowed control still has the complete exact preview");
+      }else assertAdaptiveQuoteDeniedR14(response,body);
+    }finally{restore?.();await state.closeAdaptiveRegression();}
+  });
+}
+// The helper has a distinct existing-quoted-content return before its fresh
+// INSERT path. Revoke AFTER its guarded SELECT returns, while the HTTP response
+// has not yet disclosed any bytes. Every fresh-disclosure exit needs final proof.
+for(const change of["control","selected-session","membership","project-custody","consent-erased","consent-custody"]){
+  test("adaptive quote final authority R14: "+change+" after existing quoted-content lookup cannot disclose captured private bytes",{timeout:10000},async()=>{
+    const state=await adaptiveRegressionFixture(true);let restore;
+    try{
+      await adaptiveReentryMember(state);
+      const first=await quoteAdaptiveRegression(state),before=adaptiveQuoteMoneyR14(state);let fired=false;
+      restore=interceptConsequentialDb(state,"first",/^SELECT execution\.status,content\.content FROM consequential_executions execution JOIN private_content content/u,()=>{
+        fired=true;withdrawAdaptiveQuoteAuthorityR14(state,change);
+      },"after");
+      const response=await state.request("/api/document-jobs/adaptive",json({...adaptiveRegressionRequest,action:"quote"},state.owner)),body=await response.json();
+      assert.equal(fired,true,"Exercise the existing quote's separate private-content return");
+      assertAdaptiveQuoteNotPurchasedR14(state,before);
+      if(change==="control"){
+        assert.equal(response.status,200,JSON.stringify(body));
+        assert.equal(body.quote.executionId,first.executionId);assert.equal(body.quote.bindingHash,first.bindingHash);
+        assert.deepEqual(body.quote.privateInput,first.privateInput);
+        assert.deepEqual(body.planningRequest,{...adaptiveRegressionRequest,requestKey:first.privateInput.requestKey});
+      }else assertAdaptiveQuoteDeniedR14(response,body);
+    }finally{restore?.();await state.closeAdaptiveRegression();}
+  });
+}
+
+
+// A real routed read can capture an early reserved quote and later observe that
+// the winner's final private result was erased. That is not a fresh purchase.
+for(const shared of[false,true])test("adaptive routed withdrawal R9: "+(shared?"shared":"personal")+" early reserved quote accompanies a newly unavailable winner without another charge",{timeout:15000},async t=>{
+  const state=shared?await sharedProjectFixture({provider:true}):await fixture({provider:true}),headers=state.owner??{},originalFetch=globalThis.fetch;
+  const providerEntered=Promise.withResolvers(),providerRelease=Promise.withResolvers(),readEntered=Promise.withResolvers(),readRelease=Promise.withResolvers();
+  const calls=[];let intercept,redirect;
+  const port=model=>{
+    const env={...state.env,OPENAI_MODEL:model},context={waitUntil(promise){state.background.push(promise);}};
+    return body=>worker.fetch(new Request("http://localhost"+adaptiveConsentPath,json(body,headers)),env,context);
+  };
+  t.after(()=>{providerRelease.resolve();readRelease.resolve();});
+  try{
+    globalThis.fetch=async(url,init)=>{
+      assert.equal(String(url),"https://api.openai.com/v1/responses");assert.equal(init.method,"POST");
+      const payload=JSON.parse(init.body);calls.push(payload.model);providerEntered.resolve();await providerRelease.promise;
+      return adaptiveFixtureResponse(payload);
+    };
+    const winnerPort=port("gpt-5.6-terra"),requestedPort=port("gpt-5.6-luna");
+    const winner=await adaptivePreissuedQuote(winnerPort),requested=await adaptivePreissuedQuote(requestedPort);
+    assert.notEqual(winner.executionId,requested.executionId);assert.equal(winner.privateInput.requestKey,requested.privateInput.requestKey);
+    assert.equal((await adaptivePreissuedExecute(winnerPort,winner)).status,202);await providerEntered.promise;
+    // readResult's own job query is not readJob. Pause only ports.read, after
+    // retrieve has retained the early execution/quote and before certification.
+    intercept=interceptAdaptiveRegressionSql(state,(sql,stack)=>sql==="SELECT * FROM document_jobs WHERE job_id=? AND owner_id=?"&&/\bat Object\.read\b/u.test(stack),"first",async()=>{readEntered.resolve();await readRelease.promise;});
+    redirect=adaptivePreissuedExecute(requestedPort,requested);await readEntered.promise;
+    assert.deepEqual({...state.sqlite.prepare("SELECT status,result_ref FROM consequential_executions WHERE execution_id=?").get(winner.executionId)},{status:"reserved",result_ref:null});
+    providerRelease.resolve();await state.drainBackground();
+    const inspection=await state.request("/api/document-jobs/"+winner.executionId+"?inspection=1",{headers}),certified=await inspection.json();
+    assert.equal(inspection.status,200);assert.equal(certified.job.status,"completed");assert.ok(certified.job.result.structure);
+    assert.equal(certified.job.result.quote,undefined,"Use the actual privacy-preserving serializer");
+    const finances=adaptiveReentryFinancialState(state),receipt=adaptivePreissuedAccounting(state,winner.executionId);
+    assert.equal(receipt.steps[0].verified_tokens,1300);assert.equal(receipt.cost[0].used_microusd,5600);
+    const reference=state.sqlite.prepare("SELECT result_ref FROM consequential_executions WHERE execution_id=?").get(winner.executionId).result_ref;assert.ok(reference);
+    assert.equal(Number(state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),reference).changes),1);
+    readRelease.resolve();const response=await redirect,body=await response.json();
+    assert.equal(response.status,202,JSON.stringify(body));
+    assert.equal(body.requestedExecutionId,requested.executionId);assert.equal(body.reusedExecutionId,winner.executionId);
+    assert.equal(body.quote.executionId,winner.executionId);assert.equal(body.quote.status,"reserved");
+    assert.equal(body.quote.bindingHash,winner.bindingHash);assert.deepEqual(body.quote.privateInput,winner.privateInput);
+    assert.equal(body.job.jobId,winner.executionId);assert.equal(body.job.status,"completed");
+    assert.equal(body.job.result.planningReviewAvailable,false);assert.equal(body.job.result.resultUnavailable,true);
+    assert.equal(body.job.result.structure,undefined);assert.equal(body.job.result.intent,undefined);assert.equal(body.job.result.quote,undefined);
+    assert.deepEqual(adaptiveReentryFinancialState(state),finances);assert.deepEqual(adaptivePreissuedAccounting(state,winner.executionId),receipt);
+    assertAdaptivePreissuedUnused(state,requested);assert.deepEqual(adaptiveLedgerCounts(state),{token:1,cost:1});
+    const reread=await state.request(adaptiveConsentPath,json({...adaptiveConsentBody,action:"resume",executionId:winner.executionId},headers));
+    assert.equal(reread.ok,false);assert.equal((await reread.json()).error,"adaptive_result_unavailable");
+    assert.deepEqual(calls,["gpt-5.6-terra"]);assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+    assert.deepEqual(adaptivePreissuedAccounting(state,winner.executionId),receipt);assertAdaptivePreissuedUnused(state,requested);
+  }finally{
+    providerRelease.resolve();readRelease.resolve();intercept?.restore();
+    if(redirect)await redirect.catch(()=>{});await state.drainBackground();globalThis.fetch=originalFetch;
   }
 });
 
@@ -2673,16 +4758,16 @@ test("consequential consent never regresses a saved result after a late authoriz
 });
 
 test("consequential consent retained results survive a billing-month rollover without new approval or spend",async()=>{
-  const state=await fixture({provider:true}),original=globalThis.fetch,NativeDate=Date;let calls=0;
+  const state=await fixture({provider:true}),original=globalThis.fetch,NativeDate=Date,clock=consequentialDbClock(state);let calls=0;
   try{
-    const past=Date.now()-40*86_400_000;
+    const past=Date.now()-40*86_400_000;clock.set(new NativeDate(past).toISOString());
     globalThis.Date=class extends NativeDate{constructor(...args){super(...(args.length?args:[past]));}static now(){return past;}};
     globalThis.fetch=async(_url,init)=>{calls++;return contextResult(JSON.parse(init.body));};const quote=await quoteContext(state);
-    assert.equal((await executeContext(state,quote)).status,200);globalThis.Date=NativeDate;
+    assert.equal((await executeContext(state,quote)).status,200);globalThis.Date=NativeDate;clock.set(new NativeDate().toISOString());
     const reopened=await quoteContext(state);assert.equal(reopened.executionId,quote.executionId);assert.equal(reopened.period,quote.period);
     assert.equal((await retrieveContext(state,reopened)).status,200);assert.equal(calls,1);
     assert.equal(state.sqlite.prepare("SELECT period FROM cost_budget_reservations").get().period,quote.period);
-  }finally{globalThis.Date=NativeDate;globalThis.fetch=original;}
+  }finally{globalThis.Date=NativeDate;globalThis.fetch=original;clock.close();}
 });
 
 test("consequential consent never replaces an unknown request when its private preview expires",async()=>{

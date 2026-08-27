@@ -205,7 +205,14 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     this.#toolSubmitting = false;
     this.#draft = accepted ? "" : message.slice(0, this.#maximumLength());
     this.requestUpdate();
-    if (!accepted) queueMicrotask(() => this.querySelector<HTMLTextAreaElement>(".forma-assistant-input")?.focus({ preventScroll: true }));
+    if (!accepted) {
+      const draft=this.#draft;
+      // The containing host must first clear its busy mode and re-enable the
+      // field. Focusing in the previous microtask silently targeted a disabled input.
+      void this.updateComplete.then(()=>requestAnimationFrame(()=>{
+        if(this.isConnected&&this.open&&this.#draft===draft&&!this.#toolSubmitting&&!document.querySelector("dialog:modal"))this.querySelector<HTMLTextAreaElement>(".forma-assistant-input")?.focus({preventScroll:true});
+      }));
+    }
   }
 
   #maximumLength() {

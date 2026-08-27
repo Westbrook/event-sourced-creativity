@@ -72,11 +72,11 @@ export function assistantInteractionForSurface(surface: AssistantSurface, option
     if (options.canGenerate && options.providerConfigured) modes.push("creative-chat");
     if (options.personal) modes.push("quick-edit");
   }
-  if (surface.page === "adaptive" && options.canAuthor && options.canGenerate && options.providerConfigured) {
+  if (surface.page === "adaptive" && options.canAuthor && options.canGenerate) {
     modes.push("plan-document");
   }
   if (surface.page === "canvas" && surface.canvasId && canvasViewFromRoute(surface.route) === "spatial"
-    && options.canEditCanvas && options.canGenerate && options.providerConfigured) {
+    && options.canEditCanvas && options.canGenerate) {
     modes.push("plan-board");
   }
 

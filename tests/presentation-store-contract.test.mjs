@@ -38,6 +38,16 @@ export class PresentationStoreHarness {
   content = { get: () => this.contentValues, set: (values) => { this.contentValues = values; } };
   #jobStarts = new Set();
   #jobDetails = new Map();
+  #planningRecoveryIdentities = new Map();
+  #planningRecoverySequence = 0;
+  #planningLocaleRevision = 0;
+  #adaptiveStructureJobIds = new Map();
+  planningConsent = { get: () => null };
+  adaptiveSuggestionSets = { get: () => ({}) };
+  planningRecoveryEntries() { return []; }
+  #rememberPlanningRecovery() { throw new Error("Adaptive planning is covered by its actual-store harness, not this media fixture."); }
+  #observeAdaptivePlanningJob() { throw new Error("Adaptive planning is covered by its actual-store harness, not this media fixture."); }
+  #clearAdaptivePrivatePresentation() { throw new Error("Adaptive planning is covered by its actual-store harness, not this media fixture."); }
   #appendPipeline = Promise.resolve();
   #navigationCommit = null;
   #readinessAcknowledgements = new Set();
@@ -89,6 +99,9 @@ export class PresentationStoreHarness {
 
   ${actualMethod("#startDocumentJob")}
   ${actualMethod("#hydrateDocumentJobGenerationReceipt")}
+  ${actualMethod("#referencedPlanningJobIds")}
+  ${actualMethod("#trimDocumentJobDetails")}
+  ${actualMethod("#withdrawAdaptiveRead")}
   ${actualMethod("loadDocumentJobDetail")}
   ${actualMethod("loadActorDocumentGenerationReceipt")}
   ${actualMethod("loadPreservedPresentationCandidateJobs")}

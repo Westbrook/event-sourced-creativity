@@ -13,6 +13,8 @@ import {
   generationFailureGuidance,
   documentJobIsStale,
   documentJobMaxAttempts,
+  documentJobHasNoBudgetHold,
+  planningStopBudget,
 } from "../src/model/document-jobs.ts";
 import { documentJobCompletionBindings } from "../worker/document-job-sql.ts";
 import { failedGenerationInputInspection } from "../src/model/generation-inputs.ts";
@@ -48,6 +50,20 @@ const job = (patch = {}) => ({
   stage: "queued",
   progressMessage: "",
   ...patch,
+});
+
+test("canonical budget evidence proves no hold only for three exact ledger pairs",()=>{
+  const proven=new Set(["settled/settled","released/not-incurred","not-reserved/not-incurred"]);
+  for(const reservationStatus of["not-reserved","released","retained","settled","unknown"]){
+    for(const billingStatus of["not-incurred","pending","settled","unknown"]){
+      const budget=planningStopBudget({planningStopBudget:{reservationStatus,billingStatus}});
+      assert.deepEqual(budget,{reservationStatus,billingStatus});
+      assert.equal(documentJobHasNoBudgetHold(budget),proven.has(reservationStatus+"/"+billingStatus),reservationStatus+"/"+billingStatus);
+    }
+  }
+  for(const value of[undefined,null,{},[],"released",{reservationStatus:"released"},{reservationStatus:"released",billingStatus:"refunded"}]){
+    assert.equal(documentJobHasNoBudgetHold(planningStopBudget({planningStopBudget:value})),false);
+  }
 });
 
 test("bounds automatic retries for costly image work and avoids replaying chat turns", () => {
@@ -329,7 +345,7 @@ test("exposes retained document failure history to document and Canvas surfaces"
   const [jobsApi,eventsApi,actions,canvas,inputDialog]=await Promise.all([
     readFile(new URL("../worker/document-jobs-api.ts",import.meta.url),"utf8"),readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),readFile(new URL("../src/components/generation-actions.ts",import.meta.url),"utf8"),readFile(new URL("../src/canvas/canvas-application.ts",import.meta.url),"utf8"),readFile(new URL("../src/components/generation-input-dialog.ts",import.meta.url),"utf8"),
   ]);
-  assert.match(jobsApi,/kind IN \('preview','generate','prompt_fan','render_document'\)/);assert.match(jobsApi,/expires_at>\?/);assert.match(jobsApi,/response\.ok\?\{\}:parseResult\(row\)/);
+  assert.match(jobsApi,/kind IN \('preview','generate','prompt_fan','render_document','structure_adaptive'\)/);assert.match(jobsApi,/expires_at>\?/);assert.match(jobsApi,/response\.ok\?\{\}:parseResult\(row\)/);
   assert.match(eventsApi,/retainFailurePrompt/);assert.doesNotMatch(eventsApi,/detail\.category==="safety"\?providerFailurePrompt/);
   assert.match(actions,/Failed generation attempts/);assert.match(actions,/Inspect failed inputs/);assert.match(actions,/Review all \$\{allFailures\.length\} failed attempts/);assert.match(actions,/failedGenerationInputInspection/);
   assert.match(actions,/#actorInputContent:Record<string,string>/);

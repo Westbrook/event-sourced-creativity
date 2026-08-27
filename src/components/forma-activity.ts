@@ -1,5 +1,5 @@
 import { html, nothing } from "lit";
-import { formaActivityUnread, scopedFormaActivity } from "../model/activity";
+import { formaActivityJobNeedsAttention, formaActivityUnread, scopedFormaActivity } from "../model/activity";
 import { documentArtifactDefinition, isDocumentArtifactKind } from "../model/document-artifacts";
 import {
   authorizedGenerationFailureRemediation,
@@ -12,7 +12,7 @@ import {
 } from "../model/document-jobs";
 import { libraryFocusRoute } from "../model/routes";
 import { describeOutputs, imageOutputNamingCandidate } from "../model/output-naming";
-import type { AssignedReviewTask, ProjectNotification } from "../state/store";
+import type { AssignedReviewTask, PlanningRecoveryIdentity, ProjectNotification } from "../state/store";
 import {
   localizedDocumentJobProgress,
   localizedDocumentJobProgressDetail,
@@ -66,15 +66,28 @@ export class FormaActivity extends FormaElement {
     </article>`;
   }
 
+  #planningRecovery(identity:PlanningRecoveryIdentity,documentName:string){
+    const action=this.i18n.t("planning.consent.retrieveExisting","Retrieve existing plan");
+    return html`<article class="forma-activity-card" data-activity-status="recovery">
+      <div class="forma-activity-card-icon" aria-hidden="true">${icon("info")}</div>
+      <div class="forma-activity-card-copy"><span class="eyebrow">${this.i18n.t("activity.privateOperation","Your private operation")}</span><h3 dir="auto">${documentName}</h3><p>${this.i18n.t("planning.recovery.outsideFeed","This request is outside the current Activity list. Retrieve checks the original request without generating again.")}</p></div>
+      <div class="forma-activity-card-actions"><button type="button" class="button primary" data-planning-recovery-id=${identity.jobId} aria-label=${this.i18n.t("planning.consent.retrieveNamed","{action} — {document} — request {request}",{action,document:"\u2068"+documentName+"\u2069",request:"\u2068"+identity.jobId+"\u2069"})} @click=${()=>void this.store.reviewPlanningJob(identity.jobId)}>${action}</button></div>
+    </article>`;
+  }
+
   #job(job: DocumentJob, documentName: string) {
+    const planningRecovery=job.kind==="structure_adaptive"&&job.planningExecutionId===job.jobId;
+    const planningRecoveryAction=planningRecovery?this.i18n.t("planning.consent.retrieveExisting","Retrieve existing plan"):"";
+    const outputPermission=!this.store.session.get()?.projectContext||this.store.session.get()!.projectContext!.permissions.includes("project.output.request");
     const failed = ["failed", "partial"].includes(job.status);
+    const stoppedPlanning=job.kind==="structure_adaptive"&&job.status==="canceled"&&["adaptive_canceled","adaptive_force_failed"].includes(job.errorDetail?.code??job.error??"");
     const active = ["queued", "running", "committing"].includes(job.status);
     const artifactKind = isDocumentArtifactKind(job.result?.artifactKind) ? job.result.artifactKind : null;
     const operation = artifactKind
       ? this.i18n.t(`artifact.${artifactKind}.label`, documentArtifactDefinition(artifactKind).label)
       : this.i18n.t(`activity.kind.${job.kind}`, jobLabels[job.kind] ?? this.i18n.t("activity.documentOperation", "Document operation"));
-    const failure = failed ? documentJobFailure(job) : null;
-    const guidance = failed
+    const failure = failed||stoppedPlanning ? documentJobFailure(job) : null;
+    const guidance = failed||stoppedPlanning
       ? localizedGenerationFailureGuidance(generationFailureGuidance(failure, job.error ?? "", job), failure, job.error ?? "", this.i18n)
       : null;
     const presentationRecoverable = documentJobCanRecoverPresentation(job);
@@ -89,7 +102,7 @@ export class FormaActivity extends FormaElement {
     const attention = failed ? " forma-activity-card--attention" : "";
     const terminal = failed && !recoverable && !guidance?.retryAllowed ? " forma-activity-card--terminal" : "";
     return html`<article class=${`forma-activity-card forma-activity-card--job${attention}${terminal}`} data-activity-status=${job.status}>
-      <div class="forma-activity-card-icon" aria-hidden="true">${icon(failed ? "info" : active ? "clock" : "check")}</div>
+      <div class="forma-activity-card-icon" aria-hidden="true">${icon(failed||stoppedPlanning ? "info" : active ? "clock" : "check")}</div>
       <div class="forma-activity-card-copy">
         <span class="eyebrow">${this.i18n.t("activity.privateOperation", "Your private operation")}${failed ? html` · ${operation}` : nothing}</span>
         <h3>${guidance?.title ?? operation}</h3>
@@ -99,9 +112,10 @@ export class FormaActivity extends FormaElement {
         ${failed ? html`<forma-activity-issue-panel .job=${job} .documentName=${documentName}></forma-activity-issue-panel>` : nothing}
       </div>
       <div class="forma-activity-card-actions">
+        ${planningRecovery?html`<button type="button" class="button primary" data-planning-recovery-id=${job.jobId} aria-label=${this.i18n.t("planning.consent.retrieveNamed","{action} — {document} — request {request}",{action:planningRecoveryAction,document:"\u2068"+documentName+"\u2069",request:"\u2068"+job.jobId+"\u2069"})} @click=${()=>void this.store.reviewPlanningJob(job.jobId)}>${planningRecoveryAction}</button>`:nothing}
         ${recoverable ? html`<button type="button" class="button primary" @click=${() => void (presentationRecoverable ? this.store.recoverDocumentPresentation(job.jobId) : this.store.recoverDocumentRender(job.jobId))}>${this.i18n.system("Recover saved render")}</button>` : remediation ? html`<a class="button primary" href=${remediation.href} target=${remediation.external ? "_blank" : "_self"} rel=${remediation.external ? "noopener noreferrer" : nothing}>${remediation.label}</a>` : nothing}
         <button type="button" class="button secondary" @click=${() => void this.store.openDocument(job.documentId, job.kind === "chat" ? "/studio/chat" : job.kind === "structure_adaptive" ? "/studio/adaptive" : "/")}>${this.i18n.t("activity.openDocument", "Open document")} ${icon("arrow")}</button>
-        ${failed ? html`<button type="button" class="button ghost" aria-label=${this.i18n.system("Dismiss this generation issue")} @click=${() => void this.store.dismissDocumentJobFailure(job.jobId)}>${this.i18n.system("Dismiss notice")}</button>` : nothing}
+        ${failed&&outputPermission ? html`<button type="button" class="button ghost" aria-label=${this.i18n.system("Dismiss this generation issue")} @click=${() => void this.store.dismissDocumentJobFailure(job.jobId)}>${this.i18n.system("Dismiss notice")}</button>` : nothing}
       </div>
     </article>`;
   }
@@ -112,11 +126,12 @@ export class FormaActivity extends FormaElement {
     const activity = scopedFormaActivity(session, projection, this.store.projectNotifications.get(), this.store.reviewInbox.get(), this.store.documentJobs.get());
     const documentNames = new Map(activity.documents.map((document) => [document.id, document.title]));
     const activeJobs = activity.jobs.filter((job) => ["queued", "running", "committing"].includes(job.status));
-    const failedJobs = activity.jobs.filter((job) => ["failed", "partial"].includes(job.status) && !job.dismissedAt);
+    const failedJobs = activity.jobs.filter(formaActivityJobNeedsAttention);
     const completedJobs = activity.jobs.filter((job) => job.status === "completed");
     const unread = formaActivityUnread(activity);
     const read = activity.notifications.filter((notification) => notification.readAt);
     const documentIds = new Set(activity.documents.map((document) => document.id));
+    const planningRecovery=this.store.planningRecoveryEntries().filter(identity=>documentIds.has(identity.documentId));
     const readyArtifacts = projection.libraryArtifacts.filter((artifact) => documentIds.has(artifact.documentId)).slice(0, 6);
     const readyOutputs = projection.libraryOutputs.filter((output) => documentIds.has(output.documentId)).slice(0, 6);
     const imageCandidate=(output:typeof projection.libraryOutputs[number])=>imageOutputNamingCandidate(output,{},documentNames.get(output.documentId)??projection.projectName);
@@ -125,11 +140,12 @@ export class FormaActivity extends FormaElement {
     return html`<section class="workspace-page studio-subpage forma-activity-page"><forma-project-rail surface="studio" destination="/activity" quiet></forma-project-rail>
       <div class="studio-main forma-activity-main"><header class="page-header page-header--document"><div class="page-header-copy"><span class="eyebrow">${projection.projectName ? `${projection.projectName} / ` : ""}${this.i18n.t("activity.inbox", "Activity · inbox")}</span><h1>${this.i18n.t("shell.navigation.activity", "Activity")}</h1><p>${this.i18n.t("activity.description", "Keep track of assigned reviews, authorized project updates, and your own background operations.")}</p></div><div class="forma-activity-header-actions">${session?.projectContext ? html`<button type="button" class="button ghost" @click=${async () => { if (await this.store.leaveProjectContext()) this.store.setRoute("/activity"); }}>${this.i18n.t("activity.viewAllAssignments", "View all my assigned reviews")}</button>` : nothing}<a class="button secondary" href="/deliver" @click=${(event: MouseEvent) => { event.preventDefault(); this.#open("/deliver"); }}>${this.i18n.t("activity.openDeliverables", "View deliverables")} ${icon("arrow")}</a></div></header>
         <div class="forma-activity-sections">
+          ${planningRecovery.length?html`<section class="forma-activity-group"><header class="forma-activity-group-heading"><h2>${this.i18n.t("planning.recovery.heading","Earlier planning requests")}</h2><span>${this.i18n.number(planningRecovery.length)}</span></header><div class="forma-activity-list">${planningRecovery.map(identity=>this.#planningRecovery(identity,documentNames.get(identity.documentId)??projection.projectName))}</div></section>`:nothing}
           ${activity.reviews.length || unread.length || failedJobs.length ? html`<section class="forma-activity-group"><header class="forma-activity-group-heading"><h2>${this.i18n.t("activity.needsYou", "Needs you")}</h2><span>${activity.reviews.length + unread.length + failedJobs.length}</span></header><div class="forma-activity-list">${activity.reviews.map((task) => this.#review(task))}${failedJobs.map((job) => this.#job(job, documentNames.get(job.documentId) ?? projection.projectName))}${unread.map((notification) => this.#notification(notification, documentNames.get(notification.documentId ?? "") ?? projection.projectName))}</div></section>` : nothing}
           ${activeJobs.length ? html`<section class="forma-activity-group"><header class="forma-activity-group-heading"><h2>${this.i18n.t("activity.inProgress", "In progress")}</h2><span>${activeJobs.length}</span></header><div class="forma-activity-list">${activeJobs.map((job) => this.#job(job, documentNames.get(job.documentId) ?? projection.projectName))}</div></section>` : nothing}
           ${readyArtifacts.length || readyOutputs.length || completedJobs.length ? html`<section class="forma-activity-group"><header class="forma-activity-group-heading"><h2>${this.i18n.t("activity.ready", "Ready to continue")}</h2><span>${readyArtifacts.length + readyOutputs.length + completedJobs.length}</span></header><div class="forma-activity-list">${readyArtifacts.map((artifact) => html`<article class="forma-activity-card"><div class="forma-activity-card-icon" aria-hidden="true">${icon("check")}</div><div class="forma-activity-card-copy"><span class="eyebrow">${this.i18n.system(documentArtifactDefinition(artifact.kind).label)}</span><h3 dir="auto">${resultNames.get(artifact.id)??artifact.title}</h3><p>${documentNames.get(artifact.documentId) ?? projection.projectName}</p></div><button type="button" class="button secondary" @click=${() => this.#open(libraryFocusRoute("artifact", artifact.id, artifact.title))}>${this.i18n.t("activity.openResult", "Open result")} ${icon("arrow")}</button></article>`)}${readyOutputs.map((output) => {const title=resultNames.get(output.id)??documentNames.get(output.documentId)??projection.projectName;return html`<article class="forma-activity-card"><div class="forma-activity-card-icon" aria-hidden="true">${icon("image")}</div><div class="forma-activity-card-copy"><span class="eyebrow">${this.i18n.t("deliver.visualOutput", "Visual output")}</span><h3 dir="auto">${title}</h3><p>${output.purpose === "final" ? this.i18n.t("deliver.finalQuality", "Final quality") : this.i18n.t("deliver.workingDirection", "Working direction")}</p></div><button type="button" class="button secondary" @click=${() => this.#open(libraryFocusRoute("output", output.id,title))}>${this.i18n.t("activity.openResult", "Open result")} ${icon("arrow")}</button></article>`;})}${completedJobs.map((job) => this.#job(job, documentNames.get(job.documentId) ?? projection.projectName))}</div></section>` : nothing}
           ${read.length ? html`<section class="forma-activity-group"><header class="forma-activity-group-heading"><h2>${this.i18n.t("activity.recent", "Recent project updates")}</h2></header><div class="forma-activity-list">${read.map((notification) => this.#notification(notification, documentNames.get(notification.documentId ?? "") ?? projection.projectName))}</div></section>` : nothing}
-          ${!activity.reviews.length && !activity.notifications.length && !activity.jobs.length && !readyArtifacts.length && !readyOutputs.length ? html`<div class="forma-responsive-empty"><span aria-hidden="true">${icon("check")}</span><h2>${this.i18n.t("activity.emptyTitle", "You’re all caught up")}</h2><p>${this.i18n.t("activity.emptyDescription", "Assigned reviews, shared project updates, and your own background work will appear here when they need you.")}</p><button type="button" class="button secondary" @click=${() => this.#open("/")}>${this.i18n.t("activity.continueWorking", "Continue working")}</button></div>` : nothing}
+          ${!activity.reviews.length && !activity.notifications.length && !activity.jobs.length && !planningRecovery.length && !readyArtifacts.length && !readyOutputs.length ? html`<div class="forma-responsive-empty"><span aria-hidden="true">${icon("check")}</span><h2>${this.i18n.t("activity.emptyTitle", "You’re all caught up")}</h2><p>${this.i18n.t("activity.emptyDescription", "Assigned reviews, shared project updates, and your own background work will appear here when they need you.")}</p><button type="button" class="button secondary" @click=${() => this.#open("/")}>${this.i18n.t("activity.continueWorking", "Continue working")}</button></div>` : nothing}
         </div>
       </div>
     </section>`;

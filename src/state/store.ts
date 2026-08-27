@@ -1,5 +1,7 @@
 import { Signal } from "signal-polyfill";
 import { adaptiveRequestKey, adaptiveJobMatchesRequest } from "../model/adaptive-request";
+import { contextConsentAction, contextConsentFailure, type ContextConsentAction } from "../model/context-consent-state";
+import type { AvailableConsequentialPreview } from "../../worker/consequential-consent";
 import { SignalObject } from "signal-utils/object";
 import { foldEvents, type CreativeEvent, type CreativeProjection, type EventInput } from "../model/events";
 import type { ImageSample, ReferenceFindingKind } from "../model/extractors";
@@ -9,7 +11,7 @@ import { documentFocusFromRoute, documentIdFromRoute, documentViewFromRoute, isD
 import { normalizeSpatialScope } from "../model/spatial-scope";
 import { CURRENT_FOCAL_POINT_METHOD, normalizeImageFocalPoint } from "../model/focal-point";
 import { resolveImageFocalAnalysis } from "../model/image-focus";
-import { documentGenerationRequestKey as generationRequestKeyFor, documentGenerationRevision as generationRevisionFor, documentJobCanRecoverPresentation, documentJobFailure, documentJobIsStale, documentJobTerminal, generationFailureGuidance, type DocumentJob, type DocumentJobKind } from "../model/document-jobs";
+import { documentGenerationRequestKey as generationRequestKeyFor, documentGenerationRevision as generationRevisionFor, documentJobCanRecoverPresentation, documentJobFailure, documentJobIsStale, documentJobTerminal, documentJobStopBudgetMessage, documentJobHasNoBudgetHold, planningStopBudget, generationFailureGuidance, type DocumentJob, type DocumentJobKind, type DocumentJobStopBudget } from "../model/document-jobs";
 import { effectivePromptPreference, normalizePromptTechnique, type PromptPreferenceScope, type PromptTechnique } from "../model/prompt-structures";
 import { canvasIdFromRoute } from "../canvas/routes";
 import { canvasDocumentTarget, documentJobMatchesSurface } from "../model/canvas-document-target";
@@ -74,6 +76,10 @@ export type OrganizationContextVersion={id:string;version:number;sourceProjectAc
 export type AssignedReviewTask={id:string;organizationId:string;organizationName:string;projectAccessId:string;projectId:string;projectName:string;documentId:string;documentTitle:string;artifactId:string;artifactTitle:string;artifactKind:string;revision:number;contentSha256:string;status:string;dueAt:string|null;createdAt:string;requestedByUserId:string;requestedByName:string};
 export type ArtifactRevisionSummary={revision:number;sha256:string;createdByUserId:string;createdAt:string;expiresAt:string;available:boolean;current:boolean};
 export type ArtifactRevisionDetail={revision:number;currentRevision:number;createdAt:string;content:{markdown:string;items:Array<{title:string;body:string;notes:string}>}};
+export type PlanningConsentRequest={prompt:string;projectId:string;documentId:string;canvasId:string|null;sourceSurface:string;projectScope:boolean;locale:string;requestKey:string};
+export type PlanningConsentState={id:string;request:PlanningConsentRequest;quote:AvailableConsequentialPreview|null;working:boolean;notice:""|"failed"|"refresh"|"not-submitted"|"uncertain";submitted:boolean;recoveryExecutionId?:string;replaceExecutionId?:string;recoveredPlan?:AdaptiveStructure;readRevision?:number};
+/** An ephemeral navigation handle, never a cached plan, financial receipt, or new request. */
+export type PlanningRecoveryIdentity=Pick<DocumentJob,"jobId"|"documentId"|"canvasId"|"planningExecutionId"|"planningProjectScope"|"planningLocale">&{kind:"structure_adaptive";sourceSurface?:string;requestKey?:string};
 
 export class FormaStore {
   readonly events = new Signal.State<CreativeEvent[]>([]);
@@ -99,6 +105,7 @@ export class FormaStore {
   readonly documentJobs = new Signal.State<DocumentJob[]>([]);
   readonly generationReadiness = new Signal.State<Record<string,GenerationReadiness>>({});
   readonly adaptiveStructures = new Signal.State<Record<string,AdaptiveStructure>>({});
+  readonly planningConsent = new Signal.State<PlanningConsentState|null>(null);
   readonly adaptiveSuggestionSets = new Signal.State<Record<string,AdaptiveSuggestionSet[]>>({});
   readonly canvasPlanningChoices = new Signal.State<Record<string,string>>({});
   readonly canvasPlanningSelection = new Signal.State({scope:"",canvasId:"",itemIds:[] as string[]});
@@ -139,6 +146,13 @@ export class FormaStore {
   #readinessAcknowledgements = new Set<string>();
   #pendingJobNotices: DocumentJob[] = [];
   #pendingAdaptiveIntents = new Map<string,string>();
+  #adaptiveStructureJobIds = new Map<string,string>();
+  #planningRecoveryIdentities = new Map<string,{authorization:string;identity:PlanningRecoveryIdentity;revision:number;recoverable:boolean;selectOnCompletion?:boolean;presentationLocaleRevision?:number;deliberateReadRevision?:number;pendingReadRevision?:number;certifiedReadRevision?:number;preservedReadRevision?:number;detailRevision?:number;terminalReadRevision?:number;withdrawalRevision?:number;withdrawalReadRevision?:number;terminalRevision?:number;terminalStatus?:DocumentJob["status"];terminalReceipt?:string}>();
+  #planningRecoverySequence=0;
+  #planningLocaleRevision=0;
+  #planningConsentScope="";
+  #planningConsentRoute="";
+  #planningConsentResolve?: (accepted:boolean)=>void;
   #dismissedAdaptiveSuggestions = new Set<string>();
   #impersonationConfirmation?: (confirmed:boolean)=>void;
   #historyProfile: AccountSnapshotProfile = "full";
@@ -148,7 +162,19 @@ export class FormaStore {
   #pendingPassiveJobPath="";
   #focalBackfillTimer = 0;
 
-  constructor(){document.addEventListener("visibilitychange",()=>{if(document.visibilityState!=="visible"||!this.session.get()){window.clearTimeout(this.#collaborationPollTimer);return;}if(this.events.get().length){this.#flushPendingJobNotices();this.#syncVisibleJobs();}this.#scheduleCollaborationPoll(0);});document.addEventListener("forma-locale-change",(event)=>{if(event.target!==document)return;for(const job of this.documentJobs.get())if(job.kind==="structure_adaptive")this.#dismissedAdaptiveSuggestions.add(job.jobId);this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});this.notify();});window.addEventListener("forma-performance",()=>{if(!this.#pendingPassiveJobPath||this.route.get()!==this.#pendingPassiveJobPath||document.documentElement.dataset.formaPhase!=="populated")return;this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);});}
+  constructor(){
+    document.addEventListener("visibilitychange",()=>{if(document.visibilityState!=="visible"||!this.session.get()){window.clearTimeout(this.#collaborationPollTimer);return;}if(this.events.get().length){this.#flushPendingJobNotices();this.#syncVisibleJobs();}this.#scheduleCollaborationPoll(0);});
+    document.addEventListener("forma-locale-change",(event)=>{
+      if(event.target!==document)return;
+      this.#planningLocaleRevision++;
+      for(const job of this.documentJobs.get())if(job.kind==="structure_adaptive")this.#dismissedAdaptiveSuggestions.add(job.jobId);
+      for(const entry of this.#planningRecoveryIdentities.values()){this.#dismissedAdaptiveSuggestions.add(entry.identity.jobId);delete entry.selectOnCompletion;delete entry.presentationLocaleRevision;}
+      const review=this.planningConsent.get();
+      for(const id of[review?.quote?.executionId,review?.recoveryExecutionId,review?.replaceExecutionId])if(id)this.#dismissedAdaptiveSuggestions.add(id);
+      this.#adaptiveStructureJobIds.clear();this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});this.notify();
+    });
+    window.addEventListener("forma-performance",()=>{if(!this.#pendingPassiveJobPath||this.route.get()!==this.#pendingPassiveJobPath||document.documentElement.dataset.formaPhase!=="populated")return;this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);});
+  }
 
   #scheduleCollaborationPoll(delay=30_000){
     window.clearTimeout(this.#collaborationPollTimer);
@@ -163,7 +189,10 @@ export class FormaStore {
   }
 
   subscribe(listener: Listener) { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
-  notify() { this.#listeners.forEach((listener) => listener()); }
+  notify() {
+    if(this.planningConsent.get()&&(!this.#scopeStillActive(this.#planningConsentScope)||this.route.get()!==this.#planningConsentRoute))this.#finishPlanningConsent(false);
+    this.#listeners.forEach((listener) => listener());
+  }
   #publishAppended(events:CreativeEvent[]){
     if(!events.length)return;
     const session=this.session.get();if(session&&events.some((event)=>event.type==="AttentionSignalsForgotten"))void clearAnalyticsSnapshots(this.#snapshotIdentity(session),true);
@@ -243,12 +272,216 @@ export class FormaStore {
   canvasPlanningDocumentId(selectedIds?:readonly string[]){const canvas=this.canvasProjection.get(),scope=this.captureAuthorizationScope()?.key??"",selection=this.canvasPlanningSelection.get();return canvasDocumentTarget(this.projection.get(),canvas,selectedIds??(selection.scope===scope&&selection.canvasId===canvas.selectedCanvasId?selection.itemIds:[]),this.canvasPlanningChoices.get()[`${scope}:${canvas.selectedCanvasId}`]??"");}
   documentPreviewProgress(documentId=this.projection.get().documentId){const job=this.documentJobs.get().find((item)=>item.documentId===documentId&&item.kind==="preview"&&item.status==="running"&&item.result?.partialMediaUrl);if(!job)return null;return{jobId:job.jobId,mediaUrl:String(job.result!.partialMediaUrl),mediaType:String(job.result!.partialMediaType??"image/jpeg"),width:Number(job.result!.partialWidth??816),height:Number(job.result!.partialHeight??816),index:Number(job.result!.partialIndex??0),sourceSurface:job.sourceSurface};}
   adaptiveStructureFor(documentId=this.projection.get().documentId){return this.adaptiveStructures.get()[documentId]??null;}
-  dismissAdaptiveStructure(documentId=this.projection.get().documentId){const next={...this.adaptiveStructures.get()};delete next[documentId];this.adaptiveStructures.set(next);this.notify();}
+  #clearPendingAdaptiveSelection(documentId:string,replacementId?:string){
+    for(const entry of this.#planningRecoveryIdentities.values())if(entry.identity.documentId===documentId&&entry.selectOnCompletion){
+      if(entry.identity.jobId!==replacementId)this.#dismissedAdaptiveSuggestions.add(entry.identity.jobId);
+      delete entry.selectOnCompletion;
+    }
+  }
+  dismissAdaptiveStructure(documentId=this.projection.get().documentId){const next={...this.adaptiveStructures.get()};delete next[documentId];const id=this.#adaptiveStructureJobIds.get(documentId);if(id)this.#dismissedAdaptiveSuggestions.add(id);this.#clearPendingAdaptiveSelection(documentId);this.#adaptiveStructureJobIds.delete(documentId);this.adaptiveStructures.set(next);this.#trimDocumentJobDetails();this.notify();}
   adaptiveSuggestionSetsFor(documentId=this.projection.get().documentId,canvasId?:string){const suggestions=this.adaptiveSuggestionSets.get()[documentId]??[];return canvasId===undefined?suggestions:adaptiveSuggestionsForCanvas(suggestions,canvasId);}
-  dismissAdaptiveSuggestion(documentId:string,suggestionId:string){this.#dismissedAdaptiveSuggestions.add(suggestionId);const next={...this.adaptiveSuggestionSets.get(),[documentId]:this.adaptiveSuggestionSetsFor(documentId).filter((suggestion)=>suggestion.id!==suggestionId)};if(!next[documentId].length)delete next[documentId];this.adaptiveSuggestionSets.set(next);this.notify();}
-  #adaptiveIntentForJob(job:DocumentJob){const result=job.result??{};const directRef=String(result.intentRef??"");if(directRef&&this.content.get()[directRef])return this.content.get()[directRef];const eventIds=new Set(Array.isArray(result.appendedEventIds)?result.appendedEventIds.map(String):[]);const reasoned=this.events.get().find((event)=>eventIds.has(event.eventId)&&event.type==="AssistantReasoned"&&event.payload.operation==="adaptive-structure");const eventRef=String(reasoned?.payload.intent_ref??"");return this.#pendingAdaptiveIntents.get(job.jobId)??this.content.get()[eventRef]??"";}
-  #syncAdaptiveSuggestionSets(jobs:DocumentJob[]){const next:Record<string,AdaptiveSuggestionSet[]>={};for(const job of jobs){if(job.kind!=="structure_adaptive"||job.sourceSurface!=="canvas"||job.status!=="completed"||!job.result?.structure||this.#dismissedAdaptiveSuggestions.has(job.jobId))continue;const suggestion:AdaptiveSuggestionSet={id:job.jobId,documentId:job.documentId,canvasId:job.canvasId??null,intent:this.#adaptiveIntentForJob(job),structure:job.result.structure as AdaptiveStructure,requestedAt:job.requestedAt,completedAt:job.completedAt??job.updatedAt};(next[job.documentId]??=[]).push(suggestion);}for(const suggestions of Object.values(next))suggestions.sort((left,right)=>left.requestedAt.localeCompare(right.requestedAt)||left.id.localeCompare(right.id));this.adaptiveSuggestionSets.set(next);}
-  #jobResultVisible(job:DocumentJob){if(document.visibilityState!=="visible")return false;const route=this.route.get(),canvasId=canvasIdFromRoute(route);if(canvasId)return documentJobMatchesSurface(job,{canvasId,documentId:this.canvasPlanningDocumentId()});if(!isDocumentViewRoute(route))return false;return documentJobMatchesSurface(job,{canvasId:null,documentId:documentIdFromRoute(route)??"",documentView:documentViewFromRoute(route)});}
+  dismissAdaptiveSuggestion(documentId:string,suggestionId:string){this.#dismissedAdaptiveSuggestions.add(suggestionId);const identity=this.#planningRecoveryIdentities.get(suggestionId);if(identity)delete identity.presentationLocaleRevision;const next={...this.adaptiveSuggestionSets.get(),[documentId]:this.adaptiveSuggestionSetsFor(documentId).filter((suggestion)=>suggestion.id!==suggestionId)};if(!next[documentId].length)delete next[documentId];this.adaptiveSuggestionSets.set(next);this.#trimDocumentJobDetails();this.notify();}
+  #adaptiveIntentForJob(job:DocumentJob){const result=job.result??{};if(typeof result.intent==="string")return result.intent;const directRef=String(result.intentRef??"");if(directRef&&this.content.get()[directRef])return this.content.get()[directRef];const eventIds=new Set(Array.isArray(result.appendedEventIds)?result.appendedEventIds.map(String):[]);const reasoned=this.events.get().find((event)=>eventIds.has(event.eventId)&&event.type==="AssistantReasoned"&&event.payload.operation==="adaptive-structure");const eventRef=String(reasoned?.payload.intent_ref??"");return this.#pendingAdaptiveIntents.get(job.jobId)??this.content.get()[eventRef]??"";}
+  #referencedPlanningJobIds(){
+    const review=this.planningConsent.get(),referenced=new Set<string>([...this.documentJobs.get().map(item=>item.jobId),...this.#adaptiveStructureJobIds.values(),...Object.values(this.adaptiveSuggestionSets.get()).flatMap(items=>items.map(item=>item.id))]);
+    for(const entry of this.#planningRecoveryIdentities.values())if(entry.selectOnCompletion||this.#planningLocaleRevision>0&&entry.presentationLocaleRevision===this.#planningLocaleRevision)referenced.add(entry.identity.jobId);
+    for(const id of[review?.recoveryExecutionId,review?.quote?.executionId,review?.replaceExecutionId])if(id)referenced.add(id);
+    return referenced;
+  }
+  #trimDocumentJobDetails(){
+    // Bound only history: a full Activity page must not evict the exact proof
+    // currently supporting an open review, selected plan, or Canvas card.
+    const referenced=this.#referencedPlanningJobIds();
+    const historical=[...this.#jobDetails.keys()].filter(id=>!referenced.has(id));
+    for(const id of historical.slice(0,Math.max(0,historical.length-24)))this.#jobDetails.delete(id);
+  }
+  #rememberPlanningRecovery(job:DocumentJob|PlanningRecoveryIdentity,recoverable=true){
+    const session=this.session.get(),projection=this.projection.get();
+    if(!session||job.kind!=="structure_adaptive"||job.planningExecutionId!==job.jobId||!projection.documents.some(document=>document.id===job.documentId&&document.projectId===projection.projectId))return;
+    const identity:PlanningRecoveryIdentity={jobId:job.jobId,documentId:job.documentId,canvasId:job.canvasId??null,kind:"structure_adaptive",planningExecutionId:job.jobId,sourceSurface:job.sourceSurface,requestKey:job.requestKey,planningLocale:job.planningLocale,planningProjectScope:job.planningProjectScope};
+    const authorization=this.#authorizationScope(session),previous=this.#planningRecoveryIdentities.get(job.jobId);
+    const revision=previous?.authorization===authorization?previous.revision:++this.#planningRecoverySequence;
+    this.#planningRecoveryIdentities.delete(job.jobId);this.#planningRecoveryIdentities.set(job.jobId,{...(previous?.authorization===authorization?previous:{}),authorization,identity,revision,recoverable:recoverable||previous?.authorization===authorization&&previous.recoverable===true});
+    // The cap is for historical handles, not live read/withdrawal revisions.
+    // A supported Activity page can contain 120 jobs: observing it must never
+    // evict an open request or the private presentation it is recertifying.
+    const review=this.planningConsent.get(),referenced=this.#referencedPlanningJobIds();referenced.add(job.jobId);
+    // A response may redirect the open request to a not-yet-selected winner.
+    // Its newer withdrawal/terminal barriers outlive history eviction until
+    // that potentially affected read settles, including an initial free quote.
+    const activeRead=review?.working?review.readRevision:undefined;
+    const historical=[...this.#planningRecoveryIdentities].filter(([id,entry])=>!referenced.has(id)&&entry.pendingReadRevision===undefined
+      &&!(activeRead!==undefined&&Math.max(entry.withdrawalRevision??0,entry.terminalRevision??0)>activeRead)).map(([id])=>id);
+    for(const id of historical.slice(0,Math.max(0,historical.length-24)))this.#planningRecoveryIdentities.delete(id);
+  }
+  planningRecoveryEntries():PlanningRecoveryIdentity[]{
+    const session=this.session.get();if(!session||!this.#canReadProjectJobs())return[];
+    const authorization=this.#authorizationScope(session),projection=this.projection.get(),present=new Set(this.documentJobs.get().map(job=>job.jobId));
+    return [...this.#planningRecoveryIdentities.values()].filter(entry=>entry.recoverable&&entry.authorization===authorization&&!present.has(entry.identity.jobId)&&projection.documents.some(document=>document.id===entry.identity.documentId&&document.projectId===projection.projectId)).map(entry=>({...entry.identity}));
+  }
+  #withdrawAdaptiveRead(jobId:string,startedAt:number){
+    const identity=this.#planningRecoveryIdentities.get(jobId);
+    // Starting a lookup is not new access proof. A successful newer exact
+    // read can fence this denial; an unanswered one only keeps its lifecycle.
+    if((identity?.certifiedReadRevision??0)>startedAt)return false;
+    this.#clearAdaptivePrivatePresentation(jobId,(identity?.pendingReadRevision??0)>startedAt?identity?.pendingReadRevision:undefined,startedAt,true);
+    return true;
+  }
+  #clearAdaptivePrivatePresentation(jobId:string,preservePendingRead?:number,deniedReadAt?:number,revokeSelection=false){
+    const review=this.planningConsent.get(),reviewId=review?.recoveryExecutionId??(review?.submitted||review?.quote?.status!=="quoted"?review?.quote?.executionId:undefined);
+    const known=this.documentJobs.get().find(job=>job.jobId===jobId)??this.#jobDetails.get(jobId);
+    if(known)this.#rememberPlanningRecovery(known);
+    else if(review&&reviewId===jobId)this.#rememberPlanningRecovery({jobId,kind:"structure_adaptive",planningExecutionId:jobId,documentId:review.request.documentId,canvasId:review.request.canvasId,sourceSurface:review.request.sourceSurface,requestKey:review.request.requestKey,planningLocale:review.request.locale,planningProjectScope:review.request.projectScope});
+    const identity=this.#planningRecoveryIdentities.get(jobId),preserve=preservePendingRead!==undefined&&identity?.pendingReadRevision===preservePendingRead;
+    if(identity){const withdrawnAt=++this.#planningRecoverySequence;if(!preserve)identity.revision=withdrawnAt;identity.withdrawalRevision=withdrawnAt;identity.withdrawalReadRevision=Math.max(identity.withdrawalReadRevision??0,deniedReadAt??withdrawnAt);identity.preservedReadRevision=preserve?preservePendingRead:undefined;delete identity.terminalReadRevision;
+      // Failure to read private bytes is not cancellation of a content-free
+      // delivery intent. Only affirmative withdrawal revokes that ownership.
+      if(revokeSelection){if(identity.selectOnCompletion)this.#dismissedAdaptiveSuggestions.add(jobId);delete identity.selectOnCompletion;delete identity.presentationLocaleRevision;}
+    }
+    const plans={...this.adaptiveStructures.get()};
+    // The selected ID is content-free. Clearing its private bytes must not choose
+    // a different paid plan merely because that plan's response arrives first.
+    for(const[documentId,id]of this.#adaptiveStructureJobIds)if(id===jobId)delete plans[documentId];
+    this.adaptiveStructures.set(plans);this.#pendingAdaptiveIntents.delete(jobId);this.#jobDetails.delete(jobId);
+    const suggestions:Record<string,AdaptiveSuggestionSet[]>={};
+    for(const[documentId,items]of Object.entries(this.adaptiveSuggestionSets.get())){const retained=items.filter(item=>item.id!==jobId);if(retained.length)suggestions[documentId]=retained;}
+    this.adaptiveSuggestionSets.set(suggestions);
+    this.documentJobs.set(this.documentJobs.get().map(job=>{if(job.jobId!==jobId||job.planningExecutionId!==jobId)return job;const result={...job.result};delete result.structure;delete result.intent;delete result.quote;return{...job,result};}));
+    if(review&&reviewId===jobId)this.planningConsent.set({...review,quote:null,recoveredPlan:undefined,replaceExecutionId:undefined,recoveryExecutionId:jobId,submitted:true,working:preserve?review.working:false,request:{...review.request,prompt:""},notice:"failed"});
+    this.notify();
+  }
+  /** Consume authoritative terminal/withdrawal evidence before yielding to another read. */
+  #observeAdaptivePlanningJob(job:DocumentJob){
+    if(job.kind!=="structure_adaptive"||job.planningExecutionId!==job.jobId)return;
+    this.#rememberPlanningRecovery(job);
+    const identity=this.#planningRecoveryIdentities.get(job.jobId);
+    if(!identity)return;
+    if(job.result?.planningReviewAvailable===false||job.result?.resultUnavailable===true){
+      this.#clearAdaptivePrivatePresentation(job.jobId,undefined,undefined,true);return;
+    }
+    if(job.status!=="completed"||!job.result?.structure){
+      if(documentJobTerminal(job)){
+        if(identity.selectOnCompletion)this.#dismissedAdaptiveSuggestions.add(job.jobId);
+        delete identity.selectOnCompletion;delete identity.presentationLocaleRevision;
+        const budget=planningStopBudget(job.result);
+        const receipt=JSON.stringify([job.status,budget?.reservationStatus??null,budget?.billingStatus??null]);
+        // Repeated identical polling is not newer accounting evidence. Keep
+        // its epoch stable so an exact read can still finish during polling.
+        if(identity.terminalStatus!==job.status||identity.terminalReceipt!==receipt)identity.terminalRevision=++this.#planningRecoverySequence;
+        identity.terminalStatus=job.status;identity.terminalReceipt=receipt;
+        const review=this.planningConsent.get();
+        if(review?.notice==="uncertain"&&(review.recoveryExecutionId??review.quote?.executionId)===job.jobId&&documentJobHasNoBudgetHold(budget)){
+          this.planningConsent.set({...review,notice:"failed"});this.notify();
+        }
+      }
+      return;
+    }
+    const review=this.planningConsent.get(),reviewId=review?.recoveryExecutionId??(review?.submitted||review?.quote?.status!=="quoted"?review?.quote?.executionId:undefined);
+    const quote=job.result.quote as AvailableConsequentialPreview|undefined;
+    if(quote&&(quote.executionId!==job.jobId||quote.projectId!==this.projection.get().projectId||quote.documentId!==job.documentId||(quote.canvasId??null)!==(job.canvasId??null)||reviewId===job.jobId&&review?.quote&&quote.bindingHash!==review.quote.bindingHash)){
+      this.#clearAdaptivePrivatePresentation(job.jobId);return;
+    }
+    // Re-observing a completed predecessor is not evidence about the separate
+    // replacement being prepared. Its actual withdrawal still wins above.
+    if(review?.working&&review.replaceExecutionId===job.jobId&&review.quote?.status==="completed")return;
+    // A completed proof supersedes pending reads already in flight. Ordinary
+    // progress is deliberately not an invalidation and cannot strand a lookup.
+    identity.terminalReadRevision??=identity.revision;
+    identity.revision=++this.#planningRecoverySequence;
+    identity.terminalRevision=identity.revision;identity.terminalStatus=job.status;
+    if(job.sourceSurface!=="canvas"&&!this.#dismissedAdaptiveSuggestions.has(job.jobId)){
+      const selected=this.#adaptiveStructureJobIds.get(job.documentId);
+      if(selected===job.jobId||reviewId===job.jobId||identity.selectOnCompletion){
+        if(reviewId===job.jobId||identity.selectOnCompletion)this.#clearPendingAdaptiveSelection(job.documentId,job.jobId);
+        this.#adaptiveStructureJobIds.set(job.documentId,job.jobId);this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});
+      }
+    }
+    if(job.sourceSurface==="canvas"&&this.#canPresentAdaptivePlanningJob(job)){
+      const suggestion:AdaptiveSuggestionSet={id:job.jobId,documentId:job.documentId,canvasId:job.canvasId??null,intent:this.#adaptiveIntentForJob(job),structure:job.result.structure as AdaptiveStructure,requestedAt:job.requestedAt,completedAt:job.completedAt??job.updatedAt};
+      const items=[...(this.adaptiveSuggestionSets.get()[job.documentId]??[]).filter(item=>item.id!==job.jobId),suggestion];
+      items.sort((left,right)=>left.requestedAt.localeCompare(right.requestedAt)||left.id.localeCompare(right.id));
+      this.adaptiveSuggestionSets.set({...this.adaptiveSuggestionSets.get(),[job.documentId]:items});
+    }
+    if(review&&reviewId===job.jobId)this.planningConsent.set({...review,...(quote?{quote}:{}),recoveryExecutionId:job.jobId,submitted:true,working:false,recoveredPlan:job.result.structure as AdaptiveStructure,request:{...review.request,prompt:typeof job.result.intent==="string"?job.result.intent:review.request.prompt},notice:""});
+    this.notify();
+  }
+  /** Feed omission is not deletion. Recheck the exact private identities still shown elsewhere. */
+  async #revalidateMissingAdaptivePlans(jobs:DocumentJob[],authorization:string,previous=new Map<string,DocumentJob>()){
+    type Target={documentId:string;canvasId:string|null;sourceSurface?:string;requestKey?:string;planningProjectScope?:boolean;planningLocale?:string};
+    const targets=new Map<string,Target>(),present=new Set(jobs.map(job=>job.jobId));
+    const remember=(id:string,target:Target)=>{if(!id||present.has(id))return;const known=previous.get(id)??this.#jobDetails.get(id),identity=known??{...target,jobId:id,kind:"structure_adaptive" as const,planningExecutionId:id};this.#rememberPlanningRecovery(identity);targets.set(id,{documentId:identity.documentId,canvasId:identity.canvasId??null,sourceSurface:identity.sourceSurface,requestKey:identity.requestKey,planningProjectScope:identity.planningProjectScope,planningLocale:identity.planningLocale});};
+    for(const identity of this.planningRecoveryEntries())remember(identity.jobId,{...identity,canvasId:identity.canvasId??null});
+    for(const entry of [...this.#planningRecoveryIdentities.values()])if(entry.selectOnCompletion&&entry.authorization===authorization)remember(entry.identity.jobId,{...entry.identity,canvasId:entry.identity.canvasId??null});
+    for(const[documentId,id]of this.#adaptiveStructureJobIds)remember(id,{documentId,canvasId:null});
+    for(const items of Object.values(this.adaptiveSuggestionSets.get()))for(const item of items)remember(item.id,{documentId:item.documentId,canvasId:item.canvasId??null,sourceSurface:"canvas"});
+    const review=this.planningConsent.get(),reviewId=review?.recoveryExecutionId??(review?.submitted||review?.quote?.status!=="quoted"?review?.quote?.executionId:undefined);
+    if(review&&reviewId&&(this.#planningRecoveryIdentities.get(reviewId)?.recoverable||review.quote&&review.quote.status!=="quoted"))remember(reviewId,{...review.request,planningProjectScope:review.request.projectScope,planningLocale:review.request.locale});
+    const inspected=await Promise.all([...targets].map(async([id,target])=>{
+      const revision=this.#planningRecoveryIdentities.get(id)?.revision,terminalRevision=this.#planningRecoveryIdentities.get(id)?.terminalRevision??0;
+      const deliberateReadRevision=this.#planningRecoveryIdentities.get(id)?.deliberateReadRevision??0,startedAt=this.#planningRecoverySequence;
+      if(revision===undefined){this.#clearAdaptivePrivatePresentation(id);return null;}
+      const currentRead=()=>this.#planningRecoveryIdentities.get(id)?.revision===revision&&(this.#planningRecoveryIdentities.get(id)?.deliberateReadRevision??0)===deliberateReadRevision&&(this.#planningRecoveryIdentities.get(id)?.withdrawalRevision??0)<=startedAt&&(this.#planningRecoveryIdentities.get(id)?.certifiedReadRevision??0)<=startedAt;
+      try{
+        const response=await fetch(`/api/document-jobs/${encodeURIComponent(id)}?inspection=1`);
+        this.#assertAuthorizationScope(authorization);
+        if(!response.ok){if([401,403,404,410].includes(response.status))this.#withdrawAdaptiveRead(id,startedAt);else if(currentRead())this.#clearAdaptivePrivatePresentation(id);return null;}
+        const body=await response.json() as {job?:DocumentJob};this.#assertAuthorizationScope(authorization);
+        const job=body.job,projection=this.projection.get();
+        const matches=Boolean(job&&job.jobId===id&&job.planningExecutionId===id&&job.kind==="structure_adaptive"&&job.documentId===target.documentId&&(job.canvasId??null)===target.canvasId
+          &&(target.sourceSurface===undefined||job.sourceSurface===target.sourceSurface)&&(target.requestKey===undefined||job.requestKey===target.requestKey)
+          &&(target.planningProjectScope===undefined||job.planningProjectScope===target.planningProjectScope)&&(target.planningLocale===undefined||job.planningLocale===target.planningLocale)
+          &&projection.documents.some(document=>document.id===job.documentId&&document.projectId===projection.projectId));
+        const withdrawn=matches&&(job?.result?.planningReviewAvailable===false||job?.result?.resultUnavailable===true);
+        if(withdrawn){this.#withdrawAdaptiveRead(id,startedAt);return null;}
+        if(!currentRead())return null;
+        if(!job||!matches||!(job.status==="completed"&&job.result?.structure)&&job.result?.planningReviewAvailable!==true)throw new Error("planning_result_unavailable");
+        const current=this.planningConsent.get(),currentId=current?.recoveryExecutionId??(current?.submitted||current?.quote?.status!=="quoted"?current?.quote?.executionId:undefined);
+        const quote=job.result?.quote as AvailableConsequentialPreview|undefined;
+        if(quote&&(quote.executionId!==id||quote.projectId!==projection.projectId||quote.documentId!==job.documentId||(quote.canvasId??null)!==(job.canvasId??null)||currentId===id&&current?.quote&&quote.bindingHash!==current.quote.bindingHash))throw new Error("planning_result_identity_changed");
+        // A later stop/settlement may arrive without changing the privacy read
+        // epoch. Do not republish its older status or financial receipt. A
+        // genuinely certified completion and explicit withdrawal stay distinct.
+        if(job.status!=="completed"&&(this.#planningRecoveryIdentities.get(id)?.terminalRevision??0)!==terminalRevision)return null;
+        this.#rememberPlanningRecovery(job);this.#observeAdaptivePlanningJob(job);this.#jobDetails.set(id,job);
+        const certified=this.#planningRecoveryIdentities.get(id);if(certified)certified.detailRevision=certified.revision;
+        this.#trimDocumentJobDetails();
+        return{job,revision:this.#planningRecoveryIdentities.get(id)?.revision,terminalRevision:this.#planningRecoveryIdentities.get(id)?.terminalRevision??0,deliberateReadRevision};
+      }catch{if(this.#scopeStillActive(authorization)&&currentRead())this.#clearAdaptivePrivatePresentation(id);return null;}
+    }));
+    this.#assertAuthorizationScope(authorization);
+    return inspected.filter((entry):entry is {job:DocumentJob;revision:number;terminalRevision:number;deliberateReadRevision:number}=>entry!==null&&entry.revision!==undefined&&this.#planningRecoveryIdentities.get(entry.job.jobId)?.revision===entry.revision&&(this.#planningRecoveryIdentities.get(entry.job.jobId)?.terminalRevision??0)===entry.terminalRevision&&(this.#planningRecoveryIdentities.get(entry.job.jobId)?.deliberateReadRevision??0)===entry.deliberateReadRevision);
+  }
+  #canPresentAdaptivePlanningJob(job:DocumentJob){
+    if(this.#dismissedAdaptiveSuggestions.has(job.jobId))return false;
+    // Initial hydration preserves existing discovery. After a language change,
+    // even a previously unknown reused winner needs a current exact selection.
+    // Matching intent is insufficient: a replacement can share its request key.
+    if(this.#planningLocaleRevision===0)return true;
+    const identity=this.#planningRecoveryIdentities.get(job.jobId);
+    return identity?.authorization===this.#activeAuthorizationScope()&&identity.presentationLocaleRevision===this.#planningLocaleRevision;
+  }
+  #syncAdaptiveSuggestionSets(jobs:DocumentJob[]){
+    const next:Record<string,AdaptiveSuggestionSet[]>={};
+    for(const job of jobs){
+      if(job.kind!=="structure_adaptive")continue;
+      if(job.planningExecutionId===job.jobId&&(job.result?.planningReviewAvailable===false||job.result?.resultUnavailable===true)){
+        continue;
+      }
+      if(job.sourceSurface!=="canvas"||job.status!=="completed"||!job.result?.structure||!this.#canPresentAdaptivePlanningJob(job))continue;
+      const suggestion:AdaptiveSuggestionSet={id:job.jobId,documentId:job.documentId,canvasId:job.canvasId??null,intent:this.#adaptiveIntentForJob(job),structure:job.result.structure as AdaptiveStructure,requestedAt:job.requestedAt,completedAt:job.completedAt??job.updatedAt};(next[job.documentId]??=[]).push(suggestion);
+    }
+    for(const suggestions of Object.values(next))suggestions.sort((left,right)=>left.requestedAt.localeCompare(right.requestedAt)||left.id.localeCompare(right.id));this.adaptiveSuggestionSets.set(next);this.#trimDocumentJobDetails();
+  }
+  #jobResultVisible(job:DocumentJob){
+    if(document.visibilityState!=="visible")return false;
+    const route=this.route.get(),canvasId=canvasIdFromRoute(route);
+    const matches=canvasId?documentJobMatchesSurface(job,{canvasId,documentId:this.canvasPlanningDocumentId()}):isDocumentViewRoute(route)&&documentJobMatchesSurface(job,{canvasId:null,documentId:documentIdFromRoute(route)??"",documentView:documentViewFromRoute(route)});
+    if(!matches||job.kind!=="structure_adaptive")return matches;
+    if(!job.result?.structure||job.result.planningReviewAvailable===false||job.result.resultUnavailable===true)return false;
+    if(canvasId)return this.adaptiveSuggestionSetsFor(job.documentId,canvasId).some(item=>item.id===job.jobId&&Boolean(item.structure));
+    const plan=this.adaptiveStructures.get()[job.documentId];
+    return Boolean(plan&&(job.planningExecutionId===job.jobId?this.#adaptiveStructureJobIds.get(job.documentId)===job.jobId:plan===job.result.structure));
+  }
   #jobNotice(job:DocumentJob){
     const snapshot=currentFormaLocale();
     const interpolate=(source:string,values:Record<string,string|number>={})=>source.replace(/\{(\w+)\}/g,(_,name:string)=>String(values[name]??""));
@@ -265,7 +498,7 @@ export class FormaStore {
     }
     return t(`job.notice.ready.${job.kind}`,"",{title});
   }
-  async #ackJob(jobId:string){try{await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/ack`,{method:"POST"});}catch{/* A later poll can offer the notice again. */}}
+  async #ackJob(jobId:string){if(!this.#canRequestProjectOutputs())return;try{await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}/ack`,{method:"POST"});}catch{/* A later poll can offer the notice again. */}}
   async #hydrateDocumentJobGenerationReceipt(job:DocumentJob,authorization:string){
     const receipt=job.result?.generationReceipt;this.#assertAuthorizationScope(authorization);
     if(this.session.get()?.projectContext){if(receipt!==undefined&&receipt!==null)throw new Error("Actor-private generation receipts are unavailable in shared project views.");return;}
@@ -284,18 +517,62 @@ export class FormaStore {
     const authorization=this.#activeAuthorizationScope();
     const current=this.documentJobs.get().find((job)=>job.jobId===jobId);
     const cached=this.#jobDetails.get(jobId);
-    if(cached&&cached.updatedAt===current?.updatedAt){if(cached.jobId!==jobId||cached.documentId!==current.documentId)throw new Error("The retained generation inputs do not belong to this authorized job.");await this.#hydrateDocumentJobGenerationReceipt(cached,authorization);return cached;}
-    const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}?inspection=1`);
-    const body=await response.json() as {job?:DocumentJob;error?:string};
-    this.#assertAuthorizationScope(authorization);
-    if(!response.ok||!body.job)throw new Error(body.error??"The retained generation inputs could not be loaded.");
-    if(body.job.jobId!==jobId||current&&body.job.documentId!==current.documentId)throw new Error("The retained generation inputs do not belong to this authorized job.");
-    await this.#hydrateDocumentJobGenerationReceipt(body.job,authorization);
-    this.#jobDetails.set(jobId,body.job);
-    if(this.#jobDetails.size>24)this.#jobDetails.delete(this.#jobDetails.keys().next().value!);
-    this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));
-    this.notify();
-    return body.job;
+    if(cached&&cached.kind!=="structure_adaptive"&&cached.updatedAt===current?.updatedAt){if(cached.jobId!==jobId||cached.documentId!==current.documentId)throw new Error("The retained generation inputs do not belong to this authorized job.");await this.#hydrateDocumentJobGenerationReceipt(cached,authorization);return cached;}
+    const known=current??cached??this.planningRecoveryEntries().find(entry=>entry.jobId===jobId);
+    const adaptive=known?.kind==="structure_adaptive"&&known.planningExecutionId===jobId;
+    if(adaptive)this.#rememberPlanningRecovery(known);
+    const tracked=adaptive?this.#planningRecoveryIdentities.get(jobId):undefined;
+    if(tracked){tracked.deliberateReadRevision=++this.#planningRecoverySequence;tracked.pendingReadRevision=tracked.deliberateReadRevision;delete tracked.preservedReadRevision;delete tracked.terminalReadRevision;}
+    const revision=this.#planningRecoveryIdentities.get(jobId)?.revision,terminalRevision=this.#planningRecoveryIdentities.get(jobId)?.terminalRevision??0,startedAt=this.#planningRecoverySequence;
+    const deliberateReadRevision=tracked?.deliberateReadRevision??0;
+    const currentRead=()=>{const observed=this.#planningRecoveryIdentities.get(jobId);return!adaptive||revision!==undefined&&observed?.revision===revision&&(observed.deliberateReadRevision??0)===deliberateReadRevision&&(observed.certifiedReadRevision??0)<=startedAt&&((observed.withdrawalRevision??0)<=startedAt||observed.preservedReadRevision===deliberateReadRevision);};
+    try{
+      const response=await fetch(`/api/document-jobs/${encodeURIComponent(jobId)}?inspection=1`);
+      this.#assertAuthorizationScope(authorization);
+      // Access/retention denial is already authoritative in the headers. A
+      // broken or empty error body must not preserve private presentation.
+      if(adaptive&&!response.ok&&[401,403,404,410].includes(response.status)){
+        this.#withdrawAdaptiveRead(jobId,startedAt);
+        throw new Error("planning_result_unavailable");
+      }
+      const body=await response.json() as {job?:DocumentJob;error?:string};
+      this.#assertAuthorizationScope(authorization);
+      const candidate=body.job;
+      const withdrawn=adaptive&&Boolean(candidate&&candidate.jobId===jobId&&candidate.planningExecutionId===jobId&&candidate.kind==="structure_adaptive"
+        &&candidate.documentId===known.documentId&&(candidate.canvasId??null)===(known.canvasId??null)&&candidate.sourceSurface===known.sourceSurface
+        &&candidate.requestKey===known.requestKey&&candidate.planningProjectScope===known.planningProjectScope&&candidate.planningLocale===known.planningLocale
+        &&(candidate.result?.planningReviewAvailable===false||candidate.result?.resultUnavailable===true));
+      if(withdrawn){
+        this.#withdrawAdaptiveRead(jobId,startedAt);
+        throw new Error("planning_result_unavailable");
+      }
+      if(!currentRead())throw new Error("planning_result_unavailable");
+      if(!response.ok||!body.job)throw new Error(body.error??"The retained generation inputs could not be loaded.");
+      const job=body.job;
+      if(job.jobId!==jobId||current&&job.documentId!==current.documentId)throw new Error("The retained generation inputs do not belong to this authorized job.");
+      const signed=job.kind==="structure_adaptive"&&job.planningExecutionId===jobId;
+      if(adaptive&&(!signed||job.documentId!==known.documentId||(job.canvasId??null)!==(known.canvasId??null)||job.sourceSurface!==known.sourceSurface||job.requestKey!==known.requestKey||job.planningProjectScope!==known.planningProjectScope||job.planningLocale!==known.planningLocale))throw new Error("planning_result_identity_changed");
+      if(signed&&!adaptive&&(this.#planningRecoveryIdentities.get(jobId)?.revision??0)>startedAt)throw new Error("planning_result_unavailable");
+      await this.#hydrateDocumentJobGenerationReceipt(job,authorization);
+      this.#assertAuthorizationScope(authorization);
+      if(!currentRead()||signed&&!adaptive&&(this.#planningRecoveryIdentities.get(jobId)?.revision??0)>startedAt)throw new Error("planning_result_unavailable");
+      if(signed){
+        if(job.result?.planningReviewAvailable===false||job.result?.resultUnavailable===true){this.#observeAdaptivePlanningJob(job);throw new Error("planning_result_unavailable");}
+        if(!(job.status==="completed"&&job.result?.structure)&&job.result?.planningReviewAvailable!==true)throw new Error("planning_result_unavailable");
+        if(job.status!=="completed"&&(this.#planningRecoveryIdentities.get(jobId)?.terminalRevision??0)!==terminalRevision)throw new Error("planning_result_superseded");
+        this.#observeAdaptivePlanningJob(job);
+      }
+      this.#jobDetails.set(jobId,job);
+      if(signed){const certified=this.#planningRecoveryIdentities.get(jobId);if(certified){certified.detailRevision=certified.revision;certified.certifiedReadRevision=Math.max(certified.certifiedReadRevision??0,deliberateReadRevision);delete certified.preservedReadRevision;}}
+      this.#trimDocumentJobDetails();
+      this.documentJobs.set(this.documentJobs.get().map((entry)=>entry.jobId===jobId?job:entry));
+      this.notify();return job;
+    }catch(error){
+      if(adaptive&&this.#scopeStillActive(authorization)&&currentRead()&&!(error instanceof Error&&error.message==="planning_result_superseded"))this.#clearAdaptivePrivatePresentation(jobId);
+      throw error;
+    }finally{
+      const finished=this.#planningRecoveryIdentities.get(jobId);if(finished?.pendingReadRevision===deliberateReadRevision){delete finished.pendingReadRevision;delete finished.preservedReadRevision;}
+    }
   }
   /** Explicit actor-only project receipts never enter shared job or content caches. */
   async loadActorDocumentGenerationReceipt(jobId:string):Promise<{job:DocumentJob;content:Record<string,string>}>{
@@ -460,7 +737,24 @@ export class FormaStore {
       return true;
     }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The saved provider render could not be recovered");return false;}
   }
-  async stopDocumentJob(jobId:string,force=false){const authorization=this.#activeAuthorizationScope();try{const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/${force?"force-fail":"cancel"}`,{method:"POST"},force?"force-fail this document operation":"stop this document operation");this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok||!body.job){const messages:Record<string,string>={job_finalizing:"This operation is already finalizing and can no longer be stopped.",provider_submission_in_flight:"The provider request is being submitted. Wait until its receipt is confirmed before stopping this generation.",admin_required:"Only an administrator can force-fail an operation."};throw new Error(messages[body.error??""]??body.error??"The operation could not be stopped");}this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));this.toast(force?"Operation force-failed. Its audit receipt and released budget remain available.":"Operation stopped. Any reserved application budget was released.");await Promise.all([this.syncDocumentJobs(),this.refreshSession()]);this.#assertAuthorizationScope(authorization);return true;}catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The operation could not be stopped");return false;}}
+  async stopDocumentJob(jobId:string,force=false){
+    const authorization=this.#activeAuthorizationScope();
+    try{
+      const response=await this.guardedFetch(`/api/document-jobs/${encodeURIComponent(jobId)}/${force?"force-fail":"cancel"}`,{method:"POST"},force?"force-fail this document operation":"stop this document operation");
+      this.#assertAuthorizationScope(authorization);
+      const body=await response.json() as {job?:DocumentJob;budget?:DocumentJobStopBudget;stoppedCount?:number;error?:string};
+      this.#assertAuthorizationScope(authorization);
+      if(!response.ok||!body.job){
+        const messages:Record<string,string>={job_finalizing:"This operation is already finalizing and can no longer be stopped.",provider_submission_in_flight:"The provider request is being submitted. Wait until its receipt is confirmed before stopping this generation.",admin_required:"Only an administrator can force-fail an operation."};
+        throw new Error(messages[body.error??""]??body.error??"The operation could not be stopped");
+      }
+      this.documentJobs.set(this.documentJobs.get().map((job)=>job.jobId===jobId?body.job!:job));
+      const outcome=body.job.status==="completed"||body.job.status==="partial"||body.stoppedCount===0&&documentJobTerminal(body.job)?"Operation already finished.":body.job.status==="canceled"?"Operation stopped.":body.job.status==="failed"?(force?"Operation force-failed.":"Operation stopped."):"The stop is not yet confirmed.";
+      this.toast(this.#systemNotice(outcome)+" "+this.#systemNotice(documentJobStopBudgetMessage(body.budget)));
+      await Promise.all([this.syncDocumentJobs(),this.refreshSession()]);this.#assertAuthorizationScope(authorization);
+      return documentJobTerminal(body.job);
+    }catch(error){if(this.#scopeStillActive(authorization))this.toast(error instanceof Error?error.message:"The operation could not be stopped");return false;}
+  }
   #flushPendingJobNotices(){
     if(document.visibilityState!=="visible"||!this.#pendingJobNotices.length)return;
     const jobs=this.#pendingJobNotices.splice(0),locale=currentFormaLocale(),source="{count} background document operations finished.";
@@ -619,11 +913,14 @@ export class FormaStore {
   }
   async #refreshEvents(){const authorization=this.#activeAuthorizationScope(),previous=this.events.get();const known=new Set(previous.map((event)=>event.eventId));const after=this.#historyProfile==="full"?(previous.at(-1)?.sequence??0):this.head.get();let replace=after===0;let body=await this.#readEventPages(after);this.#assertAuthorizationScope(authorization);if(body.head<after){body=await this.#readEventPages(0);this.#assertAuthorizationScope(authorization);replace=true;this.#historyProfile="full";}if(!replace&&!body.events.length&&body.head===after&&!Object.keys(body.content).length)return false;const complete=replace?body.events:[...previous,...body.events.filter((event)=>!known.has(event.eventId))];this.#assertAuthorizationScope(authorization);this.events.set(complete);const confirmedClientIds=this.#clientEventIds(complete);if(confirmedClientIds.size)this.optimisticEvents.set(this.optimisticEvents.get().filter((event)=>!confirmedClientIds.has(String(event.payload.client_event_id??""))));if(Object.keys(body.content).length)this.content.set({...this.content.get(),...body.content});this.head.set(body.head);this.#publishAppended(complete.filter((event)=>!known.has(event.eventId)));return true;}
   async refreshEvents(){if(await this.#refreshEvents())this.notify();}
-  #canRequestProjectOutputs(){const context=this.session.get()?.projectContext;return!context||context.permissions.includes("project.output.request");}
-  #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);if(!this.#canRequestProjectOutputs())return;this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
-  #syncVisibleJobs(path=this.route.get()){if(path!==this.route.get()||!this.#canRequestProjectOutputs()){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath="";return;}if(routeCapabilities(path).jobHistory||this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){this.#pendingPassiveJobPath="";void this.syncDocumentJobs();return;}window.clearTimeout(this.#jobPollTimer);if(document.documentElement.dataset.formaPhase==="populated"){this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);}else this.#pendingPassiveJobPath=path;}
+  #canRequestProjectOutputs(){const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];return permissions.includes("project.output.request");}
+  #canReadProjectJobs(){const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];return permissions.includes("project.read")||permissions.includes("project.output.request");}
+  canPreparePlanning(){const session=this.session.get(),permissions=session?.projectContext?.permissions??session?.capabilities??[];return permissions.includes("project.author")&&permissions.includes("project.output.request");}
+  #scheduleJobPoll(delay=2_000){window.clearTimeout(this.#jobPollTimer);if(!this.#canReadProjectJobs())return;this.#jobPollTimer=window.setTimeout(()=>{if(document.visibilityState==="visible")void this.syncDocumentJobs();},delay);}
+  #syncVisibleJobs(path=this.route.get()){if(path!==this.route.get()||!this.#canReadProjectJobs()){window.clearTimeout(this.#jobPollTimer);this.#pendingPassiveJobPath="";return;}if(routeCapabilities(path).jobHistory||this.documentJobs.get().some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")){this.#pendingPassiveJobPath="";void this.syncDocumentJobs();return;}window.clearTimeout(this.#jobPollTimer);if(document.documentElement.dataset.formaPhase==="populated"){this.#pendingPassiveJobPath="";this.#scheduleJobPoll(1_200);}else this.#pendingPassiveJobPath=path;}
   #jobScope(path=this.route.get()){const documentId=documentIdFromRoute(path);return documentId?`?document=${encodeURIComponent(documentId)}`:routeCapabilities(path).jobHistory?"":"?scope=active";}
   #driveDocumentJobs(jobs:DocumentJob[]){
+    if(!this.#canRequestProjectOutputs())return;
     const projection=this.projection.get(),projectDocuments=new Set(projection.documents
       .filter((document)=>document.projectId===projection.projectId).map((document)=>document.id));
     const next=[...jobs].filter((job)=>job.kind!=="prompt_fan"&&(job.status==="queued"||job.status==="running"||job.status==="committing")
@@ -634,11 +931,84 @@ export class FormaStore {
     if(recoverable&&this.session.get()){this.#presentationRecoveryAttempts.add(recoverable.jobId);void this.recoverDocumentPresentation(recoverable.jobId);}
   }
   async #driveDocumentJob(job:DocumentJob){const authorization=this.#activeAuthorizationScope();this.#jobsDriving.add(job.jobId);try{const response=await fetch(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{method:"POST"});this.#assertAuthorizationScope(authorization);const body=await response.json() as {job?:DocumentJob;error?:string};this.#assertAuthorizationScope(authorization);if(!response.ok&&!body.job)throw new Error(body.error??"document_job_runner_failed");}catch{if(this.#scopeStillActive(authorization)&&document.visibilityState==="visible")this.toast("The connection to the background operation ended. The app will recover it safely.");}finally{if(this.#scopeStillActive(authorization)){this.#jobsDriving.delete(job.jobId);this.#scheduleJobPoll(350);}}}
-  async syncDocumentJobs(){if(!this.#canRequestProjectOutputs()){window.clearTimeout(this.#jobPollTimer);return;}const scope=this.#jobScope(),initialSession=this.session.get(),authorization=initialSession?this.#authorizationScope(initialSession):"";if(this.#jobsSyncing){if(scope!==this.#jobSyncScope)this.#jobResyncRequested=true;return;}this.#jobsSyncing=true;this.#jobSyncScope=scope;try{const response=await fetch(`/api/document-jobs${scope}`);if(!response.ok)throw new Error(`Job status returned ${response.status}`);const body=await response.json() as {jobs?:DocumentJob[]};const currentSession=this.session.get();if(this.#jobScope()!==scope||!currentSession||this.#authorizationScope(currentSession)!==authorization){this.#jobResyncRequested=true;return;}const previous=new Map(this.documentJobs.get().map((job)=>[job.jobId,job]));const jobs=(body.jobs??[]).map((job)=>{const detail=this.#jobDetails.get(job.jobId);if(detail&&detail.updatedAt===job.updatedAt)return{...job,result:detail.result};if(detail)this.#jobDetails.delete(job.jobId);return job;});this.documentJobs.set(jobs);this.#jobPollFailures=0;this.#jobPollIssueNotified=false;
-      const terminalChanges=jobs.filter((job)=>documentJobTerminal(job)&&(previous.has(job.jobId)?previous.get(job.jobId)?.status!==job.status:!job.notifiedAt&&!job.parentJobId));const fanProgress=jobs.some((job)=>job.kind==="prompt_fan"&&previous.has(job.jobId)&&previous.get(job.jobId)?.updatedAt!==job.updatedAt);const disappearedActive=[...previous.values()].some((job)=>(job.status==="queued"||job.status==="running"||job.status==="committing")&&!jobs.some((current)=>current.jobId===job.jobId));const completed=terminalChanges.filter((job)=>!job.notifiedAt&&!job.parentJobId);if(terminalChanges.length||fanProgress||disappearedActive){this.#pendingJobEventRefresh=true;this.#pendingJobSessionRefresh=true;}if(this.#pendingJobEventRefresh){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);this.#pendingJobEventRefresh=false;}if(this.#pendingJobSessionRefresh){try{await this.refreshSession();this.#assertAuthorizationScope(authorization);this.#pendingJobSessionRefresh=false;}catch(error){if(!this.#scopeStillActive(authorization))throw error;/* Retry account totals independently; a temporary session failure must not hide completed creative work. */}}this.#assertAuthorizationScope(authorization);this.#syncAdaptiveSuggestionSets(jobs);
-      for(const job of completed){if(job.kind==="structure_adaptive"&&job.sourceSurface!=="canvas"&&job.status==="completed"&&job.result?.structure&&!this.#dismissedAdaptiveSuggestions.has(job.jobId))this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId);continue;}if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));if(!job.canvasId)void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);}
-      this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(jobs.some((job)=>job.status==="queued"||job.status==="running"||job.status==="committing")?1_500:this.#pendingJobSessionRefresh?5_000:60_000);
-    }catch{if(this.#scopeStillActive(authorization)){this.#jobPollFailures+=1;if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}this.#scheduleJobPoll(5_000);}}finally{this.#jobsSyncing=false;if(this.#scopeStillActive(authorization)&&(this.#jobResyncRequested||this.#jobScope()!==scope)){this.#jobResyncRequested=false;queueMicrotask(()=>void this.syncDocumentJobs());}}}
+async syncDocumentJobs(){
+    if(!this.#canReadProjectJobs()){window.clearTimeout(this.#jobPollTimer);return;}
+    const scope=this.#jobScope(),initialSession=this.session.get(),authorization=initialSession?this.#authorizationScope(initialSession):"";
+    if(this.#jobsSyncing){if(scope!==this.#jobSyncScope)this.#jobResyncRequested=true;return;}
+    this.#jobsSyncing=true;this.#jobSyncScope=scope;
+    const feedBeforeRead=this.documentJobs.get();
+    const planningReadSequence=this.#planningRecoverySequence;
+    try{
+      const response=await fetch(`/api/document-jobs${scope}`);
+      if(!response.ok)throw new Error(`Job status returned ${response.status}`);
+      const body=await response.json() as {jobs?:DocumentJob[]},currentSession=this.session.get();
+      if(this.#jobScope()!==scope||!currentSession||this.#authorizationScope(currentSession)!==authorization){this.#jobResyncRequested=true;return;}
+      // A newer explicit action may have completed while this list was in transit.
+      // Discard that older page; a free resync can observe the new canonical state.
+      if(this.documentJobs.get()!==feedBeforeRead){this.#jobResyncRequested=true;return;}
+      const previous=new Map(feedBeforeRead.map(job=>[job.jobId,job]));
+      const jobs=(body.jobs??[]).map(job=>{
+        const detail=this.#jobDetails.get(job.jobId);
+        if(detail&&job.kind!=="structure_adaptive"&&detail.updatedAt===job.updatedAt)return{...job,result:detail.result};
+        if(detail)this.#jobDetails.delete(job.jobId);return job;
+      });
+      this.documentJobs.set(jobs);this.#jobPollFailures=0;this.#jobPollIssueNotified=false;
+      for(const job of jobs)this.#observeAdaptivePlanningJob(job);
+      this.notify();
+      const terminalChanges=jobs.filter(job=>documentJobTerminal(job)&&(previous.has(job.jobId)?previous.get(job.jobId)?.status!==job.status:!job.notifiedAt&&!job.parentJobId));
+      const fanProgress=jobs.some(job=>job.kind==="prompt_fan"&&previous.has(job.jobId)&&previous.get(job.jobId)?.updatedAt!==job.updatedAt);
+      const disappearedActive=[...previous.values()].some(job=>(job.status==="queued"||job.status==="running"||job.status==="committing")&&!jobs.some(current=>current.jobId===job.jobId));
+      const completed=terminalChanges.filter(job=>!job.notifiedAt&&!job.parentJobId);
+      if(terminalChanges.length||fanProgress||disappearedActive){this.#pendingJobEventRefresh=true;this.#pendingJobSessionRefresh=true;}
+      if(this.#pendingJobEventRefresh){await this.#refreshEvents();this.#assertAuthorizationScope(authorization);this.#pendingJobEventRefresh=false;}
+      if(this.#pendingJobSessionRefresh){
+        try{await this.refreshSession();this.#assertAuthorizationScope(authorization);this.#pendingJobSessionRefresh=false;}
+        catch(error){if(!this.#scopeStillActive(authorization))throw error;/* Retry account totals independently of creative recovery. */}
+      }
+      this.#assertAuthorizationScope(authorization);
+      const inspected=await this.#revalidateMissingAdaptivePlans(jobs,authorization,previous);
+      this.#assertAuthorizationScope(authorization);
+      // Exact inspections may overlap a newer completion, dismissal, or withdrawal.
+      // Reconcile from the current authorized page, never the pre-await snapshot.
+      const currentJobs=this.documentJobs.get(),currentIds=new Set(currentJobs.map(job=>job.jobId));
+      const acceptedInspections=inspected.filter(entry=>this.#planningRecoveryIdentities.get(entry.job.jobId)?.revision===entry.revision&&(this.#planningRecoveryIdentities.get(entry.job.jobId)?.terminalRevision??0)===entry.terminalRevision&&(this.#planningRecoveryIdentities.get(entry.job.jobId)?.deliberateReadRevision??0)===entry.deliberateReadRevision&&!currentIds.has(entry.job.jobId)).map(entry=>entry.job);
+      // A deliberate exact inspection can finish while an omitted-page lookup
+      // is pending. Preserve that newly certified live result, not arbitrary
+      // historical cache entries and not the older inspection's envelope.
+      const freshDetails=[...this.#jobDetails.values()].filter(job=>{const proof=this.#planningRecoveryIdentities.get(job.jobId);return job.kind==="structure_adaptive"&&job.planningExecutionId===job.jobId&&!currentIds.has(job.jobId)
+        &&job.status==="completed"&&Boolean(job.result?.structure)&&job.result?.planningReviewAvailable!==false&&job.result?.resultUnavailable!==true
+        &&proof?.authorization===authorization&&(proof.detailRevision??0)>planningReadSequence&&(proof.withdrawalRevision??0)<(proof.detailRevision??0);});
+      const recovered=new Map([...acceptedInspections,...freshDetails].map(job=>[job.jobId,job]));
+      this.#syncAdaptiveSuggestionSets([...currentJobs,...recovered.values()]);
+      for(const changed of completed){
+        const job=this.documentJobs.get().find(current=>current.jobId===changed.jobId);if(!job)continue;
+        if(job.kind==="structure_adaptive"&&job.sourceSurface!=="canvas"&&job.status==="completed"&&job.result?.structure
+          &&job.result.planningReviewAvailable!==false&&job.result.resultUnavailable!==true&&!this.#dismissedAdaptiveSuggestions.has(job.jobId)){
+          const selected=this.#adaptiveStructureJobIds.get(job.documentId);
+          const pendingSelection=[...this.#planningRecoveryIdentities.values()].some(entry=>entry.selectOnCompletion&&entry.identity.documentId===job.documentId);
+          // Signed planning is selected by an owned handoff or an explicit
+          // completed review, never merely by arriving on an empty page.
+          if(!selected&&!pendingSelection&&job.planningExecutionId!==job.jobId||selected===job.jobId){
+            if(job.planningExecutionId===job.jobId)this.#adaptiveStructureJobIds.set(job.documentId,job.jobId);
+            this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});
+          }
+        }
+        if(job.status==="completed"&&this.#jobResultVisible(job)){void this.#ackJob(job.jobId);continue;}
+        if(document.visibilityState==="visible"){this.toast(this.#jobNotice(job));if(!job.canvasId)void this.#ackJob(job.jobId);}else this.#pendingJobNotices.push(job);
+      }
+      const latest=this.documentJobs.get();this.notify();this.#driveDocumentJobs(latest);
+      this.#scheduleJobPoll(latest.some(job=>job.status==="queued"||job.status==="running"||job.status==="committing")?1_500:this.#pendingJobSessionRefresh?5_000:60_000);
+    }catch{
+      if(this.#scopeStillActive(authorization)){
+        this.#jobPollFailures+=1;
+        if(this.#jobPollFailures>=3&&!this.#jobPollIssueNotified&&document.visibilityState==="visible"){this.#jobPollIssueNotified=true;this.toast("Background status is temporarily unavailable. Retrying…");}
+        this.#scheduleJobPoll(5_000);
+      }
+    }finally{
+      this.#jobsSyncing=false;
+      if(this.#scopeStillActive(authorization)&&(this.#jobResyncRequested||this.#jobScope()!==scope)){this.#jobResyncRequested=false;queueMicrotask(()=>void this.syncDocumentJobs());}
+    }
+  }
   #budgetPreference(key:string){try{return localStorage.getItem(key)==="true";}catch{return false;}}
   #setBudgetPreference(key:string){try{localStorage.setItem(key,"true");}catch{/* A blocked browser storage policy only affects reminder persistence. */}}
   #generationEstimate(kind:DocumentJobKind,payload:Record<string,unknown>){
@@ -886,8 +1256,8 @@ export class FormaStore {
     const previous=this.session.get(),previousUserId=previous?.user.userId;
     if(previous&&this.#authorizationScope(previous)!==this.#authorizationScope(body)){
       this.events.set([]);this.head.set(0);this.content.set({});this.shares.set([]);this.projectNotifications.set([]);this.organizationContextPackages.set([]);this.organizationContextBindings.set([]);this.organizationContextVersions.set({});this.reviewInbox.set([]);this.optimisticEvents.set([]);
-      this.documentJobs.set([]);this.generationReadiness.set({});this.#jobDetails.clear();this.#privateContentScope="none";
-      this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});this.replayEvents.set([]);this.replayAsOf.set(0);this.asOf.set(Number.POSITIVE_INFINITY);
+      this.documentJobs.set([]);this.generationReadiness.set({});this.#jobDetails.clear();this.#planningRecoveryIdentities.clear();this.#privateContentScope="none";
+      this.#adaptiveStructureJobIds.clear();this.adaptiveStructures.set({});this.adaptiveSuggestionSets.set({});this.replayEvents.set([]);this.replayAsOf.set(0);this.asOf.set(Number.POSITIVE_INFINITY);
       this.#pendingAdaptiveIntents.clear();this.#pendingJobNotices=[];this.#readinessAcknowledgements.clear();this.#dismissedAdaptiveSuggestions.clear();this.#readinessInFlight.clear();this.#jobStarts.clear();this.#jobsDriving.clear();this.#presentationRecoveryAttempts.clear();this.#focalInFlight.clear();
       this.#pendingJobEventRefresh=false;this.#pendingJobSessionRefresh=false;this.#pendingPassiveJobPath="";this.#historyProfile="full";this.#historyUpgrade=undefined;this.#contentHydration=undefined;
       this.ui.shareOpen=false;this.ui.accountOpen=false;this.ui.compareOpen=false;
@@ -1384,9 +1754,215 @@ export class FormaStore {
   }
 
   async structureAdaptive(prompt:string,options:{documentId?:string;sourceSurface?:string;projectScope?:boolean;canvasId?:string;locale?:string}={}) {
-    const documentId=options.documentId??this.projection.get().documentId;const sourceSurface=options.sourceSurface??"adaptive";
-    if(this.documentJobActive("structure_adaptive",documentId,options.canvasId??null))return false;
-    try{if(sourceSurface!=="canvas")this.dismissAdaptiveStructure(documentId);const {job}=await this.#startDocumentJob("structure_adaptive",{prompt,documentId,projectScope:options.projectScope===true,...(options.canvasId?{canvasId:options.canvasId}:{}),locale:options.locale??document.documentElement.lang??"en"},sourceSurface,documentId);this.#pendingAdaptiveIntents.set(job.jobId,prompt);this.toast(sourceSurface==="canvas"?"Forma is shaping a few useful next moves from the whole project.":"Adaptive planning started. You can continue working while it runs.");return true;}catch(error){this.toast(error instanceof Error?error.message:"Forma could not structure that intent");return false;}
+    const authorization=this.#activeAuthorizationScope(),route=this.route.get(),projection=this.projection.get();
+    if(!authorization||!prompt.trim()||this.planningConsent.get())return false;
+    const request:PlanningConsentRequest={prompt:prompt.trim(),projectId:projection.projectId,documentId:options.documentId??projection.documentId,canvasId:options.canvasId??null,sourceSurface:options.sourceSurface??"adaptive",projectScope:options.projectScope===true,locale:options.locale??document.documentElement.lang??"en",requestKey:""};
+    const navigation=this.#navigationCommit;await this.#appendPipeline;
+    if(navigation&&!await navigation||!this.#scopeStillActive(authorization)||this.route.get()!==route)return false;
+    request.requestKey=await adaptiveRequestKey(request);
+    if(!this.#scopeStillActive(authorization)||this.route.get()!==route||this.planningConsent.get())return false;
+    this.#planningConsentScope=authorization;this.#planningConsentRoute=route;
+    const decision=new Promise<boolean>((resolve)=>{this.#planningConsentResolve=resolve;});
+    this.planningConsent.set({id:crypto.randomUUID(),request,quote:null,working:false,notice:"",submitted:false});this.notify();
+    void this.previewPlanningConsent();
+    return decision;
+  }
+
+  #finishPlanningConsent(accepted:boolean){const resolve=this.#planningConsentResolve;this.#planningConsentResolve=undefined;this.planningConsent.set(null);this.#planningConsentScope="";this.#planningConsentRoute="";resolve?.(accepted);}
+  closePlanningConsent(){
+    const state=this.planningConsent.get(),id=state?.recoveryExecutionId??state?.quote?.executionId;
+    if(state?.submitted&&id&&this.#scopeStillActive(this.#planningConsentScope)){
+      this.#rememberPlanningRecovery({jobId:id,kind:"structure_adaptive",planningExecutionId:id,documentId:state.request.documentId,canvasId:state.request.canvasId,sourceSurface:state.request.sourceSurface,requestKey:state.request.requestKey,planningLocale:state.request.locale,planningProjectScope:state.request.projectScope});
+    }
+    this.#finishPlanningConsent(false);this.notify();
+  }
+  /** Reopen the original queue entry, including after reload or author-to-reader downgrade. */
+  async reviewPlanningJob(jobId:string){
+    const authorization=this.#activeAuthorizationScope(),job=this.documentJobs.get().find((entry)=>entry.jobId===jobId)??this.planningRecoveryEntries().find(entry=>entry.jobId===jobId),projection=this.projection.get();
+    if(!authorization||!this.#canReadProjectJobs()||this.planningConsent.get()||job?.kind!=="structure_adaptive"||job.planningExecutionId!==jobId||!projection.documents.some((item)=>item.id===job.documentId&&item.projectId===projection.projectId))return false;
+    this.#rememberPlanningRecovery(job);
+    const request:PlanningConsentRequest={projectId:projection.projectId,documentId:job.documentId,canvasId:job.canvasId??null,sourceSurface:job.sourceSurface??(job.canvasId?"canvas":"adaptive"),projectScope:job.planningProjectScope===true,locale:job.planningLocale??"en",requestKey:job.requestKey??"",prompt:""};
+    this.#planningConsentScope=authorization;this.#planningConsentRoute=this.route.get();
+    this.planningConsent.set({id:crypto.randomUUID(),request,quote:null,working:false,notice:"",submitted:true,recoveryExecutionId:jobId});this.notify();
+    await this.#requestPlanningConsent("resume");return true;
+  }
+  async newPlanningPreview(){
+    const state=this.planningConsent.get();if(!state?.quote||state.working||state.quote.status!=="completed"||!state.quote.canPrepareNew||!this.canPreparePlanning())return;
+    // Keep the original paid view until a new free preview is actually available.
+    this.planningConsent.set({...state,replaceExecutionId:state.quote.executionId,notice:""});this.notify();
+    return this.#requestPlanningConsent("quote");
+  }
+  async previewPlanningConsent(){return this.#requestPlanningConsent(this.planningConsent.get()?.recoveryExecutionId?"resume":"quote");}
+  async approvePlanningConsent(){const state=this.planningConsent.get();if(!state?.quote)return;const action=state.submitted||state.recoveryExecutionId?{action:"retrieve" as const,disabled:false}:contextConsentAction(state.quote.status,state.quote.providerAvailable,state.quote.canExecute);if(!action.disabled)return this.#requestPlanningConsent(action.action);}
+  async #requestPlanningConsent(action:"quote"|"resume"|ContextConsentAction){
+    const state=this.planningConsent.get(),authorization=this.#planningConsentScope,selectionLocaleRevision=this.#planningLocaleRevision;
+    if(!state||state.working||!this.#scopeStillActive(authorization)||action==="resume"&&!state.recoveryExecutionId||action!=="quote"&&action!=="resume"&&!state.quote)return;
+    const replacing=action==="quote"&&Boolean(state.replaceExecutionId)&&state.quote?.status==="completed";
+    const trackedId=state.recoveryExecutionId??state.replaceExecutionId??state.quote?.executionId;
+    if(trackedId)this.#rememberPlanningRecovery({jobId:trackedId,kind:"structure_adaptive",planningExecutionId:trackedId,documentId:state.request.documentId,canvasId:state.request.canvasId,sourceSurface:state.request.sourceSurface,requestKey:state.request.requestKey,planningLocale:state.request.locale,planningProjectScope:state.request.projectScope},state.submitted||Boolean(state.recoveryExecutionId)||state.quote?.status!=="quoted");
+    const tracked=trackedId?this.#planningRecoveryIdentities.get(trackedId):undefined;
+    const startedReadAt=++this.#planningRecoverySequence;
+    if(tracked){tracked.revision=startedReadAt;tracked.deliberateReadRevision=startedReadAt;tracked.pendingReadRevision=startedReadAt;delete tracked.preservedReadRevision;delete tracked.terminalReadRevision;
+      // This grants presentation eligibility only to the exact approved ID,
+      // not access proof, dismissal reversal, or a same-intent unknown winner.
+      if(state.request.sourceSurface==="canvas"&&this.#planningConsentResolve&&(action==="execute"||action==="retrieve"))tracked.presentationLocaleRevision=selectionLocaleRevision;
+    }
+    const readRevision=tracked?.revision??0;
+    const privateWithdrawn=()=>trackedId&&(this.#planningRecoveryIdentities.get(trackedId)?.withdrawalRevision??0)>startedReadAt;
+    const retainedQuote=()=>this.planningConsent.get()?.quote??(privateWithdrawn()?null:state.quote);
+    const failureFor=(quote:AvailableConsequentialPreview|null,outcome:Parameters<typeof contextConsentFailure>[1])=>{
+      const result=contextConsentFailure(quote,outcome),id=quote?.executionId??trackedId;
+      const job=id?this.documentJobs.get().find(item=>item.jobId===id)??this.#jobDetails.get(id):undefined;
+      const budget=planningStopBudget(job?.result);
+      // An uncertain network/execution status does not reopen a reservation
+      // whose current original receipt already proves settlement or release.
+      return result.notice==="uncertain"&&job&&adaptiveJobMatchesRequest(job,state.request)&&documentJobHasNoBudgetHold(budget)?{...result,notice:"failed" as const}:result;
+    };
+    const update=(patch:Partial<PlanningConsentState>)=>{const current=this.planningConsent.get();if(current?.id!==state.id||!this.#scopeStillActive(authorization))return false;this.planningConsent.set({...current,...patch});this.notify();return true;};
+    update({working:true,notice:"",submitted:state.submitted||action==="execute",readRevision:startedReadAt});
+    try{
+      const response=await this.guardedFetch("/api/document-jobs/adaptive",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...state.request,action,...(action==="resume"?{executionId:state.recoveryExecutionId}:action!=="quote"?{executionId:state.quote!.executionId,approvedBindingHash:state.quote!.bindingHash}:state.replaceExecutionId?{replaceExecutionId:state.replaceExecutionId}:{})})},this.#systemNotice("Review this exact planning request"));
+      if(!this.#scopeStillActive(authorization))return;
+      if((action==="resume"||action==="retrieve")&&trackedId&&!response.ok&&[401,403,404,410].includes(response.status)){
+        this.#withdrawAdaptiveRead(trackedId,startedReadAt);
+        return;
+      }
+      const body=await response.json() as {quote?:AvailableConsequentialPreview;planningRequest?:PlanningConsentRequest;job?:DocumentJob;status?:string;submission?:string;providerAvailable?:boolean;error?:string;executionId?:string;bindingHash?:string;sourceHash?:string;requestKey?:string;reused?:boolean;requestedExecutionId?:string;reusedExecutionId?:string};
+      if(!this.#scopeStillActive(authorization))return;
+      const requestedId=action==="resume"?state.recoveryExecutionId:state.quote?.executionId;
+      const unavailable=!response.ok&&["adaptive_existing_request_unavailable","adaptive_result_unavailable","adaptive_execution_unavailable","adaptive_consent_unavailable","adaptive_read_scope_denied","adaptive_read_authorization_changed"].includes(body.error??"");
+      const returnedId=body.quote?.executionId??body.job?.planningExecutionId??(unavailable?requestedId:undefined);
+      if(body.quote&&(body.quote.projectId!==state.request.projectId||body.quote.documentId!==state.request.documentId||(body.quote.canvasId??null)!==state.request.canvasId||action!=="quote"&&body.quote.executionId!==requestedId&&(body.requestedExecutionId!==requestedId||body.reusedExecutionId!==body.quote.executionId)))throw new Error("planning_result_identity_changed");
+      const original=body.planningRequest;
+      if(original&&(original.projectId!==state.request.projectId||original.documentId!==state.request.documentId||(original.canvasId??null)!==state.request.canvasId||original.sourceSurface!==state.request.sourceSurface||original.requestKey!==state.request.requestKey||original.projectScope!==state.request.projectScope||original.locale!==state.request.locale||typeof original.prompt!=="string"||!original.prompt.trim()||original.prompt.length>2_000))throw new Error("planning_result_identity_changed");
+      if(original&&await adaptiveRequestKey(original)!==original.requestKey)throw new Error("planning_result_identity_changed");
+      if(!this.#scopeStillActive(authorization))return;
+      if(body.quote&&(body.executionId!==undefined&&body.executionId!==body.quote.executionId||body.bindingHash!==undefined&&body.bindingHash!==body.quote.bindingHash||body.sourceHash!==undefined&&body.sourceHash!==body.quote.sourceHash||body.requestKey!==undefined&&body.requestKey!==(original??state.request).requestKey))throw new Error("planning_result_identity_changed");
+      // A replacement must carry its own freshly certified intent after the
+      // predecessor was withdrawn. Never approve an empty request or restore
+      // private predecessor text from this handler's captured state.
+      if(action==="quote"&&privateWithdrawn()&&!original)throw new Error("planning_preview_request_unavailable");
+      const effectiveRequest=original??(privateWithdrawn()?{...state.request,prompt:""}:state.request);
+      const redirected=(response.ok||response.status===409)&&action!=="quote"&&Boolean(requestedId&&returnedId&&requestedId!==returnedId)
+        &&body.requestedExecutionId===requestedId&&body.reusedExecutionId===returnedId&&body.quote?.executionId===returnedId
+        &&body.job!==undefined&&body.job.jobId===returnedId&&body.job.planningExecutionId===returnedId&&adaptiveJobMatchesRequest(body.job,effectiveRequest);
+      if(action!=="quote"&&returnedId&&returnedId!==requestedId&&!redirected)throw new Error("planning_result_identity_changed");
+      const observed=returnedId?this.#planningRecoveryIdentities.get(returnedId):undefined;
+      const incomingWithdrawal=Boolean(body.job&&returnedId&&body.job.jobId===returnedId&&body.job.planningExecutionId===returnedId&&adaptiveJobMatchesRequest(body.job,effectiveRequest)
+        &&(body.job.result?.planningReviewAvailable===false||body.job.result?.resultUnavailable===true));
+      if(returnedId&&(incomingWithdrawal||unavailable)){
+        const cleared=this.#withdrawAdaptiveRead(returnedId,startedReadAt);
+        if(cleared&&redirected&&(!trackedId||(this.#planningRecoveryIdentities.get(trackedId)?.deliberateReadRevision??0)===startedReadAt))update({quote:null,request:{...effectiveRequest,prompt:""},recoveryExecutionId:returnedId,replaceExecutionId:undefined,recoveredPlan:undefined,submitted:true,working:false,notice:"failed"});
+        return;
+      }
+      if(this.planningConsent.get()?.id!==state.id)return;
+      if(trackedId&&(this.#planningRecoveryIdentities.get(trackedId)?.deliberateReadRevision??0)!==startedReadAt)return;
+      // Access proof is independent of the execution outcome: an authorized
+      // uncertain receipt (409) and a free lookup reusing paid work both read
+      // retained private evidence. An ordinary new quote is not that proof.
+      const exactRetainedReceipt=Boolean(original&&body.quote&&body.executionId===body.quote.executionId&&body.bindingHash===body.quote.bindingHash&&body.requestKey===effectiveRequest.requestKey
+        &&(response.ok||response.status===409)&&body.job&&body.job.jobId===body.quote.executionId&&body.job.planningExecutionId===body.quote.executionId&&adaptiveJobMatchesRequest(body.job,effectiveRequest)
+        &&body.job.result?.planningReviewAvailable===true&&body.job.result?.resultUnavailable!==true&&(body.status===undefined||body.status===body.quote.status)
+        &&(body.job.result.executionId===undefined||body.job.result.executionId===body.quote.executionId)&&(body.job.result.bindingHash===undefined||body.job.result.bindingHash===body.quote.bindingHash)
+        &&(body.job.result.requestKey===undefined||body.job.result.requestKey===effectiveRequest.requestKey));
+      const reusedPaidQuote=Boolean(action==="quote"&&response.ok&&body.reused===true&&original&&body.quote&&body.quote.status!=="quoted"&&body.executionId===body.quote.executionId);
+      // A reuse lookup discovers its paid identity only in the response. It can
+      // recertify after an older read's denial, but never after newer withdrawal
+      // evidence merely because its own response happened to arrive last.
+      const recertifiesOlderDenial=Boolean((exactRetainedReceipt||reusedPaidQuote)&&(observed?.withdrawalRevision??0)>startedReadAt&&(observed?.withdrawalReadRevision??Number.POSITIVE_INFINITY)<startedReadAt);
+      // General feeds intentionally omit the private quote. An original read
+      // that now supplies the same certified completion may enrich its receipt,
+      // but may never undo a withdrawal, newer lookup, or terminal progress.
+      const completionRead=Boolean(observed?.terminalReadRevision!==undefined)
+        &&((observed?.withdrawalRevision??0)<=startedReadAt||observed?.preservedReadRevision===startedReadAt)
+        &&(trackedId?returnedId===trackedId&&observed?.terminalReadRevision===readRevision:true);
+      const completedReceipt=response.ok&&body.quote?.status==="completed"&&completionRead
+        &&(action==="quote"||body.job?.status==="completed"&&Boolean(body.job.result?.structure)&&body.job.result?.planningReviewAvailable!==false&&body.job.result?.resultUnavailable!==true);
+      if((trackedId?(this.#planningRecoveryIdentities.get(trackedId)?.revision??0):0)!==readRevision&&!completedReceipt&&!recertifiesOlderDenial)return;
+      if(redirected&&(observed?.withdrawalRevision??0)>startedReadAt&&!recertifiesOlderDenial){
+        update({quote:null,request:{...effectiveRequest,prompt:""},recoveryExecutionId:returnedId,replaceExecutionId:undefined,recoveredPlan:undefined,submitted:true,working:false,notice:"failed"});
+        this.#clearAdaptivePrivatePresentation(returnedId!);return;
+      }
+      if(returnedId&&(observed?.revision??0)>startedReadAt&&!completedReceipt&&!redirected&&!recertifiesOlderDenial)return;
+      if(body.quote&&body.quote.status!=="quoted")this.#rememberPlanningRecovery({jobId:body.quote.executionId,kind:"structure_adaptive",planningExecutionId:body.quote.executionId,documentId:effectiveRequest.documentId,canvasId:effectiveRequest.canvasId,sourceSurface:effectiveRequest.sourceSurface,requestKey:effectiveRequest.requestKey,planningLocale:effectiveRequest.locale,planningProjectScope:effectiveRequest.projectScope});
+      if((exactRetainedReceipt||reusedPaidQuote)&&returnedId){const certified=this.#planningRecoveryIdentities.get(returnedId);if(certified){certified.certifiedReadRevision=Math.max(certified.certifiedReadRevision??0,startedReadAt);delete certified.preservedReadRevision;}}
+      const currentWinner=returnedId?this.documentJobs.get().find(job=>job.jobId===returnedId)??this.#jobDetails.get(returnedId):undefined;
+      const currentTerminal=currentWinner&&documentJobTerminal(currentWinner)&&adaptiveJobMatchesRequest(currentWinner,effectiveRequest);
+      const newerStopped=body.job?.status!=="completed"&&body.quote?.status!=="completed"&&(
+        currentTerminal&&currentWinner.status!=="completed"&&body.job&&!documentJobTerminal(body.job)
+        ||observed?.terminalStatus&&observed.terminalStatus!=="completed"&&(observed.terminalRevision??0)>startedReadAt);
+      if(newerStopped){
+        // Access may be certified, but an older reply cannot replace newer
+        // lifecycle/accounting evidence, including quote and HTTP409 branches.
+        update({quote:null,request:{...effectiveRequest,prompt:""},recoveryExecutionId:returnedId,replaceExecutionId:undefined,recoveredPlan:undefined,submitted:true,working:false,notice:"failed"});
+        this.#scheduleJobPoll(800);return;
+      }
+      if(!response.ok&&!redirected&&!exactRetainedReceipt){
+        const unavailable=["adaptive_existing_request_unavailable","adaptive_result_unavailable","adaptive_execution_unavailable","adaptive_consent_unavailable","adaptive_read_scope_denied","adaptive_read_authorization_changed"].includes(body.error??"");
+        const originalId=replacing?state.replaceExecutionId:state.recoveryExecutionId??(state.quote?.status!=="quoted"?state.quote?.executionId:undefined);
+        if(unavailable&&originalId){this.#clearAdaptivePrivatePresentation(originalId,undefined,undefined,true);update({notice:"failed",replaceExecutionId:undefined});return;}
+        if(replacing){update({notice:"failed",replaceExecutionId:undefined});return;}
+        const outcome=failureFor(body.quote??retainedQuote(),body);update({quote:outcome.quote,request:effectiveRequest,notice:outcome.notice,...(body.submission==="not-submitted"&&!state.recoveryExecutionId?{submitted:false}:{})});return;
+      }
+      if(action==="quote"){
+        if(!body.quote)throw new Error("planning_preview_missing");
+        const newPreview=replacing&&body.quote.status==="quoted"&&body.quote.executionId!==state.quote?.executionId;
+        update({quote:body.quote,request:effectiveRequest,notice:["reserved","submitting","uncertain"].includes(body.quote.status)?failureFor(body.quote,{status:body.quote.status}).notice:"",submitted:body.quote.status!=="quoted",...(newPreview?{replaceExecutionId:undefined,recoveryExecutionId:undefined,recoveredPlan:undefined}:replacing?{replaceExecutionId:undefined,...(body.quote.executionId!==state.quote?.executionId?{recoveryExecutionId:body.quote.executionId,recoveredPlan:undefined}:{})}:{})});return;
+      }
+      if(!body.job){const outcome=failureFor(body.quote??retainedQuote(),body);update({quote:outcome.quote,notice:outcome.notice});return;}
+      // The server may reuse a winner another session already discovered. Adopt
+      // that exact receipt without downgrading a newer certified completion.
+      const job=currentWinner?.status==="completed"&&currentWinner.result?.structure&&currentWinner.result.planningReviewAvailable!==false&&currentWinner.result.resultUnavailable!==true&&adaptiveJobMatchesRequest(currentWinner,effectiveRequest)?currentWinner:body.job,effectiveQuote=body.quote??retainedQuote();
+      if(!effectiveQuote||effectiveQuote.executionId!==requestedId&&(body.requestedExecutionId!==requestedId||body.reusedExecutionId!==effectiveQuote.executionId)||effectiveQuote.projectId!==state.request.projectId||effectiveQuote.documentId!==state.request.documentId||(effectiveQuote.canvasId??null)!==state.request.canvasId||job.jobId!==effectiveQuote.executionId||!adaptiveJobMatchesRequest(job,effectiveRequest))throw new Error("planning_result_identity_changed");
+      this.#rememberPlanningRecovery(job);
+      if(job.result?.planningReviewAvailable===false||job.result?.resultUnavailable===true){this.#clearAdaptivePrivatePresentation(job.jobId,undefined,undefined,true);this.notify();return;}
+      const certified=this.#planningRecoveryIdentities.get(job.jobId);if(certified){certified.certifiedReadRevision=Math.max(certified.certifiedReadRevision??0,startedReadAt);delete certified.preservedReadRevision;}
+      this.#pendingAdaptiveIntents.set(job.jobId,typeof job.result?.intent==="string"?job.result.intent:effectiveRequest.prompt);
+      const jobs=[job,...this.documentJobs.get().filter((existing)=>existing.jobId!==job.jobId)];this.documentJobs.set(jobs);
+      const selectionLocaleChanged=selectionLocaleRevision!==this.#planningLocaleRevision;
+      if(selectionLocaleChanged)this.dismissAdaptiveSuggestion(job.documentId,job.jobId);
+      else if(certified&&job.sourceSurface==="canvas"&&(job.status==="completed"&&job.result?.structure||!documentJobTerminal(job)&&this.#planningConsentResolve))certified.presentationLocaleRevision=this.#planningLocaleRevision;
+      if(!selectionLocaleChanged&&redirected&&requestedId&&requestedId!==job.jobId){const losing=this.#planningRecoveryIdentities.get(requestedId);if(losing)delete losing.presentationLocaleRevision;}
+      // A resultless receipt is accounting/recovery evidence, not a replacement
+      // for the user's selected working plan. Select only a usable result below.
+      if(!selectionLocaleChanged&&!documentJobTerminal(job)&&this.#planningConsentResolve){
+        // A confirmed composer handoff owns the eventual selection. Historical
+        // Activity reads do not. Keep the working plan visible until it is ready.
+        this.#dismissedAdaptiveSuggestions.delete(job.jobId);
+        if(job.sourceSurface!=="canvas"){
+          this.#clearPendingAdaptiveSelection(job.documentId,job.jobId);
+          const pending=this.#planningRecoveryIdentities.get(job.jobId);if(pending)pending.selectOnCompletion=true;
+        }
+      }
+      if(job.status==="completed"&&job.result?.structure){
+        if(!selectionLocaleChanged){
+          this.#dismissedAdaptiveSuggestions.delete(job.jobId);
+          if(job.sourceSurface!=="canvas")this.#clearPendingAdaptiveSelection(job.documentId,job.jobId);
+          if(job.sourceSurface!=="canvas"){if(job.planningExecutionId===job.jobId)this.#adaptiveStructureJobIds.set(job.documentId,job.jobId);this.adaptiveStructures.set({...this.adaptiveStructures.get(),[job.documentId]:job.result.structure as AdaptiveStructure});}
+        }
+        // An exact receipt is evidence about this target, not a complete list
+        // of other still-authorized cards omitted from the current feed.
+        this.#observeAdaptivePlanningJob(job);
+      }else this.#observeAdaptivePlanningJob(job);
+      if(exactRetainedReceipt){this.#jobDetails.set(job.jobId,job);const proof=this.#planningRecoveryIdentities.get(job.jobId);if(proof)proof.detailRevision=proof.revision;this.#trimDocumentJobDetails();}
+      const resultlessTerminal=documentJobTerminal(job)&&!(job.status==="completed"&&job.result?.structure);
+      if(state.recoveryExecutionId||redirected||resultlessTerminal||selectionLocaleChanged){
+        update({quote:effectiveQuote,request:effectiveRequest,recoveryExecutionId:effectiveQuote.executionId,replaceExecutionId:undefined,submitted:true,working:false,recoveredPlan:!selectionLocaleChanged&&job.status==="completed"&&job.result?.structure?job.result.structure as AdaptiveStructure:undefined,notice:job.status==="completed"?"":failureFor(effectiveQuote,{...body,status:effectiveQuote.status}).notice});
+        if(redirected&&!resultlessTerminal&&!selectionLocaleChanged){const resolve=this.#planningConsentResolve;this.#planningConsentResolve=undefined;resolve?.(true);}
+        if(redirected||resultlessTerminal||selectionLocaleChanged)this.#scheduleJobPoll(800);
+        return;
+      }
+      this.#finishPlanningConsent(true);this.notify();this.#driveDocumentJobs(jobs);this.#scheduleJobPoll(800);
+    }catch{
+      if(trackedId&&(this.#planningRecoveryIdentities.get(trackedId)?.deliberateReadRevision??0)!==startedReadAt)return;
+      if((trackedId?(this.#planningRecoveryIdentities.get(trackedId)?.revision??0):0)!==readRevision)return;
+      if(action==="execute"&&trackedId){const identity=this.#planningRecoveryIdentities.get(trackedId);if(identity)identity.recoverable=true;}
+      if(action==="quote"||action==="resume")update({notice:"failed",...(replacing?{replaceExecutionId:undefined}:{})});
+      else{const outcome=failureFor(retainedQuote(),{transport:true});update({quote:outcome.quote,notice:outcome.notice});}
+    }finally{
+      if((trackedId?(this.#planningRecoveryIdentities.get(trackedId)?.revision??0):0)===readRevision)update({working:false});
+      const finished=trackedId?this.#planningRecoveryIdentities.get(trackedId):undefined;if(finished?.pendingReadRevision===startedReadAt){delete finished.pendingReadRevision;delete finished.preservedReadRevision;}
+    }
   }
 
   async renderDocumentArtifact(kind:DocumentArtifactKind,options:{documentId?:string;itemCount?:number;audience?:string;tone?:string;sceneMedium?:SceneMedium;videoSeconds?:VideoDurationSeconds;videoSize?:"1280x720"|"720x1280";videoAudioMode?:VideoAudioMode;soundtrackBlockIds?:string[];sendSoundtrackToVideoProvider?:boolean;audioImageBlockId?:string;audioProfile?:AudioRequestProfile;audioProviderModel?:string;audioVideoArtifactId?:string;sendAudioVideoToProvider?:boolean;productionMode?:ProductionMode;paidMediaConfirmed?:boolean;sourceSurface?:string;locale?:string;presentationStyle?:SlideStylePresetId;presentationFidelity?:"faithful"|"creative";requestedSlideCount?:number;authoredSlideCount?:number;workflowId?:string;workflowStageId?:string;workflowSources?:ProductionWorkflowSource[]}={}){

@@ -5,6 +5,7 @@ import type { CreativeBlock } from "../model/events";
 import { FormaElement, icon } from "./forma-element";
 import { ensureModalDialog } from "./modal-dialog";
 import { contextConsentAction, contextConsentFailure, type ContextConsentAction } from "../model/context-consent-state";
+import { consequentialPreview } from "./consequential-preview";
 import type { ConsequentialPreview } from "../../worker/consequential-consent";
 import type { AuthoringPreview } from "../../worker/authoring-commits";
 import type { ContextProposalSelection } from "../model/context-proposal-application";
@@ -254,7 +255,7 @@ export class ContextIntelligence extends FormaElement{
     return html`<section class="context-consent" aria-labelledby=${`context-consent-title-${this.block.id}`}><h3 id=${`context-consent-title-${this.block.id}`}>${this.i18n.t("context.consent.title")}</h3><p>${this.i18n.t("context.consent.description")}</p>
       ${this.#quoteAddition?html`<p dir="auto">${this.#quoteAddition}</p>`:nothing}
       ${this.#mode==="research"?html`<label><span>${this.i18n.t("context.consent.publicQuery")}</span><input aria-label=${this.i18n.t("context.consent.publicQuery")} aria-describedby=${`context-public-hint-${this.block.id}`} maxlength="140" .value=${this.#publicQuery} ?disabled=${this.#working||Boolean(this.#quote&&["reserved","submitting","uncertain"].includes(this.#quote.status))} @input=${(event:InputEvent)=>{this.#publicQuery=(event.currentTarget as HTMLInputElement).value;this.#quote=null;this.requestUpdate();}}><small id=${`context-public-hint-${this.block.id}`}>${this.i18n.t("context.consent.publicHint")}</small></label>`:nothing}
-      ${quote&&!quote.providerAvailable?html`<p role="status">${this.i18n.t("context.consent.unavailable")}</p>`:nothing}${quote?html`<dl><div><dt>${this.i18n.t("context.consent.provider")}</dt><dd>${quote.provider} · ${quote.models.join(", ")}</dd></div><div><dt>${this.i18n.t("context.consent.reservation")}</dt><dd>USD ${(quote.maximumMicrousd/1_000_000).toFixed(4)} · ${this.i18n.t("context.consent.calls","",{count:this.i18n.number(quote.providerCalls)})}</dd></div><div><dt>${this.i18n.t("context.consent.billing")}</dt><dd>${quote.actorLabel} · ${quote.workspaceId??this.i18n.t("context.consent.personal")} · ${quote.period}</dd></div></dl><p>${this.i18n.t(quote.publicQuery?"context.consent.searchBoundary":"context.consent.noSearch")}</p><p>${this.i18n.t("context.consent.held")}</p><details><summary>${this.i18n.t("context.consent.exactInput")}</summary><p>${quote.projectId} / ${quote.documentId}${quote.canvasId?` / ${quote.canvasId}`:""}</p><p>${quote.sourceHash}</p><textarea readonly rows="10" aria-label=${this.i18n.t("context.consent.exactInput")} .value=${JSON.stringify(quote.privateInput,null,2)}></textarea><small>${this.i18n.t("context.consent.expires")} ${quote.expiresAt}</small></details>`:nothing}
+      ${quote?consequentialPreview(quote,this.i18n):nothing}
       ${!quote?html`<button type="button" class="button secondary" ?disabled=${this.#working} @click=${()=>void this.#preview()}>${this.i18n.t("context.consent.preview")}</button>`:nothing}
     </section>`;
   }
