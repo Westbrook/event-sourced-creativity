@@ -4,6 +4,7 @@ import { promptFactIsActive, providerFacingRenderingContext } from "../src/model
 import { isVideoAudioMode, VIDEO_ADAPTER_CONTRACT, type VideoAudioMode, type VideoDurationSeconds } from "../src/model/video-adapter.ts";
 import type { VideoReference } from "./openai-adapter.ts";
 import { ProviderRequestError } from "./provider-errors.ts";
+import { applyVideoSourceInterpretations, videoOutputScopedContext, type VideoSourceInterpretation } from "./video-source-scope.ts";
 
 type CreativeRecord = Record<string, unknown>;
 
@@ -38,6 +39,8 @@ export type VideoPromptAdaptation = {
   referenceBindings: Array<{ token: string; referenceId: string; blockId: string; sequence: number | null; mode: string; contextGroupIds: string[] }>;
   sourceBlockIds: string[];
   removedAudioDirections: string[];
+  sourceInterpretations: VideoSourceInterpretation[];
+  audioExclusionInterpretations: Array<{ originalText: string; providerText: string; scope: "global" | "target"; target?: string; role?: string }>;
   timingSource: "authored" | "normalized" | "single-shot";
 };
 
@@ -57,6 +60,9 @@ type VideoPromptOptions = {
 
 const record = (value: unknown): CreativeRecord => value && typeof value === "object" && !Array.isArray(value) ? value as CreativeRecord : {};
 const text = (value: unknown, maximum = 500) => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maximum);
+// Safety classification inspects complete source channels, independently of
+// the bounded representation later sent to a provider.
+const audioPolicyText = (value: unknown) => String(value ?? "").replace(/\s+/g, " ").trim();
 const activeFacts = (snapshot: CreativeRecord = {}) => Array.isArray(snapshot.facts) ? snapshot.facts.filter(promptFactIsActive).map(record) : [];
 // Local safety review must honor existing authored audio restrictions even when
 // a reusable recording has not been approved for provider-facing composition.
@@ -108,7 +114,7 @@ function visualAudioSubject(direction: string) {
 
 function audioFactDirection(fact: CreativeRecord) {
   const properties = record(fact.properties);
-  return text(properties.text ?? properties.instruction ?? properties.description ?? properties.value ?? properties.label, 1_600);
+  return audioPolicyText(properties.text ?? properties.instruction ?? properties.description ?? properties.value ?? properties.label);
 }
 
 const stripAudioNegations = (direction: string) => direction.replace(NEGATED_AUDIO, "").replace(AUDIO_PROHIBITION, "").replace(MUSIC_FREE, "").replace(NONMUSICAL, "");
@@ -134,17 +140,32 @@ function forbidsGeneratedAudio(snapshot: CreativeRecord = {}) {
     return prohibitsAllSound(direction) || explicitAudioFact && /\b(?:silent|silence)\b/i.test(direction) || factIsNegative(fact) && /\b(?:audio|sound(?:\s+effects?)?)\b/i.test(direction);
   })) return true;
   return (Array.isArray(snapshot.standing_constraints) ? snapshot.standing_constraints.map(record) : []).some((constraint) => {
-    const direction = text(constraint.value ?? constraint.text, 1_600);
+    const direction = audioPolicyText(constraint.value ?? constraint.text);
     if (visualAudioSubject(direction) && /\b(?:poster|sign|lettering|typography|printed|written|manuscript|labels?|display(?:ed|s)?|reads?)\b/i.test(direction)) return false;
     const explicitAudioAxis = /\b(?:audio|sound)\b/i.test(text(constraint.axis, 80));
     return prohibitsAllSound(direction) || explicitAudioAxis && /\b(?:silent|silence)\b/i.test(direction) || /^(?:forbid|prohibit|avoid)$/i.test(String(constraint.polarity ?? "")) && (/\b(?:all|any|generated)\s+(?:audible\s+)?(?:audio|sound(?:\s+effects?)?)\b/i.test(direction) || explicitAudioAxis && /\b(?:audio|sound|silent|silence)\b/i.test(direction) && !/\b(?:music|songs?|soundtrack|score|voices?|vocals?|dialogue)\b/i.test(direction));
   });
 }
 
-function unsupportedAudioIntent(direction: string) {
-  return direction.split(/[.!?]\s+/).some((sentence) => {
-    const cleaned = stripAudioNegations(sentence);
-    if (!cleaned.trim() || AUDIO_PROHIBITION.test(sentence) || visualAudioSubject(cleaned)) return false;
+export function unsupportedAudioIntent(direction: string) {
+  // Inspect coordinated prohibitions and contrast clauses independently. A
+  // restriction followed by "but imitate this voice" is not a blanket waiver.
+  return direction.split(/[.!?]\s+|;\s*|\s+(?=(?:but|however|except|instead|yet)\b)/iu).some((sentence) => {
+    const clause = sentence.trim().replace(/\b(?:do not|never)\s+read\s+(?:the\s+)?(?:captions?|transcripts?)(?:\s+or\s+(?:captions?|transcripts?))?(?:\s+for\s+(?:spoken|voiced)\s+media)?\s+(?:aloud|out loud|audibly)\b/giu, "");
+    const beginsNegative = /^(?:no|without|exclude|excluding|never include|do not (?:include|portray|promise|claim|imply))\b/iu.test(clause);
+    const spokenDelivery = /\bread(?:s|ing)?\b[^.;\n]{0,150}\b(?:aloud|out loud|audibly)\b/iu.test(clause);
+    const audiblePerformance = spokenDelivery || /\b(?:play(?:s|ing)?|sing(?:s|ing)?|sung|speak(?:s|ing)?|spoken aloud|narrat(?:e|es|ing)|imitat(?:e|es|ing)|impersonat(?:e|es|ing)|chant(?:s|ing)?|whisper(?:s|ing)?|perform(?:s|ing)?|recreat(?:e|es|ing)|accompan(?:y|ies|ying)|underscor(?:e|es|ing)|swells?|recit(?:e|es|ing))\b/iu.test(clause);
+    const supplementaryDirection = /\b(?:while|when|as|with|alongside|accompanied|underscored|featuring|plus)\b/iu.test(clause);
+    const positiveAfterNegative = /(?:,\s*|\b(?:and|or)\s+)(?:add|include|play|generate|imitate|use|speak|narrate|compose|sing|whisper|perform|recreate)\b/iu.test(clause)
+      || beginsNegative && /\b(?:shall|will|must|should|needs?|requires?)\s+(?!not\b|never\b)/iu.test(clause);
+    if (beginsNegative && !positiveAfterNegative && !audiblePerformance && !supplementaryDirection) return false;
+    if (spokenDelivery) return true;
+    let cleaned = (positiveAfterNegative ? clause : stripAudioNegations(clause))
+      .replace(/\b(?:no|without|avoid|never)\s+(?:(?:recognizable|copyrighted|licensed)\s+)?(?:melody|music)(?:\s+or\s+(?:artist|voice|style)\s+imitation)\b/giu, "");
+    if (!audiblePerformance) cleaned = cleaned
+      .replace(/\bscore\s+(?:numbers?|values?|ratings?|percentages?)\b/giu, "evaluation values")
+      .replace(/\b(?:captions?|transcripts?)(?:\s+or\s+(?:captions?|transcripts?))?\s+for\s+(?:spoken|voiced)\s+media\b/giu, "conditional accessibility text");
+    if (!cleaned.trim() || visualAudioSubject(cleaned)) return false;
     return UNSUPPORTED_AUDIO.test(cleaned) || COPYRIGHT_RISK_AUDIO.test(cleaned) || NAMED_SONG_PLAYBACK.test(cleaned) || NAMED_MUSICAL_ATTRIBUTION.test(cleaned) || NAMED_MUSICAL_TITLE.test(cleaned) || NAMED_MUSICAL_PERFORMANCE.test(cleaned) || SYNTHETIC_NAMED_NARRATION.test(cleaned);
   });
 }
@@ -159,7 +180,7 @@ function videoAdaptationFailure(code: string, message: string, prompt: string | 
 }
 
 function authoredAudioFacts(snapshot: CreativeRecord = {}) {
-  const affirmativeAudioPreferences: CreativeRecord[] = (Array.isArray(snapshot.standing_constraints) ? snapshot.standing_constraints.map(record) : []).filter((constraint) => /^(?:affirm|include|required)$/i.test(String(constraint.polarity ?? ""))).filter((constraint) => { const direction = text(constraint.value ?? constraint.text, 1_600); return AUDIO_FACT.test(direction) || requiresGeneratedAudio(direction) || /\b(?:audio|sound|music|score|soundtrack|voice)\b/i.test(text(constraint.axis, 80)); }).map((constraint) => ({ type: "audio", properties: { text: text(constraint.value ?? constraint.text, 1_600), required: true } }));
+  const affirmativeAudioPreferences: CreativeRecord[] = (Array.isArray(snapshot.standing_constraints) ? snapshot.standing_constraints.map(record) : []).filter((constraint) => /^(?:affirm|include|required)$/i.test(String(constraint.polarity ?? ""))).filter((constraint) => { const direction = audioPolicyText(constraint.value ?? constraint.text); return AUDIO_FACT.test(direction) || requiresGeneratedAudio(direction) || /\b(?:audio|sound|music|score|soundtrack|voice)\b/i.test(text(constraint.axis, 80)); }).map((constraint) => ({ type: "audio", properties: { text: audioPolicyText(constraint.value ?? constraint.text), required: true } }));
   return [...activeVideoAudioPolicyFacts(snapshot), ...affirmativeAudioPreferences].filter((fact) => {
     if (factIsNegative(fact)) return false;
     const properties = record(fact.properties);
@@ -455,7 +476,7 @@ function compactMotionThesis(prompt: string, snapshot: CreativeRecord = {}) {
 
 /** Minimize repeated storyboard/provenance payloads before the one existing planner call. */
 export function videoPlannerCreativeContext(snapshot: CreativeRecord) {
-  const normalized = record(providerFacingRenderingContext(snapshot));
+  const normalized = record(providerFacingRenderingContext(videoOutputScopedContext(snapshot).snapshot));
   const facts = Array.isArray(normalized.facts) ? normalized.facts.map(record) : [];
   const storyboardCount = facts.filter((fact) => Number(record(fact.properties).storyboard_frame_index ?? record(fact.properties).video_scene_index ?? 0) > 0).length;
   const safeProperties = (fact: CreativeRecord) => {
@@ -534,9 +555,17 @@ export function compactVideoCombinedContextPlan(groups: Array<Record<string, unk
 /** Translate authored meaning into a short, provider-safe, auditable video contract. */
 export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): VideoPromptAdaptation {
   const audio = resolveVideoAudioPolicy({ snapshot: options.snapshot, audioMode: options.audioMode, generateAudio: options.generateAudio, providedSoundtrack: options.providedSoundtrack });
+  const sourceScope = videoOutputScopedContext(options.snapshot ?? {});
+  prompt = applyVideoSourceInterpretations(prompt, sourceScope.interpretations);
+  options = { ...options, snapshot: sourceScope.snapshot, ...(options.plan ? { plan: {
+    ...options.plan,
+    ...(options.plan.title ? { title: applyVideoSourceInterpretations(options.plan.title, sourceScope.interpretations) } : {}),
+    ...(options.plan.summary ? { summary: applyVideoSourceInterpretations(options.plan.summary, sourceScope.interpretations) } : {}),
+    ...(options.plan.items ? { items: options.plan.items.map((item) => ({ ...item, ...(item.body ? { body: applyVideoSourceInterpretations(item.body, sourceScope.interpretations) } : {}), ...(item.notes ? { notes: applyVideoSourceInterpretations(item.notes, sourceScope.interpretations) } : {}) })) } : {}),
+  } } : {}) };
   const cleanedPrompt = removeAudioDirections(prompt);
   if (!cleanedPrompt.text) videoAdaptationFailure("video_prompt_required", "The document did not produce usable visual motion direction after soundtrack-only instructions were removed.", prompt);
-  const authoredAudioChannels = [prompt, options.plan?.title, options.plan?.summary, ...(options.plan?.items ?? []).flatMap((item) => [item.notes, item.body]), ...activeFacts(options.snapshot).filter((fact) => !factIsNegative(fact) && !["typography","audio"].includes(String(fact.type ?? fact.role ?? ""))).flatMap((fact) => { const properties = record(fact.properties); return [audioFactDirection(fact), properties.storyboard_title, properties.storyboard_shot_title, properties.storyboard_shot_direction, properties.storyboard_frame_prompt]; }), ...options.references.flatMap((reference) => [reference.label, reference.storyboardTitle, reference.shotDirection, reference.cameraDirection, reference.framePrompt])].map((value) => text(value, 1_600));
+  const authoredAudioChannels = [prompt, options.plan?.title, options.plan?.summary, ...(options.plan?.items ?? []).flatMap((item) => [item.notes, item.body]), ...activeFacts(options.snapshot).filter((fact) => !factIsNegative(fact) && !["typography","audio"].includes(String(fact.type ?? fact.role ?? ""))).flatMap((fact) => { const properties = record(fact.properties); return [audioFactDirection(fact), properties.storyboard_title, properties.storyboard_shot_title, properties.storyboard_shot_direction, properties.storyboard_frame_prompt]; }), ...options.references.flatMap((reference) => [reference.label, reference.storyboardTitle, reference.shotDirection, reference.cameraDirection, reference.framePrompt])].map(audioPolicyText);
   if (audio.generateAudio && (cleanedPrompt.removed.some((direction) => unsupportedAudioIntent(direction)) || authoredAudioChannels.some((direction) => unsupportedAudioIntent(direction)))) {
     videoAdaptationFailure("video_audio_profile_unsupported", "The generated video direction requested musical scoring, voices, or another unsupported soundtrack. Original ambient mode permits newly generated, non-musical environmental effects only.", prompt);
   }
@@ -612,8 +641,20 @@ export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): V
     content: `PRODUCTION CONTINUITY\n${continuityNotes.map((note) => text(note, 520)).join("\n")}`,
   });
 
+  const audioExclusionInterpretations: VideoPromptAdaptation["audioExclusionInterpretations"] = [];
+  const preserveExclusion = (value: string, scope: "global" | "target", target?: string, role?: string) => {
+    const titleOnly = value.trim().replace(/\s+(?:plays?|is playing)\.?$/iu, "").replace(/[.!?]$/u, "");
+    const namedWorkOnly = !visualAudioSubject(value) && [NAMED_MUSICAL_TITLE, NAMED_MUSICAL_ATTRIBUTION].some((pattern) => pattern.exec(titleOnly)?.[0] === titleOnly);
+    if (!namedWorkOnly) return value;
+    // A standalone prohibited recording can be covered by a stronger generic
+    // absence, without prompting its recognizable title. Mixed constraints
+    // must remain atomic: never split or drop their visual/semantic clauses.
+    const providerText = "musical playback, recognizable songs, lyrics, speech, and vocal performances";
+    audioExclusionInterpretations.push({ originalText: value, providerText, scope, ...(target ? { target, role } : {}) });
+    return providerText;
+  };
   const safeVisualExclusions = [...new Set([
-    ...excluded.flatMap((value) => unsupportedAudioIntent(value) ? value.split(/\s*(?:;|,|\band\b)\s*/i).filter((part) => part && !unsupportedAudioIntent(part)) : [value]).flatMap((value) => visualProjection ? productResearchVisualBoundaries(value, visualProjection) : [value]),
+    ...excluded.map((value) => preserveExclusion(value, "global")).flatMap((value) => visualProjection ? productResearchVisualBoundaries(value, visualProjection) : [value]),
     ...(visualProjection?.anonymousInterfaces ? ["readable personal details"] : []),
     ...(visualProjection?.truthfulScores ? ["unauthored numerical claims"] : []),
   ])];
@@ -623,7 +664,7 @@ export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): V
     content: `AUTHORIAL BOUNDARIES\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: ${safeVisualExclusions.join("; ")}.`,
   });
   const safeScopedVisualExclusions = scopedExcluded.flatMap((exclusion) => {
-    const directions = unsupportedAudioIntent(exclusion.direction) ? exclusion.direction.split(/\s*(?:;|,|\band\b)\s*/i).filter((part) => part && !unsupportedAudioIntent(part)) : [exclusion.direction];
+    const directions = [preserveExclusion(exclusion.direction, "target", exclusion.target, exclusion.role)];
     return directions.flatMap((direction) => visualProjection ? productResearchVisualBoundaries(direction, visualProjection) : [direction]).map((direction) => ({ ...exclusion, direction }));
   });
   if (safeScopedVisualExclusions.length) sections.push({
@@ -703,7 +744,7 @@ export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): V
     videoAdaptationFailure("video_required_context_exceeds_budget", compilation.issues.map((issue) => issue.message).join(" ") || "The video adaptation did not produce a complete provider prompt.", compilation.prompt || prompt);
   }
   if (audio.generateAudio) {
-    for (const section of sections.filter((candidate) => compilation.includedSectionIds.includes(candidate.id) && candidate.id !== "audio-contract" && candidate.id !== "authored-boundaries")) {
+    for (const section of sections.filter((candidate) => compilation.includedSectionIds.includes(candidate.id) && !["audio-contract", "authored-boundaries", "target-scoped-authored-boundaries"].includes(candidate.id))) {
       const lines = section.content.includes("\n") ? section.content.split("\n").slice(1) : [section.content];
       for (const line of lines) {
         if (/^TYPOGRAPHY(?:\s+for[^:]*)?:/i.test(line)) continue;
@@ -729,6 +770,8 @@ export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): V
     referenceBindings,
     sourceBlockIds: [...new Set(activeFacts(snapshot).map((fact) => text(fact.block_id, 120)).filter(Boolean))],
     removedAudioDirections: [...new Set(cleanedPrompt.removed)],
+    sourceInterpretations: sourceScope.interpretations,
+    audioExclusionInterpretations,
     timingSource: authoredTiming ? "authored" : scheduledBeats.length ? "normalized" : "single-shot",
   };
 }

@@ -1,5 +1,15 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.20f23v.17": "Voir les images enregistrées",
+  "system.auto.1jy38yv.24": "Aperçu du storyboard enregistré",
+  "system.auto.q2wdty.47": "{saved} images sur {total} enregistrées · Incomplet",
+  "system.auto.14yw10u.127": "Source de la demande initiale, sans approbation actuelle. La consultation ne génère, ne remplace, n’approuve ni ne libère aucun travail ou montant réservé.",
+  "system.auto.1ee4no.24": "Version de la source initiale",
+  "system.auto.nj6hfa.26": "Image enregistrée indisponible",
+  "system.auto.11d4y1.17": "Aucune image enregistrée",
+  "system.auto.5rx7m6.27": "Fournisseur et modèle enregistrés",
+  "system.auto.hrwe8f.23": "Direction du plan initial",
+  "system.auto.1v71a7k.145": "{saved} images enregistrées. Consultez le plan initial sans relancer de génération. Le storyboard est incomplet ; le montant déjà réservé reste inchangé.",
   "system.auto.qkse08.49": "Cet audio correspond à une version antérieure du document",
   "system.auto.auzt5r.135": "Récupérez l’enregistrement déjà payé avec sa source d’origine. Les modifications récentes du document restent intactes ; aucune nouvelle génération ne sera achetée.",
   "system.auto.t6uqnc.2": "sur",

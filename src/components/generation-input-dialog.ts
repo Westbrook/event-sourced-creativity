@@ -1,18 +1,24 @@
 import { html, nothing } from "lit";
 import type { GenerationInputInspection } from "../model/generation-inputs";
+import { savedStoryboardInspection } from "../model/saved-storyboard-inspection";
 import { copyTextToClipboard, FormaElement, icon } from "./forma-element";
 import { ensureModalDialog } from "./modal-dialog";
 
 export class GenerationInputDialog extends FormaElement {
   static properties={open:{type:Boolean},inspection:{attribute:false}};
-  open=false;inspection:GenerationInputInspection|null=null;
+  open=false;inspection:GenerationInputInspection|null=null;#unavailableFrames=new Set<string>();
   protected override updated(){const dialog=this.renderRoot.querySelector<HTMLDialogElement>("dialog");if(this.open&&dialog&&!dialog.open)ensureModalDialog(dialog);if(!this.open&&dialog?.open)dialog.close();}
-  #close(){this.open=false;this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.dispatchEvent(new CustomEvent("generation-input-close",{bubbles:true,composed:true}));this.requestUpdate();}
+  #close(){this.open=false;this.#unavailableFrames.clear();this.renderRoot.querySelector<HTMLDialogElement>("dialog")?.close();this.dispatchEvent(new CustomEvent("generation-input-close",{bubbles:true,composed:true}));this.requestUpdate();}
+  #clearPrivatePreview=()=>{this.#unavailableFrames.clear();this.inspection=null;this.#close();};
+  override connectedCallback(){super.connectedCallback();window.addEventListener("forma-authorization-changed",this.#clearPrivatePreview);}
+  override disconnectedCallback(){window.removeEventListener("forma-authorization-changed",this.#clearPrivatePreview);this.#unavailableFrames.clear();this.inspection=null;super.disconnectedCallback();}
+  #frameUnavailable(url:string){this.#unavailableFrames.add(url);this.requestUpdate();}
   #backdrop(event:MouseEvent){if(event.target===event.currentTarget)this.#close();}
   async #copy(value:string,label:string){const copied=await copyTextToClipboard(value);this.store.toast(copied?this.i18n.system("{label} copied.",{label:this.i18n.system(label)}):this.i18n.system("{label} could not be copied.",{label:this.i18n.system(label)}));}
   override render(){
     const inspection=this.inspection;if(!inspection)return nothing;
     const failed=inspection.outcome==="failed",running=inspection.outcome==="in_progress";
+    const storyboard=savedStoryboardInspection(inspection);
     const receipt=JSON.stringify(inspection.receipt,null,2),accounting=record(inspection.receipt.generation_receipt);
     const render=record(inspection.receipt.render);
     const frozenInputs=Array.isArray(inspection.receipt.frozen_inputs)?inspection.receipt.frozen_inputs.map(record):[];
@@ -44,6 +50,19 @@ export class GenerationInputDialog extends FormaElement {
     return html`<dialog class="generation-input-dialog" closedby="any" @click=${this.#backdrop} @close=${()=>{if(this.open){this.open=false;this.dispatchEvent(new CustomEvent("generation-input-close",{bubbles:true,composed:true}));this.requestUpdate();}}}>
       <article><header><div><span>${inspection.subtitle}</span><h2>${inspection.title}</h2><p>${description}</p></div><button class="icon-button" aria-label="Close generation inputs" @click=${()=>this.#close()}>${icon("close")}</button></header>
       <main>
+        ${storyboard?html`<section class="saved-storyboard-inspection" aria-label=${this.i18n.system("Saved storyboard preview")}>
+          <header><div><h3>${this.i18n.system("{saved} of {total} frames recorded · Incomplete",{saved:this.i18n.number(storyboard.recordedFrameCount),total:this.i18n.number(storyboard.totalFrameCount)})}</h3><p>${this.i18n.system("Original request source, not current approval. Viewing does not generate, replace, approve, or release any work or budget hold.")}</p></div></header>
+          ${storyboard.title?html`<h4>${storyboard.title}</h4>`:nothing}${storyboard.summary?html`<p>${storyboard.summary}</p>`:nothing}
+          ${storyboard.sourceRevision?html`<p class="saved-storyboard-source">${this.i18n.system("Original source revision")}: <code>${storyboard.sourceRevision}</code></p>`:nothing}
+          <ol class="saved-storyboard-frames">${storyboard.frames.map((frame)=>html`<li>
+            <figure>${frame.mediaUrl&&!this.#unavailableFrames.has(frame.mediaUrl)?html`<img src=${frame.mediaUrl} alt=${frame.title||this.i18n.system("Storyboard shot {storyboard_sequence}",{storyboard_sequence:String(frame.index)})} loading="lazy" referrerpolicy="no-referrer" @error=${()=>this.#frameUnavailable(frame.mediaUrl!)}>`:html`<div class="saved-storyboard-placeholder" role="img" aria-label=${this.i18n.system(frame.recorded?"Recorded image unavailable":"No image recorded")}><span>${this.i18n.number(frame.index)}</span><p>${this.i18n.system(frame.recorded?"Recorded image unavailable":"No image recorded")}</p></div>`}
+              <figcaption><span>${this.i18n.system("Storyboard shot {storyboard_sequence}",{storyboard_sequence:String(frame.index)})}</span><h4>${frame.title}</h4><p>${frame.body}</p>
+                ${frame.recorded?html`<small>${this.i18n.system("Recorded provider and model")}: ${frame.provider||this.i18n.system("unknown")}${frame.model?` · ${frame.model}`:""}</small>`:nothing}
+                ${frame.notes||frame.imagePrompt?html`<details><summary>${this.i18n.system("Original shot direction")}</summary>${frame.notes?html`<p>${frame.notes}</p>`:nothing}${frame.imagePrompt?html`<p>${frame.imagePrompt}</p>`:nothing}</details>`:nothing}
+              </figcaption>
+            </figure>
+          </li>`)}</ol>
+        </section>`:nothing}
         ${facts.length?html`<section class="generation-receipt-summary"><header><div><h3>Generation receipt</h3><p>Verified provider, source-transmission, slide-count, reservation, and settlement details for this attempt.</p></div></header><dl>${facts.map(([label,value])=>html`<div><dt>${this.i18n.system(label)}</dt><dd>${value}</dd></div>`)}</dl>${accounting.slide_count_mismatch===true?html`<p role="status">The requested slide count intentionally differs from the authored outline.</p>`:nothing}${accounting.reservation_is_application_hard_cap===true?html`<p>Forma checks the remaining application spending ceiling before every provider request or repair. This is not a provider-enforced spending cap.</p>`:accounting.reservation_is_provider_hard_cap===false?html`<p>A reservation is an application estimate, not a provider-enforced spending cap. Bounded repair calls may add billable usage.</p>`:nothing}</section>`:nothing}
         ${inspection.prompt?html`<section><header><div><h3>${this.i18n.system(promptLabel)}</h3><p>${providerContacted===true?failed?this.i18n.system("The exact retained prompt associated with the failed provider request."):this.i18n.system("The exact retained prompt sent to the generation provider."):providerContacted===false?this.i18n.system("The retained prompt was prepared locally and has not been submitted to a provider."):this.i18n.system("The retained prompt is available, but provider submission has not been confirmed.")}</p></div><button class="button secondary compact" @click=${()=>this.#copy(inspection.prompt,"Prompt")}>Copy prompt</button></header><textarea readonly spellcheck="false" .value=${inspection.prompt} aria-label=${this.i18n.system("{promptLabel} for generation", { promptLabel: this.i18n.system(promptLabel) })}></textarea></section>`:nothing}
         ${references.length?html`<section><header><div><h3>Reference pixels</h3><p>${references.length} ordered reference image${references.length===1?" " + this.i18n.system("was"):this.i18n.system("s were")} supplied or prepared. Pixel receipts show whether bytes reached the provider and include hashes without duplicating private image data.</p></div></header><ol class="generation-reference-receipts">${references.map((value,index)=>{const item=record(value);return html`<li><b>${String(item.label??`Reference ${index+1}`)}</b><span>${item.storyboard_sequence?this.i18n.system("Storyboard shot {storyboard_sequence}", { storyboard_sequence: String(item.storyboard_sequence) }):this.i18n.system("Reference {count}", { count: this.i18n.number(index+1) })} · ${String(item.mode??"context")}</span><small>${item.pixels_submitted===true?this.i18n.system("Pixels submitted"):item.pixels_submitted===false?this.i18n.system("Metadata only"):this.i18n.system("Prepared before failure")}${item.byte_length?" " + this.i18n.system("· {formatted} bytes", { formatted: Number(item.byte_length).toLocaleString(this.i18n.locale) }):""}${item.sha256?` · SHA-256 ${String(item.sha256).slice(0,16)}…`:""}</small>${item.shot_direction?html`<p>${String(item.shot_direction)}</p>`:nothing}</li>`;})}</ol></section>`:nothing}

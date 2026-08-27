@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { registerHooks } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
@@ -35,7 +34,6 @@ const providerFrameIds = [
 ];
 const queueRoot = (requestId) => `https://queue.fal.run/ideogram/v4/requests/${requestId}`;
 const mediaUrl = (requestId) => `https://cdn.fal.media/${requestId}.jpg`;
-const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
 const storyboardPlan = {
   title: "One context, infinite paths",
@@ -197,109 +195,77 @@ function reservationState(fixture, reservationId, table) {
   return fixture.sqlite.prepare(`SELECT reservation_id,status,correlation_id FROM ${table} WHERE reservation_id=?`).get(reservationId);
 }
 
-test("owner safely continues a four-frame storyboard after one rejected image while preserving its paid frame and original reservations", async () => {
+test("saved storyboard inspection and the disabled legacy continuation preserve the original rejection, paid frames, and holds", async () => {
   const fixture = await routeFixture();
   const provider = providerMock();
-
   try {
     const admitted = await admitStoryboard(fixture);
     const failedResponse = await fixture.route(`${admitted.jobId}/run`, { method: "POST" });
-    assert.equal(failedResponse.status, 200, JSON.stringify(await failedResponse.clone().json()));
+    assert.equal(failedResponse.status, 200, await failedResponse.clone().text());
     const failed = (await failedResponse.json()).job;
-    assert.equal(failed.status, "failed", JSON.stringify({ errorDetail: failed.errorDetail, result: failed.result, calls: provider.calls }));
-    assert.equal(failed.errorDetail.category, "safety", JSON.stringify(failed.errorDetail));
-    assert.equal(failed.errorDetail.httpStatus, 422);
-    assert.equal(failed.errorDetail.retryable, false);
-    assert.equal(failed.result.storyboardProviderSubmission, "confirmed");
-    assert.equal(failed.result.providerJobId, rejectedFrameId);
-    assert.equal(failed.result.renderedItems.length, 1, "the successfully paid first frame must already be durably checkpointed");
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.errorDetail.category, "safety");
+    assert.equal(failed.result.renderedItems.length, 1);
     assert.equal(fixture.savedMedia.size, 1);
-
-    const originalTokenId = failed.result.reservationId;
-    const originalCostId = failed.result.costReservationId;
-    const originalCorrelation = fixture.sqlite.prepare("SELECT correlation_id FROM document_jobs WHERE job_id=?").get(failed.jobId).correlation_id;
-    assert.equal(reservationState(fixture, originalTokenId, "budget_reservations").status, "active");
-    assert.equal(reservationState(fixture, originalCostId, "cost_budget_reservations").status, "executing");
-    assert.equal(reservationState(fixture, originalTokenId, "budget_reservations").correlation_id, originalCorrelation);
-    assert.equal(reservationState(fixture, originalCostId, "cost_budget_reservations").correlation_id, originalCorrelation);
-
-    const initialSubmissions = provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST");
-    assert.equal(initialSubmissions.length, 2);
-    const rejectedPrompt = initialSubmissions[1].body.prompt;
+    const tokenId = failed.result.reservationId, costId = failed.result.costReservationId;
+    assert.equal(reservationState(fixture, tokenId, "budget_reservations").status, "active");
+    assert.equal(reservationState(fixture, costId, "cost_budget_reservations").status, "executing");
 
     const ordinaryRetry = await fixture.route(`${failed.jobId}/retry`, { method: "POST" });
-    assert.equal(ordinaryRetry.status, 409, "the provider-rejected request must never be retried directly");
+    assert.equal(ordinaryRetry.status, 409);
     assert.equal((await ordinaryRetry.json()).error, "provider_job_not_retryable");
 
-    const continuedResponse = await fixture.route(`${failed.jobId}/continue-safer-frames`, { method: "POST" });
-    assert.equal(continuedResponse.status, 202, await continuedResponse.clone().text());
-    const continued = await continuedResponse.json();
-    assert.equal(continued.job.jobId, failed.jobId);
-    assert.equal(continued.job.status, "queued");
-    assert.equal(continued.job.result.reservationId, originalTokenId);
-    assert.equal(continued.job.result.costReservationId, originalCostId);
-    assert.equal(continued.job.result.renderedItems.length, 1);
-    assert.equal(continued.continuedWithSaferFrames, true);
-    assert.equal(continued.reusedReservations, true);
-    assert.equal(continued.job.result.storyboardSafeRecovery, undefined, "server-owned recovery authority must not be exposed to clients");
-    const trustedCheckpoint = JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?")
-      .get(failed.jobId).result_json);
-    assert.equal(trustedCheckpoint.storyboardSafeRecovery.enabled, true);
-    assert.equal(trustedCheckpoint.storyboardSafeRecovery.failedFrameIndex, 1);
-    assert.equal(trustedCheckpoint.storyboardSafeRecovery.rejectedProviderJobId, rejectedFrameId);
-    assert.equal(trustedCheckpoint.storyboardSafeRecovery.rejectedPromptSha256, sha256(rejectedPrompt));
-    assert.equal(trustedCheckpoint.storyboardSafeRecovery.maxAttempts, 1);
-    assert.ok(Date.parse(trustedCheckpoint.storyboardSafeRecovery.attemptedAt));
-    assert.equal(trustedCheckpoint.storyboardRejectedProviderReceipt.providerJobId, rejectedFrameId);
-    assert.equal(trustedCheckpoint.storyboardRejectedProviderReceipt.promptSha256, sha256(rejectedPrompt));
-    assert.equal(fixture.sqlite.prepare("SELECT correlation_id FROM document_jobs WHERE job_id=?").get(failed.jobId).correlation_id,
-      originalCorrelation, "continuation must retain the already-owned reservation correlation until execution handoff");
-    assert.equal(reservationState(fixture, originalTokenId, "budget_reservations").status, "active");
-    assert.equal(reservationState(fixture, originalCostId, "cost_budget_reservations").status, "executing");
+    // A different expired lease must not turn a read-only detail request into
+    // maintenance or a queue-dispatch side effect.
+    const existing = fixture.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(failed.jobId);
+    const stale = { ...existing, job_id: "unrelated-stale-job", correlation_id: "unrelated-stale-correlation", status: "running", attempt_count: 10, lease_expires_at: "2000-01-01T00:00:00.000Z" };
+    const columns = Object.keys(stale);
+    fixture.sqlite.prepare(`INSERT INTO document_jobs (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(...columns.map((key) => stale[key]));
+    const state = () => ({
+      jobs: fixture.sqlite.prepare("SELECT * FROM document_jobs ORDER BY job_id").all(),
+      tokens: fixture.sqlite.prepare("SELECT * FROM budget_reservations ORDER BY reservation_id").all(),
+      costs: fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),
+      events: fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count,
+      privateContent: fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count,
+      mediaCount: fixture.savedMedia.size,
+      calls: provider.calls.length,
+    });
+    const original = state();
+    let dispatched = 0;
+    const inspect = (jobId) => handleDocumentJobs(
+      new Request(`http://localhost/api/document-jobs/${jobId}?inspection=1`),
+      fixture.env, jobId, { waitUntil() { dispatched += 1; } },
+    );
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const inspected = await inspect(failed.jobId);
+      assert.equal(inspected.status, 200, await inspected.clone().text());
+      assert.equal(inspected.headers.get("cache-control"), "private, no-store");
+      const observed = (await inspected.json()).job;
+      assert.equal(observed.status, "failed");
+      assert.equal(observed.errorDetail.category, "safety");
+      assert.equal(observed.result.providerJobId, rejectedFrameId);
+      assert.equal(observed.result.renderedItems.length, 1);
+      assert.equal(observed.result.artifactPlan.items.length, 4);
+      const disabled = await fixture.route(`${failed.jobId}/continue-safer-frames`, { method: "POST" });
+      assert.equal(disabled.status, 409);
+      assert.equal((await disabled.json()).error, "storyboard_revised_direction_approval_required");
+      assert.deepEqual(state(), original);
+    }
+    assert.equal(dispatched, 0);
+    assert.equal(provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST").length, 2);
+    assert.equal(provider.calls.filter((call) => call.url === queueRoot(initialFrameId)).length, 1);
+    assert.equal(provider.calls.filter((call) => call.url === queueRoot(rejectedFrameId)).length, 1);
 
-    const duplicateContinuation = await fixture.route(`${failed.jobId}/continue-safer-frames`, { method: "POST" });
-    assert.equal(duplicateContinuation.status, 409, "safe continuation must be bounded to one explicit owner-approved attempt");
-
-    const completedResponse = await fixture.route(`${failed.jobId}/run`, { method: "POST" });
-    assert.equal(completedResponse.status, 200, JSON.stringify(await completedResponse.clone().json()));
-    const completed = (await completedResponse.json()).job;
-    assert.equal(completed.status, "completed", JSON.stringify({ errorDetail: completed.errorDetail, result: completed.result, calls: provider.calls }));
-
-    const submissions = provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST");
-    assert.equal(submissions.length, 5, "only the first accepted frame, rejected frame, safer replacement, and remaining two frames may be submitted");
-    assert.notEqual(submissions[2].body.prompt, rejectedPrompt, "the replacement must have a meaningfully changed, safer provider prompt");
-    assert.notEqual(sha256(submissions[2].body.prompt), sha256(rejectedPrompt));
-    assert.equal(provider.calls.filter((call) => call.url === queueRoot(rejectedFrameId)).length, 1,
-      "the terminally rejected Fal request must never be polled, downloaded, or retried again");
-    assert.equal(provider.calls.filter((call) => call.url === queueRoot(initialFrameId)).length, 1,
-      "the completed first frame must not be polled, downloaded, or charged a second time");
-    assert.equal(provider.calls.filter((call) => call.url.endsWith("/responses")).length, 1,
-      "continuation must reuse the original paid storyboard plan");
-    assert.equal(fixture.savedMedia.size, 4, "exactly four genuine storyboard images must be privately stored");
-
-    const finalCorrelation = fixture.sqlite.prepare("SELECT correlation_id FROM document_jobs WHERE job_id=?").get(failed.jobId).correlation_id;
-    assert.equal(reservationState(fixture, originalTokenId, "budget_reservations").status, "settled");
-    assert.equal(reservationState(fixture, originalCostId, "cost_budget_reservations").status, "settled");
-    assert.equal(reservationState(fixture, originalTokenId, "budget_reservations").correlation_id, finalCorrelation);
-    assert.equal(reservationState(fixture, originalCostId, "cost_budget_reservations").correlation_id, finalCorrelation);
-    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations WHERE owner_id=? AND operation='document-render:storyboard'").get(ownerId).count, 1);
-    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE owner_id=? AND operation='document-render:storyboard'").get(ownerId).count, 1);
-
-    const completedEvent = fixture.sqlite.prepare("SELECT payload FROM events WHERE type='DocumentRenderCompleted' AND correlation_id=?").get(finalCorrelation);
-    const artifact = JSON.parse(completedEvent.payload);
-    assert.equal(artifact.artifact_kind, "storyboard");
-    assert.equal(artifact.item_count, 4);
-    assert.equal(artifact.provider, "fal");
-    const privateArtifact = fixture.sqlite.prepare("SELECT owner_id,kind,content FROM private_content WHERE content_id=?")
-      .get(artifact.content_ref);
-    assert.equal(privateArtifact.owner_id, ownerId);
-    assert.equal(privateArtifact.kind, "document-artifact");
-    assert.equal(JSON.parse(privateArtifact.content).items.length, 4);
-  } finally {
-    provider.restore();
-  }
+    for (const [column, value] of [["owner_id", "another-owner"], ["stream_id", "another-stream"], ["expires_at", "2000-01-01T00:00:00.000Z"]]) {
+      fixture.sqlite.prepare(`UPDATE document_jobs SET ${column}=? WHERE job_id=?`).run(value, failed.jobId);
+      assert.equal((await inspect(failed.jobId)).status, 404, column);
+      fixture.sqlite.prepare(`UPDATE document_jobs SET ${column}=? WHERE job_id=?`).run(existing[column], failed.jobId);
+    }
+    assert.equal((await inspect("nonexistent-job")).status, 404);
+    assert.deepEqual(state(), original);
+    assert.equal(dispatched, 0);
+  } finally { provider.restore(); }
 });
-
 for (const interruptAcceptedFrame of [false, true]) {
   test(`eight-frame storyboard ${interruptAcceptedFrame ? "resumes an accepted frame" : "completes in one foreground run"} without duplicate calls or lost costs`, async () => {
     const fixture = await routeFixture();

@@ -835,9 +835,12 @@ export async function renderManagedVideoProduction(
       await persist(`Rendering scene ${scene.narrativeOrder} of ${production.scenes.length}: ${scene.title}.`);
       const sceneSnapshot = productionSceneSnapshot(input.snapshot, scene);
       const sceneContinuity = providerFacingProductionContinuity(production, scene);
+      const { prohibitions: _sceneProhibitions, ...visualContinuity } = sceneContinuity;
       const sceneGroups = (production.contextGroups ?? combinedContextGroups(input.snapshot)).filter((group) => scene.contextGroupIds.includes(group.id));
       const scopedTargets = providerFacingProductionTargets(production, input.snapshot).filter((target) => sceneGroups.some((group) => group.role === target.role && group.target === target.target));
-      const sceneDraft = { title: draft.title, summary: `${draft.summary} Target-scoped visual continuity: ${JSON.stringify(sceneContinuity)}.`, items: [{ ...item, notes: `${item.notes} ${scene.transitionIn}; ${scene.transitionOut}.` }] };
+      // Negative continuity has its own protected global/target-scoped channel
+      // below; do not duplicate it as affirmative scene-summary direction.
+      const sceneDraft = { title: draft.title, summary: `${draft.summary} Target-scoped visual continuity: ${JSON.stringify(visualContinuity)}.`, items: [{ ...item, notes: `${item.notes} ${scene.transitionIn}; ${scene.transitionOut}.` }] };
       const video = await generateCreativeVideo(env, item.image_prompt || item.body || scene.action, {
         seconds: scene.durationSeconds,
         size: input.videoSize,

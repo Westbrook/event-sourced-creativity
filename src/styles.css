@@ -2005,6 +2005,21 @@ forma-document-artifacts { display: block; min-width: 0; }
 .generation-receipt-summary > p { margin: .9rem 0 0; color: var(--muted); }
 .generation-input-dialog textarea { display: block; width: 100%; min-height: 10rem; max-height: 22rem; resize: vertical; padding: 1rem; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font: 400 var(--type-caption)/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; }
 .generation-input-dialog .generation-input-receipt { min-height: 18rem; }
+.saved-storyboard-inspection > h4 { margin: 0 0 .4rem; font: 600 1.25rem/1.25 var(--sans); }
+.saved-storyboard-inspection > p { max-width: 60ch; }
+.saved-storyboard-source { color: var(--muted); font-size: var(--type-caption); }
+.saved-storyboard-frames { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(22rem,100%),1fr)); gap: 1rem; margin: 1rem 0 0; padding: 0; list-style: none; }
+.saved-storyboard-frames li { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.saved-storyboard-frames figure { margin: 0; }
+.saved-storyboard-frames img,.saved-storyboard-placeholder { display: block; width: 100%; aspect-ratio: 3 / 2; object-fit: contain; background: var(--paper); }
+.saved-storyboard-placeholder { display: grid; align-content: center; justify-items: center; color: var(--muted); }
+.saved-storyboard-placeholder > span { font: 400 3rem/1 var(--sans); }
+.saved-storyboard-frames figcaption { display: grid; gap: .5rem; padding: 1rem; overflow-wrap: anywhere; }
+.saved-storyboard-frames figcaption > span,.saved-storyboard-frames small { color: var(--muted); font-size: var(--type-caption); }
+.saved-storyboard-frames h4,.saved-storyboard-frames p { margin: 0; }
+.saved-storyboard-frames details { border-block-start: 1px solid var(--line); padding-block-start: .5rem; }
+.saved-storyboard-frames summary { min-height: 2.75rem; cursor: pointer; }
+.saved-storyboard-frames details p + p { margin-block-start: .75rem; }
 @media (max-width: 40rem) {
   .generation-input-dialog > article > header,.generation-input-dialog section > header { gap: .75rem; }
   .generation-input-dialog > article > footer { align-items: stretch; flex-direction: column; }
