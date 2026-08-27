@@ -6015,6 +6015,8 @@ const messages: Record<string, string> = {
   "system.auto.bcxn5b.27": "{count} renders in progress",
   "system.auto.12nuc1t.26": "Continue with safer frames",
   "system.auto.1tgh5l8.255": "{saved} of {total} frames saved. Context and captions stay unchanged. The rejected attempt may have been charged and will not be replayed. Revised frames are new paid image work within the existing {maximum} maximum; no new reservation or planner request.",
+  "system.auto.10fv3hf.51": "Forma could not fit the audio request to this model",
+  "system.auto.1bop32q.183": "Review the retained script, required voice direction, and model limits before starting a changed request. No audio render was submitted; any completed planning usage remains recorded.",
 };
 
 export default messages;

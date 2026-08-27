@@ -12,7 +12,10 @@ import { combinedContextGroups, combinedContextPromptDirectives } from "../src/m
 import { creativeEvaluationPromptGuardrails, creativePromptGuardrails, promptFactIsActive, providerFacingCreativeContext, providerFacingRenderingContext } from "../src/model/prompt-policy.ts";
 import { REPLAY_EXPERIENCE_PROFILES, replayExperienceDefinition, type ReplayExperienceId } from "../src/model/replay-experiences.ts";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, isVideoAudioMode, isVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT, type VideoAudioMode, type VideoDurationSeconds } from "../src/model/video-adapter.ts";
-import { VIDEO_AUDIO_REFERENCE_CONTRACT, audioRightsAllowed, normalizeAudioRequestProfile, type AudioRequestProfile } from "../src/model/audio.ts";
+import { VIDEO_AUDIO_REFERENCE_CONTRACT, AudioAdapterSelectionError, audioRightsAllowed, type AudioRequestProfile } from "../src/model/audio.ts";
+import { AudioProviderInputError } from "../src/model/audio-provider-contracts.ts";
+import { adaptAudioPrompt, audioPreparationConstraints } from "./audio-prompt-adapter.ts";
+import { selectAudioAdapter } from "./audio-selection.ts";
 import { productionTeamFor, productionTeamInstructions, providerFacingProductionContinuity, type ManagedProductionPlan, type ProductionMode, type ProductionScene } from "../src/model/managed-production.ts";
 import { createSceneConfiguration, type SceneConfiguration, type SceneMedium } from "../src/model/scene-configuration.ts";
 import { buildPresentationSourceContract, inferPresentationAudienceLocale, providerFacingPresentationSourceContract, repairProtectedPresentationMessages, resolvePresentationSourceReferences, type PresentationSourceContract, type PresentationSourceSlide } from "../src/model/presentation-source.ts";
@@ -84,7 +87,7 @@ export const PRESENTATION_ADAPTER_VERSION="2026-08-26-source-aware-render-v4";
 export const MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES=512*1024;
 export type ProviderResponseReceipt=ProviderAttemptReceipt&{candidateRaw:string|null;candidateBytes:number;candidateTruncated:boolean;completionStatus?:string;incompleteReason?:string};
 export type ProviderAttemptPreflight = {model:string;maximumInputTokens:number;maximumOutputTokens:number;clientRequestId:string};
-export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; locale?:string; outputLocale?:string; presentationStyle?:SlideStylePresetId; presentationFidelity?:"faithful"|"creative"; requestedSlideCount?:number; authoredSlideCount?:number; videoSeconds?:VideoDurationSeconds; videoSize?:"1280x720"|"720x1280"; videoAudioMode?:VideoAudioMode; audioProfile?:AudioRequestProfile; sceneMedium?:SceneMedium; sceneConfiguration?:SceneConfiguration; productionMode?:ProductionMode; productionPlan?:ManagedProductionPlan; productionScenes?:ProductionScene[]; productionPage?:ProductionPageContext; signal?:AbortSignal; onProviderSubmission?:PaidProviderSubmissionObserver; onProviderResponse?:(receipt:ProviderResponseReceipt)=>void|Promise<void>;onProviderAttempt?:(receipt:ProviderAttemptReceipt)=>void|Promise<void>;onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void> };
+export type DocumentArtifactOptions = { itemCount?:number; audience?:string; tone?:string; locale?:string; outputLocale?:string; presentationStyle?:SlideStylePresetId; presentationFidelity?:"faithful"|"creative"; requestedSlideCount?:number; authoredSlideCount?:number; videoSeconds?:VideoDurationSeconds; videoSize?:"1280x720"|"720x1280"; videoAudioMode?:VideoAudioMode; audioProfile?:AudioRequestProfile; audioProviderModel?:string; sceneMedium?:SceneMedium; sceneConfiguration?:SceneConfiguration; productionMode?:ProductionMode; productionPlan?:ManagedProductionPlan; productionScenes?:ProductionScene[]; productionPage?:ProductionPageContext; signal?:AbortSignal; onProviderSubmission?:PaidProviderSubmissionObserver; onProviderResponse?:(receipt:ProviderResponseReceipt)=>void|Promise<void>;onProviderAttempt?:(receipt:ProviderAttemptReceipt)=>void|Promise<void>;onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void> };
 export type VideoReference = { bytes:Uint8Array; mimeType:string; blockId:string; referenceId:string; label:string; mode:ReferencePixelMode; sequence:number|null; shotDirection:string; cameraDirection:string; framePrompt:string; sourceArtifactId:string|null; sourceArtifactItemId:string|null; sourceArtifactKind:string|null; storyboardTitle:string; contextGroups?:Array<{id:string;name:string;target:string;role:string;application:string;relativity:number}>; provider?:string|null; providerModel?:string|null; providerRequestId?:string|null; providerMediaUrl?:string|null };
 export type VideoAudioReference = { bytes:Uint8Array; mimeType:string; blockId:string; referenceId:string; label:string; durationSeconds:number; rightsClass:string };
 export type CreativeVideoPreparedReceipt = { provider:string; model:string; submittedPrompt:string; parameters:Record<string,unknown>; referenceInputs:Array<Record<string,unknown>>; usedReferencePixels:boolean; adaptation?:VideoPromptAdaptation };
@@ -165,13 +168,18 @@ const slideVisualSchema={
     },
   },
 };
-const documentArtifactSchema=(kind:DocumentArtifactKind,lockedPresentation?:SlidePresentation|null,requestedStyle?:SlideStylePresetId,expectedItemCount?:number)=>{
+const documentArtifactSchema=(kind:DocumentArtifactKind,lockedPresentation?:SlidePresentation|null,requestedStyle?:SlideStylePresetId,expectedItemCount?:number,audioConstraints?:ReturnType<typeof audioPreparationConstraints>|null)=>{
   const itemProperties:Record<string,unknown>={title:{type:"string",...(kind==="slides"?{minLength:1}:{})},body:{type:"string"},notes:{type:"string"},image_prompt:{type:"string"},context_group_ids:{type:"array",maxItems:24,items:{type:"string"}}};
   const itemRequired=["title","body","notes","image_prompt","context_group_ids"];
   if(kind==="slides"){itemProperties.slide=slideVisualSchema;itemRequired.push("slide");}
   const exactCount=kind==="slides"&&Number.isSafeInteger(expectedItemCount)&&Number(expectedItemCount)>0?Number(expectedItemCount):null;
   const properties:Record<string,unknown>={title:{type:"string",...(kind==="slides"?{minLength:1}:{})},summary:{type:"string"},content_markdown:{type:"string",...(kind==="slides"?{minLength:1}:{})},items:{type:"array",minItems:exactCount??1,maxItems:exactCount??12,items:{type:"object",additionalProperties:false,required:itemRequired,properties:itemProperties}}};
   const required=["title","summary","content_markdown","items"];
+  if(kind==="audio"&&audioConstraints){
+    properties.content_markdown=audioConstraints.approved_script_present?{type:"string",enum:[""]}:{type:"string",minLength:1,maxLength:audioConstraints.maximum_content_characters};
+    properties.summary={type:"string",maxLength:320};
+    itemProperties.notes={type:"string",maxLength:audioConstraints.maximum_style_characters??audioConstraints.maximum_prompt_characters};
+  }
   if(kind==="slides"){
     const presentation=structuredClone(slidePresentationSchema);
     if(requestedStyle&&!lockedPresentation){
@@ -496,7 +504,7 @@ const audioSceneInstructions="Write one production-readable audio scene for an a
 
 function specialistAudioInstructions(profile: AudioRequestProfile): string {
   if (profile.goal === "narration") {
-    return "Write an immediately speakable narration or conversation, not a music brief. content_markdown must contain ONLY the exact words intended to be spoken aloud; preserve an approved authored script verbatim. For two voices label every line with a consistent speaker name. Never include production notes, stage directions, policy text, sound effects, music, descriptions of a script, or instructions inside content_markdown. The item body contains the same speakable words; notes may describe nonspoken vocal delivery separately.";
+    return "Write an immediately speakable narration or conversation, not a music brief. For newly written speech, content_markdown must contain ONLY the exact words intended to be spoken aloud. For newly written two-voice dialogue label every line with exactly Speaker1: or Speaker2: so the downstream aliases are already budgeted. When audio.approved_spoken_script is supplied, return an empty content_markdown: Forma inserts those approved words unchanged locally, so never regenerate, summarize, or duplicate that script. Never include production notes, stage directions, policy text, sound effects, music, descriptions of a script, or instructions inside content_markdown. Do not repeat the complete script in item bodies; leave body empty and put concise nonspoken delivery direction in notes.";
   }
   if (profile.goal === "sound_effects" || profile.goal === "video_sound_effects") {
     return "Write a precise original Foley, sound-effect, or environmental sound-design brief, not a musical composition. Describe audible events, order, acoustic perspective, dynamics, timing, texture, and meaningful silence. For video synchronization align effects with visible authored action. Do not add music, dialogue, or narration unless explicitly authored.";
@@ -872,7 +880,9 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const audioMode=input.options?.videoAudioMode??VIDEO_ADAPTER_CONTRACT.defaultAudioMode;
   const sceneConfiguration=kind==="scene"?input.options?.sceneConfiguration??createSceneConfiguration(input.options?.sceneMedium??"visual"):null;
   const audioScene=sceneConfiguration?.medium==="audio";
-  const specialistAudio=kind==="audio"?normalizeAudioRequestProfile(input.options?.audioProfile,input.snapshot):null;
+  const audioSelection=kind==="audio"?selectAudioAdapter(env,input.options?.audioProfile,{snapshot:input.snapshot,preferredModel:input.options?.audioProviderModel}):null;
+  const specialistAudio=audioSelection?.profile??null;
+  const audioConstraints=audioSelection?audioPreparationConstraints(input.snapshot,{profile:audioSelection.profile,model:audioSelection.model,tone:input.options?.tone,audience:input.options?.audience}):null;
   const managed=input.options?.productionMode==="managed"&&Boolean(input.options.productionPlan);
   const managedScenes=input.options?.productionScenes??[];
   const managedPlan=input.options?.productionPlan;
@@ -895,7 +905,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const managedDirection=managed&&managedPlan?audioScene?audioSceneProductionInstructions(managedPlan,managedScenes):productionTeamInstructions(managedPlan,managedScenes):"";
   const formatInstructions=managed&&kind==="video"
     ? "Write one production-ready, independently renderable motion prompt per assigned scene. Each item's body is its unique visual action, notes contain camera, identity, and transition continuity, and image_prompt is its standalone source-grounded clip prompt. content_markdown is the chronological scene script. Never compress multiple assigned scenes into one clip, repeat the complete plot in every item, or invent music, dialogue, voice, or soundtrack requirements."
-    : specialistAudio?specialistAudioInstructions(specialistAudio):audioScene?audioSceneInstructions:kind==="slides"?`${artifactInstructions[kind]} ${authoredVisualCategoryCopyInstructions}`:artifactInstructions[kind];
+    : specialistAudio&&audioConstraints?`${specialistAudioInstructions(specialistAudio)} The audio.provider_contract is binding for the selected downstream model, not another model's defaults. Keep the entire resulting audio direction within ${audioConstraints.maximum_prompt_characters} characters; allow room for required context and policy. ${specialistAudio.goal==="narration"?`The final spoken script plus normalized speaker labels must fit ${audioConstraints.maximum_script_utf8_bytes} UTF-8 bytes, with a target of at most ${audioConstraints.target_script_utf8_bytes} bytes for newly written speech. Non-ASCII characters use multiple UTF-8 bytes. Never shorten an approved script or omit protected wording to meet a budget; it has already passed admission. Keep nonspoken delivery notes separate and concise. If duration is requested, pace the script for it without claiming the speech provider enforces an exact runtime.`:"Do not invent unsupported duration, voice, sample-count, reference, or format parameters."}`:audioScene?audioSceneInstructions:kind==="slides"?`${artifactInstructions[kind]} ${authoredVisualCategoryCopyInstructions}`:artifactInstructions[kind];
   const videoContract=kind==="video"?managed
     ? ` Each assigned scene is a separate ${VIDEO_ADAPTER_CONTRACT.supportedDurations[0]}–${VIDEO_ADAPTER_CONTRACT.supportedDurations.at(-1)} second provider generation in ${input.options?.videoSize==="720x1280"?"9:16 portrait":"16:9 landscape"}; the complete production may be much longer. Respect the assigned per-scene duration and chronological source beat. Do not compress the complete narrative into one clip. ${audioMode==="original_ambient"?"Only original nonmelodic environmental ambience is allowed.":"Every clip is silent; communicate rhythm through visible action and light."}`
     : ` The requested output is exactly ${input.options?.videoSeconds??4} seconds in ${input.options?.videoSize==="720x1280"?"9:16 portrait":"16:9 landscape"}. The motion prompt must fit that duration; do not claim or imply a different runtime. Preserve every ordered storyboard shot as chronology, including description-only frames, compressing their beats into the available runtime without dropping named subjects or continuity. ${audioMode==="original_ambient"?"Original nonmelodic, in-scene environmental ambience is explicitly allowed; describe it only as visible natural sources, never as music, dialogue, voices, or a recorded work.":"This is a picture-only silent render. Do not invent or request any soundtrack, score, music, voice, dialogue, or other audio. Translate their implied dramatic rhythm into visible motion and light."}`:"";
@@ -947,12 +957,12 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     ...(providerSceneConfiguration?{scene_configuration:providerSceneConfiguration}:{}),
     ...(sourceFacing?{presentation_source:sourceFacing}:{}),
     ...(kind==="video"?{video:{duration_seconds:managed?null:input.options?.videoSeconds??4,maximum_scene_seconds:managed?15:undefined,frame:input.options?.videoSize??"1280x720",aspect_ratio:input.options?.videoSize==="720x1280"?"9:16":"16:9",audio_mode:audioMode,generate_audio:audioMode==="original_ambient"}}:{}),
-    ...(specialistAudio?{audio:{goal:specialistAudio.goal,role:specialistAudio.role,destination:specialistAudio.destination,...(specialistAudio.durationSeconds?{duration_seconds:specialistAudio.durationSeconds}:{}),...(specialistAudio.speakerCount?{speaker_count:specialistAudio.speakerCount}:{}),...(specialistAudio.requireInstrumental?{prefer_instrumental:true}:{}),...(specialistAudio.transcript?{approved_spoken_script:specialistAudio.transcript}:{})}}:{}),
+    ...(specialistAudio?{audio:{goal:specialistAudio.goal,role:specialistAudio.role,destination:specialistAudio.destination,provider_contract:audioConstraints,...(specialistAudio.durationSeconds?{duration_seconds:specialistAudio.durationSeconds}:{}),...(specialistAudio.speakerCount?{speaker_count:specialistAudio.speakerCount}:{}),...(specialistAudio.requireInstrumental?{prefer_instrumental:true}:{}),...(specialistAudio.transcript?{approved_spoken_script:specialistAudio.transcript}:{})}}:{}),
     ...(managed?{production:{team:(audioScene?productionTeamFor("scene","audio"):managedPlan?.team)?.specialists.map((member)=>({role:member.label,deliverable:member.deliverable})),continuity_bible:sharedContinuity,assigned_scenes:providerScenes,...(providerPage?{page:providerPage}:{})}}:{}),
   });
   const model=env.OPENAI_MODEL??"gpt-5.6-terra";
   const identifier=await safetyIdentifier(userId);
-  const maxOutputTokens=managed?Math.max(kind==="slides"?6500:4000,Math.min(12000,itemCount*1200)):kind==="short_story"?6000:kind==="slides"?Math.max(6500,Math.min(12000,itemCount*900)):kind==="storyboard"?4000:3000;
+  const maxOutputTokens=specialistAudio?.goal==="narration"&&!specialistAudio.transcript?Math.min(12000,(audioConstraints?.maximum_script_utf8_bytes??6000)+1500):managed?Math.max(kind==="slides"?6500:4000,Math.min(12000,itemCount*1200)):kind==="short_story"?6000:kind==="slides"?Math.max(6500,Math.min(12000,itemCount*900)):kind==="storyboard"?4000:3000;
   const paidResponses:OpenAIResponse[]=[];
   const paidAccounting=():ProviderAttemptAccounting=>({
     providerUsage:{
@@ -966,7 +976,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   });
   const run=async(requestInstructions:string,requestInput:string,name:string)=>{
     try{
-      const requestBody=JSON.stringify({model,instructions:requestInstructions,input:requestInput,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:documentArtifactSchema(kind,page?.lockedPresentation,selectedStyle,itemCount)}},reasoning:{effort:"low"},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier});
+      const requestBody=JSON.stringify({model,instructions:requestInstructions,input:requestInput,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:documentArtifactSchema(kind,page?.lockedPresentation,selectedStyle,itemCount,audioConstraints)}},reasoning:{effort:"low"},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier});
       const clientRequestId=`forma-${kind}-${crypto.randomUUID()}`;
       await input.options?.onBeforeProviderAttempt?.({model,maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:maxOutputTokens,clientRequestId});
       const submission:PaidProviderSubmission={clientRequestId,provider:"openai",operation:"planning",model,status:"pending"};
@@ -1005,7 +1015,8 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const assess=(parsed:DocumentArtifactDraft|null)=>{
     const groupResolution=resolveDocumentArtifactContextGroups(parsed,groupContracts);
     const sourceResolution=sourceContract?resolveProviderPresentationSources(groupResolution.output,sourceContract,managedScenes,page?.globalStartIndex??0):null;
-    const output=sourceResolution?.output??groupResolution.output;
+    const resolvedOutput=sourceResolution?.output??groupResolution.output;
+    const output=resolvedOutput&&audioConstraints?.approved_script_present?{...resolvedOutput,content_markdown:specialistAudio!.transcript!}:resolvedOutput;
     const issues=documentArtifactValidationIssues(kind,output,{
       itemCount,
       contextGroupIds:groupIds,
@@ -1020,6 +1031,15 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       }:{}),
     });
     if(sourceContract&&sourceResolution)issues.push(...presentationSourceSupplementalIssues(output,sourceContract,sourceResolution.receipt,{complete:completeSourceCoverage,requestedStyle:selectedStyle,pageStart:page?.globalStartIndex??0,productionScenes:managedScenes}));
+    if(audioSelection&&output){
+      try{
+        const adapted=adaptAudioPrompt(input.snapshot,output,{profile:audioSelection.profile,model:audioSelection.model,tone:input.options?.tone,audience:input.options?.audience});
+        if(!adapted.compilation.valid)issues.push({code:"audio_prompt_requirements_exceed_provider_limit",path:"content_markdown",message:adapted.compilation.issues.map((issue)=>issue.message).join(" ")});
+      }catch(error){
+        if(error instanceof AudioProviderInputError||error instanceof AudioAdapterSelectionError)issues.push({code:error.code,path:error instanceof AudioProviderInputError&&error.field==="style_instructions"?"items.notes":"content_markdown",message:error.message});
+        else throw error;
+      }
+    }
     return{output,groupResolution:groupResolution.receipt,sourceResolution:sourceResolution?.receipt??null,issues};
   };
 
@@ -1094,16 +1114,17 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     ];
     const diagnostic=validationIssues.map((issue)=>`${issue.code} at ${issue.path}: ${issue.message}`).join(" | ");
     const sourceFailure=kind==="slides"&&finalIssues.some((issue)=>/source|citation|context_group|precision|protected|scorecard|quote|exact|display|roadmap|terminology|markdown|style|slide_count|slide_order/iu.test(issue.code));
+    const audioFailure=kind==="audio"&&finalIssues.some((issue)=>issue.code.startsWith("audio_"));
     throw new ProviderRequestError({
-      code:sourceFailure?"source_fidelity_validation_failed":"provider_returned_incomplete_document_artifact",
+      code:audioFailure?"audio_preparation_failed":sourceFailure?"source_fidelity_validation_failed":"provider_returned_incomplete_document_artifact",
       category:"provider",
       scope:"request",
-      action:kind==="slides"?"edit_request":"retry",
+      action:kind==="slides"||audioFailure?"edit_request":"retry",
       message:`The provider returned ${kind==="slides"?"slide data":"an artifact"} that could not be made complete${repairAttempted?" after one bounded repair pass":""}. ${diagnostic}`,
-      retryable:kind!=="slides",
+      retryable:kind!=="slides"&&!audioFailure,
       retryAfterMs:null,
       requestId:null,
-      httpStatus:kind==="slides"?null:502,
+      httpStatus:audioFailure?422:kind==="slides"?null:502,
       ...(validationIssues.length?{validationIssues}:{}),
     },`Document ${kind} instructions:\n${instructions}\n\nCreative context:\n${providerInput}\n\nValidation:\n${diagnostic}`,paidAccounting());
   }

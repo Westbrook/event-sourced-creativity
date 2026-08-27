@@ -4,12 +4,9 @@ import {
   AudioAdapterSelectionError, estimateAudioProviderCostMicrousd, normalizeAudioRequestProfile,
   selectAudioAdapterContract, type AudioRequestProfile,
 } from "../src/model/audio.ts";
-import { serializeGeminiSpeechRequest } from "./audio-adapters/gemini-tts.ts";
-import { serializeLyriaAudioRequest } from "./audio-adapters/lyria.ts";
-import { serializeSeedAudioRequest } from "./audio-adapters/seed-audio.ts";
-import { serializeSoniloAudioRequest } from "./audio-adapters/sonilo.ts";
-import { serializeStableAudioRequest } from "./audio-adapters/stable-audio.ts";
-import { AudioProviderInputError, type AudioProviderAdapterInput } from "./audio-adapters/types.ts";
+import { serializeAudioRequest } from "./audio-adapters/index.ts";
+import { AudioProviderInputError } from "./audio-adapters/types.ts";
+import { audioCharacterCount, validateAudioProviderParameters } from "../src/model/audio-provider-contracts.ts";
 import { classifyProviderFailure, ProviderRequestError, providerErrorFromResponse } from "./provider-errors.ts";
 import type { WorkerEnv } from "./runtime.ts";
 
@@ -134,18 +131,6 @@ async function videoReceipt(reference: AudioVideoReference) {
   };
 }
 
-function serializeAudioRequest(model: string, input: AudioProviderAdapterInput): Record<string, unknown> {
-  const contract = audioAdapterContractForModel(model);
-  if (!contract) throw new AudioProviderInputError("audio_provider_model_unsupported", "The requested audio model is not approved.");
-  switch (contract.adapterId) {
-    case "fal-lyria-music": return serializeLyriaAudioRequest(input);
-    case "fal-stable-audio-music": return serializeStableAudioRequest(input);
-    case "fal-gemini-speech": return serializeGeminiSpeechRequest(input);
-    case "fal-seed-mixed-audio": return serializeSeedAudioRequest(input);
-    default: return serializeSoniloAudioRequest(model, input);
-  }
-}
-
 /** Route an approved specialist schema through one recoverable Fal queue transport. */
 export async function generateCreativeAudio(env: WorkerEnv, prompt: string, options: CreativeAudioOptions = {}) {
   if (!env.FAL_KEY?.trim()) throw providerError("audio_provider_not_configured", "Fal audio generation is not configured for this environment.", prompt, { status: 503, category: "authentication", action: "check_credentials" });
@@ -163,13 +148,13 @@ export async function generateCreativeAudio(env: WorkerEnv, prompt: string, opti
       ...profile,
       ...(typeof options.retainedReceipt.parameters.goal === "string" ? { goal: options.retainedReceipt.parameters.goal } : {}),
       ...(typeof options.retainedReceipt.parameters.destination === "string" ? { destination: options.retainedReceipt.parameters.destination } : {}),
-      ...(retainedDuration > 0 ? { durationSeconds: Math.ceil(retainedDuration) } : {}),
+      ...(retainedDuration > 0 ? { durationSeconds: retainedDuration } : {}),
       ...(retainedSpeakers > 0 ? { speakerCount: retainedSpeakers } : {}),
     });
   }
-  if (profile.role === "silence") throw providerError("audio_silence_requested", "Silence does not require a paid provider request.", prompt);
-  const image = options.imageReference;
-  const video = options.videoReference;
+  if (!options.providerJobId && profile.role === "silence") throw providerError("audio_silence_requested", "Silence does not require a paid provider request.", prompt);
+  const image = options.providerJobId ? undefined : options.imageReference;
+  const video = options.providerJobId ? undefined : options.videoReference;
   if (image && (!image.bytes.length || !image.mimeType.startsWith("image/") || !image.blockId || !image.referenceId || !contract.maximumImageReferences)) {
     throw providerError("audio_image_reference_invalid", "This audio specialist cannot use the selected image reference.", prompt);
   }
@@ -177,14 +162,14 @@ export async function generateCreativeAudio(env: WorkerEnv, prompt: string, opti
     throw providerError("audio_video_reference_invalid", "Video synchronization requires one explicitly approved MP4 clip within the supported duration and size limits.", prompt);
   }
   if (!options.providerJobId && contract.supportsVideoReference && !video) throw providerError("audio_video_reference_required", "This audio specialist requires an explicitly approved video clip.", prompt);
-  if (!options.providerJobId && options.profile) {
-    try { selectAudioAdapterContract(profile, { preferredModel: model, videoReferenceAvailable: Boolean(video) }); }
+  if (!options.providerJobId && options.profile !== undefined) {
+    try { profile = selectAudioAdapterContract(options.profile, { preferredModel: model, videoReferenceAvailable: Boolean(video) }).profile; }
     catch (error) {
       if (error instanceof AudioAdapterSelectionError) throw providerError(error.code, error.message, prompt);
       throw error;
     }
   }
-  if (profile.durationSeconds && profile.durationSeconds > contract.maximumAdvertisedDurationSeconds) {
+  if (!options.providerJobId && profile.durationSeconds && profile.durationSeconds > contract.maximumAdvertisedDurationSeconds) {
     throw providerError("audio_duration_unsupported", `${contract.label} cannot generate the requested duration.`, prompt);
   }
   if (video && contract.supportsVideoReference) {
@@ -192,20 +177,20 @@ export async function generateCreativeAudio(env: WorkerEnv, prompt: string, opti
       throw providerError("audio_duration_exceeds_video", "Synchronized audio cannot be longer than the approved video clip.", prompt);
     }
     // Both end-user video goals explicitly score the complete approved clip.
-    profile = { ...profile, durationSeconds: Math.ceil(video.durationSeconds) };
+    profile = { ...profile, durationSeconds: video.durationSeconds };
   }
   if (!video && options.providerJobId && contract.supportsVideoReference) {
     const retainedDuration = Number(options.retainedReceipt?.videoReference?.duration_seconds ?? options.retainedReceipt?.parameters.duration_seconds ?? 0);
     if (retainedDuration > 0 && retainedDuration <= contract.maximumAdvertisedDurationSeconds) {
-      profile = { ...profile, durationSeconds: Math.ceil(retainedDuration) };
+      profile = { ...profile, durationSeconds: retainedDuration };
     }
   }
   let preview: Record<string, unknown>;
   try {
-    preview = serializeAudioRequest(model, {
+    preview = options.providerJobId ? { prompt: options.retainedReceipt?.submittedPrompt ?? prompt } : serializeAudioRequest(model, {
       prompt: (options.retainedReceipt?.submittedPrompt ?? prompt).trim(), profile,
-      ...(image ? { imageUrl: "approved-image" } : {}),
-      ...(video ? { videoUrl: "approved-video" } : {}),
+      ...(image ? { imageUrl: "https://fal.media/approved-image" } : {}),
+      ...(video ? { videoUrl: "https://fal.media/approved-video", videoDurationSeconds: video.durationSeconds } : {}),
       ...(options.spokenScript ? { spokenScript: options.spokenScript } : {}),
       ...(options.voiceDirection ? { voiceDirection: options.voiceDirection } : {}),
     });
@@ -216,16 +201,11 @@ export async function generateCreativeAudio(env: WorkerEnv, prompt: string, opti
   }
   const submittedPrompt = options.retainedReceipt?.submittedPrompt ?? String(preview.prompt ?? "").trim();
   if (!submittedPrompt) throw providerError("audio_prompt_required", "The document did not produce usable audio direction.", prompt);
-  if (!options.providerJobId && submittedPrompt.length > contract.maxPromptCharacters) throw providerError(
-    "audio_prompt_too_long",
-    `The audio direction exceeds ${contract.label}’s ${contract.maxPromptCharacters.toLocaleString()}-character limit. Shorten the required direction and try again.`,
-    submittedPrompt,
-  );
   const minimumCostMicrousd = estimateAudioProviderCostMicrousd(contract, profile, {
-    ...(contract.pricing.mode === "per_1000_characters" ? { characterCount: submittedPrompt.length } : {}),
+    ...(contract.pricing.mode === "per_1000_characters" ? { characterCount: audioCharacterCount(submittedPrompt) } : {}),
   });
   const estimatedCostMicrousd = options.estimatedCostMicrousd ?? minimumCostMicrousd;
-  if (!options.providerJobId && estimatedCostMicrousd < minimumCostMicrousd) {
+  if (!options.providerJobId && (!Number.isFinite(estimatedCostMicrousd) || estimatedCostMicrousd < minimumCostMicrousd)) {
     throw providerError("audio_provider_reservation_insufficient", "The approved audio reservation does not cover the actual script or complete video clip.", submittedPrompt);
   }
   const started = Date.now();
@@ -280,18 +260,17 @@ export async function generateCreativeAudio(env: WorkerEnv, prompt: string, opti
           throw new ProviderRequestError({ ...classifyProviderFailure(error), code: "fal_audio_video_upload_failed" }, submittedPrompt);
         }
       }
-      await options.onStage?.("submitting", `Submitting the approved audio request to ${contract.label}.`);
       let input: Record<string, unknown>;
       try {
-        input = serializeAudioRequest(model, {
-          prompt: submittedPrompt, profile, ...(imageUrl ? { imageUrl } : {}), ...(videoUrl ? { videoUrl } : {}),
-          ...(options.spokenScript ? { spokenScript: options.spokenScript } : {}),
-          ...(options.voiceDirection ? { voiceDirection: options.voiceDirection } : {}),
-        });
+        // Keep the validated script, aliases and cost basis unchanged after upload.
+        input = validateAudioProviderParameters(model, {
+          ...preview, ...(imageUrl ? { image_url: imageUrl } : {}), ...(videoUrl ? { video_url: videoUrl } : {}),
+        }, { videoDurationSeconds: video?.durationSeconds });
       } catch (error) {
         if (error instanceof AudioProviderInputError) throw providerError(error.code, error.message, submittedPrompt);
         throw error;
       }
+      await options.onStage?.("submitting", `Submitting the approved audio request to ${contract.label}.`);
       const submitted = await fetchJson(`https://queue.fal.run/${model}`, { method: "POST", headers: headers(env), body: JSON.stringify(input), signal: options.signal }, submittedPrompt);
       providerJobId = String(submitted.body.request_id ?? submitted.response.headers.get("x-fal-request-id") ?? "");
       if (!providerJobId) throw providerError("fal_audio_submission_receipt_missing", "Fal accepted no durable audio request identifier. No completed output can be reported.", submittedPrompt, { retryable: true, status: 502, category: "server" });
@@ -351,7 +330,7 @@ export async function generateCreativeAudio(env: WorkerEnv, prompt: string, opti
     }
     const measuredCost = estimateAudioProviderCostMicrousd(contract, profile, {
       ...(contract.pricing.mode === "per_minute" && measuredDuration > 0 && measuredDuration <= contract.maximumAdvertisedDurationSeconds ? { durationSeconds: Math.ceil(measuredDuration) } : {}),
-      ...(contract.pricing.mode === "per_1000_characters" ? { characterCount: submittedPrompt.length } : {}),
+      ...(contract.pricing.mode === "per_1000_characters" ? { characterCount: audioCharacterCount(submittedPrompt) } : {}),
     });
     if (measuredCost > estimatedCostMicrousd) {
       throw providerError("audio_provider_cost_exceeds_reservation", "The provider reported usage above the authorized audio reservation; the original provider request remains available for review.", submittedPrompt, { requestId: providerJobId, status: 502, category: "server", action: "contact_support" });

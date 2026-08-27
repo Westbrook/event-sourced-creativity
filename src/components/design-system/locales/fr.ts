@@ -2244,4 +2244,9 @@ Object.assign(messages, {
 
 Object.assign(messages, FORMA_RESPONSIVE_MESSAGES.fr);
 
+Object.assign(messages, {
+  "system.auto.10fv3hf.51": "Forma n’a pas pu adapter la demande audio aux limites de ce modèle",
+  "system.auto.1bop32q.183": "Vérifiez le script conservé, les consignes vocales obligatoires et les limites du modèle avant de lancer une demande modifiée. Aucune génération audio n’a été soumise ; toute consommation liée à la planification déjà effectuée reste enregistrée.",
+});
+
 export default messages;

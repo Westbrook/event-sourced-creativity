@@ -1,4 +1,5 @@
 import type { ContextAdapterContract } from "./context-adaptation.ts";
+import { AUDIO_PROVIDER_INPUT_CONTRACTS, GEMINI_SPEECH_INPUT_POLICY, audioCharacterCount } from "./audio-provider-contracts.ts";
 
 export const AUDIO_ROLES = ["score", "song", "soundscape", "sound_design", "voice", "silence"] as const;
 export type AudioRole = typeof AUDIO_ROLES[number];
@@ -12,12 +13,12 @@ export const MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 export const AUDIO_ADAPTER_CONTRACT = {
   adapterId: "fal-lyria-music",
-  adapterVersion: "1.0.0",
+  adapterVersion: "1.1.0",
   provider: "fal" as const,
   model: "fal-ai/lyria3/pro",
   output: "audio" as const,
   label: "Lyria 3 Pro",
-  maxPromptCharacters: 5_000,
+  maxPromptCharacters: AUDIO_PROVIDER_INPUT_CONTRACTS["fal-ai/lyria3/pro"]!.maxPromptCharacters,
   maximumAdvertisedDurationSeconds: 180,
   publishedCostMicrousd: 80_000,
   supportedOutputMimeTypes: ["audio/mpeg"] as const,
@@ -70,10 +71,9 @@ export type AudioAdapterContract = ContextAdapterContract & {
 };
 
 const commonAudioAdapter = {
-  adapterVersion: "1.0.0",
+  adapterVersion: "1.1.0",
   provider: "fal" as const,
   output: "audio" as const,
-  maxPromptCharacters: 5_000,
   maximumImageReferences: 0,
   acceptsAudioWaveformInput: false,
   supportsVideoReference: false,
@@ -97,6 +97,7 @@ export const STABLE_AUDIO_ADAPTER_CONTRACT: AudioAdapterContract = {
   adapterId: "fal-stable-audio-music",
   model: "fal-ai/stable-audio-3/medium/text-to-audio",
   label: "Stable Audio 3 Medium",
+  maxPromptCharacters: AUDIO_PROVIDER_INPUT_CONTRACTS["fal-ai/stable-audio-3/medium/text-to-audio"]!.maxPromptCharacters,
   maximumAdvertisedDurationSeconds: 380,
   defaultDurationSeconds: 30,
   supportedOutputMimeTypes: ["audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/ogg", "audio/flac"],
@@ -109,6 +110,7 @@ export const SONILO_MUSIC_ADAPTER_CONTRACT: AudioAdapterContract = {
   adapterId: "fal-sonilo-music",
   model: "sonilo/v1.1/text-to-music",
   label: "Sonilo Music",
+  maxPromptCharacters: AUDIO_PROVIDER_INPUT_CONTRACTS["sonilo/v1.1/text-to-music"]!.maxPromptCharacters,
   maximumAdvertisedDurationSeconds: 600,
   defaultDurationSeconds: 90,
   supportedOutputMimeTypes: ["audio/mp4", "audio/aac", "audio/mpeg"],
@@ -121,6 +123,7 @@ export const SONILO_SOUND_EFFECTS_ADAPTER_CONTRACT: AudioAdapterContract = {
   adapterId: "fal-sonilo-sound-effects",
   model: "sonilo/v1.1/text-to-sound-effects",
   label: "Sonilo Sound Effects",
+  maxPromptCharacters: AUDIO_PROVIDER_INPUT_CONTRACTS["sonilo/v1.1/text-to-sound-effects"]!.maxPromptCharacters,
   maximumAdvertisedDurationSeconds: 180,
   defaultDurationSeconds: 8,
   supportedOutputMimeTypes: ["audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/flac"],
@@ -133,10 +136,11 @@ export const GEMINI_TTS_ADAPTER_CONTRACT: AudioAdapterContract = {
   adapterId: "fal-gemini-speech",
   model: "fal-ai/gemini-3.1-flash-tts",
   label: "Gemini 3.1 Flash Speech",
+  maxPromptCharacters: GEMINI_SPEECH_INPUT_POLICY.maxPromptCharacters,
   maximumAdvertisedDurationSeconds: 300,
   defaultDurationSeconds: 30,
   supportedOutputMimeTypes: ["audio/mpeg", "audio/wav", "audio/ogg"],
-  maxSpeakers: 2,
+  maxSpeakers: GEMINI_SPEECH_INPUT_POLICY.maxSpeakers,
   pricing: { mode: "per_1000_characters", amountMicrousd: 50_000 },
   capabilities: [...commonAudioAdapter.capabilities, "speech-generation", "text-to-speech", "preset-voices", "multi-speaker", "dialogue"],
 };
@@ -145,7 +149,7 @@ export const SEED_AUDIO_ADAPTER_CONTRACT: AudioAdapterContract = {
   adapterId: "fal-seed-mixed-audio",
   model: "bytedance/seed-audio-1.0",
   label: "Seed Audio 1.0",
-  maxPromptCharacters: 2_048,
+  maxPromptCharacters: AUDIO_PROVIDER_INPUT_CONTRACTS["bytedance/seed-audio-1.0"]!.maxPromptCharacters,
   maximumAdvertisedDurationSeconds: 120,
   defaultDurationSeconds: 60,
   supportedOutputMimeTypes: ["audio/mpeg", "audio/wav", "audio/ogg"],
@@ -158,6 +162,7 @@ export const SONILO_VIDEO_MUSIC_ADAPTER_CONTRACT: AudioAdapterContract = {
   adapterId: "fal-sonilo-video-music",
   model: "sonilo/v1.1/video-to-music",
   label: "Sonilo Video Music",
+  maxPromptCharacters: AUDIO_PROVIDER_INPUT_CONTRACTS["sonilo/v1.1/video-to-music"]!.maxPromptCharacters,
   maximumAdvertisedDurationSeconds: 180,
   defaultDurationSeconds: 30,
   supportedOutputMimeTypes: ["audio/mp4", "audio/aac", "audio/mpeg"],
@@ -171,6 +176,7 @@ export const SONILO_VIDEO_SOUND_EFFECTS_ADAPTER_CONTRACT: AudioAdapterContract =
   adapterId: "fal-sonilo-video-sound-effects",
   model: "sonilo/v1.1/video-to-video-sound-effects",
   label: "Sonilo Video Sound Effects",
+  maxPromptCharacters: AUDIO_PROVIDER_INPUT_CONTRACTS["sonilo/v1.1/video-to-video-sound-effects"]!.maxPromptCharacters,
   maximumAdvertisedDurationSeconds: 180,
   defaultDurationSeconds: 30,
   supportedOutputMimeTypes: ["audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/flac"],
@@ -230,9 +236,9 @@ export function normalizeAudioRequestProfile(value: unknown, snapshot: Record<st
       : goal === "sound_effects" || goal === "video_sound_effects" ? initialRole === "soundscape" ? "soundscape" : "sound_design"
         : initialRole === "song" ? "song" : "score";
   const rawDuration = source.durationSeconds ?? source.duration_seconds;
-  const duration = typeof rawDuration === "number" && Number.isFinite(rawDuration) && rawDuration > 0 ? Math.ceil(rawDuration) : undefined;
+  const duration = typeof rawDuration === "number" && Number.isFinite(rawDuration) && rawDuration > 0 ? rawDuration : undefined;
   const rawSpeakers = source.speakerCount ?? source.speaker_count;
-  const speakers = typeof rawSpeakers === "number" && Number.isFinite(rawSpeakers) && rawSpeakers > 0 ? Math.floor(rawSpeakers) : undefined;
+  const speakers = typeof rawSpeakers === "number" && Number.isFinite(rawSpeakers) && rawSpeakers > 0 ? rawSpeakers : undefined;
   const videoReferenceId = text(source.videoReferenceId ?? source.video_reference_id);
   const transcript = text(source.transcript ?? source.script);
   return {
@@ -258,8 +264,9 @@ export function estimateAudioProviderCostMicrousd(
   if (contract.pricing.mode === "per_generation") return contract.pricing.amountMicrousd;
   if (contract.pricing.mode === "per_1000_characters") {
     // Speaker aliases are normalized at submission, so only a final serialized script
-    // has a trustworthy exact length. Reserve the documented ceiling beforehand.
-    const characters = actualUsage?.characterCount ?? contract.maxPromptCharacters;
+    // has a trustworthy exact length. Reserve Forma's admitted input capacity,
+    // not Fal's much larger character ceiling independently of its token limit.
+    const characters = actualUsage?.characterCount ?? Math.min(contract.maxPromptCharacters, GEMINI_SPEECH_INPUT_POLICY.maxCombinedUtf8Bytes);
     return Math.ceil(characters * contract.pricing.amountMicrousd / 1_000);
   }
   // Seed cannot enforce duration, so reserve its documented maximum before a paid call.
@@ -282,26 +289,39 @@ export type AudioAdapterSelection = {
 
 export function selectAudioAdapterContract(
   value: unknown,
-  options: { preferredModel?: string; videoReferenceAvailable?: boolean } = {},
+  options: { preferredModel?: string; videoReferenceAvailable?: boolean; snapshot?: Record<string, unknown> } = {},
 ): AudioAdapterSelection {
+  if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) {
+    throw new AudioAdapterSelectionError("audio_profile_invalid", "The audio request profile must be an object.");
+  }
   const raw = record(value);
+  for (const field of ["goal", "audioGoal", "purpose", "role", "audioRole", "audio_role"]) {
+    if (raw[field] !== undefined && typeof raw[field] !== "string") throw new AudioAdapterSelectionError(field.toLowerCase().includes("role") ? "audio_role_unsupported" : "audio_goal_unsupported", "Audio goals and roles must use supported text values.");
+  }
   const requestedGoal = text(raw.goal ?? raw.audioGoal ?? raw.purpose).toLowerCase().replace(/[\s-]+/g, "_");
   if (requestedGoal && !audioGoalAliases[requestedGoal] && requestedGoal !== "silence" && requestedGoal !== "silent") {
     throw new AudioAdapterSelectionError("audio_goal_unsupported", "The requested audio goal is not supported.");
   }
-  const rawDuration = raw.durationSeconds ?? raw.duration_seconds;
-  if (rawDuration !== undefined && (typeof rawDuration !== "number" || !Number.isFinite(rawDuration) || rawDuration <= 0 || !Number.isInteger(rawDuration))) {
-    throw new AudioAdapterSelectionError("audio_duration_invalid", "Audio duration must be a positive whole number of seconds.");
+  if ([raw.durationSeconds, raw.duration_seconds].some((duration) => duration !== undefined && (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0))) {
+    throw new AudioAdapterSelectionError("audio_duration_invalid", "Audio duration must be a positive finite number of seconds.");
   }
   const requestedRole = text(raw.role ?? raw.audioRole ?? raw.audio_role).toLowerCase().replace(/[\s-]+/g, "_");
   if (requestedRole && !AUDIO_ROLES.includes(requestedRole as AudioRole)) {
     throw new AudioAdapterSelectionError("audio_role_unsupported", "The requested audio role is not supported.");
   }
-  const requestedSpeakers = raw.speakerCount ?? raw.speaker_count;
-  if (requestedSpeakers !== undefined && (typeof requestedSpeakers !== "number" || !Number.isSafeInteger(requestedSpeakers) || requestedSpeakers <= 0)) {
+  if ([raw.speakerCount, raw.speaker_count].some((speakers) => speakers !== undefined && (typeof speakers !== "number" || !Number.isSafeInteger(speakers) || speakers <= 0))) {
     throw new AudioAdapterSelectionError("audio_speaker_count_invalid", "The number of speakers must be a positive whole number.");
   }
-  const profile = normalizeAudioRequestProfile(value);
+  if (raw.destination !== undefined && !AUDIO_DESTINATIONS.includes(raw.destination as AudioDestination)) {
+    throw new AudioAdapterSelectionError("audio_destination_unsupported", "The requested audio destination is not supported.");
+  }
+  if (raw.transcript !== undefined && typeof raw.transcript !== "string" || raw.script !== undefined && typeof raw.script !== "string") {
+    throw new AudioAdapterSelectionError("audio_spoken_script_invalid", "The approved spoken script must be text.");
+  }
+  for (const key of ["requireInstrumental", "require_instrumental", "requireEditableStems", "require_editable_stems"]) {
+    if (raw[key] !== undefined && typeof raw[key] !== "boolean") throw new AudioAdapterSelectionError("audio_parameter_invalid", "Audio preferences must be true or false.");
+  }
+  const profile = normalizeAudioRequestProfile(value, options.snapshot);
   if (profile.role === "silence") {
     throw new AudioAdapterSelectionError("audio_silence_requested", "Silence does not require a paid audio-generation request.");
   }
@@ -346,13 +366,18 @@ export function selectAudioAdapterContract(
   if (profile.durationSeconds && profile.durationSeconds > contract.maximumAdvertisedDurationSeconds) {
     throw new AudioAdapterSelectionError("audio_duration_unsupported", `${contract.label} supports up to ${contract.maximumAdvertisedDurationSeconds} seconds.`);
   }
+  const durationRule = AUDIO_PROVIDER_INPUT_CONTRACTS[contract.model]?.parameters.duration;
+  if (profile.durationSeconds !== undefined && durationRule && (profile.durationSeconds < (durationRule.minimum ?? 0)
+    || durationRule.type === "integer" && !Number.isSafeInteger(profile.durationSeconds))) {
+    throw new AudioAdapterSelectionError("audio_duration_invalid", `${contract.label} requires ${durationRule.type === "integer" ? "a whole number of" : "at least one"} seconds between ${durationRule.minimum} and ${Math.min(durationRule.maximum ?? Infinity, contract.maximumAdvertisedDurationSeconds)}.`);
+  }
   if (profile.requireInstrumental && !contract.capabilities.includes("instrumental-music")) {
     throw new AudioAdapterSelectionError("audio_instrumental_unsupported", `${contract.label} does not support the requested instrumental preference.`);
   }
-  if (profile.speakerCount && (profile.goal === "narration" || profile.goal === "mixed_audio") && profile.speakerCount > contract.maxSpeakers) {
+  if (profile.speakerCount && profile.speakerCount > contract.maxSpeakers) {
     throw new AudioAdapterSelectionError("audio_speaker_count_unsupported", `${contract.label} supports at most ${contract.maxSpeakers} speakers.`);
   }
-  if (profile.goal === "narration" && profile.transcript && profile.transcript.length > contract.maxPromptCharacters) {
+  if (profile.goal === "narration" && profile.transcript && audioCharacterCount(profile.transcript) > contract.maxPromptCharacters) {
     throw new AudioAdapterSelectionError("audio_prompt_too_long", `${contract.label} supports scripts of at most ${contract.maxPromptCharacters.toLocaleString()} characters.`);
   }
   const reasons: Record<AudioGenerationGoal, string> = {

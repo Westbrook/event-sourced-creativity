@@ -1,5 +1,6 @@
 import { normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter.ts";
 import { AUDIO_ADAPTER_CONTRACT, audioAdapterContractForModel, estimateAudioProviderCostMicrousd, normalizeAudioRequestProfile } from "../src/model/audio.ts";
+import { audioCharacterCount } from "../src/model/audio-provider-contracts.ts";
 import { priceFalIdeogramImageBreakdownMicrousd, priceTextUsageBreakdownMicrousd, type FalIdeogramRenderingSpeed, type ProviderCostBreakdown, type ProviderUsage } from "./replay-cost.ts";
 import { providerSubmissions } from "../src/model/provider-submission.ts";
 
@@ -186,7 +187,7 @@ export function interruptedDocumentJobUsage(
       const original=request.audioProfile&&typeof request.audioProfile==="object"&&!Array.isArray(request.audioProfile)?request.audioProfile as Checkpoint:{};
       const profile=normalizeAudioRequestProfile({...original,...(typeof parameters.goal==="string"?{goal:parameters.goal}:{}),...(Number(parameters.duration_seconds)>0?{durationSeconds:Number(parameters.duration_seconds)}:{})});
       const submittedPrompt=String(receipt.submitted_prompt??"");
-      acceptedAudioCostMicrousd=estimateAudioProviderCostMicrousd(contract,profile,contract.pricing.mode==="per_1000_characters"&&submittedPrompt?{characterCount:submittedPrompt.length}:undefined);
+      acceptedAudioCostMicrousd=estimateAudioProviderCostMicrousd(contract,profile,contract.pricing.mode==="per_1000_characters"&&submittedPrompt?{characterCount:audioCharacterCount(submittedPrompt)}:undefined);
     }
   }
   const singleAudioCostMicrousd=checkpoint.providerJobId&&request.artifactKind==="audio"

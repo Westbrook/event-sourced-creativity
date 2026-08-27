@@ -23,7 +23,9 @@ import { serializeLyriaAudioRequest } from "../worker/audio-adapters/lyria.ts";
 import { serializeSeedAudioRequest } from "../worker/audio-adapters/seed-audio.ts";
 import { serializeSoniloAudioRequest } from "../worker/audio-adapters/sonilo.ts";
 import { serializeStableAudioRequest } from "../worker/audio-adapters/stable-audio.ts";
-import { adaptAudioPrompt } from "../worker/audio-prompt-adapter.ts";
+import { adaptAudioPrompt, audioPreparationConstraints } from "../worker/audio-prompt-adapter.ts";
+import { AUDIO_PROVIDER_INPUT_CONTRACTS, GEMINI_SPEECH_INPUT_POLICY, geminiSpeechInputBytes, validateAudioProviderParameters } from "../src/model/audio-provider-contracts.ts";
+import { serializeAudioRequest } from "../worker/audio-adapters/index.ts";
 import { selectAudioAdapter } from "../worker/audio-selection.ts";
 import { generateCreativeAudio } from "../worker/fal-audio-adapter.ts";
 import { interruptedDocumentJobUsage } from "../worker/document-job-reservations.ts";
@@ -71,7 +73,7 @@ test("every supported end-user goal selects its capability-specific Fal adapter"
     [{ goal: "timed_music", durationSeconds: 30 }, STABLE_AUDIO_ADAPTER_CONTRACT.model, 37_600],
     [{ goal: "timed_music", durationSeconds: 381 }, SONILO_MUSIC_ADAPTER_CONTRACT.model, 952_500],
     [{ goal: "sound_effects", durationSeconds: 8 }, SONILO_SOUND_EFFECTS_ADAPTER_CONTRACT.model, 14_400],
-    [{ goal: "narration", speakerCount: 2 }, GEMINI_TTS_ADAPTER_CONTRACT.model, 250_000],
+    [{ goal: "narration", speakerCount: 2 }, GEMINI_TTS_ADAPTER_CONTRACT.model, 358_400],
     [{ goal: "mixed_audio" }, SEED_AUDIO_ADAPTER_CONTRACT.model, 375_000],
     [{ goal: "video_music", durationSeconds: 12, videoReferenceId: "approved-video" }, SONILO_VIDEO_MUSIC_ADAPTER_CONTRACT.model, 108_000],
     [{ goal: "video_sound_effects", durationSeconds: 12, videoReferenceId: "approved-video" }, SONILO_VIDEO_SOUND_EFFECTS_ADAPTER_CONTRACT.model, 108_000],
@@ -102,7 +104,7 @@ test("invalid goals, silence, durations, speakers, scripts, and unavailable capa
     [{ goal: "sound_effects", durationSeconds: 1.5 }, "audio_duration_invalid"],
     [{ goal: "narration", speakerCount: 0 }, "audio_speaker_count_invalid"],
     [{ goal: "narration", speakerCount: 3 }, "audio_speaker_count_unsupported"],
-    [{ goal: "narration", transcript: "x".repeat(5_001) }, "audio_prompt_too_long"],
+    [{ goal: "narration", transcript: "x".repeat(50_001) }, "audio_prompt_too_long"],
     [{ goal: "timed_music", durationSeconds: 381, requireInstrumental: true }, "audio_instrumental_unsupported"],
   ]) {
     assert.throws(() => selectAudioAdapterContract(value), (error) => error instanceof AudioAdapterSelectionError && error.code === code);
@@ -126,11 +128,144 @@ test("instrumental preference routes through the supported Stable specialist", (
 });
 
 test("specialist serializers expose only their documented provider-specific fields", () => {
-  assert.deepEqual(serializeLyriaAudioRequest({ prompt: "Original score", profile: profile({ goal: "music" }), imageUrl: "approved-image" }), { prompt: "Original score", image_url: "approved-image" });
+  assert.deepEqual(serializeLyriaAudioRequest({ prompt: "Original score", profile: profile({ goal: "music" }), imageUrl: "https://fal.media/approved-image" }), { prompt: "Original score", image_url: "https://fal.media/approved-image" });
   assert.deepEqual(serializeSoniloAudioRequest(SONILO_MUSIC_ADAPTER_CONTRACT.model, { prompt: "Timed score", profile: profile({ goal: "timed_music", durationSeconds: 400 }) }), { prompt: "Timed score", duration: 400, num_samples: 1 });
   assert.deepEqual(serializeSoniloAudioRequest(SONILO_SOUND_EFFECTS_ADAPTER_CONTRACT.model, { prompt: "Quiet footsteps", profile: profile({ goal: "sound_effects", durationSeconds: 5 }) }), { prompt: "Quiet footsteps", duration: 5, audio_format: "mp3" });
   assert.deepEqual(serializeSeedAudioRequest({ prompt: "Host greets the guest over quiet rain", profile: profile({ goal: "mixed_audio" }) }), { prompt: "Host greets the guest over quiet rain", output_format: "mp3" });
-  assert.deepEqual(serializeSoniloAudioRequest(SONILO_VIDEO_SOUND_EFFECTS_ADAPTER_CONTRACT.model, { prompt: "Footsteps", profile: profile({ goal: "video_sound_effects", durationSeconds: 20 }), videoUrl: "approved-video" }), { video_url: "approved-video", prompt: "Footsteps", audio_format: "mp3" });
+  assert.deepEqual(serializeSoniloAudioRequest(SONILO_VIDEO_SOUND_EFFECTS_ADAPTER_CONTRACT.model, { prompt: "Footsteps", profile: profile({ goal: "video_sound_effects", durationSeconds: 20 }), videoUrl: "https://fal.media/approved-video" }), { video_url: "https://fal.media/approved-video", prompt: "Footsteps", audio_format: "mp3" });
+});
+
+test("generated two-speaker narration beyond the former music limit survives preparation and submission intact", async () => {
+  const script = `Speaker One: ${"Explain the first decision clearly. ".repeat(75)}\nSpeaker Two: ${"Review the next decision carefully. ".repeat(75)}`;
+  const request = profile({ goal: "narration", destination: "podcast", speakerCount: 2 });
+  const documentPlan = { title: "Two perspectives", summary: "An original spoken review.", content_markdown: script, items: [] };
+  const adapted = adaptAudioPrompt({ facts: [] }, documentPlan, { profile: request, model: GEMINI_TTS_ADAPTER_CONTRACT.model, tone: "candid" });
+  assert.ok(adapted.spokenScript.length > 5_000);
+  assert.equal(adapted.spokenScript, script.trim());
+  assert.equal(adapted.compilation.valid, true);
+  const expected = script.trim().replace("Speaker One:", "Speaker1:").replace("Speaker Two:", "Speaker2:");
+  assert.equal(adapted.prompt, expected);
+  await withMockFal({}, async (calls) => {
+    const result = await generateCreativeAudio({ FAL_KEY: "test-secret" }, adapted.prompt, {
+      providerModel: GEMINI_TTS_ADAPTER_CONTRACT.model, profile: request,
+      spokenScript: adapted.spokenScript, voiceDirection: adapted.voiceDirection,
+      estimatedCostMicrousd: estimateAudioProviderCostMicrousd(GEMINI_TTS_ADAPTER_CONTRACT, request),
+    });
+    const submitted = JSON.parse(calls.find((call) => call.init.method === "POST").init.body);
+    assert.equal(submitted.prompt, expected);
+    assert.equal(submitted.style_instructions, adapted.voiceDirection);
+    assert.equal(result.preparedReceipt.submittedPrompt, submitted.prompt);
+    assert.equal(result.costMicrousd, submitted.prompt.length * 50);
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 1);
+  });
+});
+
+test("Gemini independently enforces its provider character limits and combined Unicode safety budget", () => {
+  const request = profile({ goal: "narration" });
+  const serialize = (script, voiceDirection) => serializeGeminiSpeechRequest({ profile: request, spokenScript: script, voiceDirection });
+  assert.equal(serialize("Welcome.", "a".repeat(4_000)).style_instructions.length, 4_000);
+  assert.throws(() => serialize("Welcome.", "a".repeat(4_001)), (error) => error.code === "audio_style_instructions_too_long");
+  assert.throws(() => serialize("a".repeat(50_001)), (error) => error.code === "audio_prompt_too_long");
+  for (const script of ["a".repeat(7_168), `${"界".repeat(2_389)}a`, "🎵".repeat(1_792)]) {
+    assert.equal(geminiSpeechInputBytes(serialize(script).prompt), 7_168);
+    assert.throws(() => serialize(script + "a"), (error) => error.code === "audio_input_budget_exceeded");
+    assert.throws(() => serialize(script, "quiet"), (error) => error.code === "audio_input_budget_exceeded");
+  }
+  const aliases = "A: Hello\nB: Hi\n".repeat(280).trim();
+  assert.ok(aliases.length < GEMINI_SPEECH_INPUT_POLICY.maxCombinedUtf8Bytes);
+  assert.throws(() => serializeGeminiSpeechRequest({ profile: profile({ goal: "narration", speakerCount: 2 }), spokenScript: aliases }), (error) => error.code === "audio_input_budget_exceeded");
+});
+
+test("narration protects required direction, drops only optional style, and rejects impossible authored input before planning", () => {
+  const request = profile({ goal: "narration" });
+  const documentPlan = { title: "Approved words", summary: "A complete script.", content_markdown: "a".repeat(7_100), items: [] };
+  const adapted = adaptAudioPrompt({ facts: [] }, documentPlan, { profile: request, model: GEMINI_TTS_ADAPTER_CONTRACT.model, tone: "calm ".repeat(300) });
+  assert.equal(adapted.spokenScript, documentPlan.content_markdown);
+  assert.equal(adapted.voiceDirection, undefined);
+  assert.ok(adapted.compilation.omittedSectionIds.includes("delivery-tone"));
+  const planning = audioPreparationConstraints({ facts: [] }, { profile: profile({ goal: "narration", speakerCount: 2 }), model: GEMINI_TTS_ADAPTER_CONTRACT.model, tone: "界".repeat(2_377) });
+  assert.equal(planning.maximum_script_utf8_bytes, 7_168);
+  assert.equal(planning.target_script_utf8_bytes, 6_000);
+  for (const text of ["a".repeat(4_001), "界".repeat(2_400)]) {
+    const snapshot = { facts: [{ type: "direction", locked: true, properties: { text } }] };
+    assert.throws(() => audioPreparationConstraints(snapshot, { profile: request, model: GEMINI_TTS_ADAPTER_CONTRACT.model }), (error) => ["audio_style_instructions_too_long", "audio_input_budget_exceeded"].includes(error.code));
+  }
+  assert.throws(() => audioPreparationConstraints({ facts: [] }, { profile: profile({ goal: "narration", transcript: "a".repeat(7_169) }), model: GEMINI_TTS_ADAPTER_CONTRACT.model }), (error) => error.code === "audio_input_budget_exceeded");
+});
+
+test("every audio serializer enforces its own prompt capacity without accepting another model's fields", () => {
+  const goals = ["music", "timed_music", "timed_music", "sound_effects", "narration", "mixed_audio", "video_music", "video_sound_effects"];
+  for (const [index, contract] of AUDIO_ADAPTER_CONTRACTS.entries()) {
+    const request = profile({ goal: goals[index] });
+    const limit = contract.model === GEMINI_TTS_ADAPTER_CONTRACT.model ? 7_168 : contract.maxPromptCharacters;
+    const input = { prompt: "a".repeat(limit), profile: request, ...(contract.supportsVideoReference ? { videoUrl: "https://fal.media/approved.mp4" } : {}), ...(request.goal === "narration" ? { spokenScript: "a".repeat(limit) } : {}) };
+    const serialized = serializeAudioRequest(contract.model, input);
+    assert.equal(serialized.prompt.length, limit, contract.model);
+    assert.throws(() => serializeAudioRequest(contract.model, { ...input, prompt: input.prompt + "a", ...(input.spokenScript ? { spokenScript: input.spokenScript + "a" } : {}) }), (error) => ["audio_prompt_too_long", "audio_input_budget_exceeded"].includes(error.code), contract.model);
+    assert.throws(() => validateAudioProviderParameters(contract.model, { ...serialized, unsupported_audio_setting: true }), (error) => error.code === "audio_parameter_invalid");
+    if (!AUDIO_PROVIDER_INPUT_CONTRACTS[contract.model].parameters.duration) {
+      assert.throws(() => validateAudioProviderParameters(contract.model, { ...serialized, duration: 30 }), (error) => error.code === "audio_duration_invalid");
+    }
+  }
+  assert.throws(() => validateAudioProviderParameters(LYRIA_AUDIO_ADAPTER_CONTRACT.model, { prompt: "Original score", negative_prompt: "vocals" }), (error) => error.code === "audio_parameter_invalid");
+  assert.throws(() => validateAudioProviderParameters(SEED_AUDIO_ADAPTER_CONTRACT.model, { prompt: "A scene", audio_urls: ["https://fal.media/private.wav"] }), (error) => error.code === "audio_parameter_invalid");
+});
+
+test("provider formats, voice values and cost-affecting settings stay inside Forma's approved subset", () => {
+  for (const [model, input] of [
+    [STABLE_AUDIO_ADAPTER_CONTRACT.model, { prompt: "Music", output_format: "ogg_opus" }],
+    [STABLE_AUDIO_ADAPTER_CONTRACT.model, { prompt: "Music", enable_safety_checker: false }],
+    [SONILO_MUSIC_ADAPTER_CONTRACT.model, { prompt: "Music", num_samples: 2 }],
+    [SONILO_MUSIC_ADAPTER_CONTRACT.model, { prompt: "Music", num_samples: 1.5 }],
+    [SONILO_SOUND_EFFECTS_ADAPTER_CONTRACT.model, { prompt: "Footsteps", audio_format: "m4a" }],
+    [GEMINI_TTS_ADAPTER_CONTRACT.model, { prompt: "Welcome", voice: "invented" }],
+    [GEMINI_TTS_ADAPTER_CONTRACT.model, { prompt: "Welcome", output_format: "ogg" }],
+    [SEED_AUDIO_ADAPTER_CONTRACT.model, { prompt: "A scene", output_format: "ogg" }],
+    [SONILO_VIDEO_MUSIC_ADAPTER_CONTRACT.model, { prompt: "Music", video_url: "not a URL" }],
+  ]) assert.throws(() => validateAudioProviderParameters(model, input), (error) => error.code === "audio_parameter_invalid", model);
+});
+
+test("raw audio aliases remain strict and duration numbers follow the selected model's schema", () => {
+  for (const raw of [123, [], null, { goal: 123 }, { audioGoal: false }, { role: ["voice"] }, { audioGoal: "unknown" }, { goal: "narration", speaker_count: 1.5 }, { goal: "sound_effects", duration_seconds: 1.5 }, { goal: "sound_effects", duration_seconds: null }, { goal: "music", destination: "unknown" }, { goal: "music", require_instrumental: "true" }]) {
+    assert.throws(() => selectAudioAdapter({}, raw, { snapshot: { facts: [] } }), AudioAdapterSelectionError);
+  }
+  assert.equal(selectAudioAdapterContract({ goal: "timed_music", durationSeconds: 1.5 }).profile.durationSeconds, 1.5);
+  for (const [contract, goal] of [[STABLE_AUDIO_ADAPTER_CONTRACT, "timed_music"], [SONILO_MUSIC_ADAPTER_CONTRACT, "timed_music"], [SONILO_SOUND_EFFECTS_ADAPTER_CONTRACT, "sound_effects"], [SONILO_VIDEO_MUSIC_ADAPTER_CONTRACT, "video_music"]]) {
+    const maximum = AUDIO_PROVIDER_INPUT_CONTRACTS[contract.model].parameters.duration.maximum;
+    const serialize = (durationSeconds) => serializeAudioRequest(contract.model, { prompt: "Original sound", profile: { ...profile({ goal }), durationSeconds }, videoUrl: "https://fal.media/approved.mp4" });
+    assert.equal(serialize(1).duration, 1);
+    assert.equal(serialize(maximum).duration, maximum);
+    for (const invalid of [0, -1, 0.5, maximum + 1, NaN, Infinity, "30"]) assert.throws(() => serialize(invalid), (error) => error.code === "audio_duration_invalid", `${contract.model}: ${invalid}`);
+    if (AUDIO_PROVIDER_INPUT_CONTRACTS[contract.model].parameters.duration.type === "integer") assert.throws(() => serialize(1.5), (error) => error.code === "audio_duration_invalid");
+    else assert.equal(serialize(1.5).duration, 1.5);
+  }
+});
+
+test("invalid raw profiles and final payloads cause no uploads, preparation receipt or submission checkpoint", async () => {
+  const previous = globalThis.fetch;
+  const contacts = [], stages = [], prepared = [];
+  globalThis.fetch = async (...args) => { contacts.push(args); throw new Error("Provider must not be contacted"); };
+  try {
+    for (const invalidProfile of [null, false, 0, "", []]) {
+      await assert.rejects(generateCreativeAudio({ FAL_KEY: "test-secret" }, "Original music", {
+        profile: invalidProfile, onStage: (...args) => stages.push(args), onPrepared: (value) => prepared.push(value),
+      }), (error) => error.detail?.code === "audio_profile_invalid");
+    }
+    for (const durationSeconds of [0, -1, NaN, Infinity, "30", 1.5]) {
+      await assert.rejects(generateCreativeAudio({ FAL_KEY: "test-secret" }, "Footsteps", {
+        providerModel: SONILO_SOUND_EFFECTS_ADAPTER_CONTRACT.model, profile: { ...profile({ goal: "sound_effects" }), durationSeconds }, onStage: (...args) => stages.push(args), onPrepared: (value) => prepared.push(value),
+      }), (error) => error.detail?.code === "audio_duration_invalid");
+    }
+    await assert.rejects(generateCreativeAudio({ FAL_KEY: "test-secret" }, "Production direction", {
+      providerModel: GEMINI_TTS_ADAPTER_CONTRACT.model, profile: profile({ goal: "narration" }), spokenScript: "Approved words.", voiceDirection: "x".repeat(4_001), onStage: (...args) => stages.push(args), onPrepared: (value) => prepared.push(value),
+    }), (error) => error.detail?.code === "audio_style_instructions_too_long");
+    await assert.rejects(generateCreativeAudio({ FAL_KEY: "test-secret" }, "a".repeat(5_001), {
+      imageReference: { bytes: new Uint8Array([1]), mimeType: "image/png", blockId: "approved", referenceId: "approved", label: "Image" }, onStage: (...args) => stages.push(args), onPrepared: (value) => prepared.push(value),
+    }), (error) => error.detail?.code === "audio_prompt_too_long");
+    assert.deepEqual(contacts, []);
+    assert.deepEqual(stages, []);
+    assert.deepEqual(prepared, []);
+  } finally { globalThis.fetch = previous; }
 });
 
 test("multilingual dialogue preserves spoken words while mapping localized names to provider-safe voices", () => {
@@ -320,6 +455,41 @@ test("synchronized music always scores and charges the entire approved video cli
     const submitted = JSON.parse(calls.find((call) => call.init.method === "POST" && call.url.startsWith("https://queue.fal.run/")).init.body);
     assert.equal(submitted.duration, 60);
     assert.equal(audio.costMicrousd, 540_000);
+  });
+});
+
+test("fractional video duration is sent unchanged while billing rounds independently", async () => {
+  const clip = { bytes: new Uint8Array([1, 2, 3, 4]), mimeType: "video/mp4", artifactId: "approved-video", referenceId: "approved-video", label: "Approved film", durationSeconds: 60.25 };
+  const request = profile({ goal: "video_music", videoReferenceId: clip.artifactId, durationSeconds: clip.durationSeconds });
+  assert.equal(selectAudioAdapterContract(request).profile.durationSeconds, 60.25);
+  await withMockFal({ mimeType: "audio/mp4" }, async (calls) => {
+    const audio = await generateCreativeAudio({ FAL_KEY: "test-secret" }, "Score the complete approved film.", {
+      providerModel: SONILO_VIDEO_MUSIC_ADAPTER_CONTRACT.model, profile: request, videoReference: clip, estimatedCostMicrousd: 549_000,
+    });
+    const submitted = JSON.parse(calls.find((call) => call.init.method === "POST" && call.url.startsWith("https://queue.fal.run/")).init.body);
+    assert.equal(submitted.duration, 60.25);
+    assert.equal(audio.preparedReceipt.videoReference.duration_seconds, 60.25);
+    assert.equal(audio.preparedReceipt.parameters.duration_seconds, 60.25);
+    assert.equal(audio.costMicrousd, 549_000);
+  });
+});
+
+test("paid historical narration bypasses new input policies and retains its original receipt without resubmission", async () => {
+  const script = "界".repeat(2_500);
+  const retainedReceipt = {
+    provider: "fal", model: GEMINI_TTS_ADAPTER_CONTRACT.model, submittedPrompt: script,
+    parameters: { goal: "narration", published_cost_microusd: 250_000, provider_parameters: { style_instructions: "x".repeat(4_100), output_format: "mp3", voice: "Kore" } },
+    imageReference: null, sourceAudioTreatment: "none", audioWaveformSubmitted: false,
+  };
+  await withMockFal({}, async (calls) => {
+    const recovered = await generateCreativeAudio({ FAL_KEY: "test-secret" }, "Ignore this changed request", {
+      providerJobId: "specialist-request-01", retainedReceipt,
+      profile: profile({ goal: "narration", transcript: "a".repeat(50_001) }),
+    });
+    assert.equal(recovered.submittedPrompt, script);
+    assert.deepEqual(recovered.preparedReceipt, retainedReceipt);
+    assert.equal(recovered.costMicrousd, 125_000);
+    assert.equal(calls.some((call) => call.init.method === "POST" || call.url.includes("/storage/upload")), false);
   });
 });
 

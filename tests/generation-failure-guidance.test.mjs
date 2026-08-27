@@ -32,6 +32,17 @@ test("request planning limits never masquerade as monthly exhaustion or missing 
   }
 });
 
+test("audio preparation failures identify the application boundary without erasing paid planning",()=>{
+  for(const code of ["audio_prompt_too_long","audio_input_budget_exceeded","audio_style_instructions_too_long","audio_prompt_requirements_exceed_provider_limit","audio_preparation_failed"]){
+    const guidance=generationFailureGuidance(failure({code,category:"provider",scope:"request",action:"edit_request",message:"PRIVATE_SCRIPT",retryable:false}),"",{kind:"render_document",status:"failed",result:{artifactKind:"audio",generationReceipt:{provider_request_status:"submitted",settled_cost_microusd:80_946}}});
+    assert.match(guidance.title,/Forma could not fit/);
+    assert.match(guidance.summary,/No audio render was submitted/);
+    assert.match(guidance.summary,/planning usage remains recorded/);
+    assert.doesNotMatch(guidance.summary,/PRIVATE_SCRIPT|no provider charge|provider rejected/i);
+    assert.equal(guidance.retryAllowed,false);
+  }
+});
+
 test("identifies local persistence failures without implying a provider outage or exposing private diagnostics", () => {
   const privateDiagnostic = "D1_ERROR: private source text and actor-only receipt";
   const guidance = generationFailureGuidance(failure({
