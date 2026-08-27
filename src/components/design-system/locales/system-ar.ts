@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.qkse08.49": "هذا الصوت مرتبط بإصدار سابق من المستند",
+  "system.auto.auzt5r.135": "استعد التسجيل الأصلي المدفوع مع مصدره الأصلي. ستبقى تعديلات المستند الأحدث دون تغيير، ولن يتم شراء عملية توليد جديدة.",
   "system.auto.t6uqnc.2": "من",
   "system.auto.1yyx1mu.5": "شريحة",
   "system.auto.1dr5e62.5": "صورة",

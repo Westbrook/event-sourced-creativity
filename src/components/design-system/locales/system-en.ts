@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.qkse08.49": "This audio belongs to an earlier document version",
+  "system.auto.auzt5r.135": "Recover the original paid recording with its original source. Newer document edits stay unchanged; no new generation will be purchased.",
   "system.auto.t6uqnc.2": "of",
   "system.auto.1yyx1mu.5": "Slide",
   "system.auto.1dr5e62.5": "image",

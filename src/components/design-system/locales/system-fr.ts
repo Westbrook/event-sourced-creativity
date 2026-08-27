@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.qkse08.49": "Cet audio correspond à une version antérieure du document",
+  "system.auto.auzt5r.135": "Récupérez l’enregistrement déjà payé avec sa source d’origine. Les modifications récentes du document restent intactes ; aucune nouvelle génération ne sera achetée.",
   "system.auto.t6uqnc.2": "sur",
   "system.auto.1yyx1mu.5": "Diapositive",
   "system.auto.1dr5e62.5": "image",

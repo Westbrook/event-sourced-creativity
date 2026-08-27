@@ -5,7 +5,7 @@ import test from "node:test";
 
 import worker from "../dist/server/index.js";
 import { documentArtifactValidationIssues, parseDocumentArtifactContent } from "../src/model/document-artifacts.ts";
-import { DOCUMENT_JOB_HEARTBEAT_MS, documentGenerationRevision, documentJobMaxAttempts, generationFailureGuidance } from "../src/model/document-jobs.ts";
+import { DOCUMENT_JOB_HEARTBEAT_MS, documentGenerationRevision, documentJobCanRecoverProviderRender, documentJobMaxAttempts, generationFailureGuidance } from "../src/model/document-jobs.ts";
 import { claimCostBudgetReservation, loadPrivateContent, reconcileFailedBudgetReservations, reserveBudget, reserveCostBudget } from "../worker/pilot-policy.ts";
 import { appendAuditEvent } from "../worker/runtime.ts";
 
@@ -272,6 +272,454 @@ test(`paid ${narration?"historical narration":"music"} recovery reuses its plan 
   }finally{globalThis.fetch=previousFetch;}
 });
 }
+
+async function originalSourceAudioFixture({shared=false,muted=false,repair=false,legacyPlannerScalar=repair}={}){
+  const fixture=await reliabilityWorker();fixture.environment.FAL_KEY="existing-audio-recovery-test-key";
+  await fixture.drainBackground();
+  await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","PreferenceAuthored",{preference_id:"original-audio-preference",axis:"style",value:"Original restrained material texture",polarity:"affirm"});
+  if(muted)await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"inactive-original-audio-source",type:"direction",handle:"direction/inactive",position:"z-inactive",properties:{text:"Inactive at the original purchase",weight:0,active:false,authority:"authored"}});
+  let scopedHeaders={},organizationId=null,projectAccessId=null,contextId=null;
+  if(shared){
+    const workspace=await fixture.request("/api/workspaces",json({name:"Original audio recovery workspace"}));assert.equal(workspace.status,201);organizationId=(await workspace.json()).organizationId;
+    const project=await fixture.request(`/api/workspaces/${organizationId}/projects`,json({projectId:"project-atmosphere"}));assert.equal(project.status,201);projectAccessId=(await project.json()).projectAccessId;
+    const opened=await fixture.request(`/api/workspaces/${organizationId}/projects/${projectAccessId}/context`,{method:"POST"});assert.equal(opened.status,200);
+    scopedHeaders={cookie:opened.headers.get("set-cookie").split(";")[0]};
+    contextId=fixture.sqlite.prepare("SELECT context_id FROM project_context_sessions WHERE project_access_id=? AND principal_user_id='dev-local-creative' AND revoked_at IS NULL").get(projectAccessId).context_id;
+  }
+  const jobRequest=(path,init={})=>fixture.request(path,{...init,headers:{...Object.fromEntries(new Headers(init.headers)),...scopedHeaders}});
+  const runJob=async job=>{const response=await jobRequest(`/api/document-jobs/${job.jobId}/run`,{method:"POST"});assert.equal(response.status,200,JSON.stringify(await response.clone().json()));return response;};
+  const calls=[],stored=[],deleted=[],previousFetch=globalThis.fetch;
+  let failDownload=true,afterDownload=null,plannerCalls=0;
+  const plan={title:"The original paid score",summary:"A restrained original instrumental composition.",content_markdown:"An original piano and cello score resolves into quiet clarity.",presentation:null,items:[{title:"Original arrangement",body:"Original felt piano and soft cello develop a resolving motif.",notes:"No voices or artist imitation.",image_prompt:"",slide:null,context_group_ids:[]}]};
+  fixture.environment.MEDIA.put=async(key,bytes,options)=>stored.push({key,bytes,options});
+  fixture.environment.MEDIA.delete=async key=>deleted.push(key);
+  globalThis.fetch=async(value,init={})=>{
+    const url=String(value),method=init.method??"GET";calls.push({url,method});
+    if(url==="https://api.openai.com/v1/moderations")return Response.json({id:"original-source-moderation",results:[{flagged:false,categories:{}}]});
+    if(url==="https://api.openai.com/v1/responses"){
+      plannerCalls+=1;
+      if(repair&&plannerCalls===1)return Response.json({id:"original-source-initial-plan",model:"gpt-5.6-terra",output_text:JSON.stringify({...plan,items:plan.items.map(item=>({...item,context_group_ids:["not-an-authorized-context-alias"]}))}),usage:{input_tokens:4000,output_tokens:1800,total_tokens:5800}});
+      return Response.json({id:"original-source-paid-plan",model:"gpt-5.6-terra",output_text:JSON.stringify(plan),usage:repair?{input_tokens:4101,output_tokens:2020,total_tokens:6121}:{input_tokens:8101,output_tokens:3820,total_tokens:11921}});
+    }
+    if(url==="https://queue.fal.run/fal-ai/lyria3/pro"&&method==="POST")return Response.json({request_id:"original-source-paid-audio"});
+    if(url.endsWith("/original-source-paid-audio/status?logs=1"))return Response.json({request_id:"original-source-paid-audio",status:"COMPLETED"});
+    if(url.endsWith("/original-source-paid-audio"))return Response.json({request_id:"original-source-paid-audio",audio:{url:"https://fal.media/original-source-score.mp3",content_type:"audio/mpeg",file_size:3}});
+    if(url==="https://fal.media/original-source-score.mp3"){
+      if(failDownload)throw new TypeError('Invalid redirect value, must be one of "follow" or "manual"');
+      if(afterDownload)await afterDownload();
+      return new Response(new Uint8Array([1,2,3]),{headers:{"content-type":"audio/mpeg"}});
+    }
+    throw new Error(`Unexpected request ${method} ${url}`);
+  };
+  try{
+    const admitted=await jobRequest("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"audio",productionMode:"manual",itemCount:1,paidMediaConfirmed:true,requestKey:"original-source-audio-recovery"}}));
+    assert.equal(admitted.status,202,JSON.stringify(await admitted.clone().json()));
+    const {job}=await admitted.json();
+    const failed=(await(await runJob(job)).json()).job;
+    assert.equal(failed.errorDetail.code,"provider_network_failed");
+    const originalRow=fixture.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(job.jobId);
+    const original=JSON.parse(originalRow.result_json),request=JSON.parse(originalRow.request_json);
+    const observedPlannerResponseId=original.plannerResponseId;
+    if(repair&&legacyPlannerScalar){
+      // Reproduce the released v158 first-ID checkpoint, retaining both real
+      // mocked response receipts and the immutable final-ID usage unchanged.
+      original.plannerResponseId=original.plannerInput.validation.provider_response_ids[0];
+      fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify(original),job.jobId);
+    }
+    const originalInput=JSON.parse(fixture.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(original.generationReceipt.input_ref).content);
+    const originalCostId=original.costReservationId;
+    const firstFact=originalInput.document_snapshot.facts.find(fact=>fact.type==="direction");assert.ok(firstFact);
+    await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockPropertyEdited",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:firstFact.block_id,property_path:"text",new_value:"A newer creative direction must remain intact after recovering the original paid recording."});
+    await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","DocumentRenamed",{project_id:"project-atmosphere",document_id:"doc-atmosphere",new_title:"New title after the original audio purchase"});
+    await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","PreferenceRevoked",{preference_id:"original-audio-preference"});
+    await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","PreferenceAuthored",{preference_id:"new-audio-preference",axis:"style",value:"A later preference is not the recording source",polarity:"affirm"});
+    const retry=await jobRequest(`/api/document-jobs/${job.jobId}/retry`,{method:"POST"});
+    assert.equal(retry.status,202,JSON.stringify(await retry.clone().json()));
+    const changed=(await(await runJob((await retry.json()).job)).json()).job;
+    assert.equal(changed.errorDetail.code,"context_source_version_mismatch",JSON.stringify(changed));
+    assert.equal(documentJobCanRecoverProviderRender(changed),!shared,"native eligibility still requires the actual confirmed provider identity, not a derived flag");
+    const listed=(await(await jobRequest("/api/document-jobs")).json()).jobs.find(candidate=>candidate.jobId===job.jobId);assert.ok(listed);
+    assert.equal(documentJobCanRecoverProviderRender(listed),!shared,"the Activity listing retains the same confirmed-provider eligibility");
+    assert.equal(generationFailureGuidance(listed.errorDetail,listed.error??"",listed).retryAllowed,!shared,"Activity's second guidance gate must agree with the confirmed provider eligibility");
+    assert.equal(calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length,repair?3:2);
+    failDownload=false;
+    return {...fixture,request:jobRequest,runJob,unscopedRequest:fixture.request,organizationId,projectAccessId,contextId,job,original,originalInput,originalCostId,originalRequest:request,observedPlannerResponseId,calls,stored,deleted,firstFact,restore:()=>{globalThis.fetch=previousFetch;},afterDownload:callback=>{afterDownload=callback;}};
+  }catch(error){globalThis.fetch=previousFetch;throw error;}
+}
+
+test("original-source audio recovery proves the legacy receipt, preserves newer edits, and adds no charge",async()=>{
+  const fixture=await originalSourceAudioFixture();
+  try{
+    const reservations=fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all();
+    const tokenReservations=fixture.sqlite.prepare("SELECT * FROM budget_reservations ORDER BY reservation_id").all();
+    const authored=fixture.sqlite.prepare("SELECT * FROM events WHERE actor='user' ORDER BY sequence").all();
+    const previousCount=fixture.calls.length;
+    const recovered=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});
+    assert.equal(recovered.status,200,JSON.stringify(await recovered.clone().json()));
+    const result=await recovered.json();assert.equal(result.job.status,"completed");assert.equal(result.recoveredOriginalSource,true);
+    assert.equal(result.job.result.generationReceipt.settled_cost_microusd,142_042);
+    assert.equal(result.job.result.generationReceipt.incremental_cost_microusd,0);
+    assert.equal(result.job.result.recovery.original_source_revision,fixture.originalRequest.documentRevision);
+    assert.equal(result.job.result.recovery.original_source_snapshot_sha256,fixture.original.generationReceipt.source_snapshot_sha256);
+    assert.equal(fixture.calls.length-previousCount,3);
+    assert.ok(fixture.calls.slice(previousCount).every(call=>call.method==="GET"));
+    assert.equal(fixture.calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length,2);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),reservations);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM budget_reservations ORDER BY reservation_id").all(),tokenReservations);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM events WHERE actor='user' ORDER BY sequence").all(),authored);
+    const completed=fixture.sqlite.prepare("SELECT event.payload,secret.private_json FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE event.type='DocumentRenderCompleted'").all();
+    assert.equal(completed.length,1);
+    const artifact=JSON.parse(completed[0].private_json),publicArtifact=JSON.parse(completed[0].payload);
+    assert.equal(publicArtifact.media_url,undefined);assert.equal(artifact.provider_job_id,"original-source-paid-audio");
+    assert.deepEqual(artifact.source_block_versions,fixture.originalInput.source_block_versions);
+    assert.equal(artifact.settings.settled_cost_microusd,142_042);assert.equal(artifact.settings.incremental_cost_microusd,0);
+    assert.equal(fixture.stored.length,1);assert.equal(fixture.deleted.length,0);
+    assert.ok(fixture.stored[0].key.includes(`${fixture.original.artifactId}-recovery-`));
+    assert.equal(fixture.stored[0].options.customMetadata.artifactId,fixture.original.artifactId);
+    const input=JSON.parse(fixture.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(artifact.input_ref).content);
+    assert.deepEqual(input.original_document_snapshot,fixture.originalInput.document_snapshot);
+    assert.deepEqual(input.source_block_versions,fixture.originalInput.source_block_versions);
+    assert.notEqual(input.document_snapshot.document.title,"New title after the original audio purchase");
+    assert.deepEqual(input.document_snapshot.standing_constraints.map(preference=>preference.preference_id),["original-audio-preference"]);
+    assert.equal(input.accounting.settled_cost_microusd,142_042);assert.equal(input.accounting.incremental_cost_microusd,0);
+    const finalCalls=fixture.calls.length;
+    const repeated=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(repeated.status,200);
+    await fixture.runJob(fixture.job);
+    assert.equal(fixture.calls.length,finalCalls);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted'").get().count,1);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),reservations);
+  }finally{fixture.restore();}
+});
+
+test("original-source audio recovery verifies the final repaired planner against both paid receipts",async()=>{
+  const fixture=await originalSourceAudioFixture({repair:true});
+  try{
+    assert.equal(fixture.original.plannerResponseId,"original-source-initial-plan");
+    assert.deepEqual(fixture.original.plannerInput.validation.provider_response_ids,["original-source-initial-plan","original-source-paid-plan"]);
+    assert.equal(fixture.original.plannerInput.validation.repair_response_id,"original-source-paid-plan");
+    const usage=JSON.parse(fixture.sqlite.prepare("SELECT secret.private_json FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE event.type='GenerationUsageRecorded' AND event.correlation_id=?").get(`${fixture.job.jobId}:attempt:1`).private_json);
+    assert.equal(usage.planner_response_id,"original-source-paid-plan");assert.equal(usage.cost_microusd,142_042);
+    const before=fixture.calls.length,reservations=fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all();
+    const response=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});
+    assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+    assert.equal((await response.json()).job.result.plannerResponseId,"original-source-paid-plan");
+    assert.equal(fixture.calls.length-before,3);assert.ok(fixture.calls.slice(before).every(call=>call.method==="GET"));
+    assert.equal(fixture.calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length,3);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),reservations);
+    const completed=JSON.parse(fixture.sqlite.prepare("SELECT secret.private_json FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE event.type='DocumentRenderCompleted'").get().private_json);
+    assert.equal(completed.planner_response_id,"original-source-paid-plan");
+    const saved=JSON.parse(fixture.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(completed.input_ref).content);
+    assert.equal(saved.planner.response_id,"original-source-paid-plan");assert.equal(saved.planner.legacy_checkpoint_response_id,"original-source-initial-plan");
+    assert.equal(saved.accounting.incremental_cost_microusd,0);
+  }finally{fixture.restore();}
+});
+
+test("original-source audio recovery retains the selected repaired planner through later progress and retry",async()=>{
+  const fixture=await originalSourceAudioFixture({repair:true,legacyPlannerScalar:false});
+  try{
+    assert.equal(fixture.observedPlannerResponseId,"original-source-paid-plan");
+    const current=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(fixture.job.jobId).result_json);
+    assert.equal(current.plannerResponseId,"original-source-paid-plan");
+    assert.deepEqual(current.plannerResponseIds,["original-source-initial-plan","original-source-paid-plan"]);
+    const before=fixture.calls.length,response=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});
+    assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+    assert.equal((await response.json()).job.result.plannerResponseId,"original-source-paid-plan");
+    assert.equal(fixture.calls.length-before,3);assert.ok(fixture.calls.slice(before).every(call=>call.method==="GET"));
+  }finally{fixture.restore();}
+});
+
+test("original-source audio recovery reports a provider retrieval refusal without logging its private body",async()=>{
+  const fixture=await originalSourceAudioFixture(),previousFetch=globalThis.fetch,previousError=console.error,logged=[];
+  try{
+    const reservations=fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all();
+    globalThis.fetch=async(value,init)=>String(value).endsWith("/original-source-paid-audio/status?logs=1")?Response.json({detail:"private-provider-body-never-log"},{status:404}):previousFetch(value,init);
+    console.error=(...args)=>logged.push(args);
+    const response=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});
+    assert.equal(response.status,409);
+    const diagnostic=logged.find(args=>args[0]==="audio_original_source_recovery_unavailable")?.[1];assert.ok(diagnostic);
+    assert.equal(diagnostic.phase,"retrieving-original-recording");assert.equal(diagnostic.providerHttpStatus,404);
+    assert.equal(JSON.stringify(logged).includes("private-provider-body-never-log"),false);
+    assert.equal(JSON.stringify(logged).includes(fixture.original.audioInputReceipt.submitted_prompt),false);
+    assert.equal(fixture.stored.length,0);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),reservations);
+  }finally{console.error=previousError;fixture.restore();}
+});
+
+test("original-source audio recovery guidance never substitutes a hint for confirmed provider identity",()=>{
+  const detail={code:"context_source_version_mismatch",category:"provider",scope:"request",action:"edit_request",message:"Source changed",retryable:false,retryAfterMs:null,requestId:null,httpStatus:409};
+  const base={kind:"render_document",status:"failed",stage:"failed",result:{artifactKind:"audio",audioProviderSubmission:"confirmed",providerJobId:"original-audio-id"},errorDetail:detail};
+  assert.equal(generationFailureGuidance(detail,"",base).retryAllowed,true);
+  assert.match(generationFailureGuidance(detail,"",base).summary,/original source/);
+  for(const patch of [{providerJobId:null,originalSourceAudioRecoveryAvailable:true},{providerJobId:"pending"},{audioProviderSubmission:"pending"}]){
+    const job={...base,result:{...base.result,...patch}};
+    assert.equal(documentJobCanRecoverProviderRender(job),false);assert.equal(generationFailureGuidance(detail,"",job).retryAllowed,false);
+  }
+  const safety={...detail,category:"safety",httpStatus:422};
+  assert.equal(documentJobCanRecoverProviderRender({...base,errorDetail:safety}),false);
+  assert.equal(generationFailureGuidance(safety,"",base).retryAllowed,false);
+});
+
+const mutateAudioCheckpoint=(fixture,change)=>{
+  const checkpoint=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(fixture.job.jobId).result_json);change(checkpoint);
+  fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify(checkpoint),fixture.job.jobId);
+};
+const mutateAudioInput=(fixture,change)=>{
+  const id=fixture.original.generationReceipt.input_ref,input=JSON.parse(fixture.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(id).content);change(input);
+  fixture.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(JSON.stringify(input),id);
+};
+const mutateAudioPrivateEvent=(fixture,type,change)=>{
+  const event=fixture.sqlite.prepare("SELECT event.event_id,secret.private_json FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE event.type=? AND event.correlation_id=?").get(type,`${fixture.job.jobId}:attempt:1`);
+  const payload=JSON.parse(event.private_json);change(payload);
+  fixture.sqlite.prepare("UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?").run(JSON.stringify(payload),event.event_id);
+};
+const repairedAudioFailures=[
+  ["unmarked repair",result=>{result.plannerInput.validation.repair_attempted=false;}],
+  ["unrelated scalar",result=>{result.plannerResponseId="foreign-initial-response";}],
+  ["unrelated final receipt",result=>{result.plannerInput.validation.repair_response_id="foreign-final-response";}],
+  ["reordered attempts",result=>{result.plannerResponseIds.reverse();}],
+  ["missing attempt",result=>{result.plannerInput.validation.provider_response_ids.pop();}],
+  ["missing original issue",result=>{result.plannerInput.validation.initial_issues=[];}],
+  ["failed repair",result=>{result.plannerInput.validation.repair_issues=[{code:"still-invalid"}];}],
+  ["unconfirmed planning",result=>{Object.values(result.providerSubmissions)[1].status="accepted";}],
+  ["missing planning receipt",result=>{delete result.providerSubmissions[Object.keys(result.providerSubmissions)[1]];}],
+  ["wrong planning model",result=>{Object.values(result.providerSubmissions)[1].model="gpt-foreign-model";}],
+  ["wrong planning provider",result=>{Object.values(result.providerSubmissions)[1].provider="fal";}],
+  ["missing recorded cost",result=>{delete Object.values(result.providerSubmissions)[1].costMicrousd;}],
+  ["wrong recorded cost",result=>{Object.values(result.providerSubmissions)[1].costMicrousd+=1;}],
+  ["wrong token accounting",result=>{Object.values(result.providerSubmissions)[1].inputTokens+=1;}],
+  ["wrong checkpoint aggregate",result=>{result.plannerUsage.inputTokens+=1;}],
+];
+for(const[label,mutate]of repairedAudioFailures)test(`original-source audio recovery rejects repaired-plan ${label} before provider access`,async()=>{
+  const fixture=await originalSourceAudioFixture({repair:true});
+  try{
+    mutateAudioCheckpoint(fixture,mutate);
+    const before=fixture.calls.length,reservations=fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all();
+    const response=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});
+    assert.equal(response.status,409,JSON.stringify(await response.clone().json()));
+    assert.equal(fixture.calls.length,before);assert.equal(fixture.stored.length,0);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),reservations);
+  }finally{fixture.restore();}
+});
+const audioRecoveryFailures=[
+  ["missing provider identity",fixture=>mutateAudioCheckpoint(fixture,result=>{delete result.providerJobId;})],
+  ["contradictory receipt identity",fixture=>mutateAudioCheckpoint(fixture,result=>{result.audioInputReceipt.provider_job_id="another-request";})],
+  ["contradictory receipt model",fixture=>mutateAudioCheckpoint(fixture,result=>{result.audioInputReceipt.model="fal-ai/stable-audio";})],
+  ["foreign same-host queue path",fixture=>mutateAudioCheckpoint(fixture,result=>{result.providerStatusUrl="https://queue.fal.run/fal-ai/lyria3/requests/foreign/status";})],
+  ["unconfirmed paid submission",fixture=>mutateAudioCheckpoint(fixture,result=>{result.audioProviderSubmission="pending";})],
+  ["missing paid plan",fixture=>mutateAudioCheckpoint(fixture,result=>{delete result.artifactPlan;})],
+  ["source hash mismatch",fixture=>mutateAudioCheckpoint(fixture,result=>{result.generationReceipt.source_snapshot_sha256="a".repeat(64);})],
+  ["private source contents changed",fixture=>mutateAudioInput(fixture,input=>{input.document_snapshot.facts[0].properties.text="Tampered historical source";})],
+  ["private source versions changed",fixture=>mutateAudioInput(fixture,input=>{input.source_block_versions[0].version+=1;})],
+  ["private source wrong job",fixture=>mutateAudioInput(fixture,input=>{input.job_id="foreign-job";})],
+  ["private source wrong document",fixture=>mutateAudioInput(fixture,input=>{input.document_id="foreign-document";})],
+  ["private source expired",fixture=>fixture.sqlite.prepare("UPDATE private_content SET expires_at=? WHERE content_id=?").run("2000-01-01T00:00:00.000Z",fixture.original.generationReceipt.input_ref)],
+  ["private source redacted",fixture=>fixture.sqlite.prepare("UPDATE private_content SET redacted_at=? WHERE content_id=?").run(new Date().toISOString(),fixture.original.generationReceipt.input_ref)],
+  ["private source foreign owner",fixture=>fixture.sqlite.prepare("UPDATE private_content SET owner_id=? WHERE content_id=?").run("foreign-owner",fixture.original.generationReceipt.input_ref)],
+  ["job retention expired",fixture=>fixture.sqlite.prepare("UPDATE document_jobs SET expires_at=? WHERE job_id=?").run("2000-01-01T00:00:00.000Z",fixture.job.jobId)],
+  ["foreign job owner",fixture=>fixture.sqlite.prepare("UPDATE document_jobs SET owner_id=? WHERE job_id=?").run("foreign-owner",fixture.job.jobId)],
+  ["original usage provider changed",fixture=>mutateAudioPrivateEvent(fixture,"GenerationUsageRecorded",payload=>{payload.provider_job_id="foreign-provider";})],
+  ["original request consent missing",fixture=>mutateAudioPrivateEvent(fixture,"DocumentRenderRequested",payload=>{payload.paid_media_confirmed=false;})],
+  ["original request project changed",fixture=>mutateAudioPrivateEvent(fixture,"DocumentRenderRequested",payload=>{payload.project_id="foreign-project";})],
+  ["original request versions changed",fixture=>mutateAudioPrivateEvent(fixture,"DocumentRenderRequested",payload=>{payload.source_block_versions[0].version+=1;})],
+  ["original paid event envelope redacted",fixture=>fixture.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id IN(SELECT event_id FROM events WHERE type='GenerationUsageRecorded' AND correlation_id=?)").run(new Date().toISOString(),`${fixture.job.jobId}:attempt:1`)],
+  ["original paid event envelope foreign owner",fixture=>fixture.sqlite.prepare("UPDATE event_private_payloads SET owner_id='foreign-owner' WHERE private_event_id IN(SELECT event_id FROM events WHERE type='DocumentRenderFailed' AND correlation_id=?)").run(`${fixture.job.jobId}:attempt:1`)],
+  ["original authored source envelope redacted",fixture=>fixture.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),fixture.firstFact.source_event_refs[0])],
+  ["original charge missing",fixture=>fixture.sqlite.prepare("DELETE FROM cost_budget_reservations WHERE reservation_id=?").run(fixture.originalCostId)],
+  ["original charge not settled",fixture=>fixture.sqlite.prepare("UPDATE cost_budget_reservations SET status='released' WHERE reservation_id=?").run(fixture.originalCostId)],
+  ["original charge undercovered",fixture=>fixture.sqlite.prepare("UPDATE cost_budget_reservations SET used_microusd=1 WHERE reservation_id=?").run(fixture.originalCostId)],
+  ["original charge foreign owner",fixture=>fixture.sqlite.prepare("UPDATE cost_budget_reservations SET owner_id='foreign-owner' WHERE reservation_id=?").run(fixture.originalCostId)],
+  ["original charge foreign correlation",fixture=>fixture.sqlite.prepare("UPDATE cost_budget_reservations SET correlation_id='foreign-job:attempt:1' WHERE reservation_id=?").run(fixture.originalCostId)],
+  ["current source removed",fixture=>appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockRemoved",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:fixture.firstFact.block_id})],
+  ["current source disabled",fixture=>appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockPropertyEdited",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:fixture.firstFact.block_id,property_path:"active",new_value:false})],
+  ["current source rights revoked",fixture=>appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockPropertyEdited",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:fixture.firstFact.block_id,property_path:"rights_revoked",new_value:true})],
+  ["current source license expired",fixture=>appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockPropertyEdited",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:fixture.firstFact.block_id,property_path:"rights_expires_at",new_value:"2000-01-01T00:00:00.000Z"})],
+];
+for(const[label,mutate]of audioRecoveryFailures)test(`original-source audio recovery rejects ${label} before provider access`,async()=>{
+  const fixture=await originalSourceAudioFixture();
+  try{
+    await mutate(fixture);
+    const calls=fixture.calls.length,reservations=fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all();
+    const rejected=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({skipValidation:true,providerVerified:true,recoverOriginalSource:true})});
+    assert.ok((label==="job retention expired"?[404,409,428]:[404,409]).includes(rejected.status),JSON.stringify(await rejected.clone().json()));
+    assert.equal(fixture.calls.length,calls,"invalid evidence must not reach even a provider GET");
+    assert.equal(fixture.stored.length,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted'").get().count,0);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),reservations);
+  }finally{fixture.restore();}
+});
+
+for(const damage of ["provider_mismatch","redacted_envelope","malformed_envelope"])test(`original-source audio recovery diagnoses ${damage} without exposing private evidence or permitting recovery`,async()=>{
+  const fixture=await originalSourceAudioFixture(),logged=[],previousError=console.error;
+  try{
+    if(damage==="provider_mismatch")mutateAudioPrivateEvent(fixture,"GenerationUsageRecorded",payload=>{payload.provider_job_id="private-mismatched-provider-never-log";});
+    else if(damage==="redacted_envelope")fixture.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id IN(SELECT event_id FROM events WHERE type='GenerationUsageRecorded' AND correlation_id=?)").run(new Date().toISOString(),`${fixture.job.jobId}:attempt:1`);
+    else fixture.sqlite.prepare("UPDATE event_private_payloads SET private_json=? WHERE private_event_id IN(SELECT event_id FROM events WHERE type='GenerationUsageRecorded' AND correlation_id=?)").run("{malformed-private-evidence",`${fixture.job.jobId}:attempt:1`);
+    const beforeCalls=fixture.calls.length,beforeReservations=fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all();
+    console.error=(...args)=>logged.push(args);
+    const response=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});
+    assert.equal(response.status,409);assert.equal((await response.json()).reason,"original_paid_event_chain_missing");
+    const diagnostic=logged.find(args=>args[0]==="audio_original_source_recovery_chain_diagnostic")?.[1];assert.ok(diagnostic);
+    assert.equal(diagnostic.counts.find(row=>row.type==="GenerationUsageRecorded").event_count,1);
+    const usage=diagnostic.candidates.find(row=>row.type==="GenerationUsageRecorded");
+    if(damage==="provider_mismatch"){assert.equal(usage.checks.length,1);assert.equal(usage.checks[0].provider,false);assert.equal(usage.checks[0].linkedUsage,true);}
+    else {assert.equal(usage.checks.length,0);assert.equal(diagnostic.counts.find(row=>row.type==="GenerationUsageRecorded").retained_json_count,0);}
+    const serialized=JSON.stringify(logged);
+    for(const privateValue of ["private-mismatched-provider-never-log","malformed-private-evidence",fixture.original.plannerResponseId,fixture.original.providerJobId,fixture.original.audioInputReceipt.submitted_prompt,fixture.originalInput.document_snapshot.facts[0].properties.text])if(privateValue)assert.equal(serialized.includes(privateValue),false);
+    assert.equal(fixture.calls.length,beforeCalls);assert.equal(fixture.stored.length,0);
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),beforeReservations);
+  }finally{console.error=previousError;fixture.restore();}
+});
+
+for(const race of ["source_deleted","input_expired","consent_revoked"])test(`original-source audio recovery stops when ${race} during retrieval`,async()=>{
+  const fixture=await originalSourceAudioFixture();
+  try{
+    const checkpoint=fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(fixture.job.jobId).result_json;
+    fixture.afterDownload(async()=>{
+      if(race==="source_deleted")await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockRemoved",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:fixture.firstFact.block_id});
+      if(race==="input_expired")fixture.sqlite.prepare("UPDATE private_content SET expires_at=? WHERE content_id=?").run("2000-01-01T00:00:00.000Z",fixture.original.generationReceipt.input_ref);
+      if(race==="consent_revoked")fixture.sqlite.prepare("UPDATE users SET consent_version=NULL WHERE user_id='dev-local-creative'").run();
+    });
+    const rejected=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(rejected.status,409);
+    assert.equal(fixture.stored.length,0);
+    const restored=fixture.sqlite.prepare("SELECT status,result_json FROM document_jobs WHERE job_id=?").get(fixture.job.jobId);
+    assert.equal(restored.status,"failed");assert.equal(restored.result_json,checkpoint);
+    assert.equal(fixture.calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length,2);
+    assert.equal(fixture.sqlite.prepare("SELECT SUM(used_microusd) AS cost FROM cost_budget_reservations").get().cost,142_042);
+  }finally{fixture.restore();}
+});
+
+test("original-source audio recovery atomically rolls back zero-row completion and removes only attempt staging",async()=>{
+  const fixture=await originalSourceAudioFixture();
+  try{
+    const checkpoint=fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(fixture.job.jobId).result_json;
+    fixture.sqlite.exec("CREATE TRIGGER ignore_audio_recovery_commit BEFORE UPDATE ON document_jobs WHEN NEW.status='completed' AND NEW.correlation_id LIKE '%:audio-recovery:%' BEGIN SELECT RAISE(IGNORE); END");
+    const rejected=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(rejected.status,409);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted'").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='GenerationUsageRecorded' AND correlation_id LIKE '%:audio-recovery:%'").get().count,0);
+    assert.equal(fixture.stored.length,1);assert.deepEqual(fixture.deleted,[fixture.stored[0].key]);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content WHERE kind='document-artifact' AND redacted_at IS NULL").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(fixture.job.jobId).result_json,checkpoint);
+    assert.equal(fixture.sqlite.prepare("SELECT redacted_at FROM private_content WHERE content_id=?").get(fixture.original.generationReceipt.input_ref).redacted_at,null);
+    fixture.sqlite.exec("DROP TRIGGER ignore_audio_recovery_commit");
+    const retry=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(retry.status,200,JSON.stringify(await retry.clone().json()));
+    assert.equal(fixture.stored.length,2);assert.notEqual(fixture.stored[0].key,fixture.stored[1].key);assert.equal(fixture.deleted.length,1);
+    assert.equal(fixture.sqlite.prepare("SELECT SUM(used_microusd) AS cost FROM cost_budget_reservations").get().cost,142_042);
+  }finally{fixture.restore();}
+});
+
+test("original-source audio recovery enforces single-writer claim during concurrent retries",async()=>{
+  const fixture=await originalSourceAudioFixture();
+  try{
+    let release;const blocked=new Promise(resolve=>{release=resolve;});let entered;const downloading=new Promise(resolve=>{entered=resolve;});
+    fixture.afterDownload(async()=>{entered();await blocked;});
+    const first=fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});await downloading;
+    const second=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(second.status,409);
+    release();assert.equal((await first).status,200);
+    assert.equal(fixture.stored.length,1);assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted'").get().count,1);
+    assert.equal(fixture.calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length,2);
+  }finally{fixture.restore();}
+});
+
+test("original-source audio recovery preserves original active lineage separately from admitted inactive sources",async()=>{
+  const fixture=await originalSourceAudioFixture({muted:true});
+  try{
+    const recovered=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(recovered.status,200,JSON.stringify(await recovered.clone().json()));
+    const artifact=JSON.parse(fixture.sqlite.prepare("SELECT secret.private_json FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE event.type='DocumentRenderCompleted'").get().private_json);
+    assert.equal(artifact.source_block_versions.some(source=>source.block_id==="inactive-original-audio-source"),false);
+    const input=JSON.parse(fixture.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(artifact.input_ref).content);
+    assert.equal(input.admitted_source_block_versions.some(source=>source.block_id==="inactive-original-audio-source"),true);
+    assert.deepEqual(input.source_block_versions,artifact.source_block_versions);
+    assert.deepEqual(input.original_document_snapshot,fixture.originalInput.document_snapshot);
+  }finally{fixture.restore();}
+});
+
+test("original-source audio recovery retains GET-only routing after an interrupted verified attempt",async()=>{
+  const fixture=await originalSourceAudioFixture();
+  try{
+    fixture.afterDownload(async()=>{
+      const checkpoint=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(fixture.job.jobId).result_json);
+      assert.equal(checkpoint.audioOriginalSourceRecovery.version,1);
+      checkpoint.errorDetail={code:"execution_interrupted",category:"server",scope:"unknown",action:"contact_support",message:"Worker interrupted",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null};
+      fixture.sqlite.prepare("UPDATE document_jobs SET status='failed',result_json=? WHERE job_id=?").run(JSON.stringify(checkpoint),fixture.job.jobId);
+    });
+    const interrupted=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(interrupted.status,409);
+    fixture.afterDownload(null);
+    const count=fixture.calls.length;
+    const recovered=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(recovered.status,200,JSON.stringify(await recovered.clone().json()));
+    assert.ok(fixture.calls.slice(count).every(call=>call.method==="GET"));assert.equal(fixture.calls.length-count,3);
+    assert.equal(fixture.sqlite.prepare("SELECT SUM(used_microusd) AS cost FROM cost_budget_reservations").get().cost,142_042);
+  }finally{fixture.restore();}
+});
+
+test("original-source audio recovery re-proves both repaired planner receipts after interruption",async()=>{
+  const fixture=await originalSourceAudioFixture({repair:true});
+  try{
+    const reservations=fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all();
+    fixture.afterDownload(async()=>{
+      const checkpoint=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(fixture.job.jobId).result_json);
+      assert.equal(checkpoint.plannerResponseId,"original-source-initial-plan");
+      checkpoint.errorDetail={code:"execution_interrupted",category:"server",scope:"unknown",action:"contact_support",message:"Worker interrupted",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null};
+      fixture.sqlite.prepare("UPDATE document_jobs SET status='failed',result_json=? WHERE job_id=?").run(JSON.stringify(checkpoint),fixture.job.jobId);
+    });
+    const interrupted=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(interrupted.status,409);
+    fixture.afterDownload(null);
+    const retained=fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(fixture.job.jobId).result_json;
+    assert.equal(JSON.parse(retained).plannerResponseId,"original-source-initial-plan");
+    mutateAudioCheckpoint(fixture,result=>{result.plannerInput.validation.repair_response_id="unverified-repair-after-interruption";});
+    const count=fixture.calls.length,rejected=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});
+    assert.equal(rejected.status,409);assert.equal(fixture.calls.length,count);
+    fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(retained,fixture.job.jobId);
+    const recovered=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(recovered.status,200,JSON.stringify(await recovered.clone().json()));
+    assert.equal((await recovered.json()).job.result.plannerResponseId,"original-source-paid-plan");
+    assert.equal(fixture.calls.length-count,3);assert.ok(fixture.calls.slice(count).every(call=>call.method==="GET"));
+    const completed=JSON.parse(fixture.sqlite.prepare("SELECT secret.private_json FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE event.type='DocumentRenderCompleted'").get().private_json);
+    const saved=JSON.parse(fixture.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(completed.input_ref).content);
+    assert.equal(saved.planner.response_id,"original-source-paid-plan");assert.equal(saved.planner.legacy_checkpoint_response_id,"original-source-initial-plan");
+    assert.deepEqual(fixture.sqlite.prepare("SELECT * FROM cost_budget_reservations ORDER BY reservation_id").all(),reservations);
+  }finally{fixture.restore();}
+});
+
+for(const ignoredType of ["DocumentRenderCompleted","GenerationUsageRecorded"])test(`original-source audio recovery rolls back when ${ignoredType} is not inserted`,async()=>{
+  const fixture=await originalSourceAudioFixture();
+  try{
+    fixture.sqlite.exec(`CREATE TRIGGER ignore_original_audio_event BEFORE INSERT ON event_write_stage WHEN NEW.type='${ignoredType}' AND NEW.correlation_id LIKE '%:audio-recovery:%' BEGIN SELECT RAISE(IGNORE); END`);
+    const rejected=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(rejected.status,409);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE correlation_id LIKE '%:audio-recovery:%'").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT status FROM document_jobs WHERE job_id=?").get(fixture.job.jobId).status,"failed");
+    assert.deepEqual(fixture.deleted,[fixture.stored[0].key]);
+  }finally{fixture.restore();}
+});
+
+test("original-source audio recovery protects shared-project receipts without weakening provider eligibility",async()=>{
+  const fixture=await originalSourceAudioFixture({shared:true});
+  try{
+    const unscoped=await fixture.unscopedRequest(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(unscoped.status,404);
+    const recovered=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(recovered.status,200,JSON.stringify(await recovered.clone().json()));
+    const serialized=await recovered.text();
+    assert.doesNotMatch(serialized,/original_input_ref|recovered_input_ref|original_source_snapshot_sha256|original_request_event_id|original_failure_event_id|original_usage_event_id|provider_job_id|original-source-paid-audio|audioOriginalSourceRecovery/);
+    const result=JSON.parse(serialized);assert.equal(result.job.result.recovery.current_edits_preserved,true);assert.equal(result.job.result.recovery.new_generation_requests,0);
+    for(const path of ["/api/document-jobs",`/api/document-jobs/${fixture.job.jobId}`]){
+      const response=await fixture.request(path);assert.equal(response.status,200);assert.doesNotMatch(await response.text(),/original_input_ref|recovered_input_ref|original_source_snapshot_sha256|original-source-paid-audio|audioOriginalSourceRecovery/);
+    }
+    const recoveredInput=fixture.sqlite.prepare("SELECT content_id FROM private_content WHERE kind='document-artifact-input' AND json_extract(content,'$.recovery.mode')='original-source-provider-verified'").get();
+    assert.ok(recoveredInput);
+    assert.deepEqual({...fixture.sqlite.prepare("SELECT visibility,actor_user_id FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(recoveredInput.content_id)},{visibility:"actor_private",actor_user_id:"dev-local-creative"});
+  }finally{fixture.restore();}
+});
+
+for(const race of ["session","membership","retention_classification"])test(`original-source audio recovery rejects shared ${race} revocation during retrieval`,async()=>{
+  const fixture=await originalSourceAudioFixture({shared:true});
+  try{
+    fixture.afterDownload(()=>{
+      if(race==="session")fixture.sqlite.prepare("UPDATE project_context_sessions SET revoked_at=? WHERE context_id=?").run(new Date().toISOString(),fixture.contextId);
+      if(race==="membership")fixture.sqlite.prepare("UPDATE organization_memberships SET status='revoked',revoked_at=? WHERE organization_id=? AND user_id='dev-local-creative'").run(new Date().toISOString(),fixture.organizationId);
+      if(race==="retention_classification")fixture.sqlite.prepare("UPDATE private_content_retention_scopes SET classification='untrusted' WHERE content_id=?").run(fixture.original.generationReceipt.input_ref);
+    });
+    const rejected=await fixture.request(`/api/document-jobs/${fixture.job.jobId}/retry`,{method:"POST"});assert.equal(rejected.status,409,JSON.stringify(await rejected.clone().json()));
+    assert.equal(fixture.stored.length,0);assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted'").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT SUM(used_microusd) AS cost FROM cost_budget_reservations").get().cost,142_042);
+  }finally{fixture.restore();}
+});
 
 for(const form of ["preview","generate","short_story","scene","storyboard","audio","video"]){
   test(`${form} keeps paid planning in the live request and records its boundary before dispatch`,async()=>{

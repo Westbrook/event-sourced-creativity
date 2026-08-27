@@ -131,6 +131,117 @@ async function videoReceipt(reference: AudioVideoReference) {
   };
 }
 
+/** Already-accepted result retrieval, shared without submission or cancellation. */
+async function readAcceptedAudio(
+  env: WorkerEnv,
+  accepted: { model: string; providerJobId: string; urls: ReturnType<typeof queueUrls>; profile: AudioRequestProfile; prepared: CreativeAudioPreparedReceipt; estimatedCostMicrousd: number; started: number },
+  options: Pick<CreativeAudioOptions, "signal" | "onStage"> & { verifyIdentity?: boolean },
+) {
+  const { model, providerJobId, urls, profile, prepared, estimatedCostMicrousd, started } = accepted;
+  const contract = audioAdapterContractForModel(model)!;
+  const submittedPrompt = prepared.submittedPrompt;
+  const deadline = Date.now() + 15 * 60_000;
+  let state: FalAudioQueueState = { status: "IN_QUEUE" };
+  while (state.status !== "COMPLETED") {
+    if (Date.now() >= deadline) throw providerError("fal_audio_timeout", `${contract.label} has not finished yet. Resume the saved provider request instead of purchasing another audio output.`, submittedPrompt, { requestId: providerJobId, retryable: true, status: 504, category: "server" });
+    const checked = await fetchJson(`${urls.statusUrl}${urls.statusUrl.includes("?") ? "&" : "?"}logs=1`, { method: "GET", headers: headers(env), signal: options.signal, ...(options.verifyIdentity ? { redirect: "manual" as const } : {}) }, submittedPrompt, providerJobId);
+    state = checked.body as FalAudioQueueState;
+    if (options.verifyIdentity && state.request_id !== undefined && state.request_id !== providerJobId) throw providerError("fal_audio_receipt_mismatch", "The provider returned a different audio request identifier.", submittedPrompt, { requestId: providerJobId, status: 409 });
+    if (options.verifyIdentity && state.error != null) throw providerError("fal_audio_result_rejected", "The saved audio request returned a provider error; no replacement was submitted.", submittedPrompt, { requestId: providerJobId, status: 422 });
+    if (state.status === "FAILED" || state.status === "CANCELLED") throw providerError(`fal_audio_${state.status.toLowerCase()}`, `Fal marked the ${contract.label} audio request as ${state.status.toLowerCase()}. Review the retained creative direction before starting a changed request.`, submittedPrompt, { requestId: providerJobId, status: 422 });
+    if (!state.status || !["IN_QUEUE", "IN_PROGRESS", "COMPLETED"].includes(state.status)) throw providerError("fal_audio_status_invalid", "Fal returned an unrecognized audio-generation queue status. The original request remains recoverable.", submittedPrompt, { requestId: providerJobId, retryable: true, status: 502, category: "server" });
+    if (state.status !== "COMPLETED") {
+      const log = state.logs?.at(-1)?.message?.trim();
+      await options.onStage?.(state.status === "IN_QUEUE" ? "queued" : "rendering-audio", log ? `${contract.label} · ${log}` : state.status === "IN_QUEUE" ? "The audio request is queued with the provider." : `${contract.label} is producing the requested audio.`);
+      await wait(2_000, options.signal);
+    }
+  }
+
+  await options.onStage?.("finalizing", "The requested audio is complete. Verifying its provider receipt.");
+  const response = await fetchJson(urls.responseUrl, { method: "GET", headers: headers(env), signal: options.signal, ...(options.verifyIdentity ? { redirect: "manual" as const } : {}) }, submittedPrompt, providerJobId);
+  if (options.verifyIdentity && response.body.request_id !== undefined && response.body.request_id !== providerJobId) throw providerError("fal_audio_receipt_mismatch", "The provider returned a different audio result identifier.", submittedPrompt, { requestId: providerJobId, status: 409 });
+  if (options.verifyIdentity && response.body.error != null) throw providerError("fal_audio_result_rejected", "The saved audio result contains a provider error; no replacement was submitted.", submittedPrompt, { requestId: providerJobId, status: 422 });
+  const result = response.body as FalAudioResult;
+  const audio = normalizeAudioFile(result, submittedPrompt, providerJobId);
+  let media: URL;
+  try { media = new URL(audio.url!); } catch { throw providerError("fal_audio_url_invalid", "Fal returned an invalid audio location.", submittedPrompt, { requestId: providerJobId, retryable: true, status: 502, category: "server" }); }
+  if (options.verifyIdentity && (media.username || media.password || media.port)) throw providerError("fal_audio_url_untrusted", "The audio location has an unapproved authority.", submittedPrompt, { requestId: providerJobId, status: 409 });
+  if (media.protocol !== "https:" || media.hostname !== "fal.media" && !media.hostname.endsWith(".fal.media")) throw providerError("fal_audio_url_untrusted", "Fal returned audio outside its trusted media domain; that location was not requested.", submittedPrompt, { requestId: providerJobId, status: 502, action: "contact_support" });
+  await options.onStage?.("downloading", "Saving the generated audio to private project storage.");
+  let downloaded: Response;
+  // Workers support manual/follow only. Manual also keeps redirects from
+  // escaping the trusted media host; the non-2xx check below rejects them.
+  try { downloaded = await fetch(media.toString(), { signal: options.signal, redirect: "manual" }); }
+  catch (error) { throw new ProviderRequestError({ ...classifyProviderFailure(error), requestId: providerJobId }, submittedPrompt); }
+  if (!downloaded.ok) throw providerError("fal_audio_download_failed", "Fal completed the audio request but its media could not be downloaded. Resume the retained provider request.", submittedPrompt, { requestId: providerJobId, retryable: true, status: downloaded.status, category: "server" });
+  const advertised = Number(audio.file_size ?? downloaded.headers.get("content-length") ?? 0);
+  if (advertised > MAX_AUDIO_UPLOAD_BYTES) throw providerError("fal_audio_too_large", "The generated audio exceeds Forma’s private 25 MB media limit.", submittedPrompt, { requestId: providerJobId });
+  const reader = downloaded.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  if (reader) for (;;) { const chunk = await reader.read(); if (chunk.done) break; total += chunk.value.byteLength; if (total > MAX_AUDIO_UPLOAD_BYTES) { await reader.cancel(); throw providerError("fal_audio_too_large", "The generated audio exceeds Forma’s private 25 MB media limit.", submittedPrompt, { requestId: providerJobId }); } chunks.push(chunk.value); }
+  else { const fallback = new Uint8Array(await downloaded.arrayBuffer()); total = fallback.byteLength; if (total > MAX_AUDIO_UPLOAD_BYTES) throw providerError("fal_audio_too_large", "The generated audio exceeds Forma’s private 25 MB media limit.", submittedPrompt, { requestId: providerJobId }); chunks.push(fallback); }
+  const bytes = new Uint8Array(total); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  if (!bytes.length) throw providerError("fal_audio_empty", "Fal returned empty audio. The original provider request can be inspected and recovered.", submittedPrompt, { requestId: providerJobId, retryable: true, status: 502, category: "server" });
+  const advertisedType = String(audio.content_type ?? "").split(";")[0]!.trim().toLowerCase();
+  const downloadedType = String(downloaded.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  if (options.verifyIdentity && downloadedType && downloadedType !== "application/octet-stream"
+    && (!contract.supportedOutputMimeTypes.includes(downloadedType) || advertisedType && advertisedType !== "application/octet-stream" && advertisedType !== downloadedType)) {
+    throw providerError("fal_audio_type_invalid", "The downloaded recording does not match the provider's supported audio format.", submittedPrompt, { requestId: providerJobId, status: 502, category: "server", retryable: true });
+  }
+  let mimeType = advertisedType && advertisedType !== "application/octet-stream" ? advertisedType : downloadedType && downloadedType !== "application/octet-stream" ? downloadedType : "";
+  if (!mimeType && (media.pathname.toLowerCase().endsWith(".mp3") || String(audio.file_name ?? "").toLowerCase().endsWith(".mp3"))) mimeType = "audio/mpeg";
+  if (!mimeType && model === AUDIO_ADAPTER_CONTRACT.model) mimeType = "audio/mpeg";
+  if (!contract.supportedOutputMimeTypes.includes(mimeType)) throw providerError("fal_audio_type_invalid", `Fal returned ${mimeType || "an unknown format"} instead of a supported ${contract.label} recording.`, submittedPrompt, { requestId: providerJobId, retryable: true, status: 502, category: "server" });
+  const measuredDuration = Number(audio.duration ?? (result as Record<string, unknown>).duration ?? 0);
+  if (contract.pricing.mode === "per_minute" && measuredDuration > contract.maximumAdvertisedDurationSeconds) {
+    throw providerError("audio_provider_duration_exceeds_contract", "The audio provider reported a duration outside its approved generation contract; inspect the saved provider request before continuing.", submittedPrompt, { requestId: providerJobId, status: 502, category: "server", action: "contact_support" });
+  }
+  const measuredCost = estimateAudioProviderCostMicrousd(contract, profile, {
+    ...(contract.pricing.mode === "per_minute" && measuredDuration > 0 && measuredDuration <= contract.maximumAdvertisedDurationSeconds ? { durationSeconds: Math.ceil(measuredDuration) } : {}),
+    ...(contract.pricing.mode === "per_1000_characters" ? { characterCount: audioCharacterCount(submittedPrompt) } : {}),
+  });
+  if (measuredCost > estimatedCostMicrousd) {
+    throw providerError("audio_provider_cost_exceeds_reservation", "The provider reported usage above the authorized audio reservation; the original provider request remains available for review.", submittedPrompt, { requestId: providerJobId, status: 502, category: "server", action: "contact_support" });
+  }
+  const costMicrousd = measuredCost;
+  return {
+    provider: "fal" as const, model, providerJobId, providerStatusUrl: urls.statusUrl, providerResponseUrl: urls.responseUrl, providerCancelUrl: urls.cancelUrl,
+    bytes, mimeType, fileName: audio.file_name ?? null, fileSize: typeof audio.file_size === "number" ? audio.file_size : bytes.byteLength,
+    lyrics: typeof result.lyrics === "string" ? result.lyrics : typeof result.data?.lyrics === "string" ? result.data.lyrics : "",
+    latencyMs: Date.now() - started, costMicrousd, submittedPrompt, preparedReceipt: prepared,
+  };
+}
+
+/** Exact model/request binding is mandatory for read-only recovery. */
+export function verifiedAudioRecoveryQueue(model: string, requestId: string, receipt: Pick<CreativeAudioOptions, "providerStatusUrl" | "providerResponseUrl" | "providerCancelUrl">) {
+  if (!audioAdapterContractForModel(model) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(requestId) || ["pending", "submitted", "unknown"].includes(requestId.toLowerCase())) {
+    throw providerError("audio_recovery_receipt_invalid", "A verified original audio model and request are required.", "", { status: 409 });
+  }
+  const canonical = queueUrls(model, requestId);
+  if (receipt.providerStatusUrl !== canonical.statusUrl || receipt.providerResponseUrl !== canonical.responseUrl || receipt.providerCancelUrl !== canonical.cancelUrl) {
+    throw providerError("audio_recovery_receipt_invalid", "The retained queue locations do not identify the original audio request.", "", { requestId, status: 409 });
+  }
+  return canonical;
+}
+
+/** Retrieve an accepted recording using GET only. Never submit, upload, or cancel. */
+export async function recoverAcceptedAudio(env: WorkerEnv, options: CreativeAudioOptions & { providerJobId: string; providerModel: string; retainedReceipt: CreativeAudioPreparedReceipt }) {
+  const urls = verifiedAudioRecoveryQueue(options.providerModel, options.providerJobId, options);
+  const prepared = options.retainedReceipt;
+  if (prepared.provider !== "fal" || prepared.model !== options.providerModel || typeof prepared.submittedPrompt !== "string" || !prepared.submittedPrompt.trim() || prepared.audioWaveformSubmitted !== false) {
+    throw providerError("audio_recovery_receipt_invalid", "The original audio input and provider identity must agree.", "", { requestId: options.providerJobId, status: 409 });
+  }
+  if (!env.FAL_KEY?.trim() || env.FORMA_AUDIO_PROVIDER && env.FORMA_AUDIO_PROVIDER !== "fal") {
+    throw providerError("audio_provider_not_configured", "The original audio provider is unavailable.", "", { status: 503, category: "authentication", action: "check_credentials" });
+  }
+  const estimatedCostMicrousd = Number(prepared.parameters.published_cost_microusd);
+  if (!Number.isSafeInteger(estimatedCostMicrousd) || estimatedCostMicrousd <= 0) {
+    throw providerError("audio_recovery_receipt_invalid", "The original audio cost evidence is unavailable.", "", { requestId: options.providerJobId, status: 409 });
+  }
+  return readAcceptedAudio(env, { model: options.providerModel, providerJobId: options.providerJobId, urls, profile: normalizeAudioRequestProfile(options.profile), prepared, estimatedCostMicrousd, started: Date.now() }, { signal: options.signal, onStage: options.onStage, verifyIdentity: true });
+}
+
 /** Route an approved specialist schema through one recoverable Fal queue transport. */
 export async function generateCreativeAudio(env: WorkerEnv, prompt: string, options: CreativeAudioOptions = {}) {
   if (!env.FAL_KEY?.trim()) throw providerError("audio_provider_not_configured", "Fal audio generation is not configured for this environment.", prompt, { status: 503, category: "authentication", action: "check_credentials" });
@@ -280,68 +391,7 @@ export async function generateCreativeAudio(env: WorkerEnv, prompt: string, opti
       await options.onReceipt?.({ providerJobId, provider: "fal", model, providerStatusUrl: urls.statusUrl, providerResponseUrl: urls.responseUrl, providerCancelUrl: urls.cancelUrl });
     }
 
-    const deadline = Date.now() + 15 * 60_000;
-    let state: FalAudioQueueState = { status: "IN_QUEUE" };
-    while (state.status !== "COMPLETED") {
-      if (Date.now() >= deadline) throw providerError("fal_audio_timeout", `${contract.label} has not finished yet. Resume the saved provider request instead of purchasing another audio output.`, submittedPrompt, { requestId: providerJobId, retryable: true, status: 504, category: "server" });
-      const checked = await fetchJson(`${urls.statusUrl}${urls.statusUrl.includes("?") ? "&" : "?"}logs=1`, { headers: headers(env), signal: options.signal }, submittedPrompt, providerJobId);
-      state = checked.body as FalAudioQueueState;
-      if (state.status === "FAILED" || state.status === "CANCELLED") throw providerError(`fal_audio_${state.status.toLowerCase()}`, `Fal marked the ${contract.label} audio request as ${state.status.toLowerCase()}. Review the retained creative direction before starting a changed request.`, submittedPrompt, { requestId: providerJobId, status: 422 });
-      if (!state.status || !["IN_QUEUE", "IN_PROGRESS", "COMPLETED"].includes(state.status)) throw providerError("fal_audio_status_invalid", "Fal returned an unrecognized audio-generation queue status. The original request remains recoverable.", submittedPrompt, { requestId: providerJobId, retryable: true, status: 502, category: "server" });
-      if (state.status !== "COMPLETED") {
-        const log = state.logs?.at(-1)?.message?.trim();
-        await options.onStage?.(state.status === "IN_QUEUE" ? "queued" : "rendering-audio", log ? `${contract.label} · ${log}` : state.status === "IN_QUEUE" ? "The audio request is queued with the provider." : `${contract.label} is producing the requested audio.`);
-        await wait(2_000, options.signal);
-      }
-    }
-
-    await options.onStage?.("finalizing", "The requested audio is complete. Verifying its provider receipt.");
-    const response = await fetchJson(urls.responseUrl, { headers: headers(env), signal: options.signal }, submittedPrompt, providerJobId);
-    const result = response.body as FalAudioResult;
-    const audio = normalizeAudioFile(result, submittedPrompt, providerJobId);
-    let media: URL;
-    try { media = new URL(audio.url!); } catch { throw providerError("fal_audio_url_invalid", "Fal returned an invalid audio location.", submittedPrompt, { requestId: providerJobId, retryable: true, status: 502, category: "server" }); }
-    if (media.protocol !== "https:" || media.hostname !== "fal.media" && !media.hostname.endsWith(".fal.media")) throw providerError("fal_audio_url_untrusted", "Fal returned audio outside its trusted media domain; that location was not requested.", submittedPrompt, { requestId: providerJobId, status: 502, action: "contact_support" });
-    await options.onStage?.("downloading", "Saving the generated audio to private project storage.");
-    let downloaded: Response;
-    // Workers support manual/follow only. Manual also keeps redirects from
-    // escaping the trusted media host; the non-2xx check below rejects them.
-    try { downloaded = await fetch(media.toString(), { signal: options.signal, redirect: "manual" }); }
-    catch (error) { throw new ProviderRequestError({ ...classifyProviderFailure(error), requestId: providerJobId }, submittedPrompt); }
-    if (!downloaded.ok) throw providerError("fal_audio_download_failed", "Fal completed the audio request but its media could not be downloaded. Resume the retained provider request.", submittedPrompt, { requestId: providerJobId, retryable: true, status: downloaded.status, category: "server" });
-    const advertised = Number(audio.file_size ?? downloaded.headers.get("content-length") ?? 0);
-    if (advertised > MAX_AUDIO_UPLOAD_BYTES) throw providerError("fal_audio_too_large", "The generated audio exceeds Forma’s private 25 MB media limit.", submittedPrompt, { requestId: providerJobId });
-    const reader = downloaded.body?.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    if (reader) for (;;) { const chunk = await reader.read(); if (chunk.done) break; total += chunk.value.byteLength; if (total > MAX_AUDIO_UPLOAD_BYTES) { await reader.cancel(); throw providerError("fal_audio_too_large", "The generated audio exceeds Forma’s private 25 MB media limit.", submittedPrompt, { requestId: providerJobId }); } chunks.push(chunk.value); }
-    else { const fallback = new Uint8Array(await downloaded.arrayBuffer()); total = fallback.byteLength; if (total > MAX_AUDIO_UPLOAD_BYTES) throw providerError("fal_audio_too_large", "The generated audio exceeds Forma’s private 25 MB media limit.", submittedPrompt, { requestId: providerJobId }); chunks.push(fallback); }
-    const bytes = new Uint8Array(total); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-    if (!bytes.length) throw providerError("fal_audio_empty", "Fal returned empty audio. The original provider request can be inspected and recovered.", submittedPrompt, { requestId: providerJobId, retryable: true, status: 502, category: "server" });
-    const advertisedType = String(audio.content_type ?? "").split(";")[0]!.trim().toLowerCase();
-    const downloadedType = String(downloaded.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
-    let mimeType = advertisedType && advertisedType !== "application/octet-stream" ? advertisedType : downloadedType && downloadedType !== "application/octet-stream" ? downloadedType : "";
-    if (!mimeType && (media.pathname.toLowerCase().endsWith(".mp3") || String(audio.file_name ?? "").toLowerCase().endsWith(".mp3"))) mimeType = "audio/mpeg";
-    if (!mimeType && model === AUDIO_ADAPTER_CONTRACT.model) mimeType = "audio/mpeg";
-    if (!contract.supportedOutputMimeTypes.includes(mimeType)) throw providerError("fal_audio_type_invalid", `Fal returned ${mimeType || "an unknown format"} instead of a supported ${contract.label} recording.`, submittedPrompt, { requestId: providerJobId, retryable: true, status: 502, category: "server" });
-    const measuredDuration = Number(audio.duration ?? (result as Record<string, unknown>).duration ?? 0);
-    if (contract.pricing.mode === "per_minute" && measuredDuration > contract.maximumAdvertisedDurationSeconds) {
-      throw providerError("audio_provider_duration_exceeds_contract", "The audio provider reported a duration outside its approved generation contract; inspect the saved provider request before continuing.", submittedPrompt, { requestId: providerJobId, status: 502, category: "server", action: "contact_support" });
-    }
-    const measuredCost = estimateAudioProviderCostMicrousd(contract, profile, {
-      ...(contract.pricing.mode === "per_minute" && measuredDuration > 0 && measuredDuration <= contract.maximumAdvertisedDurationSeconds ? { durationSeconds: Math.ceil(measuredDuration) } : {}),
-      ...(contract.pricing.mode === "per_1000_characters" ? { characterCount: audioCharacterCount(submittedPrompt) } : {}),
-    });
-    if (measuredCost > estimatedCostMicrousd) {
-      throw providerError("audio_provider_cost_exceeds_reservation", "The provider reported usage above the authorized audio reservation; the original provider request remains available for review.", submittedPrompt, { requestId: providerJobId, status: 502, category: "server", action: "contact_support" });
-    }
-    const costMicrousd = measuredCost;
-    return {
-      provider: "fal" as const, model, providerJobId, providerStatusUrl: urls.statusUrl, providerResponseUrl: urls.responseUrl, providerCancelUrl: urls.cancelUrl,
-      bytes, mimeType, fileName: audio.file_name ?? null, fileSize: typeof audio.file_size === "number" ? audio.file_size : bytes.byteLength,
-      lyrics: typeof result.lyrics === "string" ? result.lyrics : typeof result.data?.lyrics === "string" ? result.data.lyrics : "",
-      latencyMs: Date.now() - started, costMicrousd, submittedPrompt, preparedReceipt: options.retainedReceipt ?? prepared,
-    };
+    return await readAcceptedAudio(env, { model, providerJobId, urls, profile, prepared: options.retainedReceipt ?? prepared, estimatedCostMicrousd, started }, options);
   } catch (error) {
     if (options.signal?.aborted && providerJobId) {
       try { await fetch(urls.cancelUrl, { method: "PUT", headers: headers(env) }); } catch { /* Cancellation is best-effort and the durable job records the local stop. */ }

@@ -46,8 +46,9 @@ import { productionWorkflowSourceIdentity, type ProductionWorkflowSource } from 
 import { createSceneConfiguration, isSceneMedium, type SceneConfiguration, type SceneMedium } from "../src/model/scene-configuration";
 import { falImageProviderReceipt } from "./fal-image-adapter";
 import { definitiveProviderRejection, hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission, mergeProviderSubmissions, providerSubmissions, unresolvedProviderSubmissionSql, unsettledProviderSubmissionSql } from "../src/model/provider-submission";
+import { originalSourceAudioRecoveryRequested, recoverOriginalSourceAudio } from "./document-audio-recovery";
 
-type DocumentJobRow = {
+export type DocumentJobRow = {
   job_id: string; owner_id: string; stream_id: string; document_id: string; kind: DocumentJobKind; status: DocumentJobStatus;
   source_surface: string; correlation_id: string; requested_sequence: number; request_json: string; result_json: string | null;
   error_message: string | null; attempt_count: number; requested_at: string; started_at: string | null; completed_at: string | null;
@@ -157,7 +158,9 @@ async function anchorProjectJobs(env:WorkerEnv,user:PilotUser,jobs:Array<{jobId:
 function safeScopedJob(row:DocumentJobRow,recoveryBlocker:DocumentJobRow|null=null){
   const job=serializeJob(row,recoveryBlocker,false);
   const sensitive=new Set(["providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","plannerInput","providerInput","provider_input","videoInputReceipt","audioInputReceipt","audioProfile","audio_profile","transcript","script","spokenScript","spoken_script","audioVideoArtifactId","videoReferenceId","video_reference_id","artifactPlan","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","contentRef","contentExpiresAt","contentSha256","productionPlan","productionSceneReceipts","productionFrameReceipts","productionAnchor","providerStatusUrl","providerResponseUrl","providerCancelUrl","moderationPromptRef","intentRef","providerJobId","providerRequestId","storyboardSafeRecovery","storyboardRejectedProviderReceipt","generationReceipt","generation_receipt","input_ref","inputRef","input_expires_at","source_snapshot_sha256","snapshot","document_snapshot","sourceAliasMap","sourceAliases","source_alias_map","source_aliases","settings","audience","tone"]);
-  const redact=(value:unknown):unknown=>Array.isArray(value)?value.map(redact):value&&typeof value==="object"?Object.fromEntries(Object.entries(value).filter(([key])=>!sensitive.has(key)).map(([key,item])=>[key,redact(item)])):value;
+  const recoverySummary=(value:unknown)=>value&&typeof value==="object"?Object.fromEntries(Object.entries(value).filter(([key,item])=>["mode","original_source_revision","new_generation_requests","provider_retrieval_only","current_edits_preserved"].includes(key)&&["string","number","boolean"].includes(typeof item))):null;
+  sensitive.add("audioOriginalSourceRecovery");
+  const redact=(value:unknown):unknown=>Array.isArray(value)?value.map(redact):value&&typeof value==="object"?Object.fromEntries(Object.entries(value).filter(([key])=>!sensitive.has(key)).map(([key,item])=>[key,key==="recovery"?recoverySummary(item):redact(item)])):value;
   return{...job,result:job.result?redact(job.result):null,members:job.members.map((member)=>redact(member)),moderationPromptRef:null};
 }
 
@@ -1101,8 +1104,11 @@ async function updateJobProgress(env: WorkerEnv, row: DocumentJobRow, stage: str
   const paidPlanning=providerSubmissions(result).filter((receipt)=>receipt.operation==="planning"&&receipt.status==="completed");
   if(paidPlanning.length){
     result.plannerUsage=paidPlanning.reduce((total,receipt)=>({inputTokens:total.inputTokens+Number(receipt.inputTokens??0),outputTokens:total.outputTokens+Number(receipt.outputTokens??0),totalTokens:total.totalTokens+Number(receipt.totalTokens??0)}),{inputTokens:0,outputTokens:0,totalTokens:0});
-    result.plannerResponseIds=paidPlanning.map((receipt)=>receipt.providerRequestId).filter(Boolean);
-    result.plannerResponseId=paidPlanning[0].providerRequestId??result.plannerResponseId;
+    const paidPlanningIds=paidPlanning.map((receipt)=>receipt.providerRequestId).filter(Boolean);
+    result.plannerResponseIds=paidPlanningIds;
+    // Keep the adapter's selected response (including a successful repair),
+    // while accounting still includes every completed planning request.
+    if(!paidPlanningIds.includes(String(result.plannerResponseId??"")))result.plannerResponseId=paidPlanning.at(-1)?.providerRequestId??result.plannerResponseId;
   }
   if((requiresForegroundDocumentExecution(row)||row.kind==="render_document"&&["audio","storyboard"].includes(String(parseRequest(row).artifactKind??"")))&&previous.generationReceipt&&typeof previous.generationReceipt==="object"&&!Array.isArray(previous.generationReceipt)){
     const receipt=previous.generationReceipt as GenerationReceipt;
@@ -2022,6 +2028,16 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   if (path.endsWith("/retry") && request.method === "POST") {
     const jobId = decodeURIComponent(path.slice(0, -6).replace(/\/$/, "")); const target = await readJob(env, user.userId, jobId);
     if (!target) return Response.json({ error: "job_not_found" }, { status: 404 });
+    if(originalSourceAudioRecoveryRequested(target)){
+      const consent=requireConsent(user);if(consent)return consent;
+      const scope=user.projectExecution;
+      const recovered=await recoverOriginalSourceAudio(env,user,target,project?.contextId??"",{
+        projectGuard:scope?{sql:activeProjectExecutionSql,bindings:[...projectExecutionBindings(scope,target.document_id)]}:{sql:"1",bindings:[]},
+        run:(row,operation)=>runWithHeartbeat(env,row,user,operation),
+      });
+      if("error" in recovered)return Response.json({...recovered,message:"The original paid audio could not be verified for recovery. No new generation or charge was requested."},{status:recovered.status,headers:{"cache-control":"private, no-store"}});
+      return Response.json({job:project?safeScopedJob(recovered.job):serializeJob(recovered.job),reusedProviderRequest:true,recoveredOriginalSource:true,incrementalCostMicrousd:0},{headers:{"cache-control":"private, no-store"}});
+    }
     const previous=parseResult(target);
     const billingOwnerId=user.billingUserId??user.userId;
     const previousCostReservationId=String(previous.costReservationId??"");

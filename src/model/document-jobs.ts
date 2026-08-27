@@ -231,8 +231,12 @@ export function documentJobCanRecoverProviderRender(job: DocumentJob) {
     || sceneReceipts.some((scene) => Boolean(scene.providerJobId) && (scene.status === "submitted" || scene.status === "completed"));
   if (!job.result.providerJobId && !recoverableScene) return false;
   const failure = documentJobFailure(job);
+  const originalSourceAudio = job.result.artifactKind === "audio" && failure?.code === "context_source_version_mismatch"
+    && job.result.audioProviderSubmission === "confirmed" && typeof job.result.providerJobId === "string"
+    && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(job.result.providerJobId)
+    && !["pending", "submitted", "unknown"].includes(job.result.providerJobId.toLowerCase());
   const recoverableReservationFailure=failure?.code==="cost_reservation_invalid_or_expired"||failure?.code==="cost_reservation_already_in_use"||failure?.code==="execution_interrupted";
-  return Boolean((failure?.retryable||recoverableReservationFailure)&&failure?.category!=="safety"&&failure?.httpStatus!==400&&failure?.httpStatus!==422);
+  return Boolean((failure?.retryable||recoverableReservationFailure||originalSourceAudio)&&failure?.category!=="safety"&&failure?.httpStatus!==400&&failure?.httpStatus!==422);
 }
 
 /** Fal identifiers are useful for recovery only after a durable, confirmed acceptance checkpoint. */
@@ -280,6 +284,12 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
   }
   if (!detail) {
     return { title: "The generation could not be completed", summary: TRUSTED_GENERATION_FAILURE_FALLBACKS.has(fallback) ? fallback : "The provider could not complete this request. Review the saved inputs and technical receipt before trying again.", actionLabel: null, actionUrl: null, retryAllowed: true };
+  }
+  if(job?.kind==="render_document"&&job.status==="failed"&&result.artifactKind==="audio"
+    &&detail.code==="context_source_version_mismatch"&&detail.category!=="safety"&&detail.httpStatus===409
+    &&result.audioProviderSubmission==="confirmed"&&typeof result.providerJobId==="string"
+    &&/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(result.providerJobId)&&!["pending","submitted","unknown"].includes(result.providerJobId.toLowerCase())){
+    return{title:"This audio belongs to an earlier document version",summary:"Recover the original paid recording with its original source. Newer document edits stay unchanged; no new generation will be purchased.",actionLabel:null,actionUrl:null,retryAllowed:true};
   }
   if (detail.code === "local_persistence_failed") return { title: "Forma could not save this generation", summary: "A local event or database write failed while Forma was saving this generation. No provider outage was reported. Contact support or review the server's persistence and event-storage diagnostics.", actionLabel: null, actionUrl: null, retryAllowed: false };
   if (detail.code === "source_fidelity_validation_failed") return { title: "The presentation did not preserve its source", summary: "The generated presentation failed source-fidelity validation and was not accepted. Review the source document and adjust the presentation requirements before starting a new request.", actionLabel: null, actionUrl: null, retryAllowed: false };
