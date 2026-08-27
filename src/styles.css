@@ -1993,7 +1993,9 @@ forma-document-artifacts { display: block; min-width: 0; }
 .generation-input-dialog > article > header h2 { margin: .2rem 0; font: 600 clamp(1.4rem,3vw,2rem)/1.08 var(--sans); letter-spacing: -.03em; }
 .generation-input-dialog > article > header p,.generation-input-dialog section header p { max-width: 48rem; margin: 0; color: var(--muted); }
 .generation-input-dialog > article > header span,.generation-input-dialog > article > footer span { color: var(--muted); font-size: var(--type-caption); }
-.generation-input-dialog main { min-height: 0; overflow: auto; padding-inline: var(--page-gutter); overscroll-behavior: contain; scrollbar-gutter: stable; }
+.generation-input-dialog .generation-input-body { min-height: 0; overflow: auto; padding-inline: var(--page-gutter); overscroll-behavior: contain; scrollbar-gutter: stable; }
+.managed-production-inputs details { border: 1px solid var(--line); border-radius: 8px; padding: .5rem 1rem; margin-block: .75rem; overflow-wrap: anywhere; }
+.managed-production-inputs summary { min-block-size: var(--forma-control-min-size,44px); align-content: center; cursor: pointer; font-weight: 600; }
 .generation-input-dialog section { padding-block: 1.35rem; }
 .generation-input-dialog section + section { border-block-start: 1px solid var(--line); }
 .generation-input-dialog section > header { display: flex; align-items: start; justify-content: space-between; gap: 1.5rem; margin-block-end: .8rem; }
