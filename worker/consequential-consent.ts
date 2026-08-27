@@ -9,7 +9,7 @@ export type AvailableConsequentialPreview=ConsequentialPreview&{providerAvailabl
 export type ExecutionRow={execution_id:string;actor_user_id:string;intent_hash:string;binding_hash:string;consent_ref:string;result_ref:string|null;status:string;error_code:string|null;expires_at:string};
 // An adaptive response can be durably paid before strict decoding or final materialization.
 // Its original identity remains reusable even when those later steps failed.
-const reusableExecutionSql=(alias:string)=>`(${alias}.status IN('reserved','uncertain','completed') OR ${alias}.result_ref IS NOT NULL OR ${alias}.operation='adaptive-structure' AND EXISTS(SELECT 1 FROM consequential_execution_steps paid WHERE paid.execution_id=${alias}.execution_id AND paid.status IN('submitting','uncertain','usage-recorded','settled')))`;
+const reusableExecutionSql=(alias:string)=>`(${alias}.status IN('reserved','uncertain','completed') OR ${alias}.result_ref IS NOT NULL OR ${alias}.operation IN('adaptive-structure','assistant-specialist') AND EXISTS(SELECT 1 FROM consequential_execution_steps paid WHERE paid.execution_id=${alias}.execution_id AND paid.status IN('submitting','uncertain','usage-recorded','settled')))`;
 
 /** Stable object-key ordering prevents serialization accidents from widening an approval. */
 export function canonicalConsent(value:unknown):string{
@@ -61,15 +61,17 @@ export async function executionAuthorityCurrent(env:WorkerEnv,user:PilotUser,bin
   return Boolean(await env.DB.prepare(`SELECT 1 AS authorized WHERE ${guard.sql}`).bind(...guard.bindings).first());
 }
 
-/** Retained read custody is independent of new-purchase roles or budget availability. */
+/** Retained read custody is independent of new-purchase roles or budget availability.
+ * Row equalities keep every original comparison and SQL NULL behavior while avoiding
+ * a left-deep AND chain when this proof is nested inside a final D1 custody check. */
 export function executionContentCustodyGuard(binding:ConsequentialBinding,alias:"private_content"|"content"|"raw"|"saved"="private_content"):BudgetReservationGuard{
   const scope=binding.scope;
   if(!scope)return{sql:`NOT EXISTS(SELECT 1 FROM project_resource_scopes resource WHERE resource.resource_kind='content' AND resource.resource_id=${alias}.content_id) AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id=${alias}.content_id)`,bindings:[]};
   return{sql:`EXISTS(SELECT 1 FROM project_resource_scopes resource JOIN private_content_retention_scopes retention
-    ON retention.content_id=resource.resource_id AND retention.organization_id=resource.organization_id AND retention.project_access_id=resource.project_access_id
-      AND retention.project_id=resource.project_id AND retention.actor_user_id=resource.actor_user_id
-    WHERE resource.resource_kind='content' AND resource.resource_id=${alias}.content_id AND resource.visibility='actor_private'
-      AND resource.project_access_id=? AND resource.organization_id=? AND resource.project_id=? AND resource.owner_user_id=? AND resource.actor_user_id=?)`,bindings:[scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,binding.actorUserId]};
+    ON (retention.content_id,retention.organization_id,retention.project_access_id,retention.project_id,retention.actor_user_id)
+      =(resource.resource_id,resource.organization_id,resource.project_access_id,resource.project_id,resource.actor_user_id)
+    WHERE (resource.resource_kind,resource.resource_id,resource.visibility,resource.project_access_id,resource.organization_id,resource.project_id,resource.owner_user_id,resource.actor_user_id)
+      =('content',${alias}.content_id,'actor_private',?,?,?,?,?))`,bindings:[scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,binding.actorUserId]};
 }
 
 export async function quoteConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,privateInput:unknown,sourceHead:number,availableMicrousd:number){
@@ -212,14 +214,18 @@ async function releaseStoppedConsequentialSteps(env:WorkerEnv,userId:string,id:s
     WHERE step.execution_id=? AND execution.actor_user_id=? AND step.status='not-submitted' AND execution.status IN('failed','uncertain') AND execution.result_ref IS NULL`).bind(id,userId).all<{step_index:number}>();
   for(const step of stopped.results){await releaseBudget(env,userId,`${id}:tokens:${step.step_index}`,{reason:"context_provider_not_submitted"});await releaseCostBudget(env,userId,`${id}:usd:${step.step_index}`);}
 }
-export async function failConsequentialExecution(env:WorkerEnv,userId:string,id:string,error:string){
+export async function failConsequentialExecution(env:WorkerEnv,userId:string,id:string,error:string,authorizedStop?:{guard:BudgetReservationGuard;finalStatements:Array<ReturnType<WorkerEnv["DB"]["prepare"]>>}){
   const now=new Date().toISOString(),unfinished="EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.execution_id=consequential_execution_steps.execution_id AND execution.actor_user_id=? AND execution.status!='completed' AND execution.result_ref IS NULL)";
-  // Stop dispatch atomically BEFORE releasing any hold. A submitting winner stays uncertain.
+  const guard=authorizedStop?.guard,suffix=guard?" AND ("+guard.sql+")":"",bindings=guard?.bindings??[];
+  // An explicit Stop supplies current authority/custody plus its final CHECK in this same batch.
+  // Automatic failure callers keep their existing SQL and release behavior.
   await env.DB.batch([
-    env.DB.prepare(`UPDATE consequential_execution_steps SET status='not-submitted',updated_at=? WHERE execution_id=? AND status IN('quoted','reserved') AND ${unfinished}`).bind(now,id,userId),
-    env.DB.prepare(`UPDATE consequential_execution_steps SET status='uncertain',updated_at=? WHERE execution_id=? AND status='submitting' AND ${unfinished}`).bind(now,id,userId),
-    env.DB.prepare(`UPDATE consequential_executions SET status=CASE WHEN EXISTS(SELECT 1 FROM consequential_execution_steps step WHERE step.execution_id=consequential_executions.execution_id AND step.status IN('submitting','uncertain','usage-recorded')) THEN 'uncertain' ELSE 'failed' END,error_code=?,updated_at=? WHERE execution_id=? AND actor_user_id=? AND status!='completed' AND result_ref IS NULL`).bind(error,now,id,userId),
+    env.DB.prepare(`UPDATE consequential_execution_steps SET status='not-submitted',updated_at=? WHERE execution_id=? AND status IN('quoted','reserved') AND ${unfinished}${suffix}`).bind(now,id,userId,...bindings),
+    env.DB.prepare(`UPDATE consequential_execution_steps SET status='uncertain',updated_at=? WHERE execution_id=? AND status='submitting' AND ${unfinished}${suffix}`).bind(now,id,userId,...bindings),
+    env.DB.prepare(`UPDATE consequential_executions SET status=CASE WHEN EXISTS(SELECT 1 FROM consequential_execution_steps step WHERE step.execution_id=consequential_executions.execution_id AND step.status IN('submitting','uncertain','usage-recorded')) THEN 'uncertain' ELSE 'failed' END,error_code=?,updated_at=? WHERE execution_id=? AND actor_user_id=? AND status!='completed' AND result_ref IS NULL${suffix}`).bind(error,now,id,userId,...bindings),
+    ...(authorizedStop?.finalStatements??[]),
   ]);
+  // No release is reached if the atomic authorization/custody CHECK rejects this Stop.
   await releaseStoppedConsequentialSteps(env,userId,id);
   return(await readConsequentialExecution(env,userId,id))?.status==="uncertain";
 }

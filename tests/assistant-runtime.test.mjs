@@ -26,6 +26,7 @@ function database() {
     constructor(sql, values = []) { this.sql = sql; this.values = values; }
     bind(...values) { assert.ok(values.length <= 100); return new Statement(this.sql, values); }
     execute(kind) {
+      if(controls.requestQueryLimit&&++controls.requestQueryCount>controls.requestQueryLimit){controls.queryLimitSql ||= this.sql.slice(0,220);throw new Error("D1 request query limit exceeded");}
       if(/^\s*INSERT INTO authoring_commits/iu.test(this.sql)){
         if(controls.beforeAuthoringCommit){const callback=controls.beforeAuthoringCommit;controls.beforeAuthoringCommit=null;callback();}
         if(controls.failAuthoringCommit){controls.failAuthoringCommit=false;throw new Error("injected_authoring_receipt_failure");}
@@ -2175,230 +2176,170 @@ test("paid specialists never dispatch missing or revoked rights, incomplete prot
   }finally{globalThis.fetch=originalFetch;}
 });
 
-test("Luna specialist runs asynchronously against bounded page-aware views and settles exact usage", async () => {
-  const state = await fixture({ provider: true });
-  const originalFetch = globalThis.fetch;
-  const submissions = [];
-  globalThis.fetch = async (url, init) => {
-    assert.equal(String(url), "https://api.openai.com/v1/responses");
-    const body = JSON.parse(init.body);
-    submissions.push(body);
-    return Response.json({
-      id: "assistant-provider-luna",
-      model: body.model,
-      output_text: JSON.stringify({ reply: "This document already supports audio and other current output formats.", actions: [] }),
-      usage: { input_tokens: 1000, output_tokens: 200, total_tokens: 1200 },
-    });
-  };
-  try {
-    const response = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "What outputs are available now?", locale: "en" }));
-    assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
-    const accepted = await response.json();
-    assert.ok(accepted.task, `The provider-enabled message did not receive a durable specialist: ${state.controls.lastDatabaseError}`);
-    assert.equal(accepted.task.model, "gpt-5.6-luna");
-    assert.equal(accepted.task.estimatedMicrousd, 4000);
-    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_specialist_tasks").get().count, 1);
-    await state.drainBackground();
-    assert.equal(submissions.length, 1);
-    assert.equal(submissions[0].model, "gpt-5.6-luna");
-    assert.equal(submissions[0].store, false);
-    assert.equal(submissions[0].max_output_tokens, 1600);
-    const delivered = JSON.parse(submissions[0].input);
-    assert.equal(delivered.page, "document");
-    assert.equal(delivered.available_formats.includes("audio"), true);
-    assert.doesNotMatch(submissions[0].input, /dev-local-creative|project-atmosphere|doc-atmosphere|content_ref|allow_provider_audio_transfer/u);
-    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks").get().status, "completed");
-    assert.equal(state.sqlite.prepare("SELECT used_microusd,reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").used_microusd, 440);
-    assert.equal(state.sqlite.prepare("SELECT used_tokens,reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").used_tokens, 1200);
-    const updated = await (await state.request(endpoint())).json();
-    assert.match(updated.turns.at(-1).reply.text, /already supports audio/u);
-    assert.equal(updated.tasks[0].status, "completed");
-
-    let creativeProviderInput;
-    globalThis.fetch = async (_url, init) => {
-      const body = JSON.parse(init.body);
-      creativeProviderInput = JSON.parse(body.input);
-      return Response.json({ id: "direct-follow-up", model: body.model,
-        output_text: JSON.stringify({ reply: "Direct creative follow-up succeeded.", mutations: [], preview_worthy: false, preview_direction: "" }),
-        usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 } });
-    };
-    const direct = await state.request("/api/document-jobs", json({ kind: "chat", documentId: "doc-atmosphere", sourceSurface: "chat",
-      payload: { message: "Use what you explained", livePreview: false } }));
-    assert.equal(direct.status, 202, JSON.stringify(await direct.clone().json()));
-    await state.drainBackground();
-    assert.ok(creativeProviderInput);
-    assert.equal(creativeProviderInput.history.filter((item) => item.role === "assistant" && item.text.includes("already supports audio")).length,
-      1, JSON.stringify(creativeProviderInput.history));
-  } finally { globalThis.fetch = originalFetch; }
-});
-
-test("Terra suggestions remain separate private proposals and cannot create content until approved", async () => {
-  const state = await fixture({ provider: true, actions: true });
-  const originalFetch = globalThis.fetch;
-  const requests = [];
-  globalThis.fetch = async (_url, init) => {
-    const submitted = JSON.parse(init.body);
-    requests.push(submitted);
-    return Response.json({
-      id: "assistant-terra-proposal",
-      model: submitted.model,
-      output_text: JSON.stringify({ reply: "I prepared independent palette and emotional-direction suggestions.", actions: [{
-        kind: "context.create",
-        block_type: "emotion",
-        target_block_id: null,
-        from_block_id: null,
-        to_block_id: null,
-        relation_kind: "",
-        intent: "include",
-        text: "A calm, welcoming neighborhood atmosphere",
-      }] }),
-      usage: { input_tokens: 900, output_tokens: 120, total_tokens: 1020 },
-    });
-  };
-  try {
-    const before = state.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='BlockCreated'").get().count;
-    const response = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "Add palette: twilight cobalt" }));
-    assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
-    const accepted = await response.json();
-    assert.equal(accepted.task.model, "gpt-5.6-terra");
-    assert.equal(accepted.task.estimatedMicrousd, 40_000);
-    await state.drainBackground();
-    assert.equal(requests.length, 1);
-    assert.equal(requests[0].model, "gpt-5.6-terra");
-    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks").get().status, "completed");
-    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='BlockCreated'").get().count, before);
-    const history = await (await state.request(endpoint())).json();
-    assert.deepEqual(history.turns.at(-1).proposals.map((item) => item.summary), ["Add palette: twilight cobalt", "A calm, welcoming neighborhood atmosphere"]);
-    const immutable = state.sqlite.prepare("SELECT payload FROM events WHERE correlation_id=?").all(`assistant-specialist:dev-local-creative:${accepted.turn.id}`).map((row) => row.payload).join("\n");
-    assert.doesNotMatch(immutable, /calm, welcoming|twilight cobalt/u);
-    assert.equal(state.sqlite.prepare("SELECT used_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").used_microusd, 3240);
-  } finally { globalThis.fetch = originalFetch; }
-});
-
-test("two independent specialists run concurrently, the composer stays open, and queued cancellation releases exact budgets", async () => {
-  const state = await fixture({ provider: true });
-  const originalFetch = globalThis.fetch;
-  const gates = [];
-  const bothStarted = Promise.withResolvers();
-  globalThis.fetch = async (_url, init) => {
-    const payload = JSON.parse(init.body);
-    const gate = Promise.withResolvers();
-    gates.push(gate);
-    if (gates.length === 2) bothStarted.resolve();
-    await gate.promise;
-    return Response.json({ id: `assistant-concurrent-${gates.length}`, model: payload.model,
-      output_text: JSON.stringify({ reply: "A focused answer is ready.", actions: [] }),
-      usage: { input_tokens: 100, output_tokens: 30, total_tokens: 130 } });
-  };
-  try {
-    const first = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "Explain the current direction" }));
-    assert.equal(first.status, 201);
-    const second = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "What results already exist?" }));
-    assert.equal(second.status, 201);
-    await bothStarted.promise;
-    const thirdResponse = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "What is a useful next step?" }));
-    assert.equal(thirdResponse.status, 201);
-    const third = (await thirdResponse.json()).task;
-    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_specialist_tasks WHERE status='running'").get().count, 2);
-    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(third.id).status, "queued");
-    const canceled = await state.request(endpoint().replace("/api/assistant?", `/api/assistant/tasks/${encodeURIComponent(third.id)}/cancel?`), { method: "POST" });
-    assert.equal(canceled.status, 200, JSON.stringify(await canceled.clone().json()));
-    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(third.id).status, "canceled");
-    assert.equal(gates.length, 2);
-    for (const gate of gates) gate.resolve();
-    await state.drainBackground();
-    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_specialist_tasks WHERE status='completed'").get().count, 2);
-    assert.equal(state.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_microusd, 0);
-    assert.equal(state.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_tokens, 0);
-  } finally {
-    for (const gate of gates) gate.resolve();
-    await state.drainBackground();
-    globalThis.fetch = originalFetch;
+function specialistStructuredResponse(payload,{reply,actions=[],usage={input_tokens:1000,output_tokens:300,total_tokens:1300},...receipt}={}){
+  return specialistRawResponse(payload,{...receipt,usage,output:[{type:"message",id:"migrated-specialist-message",role:"assistant",status:"completed",
+    content:[{type:"output_text",text:JSON.stringify({reply:reply??"A focused answer is ready.",actions})}]}]});
+}
+async function specialistApprovedTurn(state,message,options={}){
+  const {model,...scope}=options,turn=await specialistFreeTurn(state,crypto.randomUUID(),message,scope);
+  await state.drainBackground();
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks WHERE turn_id=?").get(turn.id).n,0,"Send must not admit any paid task");
+  const review=await specialistQuote(state,turn.id,model,scope);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations WHERE correlation_id=?").get(review.quote.executionId).n,0,"Quote is free");
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations WHERE correlation_id=?").get(review.quote.executionId).n,0,"Quote is free");
+  const response=await specialistExecute(state,review,scope),accepted=await response.json();
+  assert.equal(response.status,202,JSON.stringify(accepted)+" SQL: "+state.controls.lastDatabaseError);
+  assert.equal(accepted.task.id,review.quote.executionId);assert.equal(accepted.task.executionId,review.quote.executionId);
+  assert.equal(accepted.task.bindingHash,review.quote.bindingHash);assert.equal(accepted.task.estimatedMicrousd,review.quote.maximumMicrousd);
+  return{turn,review,task:accepted.task};
+}
+/** Faithful pre-consent queue row and real historical ledgers; this never reopens automatic Send admission. */
+async function seedLegacyAssistantTask(state,turn,{status="needs-review",submitted=true,id="legacy-specialist-"+crypto.randomUUID()}={}){
+  const row=state.sqlite.prepare("SELECT * FROM assistant_turns WHERE turn_id=?").get(turn.id),actor=row.actor_user_id;
+  assert.ok(row);const streamId="creative:"+actor,correlationId="assistant-specialist:"+actor+":"+turn.id,operation="assistant-specialist:page-guidance:gpt-5.6-luna",now=new Date().toISOString();
+  const projectScope=row.organization_id?{organizationId:row.organization_id,projectAccessId:row.project_access_id,actorUserId:actor}:undefined;
+  const token=await reserveBudget(state.env,actor,12000,{reservationId:id+"-tokens",streamId,correlationId,operation,projectScope});
+  assert.equal(token.ok,true,JSON.stringify(token));
+  const cost=await reserveCostBudget(state.env,actor,4000,{reservationId:id+"-usd",maximumMicrousd:4000,allowUserOverage:false,streamId,correlationId,operation,period:token.period,projectScope});
+  assert.equal(cost.ok,true,JSON.stringify(cost));
+  if(submitted)assert.equal(await claimCostBudgetReservation(state.env,actor,id+"-usd"),true);
+  state.sqlite.prepare("INSERT INTO assistant_specialist_tasks(task_id,actor_user_id,scope_key,turn_id,organization_id,project_access_id,project_id,document_id,route_family,task_kind,selected_model,token_reservation_id,cost_reservation_id,estimated_microusd,maximum_input_tokens,maximum_output_tokens,locale,permission_epoch,status,error_code,created_at,updated_at,started_at,completed_at,lease_expires_at,provider_submitted,result_json) VALUES(?,?,?,?,?,?,?,?,?,'page-guidance','gpt-5.6-luna',?,?,4000,10400,1600,'en',?,?,?,?,?,?,NULL,?,?,NULL)")
+    .run(id,actor,row.scope_key,turn.id,row.organization_id,row.project_access_id,row.project_id,row.document_id,row.route_family,id+"-tokens",id+"-usd",row.permission_epoch,status,submitted?"assistant_provider_submission_unverified":null,now,now,submitted?now:null,submitted?"2000-01-01T00:00:00.000Z":null,Number(submitted));
+  state.sqlite.prepare("UPDATE assistant_turns SET request_json=NULL WHERE turn_id=?").run(turn.id);
+  assert.equal(state.sqlite.prepare("SELECT result_json FROM assistant_specialist_tasks WHERE task_id=?").get(id).result_json,null);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM consequential_executions WHERE execution_id=?").get(id).n,0,"Historical tasks have no retroactive consent");
+  return{id,turnId:turn.id,tokenReservationId:id+"-tokens",costReservationId:id+"-usd",correlationId};
+}
+/** Recreate an actual crashed signed worker boundary using the shared reservation and submission primitives. */
+async function seedExpiredConsentedAssistantLease(state,review,{submitted=false}={}){
+  const id=review.quote.executionId,execution=state.sqlite.prepare("SELECT * FROM consequential_executions WHERE execution_id=?").get(id);
+  const retained=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(execution.consent_ref).content);
+  const authorized=await requireUser(new Request("http://localhost"+endpoint(),{headers:state.owner??{}}),state.env);assert.ok(authorized.user);
+  await consequential.reserveConsequentialSteps(state.env,authorized.user,retained.binding,id);
+  if(submitted){
+    const head=Number(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(authorized.user.streamId).head);
+    await consequential.beginConsequentialStep(state.env,authorized.user,retained.binding,id,0,head);
   }
+  state.sqlite.prepare("UPDATE assistant_specialist_tasks SET status='running',lease_expires_at=?,provider_submitted=? WHERE task_id=?")
+    .run("2000-01-01T00:00:00.000Z",Number(submitted),id);
+  const receipt=consequentialReceipt(state,id);assert.equal(receipt.steps[0].status,submitted?"submitting":"reserved");
+  assert.equal(receipt.tokens[0].status,"active");assert.equal(receipt.cost[0].status,"executing");
+  return receipt;
+}
+
+test("Luna specialist requires explicit saved-turn approval, keeps page-aware privacy, and settles exact usage",async()=>{
+  const state=await specialistMockFixture({respond:payload=>specialistStructuredResponse(payload,{id:"assistant-provider-luna",reply:"This document already supports audio and other current output formats.",usage:{input_tokens:1000,output_tokens:200,total_tokens:1200}})});
+  try{
+    const {turn,review,task}=await specialistApprovedTurn(state,"What outputs are available now?");
+    assert.equal(task.model,"gpt-5.6-luna");assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n,1);
+    await state.drainBackground();assert.equal(state.calls.length,1);
+    const submitted=state.calls[0].payload;assert.equal(submitted.model,"gpt-5.6-luna");assert.equal(submitted.store,false);assert.equal(submitted.max_output_tokens,1600);
+    assert.deepEqual(submitted,review.quote.privateInput.providerRequest,"Dispatch reuses the exact reviewed provider request");
+    const delivered=JSON.parse(submitted.input);assert.equal(delivered.page,"document");assert.equal(delivered.available_formats.includes("audio"),true);
+    assert.doesNotMatch(submitted.input,/dev-local-creative|project-atmosphere|doc-atmosphere|content_ref|allow_provider_audio_transfer/u);
+    const receipt=consequentialReceipt(state,task.id);assert.equal(receipt.execution.status,"completed");assert.equal(receipt.steps[0].verified_tokens,1200);assert.equal(receipt.steps[0].verified_microusd,440);
+    assert.equal(receipt.balances.cost.used,440);assert.equal(receipt.balances.cost.reserved,0);assert.equal(receipt.balances.tokens.used,1200);assert.equal(receipt.balances.tokens.reserved,0);
+    const updated=await(await state.request(endpoint())).json();assert.match(updated.turns.find(item=>item.id===turn.id).reply.text,/already supports audio/u);assert.equal(updated.tasks[0].status,"completed");
+    let creativeProviderInput;
+    globalThis.fetch=async(_url,init)=>{const body=JSON.parse(init.body);creativeProviderInput=JSON.parse(body.input);return Response.json({id:"direct-follow-up",model:body.model,
+      output_text:JSON.stringify({reply:"Direct creative follow-up succeeded.",mutations:[],preview_worthy:false,preview_direction:""}),usage:{input_tokens:100,output_tokens:20,total_tokens:120}});};
+    const direct=await state.request("/api/document-jobs",json({kind:"chat",documentId:"doc-atmosphere",sourceSurface:"chat",payload:{message:"Use what you explained",livePreview:false}}));
+    assert.equal(direct.status,202,JSON.stringify(await direct.clone().json()));await state.drainBackground();assert.ok(creativeProviderInput);
+    assert.equal(creativeProviderInput.history.filter(item=>item.role==="assistant"&&item.text.includes("already supports audio")).length,1,JSON.stringify(creativeProviderInput.history));
+  }finally{await state.cleanup();}
 });
 
-test("premium Sol requires exact model policy, administrator enrollment, and explicit approval", async () => {
-  const state = await fixture({ provider: true, models: "gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol", solUsers: "dev-local-creative" });
-  const session = await (await state.request("/api/session")).json();
-  assert.deepEqual(session.assistant.models, [
-    { id: "gpt-5.6-luna", maximumMicrousd: 4000, premiumApprovalRequired: false },
-    { id: "gpt-5.6-terra", maximumMicrousd: 40_000, premiumApprovalRequired: false },
-    { id: "gpt-5.6-sol", maximumMicrousd: 100_000, premiumApprovalRequired: true },
-  ]);
-  const originalFetch = globalThis.fetch;
-  const requests = [];
-  globalThis.fetch = async (_url, init) => {
-    const payload = JSON.parse(init.body);
-    requests.push(payload);
-    return Response.json({ id: "assistant-sol", model: payload.model,
-      output_text: JSON.stringify({ reply: "The relevant governance decisions are ready for your review.", actions: [] }),
-      usage: { input_tokens: 200, output_tokens: 40, total_tokens: 240 } });
-  };
-  try {
-    const blocked = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "Review governance and compliance policy", model: "gpt-5.6-sol" }));
-    assert.equal(blocked.status, 201);
-    assert.equal((await blocked.json()).task, undefined);
-    assert.equal(requests.length, 0);
-    const downgraded = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "Review governance and compliance policy", model: "gpt-5.6-luna", premiumApproval: true }));
-    assert.equal(downgraded.status, 201);
-    assert.equal((await downgraded.json()).task, undefined);
-    const approved = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "Review governance and compliance policy", model: "gpt-5.6-sol", premiumApproval: true }));
-    assert.equal(approved.status, 201);
-    assert.equal((await approved.json()).task.model, "gpt-5.6-sol");
-    await state.drainBackground();
-    assert.equal(requests.length, 1);
-    assert.equal(requests[0].model, "gpt-5.6-sol");
-    assert.equal(state.sqlite.prepare("SELECT used_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").used_microusd, 2200);
-  } finally { globalThis.fetch = originalFetch; }
+test("Terra explicitly approved suggestions remain private proposals without authored changes",async()=>{
+  const state=await specialistMockFixture({respond:payload=>specialistStructuredResponse(payload,{id:"assistant-terra-proposal",reply:"I prepared independent palette and emotional-direction suggestions.",actions:[{kind:"context.create",block_type:"emotion",target_block_id:null,from_block_id:null,to_block_id:null,relation_kind:"",intent:"include",text:"A calm, welcoming neighborhood atmosphere"}],usage:{input_tokens:900,output_tokens:120,total_tokens:1020}})});
+  try{
+    const before=state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='BlockCreated'").get().n;
+    const {turn,review,task}=await specialistApprovedTurn(state,"Add palette: twilight cobalt");assert.equal(task.model,"gpt-5.6-terra");
+    await state.drainBackground();assert.equal(state.calls.length,1);assert.equal(state.calls[0].payload.model,"gpt-5.6-terra");
+    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"completed");
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='BlockCreated'").get().n,before);
+    const history=await(await state.request(endpoint())).json();assert.deepEqual(history.turns.find(item=>item.id===turn.id).proposals.map(item=>item.summary),["Add palette: twilight cobalt","A calm, welcoming neighborhood atmosphere"]);
+    const immutable=state.sqlite.prepare("SELECT payload FROM events WHERE correlation_id=?").all(task.id).map(row=>row.payload).join("\n");
+    assert.doesNotMatch(immutable,/calm, welcoming|twilight cobalt/u);
+    const receipt=consequentialReceipt(state,review.quote.executionId);assert.equal(receipt.cost[0].used_microusd,3240);assert.equal(receipt.tokens[0].used_tokens,1020);
+    assert.equal(receipt.balances.cost.reserved,0);assert.equal(receipt.balances.tokens.reserved,0);
+  }finally{await state.cleanup();}
 });
 
-test("definitive provider rejections visibly fail and release both reserved budgets without retrying", async () => {
-  const state = await fixture({ provider: true });
-  const originalFetch = globalThis.fetch;
-  let submissions = 0;
-  globalThis.fetch = async () => { submissions += 1; return new Response("Temporarily unavailable", { status: 503 }); };
-  try {
-    const response = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "What should I review?" }));
-    assert.equal(response.status, 201);
-    const task = (await response.json()).task;
-    await state.drainBackground();
-    assert.deepEqual({ ...state.sqlite.prepare("SELECT status,error_code FROM assistant_specialist_tasks WHERE task_id=?").get(task.id) },
-      { status: "failed", error_code: "assistant_provider_http_503" });
-    assert.equal(state.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_microusd, 0);
-    assert.equal(state.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_tokens, 0);
-    assert.equal((await (await state.request(endpoint())).json()).tasks.find((item) => item.id === task.id).status, "failed");
-    assert.equal(submissions, 1);
-  } finally { globalThis.fetch = originalFetch; }
+test("two explicitly approved specialists run concurrently while queued cancellation preserves both live holds",{timeout:15000},async()=>{
+  const gates=[Promise.withResolvers(),Promise.withResolvers()],started=[Promise.withResolvers(),Promise.withResolvers()];let index=0;
+  const state=await specialistMockFixture({respond:async payload=>{const current=index++;assert.ok(current<2,"Canceled queued task must never submit");started[current].resolve();await gates[current].promise;return specialistStructuredResponse(payload,{id:"assistant-concurrent-"+current,usage:{input_tokens:100,output_tokens:30,total_tokens:130}});}});
+  try{
+    const turns=[];for(const message of["Explain the current direction","What results already exist?","What is a useful next step?"])turns.push(await specialistFreeTurn(state,crypto.randomUUID(),message));
+    const reviews=[];for(const turn of turns)reviews.push(await specialistQuote(state,turn.id));
+    assert.equal((await specialistExecute(state,reviews[0])).status,202);await started[0].promise;
+    assert.equal((await specialistExecute(state,reviews[1])).status,202);await started[1].promise;
+    assert.equal((await specialistExecute(state,reviews[2])).status,202);
+    const third=reviews[2].quote.executionId;assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks WHERE status='running'").get().n,2);
+    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(third).status,"queued");
+    const free=await specialistFreeTurn(state,crypto.randomUUID(),"The composer remains available while both specialists work.");assert.ok(free.id);assert.equal(state.calls.length,2);
+    const before=adaptiveReentryFinancialState(state);const queued=consequentialReceipt(state,third);
+    assert.equal(queued.steps[0].status,"quoted");assert.equal(queued.cost.length,0);assert.equal(queued.tokens.length,0,"A queued approval has not reserved beyond the two active tasks");
+    const canceled=await state.request(taskEndpoint(third,"cancel"),{method:"POST"});assert.equal(canceled.status,200,JSON.stringify(await canceled.clone().json()));
+    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(third).status,"canceled");
+    assert.equal(consequentialReceipt(state,third).steps[0].status,"not-submitted");assert.deepEqual(adaptiveReentryFinancialState(state),before,"Canceling another queued execution cannot release either live provider hold");
+    for(const gate of gates)gate.resolve();await state.drainBackground();assert.equal(state.calls.length,2);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks WHERE status='completed'").get().n,2);
+    const balances=consequentialBalances(state);assert.equal(balances.cost.reserved,0);assert.equal(balances.tokens.reserved,0);assert.equal(balances.tokens.used,260);
+  }finally{for(const gate of gates)gate.resolve();await state.cleanup();}
 });
 
-test("ambiguous provider submission remains reserved and cannot be self-reconciled by its administrator", async () => {
-  const state = await fixture({ provider: true });
-  const originalFetch = globalThis.fetch;
-  let submissions = 0;
-  globalThis.fetch = async () => { submissions += 1; throw new TypeError("network disconnected after submission"); };
-  try {
-    const response = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "What is the current direction?" }));
-    const task = (await response.json()).task;
-    await state.drainBackground();
-    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status, "needs-review");
-    assert.equal(state.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_microusd, 4000);
-    assert.equal(state.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_tokens, 12_000);
-    assert.equal((await (await state.request(endpoint())).json()).tasks.find((item) => item.id === task.id).status, "needs-review");
-    assert.equal((await state.request(taskEndpoint(task.id, "cancel"), { method: "POST" })).status, 409);
-    assert.equal((await state.request(taskEndpoint(task.id, "reconcile"), { method: "POST" })).status, 400);
-    assert.equal((await state.request(taskEndpoint(task.id, "reconcile"), json({ confirmedNoProviderCharge: false }))).status, 400);
-    const denied = await state.request(taskEndpoint(task.id, "reconcile"), json({ confirmedNoProviderCharge: true }));
-    assert.equal(denied.status, 403, JSON.stringify(await denied.clone().json()));
-    assert.equal((await denied.json()).error, "assistant_independent_reviewer_required");
-    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status, "needs-review");
-    assert.equal(state.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_microusd, 4000);
-    assert.equal(state.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_tokens, 12_000);
-    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_billing_reconciliations WHERE task_id=?").get(task.id).count, 0);
-    assert.equal(submissions, 1, "an uncertain paid request must never be submitted to its provider twice");
-  } finally { globalThis.fetch = originalFetch; }
+test("premium Sol requires exact quote model, administrator enrollment, and separate explicit execution",async()=>{
+  const state=await specialistMockFixture({models:"gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol",solUsers:"dev-local-creative",respond:payload=>specialistStructuredResponse(payload,{id:"assistant-sol",reply:"The relevant governance decisions are ready for your review.",usage:{input_tokens:200,output_tokens:40,total_tokens:240}})});
+  try{
+    const session=await(await state.request("/api/session")).json();assert.deepEqual(session.assistant.models,[{id:"gpt-5.6-luna",maximumMicrousd:4000,premiumApprovalRequired:false},{id:"gpt-5.6-terra",maximumMicrousd:40000,premiumApprovalRequired:false},{id:"gpt-5.6-sol",maximumMicrousd:100000,premiumApprovalRequired:true}]);
+    const turn=await specialistFreeTurn(state,crypto.randomUUID(),"Review governance and compliance policy",{model:"gpt-5.6-sol",premiumApproval:true});
+    await state.drainBackground();assert.equal(state.calls.length,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n,0);
+    const implicit=await specialistQuote(state,turn.id);assert.equal(implicit.quote.models[0],"gpt-5.6-sol");assert.equal(implicit.quote.canExecute,false);
+    assert.equal((await specialistExecute(state,implicit)).status,409);
+    const wrong=await specialistQuote(state,turn.id,"gpt-5.6-luna");assert.equal(wrong.quote.canExecute,false);assert.ok(wrong.quote.unavailableReasons.includes("assistant_model_task_model_insufficient"));assert.equal((await specialistExecute(state,wrong)).status,409);
+    const approved=await specialistQuote(state,turn.id,"gpt-5.6-sol");assert.equal(approved.quote.canExecute,true);assert.equal(state.calls.length,0);
+    const response=await specialistExecute(state,approved);assert.equal(response.status,202,JSON.stringify(await response.clone().json()));await state.drainBackground();
+    assert.equal(state.calls.length,1);assert.equal(state.calls[0].payload.model,"gpt-5.6-sol");
+    const receipt=consequentialReceipt(state,approved.quote.executionId);assert.equal(receipt.execution.status,"completed");assert.equal(receipt.tokens[0].used_tokens,240);
+    assert.equal(receipt.cost[0].used_microusd,200*4+40*20,"New approval retains the current Sol snapshot instead of repricing historical receipts");
+  }finally{await state.cleanup();}
 });
 
-test("an exact authorized organization administrator can reconcile a different shared creator without accessing private conversation", async () => {
+test("provider HTTP rejection without verified usage retains both holds and cannot be retried",async()=>{
+  const state=await specialistMockFixture({respond:()=>new Response("Temporarily unavailable",{status:503})});
+  try{
+    const {turn,review,task}=await specialistApprovedTurn(state,"What should I review?");await state.drainBackground();assert.equal(state.calls.length,1);
+    const receipt=consequentialReceipt(state,task.id);assert.equal(receipt.execution.status,"uncertain");assert.equal(receipt.steps[0].status,"uncertain");
+    assert.equal(receipt.tokens[0].used_tokens,0);assert.equal(receipt.cost[0].used_microusd,0);assert.equal(receipt.cost[0].reserved_microusd,review.quote.maximumMicrousd);assert.ok(receipt.tokens[0].reserved_tokens>0);
+    const row=state.sqlite.prepare("SELECT status,result_json FROM assistant_specialist_tasks WHERE task_id=?").get(task.id);assert.equal(row.status,"needs-review");
+    assert.ok(JSON.parse(row.result_json).rawReceipt.contentRef,"Raw HTTP error is retained for independent billing verification");
+    const finances=adaptiveReentryFinancialState(state);
+    assert.equal((await state.request(endpoint())).status,200);assert.equal((await specialistRetrieve(state,review)).status,200);
+    assert.equal((await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:task.id})).status,200);
+    assert.equal((await specialistExecute(state,review)).status,200);await state.drainBackground();assert.equal(state.calls.length,1);assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+  }finally{await state.cleanup();}
+});
+
+test("ambiguous signed submission remains reserved through cancellation and cannot be self-reconciled",async()=>{
+  const state=await specialistMockFixture({respond:()=>{throw new TypeError("network disconnected after submission");}});
+  try{
+    const {turn,review,task}=await specialistApprovedTurn(state,"What is the current direction?");await state.drainBackground();
+    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"needs-review");
+    const receipt=consequentialReceipt(state,task.id);assert.equal(receipt.steps[0].status,"uncertain");assert.equal(receipt.balances.cost.reserved,review.quote.maximumMicrousd);assert.ok(receipt.balances.tokens.reserved>0);
+    const finances=adaptiveReentryFinancialState(state);assert.equal((await(await state.request(endpoint())).json()).tasks.find(item=>item.id===task.id).status,"needs-review");
+    const canceled=await state.request(taskEndpoint(task.id,"cancel"),{method:"POST"});assert.equal(canceled.status,200,JSON.stringify(await canceled.clone().json()));
+    assert.equal(consequentialReceipt(state,task.id).steps[0].status,"uncertain","Cancellation cannot manufacture proof that a prior POST was unused");
+    assert.deepEqual(adaptiveReentryFinancialState(state),finances);assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"canceled");
+    assert.equal((await state.request(taskEndpoint(task.id,"reconcile"),{method:"POST"})).status,400);
+    assert.equal((await state.request(taskEndpoint(task.id,"reconcile"),json({confirmedNoProviderCharge:false}))).status,400);
+    const denied=await state.request(taskEndpoint(task.id,"reconcile"),json({confirmedNoProviderCharge:true}));assert.equal(denied.status,403,JSON.stringify(await denied.clone().json()));
+    assert.equal((await denied.json()).error,"assistant_independent_reviewer_required");assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_billing_reconciliations WHERE task_id=?").get(task.id).n,0);
+    assert.equal((await specialistRetrieve(state,review)).status,200);assert.equal((await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:task.id})).status,200);assert.equal((await specialistExecute(state,review)).status,200);
+    await state.drainBackground();assert.equal(state.calls.length,1,"Unknown paid POST is never repeated");assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+  }finally{await state.cleanup();}
+});
+
+test("an exact authorized organization administrator reconciles a true legacy shared task without private conversation access", async () => {
   const state = await sharedProjectFixture({ provider: true });
   const ownerSession = await (await state.request("/api/session", { headers: state.owner })).json();
   assert.equal(ownerSession.user.role, "creator", "the actor reproducing the failure must be a real nonadministrator creator");
@@ -2410,10 +2351,10 @@ test("an exact authorized organization administrator can reconcile a different s
   globalThis.fetch = async () => { submissions += 1; throw new TypeError("provider submission could not be verified"); };
   try {
     const userMessage = "PRIVATE SHARED CREATOR STRATEGY must never reach the administrator";
-    const started = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: userMessage }, state.owner));
-    assert.equal(started.status, 201, JSON.stringify(await started.clone().json()));
-    const task = (await started.json()).task;
+    const turn = await specialistFreeTurn(state, crypto.randomUUID(), userMessage, { headers: state.owner });
+    const task = await seedLegacyAssistantTask(state, turn, { status: "needs-review", submitted: true });
     await state.drainBackground();
+    assert.equal(submissions, 0, "Historical uncertain charge is seeded, never resubmitted");
     assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status, "needs-review");
     const billingUrl = `/api/platform/assistant/billing/${encodeURIComponent(task.id)}/reconcile`;
     const confirmation = { actorUserId: "assistant-owner", organizationId: state.organizationId,
@@ -2487,27 +2428,25 @@ test("an exact authorized organization administrator can reconcile a different s
     assert.equal((await repeated.json()).idempotent, true);
     assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_billing_reconciliations WHERE task_id=?").get(task.id).count, 1);
     assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM organization_audit_events WHERE action='AssistantProviderChargeReconciled' AND resource_id=?").get(task.id).count, 1);
-    assert.equal(submissions, 1, "administrative reconciliation must never retry an ambiguous paid submission");
+    assert.equal(submissions, 0, "administrative reconciliation must never retry the seeded ambiguous paid submission");
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test("tenant deletion refuses an independently unresolved organization-scoped assistant submission",async()=>{
-  const state=await sharedProjectFixture({provider:true});
-  const originalFetch=globalThis.fetch;
-  globalThis.fetch=async()=>{throw new TypeError("provider completion could not be confirmed");};
-  try{
-    const started=await state.request(endpoint(),json({turnId:crypto.randomUUID(),message:"Explain the approved source context"},state.owner));
-    assert.equal(started.status,201,JSON.stringify(await started.clone().json()));
-    const task=(await started.json()).task;
-    await state.drainBackground();
-    const removed=await state.request(`/api/workspaces/${state.organizationId}/deletion`,json({confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA",organizationId:state.organizationId},state.owner));
-    assert.equal(removed.status,409,JSON.stringify(await removed.clone().json()));
-    const response=await removed.json();
-    assert.equal(response.error,"provider_submission_in_flight");
-    assert.equal(response.assistantTasks[0].taskId,task.id);
-    assert.equal(state.sqlite.prepare("SELECT status FROM organizations WHERE organization_id=?").get(state.organizationId).status,"active");
-    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"needs-review");
-  }finally{globalThis.fetch=originalFetch;}
+test("tenant deletion refuses unresolved legacy and explicitly approved organization specialist submissions",async()=>{
+  for(const legacy of[true,false]){
+    const state=await specialistMockFixture({shared:true,respond:()=>{throw new TypeError("provider completion could not be confirmed");}});
+    try{
+      let task;if(legacy){const turn=await specialistFreeTurn(state,crypto.randomUUID(),"Explain the approved source context");task=await seedLegacyAssistantTask(state,turn);}
+      else({task}=await specialistApprovedTurn(state,"Explain the approved source context"));
+      await state.drainBackground();const finances=adaptiveReentryFinancialState(state);
+      const removed=await state.request("/api/workspaces/"+state.organizationId+"/deletion",json({confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA",organizationId:state.organizationId},state.owner));
+      assert.equal(removed.status,409,JSON.stringify(await removed.clone().json()));const response=await removed.json();
+      assert.equal(response.error,"provider_submission_in_flight");assert.equal(response.assistantTasks[0].taskId,task.id);
+      assert.equal(state.sqlite.prepare("SELECT status FROM organizations WHERE organization_id=?").get(state.organizationId).status,"active");
+      assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"needs-review");
+      assert.deepEqual(adaptiveReentryFinancialState(state),finances);assert.equal(state.calls.length,legacy?0:1);
+    }finally{await state.cleanup();}
+  }
 });
 
 test("tenant deletion preserves unresolved scoped video recovery and any executing image reservation",async()=>{
@@ -2557,166 +2496,120 @@ test("tenant deletion preserves unresolved scoped video recovery and any executi
   }
 });
 
-test("tenant deletion atomically rejects a provider submission that races its final destructive claim",async()=>{
-  const state=await sharedProjectFixture({provider:true});
-  const originalFetch=globalThis.fetch;
-  globalThis.fetch=async()=>{throw new Error("the deletion race fixture must not contact a provider");};
+test("tenant deletion atomically rejects a legacy provider submission racing the final destructive claim",async()=>{
+  const state=await specialistMockFixture({shared:true,respond:()=>{throw new Error("The deletion fixture must never contact a provider");}});
   try{
-    state.controls.skipAssistantTaskClaimOnce=true;
-    const started=await state.request(endpoint(),json({turnId:crypto.randomUUID(),message:"Explain the approved source context"},state.owner));
-    assert.equal(started.status,201,JSON.stringify(await started.clone().json()));
-    const task=(await started.json()).task;
-    await state.drainBackground();
-    state.controls.beforeDeletionClaim=()=>state.sqlite.prepare("UPDATE assistant_specialist_tasks SET status='running',provider_submitted=1 WHERE task_id=?")
-      .run(task.id);
-    const removed=await state.request(`/api/workspaces/${state.organizationId}/deletion`,json({confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA",organizationId:state.organizationId},state.owner));
-    assert.equal(removed.status,409,JSON.stringify(await removed.clone().json()));
-    assert.equal((await removed.json()).error,"provider_submission_in_flight");
-    assert.equal(state.sqlite.prepare("SELECT status FROM organizations WHERE organization_id=?").get(state.organizationId).status,"active");
-    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM organization_deletion_jobs WHERE organization_id=?").get(state.organizationId).count,0);
-    assert.equal(state.sqlite.prepare("SELECT status,provider_submitted FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).provider_submitted,1);
-  }finally{globalThis.fetch=originalFetch;}
-});
-
-test("tenant deletion cancels never-submitted assistant work and erases its mutable organization records",async()=>{
-  const state=await sharedProjectFixture({provider:true,actions:true});
-  const originalFetch=globalThis.fetch;
-  globalThis.fetch=async()=>{throw new Error("a never-submitted task must not call a provider");};
-  try{
-    state.controls.skipAssistantTaskClaimOnce=true;
-    const started=await state.request(endpoint(),json({turnId:crypto.randomUUID(),message:"Explain the approved source context"},state.owner));
-    assert.equal(started.status,201,JSON.stringify(await started.clone().json()));
-    const task=(await started.json()).task;
-    await state.drainBackground();
-    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"queued");
-    const removed=await state.request(`/api/workspaces/${state.organizationId}/deletion`,json({confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA",organizationId:state.organizationId},state.owner));
-    assert.equal(removed.status,200,JSON.stringify(await removed.clone().json()));
-    assert.equal((await removed.json()).status,"completed");
-    for(const table of ["assistant_turns","assistant_action_proposals","assistant_specialist_tasks"]){
-      assert.equal(state.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE organization_id=?`).get(state.organizationId).count,0,table);
-    }
-    assert.equal(state.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("assistant-owner").reserved_microusd,0);
-    assert.equal(state.sqlite.prepare("SELECT reserved_tokens FROM budget_counters WHERE scope='user' AND scope_id=?").get("assistant-owner").reserved_tokens,0);
-  }finally{globalThis.fetch=originalFetch;}
-});
-
-test("a successful-looking provider response without an authoritative usage receipt never masquerades as free", async () => {
-  const state = await fixture({ provider: true, actions: true });
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => Response.json({ model: "gpt-5.6-luna", output_text: JSON.stringify({ reply: "UNVERIFIED COMPLETION", actions: [] }) });
-  try {
-    const response = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "What should I inspect?" }));
-    const task = (await response.json()).task;
-    await state.drainBackground();
-    assert.deepEqual({ ...state.sqlite.prepare("SELECT status,error_code FROM assistant_specialist_tasks WHERE task_id=?").get(task.id) },
-      { status: "needs-review", error_code: "assistant_provider_usage_unverified" });
-    assert.equal(state.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_microusd, 4000);
-    assert.doesNotMatch(JSON.stringify((await (await state.request(endpoint())).json()).turns), /UNVERIFIED COMPLETION/u);
-  } finally { globalThis.fetch = originalFetch; }
-});
-
-test("actor-scoped polling resumes a durable queued task after its original background dispatch was lost", async () => {
-  const state = await fixture({ provider: true });
-  const originalFetch = globalThis.fetch;
-  let submissions = 0;
-  globalThis.fetch = async (_url, init) => {
-    submissions += 1;
-    return Response.json({ id: "recovered-queued", model: JSON.parse(init.body).model,
-      output_text: JSON.stringify({ reply: "Your interrupted request has completed.", actions: [] }),
-      usage: { input_tokens: 120, output_tokens: 30, total_tokens: 150 } });
-  };
-  try {
-    state.controls.skipAssistantTaskClaimOnce = true;
-    const response = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "Explain this page" }));
-    const task = (await response.json()).task;
-    await state.drainBackground();
-    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status, "queued");
-    assert.equal(submissions, 0);
-    assert.equal((await state.request(endpoint())).status, 200);
-    await state.drainBackground();
-    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status, "completed");
-    assert.equal(submissions, 1);
-  } finally { globalThis.fetch = originalFetch; }
-});
-
-test("expired specialist leases recover only before dispatch and never replay an uncertain paid submission", async () => {
-  for (const submitted of [false, true]) {
-    const state = await fixture({ provider: true });
-    const originalFetch = globalThis.fetch;
-    let submissions = 0;
-    globalThis.fetch = async (_url, init) => {
-      submissions += 1;
-      return Response.json({ id: "recovered-lease", model: JSON.parse(init.body).model,
-        output_text: JSON.stringify({ reply: "The safely recoverable request has completed.", actions: [] }),
-        usage: { input_tokens: 120, output_tokens: 30, total_tokens: 150 } });
+    const turn=await specialistFreeTurn(state,crypto.randomUUID(),"Explain the approved source context"),task=await seedLegacyAssistantTask(state,turn,{status:"queued",submitted:false});
+    let raced=false;state.controls.beforeDeletionClaim=()=>{
+      state.sqlite.prepare("UPDATE assistant_specialist_tasks SET status='running',provider_submitted=1 WHERE task_id=?").run(task.id);
+      state.sqlite.prepare("UPDATE cost_budget_reservations SET status='executing' WHERE reservation_id=?").run(task.costReservationId);raced=true;
     };
-    try {
-      state.controls.skipAssistantTaskClaimOnce = true;
-      const response = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "Explain the current page" }));
-      const task = (await response.json()).task;
-      await state.drainBackground();
-      const stored = state.sqlite.prepare("SELECT cost_reservation_id FROM assistant_specialist_tasks WHERE task_id=?").get(task.id);
-      state.sqlite.prepare("UPDATE assistant_specialist_tasks SET status='running',lease_expires_at=?,provider_submitted=? WHERE task_id=?")
-        .run("2000-01-01T00:00:00.000Z", submitted ? 1 : 0, task.id);
-      state.sqlite.prepare("UPDATE cost_budget_reservations SET status='executing' WHERE reservation_id=?").run(stored.cost_reservation_id);
-      assert.equal((await state.request(endpoint())).status, 200);
-      await state.drainBackground();
-      assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,
-        submitted ? "needs-review" : "completed");
-      assert.equal(submissions, submitted ? 0 : 1);
-      assert.equal(state.sqlite.prepare("SELECT reserved_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").reserved_microusd,
-        submitted ? 4000 : 0);
-    } finally { globalThis.fetch = originalFetch; }
+    const finances=adaptiveReentryFinancialState(state),removed=await state.request("/api/workspaces/"+state.organizationId+"/deletion",json({confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA",organizationId:state.organizationId},state.owner));
+    assert.equal(raced,true);assert.equal(removed.status,409,JSON.stringify(await removed.clone().json()));assert.equal((await removed.json()).error,"provider_submission_in_flight");
+    assert.equal(state.sqlite.prepare("SELECT status FROM organizations WHERE organization_id=?").get(state.organizationId).status,"active");
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM organization_deletion_jobs WHERE organization_id=?").get(state.organizationId).n,0);
+    assert.equal(state.sqlite.prepare("SELECT provider_submitted FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).provider_submitted,1);
+    assert.equal(state.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(task.costReservationId).status,"executing");
+    const after=adaptiveReentryFinancialState(state);assert.deepEqual(after.costCounters,finances.costCounters);assert.deepEqual(after.tokenCounters,finances.tokenCounters);assert.equal(state.calls.length,0);
+  }finally{await state.cleanup();}
+});
+
+test("tenant deletion cancels true legacy never-submitted work and erases mutable organization records",async()=>{
+  const state=await specialistMockFixture({shared:true,respond:()=>{throw new Error("A never-submitted legacy task must not call a provider");}});
+  try{
+    const turn=await specialistFreeTurn(state,crypto.randomUUID(),"Explain the approved source context"),task=await seedLegacyAssistantTask(state,turn,{status:"queued",submitted:false});
+    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"queued");
+    assert.equal(state.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(task.costReservationId).status,"active");
+    const removed=await state.request("/api/workspaces/"+state.organizationId+"/deletion",json({confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA",organizationId:state.organizationId},state.owner));
+    assert.equal(removed.status,200,JSON.stringify(await removed.clone().json()));assert.equal((await removed.json()).status,"completed");
+    for(const table of["assistant_turns","assistant_action_proposals","assistant_specialist_tasks"])assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM "+table+" WHERE organization_id=?").get(state.organizationId).n,0,table);
+    const balances=consequentialBalances(state,"assistant-owner");assert.equal(balances.cost.reserved,0);assert.equal(balances.tokens.reserved,0);assert.equal(balances.cost.used,0);assert.equal(balances.tokens.used,0);
+    const token=state.sqlite.prepare("SELECT status,used_tokens FROM budget_reservations WHERE reservation_id=?").get(task.tokenReservationId),cost=state.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE reservation_id=?").get(task.costReservationId);
+    assert.equal(token.status,"released");assert.equal(token.used_tokens,0);assert.equal(cost.status,"released");assert.equal(cost.used_microusd,0);
+    assert.equal(state.calls.length,0);
+  }finally{await state.cleanup();}
+});
+
+test("successful-looking signed response without authoritative usage retains holds and never becomes free output",async()=>{
+  const state=await specialistMockFixture({respond:payload=>specialistStructuredResponse(payload,{reply:"UNVERIFIED COMPLETION",usage:undefined})});
+  try{
+    // Omit actual usage entirely; a syntactically completed response is not evidence of a free result.
+    const originalFetch=globalThis.fetch;globalThis.fetch=async(...args)=>{const response=await originalFetch(...args),body=await response.json();delete body.usage;return Response.json(body);};
+    const {turn,review,task}=await specialistApprovedTurn(state,"What should I inspect?");await state.drainBackground();
+    const row=state.sqlite.prepare("SELECT status,error_code FROM assistant_specialist_tasks WHERE task_id=?").get(task.id);assert.equal(row.status,"needs-review");
+    const receipt=consequentialReceipt(state,task.id);assert.equal(receipt.steps[0].status,"uncertain");assert.equal(receipt.execution.result_ref,null);
+    assert.equal(receipt.balances.cost.reserved,review.quote.maximumMicrousd);assert.ok(receipt.balances.tokens.reserved>0);assert.equal(receipt.balances.cost.used,0);assert.equal(receipt.balances.tokens.used,0);
+    assert.doesNotMatch(JSON.stringify((await(await state.request(endpoint())).json()).turns),/UNVERIFIED COMPLETION/u);
+    const finance=adaptiveReentryFinancialState(state),retrieved=await specialistRetrieve(state,review),body=await retrieved.json();assert.equal(retrieved.status,200);assert.equal(body.result,undefined);assert.equal(body.task.submission,"uncertain");
+    const resume=await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:task.id});assert.equal(resume.status,200);await state.drainBackground();
+    assert.equal(state.calls.length,1);assert.deepEqual(adaptiveReentryFinancialState(state),finance);
+  }finally{await state.cleanup();}
+});
+
+test("actor-scoped polling and resume never dispatch a lost background job; only explicit original execution resumes it",async()=>{
+  const state=await specialistMockFixture({shared:true,respond:payload=>specialistStructuredResponse(payload,{id:"recovered-queued",reply:"Your interrupted request has completed.",usage:{input_tokens:120,output_tokens:30,total_tokens:150}})});
+  try{
+    state.controls.skipAssistantTaskClaimOnce=true;const {turn,review,task}=await specialistApprovedTurn(state,"Explain this page");await state.drainBackground();
+    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"queued");assert.equal(state.calls.length,0);
+    const finances=adaptiveReentryFinancialState(state);const page=await state.request(endpoint(),{headers:state.owner}),listed=await page.json();assert.equal(page.status,200);
+    assert.equal(listed.tasks.find(item=>item.id===task.id).executionId,task.id);assert.equal(listed.tasks.find(item=>item.id===task.id).canExecute,false);
+    const resumed=await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:task.id}),body=await resumed.json();assert.equal(resumed.status,200);assert.equal(body.task.canExecute,true);assert.equal(body.quote.canExecute,true);assert.equal(body.task.submission,"not-submitted");
+    const other=await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:task.id},{headers:state.viewer});assert.equal(other.status,404);assert.doesNotMatch(JSON.stringify(await other.json()),/interrupted request|Explain this page/u);
+    await state.drainBackground();assert.equal(state.calls.length,0);assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+    const explicit=await specialistExecute(state,review);assert.equal(explicit.status,202,JSON.stringify(await explicit.clone().json()));await state.drainBackground();assert.equal(state.calls.length,1);
+    const receipt=consequentialReceipt(state,task.id);assert.equal(receipt.execution.status,"completed");assert.equal(receipt.tokens.length,1);assert.equal(receipt.cost.length,1);
+    assert.equal(receipt.tokens[0].reservation_id,task.id+":tokens:0");assert.equal(receipt.cost[0].reservation_id,task.id+":usd:0");assert.equal(receipt.tokens[0].used_tokens,150);
+  }finally{await state.cleanup();}
+});
+
+test("expired signed specialist leases require explicit execution and never replay a possibly submitted POST",async()=>{
+  for(const submitted of[false,true]){
+    const state=await specialistMockFixture({respond:payload=>specialistStructuredResponse(payload,{id:"recovered-lease",reply:"The safely recoverable request has completed.",usage:{input_tokens:120,output_tokens:30,total_tokens:150}})});
+    try{
+      state.controls.skipAssistantTaskClaimOnce=true;const {turn,review,task}=await specialistApprovedTurn(state,"Explain the current page");await state.drainBackground();
+      await seedExpiredConsentedAssistantLease(state,review,{submitted});const finances=adaptiveReentryFinancialState(state);
+      assert.equal((await state.request(endpoint())).status,200);const resume=await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:task.id}),body=await resume.json();assert.equal(resume.status,200);
+      assert.equal(body.task.canExecute,!submitted);assert.equal(body.task.submission,submitted?"submitting":"not-submitted");
+      await state.drainBackground();assert.equal(state.calls.length,0,"Lease expiry and GET/resume never authorize a POST");assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+      const explicit=await specialistExecute(state,review);assert.equal(explicit.status,submitted?200:202,JSON.stringify(await explicit.clone().json()));await state.drainBackground();
+      assert.equal(state.calls.length,submitted?0:1);
+      const receipt=consequentialReceipt(state,task.id);assert.equal(receipt.steps[0].status,submitted?"submitting":"settled");
+      assert.equal(receipt.balances.cost.reserved,submitted?review.quote.maximumMicrousd:0);assert.equal(receipt.balances.tokens.used,submitted?0:150);
+      if(submitted)assert.deepEqual(adaptiveReentryFinancialState(state),finances);else assert.equal(receipt.execution.status,"completed");
+    }finally{await state.cleanup();}
   }
 });
 
-test("provider model mismatch records truthful spend, fails closed, and never commits generated suggestions", async () => {
-  const state = await fixture({ provider: true, actions: true });
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => Response.json({ id: "wrong-model", model: "gpt-5.6-sol",
-    output_text: JSON.stringify({ reply: "This must never be delivered.", actions: [] }),
-    usage: { input_tokens: 20, output_tokens: 5, total_tokens: 25 } });
-  try {
-    const response = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "What should I do next?" }));
-    const accepted = await response.json();
-    assert.equal(accepted.task.model, "gpt-5.6-luna");
-    await state.drainBackground();
-    const task = state.sqlite.prepare("SELECT status,error_code FROM assistant_specialist_tasks").get();
-    assert.equal(task.status, "failed");
-    assert.equal(task.error_code, "assistant_provider_model_mismatch");
-    assert.equal(state.sqlite.prepare("SELECT used_microusd FROM cost_budget_counters WHERE scope='user' AND scope_id=?").get("dev-local-creative").used_microusd, 250);
-    const history = await (await state.request(endpoint())).json();
-    assert.doesNotMatch(JSON.stringify(history.turns), /must never be delivered/u);
-  } finally { globalThis.fetch = originalFetch; }
+test("provider model mismatch retains truthful unknown spend and cannot commit suggestions or silently reprice",async()=>{
+  const state=await specialistMockFixture({respond:payload=>specialistStructuredResponse(payload,{id:"wrong-model",model:"gpt-5.6-sol",reply:"This must never be delivered.",usage:{input_tokens:20,output_tokens:5,total_tokens:25}})});
+  try{
+    const {turn,review,task}=await specialistApprovedTurn(state,"What should I do next?");assert.equal(task.model,"gpt-5.6-luna");await state.drainBackground();
+    const row=state.sqlite.prepare("SELECT status,error_code,result_json FROM assistant_specialist_tasks WHERE task_id=?").get(task.id);assert.equal(row.status,"needs-review");
+    const receipt=consequentialReceipt(state,task.id);assert.equal(receipt.steps[0].status,"uncertain");assert.equal(receipt.execution.result_ref,null);
+    assert.equal(receipt.cost[0].used_microusd,0,"Mismatched evidence must not be billed at either an unapproved model or invented Luna rate");assert.equal(receipt.balances.cost.reserved,review.quote.maximumMicrousd);assert.ok(receipt.balances.tokens.reserved>0);
+    const raw=JSON.parse(row.result_json).rawReceipt;assert.ok(raw?.contentRef);
+    const retained=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(raw.contentRef).content);assert.equal(JSON.parse(retained.responseBody).model,"gpt-5.6-sol");
+    const history=await(await state.request(endpoint())).json();assert.doesNotMatch(JSON.stringify(history.turns),/must never be delivered/u);
+    const finances=adaptiveReentryFinancialState(state),otherModel=await specialistQuote(state,turn.id,"gpt-5.6-terra");assert.equal(otherModel.quote.executionId,task.id);
+    assert.equal((await specialistExecute(state,otherModel)).status,200);assert.equal((await specialistRetrieve(state,review)).status,200);await state.drainBackground();assert.equal(state.calls.length,1);assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+  }finally{await state.cleanup();}
 });
 
-test("shared viewers never incur specialist charges while enrolled owners remain scoped to their tenant", async () => {
-  const state = await sharedProjectFixture({ provider: true });
-  assert.equal((await (await state.request("/api/session", { headers: state.viewer })).json()).assistant.models, undefined);
-  assert.deepEqual((await (await state.request("/api/session", { headers: state.owner })).json()).assistant.models.map((model) => model.id),
-    ["gpt-5.6-luna", "gpt-5.6-terra"]);
-  const originalFetch = globalThis.fetch;
-  let calls = 0;
-  globalThis.fetch = async (_url, init) => {
-    calls += 1;
-    const payload = JSON.parse(init.body);
-    return Response.json({ id: "shared-luna", model: payload.model, output_text: JSON.stringify({ reply: "This shared work remains inside its approved project.", actions: [] }),
-      usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 } });
-  };
-  try {
-    const viewer = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "What can I review?" }, state.viewer));
-    assert.equal(viewer.status, 201);
-    assert.equal((await viewer.json()).task, undefined);
-    await state.drainBackground();
-    assert.equal(calls, 0);
-    const owner = await state.request(endpoint(), json({ turnId: crypto.randomUUID(), message: "What current results should I review?" }, state.owner));
-    assert.equal(owner.status, 201, JSON.stringify(await owner.clone().json()));
-    assert.equal((await owner.json()).task.model, "gpt-5.6-luna");
-    await state.drainBackground();
-    assert.equal(calls, 1);
-    const billing = state.sqlite.prepare("SELECT organization_id,project_access_id,actor_user_id FROM project_budget_reservation_scopes WHERE reservation_kind='usd'").get();
-    assert.deepEqual({ ...billing }, { organization_id: state.organizationId, project_access_id: state.projectAccessId, actor_user_id: "assistant-owner" });
-  } finally { globalThis.fetch = originalFetch; }
+test("shared viewers stay free while explicitly approved owners use exact tenant billing and private recovery",async()=>{
+  const state=await specialistMockFixture({shared:true,respond:payload=>specialistStructuredResponse(payload,{id:"shared-luna",reply:"This shared work remains inside its approved project.",usage:{input_tokens:100,output_tokens:20,total_tokens:120}})});
+  try{
+    assert.equal((await(await state.request("/api/session",{headers:state.viewer})).json()).assistant.models,undefined);
+    assert.deepEqual((await(await state.request("/api/session",{headers:state.owner})).json()).assistant.models.map(model=>model.id),["gpt-5.6-luna","gpt-5.6-terra"]);
+    const readerTurn=await specialistFreeTurn(state,crypto.randomUUID(),"What can I review?",{headers:state.viewer});await state.drainBackground();assert.equal(state.calls.length,0);
+    const denied=await specialistProtocolRequest(state,{action:"quote",turnId:readerTurn.id},{headers:state.viewer});assert.equal(denied.status,403,JSON.stringify(await denied.clone().json()));
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n,0);
+    const {review,task}=await specialistApprovedTurn(state,"What current results should I review?");assert.equal(task.model,"gpt-5.6-luna");await state.drainBackground();assert.equal(state.calls.length,1);
+    const billing=state.sqlite.prepare("SELECT reservation_kind,organization_id,project_access_id,actor_user_id FROM project_budget_reservation_scopes ORDER BY reservation_kind").all();
+    assert.deepEqual(billing.map(row=>({...row})),["tokens","usd"].map(reservation_kind=>({reservation_kind,organization_id:state.organizationId,project_access_id:state.projectAccessId,actor_user_id:"assistant-owner"})));
+    const other=await specialistRetrieve(state,review,{headers:state.viewer});assert.equal(other.status,404);
+    assert.doesNotMatch(JSON.stringify((await(await state.request(endpoint(),{headers:state.viewer})).json()).turns),/shared work remains inside/u);
+    const receipt=consequentialReceipt(state,task.id);assert.equal(receipt.execution.status,"completed");assert.equal(receipt.cost[0].used_microusd,44);assert.equal(receipt.tokens[0].used_tokens,120);
+  }finally{await state.cleanup();}
 });
 
 test("each approved personal proposal commits exactly one typed change and rejection commits none", async () => {
@@ -3146,37 +3039,46 @@ test("collaborators may reuse the same turn ID without collisions or private-con
   assert.doesNotMatch(JSON.stringify(viewerHistory), /Owner-only request/u);
 });
 
-test("owner conversations remain distinct across personal and shared contexts before and after migration", async () => {
-  const { request, owner } = await sharedProjectFixture({ legacyConversation: true });
+test("owner cookie-free turns use real organization custody without adopting old personal history", async () => {
+  const { request, sqlite, owner, viewer, organizationId, projectAccessId } = await sharedProjectFixture({ legacyConversation: true });
   const { cookie: _cookie, ...personal } = owner;
-  const sharedMessage = "SHARED ORGANIZATION CREATIVE QUESTION";
-  const personalMessage = "PERSONAL OWNER CREATIVE QUESTION";
-
-  const shared = await request(endpoint(), json({ turnId: crypto.randomUUID(), message: sharedMessage }, owner));
+  const sharedMessage = "SHARED ORGANIZATION CREATIVE QUESTION", implicitMessage = "IMPLICIT OWNER REAL TENANT QUESTION";
+  const sharedTurn=crypto.randomUUID(),implicitTurn=crypto.randomUUID();
+  const shared = await request(endpoint(), json({ turnId:sharedTurn, message: sharedMessage }, owner));
   assert.equal(shared.status, 201, JSON.stringify(await shared.clone().json()));
-  const individual = await request(endpoint(), json({ turnId: crypto.randomUUID(), message: personalMessage }, personal));
+  const individual = await request(endpoint(), json({ turnId:implicitTurn, message:implicitMessage }, personal));
   assert.equal(individual.status, 201, JSON.stringify(await individual.clone().json()));
-
+  for(const turnId of[sharedTurn,implicitTurn]){
+    const turn=sqlite.prepare("SELECT * FROM assistant_turns WHERE actor_user_id='assistant-owner' AND turn_id=?").get(turnId);
+    assert.equal(turn.organization_id,organizationId);assert.equal(turn.project_access_id,projectAccessId);
+    for(const ref of[turn.user_content_ref,turn.assistant_content_ref]){
+      const resource=sqlite.prepare("SELECT * FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(ref);
+      const retention=sqlite.prepare("SELECT * FROM private_content_retention_scopes WHERE content_id=?").get(ref);
+      assert.equal(resource.visibility,"actor_private");assert.equal(resource.actor_user_id,"assistant-owner");assert.equal(resource.organization_id,organizationId);
+      assert.equal(retention.actor_user_id,"assistant-owner");assert.equal(retention.organization_id,organizationId);assert.equal(retention.project_access_id,projectAccessId);
+    }
+  }
   const personalHistory = await (await request(endpoint(), { headers: personal })).json();
   assert.match(JSON.stringify(personalHistory), /LEGACY PERSONAL CREATIVE QUESTION/u);
-  assert.match(JSON.stringify(personalHistory), /PERSONAL OWNER CREATIVE QUESTION/u);
-  assert.doesNotMatch(JSON.stringify(personalHistory), /SHARED ORGANIZATION CREATIVE QUESTION/u);
-
+  assert.match(JSON.stringify(personalHistory), /IMPLICIT OWNER REAL TENANT QUESTION/u);
+  assert.match(JSON.stringify(personalHistory), /SHARED ORGANIZATION CREATIVE QUESTION/u);
   const sharedHistory = await (await request(endpoint(), { headers: owner })).json();
   assert.match(JSON.stringify(sharedHistory), /SHARED ORGANIZATION CREATIVE QUESTION/u);
-  assert.doesNotMatch(JSON.stringify(sharedHistory), /LEGACY PERSONAL CREATIVE QUESTION|PERSONAL OWNER CREATIVE QUESTION/u);
-
+  assert.match(JSON.stringify(sharedHistory), /IMPLICIT OWNER REAL TENANT QUESTION/u);
+  assert.doesNotMatch(JSON.stringify(sharedHistory), /LEGACY PERSONAL CREATIVE QUESTION/u);
   const sharedContent = await (await request("/api/events?after=0&limit=2000&content=1", { headers: owner })).json();
   assert.match(JSON.stringify(sharedContent.content), /SHARED ORGANIZATION CREATIVE QUESTION/u);
-  assert.doesNotMatch(JSON.stringify(sharedContent.content), /LEGACY PERSONAL CREATIVE QUESTION|PERSONAL OWNER CREATIVE QUESTION/u);
-
+  assert.match(JSON.stringify(sharedContent.content), /IMPLICIT OWNER REAL TENANT QUESTION/u);
+  assert.doesNotMatch(JSON.stringify(sharedContent.content), /LEGACY PERSONAL CREATIVE QUESTION/u);
   const personalContent = await (await request("/api/events?after=0&limit=2000&content=1", { headers: personal })).json();
-  assert.match(JSON.stringify(personalContent.content), /LEGACY PERSONAL CREATIVE QUESTION|PERSONAL OWNER CREATIVE QUESTION/u);
-  assert.doesNotMatch(JSON.stringify(personalContent.content), /SHARED ORGANIZATION CREATIVE QUESTION/u);
-
-  const reopened = await (await request(endpoint(), { headers: personal })).json();
-  assert.match(JSON.stringify(reopened), /LEGACY PERSONAL CREATIVE QUESTION|PERSONAL OWNER CREATIVE QUESTION/u);
-  assert.doesNotMatch(JSON.stringify(reopened), /SHARED ORGANIZATION CREATIVE QUESTION/u);
+  assert.match(JSON.stringify(personalContent.content), /LEGACY PERSONAL CREATIVE QUESTION/u);
+  assert.doesNotMatch(JSON.stringify(personalContent.content), /SHARED ORGANIZATION CREATIVE QUESTION|IMPLICIT OWNER REAL TENANT QUESTION/u);
+  const viewerHistory=await(await request(endpoint(),{headers:viewer})).json();
+  assert.doesNotMatch(JSON.stringify(viewerHistory),/SHARED ORGANIZATION CREATIVE QUESTION|IMPLICIT OWNER REAL TENANT QUESTION|LEGACY PERSONAL CREATIVE QUESTION/u);
+  const legacy=sqlite.prepare("SELECT content_id,content FROM private_content WHERE owner_id='assistant-owner' AND content IN('LEGACY PERSONAL CREATIVE QUESTION','LEGACY PERSONAL CREATIVE ANSWER')").all();
+  assert.equal(legacy.length,2);
+  for(const row of legacy)assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM private_content_retention_scopes WHERE content_id=?").get(row.content_id).n,0,"Old personal private bytes are never silently adopted into tenant retention");
+  const reopened=await(await request(endpoint(),{headers:personal})).json();assert.match(JSON.stringify(reopened),/LEGACY PERSONAL CREATIVE QUESTION/u);
 });
 
 test("workspace conversations never cross organizations or independent workspace sections", async () => {
@@ -5070,3 +4972,2007 @@ test("human context erased or malformed private previews never block a fresh fre
     }finally{globalThis.fetch=original;}
   }
 });
+
+function specialistFeedTrace(state){
+  const original=state.env.DB.prepare,statements=[];
+  state.env.DB.prepare=function(sql){
+    const wrap=statement=>{const bind=statement.bind;statement.bind=(...values)=>{statements.push({sql,bindings:values.length,bytes:new TextEncoder().encode(sql).byteLength});return wrap(bind.call(statement,...values));};return statement;};
+    return wrap(original.call(this,sql));
+  };
+  return{statements,restore(){state.env.DB.prepare=original;}};
+}
+function assertSpecialistFeedReadOnly(state,before,trace,expectedCalls=1){
+  assert.equal(state.calls.length,expectedCalls,"GET must not POST to a provider");
+  assert.deepEqual(adaptiveReentryFinancialState(state),before.financial);
+  assert.deepEqual(state.sqlite.prepare("SELECT * FROM consequential_executions ORDER BY execution_id").all(),before.executions);
+  assert.deepEqual(state.sqlite.prepare("SELECT * FROM consequential_execution_steps ORDER BY execution_id,step_index").all(),before.steps);
+  assert.deepEqual(state.sqlite.prepare("SELECT * FROM assistant_specialist_tasks ORDER BY task_id").all(),before.tasks);
+  assert.deepEqual(state.sqlite.prepare("SELECT * FROM assistant_action_commits ORDER BY commit_id").all(),before.commits);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content").get().n,before.privateCount);
+  for(const statement of trace.statements){
+    assert.ok(statement.bindings<=100,statement.bindings+" bindings: "+statement.sql);
+    assert.ok(statement.bytes<=100_000,statement.bytes+" SQL bytes");
+    assert.doesNotMatch(statement.sql,/^\s*(?:INSERT(?: OR \w+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:consequential_\w+|(?:cost_)?budget_\w+|assistant_action_commits|assistant_billing_reconciliations|private_content)\b/iu);
+    assert.doesNotMatch(statement.sql,/^\s*SELECT[\s\S]+kind\s*=\s*'provider-response'/iu,"GET must not read or decode raw responses");
+  }
+}
+function specialistFeedSnapshot(state){
+  return{financial:adaptiveReentryFinancialState(state),
+    executions:state.sqlite.prepare("SELECT * FROM consequential_executions ORDER BY execution_id").all(),
+    steps:state.sqlite.prepare("SELECT * FROM consequential_execution_steps ORDER BY execution_id,step_index").all(),
+    tasks:state.sqlite.prepare("SELECT * FROM assistant_specialist_tasks ORDER BY task_id").all(),
+    commits:state.sqlite.prepare("SELECT * FROM assistant_action_commits ORDER BY commit_id").all(),
+    privateCount:state.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content").get().n};
+}
+async function specialistFeedCompleted(state,id="specialist-feed-turn"){
+  const turn=await specialistFreeTurn(state,id),review=await specialistQuote(state,turn.id);
+  const response=await specialistExecute(state,review);assert.equal(response.status,202,JSON.stringify(await response.clone().json()));
+  await state.drainBackground();
+  assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(review.quote.executionId).status,"completed",state.controls.lastDatabaseError);
+  return{turn,review};
+}
+function specialistFeedPointers(state,turn,review){
+  const execution=state.sqlite.prepare("SELECT * FROM consequential_executions WHERE execution_id=?").get(review.quote.executionId);
+  const saved=state.sqlite.prepare("SELECT * FROM assistant_turns WHERE turn_id=?").get(turn.id);
+  return{canonical:execution.result_ref,consent:execution.consent_ref,answer:saved.assistant_content_ref,authored:saved.user_content_ref};
+}
+function specialistFeedWithdrawal(state,pointers,target,kind){
+  const ref=pointers[target];assert.ok(ref);
+  if(kind==="expired")state.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE content_id=?").run(ref);
+  else if(kind==="redacted")state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),ref);
+  else if(kind==="custody")state.sqlite.prepare("UPDATE private_content_retention_scopes SET project_id='different-current-custody' WHERE content_id=?").run(ref);
+  else if(kind==="owner")state.sqlite.prepare("UPDATE private_content SET owner_id='different-private-owner' WHERE content_id=?").run(ref);
+  else assert.fail("Unknown withdrawal fixture");
+}
+function assertSpecialistFeedNoCertificate(body,review){
+  const task=body.tasks.find(item=>item.id===review.quote.executionId);assert.ok(task,JSON.stringify(body));
+  assert.equal(task.certifiedCompleted,undefined);assert.equal(task.completedReview,undefined);
+  assert.equal(task.canExecute,false);
+  return task;
+}
+for(const shared of[false,true])test("specialist feed certification: exact completed review is read-only "+(shared?"shared":"personal"),async(t)=>{
+  const state=await specialistMockFixture({shared});let trace;
+  try{
+    const{turn,review}=await specialistFeedCompleted(state),before=specialistFeedSnapshot(state);trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(),{headers:state.owner??{}}),body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    assert.equal(response.headers.get("cache-control"),"private, no-store");
+    const task=body.tasks.find(item=>item.id===review.quote.executionId),completed=task.completedReview;
+    assert.equal(task.certifiedCompleted,true);assert.equal(task.status,"completed");assert.equal(task.canExecute,false);
+    assert.equal(task.executionId,review.quote.executionId);assert.equal(task.bindingHash,review.quote.bindingHash);assert.equal(task.turnId,turn.id);
+    assert.equal(completed.turnId,turn.id);assert.equal(completed.executionId,review.quote.executionId);
+    const{budgetAvailable,availableMicrousd,unavailableReasons,...originalQuote}=review.quote;
+    assert.deepEqual(completed.quote,{...originalQuote,status:"completed",providerAvailable:true,canExecute:false});
+    assert.deepEqual(completed.originalRequest,review.originalRequest);
+    assert.deepEqual(completed.result,{reply:"PRIVATE_VERIFIED_SPECIALIST_REPLY",sourceStatus:"original-approved-source"});
+    assert.equal(body.turns.find(item=>item.id===turn.id)?.reply.text,completed.result.reply);
+    assert.equal("record"in task,false);assert.equal("proof"in task,false);assert.equal("providerResult"in completed.result,false);
+    assert.doesNotMatch(JSON.stringify(task),/rawReceipt|contentRef|assistantPaidReplyReadGuard/u);
+    assertSpecialistFeedReadOnly(state,before,trace);
+    t.diagnostic("GET SQL maximum "+Math.max(...trace.statements.map(item=>item.bindings))+" bindings / "+Math.max(...trace.statements.map(item=>item.bytes))+" bytes");
+  }finally{trace?.restore();await state.cleanup();}
+});
+test("specialist feed certification: fresh certificate follows older pending resume without inferring completion from task identity",async()=>{
+  const entered=Promise.withResolvers(),release=Promise.withResolvers(),state=await specialistMockFixture({respond:async payload=>{entered.resolve();await release.promise;return specialistRawResponse(payload);}});let trace;
+  try{
+    const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);await specialistExecute(state,review);await entered.promise;
+    const oldResponse=await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:review.quote.executionId}),old=await oldResponse.json();
+    const pending=await(await state.request(endpoint())).json(),pendingTask=assertSpecialistFeedNoCertificate(pending,review);
+    assert.equal(pendingTask.retentionUnavailable,undefined);assert.equal(old.result,undefined);assert.equal(old.task.submission,"submitting");
+    release.resolve();await state.drainBackground();const before=specialistFeedSnapshot(state);trace=specialistFeedTrace(state);
+    const current=await(await state.request(endpoint())).json(),task=current.tasks.find(item=>item.id===review.quote.executionId);
+    assert.equal(task.certifiedCompleted,true);assert.equal(task.completedReview.result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY");
+    assert.equal(task.completedReview.turnId,old.turnId);assert.equal(task.completedReview.executionId,old.executionId);
+    assert.equal(task.completedReview.quote.bindingHash,old.quote.bindingHash);assert.equal(old.result,undefined);
+    assertSpecialistFeedReadOnly(state,before,trace);
+  }finally{release.resolve();trace?.restore();await state.cleanup();}
+});
+test("specialist feed certification: completed identity without current canonical answer and verified commit is insufficient",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    const{review}=await specialistFeedCompleted(state);
+    state.sqlite.prepare("DELETE FROM assistant_action_commits WHERE commit_id=?").run("task:"+review.quote.executionId);
+    const body=await(await state.request(endpoint())).json(),task=assertSpecialistFeedNoCertificate(body,review);
+    assert.equal(task.status,"completed");assert.equal(task.retentionUnavailable,undefined);
+    assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+  }finally{await state.cleanup();}
+});
+for(const kind of["expired","redacted","custody","owner"])for(const target of["canonical","consent","answer","authored"])
+test("specialist feed certification: explicit "+kind+" "+target+" clears retained result without recovery",async()=>{
+  const state=await specialistMockFixture({shared:true});let trace;
+  try{
+    const{turn,review}=await specialistFeedCompleted(state),pointers=specialistFeedPointers(state,turn,review);
+    specialistFeedWithdrawal(state,pointers,target,kind);
+    const before=specialistFeedSnapshot(state);trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint(),{headers:state.owner}),body=await response.json();
+    assert.equal(response.status,200,JSON.stringify(body)+" SQL:"+state.controls.lastDatabaseError);
+    const task=assertSpecialistFeedNoCertificate(body,review);
+    assert.equal(task.retentionUnavailable,true,JSON.stringify(task));assert.equal(task.executionId,review.quote.executionId);
+    assert.equal(task.bindingHash,review.quote.bindingHash);assert.equal(task.turnId,turn.id);
+    assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+    assertSpecialistFeedReadOnly(state,before,trace);
+  }finally{trace?.restore();await state.cleanup();}
+});
+for(const target of["canonical","consent","answer","authored"])test("specialist feed certification: final SELECT snapshot detects late "+target+" erasure",async()=>{
+  const state=await specialistMockFixture({shared:true});let restore;
+  try{
+    const{turn,review}=await specialistFeedCompleted(state),pointers=specialistFeedPointers(state,turn,review);let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/AS certified_completed/u,()=>{fired=true;specialistFeedWithdrawal(state,pointers,target,"redacted");});
+    const response=await state.request(endpoint(),{headers:state.owner}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body));
+    assert.equal(assertSpecialistFeedNoCertificate(body,review).retentionUnavailable,true);
+    assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+    assert.equal(body.turns.some(item=>item.id===turn.id),false);
+    assert.equal(body.context.recentTurns.some(item=>item.id.startsWith(turn.id+":")),false);
+    assert.equal(state.calls.length,1);
+  }finally{restore?.();await state.cleanup();}
+});
+test("specialist feed certification: final read authority is rechecked after result lookup",async()=>{
+  const state=await specialistMockFixture({shared:true});let restore;
+  try{
+    await specialistFeedCompleted(state);let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/AS certified_completed/u,()=>{fired=true;state.sqlite.prepare("UPDATE users SET consent_version='' WHERE user_id='assistant-owner'").run();});
+    const response=await state.request(endpoint(),{headers:state.owner}),body=await response.json();
+    assert.equal(fired,true);assert.equal(response.status,403,JSON.stringify(body));assert.equal(body.error,"assistant_read_scope_denied");
+    assert.equal(body.tasks,undefined);assert.equal(body.turns,undefined);assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+    assert.equal(state.calls.length,1);
+  }finally{restore?.();await state.cleanup();}
+});
+test("specialist feed certification: ordinary pending status cannot withdraw a previously retained result",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    const{review}=await specialistFeedCompleted(state);
+    state.sqlite.prepare("UPDATE assistant_specialist_tasks SET status='running' WHERE task_id=?").run(review.quote.executionId);
+    const body=await(await state.request(endpoint())).json(),task=assertSpecialistFeedNoCertificate(body,review);
+    assert.equal(task.retentionUnavailable,undefined);assert.equal(task.retainedResultUnavailable,undefined);
+    assert.equal(state.calls.length,1);
+  }finally{await state.cleanup();}
+});
+test("specialist feed certification: copied answer with mismatching live private content is never certified",async()=>{
+  const state=await specialistMockFixture();let restore;
+  try{
+    const{turn,review}=await specialistFeedCompleted(state),pointers=specialistFeedPointers(state,turn,review);
+    restore=interceptConsequentialDb(state,"batch",/AS certified_completed/u,()=>{state.sqlite.prepare("UPDATE private_content SET content='different live answer' WHERE content_id=?").run(pointers.answer);});
+    const body=await(await state.request(endpoint())).json(),task=assertSpecialistFeedNoCertificate(body,review);
+    assert.equal(task.retentionUnavailable,undefined);assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY|different live answer/u);
+    assert.equal(body.turns.some(item=>item.id===turn.id),false);
+  }finally{restore?.();await state.cleanup();}
+});
+test("specialist feed certification: raw-only receipt remains pending without materialization or ledger reconciliation",async()=>{
+  const state=await specialistMockFixture();let restore,trace;
+  try{
+    const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);
+    restore=interceptConsequentialDb(state,"run",/^\s*UPDATE consequential_executions SET status='completed'/u,()=>{throw new Error("fixture raw-only retained result");});
+    await specialistExecute(state,review);await state.drainBackground();restore();restore=null;
+    const task=state.sqlite.prepare("SELECT * FROM assistant_specialist_tasks WHERE task_id=?").get(review.quote.executionId);
+    assert.ok(JSON.parse(task.result_json).rawReceipt.contentRef);
+    assert.equal(state.sqlite.prepare("SELECT result_ref FROM consequential_executions WHERE execution_id=?").get(review.quote.executionId).result_ref,null);
+    const before=specialistFeedSnapshot(state);trace=specialistFeedTrace(state);
+    const body=await(await state.request(endpoint())).json(),shown=assertSpecialistFeedNoCertificate(body,review);
+    assert.equal(shown.retentionUnavailable,undefined);assert.equal(shown.retainedResultUnavailable,undefined);
+    assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+    assertSpecialistFeedReadOnly(state,before,trace);
+  }finally{restore?.();trace?.restore();await state.cleanup();}
+});
+test("specialist feed certification: disabled provider and exhausted purchase budget do not block completed read",async()=>{
+  const state=await specialistMockFixture();let trace;
+  try{
+    const{review}=await specialistFeedCompleted(state);
+    delete state.env.OPENAI_API_KEY;state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS="";state.env.FORMA_ASSISTANT_ALLOWED_MODELS="";
+    state.sqlite.prepare("UPDATE cost_budget_counters SET used_microusd=1000000000000").run();
+    const before=specialistFeedSnapshot(state);trace=specialistFeedTrace(state);
+    const response=await state.request(endpoint()),body=await response.json(),task=body.tasks.find(item=>item.id===review.quote.executionId);
+    assert.equal(response.status,200,JSON.stringify(body));assert.equal(task.certifiedCompleted,true);
+    assert.equal(task.completedReview.quote.providerAvailable,false);assert.equal(task.completedReview.quote.canExecute,false);
+    assertSpecialistFeedReadOnly(state,before,trace);
+  }finally{trace?.restore();await state.cleanup();}
+});
+test("specialist feed certification: current other actor and route cannot obtain an original execution certificate",async()=>{
+  const state=await specialistMockFixture({shared:true});
+  try{
+    const{review}=await specialistFeedCompleted(state);
+    for(const options of[{path:endpoint(),headers:state.viewer},{path:endpoint("/projects/project-atmosphere"),headers:state.owner}]){
+      const response=await state.request(options.path,{headers:options.headers}),body=await response.json();
+      assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.tasks.some(item=>item.executionId===review.quote.executionId),false);
+      assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+    }
+    assert.equal(state.calls.length,1);
+  }finally{await state.cleanup();}
+});
+
+const specialistTestRoute="/document/doc-atmosphere";
+function specialistProtocolRequest(state,body,{headers=state.owner??{},route=specialistTestRoute,project="project-atmosphere",selected=[]}={}){
+  const path=endpoint(route,project).replace("/api/assistant?","/api/assistant/specialist?")+selected.map(id=>"&selected="+encodeURIComponent(id)).join("");
+  return state.request(path,json(body,headers));
+}
+async function specialistFreeTurn(state,id="specialist-turn-0001",message="What should I do next?",options={}){
+  const {headers=state.owner??{},route=specialistTestRoute,project="project-atmosphere",selected=[],...body}=options;
+  const response=await state.request(endpoint(route,project)+selected.map(value=>"&selected="+encodeURIComponent(value)).join(""),json({turnId:id,message,locale:"en",...body},headers));
+  const result=await response.json();assert.equal(response.status,201,JSON.stringify(result)+" SQL: "+state.controls.lastDatabaseError);return result.turn;
+}
+async function specialistQuote(state,turnId="specialist-turn-0001",model,options={}){
+  const response=await specialistProtocolRequest(state,{action:"quote",turnId,...(model?{model}:{})},options),result=await response.json();
+  assert.equal(response.status,200,JSON.stringify(result)+" SQL: "+state.controls.lastDatabaseError);assert.ok(result.quote?.executionId);return result;
+}
+function specialistExecute(state,review,options={}){
+  return specialistProtocolRequest(state,{action:"execute",turnId:review.turnId,executionId:review.quote.executionId,approvedBindingHash:review.quote.bindingHash},options);
+}
+function specialistRetrieve(state,review,options={}){
+  return specialistProtocolRequest(state,{action:"retrieve",turnId:review.turnId,executionId:review.quote.executionId,approvedBindingHash:review.quote.bindingHash},options);
+}
+function specialistRawResponse(payload,override={}){
+  return Response.json({id:"specialist-provider-response",model:payload.model,service_tier:"default",status:"completed",
+    output:[{type:"message",id:"specialist-provider-message",role:"assistant",status:"completed",content:[{type:"output_text",text:JSON.stringify({reply:"PRIVATE_VERIFIED_SPECIALIST_REPLY",actions:[]})}]}],
+    usage:{input_tokens:1000,output_tokens:300,total_tokens:1300},...override});
+}
+async function specialistMockFixture(options={}){
+  const state=options.shared?await sharedProjectFixture({...options,provider:true,actions:true}):await fixture({...options,provider:true,actions:true}),original=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url,init)=>{assert.equal(String(url),"https://api.openai.com/v1/responses");assert.equal(init.method,"POST");const payload=JSON.parse(init.body);calls.push({payload,headers:init.headers});return options.respond?options.respond(payload,state):specialistRawResponse(payload);};
+  return{...state,calls,async cleanup(){try{await state.drainBackground();}finally{globalThis.fetch=original;}}};
+}
+test("specialist consent: Send stays free even with explicit premium/model body",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    const turn=await specialistFreeTurn(state,"specialist-turn-free","What should I do next?",{model:"gpt-5.6-sol",premiumApproval:true});
+    assert.equal(turn.originalRequest.turnId,turn.id);assert.equal(turn.originalRequest.route,specialistTestRoute);
+    await state.drainBackground();assert.equal(state.calls.length,0);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n,0);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,0);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n,0);
+    const again=await state.request(endpoint(),json({turnId:turn.id,message:turn.user,model:"gpt-5.6-terra"}));assert.equal(again.status,200);
+    assert.equal(state.calls.length,0);assert.equal((await again.json()).turn.id,turn.id);
+  }finally{await state.cleanup();}
+});
+test("specialist consent: no-key quote discloses full saved contract without purchase",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    delete state.env.OPENAI_API_KEY;const turn=await specialistFreeTurn(state);const review=await specialistQuote(state,turn.id);
+    assert.equal(review.quote.operation,"assistant-specialist");assert.equal(review.quote.providerAvailable,false);assert.equal(review.quote.canExecute,false);
+    assert.equal(review.originalRequest.turnId,turn.id);assert.equal(review.originalRequest.documentId,"doc-atmosphere");assert.deepEqual(review.originalRequest.selectedItemIds,[]);
+    assert.ok(review.quote.maximumMicrousd>0);assert.equal(state.calls.length,0);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,0);
+    const execution=await specialistExecute(state,review);assert.equal(execution.status,503,JSON.stringify(await execution.clone().json()));
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n,0);assert.equal(state.calls.length,0);
+  }finally{await state.cleanup();}
+});
+test("specialist consent: one approved task settles raw evidence and recovers without a new POST",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    const turn=await specialistFreeTurn(state);const review=await specialistQuote(state,turn.id);
+    assert.equal(review.quote.canExecute,true,JSON.stringify(review));const response=await specialistExecute(state,review);
+    assert.equal(response.status,202,JSON.stringify(await response.clone().json())+" SQL: "+state.controls.lastDatabaseError);
+    await state.drainBackground();
+    const receipt=consequentialReceipt(state,review.quote.executionId);
+    assert.equal(state.calls.length,1,JSON.stringify(receipt)+" SQL: "+state.controls.lastDatabaseError);
+    assert.equal(receipt.execution.status,"completed",JSON.stringify(receipt)+" SQL: "+state.controls.lastDatabaseError);
+    assert.equal(receipt.steps[0].status,"settled");assert.equal(receipt.steps[0].verified_tokens,1300);assert.equal(receipt.cost[0].status,"settled");assert.equal(receipt.tokens[0].status,"settled");
+    const task=state.sqlite.prepare("SELECT * FROM assistant_specialist_tasks WHERE task_id=?").get(review.quote.executionId);
+    assert.equal(task.status,"completed",JSON.stringify(task)+" SQL: "+state.controls.lastDatabaseError);
+    assert.equal(task.token_reservation_id,task.task_id+":tokens:0");assert.equal(task.cost_reservation_id,task.task_id+":usd:0");
+    assert.ok(JSON.parse(task.result_json).rawReceipt.contentRef);assert.equal(task.result_json.includes("PRIVATE_VERIFIED"),false);
+    assert.equal(state.calls[0].headers["X-Client-Request-Id"],task.task_id);
+    const financial=adaptiveReentryFinancialState(state);
+    for(const action of["retrieve","resume"]){
+      const retrieved=await specialistProtocolRequest(state,{action,turnId:turn.id,executionId:task.task_id,...(action==="retrieve"?{approvedBindingHash:review.quote.bindingHash}:{})});
+      const body=await retrieved.json();assert.equal(retrieved.status,200,JSON.stringify(body));assert.equal(body.result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY",JSON.stringify(body));
+      assert.equal(body.turn.id,turn.id);assert.equal(body.task.executionId,task.task_id);assert.equal(body.task.bindingHash,review.quote.bindingHash);assert.equal(body.task.model,review.quote.models[0]);
+    }
+    await state.drainBackground();assert.equal(state.calls.length,1);assert.deepEqual(adaptiveReentryFinancialState(state),financial);
+    const page=await state.request(endpoint()),body=await page.json();assert.equal(page.status,200,JSON.stringify(body));assert.equal(body.tasks[0].executionId,task.task_id);
+  }finally{await state.cleanup();}
+});
+
+test("specialist consent: preissued model quotes and concurrent approval cannot buy twice",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    const turn=await specialistFreeTurn(state),luna=await specialistQuote(state,turn.id,"gpt-5.6-luna"),terra=await specialistQuote(state,turn.id,"gpt-5.6-terra");
+    assert.notEqual(luna.quote.executionId,terra.quote.executionId);
+    const responses=await Promise.all([specialistExecute(state,luna),specialistExecute(state,luna),specialistExecute(state,terra)]);
+    for(const response of responses)assert.ok([200,202].includes(response.status),JSON.stringify(await response.clone().json())+" SQL: "+state.controls.lastDatabaseError);
+    await state.drainBackground();assert.equal(state.calls.length,1);
+    const rows=state.sqlite.prepare("SELECT task_id,status FROM assistant_specialist_tasks WHERE turn_id=?").all(turn.id);assert.equal(rows.length,1);assert.equal(rows[0].status,"completed",JSON.stringify(rows));
+    const winner=rows[0].task_id,loser=winner===luna.quote.executionId?terra:luna,redirect=await specialistExecute(state,loser),body=await redirect.json();
+    assert.equal(body.requestedExecutionId,loser.quote.executionId);assert.equal(body.reusedExecutionId,winner);assert.equal(body.winnerExecutionId,winner);
+    assert.equal(body.quote.executionId,winner);assert.equal(body.result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY");assert.equal(state.calls.length,1);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n,1);
+    const page=await state.request(endpoint()),listed=await page.json();assert.equal(listed.tasks[0].executionId,winner);
+  }finally{await state.cleanup();}
+});
+for(const mode of["missing usage","numeric-string usage","transport unknown","malformed raw JSON"]){
+  test("specialist consent: "+mode+" keeps exact hold and all recovery paths free",async()=>{
+    const state=await specialistMockFixture({respond(payload){
+      if(mode==="transport unknown")throw new TypeError("fixture connection lost after dispatch");
+      if(mode==="malformed raw JSON")return new Response("{ unparseable raw",{status:200});
+      return specialistRawResponse(payload,{usage:mode==="missing usage"?undefined:{input_tokens:"1000",output_tokens:300,total_tokens:1300}});
+    }});
+    try{
+      const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);assert.equal((await specialistExecute(state,review)).status,202);await state.drainBackground();
+      assert.equal(state.calls.length,1);const first=consequentialReceipt(state,review.quote.executionId);assert.equal(first.execution.status,"uncertain",JSON.stringify(first));assert.equal(first.steps[0].status,"uncertain");
+      assert.ok(first.balances.tokens.reserved>0);assert.ok(first.balances.cost.reserved>0);assert.equal(first.balances.tokens.used,0);assert.equal(first.balances.cost.used,0);
+      const raw=state.sqlite.prepare("SELECT result_json FROM assistant_specialist_tasks WHERE task_id=?").get(review.quote.executionId).result_json;
+      assert.equal(Boolean(JSON.parse(raw).rawReceipt),mode!=="transport unknown");
+      const finances=adaptiveReentryFinancialState(state);
+      for(const action of["retrieve","resume","quote","execute"]){
+        const body=action==="quote"?{action,turnId:turn.id,model:"gpt-5.6-terra"}:{action,turnId:turn.id,executionId:review.quote.executionId,...(action!=="resume"?{approvedBindingHash:review.quote.bindingHash}:{})};
+        const response=await specialistProtocolRequest(state,body),output=await response.json();assert.equal(response.status,200,JSON.stringify(output));assert.equal(output.quote.executionId,review.quote.executionId);assert.equal(output.result,undefined);
+        assert.equal(output.task.submission,"uncertain");assert.equal(output.retainedResultUnavailable,undefined);
+      }
+      await state.drainBackground();assert.equal(state.calls.length,1);assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+    }finally{await state.cleanup();}
+  });
+}
+for(const mode of["non-2xx valid usage","malformed structured reply","incomplete output","over-limit output usage"]){
+  test("specialist consent: "+mode+" is truthfully charged before result validation",async()=>{
+    const state=await specialistMockFixture({respond(payload){
+      if(mode==="non-2xx valid usage")return new Response(JSON.stringify({id:"charged-error",model:payload.model,status:"failed",error:{message:"fixture paid failure"},usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}}),{status:503,headers:{"content-type":"application/json"}});
+      if(mode==="malformed structured reply")return specialistRawResponse(payload,{output:[{type:"message",id:"msg-invalid",role:"assistant",status:"completed",content:[{type:"output_text",text:"this is not valid JSON"}]}]});
+      if(mode==="incomplete output")return specialistRawResponse(payload,{status:"incomplete"});
+      return specialistRawResponse(payload,{usage:{input_tokens:1000,output_tokens:5000,total_tokens:6000}});
+    }});
+    try{
+      const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);assert.equal((await specialistExecute(state,review)).status,202);await state.drainBackground();
+      const receipt=consequentialReceipt(state,review.quote.executionId);assert.equal(state.calls.length,1);assert.equal(receipt.steps[0].status,"settled",JSON.stringify(receipt));
+      assert.equal(receipt.tokens[0].used_tokens,mode==="over-limit output usage"?6000:1300);assert.ok(receipt.cost[0].used_microusd>0);assert.equal(receipt.balances.tokens.reserved,0);assert.equal(receipt.balances.cost.reserved,0);
+      assert.equal(receipt.execution.result_ref,null);const finance=adaptiveReentryFinancialState(state),recovered=await specialistRetrieve(state,review),body=await recovered.json();
+      assert.equal(recovered.status,200,JSON.stringify(body));assert.ok(body.recoveryError);assert.equal(body.result,undefined);assert.equal(body.task.submission,"settled");
+      const again=await specialistQuote(state,turn.id,"gpt-5.6-terra");assert.equal(again.quote.executionId,review.quote.executionId);
+      assert.equal(state.calls.length,1);assert.deepEqual(adaptiveReentryFinancialState(state),finance);
+    }finally{await state.cleanup();}
+  });
+}
+test("specialist consent: unknown lost execute response is recoverable by existing task and cannot dispatch again",async()=>{
+  const gate=Promise.withResolvers(),entered=Promise.withResolvers(),state=await specialistMockFixture({respond:async payload=>{entered.resolve();await gate.promise;return specialistRawResponse(payload);}});
+  try{
+    const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);await specialistExecute(state,review);await entered.promise;
+    const page=await state.request(endpoint()),body=await page.json();assert.equal(body.tasks[0].executionId,review.quote.executionId);assert.equal(body.tasks[0].bindingHash,review.quote.bindingHash);
+    for(const action of["retrieve","resume"]){const response=await specialistProtocolRequest(state,{action,turnId:turn.id,executionId:review.quote.executionId,...(action==="retrieve"?{approvedBindingHash:review.quote.bindingHash}:{})});const value=await response.json();assert.equal(response.status,200,JSON.stringify(value));assert.equal(value.result,undefined);assert.equal(value.task.submission,"submitting");assert.equal(value.retainedResultUnavailable,undefined);}
+    assert.equal(state.calls.length,1);gate.resolve();await state.drainBackground();assert.equal(consequentialReceipt(state,review.quote.executionId).execution.status,"completed");
+  }finally{gate.resolve();await state.cleanup();}
+});
+
+for(const cookie of[true,false])test("specialist consent: shared owner "+(cookie?"selected session":"cookie-free migrated custody")+" uses real tenant ledgers and private retention",async()=>{
+  const state=await specialistMockFixture({shared:true});
+  try{
+    const headers=cookie?state.owner:Object.fromEntries(Object.entries(state.owner).filter(([key])=>key!=="cookie")),options={headers};
+    const turn=await specialistFreeTurn(state,"specialist-turn-owner-"+cookie,"What should I do next?",options),review=await specialistQuote(state,turn.id,undefined,options);
+    assert.equal(review.quote.workspaceId,state.organizationId);assert.equal(review.quote.canExecute,true,JSON.stringify(review));
+    const response=await specialistExecute(state,review,options);assert.equal(response.status,202,JSON.stringify(await response.clone().json())+" SQL: "+state.controls.lastDatabaseError);
+    await state.drainBackground();const task=state.sqlite.prepare("SELECT * FROM assistant_specialist_tasks WHERE task_id=?").get(review.quote.executionId);
+    assert.equal(task.status,"completed",JSON.stringify(task)+" SQL: "+state.controls.lastDatabaseError);assert.equal(state.calls.length,1);
+    const turnRow=state.sqlite.prepare("SELECT * FROM assistant_turns WHERE turn_id=?").get(turn.id);assert.equal(turnRow.organization_id,state.organizationId);assert.equal(turnRow.project_access_id,state.projectAccessId);
+    for(const ref of[turnRow.user_content_ref,turnRow.assistant_content_ref,JSON.parse(task.result_json).rawReceipt.contentRef]){
+      const resource=state.sqlite.prepare("SELECT * FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(ref),retention=state.sqlite.prepare("SELECT * FROM private_content_retention_scopes WHERE content_id=?").get(ref);
+      assert.equal(resource.organization_id,state.organizationId);assert.equal(resource.owner_user_id,"assistant-owner");assert.equal(resource.actor_user_id,"assistant-owner");assert.equal(resource.visibility,"actor_private");
+      assert.equal(retention.organization_id,state.organizationId);assert.equal(retention.project_access_id,state.projectAccessId);
+    }
+    for(const table of["budget_reservations","cost_budget_reservations"]){const ledger=state.sqlite.prepare("SELECT * FROM "+table+" WHERE correlation_id=?").get(task.task_id);const custody=state.sqlite.prepare("SELECT * FROM project_budget_reservation_scopes WHERE reservation_kind=? AND reservation_id=?").get(table==="budget_reservations"?"tokens":"usd",ledger.reservation_id);assert.equal(custody.organization_id,state.organizationId);assert.equal(custody.project_access_id,state.projectAccessId);assert.equal(custody.actor_user_id,"assistant-owner");assert.equal(ledger.owner_id,"assistant-owner");assert.equal(ledger.stream_id,"creative:assistant-owner");}
+    const retained=await specialistRetrieve(state,review,options);assert.equal(retained.status,200,JSON.stringify(await retained.clone().json()));assert.equal((await retained.json()).result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY");
+    const foreign=await specialistRetrieve(state,review,{headers:state.viewer});assert.equal(foreign.status,404);assert.equal((await foreign.json()).result,undefined);
+  }finally{await state.cleanup();}
+});
+test("specialist consent: existing paid reader recovers after source, model, key, budget and month change",async()=>{
+  const state=await assistantR2DepthFixture({shared:true});
+  try{
+    state.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id='assistant-viewer'").run();
+    state.sqlite.prepare("UPDATE project_memberships SET role='editor' WHERE user_id='assistant-viewer' AND project_access_id=?").run(state.projectAccessId);
+    const options={headers:state.viewer},turn=await specialistFreeTurn(state,"specialist-turn-editor","What should I do next?",options),review=await specialistQuote(state,turn.id,undefined,options);
+    const approved=await specialistExecute(state,review,options);assert.equal(approved.status,202,JSON.stringify(await approved.clone().json()));await state.drainBackground();assert.equal(state.calls.length,1);
+    const old=consequentialReceipt(state,review.quote.executionId);assert.equal(old.execution.status,"completed",JSON.stringify(old));assert.equal(old.cost[0].used_microusd,560);
+    appendFixtureEvents(state.sqlite,"creative:assistant-owner",[["BlockPropertyEdited",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"block-direction",property_path:"text",new_value:"A new current source that was never approved."}]]);
+    state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id='assistant-viewer'").run();state.sqlite.prepare("UPDATE project_memberships SET role='viewer' WHERE user_id='assistant-viewer' AND project_access_id=?").run(state.projectAccessId);
+    state.sqlite.prepare("UPDATE cost_budget_counters SET hard_limit_microusd=0").run();delete state.env.OPENAI_API_KEY;state.env.FORMA_ASSISTANT_ALLOWED_MODELS="";state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS="";
+    const oldHeaders=options.headers,{cookie,...identity}=oldHeaders,oldContextId=decodeURIComponent(cookie.slice(cookie.indexOf("=")+1));
+    const originalSession=state.sqlite.prepare("SELECT expires_at FROM project_context_sessions WHERE context_id=?").get(oldContextId);
+    const clock=consequentialDbClock(state),period=review.quote.period,nextMonth=new Date(Date.UTC(Number(period.slice(0,4)),Number(period.slice(5,7)),1)).toISOString();
+    const simulatedNow=new Date(Math.max(Date.parse(nextMonth),Date.parse(originalSession.expires_at)+1)).toISOString();clock.set(simulatedNow);
+    try{
+      const finance=adaptiveReentryFinancialState(state);
+      const expired=await specialistRetrieve(state,review,{headers:oldHeaders}),expiredBody=await expired.json();
+      assert.ok([403,404].includes(expired.status),JSON.stringify(expiredBody));assert.equal(expiredBody.result,undefined);assert.equal(expiredBody.unusedExecution,undefined);
+      // Renew through the actual route; align only the new selected reader with the simulated DB clock.
+      const renewed=await state.request("/api/workspaces/"+state.organizationId+"/projects/"+state.projectAccessId+"/context",{method:"POST",headers:identity});
+      assert.equal(renewed.status,200,JSON.stringify(await renewed.clone().json()));
+      const renewedCookie=renewed.headers.get("set-cookie").split(";")[0],newContextId=decodeURIComponent(renewedCookie.slice(renewedCookie.indexOf("=")+1));assert.notEqual(newContextId,oldContextId);
+      const newExpiry=new Date(Date.parse(simulatedNow)+8*60*60_000).toISOString();
+      assert.equal(state.sqlite.prepare("UPDATE project_context_sessions SET expires_at=? WHERE context_id=? AND principal_user_id=? AND revoked_at IS NULL").run(newExpiry,newContextId,"assistant-viewer").changes,1);
+      assert.equal(state.sqlite.prepare("SELECT expires_at FROM project_context_sessions WHERE context_id=?").get(oldContextId).expires_at,originalSession.expires_at);assert.ok(originalSession.expires_at<simulatedNow);
+      options.headers={...identity,cookie:renewedCookie};
+      for(const action of["retrieve","resume","quote"]){
+        const response=await specialistProtocolRequest(state,action==="quote"?{action,turnId:turn.id,model:"gpt-5.6-sol"}:{action,turnId:turn.id,executionId:review.quote.executionId,...(action==="retrieve"?{approvedBindingHash:review.quote.bindingHash}:{})},options),result=await response.json();
+        assert.equal(response.status,200,JSON.stringify(result));assert.equal(result.result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY");assert.equal(result.quote.executionId,review.quote.executionId);assert.equal(result.quote.period,period);assert.equal(result.quote.canExecute,false);assert.ok([result.turn.proposal,...(result.turn.proposals??[])].filter(Boolean).every(proposal=>proposal.kind==="navigate"));
+      }
+      assert.deepEqual(adaptiveReentryFinancialState(state),finance);assert.equal(state.calls.length,1);
+    }finally{clock.close();}
+  }finally{await state.cleanup();}
+});
+for(const[seam,kind,pattern]of[["step claim","run",/^\s*UPDATE consequential_execution_steps SET status='reserved'/u],["token INSERT","batch",/^\s*INSERT OR IGNORE INTO budget_reservations\b/u],["cost INSERT","batch",/^\s*INSERT OR IGNORE INTO cost_budget_reservations\b/u],["begin","run",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u],["final read","first",/^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u]]){
+  test("specialist consent: cancellation before "+seam+" releases only proven-unused holds",{timeout:15_000},async()=>{
+    const state=await specialistMockFixture();let gate;
+    try{
+      const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);gate=gateConsequentialDb(state,kind,pattern);
+      const response=await specialistExecute(state,review);assert.equal(response.status,202,JSON.stringify(await response.clone().json()));await gate.entered;
+      const canceled=await state.request(taskEndpoint(review.quote.executionId,"cancel"),{method:"POST"});assert.equal(canceled.status,200,JSON.stringify(await canceled.clone().json()));
+      gate.release();await state.drainBackground();gate.restore();gate=null;
+      assert.equal(state.calls.length,0);const receipt=consequentialReceipt(state,review.quote.executionId);assert.equal(receipt.steps[0].status,"not-submitted",JSON.stringify(receipt));
+      assert.equal(receipt.balances.tokens.reserved,0);assert.equal(receipt.balances.cost.reserved,0);assert.equal(receipt.balances.tokens.used,0);assert.equal(receipt.balances.cost.used,0);
+      const read=await specialistRetrieve(state,review);assert.equal(read.status,200);assert.equal((await read.json()).task.submission,"not-submitted");assert.equal(state.calls.length,0);
+    }finally{gate?.release();gate?.restore();await state.cleanup();}
+  });
+}
+test("specialist consent: cancellation after submit keeps holds then accepts verified late response without re-POST",{timeout:15_000},async()=>{
+  const entered=Promise.withResolvers(),release=Promise.withResolvers(),state=await specialistMockFixture({respond:async payload=>{entered.resolve();await release.promise;return specialistRawResponse(payload);}});
+  try{
+    const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);await specialistExecute(state,review);await entered.promise;
+    const canceled=await state.request(taskEndpoint(review.quote.executionId,"cancel"),{method:"POST"});assert.equal(canceled.status,200);const before=consequentialReceipt(state,review.quote.executionId);
+    assert.equal(before.steps[0].status,"uncertain");assert.ok(before.balances.tokens.reserved>0);assert.ok(before.balances.cost.reserved>0);
+    release.resolve();await state.drainBackground();const after=consequentialReceipt(state,review.quote.executionId);assert.equal(after.execution.status,"completed",JSON.stringify(after));assert.equal(after.steps[0].status,"settled");
+    assert.equal(after.balances.tokens.reserved,0);assert.equal(after.balances.cost.reserved,0);assert.ok(after.balances.cost.used>0);assert.equal(state.calls.length,1);
+    const task=state.sqlite.prepare("SELECT * FROM assistant_specialist_tasks WHERE task_id=?").get(review.quote.executionId);assert.equal(task.status,"completed");assert.ok(JSON.parse(task.result_json).rawReceipt);
+    const again=await state.request(taskEndpoint(review.quote.executionId,"cancel"),{method:"POST"});assert.equal(again.status,200);assert.equal((await again.json()).result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY");assert.equal(state.calls.length,1);assert.deepEqual(consequentialReceipt(state,review.quote.executionId),after);
+  }finally{release.resolve();await state.cleanup();}
+});
+
+test("specialist consent: full protected source, aliases, locale and approved conversation remain exact",async()=>{
+  const state=await specialistMockFixture(),stream="creative:dev-local-creative",exact="  REVENUE  IS NOT PROOF\nNever fabricate a claim.  ",full="A complete protected requirement. ".repeat(55)+"CRITICAL_UNTRUNCATED_TAIL";
+  try{
+    appendFixtureEvents(state.sqlite,stream,[
+      ...Array.from({length:22},(_,index)=>["BlockCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"specialist-source-"+index,type:"subject",handle:"Source "+index,position:"z"+index.toString().padStart(2,"0"),properties:{text:"Exact authored fact "+index,weight:1}}]),
+      ["BlockCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"specialist-protected",type:"direction",handle:"Protected exact context",position:"zzz",properties:{text:full,intent:"prohibit",weight:1,exact_text:exact,exact_placements:["opening","closing"],protected_phrases:[{text:exact,placement:"opening_and_closing"}]}}],
+      ["BlockLocked",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"specialist-protected"}],
+      ["BlockCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"specialist-inactive",type:"direction",handle:"Inactive",position:"zzzz",properties:{text:"INACTIVE_SOURCE_MUST_NOT_LEAK",active:false}}],
+      ["DocumentCreated",{project_id:"project-atmosphere",document_id:"other-specialist-document",title:"Other authorized document"}],
+      ["BlockCreated",{project_id:"project-atmosphere",document_id:"other-specialist-document",block_id:"specialist-other-doc",type:"direction",handle:"Other document",position:"a",properties:{text:"OTHER_DOCUMENT_MUST_NOT_LEAK"}}],
+    ]);
+    const old=await specialistFreeTurn(state,"specialist-history-old","The earlier creative question"),longReply="An earlier complete specialist reply. ".repeat(70)+"HISTORY_UNTRUNCATED_TAIL";
+    state.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=(SELECT assistant_content_ref FROM assistant_turns WHERE turn_id=?)").run(longReply,old.id);
+    const turn=await specialistFreeTurn(state,"specialist-history-current","Answer this exact saved question.",{locale:"ja"}),review=await specialistQuote(state,turn.id),payload=review.quote.privateInput.providerRequest,view=JSON.parse(payload.input);
+    assert.ok(view.blocks.length>16);const protectedBlock=view.blocks.find(block=>block.properties?.text===full);assert.ok(protectedBlock);assert.equal(protectedBlock.properties.text,full);
+    assert.equal(protectedBlock.properties.exact_text,exact);assert.deepEqual(protectedBlock.properties.exact_placements,["opening","closing"]);assert.deepEqual(protectedBlock.properties.protected_phrases,[{text:exact,placement:"opening_and_closing"}]);assert.equal(protectedBlock.locked,true);
+    assert.match(protectedBlock.id,/^decision_\d+$/u);assert.doesNotMatch(payload.input,/INACTIVE_SOURCE_MUST_NOT_LEAK|OTHER_DOCUMENT_MUST_NOT_LEAK|specialist-protected|specialist-source-21/u);
+    assert.equal(view.recent_conversation.find(item=>item.text===longReply).text,longReply);assert.equal(view.message,turn.user);assert.match(payload.instructions,/\(ja\)/u);assert.deepEqual(review.originalRequest.conversationTurnIds,[old.id,turn.id]);
+    await specialistFreeTurn(state,"specialist-history-newer","NEWER_UNAPPROVED_MESSAGE_NOT_IN_ORIGINAL_REQUEST");
+    const before=adaptiveAuthoredCount(state),response=await specialistExecute(state,review);assert.equal(response.status,202,JSON.stringify(await response.clone().json()));await state.drainBackground();
+    assert.equal(state.calls.length,1);assert.deepEqual(state.calls[0].payload,payload);assert.doesNotMatch(state.calls[0].payload.input,/NEWER_UNAPPROVED_MESSAGE/u);assert.equal(adaptiveAuthoredCount(state),before);
+  }finally{await state.cleanup();}
+});
+for(const route of["/","/projects","/studio/project"])test("specialist consent: free "+route+" guidance requires an explicit document before purchase",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    const options={route},turn=await specialistFreeTurn(state,"specialist-scope-"+route.replaceAll("/","-")+"-turn","What should I do next?",options);
+    const review=await specialistProtocolRequest(state,{action:"quote",turnId:turn.id},options);assert.equal(review.status,409,JSON.stringify(await review.clone().json()));assert.equal((await review.json()).error,"assistant_source_document_required");
+    assert.equal(state.calls.length,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,0);
+  }finally{await state.cleanup();}
+});
+function specialistCanvasEvents(state){
+  appendFixtureEvents(state.sqlite,state.owner?"creative:assistant-owner":"creative:dev-local-creative",[
+    ["CanvasCreated",{project_id:"project-atmosphere",canvas_id:"specialist-exact-board",name:"Exact specialist board"}],
+    ["CanvasItemPlaced",{project_id:"project-atmosphere",canvas_id:"specialist-exact-board",item_id:"specialist-selected-document",source_kind:"document",source_id:"doc-atmosphere",title:"Exact document",frame:{x:0,y:0,w:240,h:160,z:"a0"}}],
+    ["DocumentCreated",{project_id:"project-atmosphere",document_id:"specialist-second-document",title:"Second document"}],
+    ["CanvasItemPlaced",{project_id:"project-atmosphere",canvas_id:"specialist-exact-board",item_id:"specialist-selected-second",source_kind:"document",source_id:"specialist-second-document",title:"Other selected document",frame:{x:250,y:0,w:240,h:160,z:"a1"}}],
+  ]);
+  return{route:"/canvas/specialist-exact-board/exact-specialist-board",selected:["specialist-selected-document"]};
+}
+test("specialist consent: Canvas retains exact selected document and never chooses a first document",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    const options=specialistCanvasEvents(state),turn=await specialistFreeTurn(state,"specialist-canvas-exact","Review this selected document.",options),review=await specialistQuote(state,turn.id,undefined,options);
+    assert.equal(review.quote.canvasId,"specialist-exact-board");assert.equal(review.quote.documentId,"doc-atmosphere");assert.deepEqual(review.originalRequest.selectedItemIds,options.selected);assert.equal(review.originalRequest.route,options.route);
+    const approved=await specialistExecute(state,review,options);assert.equal(approved.status,202,JSON.stringify(await approved.clone().json()));await state.drainBackground();assert.equal(state.calls.length,1);
+    const retrieved=await specialistRetrieve(state,review,options);assert.equal(retrieved.status,200);assert.equal((await retrieved.json()).originalRequest.documentId,"doc-atmosphere");
+    for(const selected of[[],["specialist-selected-document","specialist-selected-second"],["specialist-selected-document","missing-selection"]]){
+      const selection={...options,selected},id="specialist-canvas-ambiguous-"+selected.join("-").slice(-50),other=await specialistFreeTurn(state,id,"Review this page.",selection),denied=await specialistProtocolRequest(state,{action:"quote",turnId:other.id},selection);
+      assert.equal(denied.status,409,JSON.stringify(await denied.clone().json()));assert.match((await denied.json()).error,/assistant_source_document_required|assistant_selected_source_changed/u);
+    }
+    assert.equal(state.calls.length,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n,1);
+  }finally{await state.cleanup();}
+});
+for(const change of["source","permission","board"]){
+  test("specialist consent: "+change+" changing at actual begin prevents the approved POST",{timeout:15_000},async()=>{
+    const state=await specialistMockFixture();let restore;
+    try{
+      const options=change==="board"?specialistCanvasEvents(state):{},turn=await specialistFreeTurn(state,"specialist-dispatch-"+change,"What should I do next?",options),review=await specialistQuote(state,turn.id,undefined,options);
+      restore=interceptConsequentialDb(state,"run",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u,()=>{
+        if(change==="permission")state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id='dev-local-creative'").run();
+        else appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[change==="board"?["CanvasRemoved",{project_id:"project-atmosphere",canvas_id:"specialist-exact-board"}]:["BlockPropertyEdited",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"block-direction",property_path:"text",new_value:"Source changed during admission."}]]);
+      });
+      const approved=await specialistExecute(state,review,options);assert.equal(approved.status,202);await state.drainBackground();const receipt=consequentialReceipt(state,review.quote.executionId);
+      assert.equal(state.calls.length,0);assert.equal(receipt.steps[0].status,"not-submitted",JSON.stringify(receipt));assert.equal(receipt.balances.tokens.reserved,0);assert.equal(receipt.balances.cost.reserved,0);
+    }finally{restore?.();await state.cleanup();}
+  });
+}
+for(const boundary of["claim","begin","final read"])for(const change of["expiry","month"]){
+  test("specialist consent: live DB "+change+" at "+boundary+" defeats captured JS time",{timeout:15_000},async()=>{
+    const state=await specialistMockFixture();let restore,clock;
+    try{
+      const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);clock=consequentialDbClock(state);
+      const nextMonth=new Date(Date.UTC(Number(review.quote.period.slice(0,4)),Number(review.quote.period.slice(5,7)),1)),later=change==="month"?nextMonth.toISOString():new Date(Date.parse(review.quote.expiresAt)+1).toISOString();
+      if(change==="month")state.sqlite.prepare("UPDATE consequential_executions SET expires_at=? WHERE execution_id=?").run(new Date(nextMonth.getTime()+86_400_000).toISOString(),review.quote.executionId);
+      restore=interceptConsequentialDb(state,boundary==="claim"?"batch":boundary==="begin"?"run":"first",boundary==="claim"?/^\s*UPDATE consequential_executions SET status='reserved'/u:boundary==="begin"?/^\s*UPDATE consequential_execution_steps SET status='submitting'/u:/^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u,()=>clock.set(later));
+      const response=await specialistExecute(state,review);assert.equal(response.status,boundary==="claim"?409:202,JSON.stringify(await response.clone().json()));await state.drainBackground();
+      const receipt=consequentialReceipt(state,review.quote.executionId);assert.equal(state.calls.length,0);assert.equal(receipt.balances.tokens.reserved,0);assert.equal(receipt.balances.cost.reserved,0);
+      assert.equal(receipt.steps[0].status,boundary==="claim"?"quoted":"not-submitted");
+      if(boundary==="claim"){assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n,0);assert.equal(receipt.tokens.length,0);assert.equal(receipt.cost.length,0);}
+    }finally{restore?.();clock?.close();await state.cleanup();}
+  });
+}
+
+for(const source of["owned","owned_or_licensed","governed-upstream"])for(const seam of["begin","final read response"]){
+  test("specialist consent: "+source+" deadline at "+seam+" blocks without dropping protected source",{timeout:15_000},async()=>{
+    const state=await specialistMockFixture({shared:source.startsWith("governed")}),nativeNow=Date.now;let restore,clock;
+    try{
+      const validUntil=new Date(Date.now()+60_000).toISOString(),later=new Date(Date.now()+300_000).toISOString();
+      if(source.startsWith("governed"))await seedAdaptiveRightsDeadline(state,source,validUntil,later);
+      else appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["BlockCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"specialist-licensed",type:"direction",handle:"Licensed exact source",position:"z-license",properties:{text:"FULL_PROTECTED_LICENSED_TAIL",intent:"prohibit",rights_class:source,license_expires_at:validUntil,rights_expires_at:later}}]]);
+      const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);assert.equal(review.quote.privateInput.sourceRightsValidUntil,validUntil);
+      assert.match(review.quote.privateInput.providerRequest.input,source.startsWith("governed")?/protected contractual tail/u:/FULL_PROTECTED_LICENSED_TAIL/u);
+      clock=consequentialDbClock(state);
+      restore=interceptConsequentialDb(state,seam==="begin"?"run":"first",seam==="begin"?/^\s*UPDATE consequential_execution_steps SET status='submitting'/u:/^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u,()=>{
+        clock.set(validUntil);if(seam==="final read response")Date.now=()=>Date.parse(validUntil);
+      },seam==="begin"?"before":"after");
+      const approved=await specialistExecute(state,review);assert.equal(approved.status,202,JSON.stringify(await approved.clone().json()));await state.drainBackground();
+      assert.equal(state.calls.length,0);const receipt=consequentialReceipt(state,review.quote.executionId),balances=consequentialBalances(state,source.startsWith("governed")?"assistant-owner":"dev-local-creative");
+      assert.equal(receipt.steps[0].status,"not-submitted",JSON.stringify(receipt));assert.deepEqual(balances,{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});
+    }finally{Date.now=nativeNow;restore?.();clock?.close();await state.cleanup();}
+  });
+}
+for(const mutation of["upstream revoked","package redacted"])test("specialist consent: governed "+mutation+" at final dispatch checks the independent stream",{timeout:15_000},async()=>{
+  const state=await specialistMockFixture({shared:true});let restore;
+  try{
+    const source=await seedAdaptiveSeparateProjectGoverned(state),turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);
+    assert.equal(review.quote.canExecute,true);assert.doesNotMatch(JSON.stringify(review),/dispatchDependencies|sourceRightsDispatchProof/u);
+    restore=interceptConsequentialDb(state,"first",/^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u,()=>{
+      const head=state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id='creative:assistant-owner'").get().head;
+      if(mutation==="upstream revoked")appendFixtureEvents(state.sqlite,source.sourceStream,[["BlockPropertyEdited",{project_id:source.sourceProjectId,document_id:source.sourceDocumentId,block_id:source.sourceBlockId,property_path:"rights_revoked",new_value:true}]]);
+      else state.sqlite.prepare("UPDATE organization_context_package_contents SET redacted_at=? WHERE version_id=?").run(new Date().toISOString(),source.versionId);
+      assert.equal(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id='creative:assistant-owner'").get().head,head);
+    });
+    const accepted=await specialistExecute(state,review);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await state.drainBackground();
+    assert.equal(state.calls.length,0);assert.equal(consequentialReceipt(state,review.quote.executionId).steps[0].status,"not-submitted");assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});
+  }finally{restore?.();await state.cleanup();}
+});
+test("specialist consent: same-owner different-project governed source remains a valid positive dispatch",async()=>{
+  const state=await specialistMockFixture({shared:true});
+  try{
+    await seedAdaptiveSeparateProjectGoverned(state,{sameOwner:true});const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);
+    const accepted=await specialistExecute(state,review);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await state.drainBackground();assert.equal(state.calls.length,1);
+    assert.equal(consequentialReceipt(state,review.quote.executionId).execution.status,"completed");
+  }finally{await state.cleanup();}
+});
+test("specialist consent: private raw response is retained before usage accounting",async()=>{
+  const state=await specialistMockFixture();let restore,observed=false;
+  try{
+    const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);
+    restore=interceptConsequentialDb(state,"run",/^\s*UPDATE consequential_execution_steps SET status='usage-recorded'/u,()=>{
+      const task=state.sqlite.prepare("SELECT result_json FROM assistant_specialist_tasks WHERE task_id=?").get(review.quote.executionId),pointer=JSON.parse(task.result_json).rawReceipt;
+      assert.ok(pointer?.contentRef);const raw=state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=? AND kind='provider-response' AND redacted_at IS NULL").get(pointer.contentRef);
+      assert.ok(raw);const receipt=JSON.parse(raw.content),body=JSON.parse(receipt.responseBody);assert.equal(body.usage.total_tokens,1300);assert.equal(receipt.executionId,review.quote.executionId);observed=true;
+    });
+    await specialistExecute(state,review);await state.drainBackground();assert.equal(observed,true);assert.equal(state.calls.length,1);assert.equal(consequentialReceipt(state,review.quote.executionId).execution.status,"completed");
+  }finally{restore?.();await state.cleanup();}
+});
+test("specialist consent: canonical and copied-reply crash windows recover free and atomically",async()=>{
+  const state=await specialistMockFixture();let restore;
+  try{
+    const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);
+    restore=interceptConsequentialDb(state,"run",/^\s*UPDATE consequential_executions SET status='completed'/u,()=>{throw new Error("fixture canonical pointer interruption");});
+    await specialistExecute(state,review);await state.drainBackground();restore();restore=null;
+    const before=consequentialReceipt(state,review.quote.executionId);assert.equal(before.execution.result_ref,null);assert.equal(before.steps[0].status,"settled");assert.equal(state.calls.length,1);
+    const financial=adaptiveReentryFinancialState(state);state.controls.failAssistantActionCommit=true;
+    const failedCopy=await specialistRetrieve(state,review),pending=await failedCopy.json();assert.equal(failedCopy.status,200,JSON.stringify(pending));assert.equal(pending.result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY");assert.equal(pending.materializationPending,true);
+    assert.ok(consequentialReceipt(state,review.quote.executionId).execution.result_ref);
+    const oldAnswer=state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=(SELECT assistant_content_ref FROM assistant_turns WHERE turn_id=?)").get(turn.id).content;assert.notEqual(oldAnswer,"PRIVATE_VERIFIED_SPECIALIST_REPLY");
+    const after=await specialistRetrieve(state,review),complete=await after.json();assert.equal(after.status,200,JSON.stringify(complete));assert.equal(complete.materializationPending,false);assert.equal(complete.turn.reply.text,"PRIVATE_VERIFIED_SPECIALIST_REPLY");
+    assert.equal(state.calls.length,1);assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.equal(consequentialReceipt(state,review.quote.executionId).cost[0].used_microusd,before.cost[0].used_microusd);
+  }finally{restore?.();await state.cleanup();}
+});
+for(const source of["canonical","consent","answer","raw custody"])test("specialist consent: withdrawn "+source+" private custody is never exposed or recreated",async()=>{
+  const state=await specialistMockFixture({shared:true});let restore;
+  try{
+    const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);
+    if(source==="raw custody")restore=interceptConsequentialDb(state,"run",/^\s*UPDATE consequential_executions SET status='completed'/u,()=>{throw new Error("fixture leave raw only");});
+    await specialistExecute(state,review);await state.drainBackground();restore?.();restore=null;
+    const execution=state.sqlite.prepare("SELECT * FROM consequential_executions WHERE execution_id=?").get(review.quote.executionId),task=state.sqlite.prepare("SELECT * FROM assistant_specialist_tasks WHERE task_id=?").get(review.quote.executionId),turnRow=state.sqlite.prepare("SELECT * FROM assistant_turns WHERE turn_id=?").get(turn.id);
+    const ref=source==="canonical"?execution.result_ref:source==="consent"?execution.consent_ref:source==="answer"?turnRow.assistant_content_ref:JSON.parse(task.result_json).rawReceipt.contentRef;
+    assert.ok(ref);if(source==="raw custody")state.sqlite.prepare("UPDATE private_content_retention_scopes SET project_id='wrong-current-custody' WHERE content_id=?").run(ref);else state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),ref);
+    const finance=adaptiveReentryFinancialState(state),privateCount=state.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content").get().n;
+    const returned=await specialistRetrieve(state,review),body=await returned.json();assert.equal(body.result,undefined);assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+    if(source==="canonical"){assert.equal(body.retainedResultUnavailable,true);assert.equal(body.recoveryError,"assistant_result_unavailable");}
+    if(source==="consent"||source==="answer"){assert.equal(returned.status,404);assert.equal(body.retentionUnavailable,true);}
+    if(source!=="raw custody"){
+      const page=await state.request(endpoint(),{headers:state.owner}),view=await page.json();assert.equal(page.status,200,JSON.stringify(view));assert.doesNotMatch(JSON.stringify(view.turns),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+    }
+    await state.drainBackground();assert.equal(state.calls.length,1);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content").get().n,privateCount);assert.deepEqual(adaptiveReentryFinancialState(state),finance);
+    if(source!=="raw custody")assert.equal(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(ref).content,"");
+  }finally{restore?.();await state.cleanup();}
+});
+test("specialist consent: oversized complete source fails free instead of silently trimming",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["BlockCreated",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"specialist-overflow",type:"direction",handle:"Required long source",position:"z",properties:{text:"OVERFLOW".repeat(20_000),intent:"prohibit"}}]]);
+    const turn=await specialistFreeTurn(state),response=await specialistProtocolRequest(state,{action:"quote",turnId:turn.id});assert.equal(response.status,413,JSON.stringify(await response.clone().json()));assert.equal(state.calls.length,0);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,0);
+  }finally{await state.cleanup();}
+});
+
+for(const seam of["begin","final read response"])test("specialist consent: original selected session expiry at "+seam+" prevents dispatch",async()=>{
+  const state=await specialistMockFixture({shared:true}),nativeNow=Date.now;let restore,clock;
+  try{
+    const expiresAt=new Date(Date.now()+45_000).toISOString();state.sqlite.prepare("UPDATE project_context_sessions SET expires_at=? WHERE principal_user_id='assistant-owner'").run(expiresAt);
+    const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);clock=consequentialDbClock(state);
+    restore=interceptConsequentialDb(state,seam==="begin"?"run":"first",seam==="begin"?/^\s*UPDATE consequential_execution_steps SET status='submitting'/u:/^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u,()=>{clock.set(expiresAt);if(seam==="final read response")Date.now=()=>Date.parse(expiresAt);},seam==="begin"?"before":"after");
+    const admitted=await specialistExecute(state,review);assert.equal(admitted.status,202,JSON.stringify(await admitted.clone().json()));await state.drainBackground();assert.equal(state.calls.length,0);assert.equal(consequentialReceipt(state,review.quote.executionId).steps[0].status,"not-submitted");
+    assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});
+  }finally{Date.now=nativeNow;restore?.();clock?.close();await state.cleanup();}
+});
+test("specialist consent: proven-unsubmitted signed queue waits for explicit execute, never GET or resume",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);state.controls.skipAssistantTaskClaimOnce=true;
+    assert.equal((await specialistExecute(state,review)).status,202);await state.drainBackground();assert.equal(state.calls.length,0);
+    const task=state.sqlite.prepare("SELECT * FROM assistant_specialist_tasks WHERE task_id=?").get(review.quote.executionId);assert.equal(task.status,"queued");assert.equal(consequentialReceipt(state,task.task_id).tokens.length,0);
+    const financial=adaptiveReentryFinancialState(state);assert.equal((await state.request(endpoint())).status,200);
+    for(const action of["retrieve","resume"]){const response=await specialistProtocolRequest(state,{action,turnId:turn.id,executionId:task.task_id,...(action==="retrieve"?{approvedBindingHash:review.quote.bindingHash}:{})});assert.equal(response.status,200);const body=await response.json();assert.equal(body.task.submission,"not-submitted");assert.equal(body.task.canExecute,true);assert.equal(body.quote.canExecute,true);}
+    await state.drainBackground();assert.equal(state.calls.length,0);assert.deepEqual(adaptiveReentryFinancialState(state),financial);
+    assert.equal((await specialistExecute(state,review)).status,202);await state.drainBackground();assert.equal(state.calls.length,1);assert.equal(consequentialReceipt(state,task.task_id).execution.status,"completed");
+  }finally{await state.cleanup();}
+});
+for(const status of["queued","running"])test("specialist consent: unsigned legacy "+status+" is parked without retry or invented no-charge release",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    const turn=await specialistFreeTurn(state),row=state.sqlite.prepare("SELECT * FROM assistant_turns WHERE turn_id=?").get(turn.id),id="legacy-unsigned-"+status,correlation="assistant-specialist:dev-local-creative:"+turn.id,now=new Date().toISOString();
+    const token=await reserveBudget(state.env,"dev-local-creative",12000,{reservationId:id+"-tokens",streamId:"creative:dev-local-creative",correlationId:correlation,operation:"assistant-specialist:page-guidance:gpt-5.6-luna"});assert.equal(token.ok,true);
+    const cost=await reserveCostBudget(state.env,"dev-local-creative",4000,{reservationId:id+"-cost",maximumMicrousd:4000,allowUserOverage:false,streamId:"creative:dev-local-creative",correlationId:correlation,operation:"assistant-specialist:page-guidance:gpt-5.6-luna",period:token.period});assert.equal(cost.ok,true);
+    assert.equal(await claimCostBudgetReservation(state.env,"dev-local-creative",id+"-cost"),true);
+    state.sqlite.prepare("INSERT INTO assistant_specialist_tasks(task_id,actor_user_id,scope_key,turn_id,organization_id,project_access_id,project_id,document_id,route_family,task_kind,selected_model,token_reservation_id,cost_reservation_id,estimated_microusd,maximum_input_tokens,maximum_output_tokens,locale,permission_epoch,status,error_code,created_at,updated_at,started_at,completed_at,lease_expires_at,provider_submitted,result_json) VALUES(?,?,?,?,NULL,NULL,'project-atmosphere','doc-atmosphere','/document/:document','page-guidance','gpt-5.6-luna',?,?,4000,10400,1600,'en',?,?,NULL,?,?,?,NULL,?,1,NULL)")
+      .run(id,"dev-local-creative",row.scope_key,turn.id,id+"-tokens",id+"-cost",row.permission_epoch,status,now,now,now,"2000-01-01T00:00:00.000Z");
+    const before=adaptiveReentryFinancialState(state),page=await state.request(endpoint());assert.equal(page.status,200);await state.drainBackground();
+    const parked=state.sqlite.prepare("SELECT * FROM assistant_specialist_tasks WHERE task_id=?").get(id);assert.equal(parked.status,"needs-review");assert.equal(parked.error_code,"assistant_legacy_approval_required");assert.equal(state.calls.length,0);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+    const quote=await specialistProtocolRequest(state,{action:"quote",turnId:turn.id});assert.equal(quote.status,409);assert.equal((await quote.json()).error,"assistant_existing_task_unavailable");
+    const resume=await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:id});assert.equal(resume.status,404);assert.equal(state.calls.length,0);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+  }finally{await state.cleanup();}
+});
+for(const denied of["not-admin","not-enrolled","not-explicit"])test("specialist consent: Sol "+denied+" cannot be silently approved by a model field",async()=>{
+  const state=await specialistMockFixture({models:"gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol",solUsers:denied==="not-enrolled"?"another-user":"dev-local-creative"});
+  try{
+    if(denied==="not-admin")state.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id='dev-local-creative'").run();
+    const turn=await specialistFreeTurn(state,"specialist-sol-"+denied,"Review the governance and compliance of this document.",{model:"gpt-5.6-sol",premiumApproval:true}),review=await specialistQuote(state,turn.id,denied==="not-explicit"?undefined:"gpt-5.6-sol");
+    assert.equal(review.quote.models[0],"gpt-5.6-sol");assert.equal(review.quote.canExecute,false);assert.ok(review.quote.unavailableReasons.includes("assistant_model_premium_approval_required"));
+    const blocked=await specialistExecute(state,review);assert.equal(blocked.status,409,JSON.stringify(await blocked.clone().json()));assert.equal(state.calls.length,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n,0);
+  }finally{await state.cleanup();}
+});
+test("specialist consent: explicitly approved allowlisted admin Sol uses retained current pricing and cache partitions",async()=>{
+  const state=await specialistMockFixture({models:"gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol",solUsers:"dev-local-creative",respond:payload=>specialistRawResponse(payload,{usage:{input_tokens:1000,output_tokens:300,total_tokens:1300,input_tokens_details:{cached_tokens:200,cache_write_tokens:100}}})});
+  try{
+    const turn=await specialistFreeTurn(state,"specialist-sol-allowed","Review the governance of this document."),review=await specialistQuote(state,turn.id,"gpt-5.6-sol");assert.equal(review.quote.canExecute,true);
+    const snapshot=review.quote.privateInput.pricing;assert.equal(snapshot.version,"openai-standard-usd-2026-08-27-v1");assert.equal(snapshot.short.input,4);assert.equal(snapshot.short.output,20);
+    const before=review.quote.maximumMicrousd,accepted=await specialistExecute(state,review);assert.equal(accepted.status,202);await state.drainBackground();assert.equal(state.calls.length,1);
+    const receipt=consequentialReceipt(state,review.quote.executionId);assert.equal(receipt.execution.status,"completed");assert.equal(receipt.cost[0].used_microusd,700*4+200*.4+100*5+300*20);
+    const recovered=await specialistRetrieve(state,review),body=await recovered.json();assert.equal(body.result.maximumMicrousd,before);assert.equal(body.result.providerResult.usage.cachedInputTokens,200);assert.equal(body.result.providerResult.usage.cacheWriteInputTokens,100);assert.equal(state.calls.length,1);
+  }finally{await state.cleanup();}
+});
+
+test("specialist consent: same-document Canvas block selection reuses the shared exact-document resolver",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    const options=specialistCanvasEvents(state);appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["CanvasItemPlaced",{project_id:"project-atmosphere",canvas_id:"specialist-exact-board",item_id:"specialist-selected-block",source_kind:"block",source_id:"block-direction",title:"Exact selected direction",frame:{x:0,y:170,w:240,h:160,z:"a2"}}]]);
+    options.selected=["specialist-selected-block"];const turn=await specialistFreeTurn(state,"specialist-canvas-block","Review the selected direction.",options),review=await specialistQuote(state,turn.id,undefined,options);
+    assert.equal(review.originalRequest.documentId,"doc-atmosphere");assert.deepEqual(review.originalRequest.selectedItemIds,options.selected);
+    const approved=await specialistExecute(state,review,options);assert.equal(approved.status,202,JSON.stringify(await approved.clone().json()));await state.drainBackground();assert.equal(state.calls.length,1);assert.equal(consequentialReceipt(state,review.quote.executionId).execution.status,"completed");
+  }finally{await state.cleanup();}
+});
+test("specialist consent: migrated owner keeps old personal free history but never silently adopts it for paid work",async()=>{
+  const state=await specialistMockFixture({shared:true});
+  try{
+    const headers=Object.fromEntries(Object.entries(state.owner).filter(([key])=>key!=="cookie")),options={headers};
+    const current=await specialistFreeTurn(state,"specialist-new-real-custody","New scoped question.",options),now=new Date().toISOString(),expires=new Date(Date.now()+86_400_000).toISOString(),id="specialist-legacy-personal";
+    for(const[kind,suffix,content]of[["chat-user","user","LEGACY_FREE_PERSONAL_QUESTION"],["chat-assistant","answer","LEGACY_FREE_PERSONAL_REPLY"]])state.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at)VALUES(?,'assistant-owner',?,?,?,?,NULL)").run(id+"-"+suffix,kind,content,now,expires);
+    state.sqlite.prepare("INSERT INTO assistant_turns(turn_id,actor_user_id,scope_key,organization_id,project_access_id,project_id,document_id,route_family,user_content_ref,assistant_content_ref,proposal_json,permission_epoch,status,created_at,completed_at,request_json) SELECT ?,'assistant-owner',?,NULL,NULL,project_id,document_id,route_family,?,?,NULL,permission_epoch,'completed',created_at,completed_at,NULL FROM assistant_turns WHERE turn_id=?")
+      .run(id,JSON.stringify(["","","project-atmosphere","doc-atmosphere"]),id+"-user",id+"-answer",current.id);
+    const page=await state.request(endpoint(),{headers}),body=await page.json();assert.equal(page.status,200,JSON.stringify(body));assert.ok(body.turns.some(turn=>turn.id===id&&turn.user==="LEGACY_FREE_PERSONAL_QUESTION"&&turn.reply.text==="LEGACY_FREE_PERSONAL_REPLY"));
+    const paid=await specialistProtocolRequest(state,{action:"quote",turnId:id},options);assert.equal(paid.status,409,JSON.stringify(await paid.clone().json()));assert.equal((await paid.json()).error,"assistant_turn_snapshot_unavailable");
+    assert.equal(state.calls.length,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n,0);
+    for(const ref of[id+"-user",id+"-answer"]){assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(ref).n,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content_retention_scopes WHERE content_id=?").get(ref).n,0);}
+    assert.equal(state.sqlite.prepare("SELECT organization_id FROM assistant_turns WHERE turn_id=?").get(id).organization_id,null);
+  }finally{await state.cleanup();}
+});
+
+test("specialist consent: canonical reply and review-only proposals commit once without semantic writes",async()=>{
+  const action={kind:"context.create",block_type:"subject",target_block_id:null,from_block_id:null,to_block_id:null,relation_kind:"",intent:"include",text:"A separately reviewable new subject."};
+  const state=await specialistMockFixture({respond:payload=>specialistRawResponse(payload,{output:[{type:"message",id:"proposal-message",role:"assistant",status:"completed",content:[{type:"output_text",text:JSON.stringify({reply:"A proposed subject is ready for your review.",actions:[action]})}]}]})});
+  try{
+    const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id),before=adaptiveAuthoredCount(state);
+    assert.equal((await specialistExecute(state,review)).status,202);await state.drainBackground();
+    const first=await(await specialistRetrieve(state,review)).json();assert.equal(first.result.actions.length,1);assert.equal(first.turn.reply.text,"A proposed subject is ready for your review.");
+    const proposals=state.sqlite.prepare("SELECT proposal_id,action_content_ref,status FROM assistant_action_proposals WHERE turn_id=?").all(turn.id);assert.equal(proposals.length,1);assert.equal(proposals[0].status,"pending");assert.equal(first.turn.proposal.id,proposals[0].proposal_id);
+    const count=state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='MutationProposed' AND correlation_id=?").get(review.quote.executionId).n;assert.equal(count,1);
+    await specialistRetrieve(state,review);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_action_proposals WHERE turn_id=?").get(turn.id).n,1);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='MutationProposed' AND correlation_id=?").get(review.quote.executionId).n,1);assert.equal(adaptiveAuthoredCount(state),before);assert.equal(state.calls.length,1);
+  }finally{await state.cleanup();}
+});
+
+test("specialist consent: concurrency cap queues third approval and only explicit original continuation runs it",{timeout:15_000},async()=>{
+  const gates=[Promise.withResolvers(),Promise.withResolvers()],entered=[Promise.withResolvers(),Promise.withResolvers()];let started=0,active=0,maxActive=0;
+  const state=await specialistMockFixture({respond:async payload=>{const index=started++;active++;maxActive=Math.max(maxActive,active);try{if(index<2){entered[index].resolve();await gates[index].promise;}return specialistRawResponse(payload,{id:"capped-specialist-"+index});}finally{active--;}}});
+  try{
+    const turns=[];for(let index=0;index<3;index++)turns.push(await specialistFreeTurn(state,"specialist-cap-"+index+"-turn","Review exact turn "+index+"."));
+    const reviews=[];for(const turn of turns)reviews.push(await specialistQuote(state,turn.id));
+    assert.equal((await specialistExecute(state,reviews[0])).status,202);await entered[0].promise;
+    assert.equal((await specialistExecute(state,reviews[1])).status,202);await entered[1].promise;
+    const third=await specialistExecute(state,reviews[2]);assert.equal(third.status,202);assert.equal(state.calls.length,2);
+    const busy=await(await specialistRetrieve(state,reviews[2])).json();assert.equal(busy.task.status,"queued");assert.equal(busy.task.submission,"not-submitted");assert.equal(busy.task.canExecute,false);assert.equal(busy.quote.canExecute,false);
+    gates[0].resolve();gates[1].resolve();await state.drainBackground();const finance=adaptiveReentryFinancialState(state);
+    const ready=await(await specialistRetrieve(state,reviews[2])).json();assert.equal(ready.task.status,"queued");assert.equal(ready.task.canExecute,true);assert.equal(ready.quote.canExecute,true);assert.equal(ready.quote.executionId,reviews[2].quote.executionId);
+    assert.equal((await state.request(endpoint())).status,200);await state.drainBackground();assert.equal(state.calls.length,2);assert.deepEqual(adaptiveReentryFinancialState(state),finance);
+    const continued=await specialistExecute(state,reviews[2]);assert.equal(continued.status,202,JSON.stringify(await continued.clone().json()));await state.drainBackground();
+    assert.equal(state.calls.length,3);assert.equal(maxActive,2);assert.deepEqual(state.calls[2].payload,reviews[2].quote.privateInput.providerRequest,"The original reviewed conversation is not rebuilt after the first two replies change");
+    for(const review of reviews)assert.equal(consequentialReceipt(state,review.quote.executionId).execution.status,"completed");
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n,3);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,3);
+  }finally{for(const gate of gates)gate.resolve();await state.cleanup();}
+});
+for(const source of["canonical","consent","answer"])test("specialist consent: final response proof withdraws "+source+" erased after a paid result was read",async()=>{
+  const state=await specialistMockFixture({shared:true});let restore;
+  try{
+    const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);await specialistExecute(state,review);await state.drainBackground();
+    const execution=state.sqlite.prepare("SELECT * FROM consequential_executions WHERE execution_id=?").get(review.quote.executionId),turnRow=state.sqlite.prepare("SELECT * FROM assistant_turns WHERE turn_id=?").get(turn.id),ref=source==="canonical"?execution.result_ref:source==="consent"?execution.consent_ref:turnRow.assistant_content_ref;
+    let fired=false;restore=interceptConsequentialDb(state,"first",/AS retained,CASE WHEN[\s\S]+AS result_retained/u,()=>{
+      assert.equal(consequentialReceipt(state,review.quote.executionId).execution.status,"completed");state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),ref);fired=true;
+    });
+    const response=await specialistRetrieve(state,review),body=await response.json();assert.equal(fired,true);assert.equal(body.result,undefined);assert.equal(body.turn,undefined);assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+    assert.equal(body.turnId,turn.id);assert.equal(body.executionId,review.quote.executionId);
+    if(source==="canonical"){assert.equal(body.retainedResultUnavailable,true);assert.equal(response.status,200);}else{assert.equal(body.retentionUnavailable,true);assert.equal(response.status,404);assert.equal(body.quote,undefined);}
+    assert.equal(state.calls.length,1);
+  }finally{restore?.();await state.cleanup();}
+});
+
+test("specialist consent: shared-owner Canvas page history keeps original custody through index synchronization",async()=>{
+  const state=await specialistMockFixture({shared:true});
+  try{
+    state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id='assistant-owner'").run();const options=specialistCanvasEvents(state);
+    const turn=await specialistFreeTurn(state,"specialist-shared-canvas","Review this exact document on the board.",options),review=await specialistQuote(state,turn.id,undefined,options);
+    assert.equal(review.originalRequest.canvasId,"specialist-exact-board");const response=await specialistExecute(state,review,options);assert.equal(response.status,202,JSON.stringify(await response.clone().json()));await state.drainBackground();
+    assert.equal(state.calls.length,1);assert.equal(consequentialReceipt(state,review.quote.executionId).execution.status,"completed");
+    const page=await state.request(endpoint(options.route)+options.selected.map(value=>"&selected="+value).join(""),{headers:state.owner}),body=await page.json();assert.equal(page.status,200,JSON.stringify(body));assert.equal(body.turns.find(item=>item.id===turn.id).reply.text,"PRIVATE_VERIFIED_SPECIALIST_REPLY");
+  }finally{await state.cleanup();}
+});
+for(const mismatch of["retention-project","resource-owner","retention-actor"])test("specialist consent: page-chat index never preserves or recreates invalid "+mismatch+" custody",async()=>{
+  const state=await specialistMockFixture({shared:true});
+  try{
+    const route="/settings/workspaces/"+state.organizationId+"/members",options={route},turn=await specialistFreeTurn(state,"specialist-page-"+mismatch,"CURRENT_PRIVATE_WORKSPACE_TEXT",options);
+    const original=await state.request(endpoint(route),{headers:state.owner});assert.match(JSON.stringify(await original.json()),/CURRENT_PRIVATE_WORKSPACE_TEXT/u);
+    const ref=state.sqlite.prepare("SELECT user_content_ref FROM assistant_turns WHERE turn_id=?").get(turn.id).user_content_ref;
+    if(mismatch==="retention-project")state.sqlite.prepare("UPDATE private_content_retention_scopes SET project_id='another-project' WHERE content_id=?").run(ref);
+    if(mismatch==="resource-owner")state.sqlite.prepare("UPDATE project_resource_scopes SET owner_user_id='assistant-viewer' WHERE resource_kind='content' AND resource_id=?").run(ref);
+    if(mismatch==="retention-actor")state.sqlite.prepare("UPDATE private_content_retention_scopes SET actor_user_id='assistant-viewer' WHERE content_id=?").run(ref);
+    const {synchronizeProjectScope}=await import("../worker/project-access.ts");
+    appendFixtureEvents(state.sqlite,"creative:assistant-owner",[["ProjectRenamed",{project_id:"project-atmosphere",name:"Force a current exact index pass"}]]);
+    await synchronizeProjectScope(state.env,{organizationId:state.organizationId,projectAccessId:state.projectAccessId,projectId:"project-atmosphere",ownerUserId:"assistant-owner"});
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(ref).n,0);
+    assert.equal(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(ref).content,"CURRENT_PRIVATE_WORKSPACE_TEXT");
+    const unavailable=await state.request(endpoint(route),{headers:state.owner});assert.doesNotMatch(JSON.stringify(await unavailable.json()),/CURRENT_PRIVATE_WORKSPACE_TEXT/u);
+    state.sqlite.prepare("UPDATE private_content_retention_scopes SET project_id='project-atmosphere',actor_user_id='assistant-owner' WHERE content_id=?").run(ref);
+    appendFixtureEvents(state.sqlite,"creative:assistant-owner",[["ProjectRenamed",{project_id:"project-atmosphere",name:"Missing custody is not silently recreated"}]]);
+    await synchronizeProjectScope(state.env,{organizationId:state.organizationId,projectAccessId:state.projectAccessId,projectId:"project-atmosphere",ownerUserId:"assistant-owner"});
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?").get(ref).n,0);assert.equal(state.calls.length,0);
+  }finally{await state.cleanup();}
+});
+
+function measureSpecialistConversationSql(state){
+  const original=state.env.DB.prepare,metrics={bindings:0,bytes:0};
+  state.env.DB.prepare=function(sql){
+    metrics.bytes=Math.max(metrics.bytes,new TextEncoder().encode(sql).byteLength);
+    const statement=original.call(this,sql),bind=statement.bind;
+    statement.bind=function(...values){metrics.bindings=Math.max(metrics.bindings,values.length);return bind.call(this,...values);};
+    return statement;
+  };
+  return{metrics,assertBounded(){assert.ok(metrics.bindings<100,"D1 parameters: "+metrics.bindings);assert.ok(metrics.bytes<100000,"D1 SQL bytes: "+metrics.bytes);},restore(){state.env.DB.prepare=original;}};
+}
+for(const source of["canonical","consent"]){
+  test("specialist conversation custody: withdrawn "+source+" before quote cannot be copied into a new paid request",async()=>{
+    const state=await specialistMockFixture({shared:true}),sql=measureSpecialistConversationSql(state);
+    try{
+      const original=await specialistApprovedTurn(state,"Explain the exact current source.");await state.drainBackground();assert.equal(state.calls.length,1);
+      const execution=state.sqlite.prepare("SELECT * FROM consequential_executions WHERE execution_id=?").get(original.task.id),reference=source==="canonical"?execution.result_ref:execution.consent_ref;
+      state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),reference);
+      const copied=state.sqlite.prepare("SELECT answer.content,answer.redacted_at FROM assistant_turns turn JOIN private_content answer ON answer.content_id=turn.assistant_content_ref WHERE turn.turn_id=?").get(original.turn.id);
+      assert.equal(copied.redacted_at,null);assert.equal(copied.content,"PRIVATE_VERIFIED_SPECIALIST_REPLY","The live copied answer reproduces the old privacy gap");
+      const page=await(await state.request(endpoint(),{headers:state.owner})).json();assert.doesNotMatch(JSON.stringify(page.turns),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+      const next=await specialistFreeTurn(state,crypto.randomUUID(),"What should we do next?"),finances=adaptiveReentryFinancialState(state),before=state.calls.length;
+      const denied=await specialistProtocolRequest(state,{action:"quote",turnId:next.id}),body=await denied.json();
+      assert.equal(denied.status,403,JSON.stringify(body)+" SQL: "+state.controls.lastDatabaseError);assert.equal(body.error,"assistant_conversation_custody_unavailable");
+      assert.equal(body.quote,undefined);assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+      await state.drainBackground();assert.equal(state.calls.length,before);assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+      assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks WHERE turn_id=?").get(next.id).n,0);
+      assert.equal(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(reference).content,"");sql.assertBounded();
+    }finally{sql.restore();await state.cleanup();}
+  });
+  for(const boundary of["submission CAS","after submitting SQL response","final dispatch read"]){
+    test("specialist conversation custody: "+source+" withdrawal at "+boundary+" releases proven unused work without a POST",async()=>{
+      const state=await specialistMockFixture({shared:true}),sql=measureSpecialistConversationSql(state);let restore;
+      try{
+        const original=await specialistApprovedTurn(state,"Explain the exact current source.");await state.drainBackground();assert.equal(state.calls.length,1);
+        const execution=state.sqlite.prepare("SELECT * FROM consequential_executions WHERE execution_id=?").get(original.task.id),reference=source==="canonical"?execution.result_ref:execution.consent_ref;
+        const next=await specialistFreeTurn(state,crypto.randomUUID(),"What should we do next?"),review=await specialistQuote(state,next.id);
+        assert.match(JSON.stringify(review.quote.privateInput.providerRequest),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+        const balances=consequentialBalances(state,"assistant-owner"),before=state.calls.length;let fired=false;
+        const withdraw=()=>{state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),reference);fired=true;};
+        restore=boundary==="final dispatch read"
+          ?interceptConsequentialDb(state,"first",/^\s*SELECT MIN\(execution.expires_at,task.lease_expires_at/u,withdraw)
+          :interceptConsequentialDb(state,"run",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u,withdraw,boundary==="after submitting SQL response"?"after":"before");
+        const accepted=await specialistExecute(state,review);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await state.drainBackground();assert.equal(fired,true,boundary);
+        assert.equal(state.calls.length,before,"A withdrawn paid answer must never reach another provider request");
+        const receipt=consequentialReceipt(state,review.quote.executionId);assert.equal(receipt.execution.status,"failed");assert.equal(receipt.execution.result_ref,null);assert.equal(receipt.steps[0].status,"not-submitted");
+        assert.equal(receipt.tokens.length,1);assert.equal(receipt.cost.length,1);assert.equal(receipt.tokens[0].status,"released");assert.equal(receipt.cost[0].status,"released");
+        assert.equal(receipt.tokens[0].used_tokens,0);assert.equal(receipt.cost[0].used_microusd,0);assert.deepEqual(consequentialBalances(state,"assistant-owner"),balances);
+        assert.equal(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(reference).content,"");sql.assertBounded();
+      }finally{restore?.();sql.restore();await state.cleanup();}
+    });
+  }
+}
+test("specialist conversation custody: legitimate earlier paid completion preserves the frozen approved free history",async()=>{
+  const state=await specialistMockFixture({shared:true}),sql=measureSpecialistConversationSql(state);
+  try{
+    const prior=await specialistFreeTurn(state,crypto.randomUUID(),"Explain the exact current source."),next=await specialistFreeTurn(state,crypto.randomUUID(),"What should we do next?");
+    const reviewed=await specialistQuote(state,next.id),frozen=structuredClone(reviewed.quote.privateInput.providerRequest);
+    const originalAnswer=state.sqlite.prepare("SELECT answer.content FROM assistant_turns turn JOIN private_content answer ON answer.content_id=turn.assistant_content_ref WHERE turn.turn_id=?").get(prior.id).content;
+    assert.ok(JSON.parse(frozen.input).recent_conversation.some(item=>item.role==="assistant"&&item.text===originalAnswer));assert.doesNotMatch(JSON.stringify(frozen),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+    const earlier=await specialistQuote(state,prior.id);assert.equal((await specialistExecute(state,earlier)).status,202);await state.drainBackground();assert.equal(state.calls.length,1);
+    assert.equal(state.sqlite.prepare("SELECT answer.content FROM assistant_turns turn JOIN private_content answer ON answer.content_id=turn.assistant_content_ref WHERE turn.turn_id=?").get(prior.id).content,"PRIVATE_VERIFIED_SPECIALIST_REPLY");
+    const accepted=await specialistExecute(state,reviewed);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await state.drainBackground();assert.equal(state.calls.length,2);
+    assert.deepEqual(state.calls[1].payload,frozen,"Current valid paid provenance is checked without rebuilding or replacing the approved history bytes");
+    assert.equal(consequentialReceipt(state,reviewed.quote.executionId).execution.status,"completed");sql.assertBounded();
+  }finally{sql.restore();await state.cleanup();}
+});
+test("specialist conversation custody: withdrawn turns outside the exact bounded window are neither included nor substituted",async()=>{
+  const state=await specialistMockFixture({shared:true}),sql=measureSpecialistConversationSql(state);
+  try{
+    const old=await specialistApprovedTurn(state,"Explain the exact current source.");await state.drainBackground();
+    const execution=state.sqlite.prepare("SELECT result_ref FROM consequential_executions WHERE execution_id=?").get(old.task.id);
+    state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),execution.result_ref);
+    const fresh=[];for(let index=0;index<3;index++)fresh.push(await specialistFreeTurn(state,crypto.randomUUID(),"New independent question "+index+"."));
+    const review=await specialistQuote(state,fresh.at(-1).id);
+    assert.deepEqual(review.originalRequest.conversationTurnIds,fresh.map(turn=>turn.id));assert.doesNotMatch(JSON.stringify(review.quote.privateInput.providerRequest),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+    assert.equal((await specialistExecute(state,review)).status,202);await state.drainBackground();assert.equal(state.calls.length,2);
+    assert.deepEqual(state.calls[1].payload,review.quote.privateInput.providerRequest);assert.equal(consequentialReceipt(state,review.quote.executionId).execution.status,"completed");sql.assertBounded();
+  }finally{sql.restore();await state.cleanup();}
+});
+
+const deleteAssistantOrganization=state=>state.request("/api/workspaces/"+state.organizationId+"/deletion",json({confirmation:"DELETE_ORGANIZATION_AND_SCOPED_DATA",organizationId:state.organizationId},state.owner));
+async function independentAssistantBillingReviewer(state){
+  const reviewer=(await(await state.request("/api/session")).json()).user;
+  const invitationResponse=await state.request("/api/workspaces/"+state.organizationId+"/members",json({email:reviewer.email,role:"administrator"},state.owner));
+  assert.equal(invitationResponse.status,201,JSON.stringify(await invitationResponse.clone().json()));const invitation=await invitationResponse.json(),token=new URL(invitation.invitationUrl).searchParams.get("token");
+  assert.equal((await state.request("/api/workspaces/"+state.organizationId+"/invitations/"+invitation.invitationId+"/accept",json({token}))).status,200);
+  const membership=await state.request("/api/workspaces/"+state.organizationId+"/projects/"+state.projectAccessId+"/members",json({userId:reviewer.userId,role:"editor"},state.owner));
+  assert.equal(membership.status,201,JSON.stringify(await membership.clone().json()));
+  return{reviewer,confirmation:{actorUserId:"assistant-owner",organizationId:state.organizationId,projectAccessId:state.projectAccessId,confirmedNoProviderCharge:true}};
+}
+const independentlyReconcileAssistant=(state,id,confirmation)=>state.request("/api/platform/assistant/billing/"+encodeURIComponent(id)+"/reconcile",json(confirmation));
+function ageAssistantReservations(state){
+  state.sqlite.prepare("UPDATE budget_reservations SET created_at='2000-01-01T00:00:00.000Z'").run();
+  state.sqlite.prepare("UPDATE cost_budget_reservations SET created_at='2000-01-01T00:00:00.000Z'").run();
+}
+async function sweepAssistantReservations(state){
+  const principal=await requireUser(new Request("http://localhost/api/session",{headers:state.owner??{}}),state.env);
+  assert.ok(principal.user);return reconcileFailedBudgetReservations(state.env,principal.user);
+}
+for(const[field,prefix]of[["operation","assistant:"],["operation","assistant-specialist:"],["correlation_id","assistant:"],["correlation_id","assistant-specialist:"]]){
+  test("specialist lifecycle: orphan sweep retains historical "+field+" "+prefix+" holds",async()=>{
+    const state=await specialistMockFixture();
+    try{
+      const turn=await specialistFreeTurn(state),task=await seedLegacyAssistantTask(state,turn);
+      state.sqlite.prepare("UPDATE budget_reservations SET operation='historical-unknown',correlation_id='historical-unknown' WHERE reservation_id=?").run(task.tokenReservationId);
+      state.sqlite.prepare("UPDATE budget_reservations SET "+field+"=? WHERE reservation_id=?").run(prefix+"page-guidance:gpt-5.6-luna",task.tokenReservationId);
+      state.sqlite.prepare("DELETE FROM assistant_specialist_tasks WHERE task_id=?").run(task.id);ageAssistantReservations(state);
+      const finances=adaptiveReentryFinancialState(state),result=await sweepAssistantReservations(state);
+      assert.equal(result.releasedTokens,0);assert.equal(result.reservationCount,0);assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+      assert.equal(state.calls.length,0);
+    }finally{await state.cleanup();}
+  });
+}
+test("specialist lifecycle: orphan sweep retains a signed unknown hold without its mutable task row",async()=>{
+  const state=await specialistMockFixture({respond:()=>{throw new TypeError("The POST may have reached the provider");}});
+  try{
+    const {task}=await specialistApprovedTurn(state,"Explain the current document.");await state.drainBackground();assert.equal(state.calls.length,1);
+    state.sqlite.prepare("DELETE FROM assistant_specialist_tasks WHERE task_id=?").run(task.id);
+    state.sqlite.prepare("UPDATE budget_reservations SET operation='recovered-operation',correlation_id='recovered-correlation' WHERE reservation_id=?").run(task.id+":tokens:0");
+    ageAssistantReservations(state);const finances=adaptiveReentryFinancialState(state),result=await sweepAssistantReservations(state);
+    assert.equal(result.releasedTokens,0);assert.deepEqual(adaptiveReentryFinancialState(state),finances);assert.equal(state.calls.length,1);
+    assert.equal(state.sqlite.prepare("SELECT status FROM consequential_execution_steps WHERE execution_id=?").get(task.id).status,"uncertain");
+  }finally{await state.cleanup();}
+});
+test("specialist lifecycle: a restored verified receipt cannot be zeroed by orphan repair even when its step label is terminal",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    state.controls.skipAssistantTaskClaimOnce=true;const {review,task}=await specialistApprovedTurn(state,"Explain the current document.");await state.drainBackground();
+    await seedExpiredConsentedAssistantLease(state,review,{submitted:true});
+    // Reproduces a stale restored ledger beside a durably verified terminal step; repair must not call this unused.
+    state.sqlite.prepare("UPDATE consequential_execution_steps SET status='settled',verified_tokens=1300,verified_microusd=560,provider_request_id='verified-historical-response' WHERE execution_id=?").run(task.id);
+    state.sqlite.prepare("UPDATE budget_reservations SET operation='restored-operation',correlation_id='restored-correlation' WHERE reservation_id=?").run(task.id+":tokens:0");
+    ageAssistantReservations(state);const finances=adaptiveReentryFinancialState(state),result=await sweepAssistantReservations(state);
+    assert.equal(result.releasedTokens,0);assert.deepEqual(adaptiveReentryFinancialState(state),finances);assert.equal(state.calls.length,0);
+  }finally{await state.cleanup();}
+});
+test("specialist lifecycle: ordinary proven orphan token cleanup remains available",async()=>{
+  const state=await specialistMockFixture();
+  try{
+    await specialistFreeTurn(state);const reserved=await reserveBudget(state.env,"dev-local-creative",200,{reservationId:"ordinary-orphan-budget",streamId:"creative:dev-local-creative",correlationId:"ordinary-orphan",operation:"ordinary-test-operation"});assert.equal(reserved.ok,true);
+    ageAssistantReservations(state);const repaired=await sweepAssistantReservations(state);assert.equal(repaired.releasedTokens,200);assert.equal(repaired.reservationCount,1);
+    assert.equal(state.sqlite.prepare("SELECT status,used_tokens FROM budget_reservations WHERE reservation_id='ordinary-orphan-budget'").get().status,"released");assert.equal(state.calls.length,0);
+  }finally{await state.cleanup();}
+});
+for(const stage of["queued approval","reserved hold"])test("specialist lifecycle: tenant deletion tombstones a "+stage+" before releasing any signed hold",async()=>{
+  const state=await specialistMockFixture({shared:true}),sql=measureSpecialistConversationSql(state);
+  try{
+    state.controls.skipAssistantTaskClaimOnce=true;const {review,task}=await specialistApprovedTurn(state,"Explain the current document.");await state.drainBackground();
+    if(stage==="reserved hold")await seedExpiredConsentedAssistantLease(state,review);
+    const before=consequentialReceipt(state,task.id);assert.equal(before.steps[0].status,stage==="reserved hold"?"reserved":"quoted");
+    const deleted=await deleteAssistantOrganization(state);assert.equal(deleted.status,200,JSON.stringify(await deleted.clone().json())+" SQL: "+state.controls.lastDatabaseError);assert.equal((await deleted.json()).status,"completed");
+    const after=consequentialReceipt(state,task.id);assert.equal(after.execution.status,"failed");assert.equal(after.steps[0].status,"not-submitted");assert.equal(after.execution.result_ref,null);
+    assert.ok(after.tokens.every(row=>row.status==="released"&&row.used_tokens===0));assert.ok(after.cost.every(row=>row.status==="released"&&row.used_microusd===0));
+    assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks WHERE organization_id=?").get(state.organizationId).n,0);assert.equal(state.calls.length,0);sql.assertBounded();
+  }finally{sql.restore();await state.cleanup();}
+});
+for(const ledger of["tokens","cost"])test("specialist lifecycle: deletion winning before "+ledger+" INSERT cannot create a late reservation or POST",async()=>{
+  const state=await specialistMockFixture({shared:true});let gate;
+  try{
+    const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);
+    gate=gateConsequentialDb(state,"batch",ledger==="tokens"?/^\s*INSERT OR IGNORE INTO budget_reservations\b/u:/^\s*INSERT OR IGNORE INTO cost_budget_reservations\b/u);
+    const executing=specialistExecute(state,review);await gate.entered;
+    const removed=await deleteAssistantOrganization(state);assert.equal(removed.status,200,JSON.stringify(await removed.clone().json())+" SQL: "+state.controls.lastDatabaseError);
+    gate.release();await executing;await state.drainBackground();
+    const receipt=consequentialReceipt(state,review.quote.executionId);assert.equal(receipt.execution.status,"failed");assert.equal(receipt.steps[0].status,"not-submitted");
+    assert.equal(receipt.tokens.length,ledger==="cost"?1:0);assert.equal(receipt.cost.length,0);assert.ok(receipt.tokens.every(row=>row.status==="released"));
+    assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});assert.equal(state.calls.length,0);
+  }finally{gate?.release();gate?.restore();await state.cleanup();}
+});
+test("specialist lifecycle: interrupted deletion resumes its persisted tombstone without reallocating either ledger",async()=>{
+  const state=await specialistMockFixture({shared:true});let restore;
+  try{
+    state.controls.skipAssistantTaskClaimOnce=true;const {review,task}=await specialistApprovedTurn(state,"Explain the current document.");await state.drainBackground();await seedExpiredConsentedAssistantLease(state,review);
+    let fired=false;restore=interceptConsequentialDb(state,"batch",/^\s*UPDATE consequential_execution_steps SET status='not-submitted'/u,()=>{fired=true;throw new Error("fixture crash after signed stop persisted");},"after");
+    const first=await deleteAssistantOrganization(state);assert.ok(first.status>=500,JSON.stringify(await first.clone().json()));assert.equal(fired,true);restore();restore=null;
+    let receipt=consequentialReceipt(state,task.id);assert.equal(receipt.steps[0].status,"not-submitted");assert.equal(receipt.tokens[0].status,"active");assert.equal(receipt.cost[0].status,"executing");
+    const second=await deleteAssistantOrganization(state);assert.equal(second.status,200,JSON.stringify(await second.clone().json())+" SQL: "+state.controls.lastDatabaseError);
+    receipt=consequentialReceipt(state,task.id);assert.equal(receipt.tokens.length,1);assert.equal(receipt.cost.length,1);assert.equal(receipt.tokens[0].status,"released");assert.equal(receipt.cost[0].status,"released");
+    assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});assert.equal(state.calls.length,0);
+  }finally{restore?.();await state.cleanup();}
+});
+test("specialist lifecycle: signed begin winning the destructive claim preserves exact private and budget evidence",async()=>{
+  const state=await specialistMockFixture({shared:true});let restore;
+  try{
+    state.controls.skipAssistantTaskClaimOnce=true;const {review,task}=await specialistApprovedTurn(state,"Explain the current document.");await state.drainBackground();await seedExpiredConsentedAssistantLease(state,review);
+    const execution=state.sqlite.prepare("SELECT * FROM consequential_executions WHERE execution_id=?").get(task.id),binding=JSON.parse(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(execution.consent_ref).content).binding;
+    const principal=await requireUser(new Request("http://localhost/api/session",{headers:state.owner}),state.env),finances=adaptiveReentryFinancialState(state),privateRows=state.sqlite.prepare("SELECT content_id,content,redacted_at FROM private_content ORDER BY content_id").all();let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/^\s*INSERT INTO organization_deletion_jobs\b/u,async()=>{
+      const head=Number(state.sqlite.prepare("SELECT MAX(sequence) AS head FROM events WHERE stream_id=?").get(binding.streamId).head);
+      await consequential.beginConsequentialStep(state.env,principal.user,binding,task.id,0,head);state.sqlite.prepare("UPDATE assistant_specialist_tasks SET provider_submitted=1 WHERE task_id=?").run(task.id);fired=true;
+    });
+    const removed=await deleteAssistantOrganization(state);assert.equal(fired,true);assert.equal(removed.status,409,JSON.stringify(await removed.clone().json()));assert.equal((await removed.json()).error,"provider_submission_in_flight");
+    assert.equal(state.sqlite.prepare("SELECT status FROM organizations WHERE organization_id=?").get(state.organizationId).status,"active");assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM organization_deletion_jobs WHERE organization_id=?").get(state.organizationId).n,0);
+    assert.equal(consequentialReceipt(state,task.id).steps[0].status,"submitting");assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+    assert.deepEqual(state.sqlite.prepare("SELECT content_id,content,redacted_at FROM private_content ORDER BY content_id").all(),privateRows);assert.equal(state.calls.length,0);
+  }finally{restore?.();await state.cleanup();}
+});
+test("specialist lifecycle: cancel and refused deletion retain a late verified response until exact settlement", {timeout:15000},async()=>{
+  const entered=Promise.withResolvers(),finish=Promise.withResolvers(),state=await specialistMockFixture({shared:true,respond:async payload=>{entered.resolve();await finish.promise;return specialistRawResponse(payload);}});
+  try{
+    const {review,task}=await specialistApprovedTurn(state,"Explain the current document.");await entered.promise;
+    const canceled=await state.request(taskEndpoint(task.id,"cancel"),{method:"POST",headers:state.owner});assert.equal(canceled.status,200);assert.equal((await canceled.json()).task.submission,"uncertain");
+    const finances=adaptiveReentryFinancialState(state),blocked=await deleteAssistantOrganization(state);assert.equal(blocked.status,409,JSON.stringify(await blocked.clone().json()));
+    assert.equal((await blocked.json()).error,"provider_submission_in_flight");assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+    assert.equal(state.sqlite.prepare("SELECT status FROM organizations WHERE organization_id=?").get(state.organizationId).status,"active");
+    finish.resolve();await state.drainBackground();const response=await specialistRetrieve(state,review),body=await response.json();assert.equal(response.status,200);assert.equal(body.result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY");assert.equal(body.task.status,"completed");assert.equal(body.result.accountedMicrousd,560);assert.equal(body.result.billingStatus,"settled");
+    const record=state.sqlite.prepare("SELECT result_json FROM assistant_specialist_tasks WHERE task_id=?").get(task.id),raw=JSON.parse(record.result_json).rawReceipt.contentRef,execution=state.sqlite.prepare("SELECT * FROM consequential_executions WHERE execution_id=?").get(task.id);
+    assert.ok(state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=?").get(raw).content.includes("PRIVATE_VERIFIED_SPECIALIST_REPLY"));
+    const removed=await deleteAssistantOrganization(state);assert.equal(removed.status,200,JSON.stringify(await removed.clone().json())+" SQL: "+state.controls.lastDatabaseError);
+    const after=consequentialReceipt(state,task.id);assert.equal(after.execution.status,"completed");assert.equal(after.steps[0].status,"settled");assert.equal(after.tokens[0].used_tokens,1300);assert.equal(after.cost[0].used_microusd,560);
+    assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:1300,reserved:0},cost:{used:560,reserved:0}});
+    for(const ref of[raw,execution.result_ref,execution.consent_ref]){const row=state.sqlite.prepare("SELECT content,redacted_at FROM private_content WHERE content_id=?").get(ref);assert.equal(row.content,"");assert.ok(row.redacted_at,"Only the subsequent explicit fully-settled deletion erases private bodies");}
+    assert.equal(state.calls.length,1);
+  }finally{finish.resolve();await state.cleanup();}
+});
+test("specialist lifecycle: raw response before usage accounting blocks deletion and independent no-charge release",async()=>{
+  const state=await specialistMockFixture({shared:true});let restore;
+  try{
+    const {confirmation}=await independentAssistantBillingReviewer(state);
+    restore=interceptConsequentialDb(state,"run",/^\s*UPDATE consequential_execution_steps SET status='usage-recorded'/u,()=>{throw new Error("fixture interrupted before usage receipt commit");});
+    const {task}=await specialistApprovedTurn(state,"Explain the current document.");await state.drainBackground();restore();restore=null;
+    const receipt=consequentialReceipt(state,task.id),record=state.sqlite.prepare("SELECT status,result_json FROM assistant_specialist_tasks WHERE task_id=?").get(task.id);
+    assert.equal(receipt.steps[0].status,"uncertain");assert.equal(record.status,"needs-review");
+    const pointer=JSON.parse(record.result_json).rawReceipt,raw=state.sqlite.prepare("SELECT content,redacted_at FROM private_content WHERE content_id=?").get(pointer.contentRef);
+    assert.ok(raw.content.includes("PRIVATE_VERIFIED_SPECIALIST_REPLY"));const finances=adaptiveReentryFinancialState(state);
+    const billing=await independentlyReconcileAssistant(state,task.id,confirmation);assert.equal(billing.status,409,JSON.stringify(await billing.clone().json()));assert.equal((await billing.json()).error,"assistant_signed_billing_evidence_required");
+    const deletion=await deleteAssistantOrganization(state);assert.equal(deletion.status,409,JSON.stringify(await deletion.clone().json()));
+    assert.equal((await deletion.json()).error,"provider_submission_in_flight");assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+    assert.deepEqual(state.sqlite.prepare("SELECT content,redacted_at FROM private_content WHERE content_id=?").get(pointer.contentRef),raw);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_billing_reconciliations WHERE task_id=?").get(task.id).n,0);assert.equal(state.calls.length,1);
+  }finally{restore?.();await state.cleanup();}
+});
+test("specialist lifecycle: signed unknown spend cannot use the legacy independent no-charge attestation",async()=>{
+  const state=await specialistMockFixture({shared:true,respond:()=>{throw new TypeError("Unknown original POST");}});
+  try{
+    const {confirmation}=await independentAssistantBillingReviewer(state),{task}=await specialistApprovedTurn(state,"Explain the current document.");await state.drainBackground();
+    const finances=adaptiveReentryFinancialState(state),response=await independentlyReconcileAssistant(state,task.id,confirmation);
+    assert.equal(response.status,409,JSON.stringify(await response.clone().json()));assert.equal((await response.json()).error,"assistant_signed_billing_evidence_required");
+    assert.deepEqual(adaptiveReentryFinancialState(state),finances);assert.equal(consequentialReceipt(state,task.id).steps[0].status,"uncertain");
+    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"needs-review");
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_billing_reconciliations WHERE task_id=?").get(task.id).n,0);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM organization_audit_events WHERE resource_id=? AND action='AssistantProviderChargeReconciled'").get(task.id).n,0);assert.equal(state.calls.length,1);
+  }finally{await state.cleanup();}
+});
+test("specialist lifecycle: missing signed task metadata cannot bypass the retained execution billing guard",async()=>{
+  const state=await specialistMockFixture({shared:true,respond:()=>{throw new TypeError("Unknown original POST");}});
+  try{
+    const {confirmation}=await independentAssistantBillingReviewer(state),{task}=await specialistApprovedTurn(state,"Explain the current document.");await state.drainBackground();
+    state.sqlite.prepare("UPDATE assistant_specialist_tasks SET result_json=NULL WHERE task_id=?").run(task.id);
+    const finances=adaptiveReentryFinancialState(state),response=await independentlyReconcileAssistant(state,task.id,confirmation);assert.equal(response.status,409);assert.equal((await response.json()).error,"assistant_signed_billing_evidence_required");
+    assert.deepEqual(adaptiveReentryFinancialState(state),finances);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_billing_reconciliations WHERE task_id=?").get(task.id).n,0);assert.equal(state.calls.length,1);
+  }finally{await state.cleanup();}
+});
+test("specialist lifecycle: independent billing finishes persisted signed usage without repricing or asserting no charge",{timeout:15000},async()=>{
+  const finish=Promise.withResolvers(),state=await specialistMockFixture({shared:true,respond:async payload=>{await finish.promise;return specialistRawResponse(payload);}});
+  try{
+    const {confirmation}=await independentAssistantBillingReviewer(state),{task}=await specialistApprovedTurn(state,"Explain the current document.");
+    state.controls.failAssistantBillingCostSettlement=true;finish.resolve();await state.drainBackground();
+    const before=consequentialReceipt(state,task.id);assert.equal(before.steps[0].status,"usage-recorded");assert.equal(before.tokens[0].status,"settled");assert.equal(before.cost[0].status,"executing");assert.equal(before.steps[0].verified_microusd,560);
+    const saved=state.sqlite.prepare("SELECT * FROM consequential_executions WHERE execution_id=?").get(task.id),raw=state.sqlite.prepare("SELECT result_json FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).result_json;
+    delete state.env.OPENAI_API_KEY;state.env.FORMA_ASSISTANT_ALLOWED_MODELS="gpt-5.6-sol";
+    const response=await independentlyReconcileAssistant(state,task.id,confirmation);assert.equal(response.status,409,JSON.stringify(await response.clone().json()));assert.equal((await response.json()).error,"assistant_signed_billing_evidence_required");
+    const after=consequentialReceipt(state,task.id);assert.equal(after.execution.status,"completed");assert.equal(after.steps[0].status,"settled");assert.equal(after.tokens[0].used_tokens,1300);assert.equal(after.cost[0].used_microusd,560);
+    assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:1300,reserved:0},cost:{used:560,reserved:0}});
+    assert.equal(state.sqlite.prepare("SELECT result_json FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).result_json,raw);
+    assert.equal(state.sqlite.prepare("SELECT result_ref FROM consequential_executions WHERE execution_id=?").get(task.id).result_ref,saved.result_ref);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_billing_reconciliations WHERE task_id=?").get(task.id).n,0);assert.equal(state.calls.length,1);
+  }finally{finish.resolve();await state.cleanup();}
+});
+test("specialist lifecycle: verified legacy usage winning the billing claim prevents a false no-charge audit",async()=>{
+  const state=await specialistMockFixture({shared:true});let restore;
+  try{
+    const {confirmation}=await independentAssistantBillingReviewer(state),turn=await specialistFreeTurn(state),task=await seedLegacyAssistantTask(state,turn);let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/^\s*UPDATE assistant_specialist_tasks SET status='reconciling'/u,async()=>{
+      await settleBudget(state.env,"assistant-owner",task.tokenReservationId,1300);await settleCostBudget(state.env,"assistant-owner",task.costReservationId,560);fired=true;
+    });
+    const response=await independentlyReconcileAssistant(state,task.id,confirmation);assert.equal(fired,true);assert.equal(response.status,409,JSON.stringify(await response.clone().json()));
+    assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:1300,reserved:0},cost:{used:560,reserved:0}});
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_billing_reconciliations WHERE task_id=?").get(task.id).n,0);
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM organization_audit_events WHERE action='AssistantProviderChargeReconciled' AND resource_id=?").get(task.id).n,0);
+    assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"needs-review");assert.equal(state.calls.length,0);
+  }finally{restore?.();await state.cleanup();}
+});
+test("specialist lifecycle: explicit deletion settles persisted verified usage before erasing fully accounted private bodies",{timeout:15000},async()=>{
+  const finish=Promise.withResolvers(),state=await specialistMockFixture({shared:true,respond:async payload=>{await finish.promise;return specialistRawResponse(payload);}});
+  try{
+    const {task}=await specialistApprovedTurn(state,"Explain the current document.");state.controls.failAssistantBillingCostSettlement=true;finish.resolve();await state.drainBackground();
+    const before=consequentialReceipt(state,task.id);assert.equal(before.steps[0].status,"usage-recorded");assert.equal(before.cost[0].status,"executing");
+    const removed=await deleteAssistantOrganization(state);assert.equal(removed.status,200,JSON.stringify(await removed.clone().json())+" SQL: "+state.controls.lastDatabaseError);
+    const after=consequentialReceipt(state,task.id);assert.equal(after.execution.status,"completed");assert.equal(after.steps[0].status,"settled");assert.equal(after.tokens[0].used_tokens,1300);assert.equal(after.cost[0].used_microusd,560);
+    assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:1300,reserved:0},cost:{used:560,reserved:0}});assert.equal(state.calls.length,1);
+  }finally{finish.resolve();await state.cleanup();}
+});
+test("specialist lifecycle: fully accounted invalid paid output is erasable without zeroing its charge",async()=>{
+  const state=await specialistMockFixture({shared:true,respond:payload=>Response.json({id:"accounted-provider-error",model:payload.model,status:"failed",usage:{input_tokens:1000,output_tokens:300,total_tokens:1300}},{status:503})});
+  try{
+    const {task}=await specialistApprovedTurn(state,"Explain the current document.");await state.drainBackground();assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"needs-review");
+    const before=consequentialReceipt(state,task.id);assert.equal(before.steps[0].status,"settled");assert.equal(before.execution.result_ref,null);assert.equal(before.cost[0].used_microusd,560);
+    const removed=await deleteAssistantOrganization(state);assert.equal(removed.status,200,JSON.stringify(await removed.clone().json())+" SQL: "+state.controls.lastDatabaseError);
+    const after=consequentialReceipt(state,task.id);assert.equal(after.steps[0].status,"settled");assert.equal(after.tokens[0].used_tokens,1300);assert.equal(after.cost[0].used_microusd,560);
+    assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:1300,reserved:0},cost:{used:560,reserved:0}});assert.equal(state.calls.length,1);
+  }finally{await state.cleanup();}
+});
+test("specialist lifecycle: final deletion transaction retains private receipts when settlement evidence becomes inconsistent",async()=>{
+  const state=await specialistMockFixture({shared:true});let restore;
+  try{
+    const {task}=await specialistApprovedTurn(state,"Explain the current document.");await state.drainBackground();
+    const execution=state.sqlite.prepare("SELECT * FROM consequential_executions WHERE execution_id=?").get(task.id),raw=JSON.parse(state.sqlite.prepare("SELECT result_json FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).result_json).rawReceipt.contentRef;
+    const balances=consequentialBalances(state,"assistant-owner");let fired=false;
+    restore=interceptConsequentialDb(state,"batch",/^\s*DELETE FROM assistant_action_proposals\b/u,()=>{state.sqlite.prepare("UPDATE cost_budget_reservations SET status='executing' WHERE reservation_id=?").run(task.id+":usd:0");fired=true;});
+    const removed=await deleteAssistantOrganization(state);assert.equal(fired,true);assert.equal(removed.status,409,JSON.stringify(await removed.clone().json()));
+    assert.equal((await removed.json()).error,"provider_submission_in_flight");
+    for(const ref of[raw,execution.result_ref,execution.consent_ref]){const row=state.sqlite.prepare("SELECT content,redacted_at FROM private_content WHERE content_id=?").get(ref);assert.ok(row.content);assert.equal(row.redacted_at,null);}
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).n,1);assert.deepEqual(consequentialBalances(state,"assistant-owner"),balances);
+    assert.equal(state.sqlite.prepare("SELECT status FROM organizations WHERE organization_id=?").get(state.organizationId).status,"active");assert.equal(state.calls.length,1);
+  }finally{restore?.();await state.cleanup();}
+});
+for(const kind of["legacy-token-only","legacy-active-cost","signed-unknown"])test("specialist lifecycle: tenant deletion cannot discard "+kind+" evidence after its mutable task row is lost",async()=>{
+  const state=await specialistMockFixture({shared:true,respond:()=>{throw new TypeError("An original signed POST is unknown");}});
+  try{
+    let id,tokenId,costId;
+    if(kind==="signed-unknown"){
+      const {task}=await specialistApprovedTurn(state,"Explain the current document.");await state.drainBackground();id=task.id;tokenId=id+":tokens:0";costId=id+":usd:0";
+    }else{
+      const turn=await specialistFreeTurn(state),task=await seedLegacyAssistantTask(state,turn,{status:"queued",submitted:false});id=task.id;tokenId=task.tokenReservationId;costId=task.costReservationId;
+      if(kind==="legacy-token-only"){await settleCostBudget(state.env,"assistant-owner",costId,0);}
+    }
+    state.sqlite.prepare("DELETE FROM assistant_specialist_tasks WHERE task_id=?").run(id);const finances=adaptiveReentryFinancialState(state);
+    const removed=await deleteAssistantOrganization(state);assert.equal(removed.status,409,JSON.stringify(await removed.clone().json())+" SQL: "+state.controls.lastDatabaseError);
+    const body=await removed.json();assert.equal(body.error,"provider_submission_in_flight");
+    if(kind==="signed-unknown")assert.ok(body.assistantTasks.some(task=>task.taskId===id));else assert.ok(body.tokenReservations.some(row=>row.reservationId===tokenId));
+    assert.deepEqual(adaptiveReentryFinancialState(state),finances);assert.equal(state.sqlite.prepare("SELECT status FROM organizations WHERE organization_id=?").get(state.organizationId).status,"active");
+    assert.equal(state.calls.length,kind==="signed-unknown"?1:0);
+  }finally{await state.cleanup();}
+});
+test("specialist lifecycle: legacy deletion resumes only its own durable unused cancellation after a crash",async()=>{
+  const state=await specialistMockFixture({shared:true});let restore;
+  try{
+    const turn=await specialistFreeTurn(state),task=await seedLegacyAssistantTask(state,turn,{status:"queued",submitted:false});let fired=false;
+    restore=interceptConsequentialDb(state,"run",/^\s*UPDATE assistant_specialist_tasks SET status='canceled'/u,()=>{fired=true;throw new Error("fixture crash after legacy unused cancellation");},"after");
+    const first=await deleteAssistantOrganization(state);assert.equal(first.status,503,JSON.stringify(await first.clone().json()));assert.equal(fired,true);restore();restore=null;
+    const stopped=state.sqlite.prepare("SELECT status,error_code,provider_submitted FROM assistant_specialist_tasks WHERE task_id=?").get(task.id);
+    assert.deepEqual({...stopped},{status:"canceled",error_code:"organization_deleted",provider_submitted:0});assert.equal(state.sqlite.prepare("SELECT status FROM budget_reservations WHERE reservation_id=?").get(task.tokenReservationId).status,"active");
+    const second=await deleteAssistantOrganization(state);assert.equal(second.status,200,JSON.stringify(await second.clone().json())+" SQL: "+state.controls.lastDatabaseError);
+    assert.equal(state.sqlite.prepare("SELECT status FROM budget_reservations WHERE reservation_id=?").get(task.tokenReservationId).status,"released");
+    assert.equal(state.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(task.costReservationId).status,"released");
+    assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});assert.equal(state.calls.length,0);
+  }finally{restore?.();await state.cleanup();}
+});
+
+/** Count actual executed statements, including batch members, per HTTP request only. */
+async function deletionProgressAttempt(state){
+ state.controls.requestQueryCount=0;state.controls.requestQueryLimit=1000;
+ state.controls.queryLimitSql="";
+ try{
+  const response=await deleteAssistantOrganization(state),body=await response.json();
+  assert.ok(state.controls.requestQueryCount<=1000,state.controls.queryLimitSql);
+  assert.ok([200,503].includes(response.status),JSON.stringify(body)+" SQL: "+state.controls.lastDatabaseError);
+  if(response.status===503){assert.equal(response.ok,false);assert.equal(body.status,"partial");assert.equal(body.retryable,true);
+   assert.ok(body.assistantCleanup.attempted<=24);assert.equal(body.assistantCleanup.requestLimit,24);}
+  return{status:response.status,body,queries:state.controls.requestQueryCount};
+ }finally{state.controls.requestQueryLimit=0;}
+}
+function assistantDeletionBodies(state){
+ return state.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content WHERE content<>'' AND redacted_at IS NULL").get().count;
+}
+function restoreDeletionCostScopes(state,scopes){
+ for(const row of scopes)state.sqlite.prepare("INSERT INTO project_budget_reservation_scopes(reservation_kind,reservation_id,organization_id,project_access_id,actor_user_id,workspace_scope_id,created_at) VALUES(?,?,?,?,?,?,?)")
+     .run(row.reservation_kind,row.reservation_id,row.organization_id,row.project_access_id,row.actor_user_id,row.workspace_scope_id,row.created_at);
+}
+async function deletionSignedBacklog(state,count,{held=false,verified=false}={}){
+ const reviews=[];
+ for(let index=0;index<count;index++){
+  state.controls.skipAssistantTaskClaimOnce=true;
+  const {review}=await specialistApprovedTurn(state,"Retained deletion backlog "+index);
+  await state.drainBackground();reviews.push(review);
+ }
+ for(let index=0;index<reviews.length;index++){
+  if(!verified&&!held)continue;
+  if(held==="alternating"&&index%2===0)continue;
+  const review=reviews[index];await seedExpiredConsentedAssistantLease(state,review,{submitted:verified});
+  if(verified){
+   state.controls.failAssistantBillingCostSettlement=true;
+   await assert.rejects(consequential.settleConsequentialStep(state.env,"assistant-owner",review.quote.executionId,0,1300,560,"verified-deletion-"+review.quote.executionId),/injected_assistant_billing_settlement_failure/u);
+  }
+ }
+ assert.equal(state.calls.length,0);return reviews;
+}
+test("specialist deletion progress: 150 signed approvals resume without reprocessing released or absent holds",{timeout:30000},async()=>{
+ const state=await specialistMockFixture({shared:true});
+ try{
+  await deletionSignedBacklog(state,150,{held:"alternating"});
+  const bodies=assistantDeletionBodies(state),samples=[];let stopped=0,jobId;
+  for(let attempt=0;attempt<10;attempt++){
+   const sample=await deletionProgressAttempt(state);samples.push(sample.queries);
+   const next=state.sqlite.prepare("SELECT COUNT(*) AS count FROM consequential_execution_steps WHERE status='not-submitted'").get().count;
+   assert.ok(next>stopped,"Each explicit retry must make durable progress");assert.ok(next-stopped<=24);stopped=next;
+   if(sample.status===200){assert.equal(stopped,150);assert.equal(sample.body.status,"completed");assert.equal(sample.body.jobId,jobId);break;}
+   assert.ok(sample.body.jobId);jobId??=sample.body.jobId;assert.equal(sample.body.jobId,jobId);
+   assert.equal(state.sqlite.prepare("SELECT status FROM organization_deletion_jobs WHERE job_id=?").get(jobId).status,"partial");
+   assert.equal(assistantDeletionBodies(state),bodies,"No private erasure ahead of unfinished cleanup");
+  }
+  assert.equal(stopped,150);assert.equal(assistantDeletionBodies(state),0);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations WHERE status='released' AND used_tokens=0").get().count,75);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status='released' AND used_microusd=0").get().count,75);
+  assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});
+  assert.equal(state.calls.length,0);console.log("ASSISTANT_DELETION_SIGNED_150",JSON.stringify({queries:samples,requests:samples.length}));
+ }finally{state.controls.requestQueryLimit=0;await state.cleanup();}
+});
+test("specialist deletion progress: 150 true legacy unused tasks release once and reach completion",{timeout:30000},async()=>{
+ const state=await specialistMockFixture({shared:true});
+ try{
+  for(let index=0;index<150;index++){
+   const turn=await specialistFreeTurn(state,"legacy-progress-"+index,"Retained legacy task "+index);
+   await seedLegacyAssistantTask(state,turn,{status:"queued",submitted:false,id:"legacy-progress-task-"+String(index).padStart(4,"0")});
+  }
+  const bodies=assistantDeletionBodies(state),samples=[];let released=0,jobId;
+  for(let attempt=0;attempt<10;attempt++){
+   const sample=await deletionProgressAttempt(state);samples.push(sample.queries);
+   const tokens=state.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations WHERE status='released' AND used_tokens=0").get().count;
+   const costs=state.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status='released' AND used_microusd=0").get().count;
+   assert.ok(tokens>released);assert.ok(tokens-released<=24);assert.equal(tokens,costs);released=tokens;
+   if(sample.status===200){assert.equal(released,150);assert.equal(sample.body.jobId,jobId);break;}
+   assert.ok(sample.body.jobId);jobId??=sample.body.jobId;assert.equal(sample.body.jobId,jobId);
+   assert.equal(assistantDeletionBodies(state),bodies);
+  }
+  assert.equal(released,150);assert.equal(assistantDeletionBodies(state),0);
+  assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_billing_reconciliations").get().count,0,"Deletion is not an independent no-charge billing attestation");
+  assert.equal(state.calls.length,0);console.log("ASSISTANT_DELETION_LEGACY_150",JSON.stringify({queries:samples,requests:samples.length}));
+ }finally{state.controls.requestQueryLimit=0;await state.cleanup();}
+});
+test("specialist deletion progress: 150 verified receipts settle in bounded preflight chunks without repricing",{timeout:30000},async()=>{
+ const state=await specialistMockFixture({shared:true});
+ try{
+  const reviews=await deletionSignedBacklog(state,150,{verified:true});
+  const bodies=assistantDeletionBodies(state),samples=[];let settled=0;
+  delete state.env.OPENAI_API_KEY;state.env.FORMA_ASSISTANT_ALLOWED_MODELS="gpt-5.6-sol";
+  for(let attempt=0;attempt<10;attempt++){
+   const sample=await deletionProgressAttempt(state);samples.push(sample.queries);
+   const next=state.sqlite.prepare("SELECT COUNT(*) AS count FROM consequential_execution_steps WHERE status='settled'").get().count;
+   assert.ok(next>settled);assert.ok(next-settled<=24);settled=next;
+   assert.equal(consequentialBalances(state,"assistant-owner").cost.used,settled*560);
+   if(sample.status===200){assert.equal(settled,150);break;}
+   assert.equal(sample.body.error,"organization_assistant_reconciliation_incomplete");
+   assert.equal(sample.body.jobId,undefined,"Unsettled receipts must not reopen destructive admission");
+   assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM organization_deletion_jobs").get().count,0);
+   assert.equal(assistantDeletionBodies(state),bodies);
+  }
+  assert.equal(settled,150);assert.equal(assistantDeletionBodies(state),0);
+  assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:195000,reserved:0},cost:{used:84000,reserved:0}});
+  for(const review of reviews){const receipt=consequentialReceipt(state,review.quote.executionId);assert.equal(receipt.steps[0].verified_tokens,1300);assert.equal(receipt.steps[0].verified_microusd,560);assert.ok(receipt.steps[0].provider_request_id);}
+  assert.equal(state.calls.length,0);console.log("ASSISTANT_DELETION_VERIFIED_150",JSON.stringify({queries:samples,requests:samples.length}));
+ }finally{state.controls.requestQueryLimit=0;await state.cleanup();}
+});
+test("specialist deletion progress: accounting and cancellation share the same request allowance",{timeout:15000},async()=>{
+ const state=await specialistMockFixture({shared:true});
+ try{
+  const reviews=await deletionSignedBacklog(state,42),bodies=assistantDeletionBodies(state);
+  for(const review of reviews.slice(0,12)){
+   await seedExpiredConsentedAssistantLease(state,review,{submitted:true});
+   state.controls.failAssistantBillingCostSettlement=true;
+   await assert.rejects(consequential.settleConsequentialStep(state.env,"assistant-owner",review.quote.executionId,0,1300,560,"mixed-"+review.quote.executionId),/injected_assistant_billing_settlement_failure/u);
+  }
+  const first=await deletionProgressAttempt(state);assert.equal(first.status,503);assert.equal(first.body.assistantCleanup.attempted,24);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM consequential_execution_steps WHERE status='settled'").get().count,12);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM consequential_execution_steps WHERE status='not-submitted'").get().count,12);
+  assert.equal(assistantDeletionBodies(state),bodies);
+  const second=await deletionProgressAttempt(state);assert.equal(second.status,200);assert.equal(second.body.jobId,first.body.jobId);
+  assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:15600,reserved:0},cost:{used:6720,reserved:0}});assert.equal(state.calls.length,0);
+ }finally{state.controls.requestQueryLimit=0;await state.cleanup();}
+});
+test("specialist deletion progress: failed oldest verified receipts cannot starve later valid settlement",{timeout:20000},async()=>{
+ const state=await specialistMockFixture({shared:true});
+ try{
+  const reviews=await deletionSignedBacklog(state,50,{verified:true}),blocked=reviews.slice(0,24).map(review=>review.quote.executionId),scopes=[];
+  for(let index=0;index<reviews.length;index++)state.sqlite.prepare("UPDATE consequential_execution_steps SET updated_at=? WHERE execution_id=?")
+    .run(index<24?"2000-01-01T00:00:00.000Z":"2001-01-01T00:00:00.000Z",reviews[index].quote.executionId);
+  for(const id of blocked){
+   scopes.push(state.sqlite.prepare("SELECT * FROM project_budget_reservation_scopes WHERE reservation_kind='usd' AND reservation_id=?").get(id+":usd:0"));
+   state.sqlite.prepare("DELETE FROM project_budget_reservation_scopes WHERE reservation_kind='usd' AND reservation_id=?").run(id+":usd:0");
+  }
+  const bodies=assistantDeletionBodies(state);
+  for(let attempt=0;attempt<3;attempt++){
+   const sample=await deletionProgressAttempt(state);assert.equal(sample.status,503);assert.equal(assistantDeletionBodies(state),bodies);
+  }
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM consequential_execution_steps WHERE status='settled'").get().count,26,"Later exact receipts advance past the broken prefix");
+  for(const id of blocked){const step=consequentialReceipt(state,id).steps[0];assert.equal(step.status,"usage-recorded");assert.equal(step.verified_tokens,1300);assert.equal(step.verified_microusd,560);assert.equal(state.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(id+":usd:0").status,"executing");}
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM organization_deletion_jobs").get().count,0);
+  assert.equal(consequentialBalances(state,"assistant-owner").cost.used,26*560);
+  restoreDeletionCostScopes(state,scopes);
+  const final=await deletionProgressAttempt(state);assert.equal(final.status,200);
+  assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:65000,reserved:0},cost:{used:28000,reserved:0}});assert.equal(state.calls.length,0);
+ }finally{state.controls.requestQueryLimit=0;await state.cleanup();}
+});
+test("specialist deletion progress: contradictory paid ledgers are not mistaken for fully released cleanup",async()=>{
+ const state=await specialistMockFixture({shared:true});
+ try{
+  const [review]=await deletionSignedBacklog(state,1,{held:true}),id=review.quote.executionId;
+  await consequential.failConsequentialExecution(state.env,"assistant-owner",id,"organization_deleted");
+  state.sqlite.prepare("UPDATE assistant_specialist_tasks SET status='canceled',error_code='organization_deleted' WHERE task_id=?").run(id);
+  state.sqlite.prepare("UPDATE cost_budget_reservations SET status='settled',used_microusd=560 WHERE reservation_id=?").run(id+":usd:0");
+  state.sqlite.prepare("UPDATE cost_budget_counters SET used_microusd=used_microusd+560 WHERE period=? AND ((scope='user' AND scope_id='assistant-owner') OR scope='workspace' AND scope_id IN('forma',?))")
+    .run(new Date().toISOString().slice(0,7),state.organizationId);
+  const balances=consequentialBalances(state,"assistant-owner"),bodies=assistantDeletionBodies(state);
+  for(let attempt=0;attempt<2;attempt++){const sample=await deletionProgressAttempt(state);assert.equal(sample.status,503);assert.equal(assistantDeletionBodies(state),bodies);assert.deepEqual(consequentialBalances(state,"assistant-owner"),balances);}
+  assert.equal(state.sqlite.prepare("SELECT used_microusd FROM cost_budget_reservations WHERE reservation_id=?").get(id+":usd:0").used_microusd,560);assert.equal(state.calls.length,0);
+ }finally{state.controls.requestQueryLimit=0;await state.cleanup();}
+});
+test("specialist deletion progress: partial accounting uses the existing native retry path, never the success notice",async()=>{
+ const {readFileSync}=await import("node:fs"),source=readFileSync(new URL("../src/components/forma-workspace-settings.ts",import.meta.url),"utf8");
+ assert.match(source,/if\(!response\.ok\).*retryable:body\.retryable===true\|\|body\.status==="partial"/u);
+ assert.match(source,/if\(error instanceof Error&&\(error as Error&\{retryable\?:boolean\}\)\.retryable\)await this\.#load\(\)/u);
+ assert.match(source,/#deletionRecoveryControls\(\)/u);
+ assert.match(source,/if\(deletion\.job&&\["pending","partial","processing"\]\.includes\(deletion\.job\.status\)\)/u);
+});
+
+test("specialist deletion progress: malformed receipt prefix remains blocked without starving valid usage",{timeout:15000},async()=>{
+ const state=await specialistMockFixture({shared:true});
+ try{
+  const reviews=await deletionSignedBacklog(state,25,{verified:true}),invalid=reviews.slice(0,24).map(review=>review.quote.executionId);
+  for(const id of invalid)state.sqlite.prepare("UPDATE consequential_execution_steps SET verified_tokens=NULL,updated_at='2000-01-01T00:00:00.000Z' WHERE execution_id=?").run(id);
+  const bodies=assistantDeletionBodies(state),first=await deletionProgressAttempt(state);
+  assert.equal(first.status,503);assert.equal(first.body.assistantCleanup.attempted,1);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM consequential_execution_steps WHERE status='settled'").get().count,1);
+  assert.equal(consequentialBalances(state,"assistant-owner").cost.used,560);
+  assert.equal(assistantDeletionBodies(state),bodies);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM organization_deletion_jobs").get().count,0);
+  for(const id of invalid){
+   const step=state.sqlite.prepare("SELECT status,verified_tokens,verified_microusd,updated_at FROM consequential_execution_steps WHERE execution_id=?").get(id);
+   assert.deepEqual({...step},{status:"usage-recorded",verified_tokens:null,verified_microusd:560,updated_at:"2000-01-01T00:00:00.000Z"});
+   state.sqlite.prepare("UPDATE consequential_execution_steps SET verified_tokens=1300 WHERE execution_id=?").run(id);
+  }
+  const final=await deletionProgressAttempt(state);assert.equal(final.status,200);
+  assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:32500,reserved:0},cost:{used:14000,reserved:0}});assert.equal(state.calls.length,0);
+ }finally{state.controls.requestQueryLimit=0;await state.cleanup();}
+});
+
+for(const kind of["signed","legacy"])test("specialist deletion progress: "+kind+" unused custody failures rotate without repeating completed cleanup",{timeout:15000},async()=>{
+ const state=await specialistMockFixture({shared:true});
+ try{
+  const tasks=[];
+  if(kind==="signed"){
+   const reviews=await deletionSignedBacklog(state,50,{held:true});
+   for(const review of reviews)tasks.push({id:review.quote.executionId,costReservationId:review.quote.executionId+":usd:0"});
+  }else for(let index=0;index<50;index++){
+   const turn=await specialistFreeTurn(state,"legacy-fair-"+index,"Retained legacy fairness "+index);
+   tasks.push(await seedLegacyAssistantTask(state,turn,{status:"queued",submitted:false,id:"legacy-fair-task-"+String(index).padStart(4,"0")}));
+  }
+  const blocked=tasks.slice(0,24),scopes=[];
+  for(let index=0;index<tasks.length;index++){
+   const timestamp=index<24?"2000-01-01T00:00:00.000Z":"2001-01-01T00:00:00.000Z";
+   state.sqlite.prepare("UPDATE assistant_specialist_tasks SET updated_at=? WHERE task_id=?").run(timestamp,tasks[index].id);
+   if(kind==="signed")state.sqlite.prepare("UPDATE consequential_executions SET updated_at=? WHERE execution_id=?").run(timestamp,tasks[index].id);
+  }
+  for(const task of blocked){
+   scopes.push(state.sqlite.prepare("SELECT * FROM project_budget_reservation_scopes WHERE reservation_kind='usd' AND reservation_id=?").get(task.costReservationId));
+   state.sqlite.prepare("DELETE FROM project_budget_reservation_scopes WHERE reservation_kind='usd' AND reservation_id=?").run(task.costReservationId);
+  }
+  const bodies=assistantDeletionBodies(state);let jobId;
+  for(let attempt=0;attempt<3;attempt++){
+   const sample=await deletionProgressAttempt(state);assert.equal(sample.status,503);
+   jobId??=sample.body.jobId;assert.equal(sample.body.jobId,jobId);assert.equal(assistantDeletionBodies(state),bodies);
+  }
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_specialist_tasks WHERE status='canceled' AND error_code='organization_deleted'").get().count,50);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status='released' AND used_microusd=0").get().count,26);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations WHERE status='released' AND used_tokens=0").get().count,50);
+  assert.equal(consequentialBalances(state,"assistant-owner").cost.used,0);
+  for(const task of blocked)assert.equal(state.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(task.costReservationId).status,kind==="signed"?"executing":"active");
+  restoreDeletionCostScopes(state,scopes);
+  const final=await deletionProgressAttempt(state);assert.equal(final.status,200);assert.equal(final.body.jobId,jobId);
+  assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});assert.equal(state.calls.length,0);
+ }finally{state.controls.requestQueryLimit=0;await state.cleanup();}
+});
+
+const {effectivePilotParticipantSql,effectivePilotReviewerSql}=await import("../worker/access-policy.ts");
+const d1LegacyParticipantSql=(organizationId,userId)=>`NOT EXISTS(
+  SELECT 1 FROM pilot_cohorts effective_cohort
+  WHERE effective_cohort.organization_id=${organizationId} AND effective_cohort.status IN ('active','paused','closed')
+    AND (effective_cohort.status!='closed' OR NOT EXISTS(
+      SELECT 1 FROM pilot_cohorts effective_successor
+      WHERE effective_successor.organization_id=effective_cohort.organization_id AND effective_successor.status IN ('active','paused')
+    ))
+    AND NOT EXISTS(
+      SELECT 1 FROM pilot_participants effective_participant
+      WHERE effective_participant.cohort_id=effective_cohort.cohort_id
+        AND effective_participant.organization_id=effective_cohort.organization_id
+        AND effective_participant.user_id=${userId}
+        AND effective_participant.status='active' AND effective_participant.revoked_at IS NULL
+    )
+)`;
+const d1LegacyReviewerSql=(organizationId,userId)=>`EXISTS(
+SELECT 1 FROM pilot_cohorts reviewer_cohort
+    JOIN pilot_participants reviewer_participant ON reviewer_participant.cohort_id=reviewer_cohort.cohort_id
+      AND reviewer_participant.organization_id=reviewer_cohort.organization_id
+  WHERE reviewer_cohort.organization_id=${organizationId} AND reviewer_cohort.status IN ('active','paused','closed')
+    AND (reviewer_cohort.status!='closed' OR NOT EXISTS(
+      SELECT 1 FROM pilot_cohorts reviewer_successor
+      WHERE reviewer_successor.organization_id=reviewer_cohort.organization_id AND reviewer_successor.status IN ('active','paused')
+    ))
+    AND reviewer_participant.user_id=${userId} AND reviewer_participant.status='active'
+    AND reviewer_participant.revoked_at IS NULL AND reviewer_participant.role='reviewer'
+)`;
+
+test("assistant d1 depth: policy anti-joins preserve original cohort, enrollment, reviewer and NULL decisions",async(t)=>{
+  const state=await fixture(),db=new DatabaseSync(":memory:");
+  // Exact production table constraints; unrelated destructive-lifecycle triggers are not under test.
+  for(const name of["pilot_cohorts","pilot_participants"])db.exec(state.sqlite.prepare("SELECT sql FROM sqlite_master WHERE type=\'table\' AND name=?").get(name).sql);
+  for(const row of state.sqlite.prepare("SELECT sql FROM sqlite_master WHERE type=\'index\' AND tbl_name IN(\'pilot_cohorts\',\'pilot_participants\') AND sql IS NOT NULL").all())db.exec(row.sql);
+  const sql=db.prepare("SELECT "+d1LegacyParticipantSql("expected.organization_id","expected.user_id")+" AS old_participant,"
+    +effectivePilotParticipantSql("expected.organization_id","expected.user_id")+" AS current_participant,"
+    +d1LegacyReviewerSql("expected.organization_id","expected.user_id")+" AS old_reviewer,"
+    +effectivePilotReviewerSql("expected.organization_id","expected.user_id")+" AS current_reviewer FROM(SELECT ? AS organization_id,? AS user_id) expected");
+  const insertCohort=db.prepare("INSERT INTO pilot_cohorts(cohort_id,organization_id,status,starts_at,ends_at,created_by_user_id,created_at,updated_at) VALUES(?,?,?,'2000-01-01','2999-01-01','fixture','2000-01-01','2000-01-01')");
+  const insertParticipant=db.prepare("INSERT INTO pilot_participants(participant_id,cohort_id,organization_id,email_normalized,user_id,role,status,invited_by_user_id,created_at,revoked_at) VALUES(?,?,?,?,?,?,?,'fixture','2000-01-01',?)");
+  const layouts=[[],["active"],["paused"],["closed"],["draft"],["closed","active"],["closed","paused"],
+    ["active","paused"],["closed","closed"],["closed","foreign:active"],["foreign:active"],["closed","active","paused"]];
+  const enrollments=[
+    null,{user:"depth-user",status:"active",role:"member",revoked:null},
+    {user:"depth-user",status:"active",role:"reviewer",revoked:null},
+    {user:"foreign-user",status:"active",role:"reviewer",revoked:null},
+    {user:null,status:"active",role:"reviewer",revoked:null},
+    {user:"depth-user",status:"invited",role:"reviewer",revoked:null},
+    {user:"depth-user",status:"paused",role:"reviewer",revoked:null},
+    {user:"depth-user",status:"removed",role:"reviewer",revoked:null},
+    {user:"depth-user",status:"active",role:"reviewer",revoked:"2000-01-01"},
+    {user:"depth-user",status:"active",role:"reviewer",revoked:null,foreignOrganization:true},
+    {user:"depth-user",status:"active",role:"member",revoked:null,foreignCohort:true},
+  ];
+  const scopes=[["depth-org","depth-user"],["depth-org","foreign-user"],["foreign-org","depth-user"],["depth-org",null],[null,"depth-user"]];
+  const combinations=count=>count===0?[[]]:combinations(count-1).flatMap(prefix=>enrollments.map(enrollment=>[...prefix,enrollment]));
+  let cases=0;
+  for(const layout of layouts)for(const selected of combinations(layout.length)){
+    db.exec("DELETE FROM pilot_participants; DELETE FROM pilot_cohorts;");
+    const cohorts=layout.map((entry,index)=>({id:"depth-cohort-"+index,organization:entry.startsWith("foreign:")?"foreign-org":"depth-org",status:entry.replace("foreign:","")}));
+    const participants=[];
+    for(const [index,cohort]of cohorts.entries()){
+      insertCohort.run(cohort.id,cohort.organization,cohort.status);
+      const enrollment=selected[index];
+      if(enrollment){
+        const row={...enrollment,cohort:enrollment.foreignCohort?"missing-cohort-"+index:cohort.id,organization:enrollment.foreignOrganization?"foreign-enrollment-org":cohort.organization};
+        participants.push(row);insertParticipant.run("depth-participant-"+index,row.cohort,row.organization,"depth-participant-"+index+"@example.test",row.user,row.role,row.status,row.revoked);
+        // A second ineligible row must not negate an existing eligible match or multiply access.
+        insertParticipant.run("depth-duplicate-"+index,cohort.id,cohort.organization,"depth-duplicate-"+index+"@example.test","other-user","reviewer","active",null);
+      }
+    }
+    for(const [organization,user]of scopes){
+      const row=sql.get(organization,user),label=JSON.stringify({layout,selected,organization,user});
+      const effective=cohorts.filter(cohort=>cohort.organization===organization&&["active","paused","closed"].includes(cohort.status)
+        &&(cohort.status!=="closed"||!cohorts.some(other=>other.organization===cohort.organization&&["active","paused"].includes(other.status))));
+      const matches=(participant,cohort)=>user!==null&&participant.cohort===cohort.id&&participant.organization===cohort.organization
+        &&participant.user===user&&participant.status==="active"&&participant.revoked===null;
+      assert.equal(row.current_participant,row.old_participant,label);
+      assert.equal(row.current_reviewer,row.old_reviewer,label);
+      assert.equal(row.current_participant,Number(effective.every(cohort=>participants.some(participant=>matches(participant,cohort)))),label);
+      assert.equal(row.current_reviewer,Number(effective.some(cohort=>participants.some(participant=>matches(participant,cohort)&&participant.role==="reviewer"))),label);
+      cases++;
+    }
+  }
+  assert.ok(cases>9000);t.diagnostic(cases+" original/current policy decisions agree, including independent expected outcomes");db.close();
+});
+
+test("assistant d1 depth: custody tuples retain all original fields, NULL denial and SQLite affinities",async(t)=>{
+  const state=await fixture(),db=state.sqlite;
+  const binding={actorUserId:"depth-actor",scope:{projectAccessId:"depth-access",organizationId:"depth-org",projectId:"depth-project",ownerUserId:"depth-owner"}};
+  const current=consequential.executionContentCustodyGuard(binding,"content");
+  assert.deepEqual(current.bindings,["depth-access","depth-org","depth-project","depth-owner","depth-actor"]);
+  const legacy="EXISTS(SELECT 1 FROM project_resource_scopes resource JOIN private_content_retention_scopes retention "
+    +"ON retention.content_id=resource.resource_id AND retention.organization_id=resource.organization_id AND retention.project_access_id=resource.project_access_id "
+    +"AND retention.project_id=resource.project_id AND retention.actor_user_id=resource.actor_user_id "
+    +"WHERE resource.resource_kind='content' AND resource.resource_id=content.content_id AND resource.visibility='actor_private' "
+    +"AND resource.project_access_id=? AND resource.organization_id=? AND resource.project_id=? AND resource.owner_user_id=? AND resource.actor_user_id=?)";
+  // Reuse the actual production table definitions (including TEXT affinities/NOT NULL).
+  const columns={
+    resource:db.prepare("PRAGMA table_info(project_resource_scopes)").all(),
+    retention:db.prepare("PRAGMA table_info(private_content_retention_scopes)").all(),
+  };
+  const resource={resource_kind:"content",resource_id:"depth-content",project_access_id:"depth-access",organization_id:"depth-org",project_id:"depth-project",owner_user_id:"depth-owner",actor_user_id:"depth-actor",visibility:"actor_private",created_at:"2000-01-01"};
+  const retention={content_id:"depth-content",organization_id:"depth-org",project_access_id:"depth-access",project_id:"depth-project",actor_user_id:"depth-actor",classification:"test",policy_version:1,assigned_expires_at:"2999-01-01",created_at:"2000-01-01"};
+  const compare=db.prepare("SELECT "+legacy+" AS legacy,"+current.sql+" AS current FROM(SELECT ? AS content_id) content");
+  const insert=(table,record)=>{const keys=Object.keys(record);db.prepare("INSERT INTO "+table+"("+keys.join(",")+") VALUES("+keys.map(()=>"?").join(",")+")").run(...Object.values(record));};
+  const variants=[{name:"exact",resource,retention,contentId:"depth-content",bindings:current.bindings,allowed:1},
+    {name:"missing resource",resource:null,retention,contentId:"depth-content",bindings:current.bindings,allowed:0},
+    {name:"missing retention",resource,retention:null,contentId:"depth-content",bindings:current.bindings,allowed:0},
+    {name:"NULL selected content",resource,retention,contentId:null,bindings:current.bindings,allowed:0},
+    {name:"foreign selected content",resource,retention,contentId:"foreign-content",bindings:current.bindings,allowed:0}];
+  for(const [kind,record]of Object.entries({resource,retention}))for(const key of (kind==="resource"?["resource_kind","resource_id","visibility","project_access_id","organization_id","project_id","owner_user_id","actor_user_id"]:["content_id","organization_id","project_access_id","project_id","actor_user_id"])){
+    variants.push({name:kind+" wrong "+key,resource,retention,[kind]:{...record,[key]:"foreign"},contentId:"depth-content",bindings:current.bindings,allowed:0});
+    if(columns[kind].find(column=>column.name===key)?.notnull===0)variants.push({name:kind+" NULL "+key,resource,retention,[kind]:{...record,[key]:null},contentId:"depth-content",bindings:current.bindings,allowed:0});
+  }
+  for(let index=0;index<current.bindings.length;index++)for(const value of[null,"foreign",0,1,"",true]){
+    const bindings=[...current.bindings];bindings[index]=value===true?1:value;
+    variants.push({name:"binding "+index+" "+value,resource,retention,contentId:"depth-content",bindings,allowed:0});
+  }
+  // SQLite converts inserted numbers to TEXT in the real schema; tuple comparison must
+  // preserve the same column affinity as each original comparison against a bound value.
+  for(const value of[0,1,12,1.25,"01","1e1","",null]){
+    variants.push({name:"content-id affinity "+value,resource:{...resource,resource_id:String(value)},retention:{...retention,content_id:String(value)},contentId:value,bindings:current.bindings});
+    variants.push({name:"scope affinity "+value,resource:{...resource,project_access_id:String(value)},retention:{...retention,project_access_id:String(value)},contentId:"depth-content",bindings:[value,...current.bindings.slice(1)]});
+  }
+  for(const variant of variants){
+    db.exec("DELETE FROM project_resource_scopes; DELETE FROM private_content_retention_scopes;");
+    if(variant.resource)insert("project_resource_scopes",variant.resource);
+    if(variant.retention)insert("private_content_retention_scopes",variant.retention);
+    const result=compare.get(...variant.bindings,...variant.bindings,variant.contentId);
+    assert.equal(result.current,result.legacy,variant.name);
+    if(variant.allowed!==undefined)assert.equal(result.current,variant.allowed,variant.name);
+  }
+  t.diagnostic(variants.length+" original/current custody predicates agree with original binding order");
+});
+
+
+import { compileSqliteExpressionDepth, enforceD1ExpressionDepth } from "./helpers/d1-expression-depth.mjs";
+
+test("assistant d1 depth: the real depth-100 preflight rejects before fixture preparation or execution",()=>{
+  const sqlite=new DatabaseSync(":memory:"),sql="SELECT "+Array(125).fill("1").join(" AND ")+" AS permitted";
+  assert.equal(sqlite.prepare(sql).get().permitted,1,"Default Node SQLite would conceal this D1 failure");
+  assert.equal(compileSqliteExpressionDepth(sqlite,sql,{limit:1000}).ok,true);
+  const rejected=compileSqliteExpressionDepth(sqlite,sql);
+  assert.equal(rejected.ok,false);assert.match(rejected.error,/Expression tree is too large \(maximum depth 100\)/u);
+  let prepared=0;const state={sqlite,env:{DB:{prepare(){prepared++;}}}},guard=enforceD1ExpressionDepth(state);
+  try{assert.throws(()=>state.env.DB.prepare(sql),/maximum depth 100/u);assert.equal(prepared,0);assert.equal(guard.failures.length,1);}
+  finally{guard.restore();sqlite.close();}
+});
+
+for(const shared of[false,true])test("assistant d1 depth: actual Document and Canvas consent lifecycle compiles before execution "+(shared?"shared":"personal"),async(t)=>{
+  const state=await specialistMockFixture({shared}),depth=enforceD1ExpressionDepth(state);
+  try{
+    if(shared)state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id='assistant-owner'").run();
+    const canvas=specialistCanvasEvents(state),headers=state.owner??{};
+    for(const route of["/projects","/document/doc-atmosphere",canvas.route]){
+      const response=await state.request(endpoint(route),{headers});assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+    }
+    let calls=0;
+    for(const [index,options]of[{},canvas].entries()){
+      for(let generation=0;generation<2;generation++){
+        const turn=await specialistFreeTurn(state,"depth-"+index+"-"+generation,"Review the exact original conversation and current document.",options);
+        const review=await specialistQuote(state,turn.id,undefined,options);
+        assert.equal(state.calls.length,calls,"Send and quote stay free");
+        const approved=await specialistExecute(state,review,options);assert.equal(approved.status,202,JSON.stringify(await approved.clone().json()));
+        await state.drainBackground();assert.equal(state.calls.length,++calls);
+        const retrieved=await specialistRetrieve(state,review,options),body=await retrieved.json();
+        assert.equal(retrieved.status,200,JSON.stringify(body));assert.equal(body.result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY");
+        const resumed=await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:review.quote.executionId},options);
+        assert.equal(resumed.status,200,JSON.stringify(await resumed.clone().json()));
+        const before=specialistFeedSnapshot(state),trace=specialistFeedTrace(state);
+        try{
+          const feed=await state.request(endpoint(options.route),{headers}),shown=await feed.json();
+          assert.equal(feed.status,200,JSON.stringify(shown));
+          assert.equal(shown.tasks.find(task=>task.id===review.quote.executionId)?.certifiedCompleted,true);
+          assertSpecialistFeedReadOnly(state,before,trace,calls);assert.equal(state.calls.length,calls);
+        }finally{trace.restore();}
+      }
+    }
+    state.controls.skipAssistantTaskClaimOnce=true;
+    const queued=await specialistApprovedTurn(state,"Prepare a cancelable exact request.");await state.drainBackground();
+    const canceled=await state.request(taskEndpoint(queued.task.id,"cancel"),{method:"POST",headers}),cancelBody=await canceled.json();
+    assert.equal(canceled.status,200,JSON.stringify(cancelBody));assert.equal(cancelBody.task.status,"canceled");assert.equal(state.calls.length,calls);
+    const actor=shared?"assistant-owner":"dev-local-creative";
+    const orphan=await reserveBudget(state.env,actor,200,{reservationId:"depth-orphan",streamId:"creative:"+actor,correlationId:"depth-orphan",operation:"ordinary-test-operation"});
+    assert.equal(orphan.ok,true);ageAssistantReservations(state);
+    const repaired=await sweepAssistantReservations(state);assert.equal(repaired.releasedTokens,200);
+    await state.drainBackground();depth.assertVerified();
+    assert.ok(depth.records.length>=100,"Exercise the full real request-query inventory");
+    t.diagnostic(depth.records.length+" byte-exact SQL/schema shapes compiled with SQLITE_LIMIT_EXPR_DEPTH=100 before fixture preparation");
+  }finally{depth.restore();await state.cleanup();}
+});
+
+for(const shared of[false,true])test("assistant d1 depth: signed cleanup and cancellation never guess away submitted usage "+(shared?"shared":"personal"),async(t)=>{
+  const state=await specialistMockFixture({shared}),depth=enforceD1ExpressionDepth(state);
+  try{
+    state.controls.skipAssistantTaskClaimOnce=true;const {review,task}=await specialistApprovedTurn(state,"Review this exact source.");await state.drainBackground();
+    await seedExpiredConsentedAssistantLease(state,review,{submitted:true});
+    const canceled=await state.request(taskEndpoint(task.id,"cancel"),{method:"POST",headers:state.owner??{}}),body=await canceled.json();
+    assert.equal(canceled.status,200,JSON.stringify(body));assert.equal(body.task.submission,"uncertain");
+    ageAssistantReservations(state);const finances=adaptiveReentryFinancialState(state),result=await sweepAssistantReservations(state);
+    assert.equal(result.releasedTokens,0);assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+    if(shared){
+      const removed=await deleteAssistantOrganization(state),failure=await removed.json();
+      assert.equal(removed.status,409,JSON.stringify(failure));assert.equal(failure.error,"provider_submission_in_flight");
+      assert.deepEqual(adaptiveReentryFinancialState(state),finances);
+    }
+    assert.equal(state.calls.length,0);depth.assertVerified();
+    t.diagnostic(depth.records.length+" signed cleanup/cancel SQL shapes verified before execution");
+  }finally{depth.restore();await state.cleanup();}
+});
+
+test("assistant d1 depth: final read-only feed still rejects each private withdrawal and current authority change",async(t)=>{
+  const state=await specialistMockFixture({shared:true}),depth=enforceD1ExpressionDepth(state);let restore;
+  try{
+    const{turn,review}=await specialistFeedCompleted(state,"depth-final-feed"),pointers=specialistFeedPointers(state,turn,review);
+    const original=new Map(Object.values(pointers).map(ref=>[ref,state.sqlite.prepare("SELECT * FROM private_content WHERE content_id=?").get(ref)]));
+    for(const target of["canonical","consent","answer","authored"]){
+      let fired=false;restore=interceptConsequentialDb(state,"batch",/AS certified_completed/u,()=>{
+        fired=true;specialistFeedWithdrawal(state,pointers,target,"redacted");
+      });
+      const response=await state.request(endpoint(),{headers:state.owner}),body=await response.json();restore();restore=null;
+      assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body));
+      assert.equal(assertSpecialistFeedNoCertificate(body,review).retentionUnavailable,true);
+      assert.equal(body.turns.some(item=>item.id===turn.id),false);assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+      const row=original.get(pointers[target]);state.sqlite.prepare("UPDATE private_content SET content=?,redacted_at=? WHERE content_id=?").run(row.content,row.redacted_at,row.content_id);
+    }
+    for(const target of["answer","authored"]){
+      restore=interceptConsequentialDb(state,"batch",/AS certified_completed/u,()=>state.sqlite.prepare("UPDATE private_content SET content='different final private bytes' WHERE content_id=?").run(pointers[target]));
+      const response=await state.request(endpoint(),{headers:state.owner}),body=await response.json();restore();restore=null;
+      assert.equal(response.status,200);assert.equal(body.turns.some(item=>item.id===turn.id),false);
+      assert.equal(body.context.recentTurns.some(item=>item.id.startsWith(turn.id+":")),false);
+      if(target==="answer"){assertSpecialistFeedNoCertificate(body,review);assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);}
+      else assert.equal(body.tasks.find(task=>task.id===review.quote.executionId)?.completedReview?.result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY","A retained original review is not reconstructed from the changed chat message");
+      assert.doesNotMatch(JSON.stringify(body),/different final private bytes/u);
+      const row=original.get(pointers[target]);state.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id=?").run(row.content,row.content_id);
+    }
+    restore=interceptConsequentialDb(state,"batch",/AS certified_completed/u,()=>state.sqlite.prepare("UPDATE users SET consent_version='' WHERE user_id='assistant-owner'").run());
+    const denied=await state.request(endpoint(),{headers:state.owner}),body=await denied.json();
+    assert.equal(denied.status,403);assert.equal(body.error,"assistant_read_scope_denied");
+    assert.equal(body.tasks,undefined);assert.equal(body.turns,undefined);assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY/u);
+    assert.equal(state.calls.length,1);depth.assertVerified();t.diagnostic(depth.records.length+" final read/custody proof SQL shapes verified");
+  }finally{restore?.();depth.restore();await state.cleanup();}
+});
+
+test("assistant d1 depth: verified shared-document cleanup compiles before destructive statements",async(t)=>{
+  const state=await specialistMockFixture({shared:true}),depth=enforceD1ExpressionDepth(state);
+  try{
+    const{review}=await specialistFeedCompleted(state,"depth-verified-cleanup");
+    const receipt=consequentialReceipt(state,review.quote.executionId),before=consequentialBalances(state,"assistant-owner");
+    assert.equal(receipt.steps[0].status,"settled");
+    const deleted=await deleteAssistantOrganization(state),body=await deleted.json();
+    assert.equal(deleted.status,200,JSON.stringify(body));assert.equal(body.status,"completed");
+    const after=consequentialReceipt(state,review.quote.executionId);
+    assert.equal(after.execution.status,"completed");assert.equal(after.steps[0].status,"settled");
+    assert.deepEqual(consequentialBalances(state,"assistant-owner"),before);assert.equal(state.calls.length,1);
+    depth.assertVerified();t.diagnostic(depth.records.length+" verified cleanup SQL shapes checked before execution");
+  }finally{depth.restore();await state.cleanup();}
+});
+
+test("assistant d1 depth: compile-only custom row gates retain their signatures and never execute",()=>{
+  const sqlite=new DatabaseSync(":memory:");let calls=0;
+  sqlite.function("depth_test_row_gate",{deterministic:true},()=>{calls++;return 1;});
+  sqlite.exec("CREATE TABLE depth_gate(value TEXT); CREATE TRIGGER depth_gate_proof BEFORE INSERT ON depth_gate BEGIN SELECT depth_test_row_gate(); END;");
+  const sql="INSERT INTO depth_gate(value) VALUES(?)";
+  assert.equal(compileSqliteExpressionDepth(sqlite,sql,{bindings:["mocked-row"]}).ok,true);
+  assert.equal(calls,0);assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM depth_gate").get().count,0);
+  sqlite.prepare(sql).run("mocked-row");assert.equal(calls,1,"The real fixture gate still runs only with the actual write");
+  sqlite.close();
+});
+
+/** Reuse the actual routed SQLite fixture, with native D1 depth and statement-size gates. */
+async function assistantR2DepthFixture(options={}){
+ const state=await specialistMockFixture(options),depth=enforceD1ExpressionDepth(state),trace=specialistFeedTrace(state);
+ return{...state,depth,trace,async cleanup(){
+  try{
+   await state.cleanup();depth.assertVerified();
+   for(const statement of trace.statements){assert.ok(statement.bindings<=100,statement.bindings+" bindings");assert.ok(statement.bytes<=100_000,statement.bytes+" SQL bytes");}
+  }finally{trace.restore();depth.restore();}
+ }};
+}
+
+function assistantR2RevokeSession(state,kind="revoked"){
+ const sql=kind==="expired"?"UPDATE project_context_sessions SET expires_at='2000-01-01T00:00:00.000Z' WHERE principal_user_id=? AND project_access_id=?":"UPDATE project_context_sessions SET revoked_at=? WHERE principal_user_id=? AND project_access_id=?";
+ const actor=state.owner?.["oai-authenticated-user-id"]??"dev-local-creative";
+ const changed=kind==="expired"?state.sqlite.prepare(sql).run(actor,state.projectAccessId):state.sqlite.prepare(sql).run(new Date().toISOString(),actor,state.projectAccessId);
+ assert.ok(changed.changes>0);
+}
+async function assistantR2EditorFixture(){
+ const original=await assistantR2DepthFixture({shared:true});
+ original.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id='assistant-viewer'").run();
+ original.sqlite.prepare("UPDATE project_memberships SET role='editor',updated_at=? WHERE user_id='assistant-viewer' AND project_access_id=?").run(new Date().toISOString(),original.projectAccessId);
+ return{...original,owner:original.viewer};
+}
+async function assistantR2Queued(state,{reserve=true}={}){
+ state.controls.skipAssistantTaskClaimOnce=true;
+ const approved=await specialistApprovedTurn(state,"Review the exact retained source.");
+ await state.drainBackground();if(reserve)await seedExpiredConsentedAssistantLease(state,approved.review);
+ return approved;
+}
+function assistantR2Financial(state){return{...specialistFeedSnapshot(state),providerCalls:state.calls.length};}
+
+for(const action of["feed","resume","quote"])test("assistant authority R2: revoked CURRENT selected session withholds "+action,async()=>{
+ const state=await assistantR2DepthFixture({shared:true});let restore;
+ try{
+  const {turn,review}=action==="quote"?{turn:await specialistFreeTurn(state,"r2-old-free-quote"),review:null}:await specialistFeedCompleted(state,"r2-old-paid-"+action);
+  const pattern=action==="feed"?/AS certified_completed/u:action==="resume"?/AS result_retained/u:/^SELECT 1 AS retained WHERE/u;
+  let fired=false;restore=interceptConsequentialDb(state,action==="feed"?"batch":"first",pattern,()=>{fired=true;assistantR2RevokeSession(state);});
+  const response=action==="feed"?await state.request(endpoint(),{headers:state.owner}):action==="resume"?await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:review.quote.executionId}):await specialistProtocolRequest(state,{action:"quote",turnId:turn.id});
+  const body=await response.json();assert.equal(fired,true);assert.ok([403,404].includes(response.status),JSON.stringify(body));
+  assert.equal(body.quote,undefined);assert.equal(body.tasks,undefined);assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY|providerRequest/u);
+ }finally{restore?.();await state.cleanup();}
+});
+test("assistant authority R2: downgraded viewer cannot stop or release holds",async()=>{
+ const state=await assistantR2EditorFixture();
+ try{
+  const {task}=await assistantR2Queued(state),before=assistantR2Financial(state);
+  state.sqlite.prepare("UPDATE project_memberships SET role='viewer',updated_at=? WHERE user_id='assistant-viewer' AND project_access_id=?").run(new Date().toISOString(),state.projectAccessId);
+  const response=await state.request(taskEndpoint(task.id,"cancel"),{method:"POST",headers:state.owner}),body=await response.json();
+  assert.equal(response.status,403,JSON.stringify(body));assert.equal(body.error,"assistant_stop_scope_denied");
+  assert.deepEqual(assistantR2Financial(state),before);
+ }finally{await state.cleanup();}
+});
+test("assistant authority R2: Stop authorization loss after read prevents mutation and release",async()=>{
+ const state=await assistantR2EditorFixture();let restore;
+ try{
+  const {task}=await assistantR2Queued(state),before=assistantR2Financial(state);let fired=false;
+  restore=interceptConsequentialDb(state,"first",/^SELECT 1 AS current WHERE[\s\S]*specialistConsentVersion/u,()=>{
+   fired=true;state.sqlite.prepare("UPDATE project_memberships SET status='revoked',revoked_at=? WHERE user_id='assistant-viewer' AND project_access_id=?").run(new Date().toISOString(),state.projectAccessId);
+  },"after");
+  const response=await state.request(taskEndpoint(task.id,"cancel"),{method:"POST",headers:state.owner}),body=await response.json();
+  assert.equal(fired,true);assert.equal(response.status,409,JSON.stringify(body));assert.equal(body.error,"assistant_stop_unconfirmed");assert.deepEqual(assistantR2Financial(state),before);
+  assert.equal(state.sqlite.prepare("SELECT status FROM assistant_specialist_tasks WHERE task_id=?").get(task.id).status,"running");
+ }finally{restore?.();await state.cleanup();}
+});
+for(const paid of["settled","uncertain"])test("assistant authority R2: generic catch does not assert unused on "+paid+" receipt failure",async()=>{
+ const state=await assistantR2DepthFixture(paid==="uncertain"?{respond:()=>{throw new TypeError("Unknown original POST");}}:{});let restore;
+ try{
+  const {review,task}=await specialistApprovedTurn(state,"Review the exact retained source.");await state.drainBackground();
+  const original=consequentialReceipt(state,task.id);assert.equal(state.calls.length,1);if(paid==="settled")assert.equal(original.cost[0].used_microusd,560);else assert.ok(original.balances.cost.reserved>0);
+  const before=assistantR2Financial(state);
+  restore=interceptConsequentialDb(state,"first",/^SELECT \* FROM consequential_executions WHERE execution_id=/u,()=>{throw new Error("fixture transient original receipt read");});
+  const response=await specialistRetrieve(state,review),body=await response.json();
+  assert.equal(response.status,409);assert.equal(body.submission,undefined);assert.equal(body.unusedExecution,undefined);assert.deepEqual(assistantR2Financial(state),before);
+ }finally{restore?.();await state.cleanup();}
+});
+test("assistant authority R2: original unused recovery has a certified refresh marker",async()=>{
+ const state=await assistantR2DepthFixture();
+ try{
+  const turn=await specialistFreeTurn(state,"r2-original-unused"),review=await specialistQuote(state,turn.id),response=await specialistRetrieve(state,review),body=await response.json();
+  assert.equal(response.status,200);assert.equal(body.quote.status,"quoted");assert.equal(body.task,undefined);assert.equal(body.unusedExecution,true);assert.equal(body.quote.canExecute,false);assert.equal(state.calls.length,0);
+ }finally{await state.cleanup();}
+});
+
+for(const action of["feed","resume","quote"])test("assistant authority R2: expired CURRENT selected session withholds "+action+" private material at final read",async()=>{
+ const state=await assistantR2DepthFixture({shared:true});let restore;
+ try{
+  const {turn,review}=action==="quote"?{turn:await specialistFreeTurn(state,"r2-expiring-quote"),review:null}:await specialistFeedCompleted(state,"r2-expiring-"+action);
+  let fired=false;restore=interceptConsequentialDb(state,action==="feed"?"batch":"first",action==="feed"?/AS certified_completed/u:action==="resume"?/AS result_retained/u:/^SELECT 1 AS retained WHERE/u,()=>{fired=true;assistantR2RevokeSession(state,"expired");});
+  const response=action==="feed"?await state.request(endpoint(),{headers:state.owner}):action==="resume"?await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:review.quote.executionId}):await specialistProtocolRequest(state,{action:"quote",turnId:turn.id}),body=await response.json();
+  assert.equal(fired,true);assert.ok([403,404].includes(response.status),JSON.stringify(body));
+  assert.equal(body.quote,undefined);assert.equal(body.tasks,undefined);assert.equal(body.unusedExecution,undefined);
+  assert.doesNotMatch(JSON.stringify(body),/PRIVATE_VERIFIED_SPECIALIST_REPLY|providerRequest/u);
+ }finally{restore?.();await state.cleanup();}
+});
+test("assistant authority R2: cookie-free owner reads remain valid after an unrelated selected session expires",async()=>{
+ const state=await assistantR2DepthFixture({shared:true});
+ try{
+  const {turn,review}=await specialistFeedCompleted(state,"r2-cookie-free-owner"),before=assistantR2Financial(state);
+  assistantR2RevokeSession(state,"expired");const{cookie,...headers}=state.owner;assert.ok(cookie);
+  const resumed=await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:review.quote.executionId},{headers}),body=await resumed.json();
+  assert.equal(resumed.status,200,JSON.stringify(body));assert.equal(body.result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY");assert.equal(body.quote.canExecute,false);
+  const feed=await state.request(endpoint(),{headers});assert.equal(feed.status,200);assert.equal((await feed.json()).tasks.find(task=>task.id===review.quote.executionId)?.certifiedCompleted,true);
+  assert.deepEqual(assistantR2Financial(state),before);
+ }finally{await state.cleanup();}
+});
+test("assistant authority R2: renewed current reader session does not depend on the original approval session",async()=>{
+ const state=await assistantR2EditorFixture();
+ try{
+  const {turn,review}=await specialistFeedCompleted(state,"r2-renewed-reader");
+  assistantR2RevokeSession(state,"expired");
+  state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id='assistant-viewer'").run();
+  state.sqlite.prepare("UPDATE project_memberships SET role='viewer' WHERE user_id='assistant-viewer' AND project_access_id=?").run(state.projectAccessId);
+  const{cookie,...identity}=state.owner;assert.ok(cookie);
+  const renewed=await state.request("/api/workspaces/"+state.organizationId+"/projects/"+state.projectAccessId+"/context",{method:"POST",headers:identity});
+  assert.equal(renewed.status,200,JSON.stringify(await renewed.clone().json()));
+  const headers={...identity,cookie:renewed.headers.get("set-cookie").split(";")[0]},before=assistantR2Financial(state);
+  assert.notEqual(headers.cookie,cookie);
+  for(const action of["retrieve","resume"]){
+   const response=await specialistProtocolRequest(state,{action,turnId:turn.id,executionId:review.quote.executionId,...(action==="retrieve"?{approvedBindingHash:review.quote.bindingHash}:{})},{headers}),body=await response.json();
+   assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY");assert.equal(body.quote.canExecute,false);assert.equal(body.unusedExecution,undefined);
+  }
+  assert.deepEqual(assistantR2Financial(state),before);
+ }finally{await state.cleanup();}
+});
+for(const shared of[false,true])test("assistant authority R2: current authorized Stop ignores provider/model/budget/month purchase eligibility "+shared,async()=>{
+ const state=shared?await assistantR2EditorFixture():await assistantR2DepthFixture();let clock;
+ try{
+  const {review,task}=await assistantR2Queued(state);
+  delete state.env.OPENAI_API_KEY;state.env.FORMA_ASSISTANT_ALLOWED_MODELS="";state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS="";
+  state.sqlite.prepare("UPDATE cost_budget_counters SET hard_limit_microusd=0").run();
+  state.sqlite.prepare("UPDATE private_content SET expires_at='2099-01-01T00:00:00.000Z' WHERE redacted_at IS NULL").run();
+  state.sqlite.prepare("UPDATE project_context_sessions SET expires_at='2099-01-01T00:00:00.000Z' WHERE revoked_at IS NULL").run();
+  clock=consequentialDbClock(state);clock.set(new Date(Date.UTC(Number(review.quote.period.slice(0,4)),Number(review.quote.period.slice(5,7)),1)).toISOString());
+  const response=await state.request(taskEndpoint(task.id,"cancel"),{method:"POST",headers:state.owner??{}}),body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.task.status,"canceled");assert.equal(body.task.submission,"not-submitted");
+  const receipt=consequentialReceipt(state,task.id);assert.equal(receipt.steps[0].status,"not-submitted");assert.ok(receipt.tokens.every(row=>row.status==="released"));assert.ok(receipt.cost.every(row=>row.status==="released"));assert.equal(state.calls.length,0);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_action_commits WHERE commit_id=?").get("specialist-stop:"+task.id).count,1);
+ }finally{clock?.close();await state.cleanup();}
+});
+for(const change of["session","expired session","consent","membership","author role"])test("assistant authority R2: "+change+" loss at Stop mutation boundary has zero Stop or budget effects",async()=>{
+ const state=await assistantR2EditorFixture();let restore;
+ try{
+  const {review,task}=await assistantR2Queued(state);let fired=false;
+  restore=interceptConsequentialDb(state,"batch",/^UPDATE consequential_execution_steps SET status='not-submitted'/u,()=>{
+   fired=true;
+   if(change==="session"||change==="expired session")assistantR2RevokeSession(state,change==="expired session"?"expired":"revoked");
+   else if(change==="author role")state.sqlite.prepare("UPDATE project_memberships SET role='viewer' WHERE user_id='assistant-viewer' AND project_access_id=?").run(state.projectAccessId);
+   else if(change==="consent")state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=(SELECT consent_ref FROM consequential_executions WHERE execution_id=?)").run(new Date().toISOString(),review.quote.executionId);
+   else state.sqlite.prepare("UPDATE project_memberships SET status='revoked',revoked_at=? WHERE user_id='assistant-viewer' AND project_access_id=?").run(new Date().toISOString(),state.projectAccessId);
+  });
+  const before=assistantR2Financial(state),response=await state.request(taskEndpoint(task.id,"cancel"),{method:"POST",headers:state.owner}),body=await response.json();
+  assert.equal(fired,true);assert.equal(response.status,409,JSON.stringify(body));assert.equal(body.error,"assistant_stop_unconfirmed");assert.deepEqual(assistantR2Financial(state),before);assert.equal(body.submission,undefined);
+ }finally{restore?.();await state.cleanup();}
+});
+test("assistant authority R2: authorization revoked between Stop mutations rolls the entire batch back",async()=>{
+ const state=await assistantR2EditorFixture();
+ try{
+  const {task}=await assistantR2Queued(state),before=assistantR2Financial(state);
+  state.sqlite.exec("CREATE TRIGGER r2_revoke_inside_stop AFTER UPDATE OF status ON consequential_execution_steps WHEN NEW.execution_id='"+task.id+"' AND NEW.status='not-submitted' BEGIN UPDATE project_memberships SET status='revoked',revoked_at='2000-01-01' WHERE user_id='assistant-viewer' AND project_access_id='"+state.projectAccessId+"'; END;");
+  const response=await state.request(taskEndpoint(task.id,"cancel"),{method:"POST",headers:state.owner}),body=await response.json();
+  assert.equal(response.status,409,JSON.stringify(body));assert.equal(body.error,"assistant_stop_unconfirmed");assert.deepEqual(assistantR2Financial(state),before);
+  assert.equal(state.sqlite.prepare("SELECT status FROM project_memberships WHERE user_id='assistant-viewer' AND project_access_id=?").get(state.projectAccessId).status,"active","The failed final CHECK rolls back every statement in the batch");
+ }finally{await state.cleanup();}
+});
+test("assistant authority R2: an existing Stop receipt cannot suppress a later CHECK denial",async()=>{
+ const state=await assistantR2EditorFixture();let restore;
+ try{
+  const {task}=await assistantR2Queued(state);assert.equal((await state.request(taskEndpoint(task.id,"cancel"),{method:"POST",headers:state.owner})).status,200);
+  const before=assistantR2Financial(state);let fired=false;
+  restore=interceptConsequentialDb(state,"first",/^SELECT 1 AS current WHERE[\s\S]*specialistConsentVersion/u,()=>{fired=true;assistantR2RevokeSession(state);},"after");
+  const response=await state.request(taskEndpoint(task.id,"cancel"),{method:"POST",headers:state.owner}),body=await response.json();
+  assert.equal(fired,true);assert.equal(response.status,409,JSON.stringify(body));assert.equal(body.error,"assistant_stop_unconfirmed");assert.deepEqual(assistantR2Financial(state),before);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_action_commits WHERE commit_id=?").get("specialist-stop:"+task.id).count,1);
+ }finally{restore?.();await state.cleanup();}
+});
+test("assistant authority R2: Stop retains unknown submitted holds and cannot turn them into an unused quote",async()=>{
+ const state=await assistantR2DepthFixture({respond:()=>{throw new TypeError("unknown original submission");}});
+ try{
+  const{review,task}=await specialistApprovedTurn(state,"Review the exact retained source.");await state.drainBackground();
+  const before=consequentialReceipt(state,task.id),response=await state.request(taskEndpoint(task.id,"cancel"),{method:"POST"}),body=await response.json(),after=consequentialReceipt(state,task.id);
+  assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.task.status,"canceled");assert.equal(body.task.submission,"uncertain");assert.equal(body.unusedExecution,undefined);
+  assert.deepEqual(after.tokens,before.tokens);assert.deepEqual(after.cost,before.cost);assert.deepEqual(after.balances,before.balances);assert.equal(state.calls.length,1);
+  const resumed=await specialistRetrieve(state,review);assert.equal((await resumed.json()).unusedExecution,undefined);assert.equal(state.calls.length,1);
+ }finally{await state.cleanup();}
+});
+test("assistant authority R2: completed paid original wins a racing Stop without changing its receipt",async()=>{
+ const ready=Promise.withResolvers(),release=Promise.withResolvers(),state=await assistantR2DepthFixture({respond:async payload=>{ready.resolve();await release.promise;return specialistRawResponse(payload);}});let restore;
+ try{
+  const{task}=await specialistApprovedTurn(state,"Review the exact retained source.");await ready.promise;let completed;
+  restore=interceptConsequentialDb(state,"first",/^SELECT 1 AS current WHERE[\s\S]*specialistConsentVersion/u,async()=>{release.resolve();await state.drainBackground();completed=consequentialReceipt(state,task.id);},"after");
+  const response=await state.request(taskEndpoint(task.id,"cancel"),{method:"POST"}),body=await response.json();
+  assert.ok(completed);assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY");assert.equal(body.task.status,"completed");assert.equal(body.unusedExecution,undefined);assert.deepEqual(consequentialReceipt(state,task.id),completed);assert.equal(state.calls.length,1);
+  const before=assistantR2Financial(state),again=await state.request(taskEndpoint(task.id,"cancel"),{method:"POST"});
+  assert.equal(again.status,200);assert.equal((await again.json()).result.reply,"PRIVATE_VERIFIED_SPECIALIST_REPLY");assert.deepEqual(assistantR2Financial(state),before);
+ }finally{release.resolve();restore?.();await state.cleanup();}
+});
+
+for(const reason of["provider-unavailable","source-changed","expired-approval"])test("assistant authority R2: exact unused recovery permits only an explicit FREE refresh after "+reason,async()=>{
+ const state=await assistantR2DepthFixture();
+ try{
+  const turn=await specialistFreeTurn(state,"r2-unused-"+reason),review=await specialistQuote(state,turn.id),original=structuredClone(review.quote);
+  if(reason==="provider-unavailable")delete state.env.OPENAI_API_KEY;
+  if(reason==="source-changed")appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[["BlockPropertyEdited",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"block-direction",property_path:"text",new_value:"A new current direction requiring a new free review."}]]);
+  if(reason==="expired-approval")state.sqlite.prepare("UPDATE consequential_executions SET expires_at='2000-01-01T00:00:00.000Z' WHERE execution_id=?").run(review.quote.executionId);
+  const rejected=await specialistExecute(state,review),failure=await rejected.json();assert.ok(rejected.status>=400,JSON.stringify(failure));assert.equal(failure.unusedExecution,undefined);assert.equal(failure.submission,undefined);
+  const before=assistantR2Financial(state);
+  const resumed=await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:review.quote.executionId}),body=await resumed.json();
+  assert.equal(resumed.status,200,JSON.stringify(body));assert.equal(body.unusedExecution,true);assert.equal(body.task,undefined);assert.equal(body.result,undefined);assert.equal(body.quote.canExecute,false);
+  assert.equal(body.executionId,original.executionId);assert.equal(body.quote.bindingHash,original.bindingHash);assert.deepEqual(body.quote.privateInput,original.privateInput);
+  assert.deepEqual(assistantR2Financial(state),before);assert.equal(state.calls.length,0);
+  const fresh=await specialistQuote(state,turn.id);assert.equal(state.calls.length,0);
+  if(reason==="source-changed"){assert.notEqual(fresh.quote.bindingHash,original.bindingHash);assert.notEqual(fresh.quote.sourceHash,original.sourceHash);}
+ }finally{await state.cleanup();}
+});
+for(const corruption of[
+ "missing-step","extra-step","wrong-index","wrong-token-limit","wrong-cost-limit","wrong-token-pointer","wrong-cost-pointer",
+ "reserved-step","submitting-step","uncertain-step","usage-recorded-step","settled-step","not-submitted-step",
+ "zero-verified-tokens","zero-verified-cost","empty-provider-id","reserved-execution","failed-execution","result-pointer",
+])test("assistant authority R2: "+corruption+" is not an unused execution certificate",async()=>{
+ const state=await assistantR2DepthFixture();
+ try{
+  const turn=await specialistFreeTurn(state,"r2-unused-negative-"+corruption),review=await specialistQuote(state,turn.id),id=review.quote.executionId;
+  if(corruption==="missing-step")state.sqlite.prepare("DELETE FROM consequential_execution_steps WHERE execution_id=?").run(id);
+  else if(corruption==="extra-step")state.sqlite.prepare("INSERT INTO consequential_execution_steps(execution_id,step_index,token_reservation_id,cost_reservation_id,maximum_tokens,maximum_microusd,status,updated_at) SELECT execution_id,1,execution_id||':tokens:1',execution_id||':usd:1',maximum_tokens,maximum_microusd,'quoted',updated_at FROM consequential_execution_steps WHERE execution_id=? AND step_index=0").run(id);
+  else if(corruption==="wrong-index")state.sqlite.prepare("UPDATE consequential_execution_steps SET step_index=2 WHERE execution_id=?").run(id);
+  else if(corruption==="wrong-token-limit")state.sqlite.prepare("UPDATE consequential_execution_steps SET maximum_tokens=maximum_tokens+1 WHERE execution_id=?").run(id);
+  else if(corruption==="wrong-cost-limit")state.sqlite.prepare("UPDATE consequential_execution_steps SET maximum_microusd=maximum_microusd+1 WHERE execution_id=?").run(id);
+  else if(corruption==="wrong-token-pointer")state.sqlite.prepare("UPDATE consequential_execution_steps SET token_reservation_id='different-token-pointer' WHERE execution_id=?").run(id);
+  else if(corruption==="wrong-cost-pointer")state.sqlite.prepare("UPDATE consequential_execution_steps SET cost_reservation_id='different-cost-pointer' WHERE execution_id=?").run(id);
+  else if(corruption.endsWith("-step"))state.sqlite.prepare("UPDATE consequential_execution_steps SET status=? WHERE execution_id=?").run(corruption.slice(0,-5),id);
+  else if(corruption==="zero-verified-tokens")state.sqlite.prepare("UPDATE consequential_execution_steps SET verified_tokens=0 WHERE execution_id=?").run(id);
+  else if(corruption==="zero-verified-cost")state.sqlite.prepare("UPDATE consequential_execution_steps SET verified_microusd=0 WHERE execution_id=?").run(id);
+  else if(corruption==="empty-provider-id")state.sqlite.prepare("UPDATE consequential_execution_steps SET provider_request_id='' WHERE execution_id=?").run(id);
+  else if(corruption.endsWith("-execution"))state.sqlite.prepare("UPDATE consequential_executions SET status=? WHERE execution_id=?").run(corruption.slice(0,-10),id);
+  else if(corruption==="result-pointer")state.sqlite.prepare("UPDATE consequential_executions SET result_ref='missing-but-existing-result-pointer' WHERE execution_id=?").run(id);
+  const before=assistantR2Financial(state),response=await specialistRetrieve(state,review),body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.unusedExecution,undefined);assert.equal(body.quote.canExecute,false);assert.deepEqual(assistantR2Financial(state),before);assert.equal(state.calls.length,0);
+ }finally{await state.cleanup();}
+});
+for(const ledger of["tokens","cost"])for(const evidence of["normal","foreign-owner","orphan-correlation","unexpected-index","released"])test("assistant authority R2: "+ledger+" "+evidence+" reservation prevents a false unused certificate",async()=>{
+ const state=await assistantR2DepthFixture();
+ try{
+  const turn=await specialistFreeTurn(state,"r2-ledger-"+ledger+"-"+evidence),review=await specialistQuote(state,turn.id),id=review.quote.executionId;
+  const reservationId=evidence==="orphan-correlation"?"orphan-"+id:id+(ledger==="tokens"?":tokens:":":usd:")+(evidence==="unexpected-index"?"9":"0");
+  const options={reservationId,streamId:"creative:dev-local-creative",correlationId:evidence==="unexpected-index"?"different-correlation":id,operation:"assistant-specialist:fixture"};
+  const held=ledger==="tokens"?await reserveBudget(state.env,"dev-local-creative",100,options):await reserveCostBudget(state.env,"dev-local-creative",100,{...options,maximumMicrousd:100,allowUserOverage:false});
+  assert.equal(held.ok,true);
+  const table=ledger==="tokens"?"budget_reservations":"cost_budget_reservations";
+  if(evidence==="foreign-owner")state.sqlite.prepare("UPDATE "+table+" SET owner_id='foreign-ledger-owner' WHERE reservation_id=?").run(reservationId);
+  if(evidence==="released")state.sqlite.prepare("UPDATE "+table+" SET status='released' WHERE reservation_id=?").run(reservationId);
+  const before=assistantR2Financial(state),response=await specialistRetrieve(state,review),body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.unusedExecution,undefined);assert.equal(body.quote.canExecute,false);assert.deepEqual(assistantR2Financial(state),before);assert.equal(state.calls.length,0);
+ }finally{await state.cleanup();}
+});
+test("assistant authority R2: admission racing the final unused proof never unlocks a new request",async()=>{
+ const state=await assistantR2DepthFixture();let restore;
+ try{
+  const turn=await specialistFreeTurn(state,"r2-unused-racing-admission"),review=await specialistQuote(state,turn.id);let fired=false;
+  restore=interceptConsequentialDb(state,"first",/AS unused_execution/u,async()=>{
+   fired=true;state.controls.skipAssistantTaskClaimOnce=true;
+   const admitted=await specialistExecute(state,review);assert.equal(admitted.status,202,JSON.stringify(await admitted.clone().json()));await state.drainBackground();
+  });
+  const response=await specialistRetrieve(state,review),body=await response.json();
+  assert.equal(fired,true);assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.unusedExecution,undefined);assert.equal(body.quote.canExecute,false);assert.equal(state.calls.length,0);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_specialist_tasks WHERE task_id=?").get(review.quote.executionId).count,1);
+ }finally{restore?.();await state.cleanup();}
+});
+test("assistant authority R2: paid same-turn winner remains evidence even when its mutable task row is gone",async()=>{
+ const state=await assistantR2DepthFixture();
+ try{
+  const turn=await specialistFreeTurn(state,"r2-unused-paid-winner"),old=await specialistQuote(state,turn.id),winner=await specialistQuote(state,turn.id,"gpt-5.6-terra");
+  assert.notEqual(winner.quote.executionId,old.quote.executionId);
+  assert.equal((await specialistExecute(state,winner)).status,202);await state.drainBackground();
+  assert.equal(consequentialReceipt(state,winner.quote.executionId).execution.status,"completed");
+  state.sqlite.prepare("DELETE FROM assistant_specialist_tasks WHERE task_id=?").run(winner.quote.executionId);
+  const before=assistantR2Financial(state),response=await specialistRetrieve(state,old),body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.unusedExecution,undefined);assert.deepEqual(assistantR2Financial(state),before);assert.equal(state.calls.length,1);
+ }finally{await state.cleanup();}
+});
+test("assistant authority R2: multiple truly unused model previews remain independently reviewable without spend",async()=>{
+ const state=await assistantR2DepthFixture();
+ try{
+  const turn=await specialistFreeTurn(state,"r2-unused-free-siblings"),first=await specialistQuote(state,turn.id),second=await specialistQuote(state,turn.id,"gpt-5.6-terra");
+  assert.notEqual(first.quote.executionId,second.quote.executionId);
+  for(const review of[first,second]){const response=await specialistRetrieve(state,review),body=await response.json();assert.equal(response.status,200);assert.equal(body.unusedExecution,true);assert.equal(body.quote.canExecute,false);}
+  assert.equal(state.calls.length,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM assistant_specialist_tasks").get().count,0);
+ }finally{await state.cleanup();}
+});
+for(const withdrawal of["consent","session"])test("assistant authority R2: "+withdrawal+" withdrawal at final unused proof withholds the entire certificate",async()=>{
+ const state=await assistantR2DepthFixture({shared:true});let restore;
+ try{
+  const turn=await specialistFreeTurn(state,"r2-unused-final-"+withdrawal),review=await specialistQuote(state,turn.id);
+  restore=interceptConsequentialDb(state,"first",/AS unused_execution/u,()=>{
+   if(withdrawal==="session")assistantR2RevokeSession(state);
+   else state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=(SELECT consent_ref FROM consequential_executions WHERE execution_id=?)").run(new Date().toISOString(),review.quote.executionId);
+  });
+  const response=await specialistRetrieve(state,review),body=await response.json();
+  assert.equal(response.status,404,JSON.stringify(body));assert.equal(body.unusedExecution,undefined);assert.equal(body.quote,undefined);assert.equal(state.calls.length,0);
+ }finally{restore?.();await state.cleanup();}
+});
+
+for(const paid of["settled","uncertain"])for(const corruption of["missing","unrecognized"])test("assistant authority R2: "+paid+" "+corruption+" step never implies no submission in exact recovery or feed",async()=>{
+ const state=await assistantR2DepthFixture(paid==="uncertain"?{respond:()=>{throw new TypeError("Unknown original POST");}}:{});
+ try{
+  const{turn,review,task}=await specialistApprovedTurn(state,"Review the exact retained source.");await state.drainBackground();
+  const receipt=consequentialReceipt(state,task.id);assert.equal(state.calls.length,1);
+  assert.equal(receipt.steps[0].status,paid);if(paid==="settled")assert.equal(receipt.cost[0].used_microusd,560);else assert.ok(receipt.balances.cost.reserved>0);
+  if(corruption==="missing")state.sqlite.prepare("DELETE FROM consequential_execution_steps WHERE execution_id=?").run(task.id);
+  else state.sqlite.prepare("UPDATE consequential_execution_steps SET status='unrecognized-status' WHERE execution_id=?").run(task.id);
+  const before=assistantR2Financial(state);
+  const response=await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:review.quote.executionId}),body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.task.submission,undefined);assert.equal(body.task.canExecute,false);assert.equal(body.unusedExecution,undefined);
+  assert.deepEqual(adaptiveReentryFinancialState(state),before.financial);assert.equal(state.calls.length,before.providerCalls);
+  const beforeFeed=assistantR2Financial(state),feed=await state.request(endpoint()),page=await feed.json();assert.equal(feed.status,200,JSON.stringify(page));
+  const listed=page.tasks.find(item=>item.id===task.id);assert.ok(listed);assert.equal(listed.submission,undefined);assert.equal(listed.canExecute,false);
+  assert.deepEqual(assistantR2Financial(state),beforeFeed);
+ }finally{await state.cleanup();}
+});
+for(const reserved of[false,true])test("assistant authority R2: genuine "+(reserved?"reserved":"quoted")+" step remains proven not-submitted and explicitly runnable",async()=>{
+ const state=await assistantR2DepthFixture();
+ try{
+  const{turn,review,task}=await assistantR2Queued(state,{reserve:reserved}),receipt=consequentialReceipt(state,task.id);
+  assert.equal(receipt.steps[0].status,reserved?"reserved":"quoted");
+  const before=assistantR2Financial(state),response=await specialistProtocolRequest(state,{action:"resume",turnId:turn.id,executionId:review.quote.executionId}),body=await response.json();
+  assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.task.submission,"not-submitted");assert.equal(body.task.canExecute,true);assert.equal(body.unusedExecution,undefined);
+  const feed=await state.request(endpoint()),page=await feed.json();assert.equal(feed.status,200,JSON.stringify(page));
+  const listed=page.tasks.find(item=>item.id===task.id);assert.ok(listed);assert.equal(listed.submission,"not-submitted");assert.equal(listed.canExecute,false);
+  assert.deepEqual(assistantR2Financial(state),before);assert.equal(state.calls.length,0);
+ }finally{await state.cleanup();}
+});
+
+for (const shared of [false, true]) for (const surface of ["Document", "Canvas"]) {
+  test("unused model route R3 " + (shared ? "shared " : "personal ") + surface + ": original inspection and explicit replacement previews reserve nothing", async () => {
+    const state = await assistantR2DepthFixture({ shared, models: "gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol", solUsers: "dev-local-creative,assistant-owner",
+      respond: () => assert.fail("Free recovery must never reach a provider") });
+    try {
+      if (shared && surface === "Canvas") state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id='assistant-owner'").run();
+      const options = surface === "Canvas" ? specialistCanvasEvents(state) : {};
+      const authored = adaptiveAuthoredCount(state);
+      for (const locale of ["en", "fr", "ar", "ja"]) {
+        state.env.FORMA_ASSISTANT_ALLOWED_MODELS = "gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol";
+        const turn = await specialistFreeTurn(state, "unused-model-" + surface + "-" + locale, "Explain the exact original source.", { ...options, locale });
+        const original = await specialistQuote(state, turn.id, "gpt-5.6-luna", options), finances = adaptiveReentryFinancialState(state);
+        state.env.FORMA_ASSISTANT_ALLOWED_MODELS = "gpt-5.6-terra,gpt-5.6-sol";
+        const session = await (await state.request("/api/session", { headers: state.owner ?? {} })).json();
+        assert.equal(session.assistant.models.some(model => model.id === "gpt-5.6-luna"), false);
+        const response = await specialistProtocolRequest(state, { action: "resume", turnId: turn.id, executionId: original.executionId }, options), unused = await response.json();
+        assert.equal(response.status, 200, JSON.stringify(unused));
+        assert.equal(unused.unusedExecution, true); assert.equal(unused.task, undefined); assert.equal(unused.result, undefined);
+        assert.equal(unused.quote.canExecute, false); assert.equal(unused.quote.bindingHash, original.quote.bindingHash);
+        const inspected = await specialistQuote(state, turn.id, "gpt-5.6-luna", options);
+        assert.equal(inspected.quote.models[0], "gpt-5.6-luna"); assert.equal(inspected.quote.canExecute, false);
+        assert.ok(inspected.quote.unavailableReasons.includes("assistant_model_model_not_allowed"));
+        assert.equal(inspected.originalRequest.locale, locale);
+        assert.deepEqual(inspected.originalRequest.selectedItemIds, original.originalRequest.selectedItemIds);
+        const denied = await specialistExecute(state, inspected, options);
+        assert.ok(denied.status >= 400, JSON.stringify(await denied.clone().json()));
+        const chosen = await specialistQuote(state, turn.id, "gpt-5.6-terra", options);
+        assert.equal(chosen.quote.models[0], "gpt-5.6-terra"); assert.equal(chosen.quote.canExecute, true);
+        assert.equal(chosen.turnId, turn.id); assert.notEqual(chosen.quote.bindingHash, original.quote.bindingHash);
+        assert.equal(chosen.originalRequest.sourceHash, chosen.quote.sourceHash);
+        assert.equal(chosen.originalRequest.route, original.originalRequest.route);
+        assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_turns WHERE turn_id=?").get(turn.id).n, 1);
+        assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM assistant_specialist_tasks").get().n, 0);
+        assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n, 0);
+        assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n, 0);
+        assert.deepEqual(adaptiveReentryFinancialState(state), finances);
+        assert.equal(adaptiveAuthoredCount(state), authored);
+        assert.equal(state.calls.length, 0);
+      }
+    } finally { await state.cleanup(); }
+  });
+}

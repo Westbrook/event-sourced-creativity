@@ -2553,6 +2553,23 @@
             },
             {
               "kind": "field",
+              "name": "canSpecialist",
+              "type": {
+                "text": "boolean"
+              },
+              "attribute": "canspecialist"
+            },
+            {
+              "kind": "method",
+              "name": "clearConversationDrafts",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "field",
               "name": "context",
               "type": {
                 "text": "AssistantContext | null"
@@ -2565,6 +2582,14 @@
                 "text": "string"
               },
               "attribute": "conversationscope"
+            },
+            {
+              "kind": "field",
+              "name": "guidanceDelivery",
+              "type": {
+                "text": "\"\" | \"sending\" | \"uncertain\""
+              },
+              "attribute": "guidancedelivery"
             },
             {
               "kind": "field",
@@ -2638,6 +2663,29 @@
             },
             {
               "kind": "method",
+              "name": "resolveGuidanceRequest",
+              "parameters": [
+                {
+                  "name": "accepted",
+                  "type": {
+                    "text": "boolean"
+                  }
+                },
+                {
+                  "name": "message",
+                  "type": {
+                    "text": "string"
+                  }
+                }
+              ],
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            },
+            {
+              "kind": "method",
               "name": "resolveToolRequest",
               "parameters": [
                 {
@@ -2678,6 +2726,21 @@
             },
             {
               "kind": "field",
+              "name": "retainGuidanceDraft",
+              "type": {
+                "text": "boolean"
+              },
+              "attribute": "retainguidancedraft"
+            },
+            {
+              "kind": "field",
+              "name": "specialist",
+              "type": {
+                "text": "AssistantSpecialistReview | null"
+              }
+            },
+            {
+              "kind": "field",
               "name": "tasks",
               "type": {
                 "text": "AssistantDisplayedTask[]"
@@ -2693,10 +2756,24 @@
               }
             },
             {
+              "name": "canspecialist",
+              "fieldName": "canSpecialist",
+              "type": {
+                "text": "boolean"
+              }
+            },
+            {
               "name": "conversationscope",
               "fieldName": "conversationScope",
               "type": {
                 "text": "string"
+              }
+            },
+            {
+              "name": "guidancedelivery",
+              "fieldName": "guidanceDelivery",
+              "type": {
+                "text": "\"\" | \"sending\" | \"uncertain\""
               }
             },
             {
@@ -2734,13 +2811,27 @@
                 "text": "boolean"
               },
               "description": "Whether the native control can be read but not edited."
+            },
+            {
+              "name": "retainguidancedraft",
+              "fieldName": "retainGuidanceDraft",
+              "type": {
+                "text": "boolean"
+              }
             }
           ],
           "events": [
             {
+              "name": "forma-assistant-guidance-recovery",
+              "type": {
+                "text": "CustomEvent<{ action: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
               "name": "forma-assistant-message",
               "type": {
-                "text": "CustomEvent<{ message: string; mode: \"creative-chat\" | \"quick-edit\" | \"plan-document\" | \"plan-board\"; } | { premiumApproval?: true | undefined; model?: \"gpt-5.6-luna\" | \"gpt-5.6-terra\" | \"gpt-5.6-sol\" | undefined; message: string; }>"
+                "text": "CustomEvent<{ message: string; mode: \"creative-chat\" | \"quick-edit\" | \"plan-document\" | \"plan-board\"; } | { message: string; }>"
               },
               "description": "Bubbles and crosses component boundaries."
             },
@@ -2755,6 +2846,34 @@
               "name": "forma-assistant-review",
               "type": {
                 "text": "CustomEvent<{ mode: \"plan-document\" | \"plan-board\"; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-assistant-specialist-action",
+              "type": {
+                "text": "CustomEvent<AssistantSpecialistControl>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-assistant-specialist-close",
+              "type": {
+                "text": "CustomEvent<{ reviewId: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-assistant-specialist-model",
+              "type": {
+                "text": "CustomEvent<AssistantSpecialistControl>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-assistant-specialist-review",
+              "type": {
+                "text": "CustomEvent<{ task?: AssistantDisplayedTask | undefined; turnId: string; }>"
               },
               "description": "Bubbles and crosses component boundaries."
             },

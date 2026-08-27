@@ -68,9 +68,14 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
   border-block-end: 1px solid color-mix(in srgb, currentColor 10%, transparent);
 }
 
-.forma-assistant-header strong,
+.forma-assistant-header h2,
 .forma-assistant-header small {
   display: block;
+}
+
+.forma-assistant-header h2 {
+  margin: 0;
+  font-size: inherit;
 }
 
 .forma-assistant-header small,
@@ -349,4 +354,54 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
     animation: none;
     transition: none;
   }
+}
+
+/* The assistant reuses the native approval dialog; this is not another panel or queue. */
+.forma-assistant-guidance-recovery {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: .5rem;
+}
+.forma-assistant-guidance-recovery p { margin: 0; overflow-wrap: anywhere; }
+.forma-assistant-guidance-recovery button,
+.forma-assistant-specialist button,
+.forma-assistant-specialist select,
+.forma-assistant-specialist summary {
+  min-block-size: 2.75rem;
+}
+.forma-assistant-specialist {
+  pointer-events: auto;
+  inline-size: min(46rem, calc(100vw - 2rem));
+  max-inline-size: calc(100vw - 2rem);
+  max-block-size: calc(100dvh - 2rem - var(--forma-keyboard-offset, 0px));
+  margin: auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+  color: var(--ink, #18211e);
+  background: var(--surface, #fffdf9);
+}
+.forma-assistant-specialist .modal-card {
+  min-inline-size: 0;
+  max-block-size: none;
+  overflow: visible;
+}
+.forma-assistant-specialist p,
+.forma-assistant-specialist dd { overflow-wrap: anywhere; }
+.forma-assistant-specialist textarea {
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-block-size: 8rem;
+  resize: vertical;
+}
+.forma-assistant-specialist summary {
+  display: list-item;
+  align-content: center;
+  cursor: pointer;
+}
+.forma-assistant-specialist footer { display: flex; flex-wrap: wrap; gap: .75rem; }
+.forma-assistant-specialist footer button { flex: 1 1 12rem; white-space: normal; }
+.forma-assistant-specialist-result p { white-space: pre-wrap; }
+@media (forced-colors: active) {
+  .forma-assistant-specialist { border: 1px solid CanvasText; }
 }

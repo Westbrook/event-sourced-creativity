@@ -18,7 +18,7 @@ import { handleWorkspaces } from "./workspaces-api";
 import { readProjectRequestContext } from "./project-access";
 import { handlePerformanceSample } from "./performance-api";
 import { handleArtifactEdit } from "./artifact-api";
-import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask } from "./assistant-api";
+import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask, handleAssistantSpecialist } from "./assistant-api";
 import { handlePlatformAssistant } from "./platform-assistant-api";
 import { handleEventPrivacy } from "./privacy-api";
 import { handleProjectNotifications } from "./project-notifications-api";
@@ -115,6 +115,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     }
     if(url.pathname==="/api/session")return handleSession(request,env,context);
     if(url.pathname==="/api/platform/assistant")return handlePlatformAssistant(request,env);
+    if(url.pathname==="/api/assistant/specialist")return handleAssistantSpecialist(request,env,context);
     if(url.pathname==="/api/assistant")return handleAssistant(request,env,context);
     if(url.pathname==="/api/context/decompose")return handleContextIntelligence(request,env,"decompose");
     if(url.pathname==="/api/context/research")return handleContextIntelligence(request,env,"research");

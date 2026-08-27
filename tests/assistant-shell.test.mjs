@@ -52,40 +52,41 @@ test("every privileged page gets an independent accessible platform host with no
   assert.match(panel, /this\.guidanceOnly(?: && this\.#activeMode === "guidance")? \? html`<p[^`]*assistant\.guidanceOnly/u);
 });
 
-test("the visible assistant exposes governed model choice, explicit premium approval, task progress, and safe recovery", async () => {
+test("free guidance separates exact specialist approval, durable task recovery and legacy financial controls", async () => {
   const [panel, host, policy, composer] = await Promise.all([
     read("src/components/design-system/assistant-panel.ts"),
     read("src/components/forma-creative-assistant.ts"),
     read("worker/pilot-policy.ts"),
     read("src/components/design-system/conversation-composer.ts"),
   ]);
-  assert.match(panel, /class="forma-assistant-model"/u);
-  assert.match(panel, /assistant\.model\.automatic/u);
+  assert.match(panel, /#specialistView\(\)/u);
+  assert.match(panel, /consequentialPreview\(quote, this\.i18n\)/u);
+  assert.match(panel, /ensureNativeModalDialog/u);
   assert.match(panel, /premiumApprovalRequired/u);
-  assert.match(panel, /type="checkbox"/u);
-  assert.match(panel, /premiumApproval:\s*true/u);
-  assert.match(panel, /#premiumApproved\s*=\s*false/u);
-  assert.match(panel, /\.submitDisabled=\$\{Boolean\(selectedModel\?\.premiumApprovalRequired && !this\.#premiumApproved \|\| this\.#?busyModes\.includes\(this\.#activeMode\)\)\}/u);
+  assert.doesNotMatch(panel, /type="checkbox"|premiumApproval:\s*true|#premiumApproved/u);
+  const submit = panel.slice(panel.indexOf("  #submit("), panel.indexOf("  #contextName("));
+  assert.doesNotMatch(submit, /model:|premiumApproval/u);
+  assert.match(submit, /retainGuidanceDraft/u);
   assert.match(composer, /\?disabled=\$\{this\.disabled \|\| this\.submitDisabled \|\| this\.busy \|\| !this\.value\.trim\(\)\}/u);
   assert.match(panel, /class="forma-assistant-task"/u);
+  assert.match(panel, /assistant\.specialist\.retrieve/u);
+  assert.match(panel, /!task\.executionId && task\.status === "queued"/u);
   assert.match(panel, /assistant\.task\.estimatedCost/u);
-  assert.match(panel, /assistant\.task\.cancel/u);
-  assert.match(panel, /\["needs-review", "reconciling"\]\.includes\(task\.status\) && this\.canReconcile/u);
-  assert.match(panel, /\["needs-review", "reconciling"\]\.includes\(task\.status\) && !this\.canReconcile/u);
-  assert.match(panel, /task\.status === "needs-review" \|\| task\.status === "reconciling" \? "needsReview"/u);
   assert.match(panel, /assistant\.task\.contactAdministrator/u);
-  assert.match(panel, /assistant\.task\.reviewReference/u);
-  assert.match(host, /premiumApproval:\s*true/u);
-  assert.match(host, /\/api\/assistant\/tasks\//u);
+  assert.match(host, /\/api\/assistant\/specialist/u);
+  assert.match(host, /approvedBindingHash: approvedHash/u);
+  assert.match(host, /request\.turnId, message: request\.message, locale: request\.locale/u);
+  assert.doesNotMatch(host, /premiumApproval:\s*true/u);
   assert.match(host, /confirmedNoProviderCharge:\s*true/u);
-  assert.match(host, /task\.status === "queued" \|\| task\.status === "running" \|\| task\.status === "reconciling"/u);
+  assert.match(host, /if \(detail\.task\.executionId\) \{[\s\S]*assistantApprovedRequestCanStop/u);
+  assert.match(panel, /assistant\.specialist\.stopLabel/u);
+  assert.match(host, /action === "stop" \? undefined : \{ action/u);
   assert.match(host, /@forma-assistant-task=/u);
   assert.match(policy, /assistantPremiumUsers/u);
-  assert.match(panel,/assistant\.coverage\.visible/u,"on-screen context is honestly distinguished from provider-visible evidence");
-  assert.match(panel,/assistant\.coverage\.readable/u);
-  assert.match(panel,/assistant\.coverage\.withheld/u);
-  assert.match(panel,/assistant\.coverage\.protectedOverflow/u);
-  assert.match(panel,/item\.providerEligible&&\(!item\.immutable\|\|item\.providerVisibility==="governed"\)/u);
+  for (const key of ["visible", "readable", "withheld", "protectedOverflow"]) {
+    assert.ok(panel.includes("assistant.coverage." + key));
+  }
+  assert.match(panel, /item\.providerEligible&&\(!item\.immutable\|\|item\.providerVisibility==="governed"\)/u);
 });
 
 test("the assistant keeps all four locales and exact interpolation placeholders aligned", () => {

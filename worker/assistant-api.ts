@@ -1,7 +1,7 @@
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { ASSISTANT_MESSAGES } from "../src/components/design-system/locales/assistant-messages.ts";
 import { isBlockKind } from "../src/model/block-types.ts";
-import { ASSISTANT_MODELS, selectAssistantModel, type AssistantModel, type AssistantTask } from "../src/model/assistant-model-policy.ts";
+import { ASSISTANT_MODELS, type AssistantModel, type AssistantTask } from "../src/model/assistant-model-policy.ts";
 import { assistantSurfaceForRoute, type AssistantSurface } from "../src/model/assistant-route-policy.ts";
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
 import { assistantActionEvents, normalizeAssistantActions, type AssistantContextAction } from "../src/model/assistant-proposals.ts";
@@ -12,31 +12,29 @@ import { outputBlockRemovalEvents, outputBlockTextEditEvents } from "../src/mode
 import type { FormaCapability } from "../src/platform/capabilities.ts";
 import { readCanvasGovernance } from "./canvas-governance-policy.ts";
 import {
-  claimCostBudgetReservation,
   hasCapability,
-  pilotExecutionAllowance,
-  readAccountBudgets,
   releaseBudget,
   releaseCostBudget,
   requireCapability,
   requireConsent,
   requireUser,
-  reserveBudget,
-  reserveCostBudget,
   settleBudget,
   settleCostBudget,
   type PilotUser,
+  type BudgetReservationGuard,
 } from "./pilot-policy.ts";
-import { AssistantProviderRejectedError, requestAssistantProvider, type AssistantProviderResult } from "./assistant-provider.ts";
+import { type AssistantProviderResult } from "./assistant-provider.ts";
+import { reconcileConsequentialUsage } from "./consequential-consent.ts";
+import { assistantPaidReplyReadGuard, assistantSubmissionStatus, certifiedAssistantTaskFeed, type AssistantTaskFeedEntry, assistantTurnContentCustody, ensureAssistantSpecialistColumns, savedAssistantRequest, handleAssistantSpecialistConsent, parkUnsignedAssistantTasks, cancelConsentedAssistantTask, type SpecialistActor, type SpecialistTaskRecord, type AssistantSpecialistHost } from "./assistant-specialist-consent.ts";
 import { governedPackageSourceRightsCurrent } from "./context-package-rights.ts";
-import { appendProjectEvents, readProjectAssistantEventView, readProjectEventPage, readProjectRequestContext, type ProjectRequestContext } from "./project-access.ts";
+import { appendProjectEvents, readProjectAssistantEventView, readProjectEventPage, readProjectRequestContext, resolveOwnerExecutionScope } from "./project-access.ts";
 import { priceTextUsageBreakdownMicrousd } from "./replay-cost.ts";
 import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, serializeEvent, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
 
 type AssistantReply = { key?: string; values?: Record<string, string | number>; text?: string };
 type AssistantProposal = { id: string; key: string; route?: string; kind: "navigate" | AssistantContextAction["kind"]; turnId: string; summary?: string };
-type AssistantTurn = { id: string; user: string; reply: AssistantReply; proposal: AssistantProposal | null; proposals?: AssistantProposal[] };
-type AuthorizedAssistant = { principal: PilotUser; project: ProjectRequestContext | null; surface: AssistantSurface; projectId: string | null; canPropose: boolean };
+type AssistantTurn = { id: string; user: string; reply: AssistantReply; proposal: AssistantProposal | null; proposals?: AssistantProposal[]; originalRequest?: unknown };
+type AuthorizedAssistant = SpecialistActor;
 type PreparedAssistantAction = {
   id: string;
   turnId: string;
@@ -45,7 +43,7 @@ type PreparedAssistantAction = {
   summary: string;
   sourceVersions: Array<{ blockId: string; version: number }>;
 };
-type AssistantTurnRow = { turn_id: string; proposal_json: string | null; user_content: string; assistant_content: string };
+type AssistantTurnRow = { turn_id: string; proposal_json: string | null; user_content: string; assistant_content: string; request_json?: string|null };
 type StoredAssistantProposal = {
   proposal_id: string;
   actor_user_id: string;
@@ -64,41 +62,7 @@ type StoredAssistantProposal = {
   expires_at: string;
   content: string;
 };
-type PreparedAssistantTask = {
-  id: string;
-  turnId: string;
-  kind: AssistantTask;
-  model: AssistantModel;
-  tokenReservationId: string;
-  costReservationId: string;
-  estimatedMicrousd: number;
-  inputTokens: number;
-  outputTokens: number;
-  locale: string;
-};
-type StoredAssistantTask = {
-  task_id: string;
-  actor_user_id: string;
-  scope_key: string;
-  turn_id: string;
-  organization_id: string | null;
-  project_access_id: string | null;
-  project_id: string | null;
-  document_id: string | null;
-  task_kind: string;
-  selected_model: string;
-  token_reservation_id: string;
-  cost_reservation_id: string;
-  estimated_microusd: number;
-  maximum_input_tokens: number;
-  maximum_output_tokens: number;
-  locale: string;
-  permission_epoch: string;
-  status: string;
-  error_code: string | null;
-  lease_expires_at: string | null;
-  provider_submitted: number;
-};
+type StoredAssistantTask = SpecialistTaskRecord;
 
 const initializedAssistants = new WeakMap<D1Database, Promise<void>>();
 const privateHeaders = { "cache-control": "private, no-store", vary: "Cookie, oai-authenticated-user-id, oai-authenticated-user-email" };
@@ -120,6 +84,7 @@ async function ensureAssistantSchema(env: WorkerEnv) {
         env.DB.prepare("CREATE TRIGGER IF NOT EXISTS assistant_billing_reconciliation_block_update BEFORE UPDATE ON assistant_billing_reconciliations BEGIN SELECT RAISE(ABORT,'assistant billing audit is append-only'); END"),
         env.DB.prepare("CREATE TRIGGER IF NOT EXISTS assistant_billing_reconciliation_block_delete BEFORE DELETE ON assistant_billing_reconciliations BEGIN SELECT RAISE(ABORT,'assistant billing audit is append-only'); END"),
       ]);
+      await ensureAssistantSpecialistColumns(env);
     })().catch((error) => { initializedAssistants.delete(env.DB); throw error; });
     initializedAssistants.set(env.DB, pending);
   }
@@ -142,13 +107,6 @@ function assistantActionsEnabled(env: WorkerEnv, actor: AuthorizedAssistant) {
   return featureUsers(env.FORMA_ASSISTANT_ACTION_USER_IDS).has(actor.principal.userId) && actor.canPropose;
 }
 
-function assistantProviderEnabled(env: WorkerEnv, actor: AuthorizedAssistant) {
-  const scope = actor.project ? { organizationId: actor.project.organizationId, projectAccessId: actor.project.projectAccessId } : undefined;
-  return Boolean(env.OPENAI_API_KEY && featureUsers(env.FORMA_ASSISTANT_PROVIDER_USER_IDS).has(actor.principal.userId)
-    && actor.canPropose && (scope ? hasCapability(actor.principal, "project.output.request", scope)
-      : actor.principal.access.capabilities.includes("project.output.request")));
-}
-
 function assistantTaskKind(message: string, actions: PreparedAssistantAction[]): AssistantTask {
   if (/\b(?:governance|compliance|security policy|procurement|audit policy)\b/iu.test(message)) return "governance-review";
   if (/\b(?:across|compare|synthesize)\b.{0,30}\b(?:documents|projects)\b/iu.test(message)) return "cross-document-synthesis";
@@ -159,78 +117,6 @@ function assistantAllowedModels(env: WorkerEnv): AssistantModel[] {
   if (!env.FORMA_ASSISTANT_ALLOWED_MODELS) return ["gpt-5.6-luna", "gpt-5.6-terra"];
   return [...new Set(env.FORMA_ASSISTANT_ALLOWED_MODELS.split(",").map((item) => item.trim()))]
     .filter((item): item is AssistantModel => ASSISTANT_MODELS.includes(item as AssistantModel));
-}
-
-async function prepareAssistantTask(env: WorkerEnv, actor: AuthorizedAssistant, input: {
-  turnId: string;
-  message: string;
-  actions: PreparedAssistantAction[];
-  locale: unknown;
-  model: unknown;
-  premiumApproval: unknown;
-}): Promise<PreparedAssistantTask | null> {
-  if (!assistantProviderEnabled(env, actor)) return null;
-  const scope = actor.project ? { organizationId: actor.project.organizationId, projectAccessId: actor.project.projectAccessId, actorUserId: actor.principal.userId } : undefined;
-  if (!(await pilotExecutionAllowance(env, actor.principal.userId, scope)).allowed) return null;
-  const budgets = await readAccountBudgets(env, actor.principal.userId, scope?.organizationId);
-  const kind = assistantTaskKind(input.message, input.actions);
-  const premiumApproved = input.premiumApproval === true && actor.principal.role === "admin"
-    && featureUsers(env.FORMA_ASSISTANT_SOL_USER_IDS).has(actor.principal.userId);
-  const selection = selectAssistantModel(kind, {
-    allowedModels: assistantAllowedModels(env),
-    remainingMicrousd: Math.min(budgets.costBudgets.user.remainingMicrousd, budgets.costBudgets.workspace.remainingMicrousd),
-    premiumApproved,
-    ...(typeof input.model === "string" ? { requestedModel: input.model } : {}),
-  });
-  if (selection.blocked || !selection.model) return null;
-  const streamId = actor.project ? `creative:${actor.project.ownerUserId}` : actor.principal.streamId;
-  const correlation = `assistant-specialist:${actor.principal.userId}:${input.turnId}`;
-  const token = await reserveBudget(env, actor.principal.userId, selection.inputTokens + selection.outputTokens, {
-    streamId,
-    correlationId: correlation,
-    operation: `assistant:${kind}:${selection.model}`,
-    ...(scope ? { projectScope: scope } : {}),
-  });
-  if (!token.ok) return null;
-  try {
-    const cost = await reserveCostBudget(env, actor.principal.userId, selection.estimatedMicrousd, {
-      maximumMicrousd: selection.estimatedMicrousd,
-      allowUserOverage: false,
-      period: token.period,
-      streamId,
-      correlationId: correlation,
-      operation: `assistant:${kind}:${selection.model}`,
-      ...(scope ? { projectScope: scope } : {}),
-    });
-    if (!cost.ok) {
-      await releaseBudget(env, actor.principal.userId, token.reservationId, { reason: "assistant_cost_budget_unavailable" });
-      return null;
-    }
-    return {
-      id: uuidV7(),
-      turnId: input.turnId,
-      kind,
-      model: selection.model,
-      tokenReservationId: token.reservationId,
-      costReservationId: cost.reservationId,
-      estimatedMicrousd: selection.estimatedMicrousd,
-      inputTokens: selection.inputTokens,
-      outputTokens: selection.outputTokens,
-      locale: responseLocale(input.locale),
-    };
-  } catch {
-    await releaseBudget(env, actor.principal.userId, token.reservationId, { reason: "assistant_admission_failed" });
-    return null;
-  }
-}
-
-async function releasePreparedAssistantTask(env: WorkerEnv, actor: AuthorizedAssistant, task: PreparedAssistantTask | null) {
-  if (!task) return;
-  const retained = await env.DB.prepare("SELECT 1 AS present FROM assistant_specialist_tasks WHERE task_id=? AND actor_user_id=?")
-    .bind(task.id, actor.principal.userId).first();
-  if (retained) return;
-  await releaseCostBudget(env, actor.principal.userId, task.costReservationId);
-  await releaseBudget(env, actor.principal.userId, task.tokenReservationId, { reason: "assistant_turn_not_committed" });
 }
 
 function workspaceCapabilities(path: string): { organizationId: string; capabilities: readonly FormaCapability[] } | null {
@@ -260,8 +146,8 @@ async function authorizeAssistant(request: Request, env: WorkerEnv): Promise<{ a
   if (!surface.available || surface.host !== "creator") return { authorized: null, response: json({ error: "assistant_surface_denied" }, 403) };
   const selected = await readProjectRequestContext(request, env, principal);
   if (selected.response) return { authorized: null, response: selected.response };
-  const project = selected.context;
-  const scope = project ? { organizationId: project.organizationId, projectAccessId: project.projectAccessId } : undefined;
+  let project = selected.context;
+  let scope = project ? { organizationId: project.organizationId, projectAccessId: project.projectAccessId } : undefined;
   if (project && !hasCapability(principal, "project.read", scope)) return { authorized: null, response: json({ error: "assistant_project_denied" }, 403) };
   if (surface.application === "canvas") {
     const governance = await readCanvasGovernance(env, principal.role);
@@ -298,7 +184,18 @@ async function authorizeAssistant(request: Request, env: WorkerEnv): Promise<{ a
       projectId = String(resource.project_id);
     }
   }
-  return { authorized: { principal, project, surface, projectId, canPropose: !project || hasCapability(principal, "project.author", scope) }, response: null };
+  let legacyScopeKey:string|undefined;
+  if(!project&&projectId){
+    const custody=await resolveOwnerExecutionScope(env,principal,surface.documentId??"",projectId,"read");
+    if(custody.denied)return{authorized:null,response:json({error:"assistant_project_custody_unavailable"},403)};
+    if(custody.scope){
+      legacyScopeKey=assistantScopeKey({principal,project:null,surface,projectId,canPropose:false});
+      scope={organizationId:custody.scope.organizationId,projectAccessId:custody.scope.projectAccessId};
+      project={contextId:"",organizationId:custody.scope.organizationId,projectAccessId:custody.scope.projectAccessId,projectId,ownerUserId:custody.scope.ownerUserId,principalUserId:principal.userId,role:"owner",permissions:principal.access.capabilities.filter(capability=>hasCapability(principal,capability,custody.scope)),expiresAt:""};
+      if(workspace&&workspace.organizationId!==project.organizationId)return{authorized:null,response:json({error:"assistant_workspace_project_mismatch"},403)};
+    }
+  }
+  return { authorized: { principal, project, surface, projectId, canPropose: scope?hasCapability(principal,"project.author",scope):principal.access.capabilities.includes("project.author"),...(legacyScopeKey?{legacyScopeKey}:{}) }, response: null };
 }
 
 async function scopedAssistantEvents(env: WorkerEnv, actor: AuthorizedAssistant) {
@@ -405,24 +302,28 @@ async function pendingTurnProposals(env: WorkerEnv, actor: AuthorizedAssistant, 
 
 async function assistantTurnFromRow(env: WorkerEnv, actor: AuthorizedAssistant, row: AssistantTurnRow): Promise<AssistantTurn> {
   const proposals = await pendingTurnProposals(env, actor, String(row.turn_id), row.proposal_json);
+  let originalRequest:unknown;try{if(row.request_json)originalRequest=JSON.parse(row.request_json);}catch{/* Old free history may lack a reviewable request snapshot. */}
   return {
     id: String(row.turn_id),
     user: String(row.user_content),
     reply: { text: String(row.assistant_content) },
     proposal: proposals[0] ?? null,
     ...(proposals.length > 1 ? { proposals } : {}),
+    ...(originalRequest?{originalRequest}:{}),
   };
 }
 
 async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant): Promise<AssistantTurn[]> {
+  const replyProof=assistantPaidReplyReadGuard(actor,assistantScopeKey(actor),actor.surface.documentId?"json_extract(message.payload,'$.turn_id')":"turn.turn_id");
+  const authoredCustody=assistantTurnContentCustody(actor,"authored"),answerCustody=assistantTurnContentCustody(actor,"answer");
   if (!actor.surface.documentId) {
-    const rows = await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,authored.content AS user_content,answer.content AS assistant_content
+    const rows = await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,turn.request_json,authored.content AS user_content,answer.content AS assistant_content
       FROM assistant_turns turn
-      JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.redacted_at IS NULL AND authored.expires_at>?
-      JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.redacted_at IS NULL AND answer.expires_at>?
-      WHERE turn.actor_user_id=? AND turn.scope_key=?
+      JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>?
+      JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>?
+      WHERE turn.actor_user_id=? AND turn.scope_key=? AND ${authoredCustody.sql} AND ${answerCustody.sql} AND ${replyProof.sql}
       ORDER BY turn.created_at DESC LIMIT ?`)
-      .bind(new Date().toISOString(), new Date().toISOString(), actor.principal.userId, assistantScopeKey(actor), ASSISTANT_CONTEXT_LIMITS.turns)
+      .bind(new Date().toISOString(), new Date().toISOString(), actor.principal.userId, assistantScopeKey(actor),...authoredCustody.bindings,...answerCustody.bindings,...replyProof.bindings, ASSISTANT_CONTEXT_LIMITS.turns)
       .all<AssistantTurnRow>();
     return Promise.all(rows.results.reverse().map((row) => assistantTurnFromRow(env, actor, row)));
   }
@@ -444,11 +345,10 @@ async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant):
       bindings.push(scope.organizationId, scope.projectAccessId, scope.projectId, actor.principal.userId);
     }
   } else {
-    guard = " AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes custody WHERE custody.content_id=authored.content_id)"
-      + " AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes custody WHERE custody.content_id=answer.content_id)";
+    guard = " AND "+authoredCustody.sql+" AND "+answerCustody.sql;
   }
 
-  const rows = await env.DB.prepare(`SELECT json_extract(message.payload,'$.turn_id') AS turn_id,metadata.proposal_json,authored.content AS user_content,answer.content AS assistant_content
+  const rows = await env.DB.prepare(`SELECT json_extract(message.payload,'$.turn_id') AS turn_id,metadata.proposal_json,metadata.request_json,authored.content AS user_content,answer.content AS assistant_content
     FROM events message INDEXED BY idx_events_stream_type
     JOIN private_content authored ON authored.content_id=json_extract(message.payload,'$.content_ref') AND authored.owner_id=?
       AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>?
@@ -458,10 +358,10 @@ async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant):
     JOIN private_content answer ON answer.content_id=json_extract(response.payload,'$.content_ref') AND answer.owner_id=?
       AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>?
     LEFT JOIN assistant_turns metadata ON metadata.actor_user_id=? AND metadata.scope_key=? AND metadata.turn_id=json_extract(message.payload,'$.turn_id')
-    WHERE message.stream_id=? AND message.type='ChatMessageSent' AND json_extract(message.payload,'$.document_id')=?${guard}
+    WHERE message.stream_id=? AND message.type='ChatMessageSent' AND json_extract(message.payload,'$.document_id')=?${guard} AND ${replyProof.sql}
     ORDER BY message.sequence DESC,response.sequence DESC LIMIT ?`)
     .bind(actor.principal.userId, now, actor.surface.documentId, actor.principal.userId, now, actor.principal.userId,
-      assistantScopeKey(actor), stream, actor.surface.documentId, ...bindings, ASSISTANT_CONTEXT_LIMITS.turns * 3)
+      assistantScopeKey(actor), stream, actor.surface.documentId, ...bindings,...replyProof.bindings, ASSISTANT_CONTEXT_LIMITS.turns * 3)
     .all<AssistantTurnRow>();
   const seen = new Set<string>();
   const unique = rows.results.filter((row) => {
@@ -470,7 +370,35 @@ async function recentAssistantTurns(env: WorkerEnv, actor: AuthorizedAssistant):
     seen.add(id);
     return true;
   }).slice(0, ASSISTANT_CONTEXT_LIMITS.turns).reverse();
-  return Promise.all(unique.map((row) => assistantTurnFromRow(env, actor, row)));
+  const current=await Promise.all(unique.map((row) => assistantTurnFromRow(env, actor, row)));
+  if(!actor.legacyScopeKey)return current;
+  const legacy=await legacyAssistantTurns(env,actor);
+  return[...legacy.filter(turn=>!current.some(item=>item.id===turn.id)),...current].slice(-ASSISTANT_CONTEXT_LIMITS.turns);
+}
+
+/** Retain an owner's pre-migration free history without adopting its private bytes into tenant custody. */
+
+async function legacyAssistantTurns(env:WorkerEnv,actor:AuthorizedAssistant){
+  if(!actor.legacyScopeKey||actor.project?.ownerUserId!==actor.principal.userId)return[];
+  const rows=await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,turn.request_json,authored.content AS user_content,answer.content AS assistant_content
+    FROM assistant_turns turn JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE turn.actor_user_id=? AND turn.scope_key=? AND turn.organization_id IS NULL AND turn.project_access_id IS NULL AND turn.project_id=?
+      AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id IN(authored.content_id,answer.content_id))
+    ORDER BY turn.created_at DESC LIMIT ?`).bind(actor.principal.userId,actor.legacyScopeKey,actor.projectId,ASSISTANT_CONTEXT_LIMITS.turns).all<AssistantTurnRow>();
+  // Historical owner chat may predate assistant_turns. A derived resource index alone is not tenant adoption.
+  const historical=actor.surface.documentId?(await env.DB.prepare(`SELECT json_extract(message.payload,'$.turn_id') AS turn_id,NULL AS proposal_json,authored.content AS user_content,answer.content AS assistant_content
+    FROM events message JOIN private_content authored ON authored.content_id=json_extract(message.payload,'$.content_ref') AND authored.owner_id=? AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    JOIN events response ON response.stream_id=message.stream_id AND response.correlation_id=message.correlation_id AND response.type='AssistantReasoned'
+      AND json_extract(response.payload,'$.operation')='creative-chat' AND json_extract(response.payload,'$.document_id')=json_extract(message.payload,'$.document_id')
+      AND json_extract(response.payload,'$.turn_id')=json_extract(message.payload,'$.turn_id')
+    JOIN private_content answer ON answer.content_id=json_extract(response.payload,'$.content_ref') AND answer.owner_id=? AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE message.stream_id=? AND message.type='ChatMessageSent' AND json_extract(message.payload,'$.document_id')=?
+      AND COALESCE(json_extract(message.payload,'$.project_id'),?)=?
+      AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes retention WHERE retention.content_id IN(authored.content_id,answer.content_id))
+    ORDER BY message.sequence DESC,response.sequence DESC LIMIT ?`).bind(actor.principal.userId,actor.principal.userId,actor.principal.streamId,actor.surface.documentId,actor.projectId,actor.projectId,ASSISTANT_CONTEXT_LIMITS.turns).all<AssistantTurnRow>()).results:[];
+  const seen=new Set<string>();return[...rows.results,...historical].filter(row=>Boolean(row.turn_id)&&!seen.has(row.turn_id)&&Boolean(seen.add(row.turn_id))).slice(0,ASSISTANT_CONTEXT_LIMITS.turns).reverse()
+    .map(row=>({id:row.turn_id,user:row.user_content,reply:{text:row.assistant_content},proposal:null}as AssistantTurn));
 }
 
 function assistantScopeKey(actor: AuthorizedAssistant) {
@@ -488,15 +416,17 @@ function assistantScopeKey(actor: AuthorizedAssistant) {
 }
 
 async function exactAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, turnId: string): Promise<AssistantTurn | null> {
+  const replyProof=assistantPaidReplyReadGuard(actor,assistantScopeKey(actor),"turn.turn_id");
+  const authoredCustody=assistantTurnContentCustody(actor,"authored"),answerCustody=assistantTurnContentCustody(actor,"answer");
   const now = new Date().toISOString();
-  const row = await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,authored.content AS user_content,answer.content AS assistant_content
+  const row = await env.DB.prepare(`SELECT turn.turn_id,turn.proposal_json,turn.request_json,authored.content AS user_content,answer.content AS assistant_content
     FROM assistant_turns turn
-    JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.redacted_at IS NULL AND authored.expires_at>?
-    JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.redacted_at IS NULL AND answer.expires_at>?
-    WHERE turn.actor_user_id=? AND turn.scope_key=? AND turn.turn_id=? LIMIT 1`)
-    .bind(now, now, actor.principal.userId, assistantScopeKey(actor), turnId)
+    JOIN private_content authored ON authored.content_id=turn.user_content_ref AND authored.owner_id=turn.actor_user_id AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>?
+    JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>?
+    WHERE turn.actor_user_id=? AND turn.scope_key=? AND turn.turn_id=? AND ${authoredCustody.sql} AND ${answerCustody.sql} AND ${replyProof.sql} LIMIT 1`)
+    .bind(now, now, actor.principal.userId, assistantScopeKey(actor), turnId,...authoredCustody.bindings,...answerCustody.bindings,...replyProof.bindings)
     .first<AssistantTurnRow>();
-  if (!row) return null;
+  if (!row) return actor.legacyScopeKey?(await legacyAssistantTurns(env,actor)).find(turn=>turn.id===turnId)??null:null;
   return assistantTurnFromRow(env, actor, row);
 }
 
@@ -543,7 +473,7 @@ async function commitAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, i
   proposal: AssistantProposal | null;
   documentId: string | null;
   actions?: PreparedAssistantAction[];
-  task?: PreparedAssistantTask | null;
+  requestJson:string;
 }) {
   const scope = actor.project;
   const policy = scope ? await env.DB.prepare("SELECT transient_days,version FROM organization_retention_policies WHERE organization_id=?").bind(scope.organizationId)
@@ -556,13 +486,18 @@ async function commitAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, i
   const answerId = uuidV7();
   const actions = input.actions ?? [];
   const actionContents = new Map(actions.map((action) => [action.id, uuidV7()]));
-  const active = `EXISTS(SELECT 1 FROM project_context_sessions context
+  const active = scope&&!scope.contextId?`EXISTS(SELECT 1 FROM organization_projects project
+    JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status=\'active\'
+    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status=\'active\'
+    JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=project.owner_user_id AND member.status=\'active\' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
+    WHERE project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND project.owner_user_id=? AND project.status=\'active\')`:`EXISTS(SELECT 1 FROM project_context_sessions context
       JOIN organization_projects project ON project.project_access_id=context.project_access_id AND project.organization_id=context.organization_id AND project.status='active'
       JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
       JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=? AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
       JOIN organization_memberships owner_member ON owner_member.organization_id=project.organization_id AND owner_member.user_id=project.owner_user_id AND owner_member.status='active' AND owner_member.accepted_at IS NOT NULL AND owner_member.revoked_at IS NULL
       LEFT JOIN project_memberships project_member ON project_member.project_access_id=project.project_access_id AND project_member.organization_id=project.organization_id AND project_member.project_id=project.project_id AND project_member.user_id=? AND project_member.status='active' AND project_member.revoked_at IS NULL
-      WHERE context.context_id=? AND context.principal_user_id=? AND context.revoked_at IS NULL AND context.expires_at>? AND project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND(project.owner_user_id=? OR project_member.membership_id IS NOT NULL))`;
+      WHERE context.context_id=? AND context.principal_user_id=? AND context.revoked_at IS NULL AND context.expires_at>? AND context.expires_at>strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\') AND project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND(project.owner_user_id=? OR project_member.membership_id IS NOT NULL))`;
+  const activeBindings=scope?!scope.contextId?[scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,actor.principal.userId]:[actor.principal.userId,actor.principal.userId,scope.contextId,actor.principal.userId,createdAt,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,actor.principal.userId]:[];
 
   const statements: D1PreparedStatement[] = [];
   const privateEntries: Array<[string, string, string]> = [
@@ -573,7 +508,7 @@ async function commitAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, i
   for (const [contentId, kind, content] of privateEntries) {
     if (scope) {
       statements.push(env.DB.prepare(`INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) SELECT ?,?,?,?,?,?,NULL WHERE ${active}`)
-        .bind(contentId, actor.principal.userId, kind, content, createdAt, expiresAt, actor.principal.userId, actor.principal.userId, scope.contextId, actor.principal.userId, createdAt, scope.projectAccessId, scope.organizationId, scope.projectId, scope.ownerUserId, actor.principal.userId));
+        .bind(contentId, actor.principal.userId, kind, content, createdAt, expiresAt,...activeBindings));
       statements.push(env.DB.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) SELECT ?,'content',?,?,?,?,'actor_private',NULL,?,? WHERE EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)")
         .bind(scope.projectAccessId, contentId, scope.organizationId, scope.projectId, scope.ownerUserId, actor.principal.userId, createdAt, contentId, actor.principal.userId));
       statements.push(env.DB.prepare("INSERT INTO private_content_retention_scopes(content_id,organization_id,project_access_id,project_id,actor_user_id,classification,policy_version,assigned_expires_at,created_at) SELECT ?,?,?,?,?,'transient-private',?,?,? WHERE EXISTS(SELECT 1 FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND resource_kind='content' AND resource_id=? AND actor_user_id=?)")
@@ -627,19 +562,6 @@ async function commitAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, i
         createdAt, proposalExpiresAt, contentId, actor.principal.userId,
         ...(scope ? [scope.projectAccessId, scope.organizationId, contentId, actor.principal.userId] : [])));
   }
-  if (input.task) {
-    const task = input.task;
-    statements.push(env.DB.prepare(`INSERT INTO assistant_specialist_tasks(task_id,actor_user_id,scope_key,turn_id,organization_id,project_access_id,project_id,document_id,
-      route_family,task_kind,selected_model,token_reservation_id,cost_reservation_id,estimated_microusd,maximum_input_tokens,maximum_output_tokens,locale,
-      permission_epoch,status,error_code,created_at,updated_at,started_at,completed_at)
-      SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'queued',NULL,?,?,NULL,NULL
-      WHERE EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)
-        AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)`)
-      .bind(task.id, actor.principal.userId, assistantScopeKey(actor), input.turnId, scope?.organizationId ?? null, scope?.projectAccessId ?? null,
-        actor.projectId, input.documentId, actor.surface.canonicalFamily, task.kind, task.model, task.tokenReservationId, task.costReservationId,
-        task.estimatedMicrousd, task.inputTokens, task.outputTokens, task.locale, actor.principal.access.permissionEpoch, createdAt, createdAt,
-        authoredId, actor.principal.userId, answerId, actor.principal.userId));
-  }
 
   const complete = `EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)
     AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=?)
@@ -648,20 +570,20 @@ async function commitAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, i
     AND EXISTS(SELECT 1 FROM event_client_receipts WHERE stream_id=? AND client_event_id=? AND event_id=?)
     AND EXISTS(SELECT 1 FROM event_client_receipts WHERE stream_id=? AND client_event_id=? AND event_id=?)
     AND (SELECT COUNT(*) FROM assistant_action_proposals WHERE actor_user_id=? AND scope_key=? AND turn_id=? AND status='pending')=?
-    AND (?='' OR EXISTS(SELECT 1 FROM assistant_specialist_tasks WHERE task_id=? AND actor_user_id=? AND scope_key=? AND turn_id=? AND status='queued'))`;
+    `;
   const encodedProposal = actions.length
     ? JSON.stringify({ proposals: actions.map(({ id, turnId, key, action }) => ({ id, turnId, key, kind: action.kind })) })
     : input.proposal ? JSON.stringify(input.proposal) : null;
   // NULL violates the NOT NULL status constraint and atomically rolls back every
   // private row, scope, event, and receipt if authorization or the event head moved.
-  statements.push(env.DB.prepare(`INSERT INTO assistant_turns(turn_id,actor_user_id,scope_key,organization_id,project_access_id,project_id,document_id,route_family,user_content_ref,assistant_content_ref,proposal_json,permission_epoch,status,created_at,completed_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ${complete} THEN 'completed' ELSE NULL END,?,?)`).bind(
+  statements.push(env.DB.prepare(`INSERT INTO assistant_turns(turn_id,actor_user_id,scope_key,organization_id,project_access_id,project_id,document_id,route_family,user_content_ref,assistant_content_ref,proposal_json,permission_epoch,request_json,status,created_at,completed_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ${complete} THEN 'completed' ELSE NULL END,?,?)`).bind(
     input.turnId, actor.principal.userId, assistantScopeKey(actor), scope?.organizationId ?? null, scope?.projectAccessId ?? null, actor.projectId, input.documentId,
-    actor.surface.canonicalFamily, authoredId, answerId, encodedProposal, actor.principal.access.permissionEpoch,
+    actor.surface.canonicalFamily, authoredId, answerId, encodedProposal, actor.principal.access.permissionEpoch,input.requestJson,
     authoredId, actor.principal.userId, answerId, actor.principal.userId, authored.eventId, streamId, head + 1, answer.eventId, streamId, head + 2,
     streamId, receipts[0], authored.eventId, streamId, receipts[1], answer.eventId,
     actor.principal.userId, assistantScopeKey(actor), input.turnId, actions.length,
-    input.task?.id ?? "", input.task?.id ?? "", actor.principal.userId, assistantScopeKey(actor), input.turnId, createdAt, createdAt,
+    createdAt, createdAt,
   ));
 
   await env.DB.batch(statements);
@@ -763,6 +685,7 @@ function validAssistantAction(value: unknown, expectedKind: string): AssistantCo
 function activeAssistantProjectGuard(actor: AuthorizedAssistant, now: string) {
   const selected = actor.project;
   if (!selected) return { sql: "", bindings: [] as Array<string | number | null> };
+  if(!selected.contextId)return{sql:" AND EXISTS(SELECT 1 FROM organization_projects project JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status=\'active\' JOIN organization_memberships owner ON owner.organization_id=project.organization_id AND owner.user_id=project.owner_user_id AND owner.status=\'active\' AND owner.accepted_at IS NOT NULL AND owner.revoked_at IS NULL JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status=\'active\' WHERE project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND project.owner_user_id=? AND project.status=\'active\')",bindings:[selected.projectAccessId,selected.organizationId,selected.projectId,selected.ownerUserId,actor.principal.userId]};
   const sql = ` AND EXISTS(SELECT 1 FROM project_context_sessions context
     JOIN organization_projects project ON project.project_access_id=context.project_access_id AND project.organization_id=context.organization_id AND project.status='active'
     JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
@@ -997,23 +920,10 @@ function providerAssistantActions(result: AssistantProviderResult, context: Assi
   });
 }
 
-function assistantTaskGuard(actor: AuthorizedAssistant, task: StoredAssistantTask, now: string) {
-  const project = activeAssistantProjectGuard(actor, now);
-  const sql = `EXISTS(SELECT 1 FROM assistant_specialist_tasks specialist JOIN assistant_turns turn
-      ON turn.actor_user_id=specialist.actor_user_id AND turn.scope_key=specialist.scope_key AND turn.turn_id=specialist.turn_id
-      JOIN private_content answer ON answer.content_id=turn.assistant_content_ref AND answer.owner_id=turn.actor_user_id
-        AND answer.redacted_at IS NULL AND answer.expires_at>?
-      WHERE specialist.task_id=? AND specialist.actor_user_id=? AND specialist.scope_key=? AND specialist.turn_id=?
-        AND specialist.permission_epoch=? AND specialist.selected_model=? AND specialist.status='running')${project.sql}`;
-  return {
-    sql,
-    bindings: [now, task.task_id, actor.principal.userId, assistantScopeKey(actor), task.turn_id,
-      actor.principal.access.permissionEpoch, task.selected_model, ...project.bindings] as Array<string | number | null>,
-  };
-}
-
 async function commitAssistantSpecialistResult(env: WorkerEnv, actor: AuthorizedAssistant, task: StoredAssistantTask,
-  result: AssistantProviderResult, context: AssistantContext) {
+  result: AssistantProviderResult, context: AssistantContext, proof:BudgetReservationGuard) {
+  if(!await env.DB.prepare("SELECT 1 AS current WHERE "+proof.sql).bind(...proof.bindings).first())throw new Error("assistant_result_custody_changed");
+  if(await env.DB.prepare("SELECT 1 AS committed FROM assistant_action_commits WHERE commit_id=? AND verified=1").bind("task:"+task.task_id).first())return;
   const existing = await env.DB.prepare(`SELECT turn.assistant_content_ref,turn.proposal_json FROM assistant_turns turn
     WHERE turn.actor_user_id=? AND turn.scope_key=? AND turn.turn_id=?`).bind(actor.principal.userId, assistantScopeKey(actor), task.turn_id)
     .first<{ assistant_content_ref: string; proposal_json: string | null }>();
@@ -1033,10 +943,10 @@ async function commitAssistantSpecialistResult(env: WorkerEnv, actor: Authorized
   const createdAt = now.toISOString();
   const expiresAt = new Date(now.getTime() + Math.max(1, Math.min(365, Number(policy?.transient_days ?? Number(env.FORMA_RETENTION_DAYS ?? 30)) || 30)) * 86_400_000).toISOString();
   const proposalExpiresAt = new Date(now.getTime() + 15 * 60_000).toISOString();
-  const guard = assistantTaskGuard(actor, task, createdAt);
+  const guard = proof;
   const streamId = scope ? `creative:${scope.ownerUserId}` : actor.principal.streamId;
   const head = await streamHead(env, streamId);
-  const correlation = `assistant-specialist:${actor.principal.userId}:${task.turn_id}`;
+  const correlation = task.task_id;
   const base = { ...(actor.projectId ? { project_id: actor.projectId } : {}), ...(task.document_id ? { document_id: task.document_id } : {}),
     actor_user_id: actor.principal.userId, source_surface: actor.surface.page, turn_id: task.turn_id, task_id: task.task_id };
   const answered = makeEvent(streamId, head + 1, `user:${actor.principal.userId}`, "server:assistant", correlation, "AssistantReasoned", {
@@ -1048,7 +958,7 @@ async function commitAssistantSpecialistResult(env: WorkerEnv, actor: Authorized
     "MutationProposed", { ...base, proposal_id: action.id, action_kind: action.action.kind, content_ref: actionContents.get(action.id), requires_approval: true },
     { causationId: answered.eventId }));
   const statements: D1PreparedStatement[] = [
-    env.DB.prepare(`UPDATE private_content SET content=? WHERE content_id=? AND owner_id=? AND redacted_at IS NULL AND expires_at>? AND ${guard.sql}`)
+    env.DB.prepare(`UPDATE private_content SET content=? WHERE content_id=? AND owner_id=? AND kind='chat-assistant' AND redacted_at IS NULL AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${guard.sql}`)
       .bind(result.reply, existing.assistant_content_ref, actor.principal.userId, createdAt, ...guard.bindings),
   ];
   for (const action of actions) {
@@ -1085,148 +995,39 @@ async function commitAssistantSpecialistResult(env: WorkerEnv, actor: Authorized
     ...actions.map(({ id, turnId, key, action }) => ({ id, turnId, key, kind: action.kind })),
   ];
   const encoded = metadata.length ? JSON.stringify({ proposals: metadata }) : existing.proposal_json;
-  statements.push(env.DB.prepare("UPDATE assistant_turns SET proposal_json=? WHERE actor_user_id=? AND scope_key=? AND turn_id=?")
-    .bind(encoded, actor.principal.userId, assistantScopeKey(actor), task.turn_id));
+  statements.push(env.DB.prepare("UPDATE assistant_turns SET proposal_json=? WHERE actor_user_id=? AND scope_key=? AND turn_id=? AND "+guard.sql)
+    .bind(encoded, actor.principal.userId, assistantScopeKey(actor), task.turn_id,...guard.bindings));
   statements.push(env.DB.prepare(`UPDATE assistant_specialist_tasks SET status='completed',error_code=NULL,updated_at=?,completed_at=?
-    WHERE task_id=? AND actor_user_id=? AND scope_key=? AND permission_epoch=? AND status='running'`)
-    .bind(createdAt, createdAt, task.task_id, actor.principal.userId, assistantScopeKey(actor), actor.principal.access.permissionEpoch));
+    WHERE task_id=? AND actor_user_id=? AND scope_key=? AND ${guard.sql}`)
+    .bind(createdAt, createdAt, task.task_id, actor.principal.userId, assistantScopeKey(actor),...guard.bindings));
   const exactActions = actions.length ? ` AND (SELECT COUNT(*) FROM assistant_action_proposals WHERE proposal_id IN(${actions.map(() => "?").join(",")})
     AND actor_user_id=? AND scope_key=? AND turn_id=? AND status='pending')=?` : "";
   statements.push(env.DB.prepare(`INSERT INTO assistant_action_commits(commit_id,verified,created_at) VALUES(?,CASE WHEN
     EXISTS(SELECT 1 FROM assistant_specialist_tasks WHERE task_id=? AND actor_user_id=? AND scope_key=? AND status='completed')
-    AND EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND type='AssistantReasoned')${exactActions} THEN 1 ELSE 0 END,?)`)
+    AND EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND type='AssistantReasoned')${exactActions}
+    AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='chat-assistant' AND content=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND ${guard.sql} THEN 1 ELSE 0 END,?)`)
     .bind(`task:${task.task_id}`, task.task_id, actor.principal.userId, assistantScopeKey(actor), answered.eventId, streamId,
-      ...(actions.length ? [...actions.map((action) => action.id), actor.principal.userId, assistantScopeKey(actor), task.turn_id, actions.length] : []), createdAt));
+      ...(actions.length ? [...actions.map((action) => action.id), actor.principal.userId, assistantScopeKey(actor), task.turn_id, actions.length] : []),existing.assistant_content_ref,actor.principal.userId,result.reply,...guard.bindings, createdAt));
   await env.DB.batch(statements);
 }
 
-async function finishAssistantTask(env: WorkerEnv, task: StoredAssistantTask, status: "failed" | "needs-review" | "canceled", code: string) {
-  const now = new Date().toISOString();
-  await env.DB.prepare("UPDATE assistant_specialist_tasks SET status=?,error_code=?,updated_at=?,completed_at=? WHERE task_id=? AND actor_user_id=? AND status IN('queued','running')")
-    .bind(status, code, now, now, task.task_id, task.actor_user_id).run();
+/** A history read can park unsigned legacy rows, but cannot buy work or release an unknown bill. */
+async function resumeAssistantTasks(_request:Request,env:WorkerEnv,actor:AuthorizedAssistant,_execution:WorkerExecutionContext){
+  await parkUnsignedAssistantTasks(env,actor,assistantScopeKey(actor));
 }
 
-async function runAssistantSpecialist(request: Request, env: WorkerEnv, taskId: string): Promise<void> {
-  const task = await env.DB.prepare("SELECT * FROM assistant_specialist_tasks WHERE task_id=? LIMIT 1").bind(taskId).first<StoredAssistantTask>();
-  if (!task || task.status !== "queued") return;
-  const now = new Date().toISOString();
-  const lease = new Date(Date.now() + 10 * 60_000).toISOString();
-  const claimed = await env.DB.prepare(`UPDATE assistant_specialist_tasks SET status='running',updated_at=?,started_at=?,lease_expires_at=?
-    WHERE task_id=? AND actor_user_id=? AND status='queued'
-      AND (SELECT COUNT(*) FROM assistant_specialist_tasks active WHERE active.actor_user_id=? AND active.status='running')<2`)
-    .bind(now, now, lease, task.task_id, task.actor_user_id, task.actor_user_id).run();
-  if (Number(claimed.meta.changes ?? 0) !== 1) return;
-  task.status = "running";
-  let dispatched = false;
-  let settled = false;
-  try {
-    const live = await authorizeAssistant(request, env);
-    const actor = live.authorized;
-    if (live.response || !actor || actor.principal.userId !== task.actor_user_id || assistantScopeKey(actor) !== task.scope_key
-      || actor.principal.access.permissionEpoch !== task.permission_epoch || !assistantProviderEnabled(env, actor)
-      || !assistantAllowedModels(env).includes(task.selected_model as AssistantModel)
-      || task.selected_model === "gpt-5.6-sol" && (actor.principal.role !== "admin" || !featureUsers(env.FORMA_ASSISTANT_SOL_USER_IDS).has(actor.principal.userId))) {
-      throw new Error("assistant_authorization_changed");
-    }
-    const turn = await exactAssistantTurn(env, actor, task.turn_id);
-    if (!turn) throw new Error("assistant_turn_missing");
-    const current = await assistantContext(request, env, actor);
-    if (!await claimCostBudgetReservation(env, task.actor_user_id, task.cost_reservation_id)) throw new Error("assistant_budget_claim_denied");
-    const dispatchedAt = new Date().toISOString();
-    const submission = await env.DB.prepare(`UPDATE assistant_specialist_tasks SET provider_submitted=1,updated_at=?,lease_expires_at=?
-      WHERE task_id=? AND actor_user_id=? AND scope_key=? AND permission_epoch=? AND status='running' AND provider_submitted=0`)
-      .bind(dispatchedAt, new Date(Date.now() + 10 * 60_000).toISOString(), task.task_id, task.actor_user_id, task.scope_key, task.permission_epoch).run();
-    if (Number(submission.meta.changes ?? 0) !== 1) throw new Error("assistant_authorization_changed");
-    task.provider_submitted = 1;
-    dispatched = true;
-    const result = await requestAssistantProvider(env, task.actor_user_id, {
-      model: task.selected_model as AssistantModel,
-      context: current.context,
-      message: turn.user,
-      locale: task.locale,
-      maximumInputTokens:task.maximum_input_tokens,
-      maximumOutputTokens: task.maximum_output_tokens,
-    });
-    const pricedModel = ASSISTANT_MODELS.includes(result.model as AssistantModel) ? result.model : task.selected_model;
-    const actual = priceTextUsageBreakdownMicrousd(pricedModel, result.usage).totalMicrousd;
-    await settleBudget(env, task.actor_user_id, task.token_reservation_id, result.usage.totalTokens || result.usage.inputTokens + result.usage.outputTokens);
-    await settleCostBudget(env, task.actor_user_id, task.cost_reservation_id, actual);
-    settled = true;
-    if (result.model !== task.selected_model) throw new Error("assistant_provider_model_mismatch");
-    if (actual > task.estimated_microusd) throw new Error("assistant_provider_budget_exceeded");
-    const final = await authorizeAssistant(request, env);
-    if (!final.authorized || final.response || final.authorized.principal.userId !== task.actor_user_id
-      || final.authorized.principal.access.permissionEpoch !== task.permission_epoch || assistantScopeKey(final.authorized) !== task.scope_key) {
-      throw new Error("assistant_authorization_changed");
-    }
-    const refreshed = await assistantContext(request, env, final.authorized);
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        await commitAssistantSpecialistResult(env, final.authorized, task, result, refreshed.context);
-        return;
-      } catch (error) {
-        if (attempt === 2 || !/assistant_action_commits|events\.stream_id|events\.sequence|CHECK constraint/iu.test(error instanceof Error ? error.message : String(error))) throw error;
-      }
-    }
-  } catch (error) {
-    const code = error instanceof Error && /^assistant_[a-z_]+(?:_\d+)?$/u.test(error.message) ? error.message : "assistant_specialist_failed";
-    if (!dispatched || error instanceof AssistantProviderRejectedError) {
-      await releaseCostBudget(env, task.actor_user_id, task.cost_reservation_id);
-      await releaseBudget(env, task.actor_user_id, task.token_reservation_id, { reason: code });
-      await finishAssistantTask(env, task, "failed", code);
-    } else if (!settled) {
-      // A paid POST may have reached its provider. Never duplicate or release its uncertain charge automatically.
-      await finishAssistantTask(env, task, "needs-review", code);
-    } else {
-      await finishAssistantTask(env, task, "failed", code);
-    }
-  } finally {
-    const next = await env.DB.prepare("SELECT task_id FROM assistant_specialist_tasks WHERE actor_user_id=? AND scope_key=? AND status='queued' ORDER BY created_at LIMIT 1")
-      .bind(task.actor_user_id, task.scope_key).first<{ task_id: string }>();
-    if (next) await runAssistantSpecialist(request, env, String(next.task_id));
-  }
-}
-
-/** Polling can recover an interrupted request without ever replaying an ambiguous paid submission. */
-async function resumeAssistantTasks(request: Request, env: WorkerEnv, actor: AuthorizedAssistant, execution: WorkerExecutionContext) {
-  const now = new Date().toISOString();
-  const expired = await env.DB.prepare(`SELECT * FROM assistant_specialist_tasks WHERE actor_user_id=? AND scope_key=?
-    AND status='running' AND lease_expires_at IS NOT NULL AND lease_expires_at<=? LIMIT 8`)
-    .bind(actor.principal.userId, assistantScopeKey(actor), now).all<StoredAssistantTask>();
-  for (const task of expired.results) {
-    if (Number(task.provider_submitted) === 1) {
-      await finishAssistantTask(env, task, "needs-review", "assistant_provider_submission_uncertain");
-      continue;
-    }
-    await env.DB.batch([
-      env.DB.prepare("UPDATE cost_budget_reservations SET status='active',updated_at=? WHERE reservation_id=? AND owner_id=? AND status='executing'")
-        .bind(now, task.cost_reservation_id, actor.principal.userId),
-      env.DB.prepare("UPDATE assistant_specialist_tasks SET status='queued',updated_at=?,started_at=NULL,lease_expires_at=NULL WHERE task_id=? AND actor_user_id=? AND scope_key=? AND status='running' AND provider_submitted=0 AND lease_expires_at<=?")
-        .bind(now, task.task_id, actor.principal.userId, assistantScopeKey(actor), now),
-    ]);
-  }
-  const pending = await env.DB.prepare("SELECT task_id FROM assistant_specialist_tasks WHERE actor_user_id=? AND scope_key=? AND status='queued' ORDER BY created_at LIMIT 2")
-    .bind(actor.principal.userId, assistantScopeKey(actor)).all<{ task_id: string }>();
-  for (const task of pending.results) {
-    const background = new Request(request.url, { method: "GET", headers: request.headers });
-    execution.waitUntil(runAssistantSpecialist(background, env, String(task.task_id)).catch(() => undefined));
-  }
-}
-
-async function recentAssistantTasks(env: WorkerEnv, actor: AuthorizedAssistant) {
-  const rows = await env.DB.prepare(`SELECT task_id,turn_id,task_kind,selected_model,status,error_code,estimated_microusd
-    FROM assistant_specialist_tasks WHERE actor_user_id=? AND scope_key=? ORDER BY created_at DESC LIMIT 8`)
-    .bind(actor.principal.userId, assistantScopeKey(actor)).all<{
-      task_id: string;
-      turn_id: string;
-      task_kind: string;
-      selected_model: string;
-      status: string;
-      error_code: string | null;
-      estimated_microusd: number;
-    }>();
-  return rows.results.map((row) => ({ id: row.task_id, turnId: row.turn_id, kind: row.task_kind,
-    model: row.selected_model, status: row.status, error: row.error_code, estimatedMicrousd: Number(row.estimated_microusd) }));
+async function recentAssistantTasks(env: WorkerEnv, actor: AuthorizedAssistant):Promise<AssistantTaskFeedEntry[]> {
+  const keys=[assistantScopeKey(actor),...(actor.legacyScopeKey?[actor.legacyScopeKey]:[])];
+  const rows=await env.DB.prepare(`SELECT task.*,
+    execution.execution_id AS consent_execution_id,execution.binding_hash AS consent_binding_hash,step.status AS step_status
+    FROM assistant_specialist_tasks task LEFT JOIN consequential_executions execution ON execution.execution_id=task.task_id AND execution.actor_user_id=task.actor_user_id AND execution.operation='assistant-specialist'
+      AND json_extract(task.result_json,'$.specialistConsentVersion')=1 AND execution.binding_hash=json_extract(task.result_json,'$.bindingHash')
+      AND task.token_reservation_id=task.task_id||':tokens:0' AND task.cost_reservation_id=task.task_id||':usd:0'
+    LEFT JOIN consequential_execution_steps step ON step.execution_id=execution.execution_id AND step.step_index=0
+    WHERE task.actor_user_id=? AND task.scope_key IN(${keys.map(()=>"?").join(",")}) ORDER BY task.created_at DESC LIMIT 8`)
+    .bind(actor.principal.userId,...keys).all<SpecialistTaskRecord&{consent_execution_id:string|null;consent_binding_hash:string|null;step_status:string|null}>();
+  return rows.results.map(row=>({record:row,display:{id:row.task_id,turnId:row.turn_id,kind:row.task_kind,model:row.selected_model,status:row.status,error:row.error_code,estimatedMicrousd:Number(row.estimated_microusd),
+    ...(row.consent_execution_id?{executionId:row.consent_execution_id,bindingHash:row.consent_binding_hash,canExecute:false,submission:assistantSubmissionStatus(row.step_status)}:{})}}));
 }
 
 export async function handleAssistantTask(request: Request, env: WorkerEnv, taskId: string, operation: string): Promise<Response> {
@@ -1247,21 +1048,25 @@ export async function handleAssistantTask(request: Request, env: WorkerEnv, task
   const task = await env.DB.prepare("SELECT * FROM assistant_specialist_tasks WHERE task_id=? AND actor_user_id=? AND scope_key=? LIMIT 1")
     .bind(taskId, actor.principal.userId, assistantScopeKey(actor)).first<StoredAssistantTask>();
   if (!task) return json({ error: "assistant_task_not_found" }, 404);
+  if(operation==="cancel"){const signed=await cancelConsentedAssistantTask(env,actor,assistantSpecialistHost,task);if(signed)return signed;}
   if (task.permission_epoch !== actor.principal.access.permissionEpoch) return json({ error: "assistant_authorization_changed" }, 403);
   if (operation === "reconcile") {
     // The task-owner route can never provide the independent reviewer required for
     // an ambiguous paid submission, even when that owner is a platform admin.
     return json({ error: "assistant_independent_reviewer_required" }, 403);
   }
-  if (task.status === "canceled") return json({ taskId, status: "canceled", idempotent: true });
-  if (task.status !== "queued") return json({ error: "assistant_task_already_started" }, 409);
-  const now = new Date().toISOString();
-  const canceled = await env.DB.prepare("UPDATE assistant_specialist_tasks SET status='canceled',error_code='assistant_canceled',updated_at=?,completed_at=? WHERE task_id=? AND actor_user_id=? AND scope_key=? AND status='queued'")
-    .bind(now, now, taskId, actor.principal.userId, assistantScopeKey(actor)).run();
-  if (Number(canceled.meta.changes ?? 0) !== 1) return json({ error: "assistant_task_already_started" }, 409);
-  await releaseCostBudget(env, actor.principal.userId, task.cost_reservation_id);
-  await releaseBudget(env, actor.principal.userId, task.token_reservation_id, { reason: "assistant_user_canceled" });
-  return json({ taskId, status: "canceled" });
+  await parkUnsignedAssistantTasks(env,actor,assistantScopeKey(actor));
+  return json({error:"assistant_legacy_approval_required",taskId,noAutomaticRetry:true},409);
+}
+
+/** The historical no-charge attestation must never overwrite a signed receipt or already recorded spend. */
+function legacyAssistantNoChargeSql(task:string){
+  return `${task}.result_json IS NULL
+    AND NOT EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.actor_user_id=${task}.actor_user_id AND(
+      execution.execution_id=${task}.task_id OR EXISTS(SELECT 1 FROM consequential_execution_steps step WHERE step.execution_id=execution.execution_id
+        AND(step.token_reservation_id=${task}.token_reservation_id OR step.cost_reservation_id=${task}.cost_reservation_id))))
+    AND NOT EXISTS(SELECT 1 FROM budget_reservations tokens WHERE tokens.reservation_id=${task}.token_reservation_id AND tokens.owner_id=${task}.actor_user_id AND tokens.used_tokens>0)
+    AND NOT EXISTS(SELECT 1 FROM cost_budget_reservations cost WHERE cost.reservation_id=${task}.cost_reservation_id AND cost.owner_id=${task}.actor_user_id AND cost.used_microusd>0)`;
 }
 
 /** Rescue another actor's uncertain bill without exposing their conversation or widening project authority. */
@@ -1320,6 +1125,21 @@ export async function handleAssistantBillingReconciliation(request: Request, env
     AND organization_id IS ? AND project_access_id IS ? LIMIT 1`)
     .bind(taskId, actorUserId, organizationId, projectAccessId).first<StoredAssistantTask>();
   if (!task) return json({ error: "assistant_task_not_found" }, 404);
+  const signed=await env.DB.prepare(`SELECT execution.execution_id,execution.operation,execution.organization_id,execution.project_access_id
+    FROM consequential_executions execution WHERE execution.actor_user_id=? AND(execution.execution_id=? OR EXISTS(
+      SELECT 1 FROM consequential_execution_steps step WHERE step.execution_id=execution.execution_id AND(step.token_reservation_id=? OR step.cost_reservation_id=?)))
+    ORDER BY execution.execution_id=? DESC LIMIT 1`).bind(actorUserId,taskId,task.token_reservation_id,task.cost_reservation_id,taskId)
+    .first<{execution_id:string;operation:string;organization_id:string|null;project_access_id:string|null}>();
+  if(task.result_json!==null&&task.result_json!==undefined||signed){
+    if(signed?.execution_id===taskId&&signed.operation==="assistant-specialist"&&signed.organization_id===organizationId&&signed.project_access_id===projectAccessId){
+      // An independent reviewer may finish persisted usage accounting, but this legacy checkbox is not a signed no-charge receipt.
+      try{await reconcileConsequentialUsage(env,actorUserId,taskId);}catch{/* Keep the exact retained evidence and remaining hold for free recovery. */}
+    }
+    return json({error:"assistant_signed_billing_evidence_required",taskId,noAutomaticRetry:true},409);
+  }
+  const knownUsage=await env.DB.prepare(`SELECT 1 AS present FROM assistant_specialist_tasks task WHERE task.task_id=? AND task.actor_user_id=? AND NOT(${legacyAssistantNoChargeSql("task")})`)
+    .bind(taskId,actorUserId).first();
+  if(knownUsage)return json({error:"assistant_recorded_usage_cannot_be_reconciled_as_free",taskId,noAutomaticRetry:true},409);
   if (task.status === "reconciled") return json({ taskId, status: "reconciled", idempotent: true });
   if (!["needs-review", "reconciling"].includes(task.status)) return json({ error: "assistant_task_reconciliation_unavailable" }, 409);
 
@@ -1330,11 +1150,11 @@ export async function handleAssistantBillingReconciliation(request: Request, env
   const statements = [
     env.DB.prepare(`UPDATE assistant_specialist_tasks SET status='reconciling',updated_at=?
       WHERE task_id=? AND actor_user_id=? AND scope_key=? AND organization_id IS ? AND project_access_id IS ?
-        AND status IN('needs-review','reconciling')`)
+        AND status IN('needs-review','reconciling') AND ${legacyAssistantNoChargeSql("assistant_specialist_tasks")}`)
       .bind(started, taskId, actorUserId, task.scope_key, organizationId, projectAccessId),
     env.DB.prepare(`INSERT OR IGNORE INTO assistant_billing_reconciliations(reconciliation_id,task_id,actor_user_id,reviewer_user_id,organization_id,project_access_id,evidence_classification,occurred_at)
       SELECT ?,?,?,?,?,?,'verified-no-provider-charge',? WHERE EXISTS(SELECT 1 FROM assistant_specialist_tasks
-        WHERE task_id=? AND actor_user_id=? AND scope_key=? AND status='reconciling')`)
+        WHERE task_id=? AND actor_user_id=? AND scope_key=? AND status='reconciling' AND ${legacyAssistantNoChargeSql("assistant_specialist_tasks")})`)
       .bind(auditId, taskId, actorUserId, reviewer.userId, organizationId, projectAccessId, started, taskId, actorUserId, task.scope_key),
   ];
   if (organizationId) {
@@ -1342,13 +1162,16 @@ export async function handleAssistantBillingReconciliation(request: Request, env
       SELECT ?,?,?, 'AssistantProviderChargeReconciled','assistant-billing',?,?,? WHERE EXISTS(SELECT 1 FROM assistant_billing_reconciliations
         WHERE task_id=? AND actor_user_id=? AND reviewer_user_id=? AND organization_id=? AND project_access_id IS ?)
         AND NOT EXISTS(SELECT 1 FROM organization_audit_events WHERE organization_id=? AND action='AssistantProviderChargeReconciled'
-          AND resource_kind='assistant-billing' AND resource_id=? AND actor_user_id=?)`)
+          AND resource_kind='assistant-billing' AND resource_id=? AND actor_user_id=?)
+        AND EXISTS(SELECT 1 FROM assistant_specialist_tasks task WHERE task.task_id=? AND task.actor_user_id=? AND task.status='reconciling' AND ${legacyAssistantNoChargeSql("task")})`)
       .bind(uuidV7(), organizationId, reviewer.userId, taskId, JSON.stringify(evidence), started,
-        taskId, actorUserId, reviewer.userId, organizationId, projectAccessId, organizationId, taskId, reviewer.userId));
+        taskId, actorUserId, reviewer.userId, organizationId, projectAccessId, organizationId, taskId, reviewer.userId, taskId, actorUserId));
   }
   try {
     const results = await env.DB.batch(statements);
     if (Number(results[0]?.meta.changes ?? 0) !== 1) return json({ error: "assistant_task_reconciliation_unavailable" }, 409);
+    if(!await env.DB.prepare(`SELECT 1 AS current FROM assistant_specialist_tasks task WHERE task.task_id=? AND task.actor_user_id=? AND task.status=\'reconciling\' AND ${legacyAssistantNoChargeSql("task")}`).bind(taskId,actorUserId).first())
+      return json({error:"assistant_recorded_usage_cannot_be_reconciled_as_free",taskId,noAutomaticRetry:true},409);
     await releaseCostBudget(env, actorUserId, task.cost_reservation_id);
     await releaseBudget(env, actorUserId, task.token_reservation_id, { reason: "assistant_admin_verified_no_provider_charge" });
     const ended = new Date().toISOString();
@@ -1356,70 +1179,48 @@ export async function handleAssistantBillingReconciliation(request: Request, env
       WHERE task_id=? AND actor_user_id=? AND scope_key=? AND organization_id IS ? AND project_access_id IS ? AND status='reconciling'
         AND NOT EXISTS(SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status IN('active','executing'))
         AND NOT EXISTS(SELECT 1 FROM budget_reservations WHERE reservation_id=? AND owner_id=? AND status IN('active','executing'))
-        AND EXISTS(SELECT 1 FROM assistant_billing_reconciliations WHERE task_id=? AND actor_user_id=? AND reviewer_user_id=?)`)
+        AND EXISTS(SELECT 1 FROM assistant_billing_reconciliations WHERE task_id=? AND actor_user_id=? AND reviewer_user_id=?)
+        AND ${legacyAssistantNoChargeSql("assistant_specialist_tasks")}`)
       .bind(ended, ended, taskId, actorUserId, task.scope_key, organizationId, projectAccessId,
         task.cost_reservation_id, actorUserId, task.token_reservation_id, actorUserId, taskId, actorUserId, reviewer.userId).run();
     return Number(completed.meta.changes ?? 0) === 1 ? json({ taskId, status: "reconciled" }) : json({ error: "assistant_reconciliation_incomplete" }, 409);
   } catch { return json({ error: "assistant_reconciliation_incomplete" }, 409); }
 }
 
+const assistantSpecialistHost:AssistantSpecialistHost={
+  authorize:authorizeAssistant,scopeKey:assistantScopeKey,ensure:ensureAssistantSchema,
+  kind:(message,context,turnId)=>assistantTaskKind(message,preparedAssistantActions(message,context,turnId)),
+  allowedModels:assistantAllowedModels,providerEnrolled:(env,userId)=>featureUsers(env.FORMA_ASSISTANT_PROVIDER_USER_IDS).has(userId),
+  solEnrolled:(env,userId)=>featureUsers(env.FORMA_ASSISTANT_SOL_USER_IDS).has(userId),
+  turn:exactAssistantTurn,commit:commitAssistantSpecialistResult,
+};
+export async function handleAssistantSpecialist(request:Request,env:WorkerEnv,execution:WorkerExecutionContext){
+  return handleAssistantSpecialistConsent(request,env,execution,assistantSpecialistHost);
+}
+
 export async function handleAssistant(request: Request, env: WorkerEnv, execution: WorkerExecutionContext): Promise<Response> {
-  if (request.method !== "GET" && request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
-  const authorization = await authorizeAssistant(request, env);
-  if (authorization.response || !authorization.authorized) return authorization.response!;
-  const actor = authorization.authorized;
-  await ensureAssistantSchema(env);
-  const state = await assistantContext(request, env, actor);
-  if (request.method === "GET") {
-    await resumeAssistantTasks(request, env, actor, execution);
-    return json({ ...state, tasks: await recentAssistantTasks(env, actor) });
-  }
-
-  let body: { turnId?: unknown; message?: unknown; locale?: unknown; model?: unknown; premiumApproval?: unknown };
-  try { body = await request.json() as typeof body; } catch { return json({ error: "assistant_request_invalid" }, 400); }
-  const turnId = typeof body.turnId === "string" ? body.turnId.trim() : "";
-  const message = typeof body.message === "string" ? body.message.trim() : "";
-  if (!/^[a-zA-Z0-9_-]{8,80}$/u.test(turnId)) return json({ error: "assistant_turn_invalid" }, 400);
-  if (!message || message.length > ASSISTANT_CONTEXT_LIMITS.turnChars) return json({ error: "assistant_message_invalid" }, 400);
-  const previous = await exactAssistantTurn(env, actor, turnId);
-  if (previous) return previous.user === message ? json({ context: state.context, turn: previous }) : json({ error: "assistant_turn_conflict" }, 409);
-
-  const reply = answerFor(state.context, message, body.locale);
-  const actions = assistantActionsEnabled(env, actor) ? preparedAssistantActions(message, state.context, turnId) : [];
-  const actionProposals: AssistantProposal[] = actions.map(({ id, turnId: sourceTurn, key, summary, action }) => ({ id, turnId: sourceTurn, key, summary, kind: action.kind }));
-  const proposal = actionProposals[0] ?? proposalFor(state.context, turnId, actor.canPropose);
-  let task: PreparedAssistantTask | null = null;
-  try {
-    const visibleProtected=state.context.decisionAtoms.filter((decision)=>decision.providerEligible&&(decision.protected||decision.locked||decision.type==="exclusion"||decision.intent==="prohibit")).length;
-    const protectedComplete=visibleProtected>=Number(state.context.totals.protectedDecisions??visibleProtected);
-    const safeRights=Number(state.context.totals.unsafeRightsDecisions??0)===0;
-    const completeProtectedText=Number(state.context.totals.truncatedProtectedDecisions??0)===0;
-    const synthesisAvailable=assistantTaskKind(message,actions)!=="cross-document-synthesis";
-    if(protectedComplete&&completeProtectedText&&safeRights&&synthesisAvailable)task=await prepareAssistantTask(env,actor,{turnId,message,actions,locale:body.locale,model:body.model,premiumApproval:body.premiumApproval});
-  } catch { /* Account, policy, or provider unavailability never blocks zero-cost page guidance. */ }
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    try {
-      await commitAssistantTurn(env, actor, { turnId, message, reply: localizedAnswer(reply, body.locale), proposal, documentId: state.context.scope.documentId, actions, task });
-      if (task) {
-        const background = new Request(request.url, { method: "GET", headers: request.headers });
-        execution.waitUntil(runAssistantSpecialist(background, env, task.id).catch(() => undefined));
-      }
-      return json({ context: state.context,
-        turn: { id: turnId, user: message, reply, proposal, ...(actionProposals.length > 1 ? { proposals: actionProposals } : {}) },
-        ...(task ? { task: { id: task.id, turnId, kind: task.kind, model: task.model, status: "queued", estimatedMicrousd: task.estimatedMicrousd } } : {}),
-      }, 201);
-    } catch (error) {
-      const accepted = await exactAssistantTurn(env, actor, turnId);
-      if (accepted) {
-        await releasePreparedAssistantTask(env, actor, task);
-        return accepted.user === message ? json({ context: state.context, turn: accepted }) : json({ error: "assistant_turn_conflict" }, 409);
-      }
-      if (attempt === 3 || !/assistant_turns\.status|events\.stream_id|events\.sequence|event_append_contention/iu.test(error instanceof Error ? error.message : String(error))) {
-        await releasePreparedAssistantTask(env, actor, task);
-        return json({ error: "assistant_persistence_failed" }, 503);
-      }
+  if(request.method!=="GET"&&request.method!=="POST")return json({error:"method_not_allowed"},405);
+  const authorization=await authorizeAssistant(request,env);if(authorization.response||!authorization.authorized)return authorization.response!;
+  const actor=authorization.authorized;await ensureAssistantSchema(env);const state=await assistantContext(request,env,actor);
+  if(request.method==="GET"){await resumeAssistantTasks(request,env,actor,execution);return certifiedAssistantTaskFeed(env,actor,assistantScopeKey(actor),state,await recentAssistantTasks(env,actor));}
+  let body:{turnId?:unknown;message?:unknown;locale?:unknown;model?:unknown;premiumApproval?:unknown};
+  try{body=await request.json()as typeof body;}catch{return json({error:"assistant_request_invalid"},400);}
+  const turnId=typeof body.turnId==="string"?body.turnId.trim():"",message=typeof body.message==="string"?body.message.trim():"";
+  if(!/^[a-zA-Z0-9_-]{8,80}$/u.test(turnId))return json({error:"assistant_turn_invalid"},400);
+  if(!message||message.length>ASSISTANT_CONTEXT_LIMITS.turnChars)return json({error:"assistant_message_invalid"},400);
+  const previous=await exactAssistantTurn(env,actor,turnId);if(previous)return previous.user===message?json({context:state.context,turn:previous}):json({error:"assistant_turn_conflict"},409);
+  // Send always remains zero-cost, even when an old caller supplies a model or premium flag.
+  const reply=answerFor(state.context,message,body.locale),actions=assistantActionsEnabled(env,actor)?preparedAssistantActions(message,state.context,turnId):[];
+  const actionProposals:AssistantProposal[]=actions.map(({id,turnId:sourceTurn,key,summary,action})=>({id,turnId:sourceTurn,key,summary,kind:action.kind})),proposal=actionProposals[0]??proposalFor(state.context,turnId,actor.canPropose);
+  const originalRequest=savedAssistantRequest(request,actor,turnId,responseLocale(body.locale)),requestJson=JSON.stringify(originalRequest);
+  for(let attempt=0;attempt<4;attempt++){
+    try{
+      await commitAssistantTurn(env,actor,{turnId,message,reply:localizedAnswer(reply,body.locale),proposal,documentId:state.context.scope.documentId,actions,requestJson});
+      return json({context:state.context,turn:{id:turnId,user:message,reply,proposal,...(actionProposals.length>1?{proposals:actionProposals}:{}),originalRequest}},201);
+    }catch(error){
+      const accepted=await exactAssistantTurn(env,actor,turnId);if(accepted)return accepted.user===message?json({context:state.context,turn:accepted}):json({error:"assistant_turn_conflict"},409);
+      if(attempt===3||!/assistant_turns\.status|events\.stream_id|events\.sequence|event_append_contention/iu.test(error instanceof Error?error.message:String(error)))return json({error:"assistant_persistence_failed"},503);
     }
   }
-  await releasePreparedAssistantTask(env, actor, task);
-  return json({ error: "assistant_persistence_failed" }, 503);
+  return json({error:"assistant_persistence_failed"},503);
 }

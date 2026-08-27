@@ -237,6 +237,17 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     FROM project_resource_scopes resource LEFT JOIN private_content retained ON resource.resource_kind='content'
       AND retained.content_id=resource.resource_id AND retained.owner_id=resource.actor_user_id
       AND(retained.kind IN('provider-response','assistant-action')
+        OR retained.kind IN('chat-user','chat-assistant') AND resource.visibility='actor_private' AND retained.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          AND EXISTS(SELECT 1 FROM private_content_retention_scopes conversation
+            JOIN organization_projects current_project ON current_project.project_access_id=conversation.project_access_id
+              AND current_project.organization_id=conversation.organization_id AND current_project.project_id=conversation.project_id
+              AND current_project.owner_user_id=resource.owner_user_id AND current_project.status='active'
+            JOIN organizations current_organization ON current_organization.organization_id=current_project.organization_id AND current_organization.status='active'
+            JOIN organization_memberships current_actor ON current_actor.organization_id=current_project.organization_id AND current_actor.user_id=resource.actor_user_id
+              AND current_actor.status='active' AND current_actor.accepted_at IS NOT NULL AND current_actor.revoked_at IS NULL
+            WHERE conversation.content_id=retained.content_id AND conversation.organization_id=resource.organization_id
+              AND conversation.project_access_id=resource.project_access_id AND conversation.project_id=resource.project_id
+              AND conversation.actor_user_id=resource.actor_user_id AND conversation.classification='transient-private')
         OR retained.kind IN('execution-consent','context-proposal','authoring-preview') AND resource.visibility='actor_private'
           AND EXISTS(SELECT 1 FROM private_content_retention_scopes governed WHERE governed.content_id=retained.content_id
             AND governed.organization_id=resource.organization_id AND governed.project_access_id=resource.project_access_id

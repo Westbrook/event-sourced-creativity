@@ -1,4 +1,5 @@
 import { cancelProjectActorJobs, projectProviderSubmissionBlockers } from "./document-jobs-api.ts";
+import { failConsequentialExecution, reconcileConsequentialUsage } from "./consequential-consent.ts";
 import { unsettledProviderSubmissionSql } from "../src/model/provider-submission";
 import { ensureOrganizationKey, openOrganizationPayload, organizationEncryptionConfigured, OrganizationCryptoUnavailable, sealOrganizationPayload } from "./organization-crypto.ts";
 import { hasCapability, POLICY_VERSION, releaseBudget, releaseCostBudget, type PilotUser } from "./pilot-policy.ts";
@@ -822,50 +823,204 @@ async function deletionInventory(env: WorkerEnv, organizationId: string) {
 async function initializedAssistantTables(env:WorkerEnv){
   const tables=await env.DB.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name IN('assistant_turns','assistant_action_proposals','assistant_specialist_tasks')")
     .all<{name:string}>();
-  return new Set(tables.results.map((row)=>String(row.name)));
+  const present=new Set(tables.results.map(row=>String(row.name)));
+  if(present.has("assistant_specialist_tasks")){
+    const columns=await env.DB.prepare("PRAGMA table_info(assistant_specialist_tasks)").all<{name:string}>();
+    if(columns.results.some(column=>column.name==="result_json"))present.add("assistant_specialist_consent");
+  }
+  return present;
 }
 
+/** The step boundary, not a task label or an executing hold, proves that a signed POST has not happened. */
+function unusedAssistantExecutionSql(execution:string,tables:Set<string>){
+  const noContradictoryTask=!tables.has("assistant_specialist_tasks")?"":` AND NOT EXISTS(SELECT 1 FROM assistant_specialist_tasks signed_task
+    WHERE signed_task.task_id=${execution}.execution_id AND signed_task.actor_user_id=${execution}.actor_user_id
+      AND(COALESCE(signed_task.provider_submitted,1)!=0 AND stopped.status!='not-submitted'
+        ${tables.has("assistant_specialist_consent")?`OR signed_task.result_json IS NOT NULL AND NOT json_valid(signed_task.result_json)
+          OR json_type(CASE WHEN json_valid(signed_task.result_json) THEN signed_task.result_json ELSE '{}' END,'$.rawReceipt') IS NOT NULL`:""}))`;
+  return `${execution}.result_ref IS NULL AND ${execution}.status IN('quoted','reserved','failed','uncertain')
+    AND(SELECT COUNT(*) FROM consequential_execution_steps counted WHERE counted.execution_id=${execution}.execution_id)=1
+    AND EXISTS(SELECT 1 FROM consequential_execution_steps stopped WHERE stopped.execution_id=${execution}.execution_id AND stopped.step_index=0
+      AND stopped.token_reservation_id=${execution}.execution_id||':tokens:0' AND stopped.cost_reservation_id=${execution}.execution_id||':usd:0'
+      AND stopped.status IN('quoted','reserved','not-submitted') AND stopped.verified_tokens IS NULL AND stopped.verified_microusd IS NULL
+      AND stopped.provider_request_id IS NULL ${noContradictoryTask})`;
+}
+
+/** Reuse the persisted amounts. A task status or a canonical pointer alone does not prove both ledgers are settled. */
+function settledAssistantExecutionSql(execution:string){
+  return `EXISTS(SELECT 1 FROM consequential_execution_steps present WHERE present.execution_id=${execution}.execution_id)
+    AND NOT EXISTS(SELECT 1 FROM consequential_execution_steps verified WHERE verified.execution_id=${execution}.execution_id AND(
+      verified.status!='settled' OR typeof(verified.verified_tokens)!='integer' OR verified.verified_tokens<0
+      OR typeof(verified.verified_microusd)!='integer' OR verified.verified_microusd<0
+      OR NOT EXISTS(SELECT 1 FROM budget_reservations tokens WHERE tokens.reservation_id=verified.token_reservation_id AND tokens.owner_id=${execution}.actor_user_id
+        AND tokens.status='settled' AND tokens.used_tokens=verified.verified_tokens)
+      OR NOT EXISTS(SELECT 1 FROM cost_budget_reservations cost WHERE cost.reservation_id=verified.cost_reservation_id AND cost.owner_id=${execution}.actor_user_id
+        AND cost.status='settled' AND cost.used_microusd=verified.verified_microusd)))`;
+}
+function legacyAssistantBlockedSql(task:string,tables:Set<string>){
+  return `(${tables.has("assistant_specialist_consent")?task+".result_json IS NOT NULL OR ":""}${task}.status IN('needs-review','reconciling')
+    OR COALESCE(${task}.provider_submitted,1)!=0 AND ${task}.status NOT IN('completed','reconciled')
+    OR ${task}.status='running' AND EXISTS(SELECT 1 FROM cost_budget_reservations cost
+      WHERE cost.reservation_id=${task}.cost_reservation_id AND cost.owner_id=${task}.actor_user_id AND cost.status='executing')
+    OR ${task}.status NOT IN('queued','running') AND NOT(${task}.status='canceled' AND ${task}.error_code='organization_deleted' AND ${task}.provider_submitted=0
+      AND NOT EXISTS(SELECT 1 FROM cost_budget_reservations stopped_cost WHERE stopped_cost.reservation_id=${task}.cost_reservation_id AND stopped_cost.owner_id=${task}.actor_user_id AND stopped_cost.status='executing'))
+      AND(EXISTS(SELECT 1 FROM budget_reservations tokens
+      WHERE tokens.reservation_id=${task}.token_reservation_id AND tokens.owner_id=${task}.actor_user_id AND tokens.status='active')
+      OR EXISTS(SELECT 1 FROM cost_budget_reservations cost WHERE cost.reservation_id=${task}.cost_reservation_id AND cost.owner_id=${task}.actor_user_id AND cost.status IN('active','executing'))))`;
+}
+function noAssistantSubmissionGuard(organizationId:string,tables:Set<string>){
+  const legacy=tables.has("assistant_specialist_tasks")?`NOT EXISTS(SELECT 1 FROM assistant_specialist_tasks task WHERE task.organization_id=?
+    AND NOT EXISTS(SELECT 1 FROM consequential_executions signed WHERE signed.execution_id=task.task_id AND signed.actor_user_id=task.actor_user_id AND signed.operation='assistant-specialist')
+    AND ${legacyAssistantBlockedSql("task",tables)}) AND `:"";
+  const tokens=noAssistantTokenReservationGuard(organizationId,tables);
+  return{sql:legacy+`NOT EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.organization_id=? AND execution.operation='assistant-specialist'
+    AND NOT(${unusedAssistantExecutionSql("execution",tables)}) AND NOT(${settledAssistantExecutionSql("execution")})) AND ${tokens.sql}`,bindings:[...(tables.has("assistant_specialist_tasks")?[organizationId,organizationId]:[organizationId]),...tokens.bindings]};
+}
+function orphanAssistantReservationSql(reservation:string,kind:"tokens"|"usd",tables:Set<string>){
+  const column=kind==="tokens"?"token_reservation_id":"cost_reservation_id";
+  const noTask=tables.has("assistant_specialist_tasks")?`AND NOT EXISTS(SELECT 1 FROM assistant_specialist_tasks task WHERE task.${column}=${reservation}.reservation_id
+    AND task.actor_user_id=${reservation}.owner_id AND task.organization_id=scoped.organization_id)`:"";
+  return `(${reservation}.operation LIKE 'assistant:%' OR ${reservation}.operation LIKE 'assistant-specialist:%'
+      OR ${reservation}.correlation_id LIKE 'assistant:%' OR ${reservation}.correlation_id LIKE 'assistant-specialist:%')
+    ${noTask} AND NOT EXISTS(SELECT 1 FROM consequential_execution_steps step JOIN consequential_executions execution ON execution.execution_id=step.execution_id
+      WHERE step.${column}=${reservation}.reservation_id AND execution.actor_user_id=${reservation}.owner_id
+        AND execution.organization_id=scoped.organization_id AND execution.operation='assistant-specialist')`;
+}
+function noAssistantTokenReservationGuard(organizationId:string,tables:Set<string>){
+  return{sql:`NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes scoped JOIN budget_reservations tokens ON tokens.reservation_id=scoped.reservation_id AND tokens.owner_id=scoped.actor_user_id
+    WHERE scoped.reservation_kind='tokens' AND scoped.organization_id=? AND tokens.status='active' AND ${orphanAssistantReservationSql("tokens","tokens",tables)})`,bindings:[organizationId]};
+}
+async function organizationAssistantTokenReservationBlockers(env:WorkerEnv,organizationId:string,tables:Set<string>){
+  const rows=await env.DB.prepare(`SELECT tokens.reservation_id,tokens.operation FROM project_budget_reservation_scopes scoped
+    JOIN budget_reservations tokens ON tokens.reservation_id=scoped.reservation_id AND tokens.owner_id=scoped.actor_user_id
+    WHERE scoped.reservation_kind='tokens' AND scoped.organization_id=? AND tokens.status='active' AND ${orphanAssistantReservationSql("tokens","tokens",tables)} LIMIT 100`)
+    .bind(organizationId).all<{reservation_id:string;operation:string}>();
+  return rows.results.map(row=>({reservationId:String(row.reservation_id),operation:String(row.operation)}));
+}
+function unprotectedExecutingReservationSql(tables:Set<string>){
+  return `NOT EXISTS(SELECT 1 FROM consequential_executions execution JOIN consequential_execution_steps step ON step.execution_id=execution.execution_id
+    WHERE execution.operation='assistant-specialist' AND execution.organization_id=scoped.organization_id AND execution.actor_user_id=cost.owner_id
+      AND step.cost_reservation_id=cost.reservation_id AND ${unusedAssistantExecutionSql("execution",tables)})`;
+}
+function noExecutingReservationGuard(organizationId:string,tables:Set<string>){
+  return{sql:`NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes scoped JOIN cost_budget_reservations cost ON cost.reservation_id=scoped.reservation_id AND cost.owner_id=scoped.actor_user_id
+    WHERE scoped.reservation_kind='usd' AND scoped.organization_id=? AND (cost.status='executing' AND ${unprotectedExecutingReservationSql(tables)} OR cost.status='active' AND ${orphanAssistantReservationSql("cost","usd",tables)}))`,bindings:[organizationId]};
+}
 async function organizationAssistantSubmissionBlockers(env:WorkerEnv,organizationId:string,tables:Set<string>){
-  if(!tables.has("assistant_specialist_tasks"))return[];
-  const rows=await env.DB.prepare(`SELECT task_id,status FROM assistant_specialist_tasks WHERE organization_id=?
-    AND(status IN('needs-review','reconciling') OR provider_submitted=1 AND status IN('queued','running')
-      OR status='running' AND EXISTS(SELECT 1 FROM cost_budget_reservations cost
-        WHERE cost.reservation_id=assistant_specialist_tasks.cost_reservation_id AND cost.owner_id=assistant_specialist_tasks.actor_user_id AND cost.status='executing')) LIMIT 100`)
-    .bind(organizationId).all<{task_id:string;status:string}>();
-  return rows.results.map((row)=>({taskId:String(row.task_id),status:String(row.status)}));
+  const legacy=tables.has("assistant_specialist_tasks")?`SELECT task.task_id,task.status FROM assistant_specialist_tasks task WHERE task.organization_id=?
+    AND NOT EXISTS(SELECT 1 FROM consequential_executions signed WHERE signed.execution_id=task.task_id AND signed.actor_user_id=task.actor_user_id AND signed.operation='assistant-specialist')
+    AND ${legacyAssistantBlockedSql("task",tables)} UNION ALL `:"";
+  const status=tables.has("assistant_specialist_tasks")?"COALESCE((SELECT task.status FROM assistant_specialist_tasks task WHERE task.task_id=execution.execution_id AND task.actor_user_id=execution.actor_user_id),execution.status)":"execution.status";
+  const rows=await env.DB.prepare(legacy+`SELECT execution.execution_id AS task_id,${status} AS status FROM consequential_executions execution
+    WHERE execution.organization_id=? AND execution.operation='assistant-specialist' AND NOT(${unusedAssistantExecutionSql("execution",tables)})
+      AND NOT(${settledAssistantExecutionSql("execution")}) LIMIT 100`)
+    .bind(...(tables.has("assistant_specialist_tasks")?[organizationId,organizationId]:[organizationId])).all<{task_id:string;status:string}>();
+  return rows.results.map(row=>({taskId:String(row.task_id),status:String(row.status)}));
 }
-
-async function organizationExecutingReservationBlockers(env:WorkerEnv,organizationId:string){
+async function organizationExecutingReservationBlockers(env:WorkerEnv,organizationId:string,tables:Set<string>){
   const reservations=await env.DB.prepare(`SELECT scoped.reservation_id,cost.operation FROM project_budget_reservation_scopes scoped
     JOIN cost_budget_reservations cost ON cost.reservation_id=scoped.reservation_id AND cost.owner_id=scoped.actor_user_id
-    WHERE scoped.reservation_kind='usd' AND scoped.organization_id=? AND cost.status='executing' LIMIT 100`)
+    WHERE scoped.reservation_kind='usd' AND scoped.organization_id=? AND (cost.status='executing' AND ${unprotectedExecutingReservationSql(tables)} OR cost.status='active' AND ${orphanAssistantReservationSql("cost","usd",tables)}) LIMIT 100`)
     .bind(organizationId).all<{reservation_id:string;operation:string}>();
-  return reservations.results.map((reservation)=>({reservationId:String(reservation.reservation_id),operation:String(reservation.operation)}));
+  return reservations.results.map(reservation=>({reservationId:String(reservation.reservation_id),operation:String(reservation.operation)}));
 }
-
-async function cancelUnsubmittedOrganizationAssistantTasks(env:WorkerEnv,organizationId:string,tables:Set<string>){
-  if(!tables.has("assistant_specialist_tasks"))return;
-  const rows=await env.DB.prepare(`SELECT task_id,actor_user_id,cost_reservation_id,token_reservation_id
-    FROM assistant_specialist_tasks WHERE organization_id=? AND status IN('queued','running') AND provider_submitted=0
-      AND NOT EXISTS(SELECT 1 FROM cost_budget_reservations cost
-        WHERE cost.reservation_id=assistant_specialist_tasks.cost_reservation_id AND cost.owner_id=assistant_specialist_tasks.actor_user_id AND cost.status='executing') LIMIT 500`)
-    .bind(organizationId).all<{task_id:string;actor_user_id:string;cost_reservation_id:string;token_reservation_id:string}>();
-  for(const row of rows.results){
-    const now=new Date().toISOString();
-    const stopped=await env.DB.prepare(`UPDATE assistant_specialist_tasks SET status='canceled',error_code='organization_deleted',updated_at=?,completed_at=?
-      WHERE task_id=? AND actor_user_id=? AND organization_id=? AND status IN('queued','running') AND provider_submitted=0`)
-      .bind(now,now,row.task_id,row.actor_user_id,organizationId).run();
-    if(Number(stopped.meta.changes??0)!==1)continue;
-    await releaseCostBudget(env,row.actor_user_id,row.cost_reservation_id);
-    await releaseBudget(env,row.actor_user_id,row.token_reservation_id,{reason:"organization_deleted"});
+// Share one allowance across preflight accounting and admitted cancellation. Successful work
+// leaves existing steps/tasks/ledgers terminal, so the next explicit retry never starts over.
+const ASSISTANT_DELETION_REQUEST_LIMIT=24;
+type AssistantDeletionWork={remaining:number};
+function releasedAssistantReservationsSql(actor:string,tokenId:string,costId:string){
+  return `NOT EXISTS(SELECT 1 FROM budget_reservations released_tokens WHERE released_tokens.reservation_id=${tokenId}
+      AND(released_tokens.owner_id!=${actor} OR released_tokens.status!='released' OR typeof(released_tokens.used_tokens)!='integer' OR released_tokens.used_tokens!=0))
+    AND NOT EXISTS(SELECT 1 FROM cost_budget_reservations released_cost WHERE released_cost.reservation_id=${costId}
+      AND(released_cost.owner_id!=${actor} OR released_cost.status!='released' OR typeof(released_cost.used_microusd)!='integer' OR released_cost.used_microusd!=0))`;
+}
+function unfinishedUnusedAssistantSql(execution:string,tables:Set<string>){
+  const taskPending=tables.has("assistant_specialist_tasks")?`OR EXISTS(SELECT 1 FROM assistant_specialist_tasks unfinished_task
+    WHERE unfinished_task.task_id=${execution}.execution_id AND unfinished_task.actor_user_id=${execution}.actor_user_id
+      AND(unfinished_task.status!='canceled' OR COALESCE(unfinished_task.error_code,'')!='organization_deleted'))`:"";
+  return `${unusedAssistantExecutionSql(execution,tables)} AND(${execution}.status!='failed'
+    OR EXISTS(SELECT 1 FROM consequential_execution_steps unfinished_step WHERE unfinished_step.execution_id=${execution}.execution_id AND unfinished_step.status!='not-submitted')
+    ${taskPending} OR NOT(${releasedAssistantReservationsSql(execution+".actor_user_id",execution+".execution_id||':tokens:0'",execution+".execution_id||':usd:0'")}))`;
+}
+function unusedLegacyAssistantSql(tables:Set<string>){
+  return `provider_submitted=0 ${tables.has("assistant_specialist_consent")?"AND result_json IS NULL":""}
+    AND NOT EXISTS(SELECT 1 FROM consequential_executions signed WHERE signed.execution_id=assistant_specialist_tasks.task_id AND signed.actor_user_id=assistant_specialist_tasks.actor_user_id)
+    AND NOT EXISTS(SELECT 1 FROM cost_budget_reservations cost WHERE cost.reservation_id=assistant_specialist_tasks.cost_reservation_id AND cost.owner_id=assistant_specialist_tasks.actor_user_id AND cost.status='executing')`;
+}
+function unfinishedLegacyAssistantSql(tables:Set<string>){
+  return `(status IN('queued','running') OR status='canceled' AND error_code='organization_deleted') AND ${unusedLegacyAssistantSql(tables)}
+    AND(status!='canceled' OR NOT(${releasedAssistantReservationsSql("assistant_specialist_tasks.actor_user_id","assistant_specialist_tasks.token_reservation_id","assistant_specialist_tasks.cost_reservation_id")}))`;
+}
+async function assistantDeletionPending(env:WorkerEnv,organizationId:string,work:AssistantDeletionWork,error:string,jobId?:string){
+  if(jobId)await env.DB.prepare("UPDATE organization_deletion_jobs SET status='partial',updated_at=? WHERE job_id=? AND organization_id=? AND status IN('pending','partial','processing')")
+    .bind(new Date().toISOString(),jobId,organizationId).run();
+  // The native deletion caller treats any 2xx as completion; retain its explicit retry flow.
+  return Response.json({...(jobId?{jobId}:{}),status:"partial",error,retryable:true,
+    assistantCleanup:{attempted:ASSISTANT_DELETION_REQUEST_LIMIT-work.remaining,requestLimit:ASSISTANT_DELETION_REQUEST_LIMIT},
+    immutableOperationalMetadataRetained:true},{status:503});
+}
+async function reconcileOrganizationAssistantUsage(env:WorkerEnv,organizationId:string,work:AssistantDeletionWork){
+  const verified=await env.DB.prepare(`SELECT execution.execution_id,execution.actor_user_id,MIN(step.updated_at) AS attempted_at
+    FROM consequential_executions execution JOIN consequential_execution_steps step ON step.execution_id=execution.execution_id
+    WHERE execution.organization_id=? AND execution.operation='assistant-specialist' AND step.status='usage-recorded'
+      AND step.step_index=0 AND step.token_reservation_id=execution.execution_id||':tokens:0' AND step.cost_reservation_id=execution.execution_id||':usd:0'
+      AND typeof(step.verified_tokens)='integer' AND step.verified_tokens>=0 AND typeof(step.verified_microusd)='integer' AND step.verified_microusd>=0
+      AND(SELECT COUNT(*) FROM consequential_execution_steps counted WHERE counted.execution_id=execution.execution_id)=1
+    GROUP BY execution.execution_id,execution.actor_user_id ORDER BY attempted_at,execution.execution_id LIMIT ?`)
+    .bind(organizationId,work.remaining).all<{execution_id:string;actor_user_id:string}>();
+  for(const execution of verified.results){
+    work.remaining--;
+    // Only verified-usage metadata rotates: a broken ledger in the oldest chunk cannot starve
+    // later exact receipts. No usage, price, provider state, or private evidence is rewritten.
+    await env.DB.prepare(`UPDATE consequential_execution_steps SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE execution_id=? AND status='usage-recorded' AND typeof(verified_tokens)='integer' AND verified_tokens>=0
+        AND typeof(verified_microusd)='integer' AND verified_microusd>=0
+        AND EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.execution_id=consequential_execution_steps.execution_id
+          AND execution.actor_user_id=? AND execution.organization_id=? AND execution.operation='assistant-specialist')`)
+      .bind(execution.execution_id,execution.actor_user_id,organizationId).run();
+    try{await reconcileConsequentialUsage(env,execution.actor_user_id,execution.execution_id);}catch{/* Exact receipt/hold remains; final deletion guards stay authoritative. */}
   }
+  return Boolean(await env.DB.prepare(`SELECT 1 AS pending FROM consequential_executions execution
+    JOIN consequential_execution_steps step ON step.execution_id=execution.execution_id
+    WHERE execution.organization_id=? AND execution.operation='assistant-specialist' AND step.status='usage-recorded' LIMIT 1`).bind(organizationId).first());
+}
+async function cancelUnsubmittedOrganizationAssistantTasks(env:WorkerEnv,organizationId:string,tables:Set<string>,work:AssistantDeletionWork){
+  const signed=await env.DB.prepare(`SELECT execution.execution_id,execution.actor_user_id FROM consequential_executions execution
+    WHERE execution.organization_id=? AND execution.operation='assistant-specialist' AND ${unfinishedUnusedAssistantSql("execution",tables)}
+    ORDER BY execution.updated_at,execution.execution_id LIMIT ?`).bind(organizationId,work.remaining).all<{execution_id:string;actor_user_id:string}>();
+  for(const row of signed.results){
+    work.remaining--;
+    await failConsequentialExecution(env,row.actor_user_id,row.execution_id,"organization_deleted");
+    if(tables.has("assistant_specialist_tasks"))await env.DB.prepare(`UPDATE assistant_specialist_tasks SET status='canceled',error_code='organization_deleted',updated_at=?,completed_at=?
+      WHERE task_id=? AND actor_user_id=? AND organization_id=? AND status!='completed'
+        AND EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.execution_id=assistant_specialist_tasks.task_id
+          AND execution.actor_user_id=assistant_specialist_tasks.actor_user_id AND execution.result_ref IS NULL AND execution.status='failed'
+          AND ${unusedAssistantExecutionSql("execution",tables)})`)
+      .bind(new Date().toISOString(),new Date().toISOString(),row.execution_id,row.actor_user_id,organizationId).run();
+  }
+  if(tables.has("assistant_specialist_tasks")){
+    const rows=await env.DB.prepare(`SELECT task_id,actor_user_id,cost_reservation_id,token_reservation_id FROM assistant_specialist_tasks
+      WHERE organization_id=? AND ${unfinishedLegacyAssistantSql(tables)} ORDER BY updated_at,task_id LIMIT ?`)
+      .bind(organizationId,work.remaining).all<{task_id:string;actor_user_id:string;cost_reservation_id:string;token_reservation_id:string}>();
+    for(const row of rows.results){
+      work.remaining--;
+      const now=new Date().toISOString(),stopped=await env.DB.prepare(`UPDATE assistant_specialist_tasks SET status='canceled',error_code='organization_deleted',updated_at=?,completed_at=?
+        WHERE task_id=? AND actor_user_id=? AND organization_id=? AND ${unfinishedLegacyAssistantSql(tables)}`)
+        .bind(now,now,row.task_id,row.actor_user_id,organizationId).run();
+      if(Number(stopped.meta.changes??0)===1){await releaseCostBudget(env,row.actor_user_id,row.cost_reservation_id);await releaseBudget(env,row.actor_user_id,row.token_reservation_id,{reason:"organization_deleted"});}
+    }
+  }
+  const legacy=tables.has("assistant_specialist_tasks")?` OR EXISTS(SELECT 1 FROM assistant_specialist_tasks WHERE organization_id=? AND ${unfinishedLegacyAssistantSql(tables)})`:"";
+  return Boolean(await env.DB.prepare(`SELECT 1 AS pending WHERE EXISTS(SELECT 1 FROM consequential_executions execution
+    WHERE execution.organization_id=? AND execution.operation='assistant-specialist' AND ${unfinishedUnusedAssistantSql("execution",tables)})${legacy}`)
+    .bind(organizationId,...(tables.has("assistant_specialist_tasks")?[organizationId]:[])).first());
 }
 
 async function finalizeDeletion(env: WorkerEnv, actor: PilotUser, organizationId: string, jobId: string, inventory: Awaited<ReturnType<typeof deletionInventory>>) {
   const now = new Date().toISOString();
   const assistantTables=await initializedAssistantTables(env);
   if((await organizationAssistantSubmissionBlockers(env,organizationId,assistantTables)).length||(await projectProviderSubmissionBlockers(env,organizationId)).length
-    ||(await organizationExecutingReservationBlockers(env,organizationId)).length)
+    ||(await organizationExecutingReservationBlockers(env,organizationId,assistantTables)).length||(await organizationAssistantTokenReservationBlockers(env,organizationId,assistantTables)).length)
     throw new Error("provider_submission_in_flight");
   const removed=await env.DB.prepare(`SELECT
     COALESCE(SUM(CASE WHEN status='deleted' THEN 1 ELSE 0 END),0) AS deleted,
@@ -889,7 +1044,10 @@ async function finalizeDeletion(env: WorkerEnv, actor: PilotUser, organizationId
     externalBackupsPurged: false,
     otherDevicesPurged: false,
   };
+  const assistantSafe=noAssistantSubmissionGuard(organizationId,assistantTables),costSafe=noExecutingReservationGuard(organizationId,assistantTables);
   const statements: D1PreparedStatement[] = [
+    env.DB.prepare(`SELECT CASE WHEN ${assistantSafe.sql} AND ${costSafe.sql} THEN 1 ELSE json(\'provider_submission_in_flight\') END AS provider_guard`)
+      .bind(...assistantSafe.bindings,...costSafe.bindings),
     env.DB.prepare(`SELECT CASE WHEN EXISTS(SELECT 1 FROM organization_legal_holds hold WHERE hold.organization_id=? AND hold.status='active')
       OR EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=? AND policy.legal_hold=1)
       THEN json('active organization legal hold') ELSE 1 END AS hold_guard`).bind(organizationId,organizationId),
@@ -966,7 +1124,7 @@ async function finalizeDeletion(env: WorkerEnv, actor: PilotUser, organizationId
   return receipt;
 }
 
-async function processDeletion(request:Request,env:WorkerEnv,actor:PilotUser,organizationId:string,jobId:string,inventory:Awaited<ReturnType<typeof deletionInventory>>){
+async function processDeletion(request:Request,env:WorkerEnv,actor:PilotUser,organizationId:string,jobId:string,inventory:Awaited<ReturnType<typeof deletionInventory>>,work:AssistantDeletionWork){
   const claimed=await env.DB.prepare(`UPDATE organization_deletion_jobs SET status='processing',updated_at=?
     WHERE job_id=? AND organization_id=? AND initiated_by_user_id=? AND status IN('pending','partial','processing')
       AND NOT EXISTS(SELECT 1 FROM organization_legal_holds hold WHERE hold.organization_id=? AND hold.status='active')
@@ -974,13 +1132,18 @@ async function processDeletion(request:Request,env:WorkerEnv,actor:PilotUser,org
     .bind(new Date().toISOString(),jobId,organizationId,actor.userId,organizationId,organizationId).run();
   if(Number(claimed.meta.changes??0)!==1)return Response.json({error:"organization_legal_hold_active",jobId},{status:409});
   const assistantTables=await initializedAssistantTables(env);
+  try{if(await cancelUnsubmittedOrganizationAssistantTasks(env,organizationId,assistantTables,work))
+    return assistantDeletionPending(env,organizationId,work,"organization_assistant_cancellation_incomplete",jobId);
+  }catch{return assistantDeletionPending(env,organizationId,work,"organization_assistant_cancellation_incomplete",jobId);}
+  if(await reconcileOrganizationAssistantUsage(env,organizationId,work))
+    return assistantDeletionPending(env,organizationId,work,"organization_assistant_reconciliation_incomplete",jobId);
   const assistantBlockers=await organizationAssistantSubmissionBlockers(env,organizationId,assistantTables);
   const providerBlockers=await projectProviderSubmissionBlockers(env,organizationId);
-  const executingReservations=await organizationExecutingReservationBlockers(env,organizationId);
-  if(assistantBlockers.length||providerBlockers.length||executingReservations.length){
+  const executingReservations=await organizationExecutingReservationBlockers(env,organizationId,assistantTables),tokenReservations=await organizationAssistantTokenReservationBlockers(env,organizationId,assistantTables);
+  if(assistantBlockers.length||providerBlockers.length||executingReservations.length||tokenReservations.length){
     await env.DB.prepare("UPDATE organization_deletion_jobs SET status='partial',updated_at=? WHERE job_id=? AND organization_id=? AND status='processing'")
       .bind(new Date().toISOString(),jobId,organizationId).run();
-    return Response.json({jobId,status:"partial",error:"provider_submission_in_flight",assistantTasks:assistantBlockers,documentJobs:providerBlockers,costReservations:executingReservations},{status:409});
+    return Response.json({jobId,status:"partial",error:"provider_submission_in_flight",assistantTasks:assistantBlockers,documentJobs:providerBlockers,costReservations:executingReservations,tokenReservations},{status:409});
   }
   for (const resource of inventory.media) {
     const item = await env.DB.prepare("SELECT status FROM organization_deletion_items WHERE job_id=? AND organization_id=? AND resource_kind='media' AND resource_id=?")
@@ -1036,6 +1199,8 @@ async function processDeletion(request:Request,env:WorkerEnv,actor:PilotUser,org
   }catch{
     await env.DB.prepare("UPDATE organization_deletion_jobs SET status='partial',updated_at=? WHERE job_id=? AND organization_id=? AND status='processing'")
       .bind(new Date().toISOString(),jobId,organizationId).run();
+    const assistants=await organizationAssistantSubmissionBlockers(env,organizationId,assistantTables),reservations=await organizationExecutingReservationBlockers(env,organizationId,assistantTables),tokens=await organizationAssistantTokenReservationBlockers(env,organizationId,assistantTables);
+    if(assistants.length||reservations.length||tokens.length)return Response.json({jobId,status:"partial",error:"provider_submission_in_flight",assistantTasks:assistants,costReservations:reservations,tokenReservations:tokens},{status:409});
     return Response.json({jobId,status:"partial",error:"organization_deletion_finalization_failed",retryable:true},{status:503});
   }
 }
@@ -1053,11 +1218,13 @@ async function handleDeletion(request: Request, env: WorkerEnv, actor: PilotUser
   const held = await env.DB.prepare(`SELECT 1 AS held FROM organization_legal_holds WHERE organization_id=? AND status='active'
     UNION SELECT 1 AS held FROM organization_retention_policies WHERE organization_id=? AND legal_hold=1 LIMIT 1`).bind(organizationId, organizationId).first();
   if (held) return Response.json({ error: "organization_legal_hold_active" }, { status: 409 });
-  const assistantTables=await initializedAssistantTables(env);
+  const assistantTables=await initializedAssistantTables(env),work:AssistantDeletionWork={remaining:ASSISTANT_DELETION_REQUEST_LIMIT};
+  if(await reconcileOrganizationAssistantUsage(env,organizationId,work))
+    return assistantDeletionPending(env,organizationId,work,"organization_assistant_reconciliation_incomplete",existing?String(existing.job_id):undefined);
   const assistantBlockers=await organizationAssistantSubmissionBlockers(env,organizationId,assistantTables);
   const providerBlockers=await projectProviderSubmissionBlockers(env,organizationId);
-  const executingReservations=await organizationExecutingReservationBlockers(env,organizationId);
-  if(assistantBlockers.length||providerBlockers.length||executingReservations.length)return Response.json({error:"provider_submission_in_flight",assistantTasks:assistantBlockers,documentJobs:providerBlockers,costReservations:executingReservations},{status:409});
+  const executingReservations=await organizationExecutingReservationBlockers(env,organizationId,assistantTables),tokenReservations=await organizationAssistantTokenReservationBlockers(env,organizationId,assistantTables);
+  if(assistantBlockers.length||providerBlockers.length||executingReservations.length||tokenReservations.length)return Response.json({error:"provider_submission_in_flight",assistantTasks:assistantBlockers,documentJobs:providerBlockers,costReservations:executingReservations,tokenReservations},{status:409});
   let historicalCursor="";
   while(true){
     const historical=await env.DB.prepare(`SELECT event.event_id,event.payload FROM events event
@@ -1083,14 +1250,12 @@ async function handleDeletion(request: Request, env: WorkerEnv, actor: PilotUser
     if(historical.results.length<500)break;
   }
   const inventory = await deletionInventory(env, organizationId);
-  if(existing&&["pending","partial","processing"].includes(String(existing.status)))return processDeletion(request,env,actor,organizationId,String(existing.job_id),inventory);
+  if(existing&&["pending","partial","processing"].includes(String(existing.status)))return processDeletion(request,env,actor,organizationId,String(existing.job_id),inventory,work);
   if (existing?.status === "completed") return Response.json({ jobId: String(existing.job_id), status: "completed", receipt: JSON.parse(String(existing.receipt_json ?? "{}")) });
   const id = uuidV7();
   const now = new Date().toISOString();
   const jobGuard="EXISTS(SELECT 1 FROM organization_deletion_jobs claimed WHERE claimed.job_id=? AND claimed.organization_id=? AND claimed.status='processing')";
-  const assistantSubmissionGuard=assistantTables.has("assistant_specialist_tasks")?` AND NOT EXISTS(SELECT 1 FROM assistant_specialist_tasks task
-    WHERE task.organization_id=? AND(task.status IN('needs-review','reconciling') OR task.provider_submitted=1 AND task.status IN('queued','running')
-      OR task.status='running' AND EXISTS(SELECT 1 FROM cost_budget_reservations cost WHERE cost.reservation_id=task.cost_reservation_id AND cost.owner_id=task.actor_user_id AND cost.status='executing')))` : "";
+  const assistantSubmissionGuard=noAssistantSubmissionGuard(organizationId,assistantTables);
   const documentSubmissionGuard=` AND NOT EXISTS(SELECT 1 FROM project_resource_scopes resource
     JOIN document_jobs job ON job.job_id=resource.resource_id AND job.owner_id=resource.actor_user_id
     WHERE resource.organization_id=? AND resource.resource_kind='job'
@@ -1106,9 +1271,7 @@ async function handleDeletion(request: Request, env: WorkerEnv, actor: PilotUser
           OR json_extract(COALESCE(job.result_json,'{}'),'$.generationReceipt.provider_request_status') IN('submitted','submission_unknown')
           OR EXISTS(SELECT 1 FROM json_each(COALESCE(job.result_json,'{}'),'$.productionSceneReceipts') scene
             WHERE json_extract(scene.value,'$.status') IN('submitted','completed'))))))`;
-  const executingReservationGuard=` AND NOT EXISTS(SELECT 1 FROM project_budget_reservation_scopes scoped
-    JOIN cost_budget_reservations cost ON cost.reservation_id=scoped.reservation_id AND cost.owner_id=scoped.actor_user_id
-    WHERE scoped.reservation_kind='usd' AND scoped.organization_id=? AND cost.status='executing')`;
+  const executingReservationGuard=noExecutingReservationGuard(organizationId,assistantTables);
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(`INSERT INTO organization_deletion_jobs(job_id,organization_id,initiated_by_user_id,status,inventory_json,receipt_json,created_at,updated_at,completed_at)
       SELECT ?,?,?,'processing',?,NULL,?,?,NULL WHERE NOT EXISTS(SELECT 1 FROM organization_legal_holds hold
@@ -1116,9 +1279,9 @@ async function handleDeletion(request: Request, env: WorkerEnv, actor: PilotUser
         AND NOT EXISTS(SELECT 1 FROM organization_retention_policies policy WHERE policy.organization_id=? AND policy.legal_hold=1)
         AND NOT EXISTS(SELECT 1 FROM organization_recovery_snapshots recovery WHERE recovery.organization_id=? AND recovery.status='staging')
         AND NOT EXISTS(SELECT 1 FROM organization_deletion_jobs previous WHERE previous.organization_id=?
-          AND previous.status IN('pending','partial','processing'))${assistantSubmissionGuard}${documentSubmissionGuard}${executingReservationGuard}`)
+          AND previous.status IN('pending','partial','processing')) AND ${assistantSubmissionGuard.sql}${documentSubmissionGuard} AND ${executingReservationGuard.sql}`)
       .bind(id,organizationId,actor.userId,JSON.stringify({projectCount:inventory.projects.length,mediaCount:inventory.media.length,packageCount:inventory.packageCount,revisionCount:inventory.revisionCount,privateEventBodyCount:inventory.privateEventBodyCount}),now,now,organizationId,organizationId,organizationId,organizationId,
-        ...(assistantTables.has("assistant_specialist_tasks")?[organizationId]:[]),organizationId,organizationId),
+        ...assistantSubmissionGuard.bindings,organizationId,...executingReservationGuard.bindings),
     env.DB.prepare(`UPDATE pilot_cohorts SET status='closed',updated_at=? WHERE organization_id=? AND status IN('active','paused') AND ${jobGuard}`)
       .bind(now,organizationId,id,organizationId),
     env.DB.prepare(`UPDATE project_context_sessions SET revoked_at=? WHERE organization_id=? AND revoked_at IS NULL AND ${jobGuard}`)
@@ -1140,14 +1303,13 @@ async function handleDeletion(request: Request, env: WorkerEnv, actor: PilotUser
   if(Number(created[0]?.meta.changes??0)!==1){
     const racedAssistant=await organizationAssistantSubmissionBlockers(env,organizationId,assistantTables);
     const racedDocuments=await projectProviderSubmissionBlockers(env,organizationId);
-    const racedReservations=await organizationExecutingReservationBlockers(env,organizationId);
-    if(racedAssistant.length||racedDocuments.length||racedReservations.length)return Response.json({error:"provider_submission_in_flight",assistantTasks:racedAssistant,documentJobs:racedDocuments,costReservations:racedReservations},{status:409});
+    const racedReservations=await organizationExecutingReservationBlockers(env,organizationId,assistantTables),racedTokens=await organizationAssistantTokenReservationBlockers(env,organizationId,assistantTables);
+    if(racedAssistant.length||racedDocuments.length||racedReservations.length||racedTokens.length)return Response.json({error:"provider_submission_in_flight",assistantTasks:racedAssistant,documentJobs:racedDocuments,costReservations:racedReservations,tokenReservations:racedTokens},{status:409});
     return Response.json({error:"organization_deletion_conflict"},{status:409});
   }
-  await cancelUnsubmittedOrganizationAssistantTasks(env,organizationId,assistantTables);
   await cancelProjectActorJobs(env,actor,{organizationId});
   await recordOrganizationAudit(env, organizationId, actor, "OrganizationTenantDeletionStarted", "deletion", id, { resourceCount: inventory.media.length });
-  return processDeletion(request,env,actor,organizationId,id,inventory);
+  return processDeletion(request,env,actor,organizationId,id,inventory,work);
 }
 
 async function createProvisioningCredential(env: WorkerEnv, actor: PilotUser, organizationId: string) {

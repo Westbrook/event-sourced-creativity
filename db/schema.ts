@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex, index, primaryKey, check } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text, uniqueIndex, index, primaryKey, check, unique } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import { PHANTOM_ATTENTION_EVENT_SQL } from "./event-predicates.ts";
 
@@ -1114,6 +1114,44 @@ export const documentJobs = sqliteTable(
     index("idx_document_jobs_stream_correlation").on(table.streamId,table.correlationId,table.jobId,table.ownerId),
   ],
 );
+
+/** Existing runtime assistant tables, declared without adopting legacy turns as consent. */
+export const assistantTurns = sqliteTable("assistant_turns", {
+  turnId:text("turn_id").notNull(), actorUserId:text("actor_user_id").notNull(), scopeKey:text("scope_key").notNull(),
+  organizationId:text("organization_id"), projectAccessId:text("project_access_id"), projectId:text("project_id"), documentId:text("document_id"),
+  routeFamily:text("route_family").notNull(), userContentRef:text("user_content_ref").notNull(), assistantContentRef:text("assistant_content_ref").notNull(),
+  proposalJson:text("proposal_json"), requestJson:text("request_json"), permissionEpoch:text("permission_epoch").notNull(), status:text("status").notNull(),
+  createdAt:text("created_at").notNull(), completedAt:text("completed_at").notNull(),
+}, table => [primaryKey({columns:[table.actorUserId,table.scopeKey,table.turnId]}),index("idx_assistant_turns_actor_scope").on(table.actorUserId,table.scopeKey,table.createdAt)]);
+
+export const assistantActionProposals = sqliteTable("assistant_action_proposals", {
+  proposalId:text("proposal_id").primaryKey().notNull(), actorUserId:text("actor_user_id").notNull(), scopeKey:text("scope_key").notNull(), turnId:text("turn_id").notNull(),
+  organizationId:text("organization_id"), projectAccessId:text("project_access_id"), projectId:text("project_id").notNull(), documentId:text("document_id").notNull(),
+  actionKind:text("action_kind").notNull(), actionContentRef:text("action_content_ref").notNull(), sourceVersionsJson:text("source_versions_json").notNull(),
+  expectedHead:integer("expected_head").notNull(), permissionEpoch:text("permission_epoch").notNull(), status:text("status").notNull(),
+  createdAt:text("created_at").notNull(), expiresAt:text("expires_at").notNull(), resolvedAt:text("resolved_at"),
+}, table => [index("idx_assistant_proposals_actor_scope").on(table.actorUserId,table.scopeKey,table.status,table.createdAt)]);
+
+export const assistantActionCommits = sqliteTable("assistant_action_commits", {
+  commitId:text("commit_id").primaryKey().notNull(), verified:integer("verified").notNull(), createdAt:text("created_at").notNull(),
+}, table => [check("assistant_action_commits_verified",sql`${table.verified}=1`)]);
+
+export const assistantSpecialistTasks = sqliteTable("assistant_specialist_tasks", {
+  taskId:text("task_id").primaryKey().notNull(), actorUserId:text("actor_user_id").notNull(), scopeKey:text("scope_key").notNull(), turnId:text("turn_id").notNull(),
+  organizationId:text("organization_id"), projectAccessId:text("project_access_id"), projectId:text("project_id"), documentId:text("document_id"),
+  routeFamily:text("route_family").notNull(), taskKind:text("task_kind").notNull(), selectedModel:text("selected_model").notNull(),
+  tokenReservationId:text("token_reservation_id").notNull(), costReservationId:text("cost_reservation_id").notNull(), estimatedMicrousd:integer("estimated_microusd").notNull(),
+  maximumInputTokens:integer("maximum_input_tokens").notNull(), maximumOutputTokens:integer("maximum_output_tokens").notNull(), locale:text("locale").notNull(),
+  permissionEpoch:text("permission_epoch").notNull(), status:text("status").notNull(), errorCode:text("error_code"),
+  createdAt:text("created_at").notNull(), updatedAt:text("updated_at").notNull(), startedAt:text("started_at"), completedAt:text("completed_at"),
+  leaseExpiresAt:text("lease_expires_at"), providerSubmitted:integer("provider_submitted").notNull().default(0), resultJson:text("result_json"),
+}, table => [unique().on(table.actorUserId,table.scopeKey,table.turnId,table.taskKind),index("idx_assistant_tasks_actor_scope").on(table.actorUserId,table.scopeKey,table.status,table.createdAt),uniqueIndex("idx_assistant_single_consented_turn").on(table.actorUserId,table.scopeKey,table.turnId).where(sql`${table.resultJson} IS NOT NULL`)]);
+
+/** Immutable audit rows: migration triggers also prohibit update and deletion. */
+export const assistantBillingReconciliations = sqliteTable("assistant_billing_reconciliations", {
+  reconciliationId:text("reconciliation_id").primaryKey().notNull(), taskId:text("task_id").notNull(), actorUserId:text("actor_user_id").notNull(), reviewerUserId:text("reviewer_user_id").notNull(),
+  organizationId:text("organization_id"), projectAccessId:text("project_access_id"), evidenceClassification:text("evidence_classification").notNull(), occurredAt:text("occurred_at").notNull(),
+}, table => [unique().on(table.taskId,table.reviewerUserId),check("assistant_billing_reconciliations_evidence",sql`${table.evidenceClassification}='verified-no-provider-charge'`),index("idx_assistant_billing_reconciliations_actor_scope").on(table.actorUserId,table.organizationId,table.projectAccessId,table.occurredAt)]);
 
 /** Server-owned release projection; every mutation also appends an immutable governance receipt. */
 export const canvasGovernanceRequirements = sqliteTable(

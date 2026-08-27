@@ -290,7 +290,7 @@ const verifiedUsage=(usage:unknown)=>{
 const missingUsageReceipt=(requestId:string|null)=>new ProviderRequestError({code:"provider_usage_receipt_missing",category:"server",scope:"provider",action:"contact_support",message:"The provider returned work without complete cost-accounting evidence. The original reservation is held; a zero-dollar charge cannot be verified.",retryable:false,retryAfterMs:null,requestId,httpStatus:200});
 
 /** Preserve creative group semantics without submitting durable relationship identifiers. */
-function providerFacingCombinedContextPlan(snapshot:Record<string,unknown>,kind:"image"|DocumentArtifactKind="image"){
+export function providerFacingCombinedContextPlan(snapshot:Record<string,unknown>,kind:"image"|DocumentArtifactKind="image"){
   const activeSnapshot={...snapshot,facts:(Array.isArray(snapshot.facts)?snapshot.facts:[]).filter(promptFactIsActive)};
   const groups=combinedContextGroups(activeSnapshot);
   const instructions=combinedContextPromptDirectives(activeSnapshot,kind);

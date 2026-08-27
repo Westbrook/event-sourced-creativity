@@ -520,7 +520,12 @@ export async function reconcileFailedBudgetReservations(env: WorkerEnv, user: Pi
       -- Legacy planning lacks an exact non-submission boundary, including attempt-correlated orphan holds.
       -- Only explicit proven-unused release paths may release this historical operation.
       AND reservation.operation!='adaptive-structure'
-      AND NOT EXISTS (SELECT 1 FROM consequential_execution_steps step WHERE step.token_reservation_id=reservation.reservation_id AND step.status IN('reserved','submitting','uncertain','usage-recorded'))
+      -- Both historical assistant formats can outlive their task row; neither is proof of non-submission.
+      AND reservation.operation NOT LIKE 'assistant:%' AND reservation.operation NOT LIKE 'assistant-specialist:%'
+      AND reservation.correlation_id NOT LIKE 'assistant:%' AND reservation.correlation_id NOT LIKE 'assistant-specialist:%'
+      AND NOT EXISTS (SELECT 1 FROM consequential_execution_steps step WHERE step.token_reservation_id=reservation.reservation_id
+        AND(step.status IN('reserved','submitting','uncertain','usage-recorded','settled') OR step.verified_tokens IS NOT NULL
+          OR step.verified_microusd IS NOT NULL OR step.provider_request_id IS NOT NULL))
       AND NOT EXISTS (SELECT 1 FROM document_jobs job WHERE job.stream_id=? AND job.owner_id=? AND (job.status IN ('queued','running','committing') OR job.status IN ('failed','canceled') AND (${unsettledProviderSubmissionSql("job.result_json")} OR json_extract(COALESCE(job.result_json,'{}'),'$.presentationProviderSubmission')='pending' OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='storyboard' AND json_extract(COALESCE(job.result_json,'{}'),'$.storyboardProviderSubmission') IN ('pending','confirmed') OR json_extract(COALESCE(job.request_json,'{}'),'$.artifactKind')='audio' AND json_extract(COALESCE(job.result_json,'{}'),'$.audioProviderSubmission')='pending'))
         AND (job.correlation_id=reservation.correlation_id OR json_extract(COALESCE(job.result_json,'{}'),'$.reservationId')=reservation.reservation_id))
     ORDER BY reservation.created_at ASC LIMIT 100`).bind(billingUserId,user.streamId,cutoff,user.streamId,user.userId).all<BudgetReservationRow>();
