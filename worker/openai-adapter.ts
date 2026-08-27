@@ -20,6 +20,7 @@ import { PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS } from "../src/model/presenta
 import { safePresentationCandidateIssues } from "../src/model/presentation-candidates.ts";
 import { generationValidationReceipt } from "./generation-self-healing.ts";
 import { adaptVideoPrompt, compactVideoCombinedContextPlan, resolveVideoAudioPolicy, videoPlannerCreativeContext, type VideoPromptAdaptation } from "./video-prompt-adapter.ts";
+import { projectVideoSourceCopy, videoOutputScopedContext } from "./video-source-scope.ts";
 import { definitiveProviderRejection, type PaidProviderSubmission, type PaidProviderSubmissionObserver } from "../src/model/provider-submission.ts";
 import { priceImageUsageBreakdownMicrousd, priceTextUsageBreakdownMicrousd } from "./replay-cost.ts";
 
@@ -867,16 +868,20 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const started=Date.now();
   const itemCount=Math.max(1,Math.min(12,Math.floor(Number(input.options?.itemCount??(kind==="slides"?7:kind==="storyboard"?6:kind==="short_story"?3:1)))));
   if(kind==="video")resolveVideoAudioPolicy({snapshot:input.snapshot,audioMode:input.options?.videoAudioMode??VIDEO_ADAPTER_CONTRACT.defaultAudioMode});
-  const {groups,plan:providerGroups}=providerFacingCombinedContextPlan(input.snapshot,kind);
+  const videoSourceScope=kind==="video"?videoOutputScopedContext(input.snapshot):null;
+  const {groups,plan:providerGroups}=providerFacingCombinedContextPlan(videoSourceScope?.snapshot??input.snapshot,kind);
   const groupContracts:DocumentArtifactContextGroupContract[]=groups.map((group,index)=>({id:group.id,alias:`context_group_${index+1}`}));
   const audioMode=input.options?.videoAudioMode??VIDEO_ADAPTER_CONTRACT.defaultAudioMode;
   const sceneConfiguration=kind==="scene"?input.options?.sceneConfiguration??createSceneConfiguration(input.options?.sceneMedium??"visual"):null;
   const audioScene=sceneConfiguration?.medium==="audio";
   const specialistAudio=kind==="audio"?normalizeAudioRequestProfile(input.options?.audioProfile,input.snapshot):null;
   const managed=input.options?.productionMode==="managed"&&Boolean(input.options.productionPlan);
-  const managedScenes=input.options?.productionScenes??[];
-  const managedPlan=input.options?.productionPlan;
-  const page=input.options?.productionPage;
+  // Scene actions and continuity repeat source prose outside creative_context.
+  // Apply the same source-linked interpretation to every provider-facing copy,
+  // retaining the canonical snapshot/plan and private interpretation receipt.
+  const managedScenes=projectVideoSourceCopy(input.options?.productionScenes??[],videoSourceScope?.interpretations??[]);
+  const managedPlan=projectVideoSourceCopy(input.options?.productionPlan,videoSourceScope?.interpretations??[]);
+  const page=projectVideoSourceCopy(input.options?.productionPage,videoSourceScope?.interpretations??[]);
   const requestedStyle=SLIDE_STYLE_PRESET_IDS.includes(input.options?.presentationStyle as SlideStylePresetId)?input.options?.presentationStyle:undefined;
   const sourceContract=kind==="slides"?buildPresentationSourceContract(input.snapshot,{
     requestedSlideCount:page?.totalItems??input.options?.requestedSlideCount??itemCount,
@@ -1117,6 +1122,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     inputReceipt:{
       instructions,
       providerInput:JSON.parse(providerInput) as Record<string,unknown>,
+      ...(videoSourceScope?{video_source_interpretations:videoSourceScope.interpretations}:{}),
       ...(providerSceneConfiguration?{scene_configuration:providerSceneConfiguration}:{}),
       validation:{
         context_group_resolution:{initial:initialResolution,repair:repairResolution},

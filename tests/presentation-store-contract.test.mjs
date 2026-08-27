@@ -266,7 +266,7 @@ test("hydrates governed input receipts only from an authorized matching job-deta
   });
 
   const fetch = context.mock.method(globalThis, "fetch", async (url) => {
-    assert.equal(url, `/api/document-jobs/${listed.jobId}`);
+    assert.equal(url, `/api/document-jobs/${listed.jobId}?inspection=1`);
     return { ok: true, json: async () => ({ job: detail }) };
   });
 

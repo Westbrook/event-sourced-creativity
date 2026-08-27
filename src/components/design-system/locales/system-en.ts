@@ -1,5 +1,15 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.20f23v.17": "View saved frames",
+  "system.auto.1jy38yv.24": "Saved storyboard preview",
+  "system.auto.q2wdty.47": "{saved} of {total} frames recorded · Incomplete",
+  "system.auto.14yw10u.127": "Original request source, not current approval. Viewing does not generate, replace, approve, or release any work or budget hold.",
+  "system.auto.1ee4no.24": "Original source revision",
+  "system.auto.nj6hfa.26": "Recorded image unavailable",
+  "system.auto.11d4y1.17": "No image recorded",
+  "system.auto.5rx7m6.27": "Recorded provider and model",
+  "system.auto.hrwe8f.23": "Original shot direction",
+  "system.auto.1v71a7k.145": "{saved} frames recorded. Inspect the original plan without generating again. The storyboard is incomplete; its existing budget hold is unchanged.",
   "system.auto.qkse08.49": "This audio belongs to an earlier document version",
   "system.auto.auzt5r.135": "Recover the original paid recording with its original source. Newer document edits stay unchanged; no new generation will be purchased.",
   "system.auto.t6uqnc.2": "of",

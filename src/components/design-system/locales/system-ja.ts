@@ -1,5 +1,15 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.20f23v.17": "保存済みフレームを表示",
+  "system.auto.1jy38yv.24": "保存済みストーリーボードのプレビュー",
+  "system.auto.q2wdty.47": "{total} フレーム中 {saved} フレームを記録済み · 未完成",
+  "system.auto.14yw10u.127": "元の依頼時点のソースであり、現在の承認ではありません。閲覧によって作品の生成・置換・承認や予算の予約解除は行われません。",
+  "system.auto.1ee4no.24": "元のソースのリビジョン",
+  "system.auto.nj6hfa.26": "記録済み画像を表示できません",
+  "system.auto.11d4y1.17": "画像は記録されていません",
+  "system.auto.5rx7m6.27": "記録済みのプロバイダーとモデル",
+  "system.auto.hrwe8f.23": "元のショット指示",
+  "system.auto.1v71a7k.145": "{saved} フレームを記録済みです。再生成せずに元のプランを確認できます。ストーリーボードは未完成で、既存の予算予約は変更されません。",
   "system.auto.qkse08.49": "この音声は以前のドキュメント版に基づいています",
   "system.auto.auzt5r.135": "支払い済みの元の録音を、元のソース情報とともに復元します。その後のドキュメント編集は変更されず、新たな生成料金も発生しません。",
   "system.auto.t6uqnc.2": "／",
