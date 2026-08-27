@@ -2119,4 +2119,9 @@ Object.assign(messages, {
 
 Object.assign(messages, FORMA_RESPONSIVE_MESSAGES.ja);
 
+Object.assign(messages, {
+  "system.auto.10fv3hf.51": "Formaは音声リクエストをこのモデルの制限内に収められませんでした",
+  "system.auto.1bop32q.183": "リクエストを変更して開始する前に、保存された台本、必須の音声指示、モデルの制限を確認してください。音声生成リクエストは送信されていません。完了したプランニングの使用量は記録に残ります。",
+});
+
 export default messages;

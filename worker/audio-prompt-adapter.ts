@@ -1,10 +1,13 @@
 import {
   AudioAdapterSelectionError, audioAdapterContractForModel, audioAuthoringConflict, audioContextDescription, audioContexts,
-  normalizeAudioRequestProfile, selectAudioAdapterContract, type AudioRequestProfile,
+  selectAudioAdapterContract, type AudioRequestProfile,
 } from "../src/model/audio.ts";
 import { combinedContextPromptDirectives } from "../src/model/combined-context.ts";
 import { compileContextAdaptationSections, requiredContextAdaptationFacts, type CompiledContextAdaptation } from "../src/model/context-adaptation.ts";
 import type { DocumentArtifactDraft } from "../src/model/document-artifacts.ts";
+import { AUDIO_PROVIDER_INPUT_CONTRACTS, AudioProviderInputError, GEMINI_SPEECH_INPUT_POLICY, audioCharacterCount, audioUtf8Bytes, geminiSpeechInputBytes } from "../src/model/audio-provider-contracts.ts";
+import { prepareGeminiSpeechScript, serializeGeminiSpeechRequest } from "./audio-adapters/gemini-tts.ts";
+import { serializeAudioRequest } from "./audio-adapters/index.ts";
 
 export type AudioPromptAdaptation = {
   adapterId: string;
@@ -17,6 +20,7 @@ export type AudioPromptAdaptation = {
   orderedCueCount: number;
   spokenScript?: string;
   voiceDirection?: string;
+  inputBudget?: { scriptCharacters: number; styleCharacters: number; combinedUtf8Bytes: number; maximumCombinedUtf8Bytes: number };
 };
 
 const privateMedia = /(?:https?:\/\/[^\s"')]+|\/api\/media\/[^\s"')]+)/giu;
@@ -40,13 +44,11 @@ const cleanSpokenScript = (value: unknown) => String(value ?? "").replace(spoken
 export function adaptAudioPrompt(
   snapshot: Record<string, unknown>,
   plan: Pick<DocumentArtifactDraft, "title" | "summary" | "content_markdown" | "items">,
-  options: { tone?: string; audience?: string; maxPromptCharacters?: number; profile?: AudioRequestProfile; model?: string } = {},
+  options: { tone?: string; audience?: string; maxPromptCharacters?: number; profile?: AudioRequestProfile; model?: string; omitOptionalVoiceDirection?: boolean } = {},
 ): AudioPromptAdaptation {
-  const profile = normalizeAudioRequestProfile(options.profile, snapshot);
+  const { profile, contract } = selectAudioAdapterContract(options.profile, { snapshot, preferredModel: options.model });
   const conflict = audioAuthoringConflict(snapshot, profile, { tone: options.tone, audience: options.audience });
   if (conflict) throw new AudioAdapterSelectionError(conflict.code, conflict.message);
-  const contract = options.model ? audioAdapterContractForModel(options.model) : selectAudioAdapterContract(profile).contract;
-  if (!contract) throw new Error("audio_provider_model_unsupported");
   const prohibitedAudioBlockIds = new Set((Array.isArray(snapshot.facts) ? snapshot.facts : []).flatMap((candidate) => {
     if (!candidate || typeof candidate !== "object") return [];
     const fact = candidate as Record<string, unknown>;
@@ -71,14 +73,38 @@ export function adaptAudioPrompt(
     return description ? [`${index + 1}. ${description}`] : [];
   });
 
+  if (profile.goal === "narration") {
+    const spokenScript = cleanSpokenScript(profile.transcript ?? plan.content_markdown ?? plan.items.map((item) => item.body).join("\n"));
+    const { prompt: script } = prepareGeminiSpeechScript({ profile, spokenScript });
+    let voiceDirection = [...prohibited.map((fact) => `Avoid: ${clean(fact.direction)}`), ...requirements].filter(Boolean).join(" ");
+    // Mandatory voice direction is checked before optional delivery preferences.
+    // Neither an approved script nor a locked requirement may be truncated.
+    serializeGeminiSpeechRequest({ prompt: script, profile, spokenScript, ...(voiceDirection ? { voiceDirection } : {}) });
+    const omittedStyles: string[] = [];
+    for (const [id, direction] of options.omitOptionalVoiceDirection ? [] : [["delivery-tone", options.tone ? `Delivery: ${clean(options.tone)}.` : ""], ["delivery-destination", destinationDirection]]) {
+      if (!direction) continue;
+      const next = [voiceDirection, direction].filter(Boolean).join(" ");
+      if (audioCharacterCount(next) <= GEMINI_SPEECH_INPUT_POLICY.maxStyleCharacters && geminiSpeechInputBytes(script, next) <= GEMINI_SPEECH_INPUT_POLICY.maxCombinedUtf8Bytes) voiceDirection = next;
+      else omittedStyles.push(id!);
+    }
+    const compilation = compileContextAdaptationSections([{ id: "spoken-script", content: script, priority: "required", allowCompaction: false }], Math.min(options.maxPromptCharacters ?? contract.maxPromptCharacters, contract.maxPromptCharacters));
+    compilation.omittedSectionIds.push(...omittedStyles);
+    compilation.compacted ||= omittedStyles.length > 0;
+    return {
+      adapterId: contract.adapterId, adapterVersion: contract.adapterVersion, prompt: script, compilation, spokenScript,
+      ...(voiceDirection ? { voiceDirection } : {}),
+      sourceAudioBlockIds: references.map((reference) => reference.blockId).filter(Boolean),
+      audioWaveformSubmitted: false, sourceAudioTreatment: references.length ? "authored-description-only" : "none", orderedCueCount: cues.length,
+      inputBudget: { scriptCharacters: audioCharacterCount(script), styleCharacters: audioCharacterCount(voiceDirection), combinedUtf8Bytes: geminiSpeechInputBytes(script, voiceDirection), maximumCombinedUtf8Bytes: GEMINI_SPEECH_INPUT_POLICY.maxCombinedUtf8Bytes },
+    };
+  }
+
   const sections = [
     {
       id: "originality-policy",
       priority: "required" as const,
       allowCompaction: false,
-      content: profile.goal === "narration"
-        ? "Create an original, speakable narration or clearly labeled conversation. Never imitate a named performer, celebrity voice, or protected recording. Do not read production instructions or policy aloud."
-        : profile.goal === "sound_effects" || profile.goal === "video_sound_effects"
+      content: profile.goal === "sound_effects" || profile.goal === "video_sound_effects"
           ? "Create original, precise sound effects and environmental texture. Do not introduce unwanted music, a recognizable melody, protected recording, or imitated voice."
           : profile.goal === "mixed_audio"
             ? "Create an original, produced audible scene with authored dialogue, atmosphere, sound effects, and music only when appropriate. Never imitate a protected recording, celebrity voice, or recognizable melody."
@@ -128,17 +154,7 @@ export function adaptAudioPrompt(
   ];
   const maxPromptCharacters = Math.min(options.maxPromptCharacters ?? contract.maxPromptCharacters, contract.maxPromptCharacters);
   const compilation = compileContextAdaptationSections(sections, maxPromptCharacters);
-  const spokenScript = profile.goal === "narration" ? cleanSpokenScript(profile.transcript ?? plan.content_markdown ?? plan.items.map((item) => item.body).join("\n")) : "";
-  let voiceDirection = "";
-  if (profile.goal === "narration") {
-    // Required prohibitions and authored direction must never disappear behind
-    // optional delivery preferences or a cosmetic truncation limit.
-    voiceDirection = [...prohibited.map((fact) => `Avoid: ${clean(fact.direction)}`), ...requirements].filter(Boolean).join(" ");
-    for (const optional of [options.tone ? `Delivery: ${clean(options.tone)}.` : "", destinationDirection].filter(Boolean)) {
-      const next = [voiceDirection, optional].filter(Boolean).join(" ");
-      if (next.length <= contract.maxPromptCharacters) voiceDirection = next;
-    }
-  }
+  if (compilation.valid) serializeAudioRequest(contract.model, { prompt: compilation.prompt, profile, ...(contract.supportsVideoReference ? { videoUrl: "https://fal.media/approved-video" } : {}) });
   return {
     adapterId: contract.adapterId,
     adapterVersion: contract.adapterVersion,
@@ -148,7 +164,37 @@ export function adaptAudioPrompt(
     audioWaveformSubmitted: false,
     sourceAudioTreatment: references.length ? "authored-description-only" : "none",
     orderedCueCount: cues.length,
-    ...(spokenScript ? { spokenScript } : {}),
-    ...(voiceDirection ? { voiceDirection } : {}),
+  };
+}
+
+/** Validate immutable inputs before planning and disclose the downstream budget. */
+export function audioPreparationConstraints(snapshot: Record<string, unknown>, options: { profile: AudioRequestProfile; model: string; tone?: string; audience?: string }) {
+  const contract = audioAdapterContractForModel(options.model);
+  if (!contract) throw new AudioProviderInputError("audio_provider_model_unsupported", "The requested audio model is not approved.");
+  const sampleScript = options.profile.speakerCount === 2 ? "Speaker1: A\nSpeaker2: B" : "A";
+  const prepared = adaptAudioPrompt(snapshot, { title: "Audio", summary: "", content_markdown: options.profile.goal === "narration" ? sampleScript : "", items: [] }, { ...options, omitOptionalVoiceDirection: true });
+  if (!prepared.compilation.valid) throw new AudioProviderInputError("audio_prompt_requirements_exceed_provider_limit", prepared.compilation.issues.map((issue) => issue.message).join(" "));
+  const inputContract = AUDIO_PROVIDER_INPUT_CONTRACTS[contract.model]!;
+  const scriptBytes = contract.model === "fal-ai/gemini-3.1-flash-tts"
+    ? GEMINI_SPEECH_INPUT_POLICY.maxCombinedUtf8Bytes - (prepared.voiceDirection ? audioUtf8Bytes(prepared.voiceDirection) + 2 : 0) : null;
+  return {
+    model: contract.model, adapter_version: contract.adapterVersion,
+    maximum_prompt_characters: contract.maxPromptCharacters,
+    provider_prompt_character_limit: inputContract.parameters.prompt?.maxLength ?? null,
+    maximum_content_characters: options.profile.transcript ? Math.max(options.profile.transcript.length, scriptBytes ?? contract.maxPromptCharacters) : scriptBytes ?? contract.maxPromptCharacters,
+    approved_script_present: options.profile.goal === "narration" && Boolean(options.profile.transcript),
+    supported_parameters: Object.keys(inputContract.parameters),
+    parameter_limits: inputContract.parameters,
+    duration: { parameter: inputContract.parameters.duration ?? null, requested_seconds: options.profile.durationSeconds ?? null, default_seconds: contract.defaultDurationSeconds, maximum_seconds: contract.maximumAdvertisedDurationSeconds, exact: contract.supportsExactDuration },
+    ...(scriptBytes !== null ? {
+      maximum_script_utf8_bytes: scriptBytes,
+      target_script_utf8_bytes: Math.min(GEMINI_SPEECH_INPUT_POLICY.targetScriptUtf8Bytes, scriptBytes),
+      maximum_style_characters: GEMINI_SPEECH_INPUT_POLICY.maxStyleCharacters,
+      maximum_combined_utf8_bytes: GEMINI_SPEECH_INPUT_POLICY.maxCombinedUtf8Bytes,
+      input_token_limit: GEMINI_SPEECH_INPUT_POLICY.inputTokenLimit,
+      budget_basis: "conservative-utf8-with-wrapper-allowance",
+      speaker_aliases: options.profile.speakerCount === 2 ? ["Speaker1", "Speaker2"] : [],
+      preserve_approved_script: true,
+    } : {}),
   };
 }

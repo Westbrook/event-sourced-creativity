@@ -24,6 +24,8 @@ import { preflightGeneration } from "./generation-readiness";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT } from "../src/model/video-adapter";
 import { AUDIO_ADAPTER_CONTRACT, AudioAdapterSelectionError, audioAuthoringConflict, normalizeAudioRequestProfile } from "../src/model/audio";
 import { selectAudioAdapter } from "./audio-selection";
+import { audioPreparationConstraints } from "./audio-prompt-adapter";
+import { AudioProviderInputError } from "../src/model/audio-provider-contracts";
 import { clearPresentationServerOwnedCheckpointFields, documentRenderTokenReservation, estimatePlannerOperationMicrousd, generationBudgetGate, presentationServerOwnedCheckpointField } from "../src/model/generation-budget";
 import { buildManagedProductionPlan, ManagedPresentationPlanningError, MAX_MANAGED_PRESENTATION_SLIDES, minimumPresentationSlideCount, scoreManagedProductionPlan, type ManagedProductionPlan } from "../src/model/managed-production";
 import { productionSystemFor, productionUnitsForPlan } from "../src/model/production-system";
@@ -2350,7 +2352,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
           return Response.json({error:"audio_video_reference_consent_required",message:"Choose an approved video and separately authorize sharing its complete contents with the audio provider."},{status:428});
         }
         if(!videoGoal&&(payload.audioVideoArtifactId||payload.sendAudioVideoToProvider===true))return Response.json({error:"audio_video_reference_goal_mismatch"},{status:400});
-        selectedAudio=selectAudioAdapter(env,{...audioProfile,...suppliedProfile},{
+        selectedAudio=selectAudioAdapter(env,payload.audioProfile,{
+          snapshot:trustedSnapshot??{},
           ...(typeof payload.audioProviderModel==="string"?{preferredModel:payload.audioProviderModel}:{}),
           ...(videoGoal?{videoReferenceAvailable:true}:{}),
         });
@@ -2366,9 +2369,10 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         }
         const conflict=audioAuthoringConflict(trustedSnapshot??{},audioProfile,{tone:payload.tone,audience:payload.audience});
         if(conflict)return Response.json({error:conflict.code,message:conflict.message},{status:422});
+        audioPreparationConstraints(trustedSnapshot??{},{profile:audioProfile,model:selectedAudio.model,tone:typeof payload.tone==="string"?payload.tone:undefined,audience:typeof payload.audience==="string"?payload.audience:undefined});
         payload.audioProfile=audioProfile;payload.audioProviderModel=selectedAudio.model;payload.audioEstimatedCostMicrousd=selectedAudio.estimatedCostMicrousd;
       }catch(error){
-        if(error instanceof AudioAdapterSelectionError)return Response.json({error:error.code,message:error.message},{status:422});
+        if(error instanceof AudioAdapterSelectionError||error instanceof AudioProviderInputError)return Response.json({error:error.code,message:error.message},{status:422});
         if(error instanceof ProviderRequestError){const detail=error.detail;return Response.json({error:detail.code,errorDetail:publicFailureDetail(detail)},{status:detail.httpStatus??400});}
         throw error;
       }

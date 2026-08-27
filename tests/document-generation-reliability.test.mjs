@@ -152,17 +152,61 @@ async function stalePresentationAttempt(fixture,job,{attemptCount=1,reserve=fals
 
 const flushExecution=async()=>{for(let index=0;index<8;index+=1)await new Promise(setImmediate);};
 
-test("paid audio download recovery reuses its plan and provider request with zero additional settlement",async()=>{
+test("both audio admission routes reject invalid raw aliases and immutable input before provider contact",async()=>{
+  const fixture=await reliabilityWorker();fixture.environment.FAL_KEY="test-existing-fal-key";
+  await fixture.drainBackground();
+  const previousFetch=globalThis.fetch,contacts=[];
+  globalThis.fetch=async(...args)=>{contacts.push(args);throw new Error("Provider must not be contacted");};
+  try{
+    for(const [audioProfile,code] of [
+      [123,"audio_profile_invalid"],
+      [{goal:123},"audio_goal_unsupported"],
+      [{audioGoal:false},"audio_goal_unsupported"],
+      [{role:["voice"]},"audio_role_unsupported"],
+      [{audioGoal:"unknown"},"audio_goal_unsupported"],
+      [{goal:"sound_effects",duration_seconds:1.5},"audio_duration_invalid"],
+      [{goal:"narration",speaker_count:1.5},"audio_speaker_count_invalid"],
+      [{goal:"narration",transcript:"界".repeat(2_400)},"audio_input_budget_exceeded"],
+    ]){
+      const payload={artifactKind:"audio",productionMode:"manual",itemCount:1,paidMediaConfirmed:true,audioProfile};
+      const queued=await handleDocumentJobs(new Request("http://localhost/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload})),fixture.environment);
+      assert.equal(queued.status,422,JSON.stringify(await queued.clone().json()));
+      assert.equal((await queued.json()).error,code);
+      const direct=await handleEvents(new Request("http://localhost/api/events",json({...payload,action:"render_document",documentId:"doc-atmosphere",sourceSurface:"document"})),fixture.environment);
+      assert.equal(direct.status,422,JSON.stringify(await direct.clone().json()));
+      assert.equal((await direct.json()).error,code);
+    }
+    assert.equal(contacts.length,0);
+    await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockCreated",{
+      project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"required-voice-direction",type:"direction",handle:"direction/voice",position:"z-audio-required",
+      properties:{text:"a".repeat(4_001),required:true,weight:1,authority:"authored"},
+    });
+    const payload={artifactKind:"audio",productionMode:"manual",itemCount:1,paidMediaConfirmed:true,audioProfile:{goal:"narration"}};
+    const direct=await handleEvents(new Request("http://localhost/api/events",json({...payload,action:"render_document",documentId:"doc-atmosphere",sourceSurface:"document"})),fixture.environment);
+    assert.equal(direct.status,422,JSON.stringify(await direct.clone().json()));
+    assert.equal((await direct.json()).error,"audio_style_instructions_too_long");
+    const queued=await handleDocumentJobs(new Request("http://localhost/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload})),fixture.environment);
+    assert.equal(queued.status,422,JSON.stringify(await queued.clone().json()));
+    assert.equal((await queued.json()).error,"audio_style_instructions_too_long");
+    assert.equal(contacts.length,0);
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+for(const narration of [false,true]){
+test(`paid ${narration?"historical narration":"music"} recovery reuses its plan and provider request with zero additional settlement`,async()=>{
   const fixture=await reliabilityWorker();fixture.environment.FAL_KEY="test-existing-fal-key";
   const previousFetch=globalThis.fetch,calls=[],stored=[];
+  const providerModel=narration?"fal-ai/gemini-3.1-flash-tts":"fal-ai/lyria3/pro";
+  const providerCost=narration?125_000:80_000, expectedCost=62_042+providerCost;
   let failDownload=true;
   fixture.environment.MEDIA.put=async(key,bytes,options)=>{stored.push({key,bytes,options});};
   const plan={title:"Original retained score",summary:"An original instrumental piano and cello composition.",content_markdown:"Create an original instrumental score moving from restraint to quiet resolution.",presentation:null,items:[{title:"Complete arrangement",body:"Original felt piano and soft cello develop a restrained resolving motif.",notes:"No voices or artist imitation.",image_prompt:"",slide:null,context_group_ids:[]}]};
+  if(narration){plan.content_markdown="a".repeat(2_499)+"🎵";plan.items[0].notes="Original clear narration.";}
   globalThis.fetch=async(value,init={})=>{
     const url=String(value),method=init.method??"GET";calls.push({url,method});
     if(url==="https://api.openai.com/v1/moderations")return Response.json({id:"audio-recovery-moderation",results:[{flagged:false,categories:{}}]});
     if(url==="https://api.openai.com/v1/responses")return Response.json({id:"paid-audio-plan",model:"gpt-5.6-terra",output_text:JSON.stringify(plan),usage:{input_tokens:8101,output_tokens:3820,total_tokens:11921}});
-    if(url==="https://queue.fal.run/fal-ai/lyria3/pro"&&method==="POST")return Response.json({request_id:"paid-audio-edge-result"});
+    if(url===`https://queue.fal.run/${providerModel}`&&method==="POST")return Response.json({request_id:"paid-audio-edge-result"});
     if(url.endsWith("/paid-audio-edge-result/status?logs=1"))return Response.json({status:"COMPLETED"});
     if(url.endsWith("/paid-audio-edge-result"))return Response.json({audio:{url:"https://fal.media/paid-audio-edge.mp3",content_type:"audio/mpeg",file_size:3}});
     if(url==="https://fal.media/paid-audio-edge.mp3"){
@@ -174,17 +218,27 @@ test("paid audio download recovery reuses its plan and provider request with zer
   };
   try{
     await fixture.drainBackground();
-    const admission=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"audio",productionMode:"manual",itemCount:1,paidMediaConfirmed:true,requestKey:"paid-audio-edge-recovery"}}));
+    const admission=await fixture.request("/api/document-jobs",json({kind:"render_document",documentId:"doc-atmosphere",payload:{artifactKind:"audio",productionMode:"manual",itemCount:1,paidMediaConfirmed:true,...(narration?{audioProfile:{goal:"narration"}}:{}),requestKey:"paid-audio-edge-recovery"}}));
     assert.equal(admission.status,202,JSON.stringify(await admission.clone().json()));
     const {job}=await admission.json();
     const failed=(await(await fixture.runJob(job)).json()).job;
     assert.equal(failed.status,"failed");assert.equal(failed.errorDetail.code,"provider_network_failed");
-    assert.equal(failed.result.generationReceipt.settled_cost_microusd,142_042);
+    assert.equal(failed.result.generationReceipt.settled_cost_microusd,expectedCost);
     const original=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
     assert.equal(original.providerJobId,"paid-audio-edge-result");
-    assert.ok(original.artifactPlan);assert.equal(original.audioInputReceipt.model,"fal-ai/lyria3/pro");
+    assert.ok(original.artifactPlan);assert.equal(original.audioInputReceipt.model,providerModel);
+    if(narration){
+      // Simulate a paid pre-upgrade receipt: the same 2,500 billable characters
+      // exceed today's UTF-8 policy, and the saved quote predates the new capacity.
+      original.artifactPlan.content_markdown="界".repeat(2_499)+"🎵";
+      original.audioInputReceipt.submitted_prompt=original.artifactPlan.content_markdown;
+      original.audioInputReceipt.parameters.provider_parameters.style_instructions="x".repeat(4_100);
+      original.audioInputReceipt.parameters.published_cost_microusd=250_000;
+      original.audioEstimatedCostMicrousd=250_000;
+      fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(JSON.stringify(original),job.jobId);
+    }
     const originalCostId=original.costReservationId;
-    assert.deepEqual({...fixture.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE reservation_id=?").get(originalCostId)},{status:"settled",used_microusd:142_042});
+    assert.deepEqual({...fixture.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE reservation_id=?").get(originalCostId)},{status:"settled",used_microusd:expectedCost});
     const originalPosts=calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length;
     assert.equal(originalPosts,2);
 
@@ -193,7 +247,7 @@ test("paid audio download recovery reuses its plan and provider request with zer
     const resumed=(await retry.json()).job;assert.equal(resumed.jobId,job.jobId);
     const recovery=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
     assert.equal(recovery.providerJobId,"paid-audio-edge-result");
-    assert.equal(recovery.prepaidProviderCostMicrousd,80_000);
+    assert.equal(recovery.prepaidProviderCostMicrousd,providerCost);
     failDownload=false;
     const completed=(await(await fixture.runJob(resumed)).json()).job;
     assert.equal(completed.status,"completed",JSON.stringify(completed.errorDetail));
@@ -209,14 +263,15 @@ test("paid audio download recovery reuses its plan and provider request with zer
     assert.equal(artifact.media_url,undefined);
     assert.equal(stored[0].options.customMetadata.providerJobId,"paid-audio-edge-result");
     assert.equal(stored[0].options.httpMetadata.contentType,"audio/mpeg");
-    assert.deepEqual({...fixture.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE reservation_id=?").get(originalCostId)},{status:"settled",used_microusd:142_042});
-    assert.equal(fixture.sqlite.prepare("SELECT SUM(used_microusd) AS cost FROM cost_budget_reservations").get().cost,142_042);
+    assert.deepEqual({...fixture.sqlite.prepare("SELECT status,used_microusd FROM cost_budget_reservations WHERE reservation_id=?").get(originalCostId)},{status:"settled",used_microusd:expectedCost});
+    assert.equal(fixture.sqlite.prepare("SELECT SUM(used_microusd) AS cost FROM cost_budget_reservations").get().cost,expectedCost);
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations WHERE status IN ('active','executing')").get().count,0);
     await fixture.runJob(resumed);
     assert.equal(calls.filter(call=>call.method==="POST"&&call.url!=="https://api.openai.com/v1/moderations").length,originalPosts);
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted'").get().count,1);
   }finally{globalThis.fetch=previousFetch;}
 });
+}
 
 async function originalSourceAudioFixture({shared=false,muted=false,repair=false,legacyPlannerScalar=repair}={}){
   const fixture=await reliabilityWorker();fixture.environment.FAL_KEY="existing-audio-recovery-test-key";

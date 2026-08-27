@@ -15,7 +15,10 @@ import { buildPresentationSourceContract, inferPresentationAudienceLocale } from
 import { safePresentationCandidateIssues } from "../src/model/presentation-candidates.ts";
 import type { SceneConfiguration, SceneMedium } from "../src/model/scene-configuration.ts";
 import { VIDEO_ADAPTER_CONTRACT, type VideoAudioMode } from "../src/model/video-adapter.ts";
-import type { AudioRequestProfile } from "../src/model/audio.ts";
+import { AudioAdapterSelectionError, type AudioRequestProfile } from "../src/model/audio.ts";
+import { AudioProviderInputError } from "../src/model/audio-provider-contracts.ts";
+import { adaptAudioPrompt, audioPreparationConstraints } from "./audio-prompt-adapter.ts";
+import { selectAudioAdapter } from "./audio-selection.ts";
 import { generationRepairPages, generationValidationReceipt, type GenerationValidationObservation } from "./generation-self-healing.ts";
 import { generateCreativeImage } from "./image-adapter.ts";
 import { readGeneratedImageReference, storeGeneratedImage, storeGeneratedMedia } from "./media-api.ts";
@@ -221,23 +224,24 @@ function managedSlideVisibleCopy(item: DocumentArtifactDraftItem): string[] {
 }
 
 function managedProductionValidationFailure(kind: DocumentArtifactKind, issues: DocumentArtifactValidationIssue[], phase: "review" | "assembly",options:{pageCount:number;providerAttempt:number}) {
+  const audioFailure = kind === "audio" && issues.some((issue) => issue.code.startsWith("audio_"));
   const sourceFidelityFailure = kind === "slides" && issues.some((issue) =>
     /(?:source|citation|protected|precision|scorecard|numeric|quote|roadmap|outline|context_group|exact_value|display_value|slide_count_mismatch)/u.test(issue.code));
   const diagnostic = issues.map((issue) => `${issue.code} ${issue.path}`).join(", ");
   const stage = phase === "review" ? "its bounded production review" : "final assembly";
   return new ProviderRequestError({
-    code: sourceFidelityFailure ? "source_fidelity_validation_failed" : "provider_returned_incomplete_document_artifact",
+    code: audioFailure ? "audio_preparation_failed" : sourceFidelityFailure ? "source_fidelity_validation_failed" : "provider_returned_incomplete_document_artifact",
     category: "provider",
     scope: "request",
-    action: kind === "slides" ? "edit_request" : "retry",
+    action: kind === "slides" || audioFailure ? "edit_request" : "retry",
     message: sourceFidelityFailure
       ? `The managed presentation did not preserve its required authorized source evidence after ${stage}: ${diagnostic}. Review the source document and presentation requirements before starting a new request.`
       : `The managed ${kind.replaceAll("_", " ")} could not be completed after ${stage}: ${diagnostic}.`,
-    retryable: kind !== "slides",
+    retryable: kind !== "slides" && !audioFailure,
     retryAfterMs: null,
     requestId: null,
     // This is our terminal artifact review, not an upstream HTTP failure.
-    httpStatus: kind === "slides" ? null : 502,
+    httpStatus: audioFailure ? 422 : kind === "slides" ? null : 502,
     ...(issues.length?{validationIssues:issues.flatMap((issue)=>{
       const match=/^items\.(\d+)(.*)$/u.exec(issue.path);
       const globalIndex=match?Number(match[1]):0;
@@ -267,10 +271,13 @@ export async function generateManagedArtifactDraft(
     videoSize?: "1280x720" | "720x1280";
     videoAudioMode?: VideoAudioMode;
     audioProfile?: AudioRequestProfile;
+    audioProviderModel?: string;
     sceneMedium?: SceneMedium;
     sceneConfiguration?: SceneConfiguration;
   } & ManagedProductionCallbacks,
 ) {
+  const audioSelection = kind === "audio" ? selectAudioAdapter(env, input.audioProfile, { snapshot: input.snapshot, preferredModel: input.audioProviderModel }) : null;
+  if (audioSelection) audioPreparationConstraints(input.snapshot, { profile: audioSelection.profile, model: audioSelection.model, tone: input.tone, audience: input.audience });
   if (kind === "scene") {
     // Normalize old queued plans in place so their final persisted plan matches the actual provider team.
     input.production.team = productionTeamFor("scene", input.sceneConfiguration?.medium ?? input.sceneMedium ?? "visual");
@@ -396,7 +403,7 @@ export async function generateManagedArtifactDraft(
         authoredSlideCount: input.authoredSlideCount,
         videoSize: input.videoSize,
         videoAudioMode: input.videoAudioMode,
-        audioProfile: input.audioProfile,
+        audioProfile: input.audioProfile, audioProviderModel: input.audioProviderModel,
         sceneMedium: input.sceneMedium,
         sceneConfiguration: input.sceneConfiguration,
         productionMode: "managed",
@@ -495,6 +502,15 @@ export async function generateManagedArtifactDraft(
       contextGroupIds: expectedGroups,
       ...(presentationSources ? { sourceContract: presentationSources, requireSourceGrounding: true, requireAllProtectedContent: true } : {}),
     });
+    if (audioSelection) {
+      try {
+        const adapted = adaptAudioPrompt(input.snapshot, output, { profile: audioSelection.profile, model: audioSelection.model, tone: input.tone, audience: input.audience });
+        if (!adapted.compilation.valid) issues.push({ code: "audio_prompt_requirements_exceed_provider_limit", path: "content_markdown", message: adapted.compilation.issues.map((issue) => issue.message).join(" ") });
+      } catch (error) {
+        if (error instanceof AudioProviderInputError || error instanceof AudioAdapterSelectionError) issues.push({ code: error.code, path: "content_markdown", message: error.message });
+        else throw error;
+      }
+    }
     if (kind === "slides") {
       for (const [index, item] of output.items.entries()) {
         const assignedSources = input.production.scenes[index]?.sourceBlockIds ?? [];
@@ -546,7 +562,7 @@ export async function generateManagedArtifactDraft(
       const repaired = await generateDocumentArtifact(env, ownerId, kind, {
         documentTitle: input.documentTitle,
         snapshot: combinedSceneSnapshot(input.snapshot, scenes),
-        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, outputLocale:presentationAudienceLocale,presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, audioProfile: input.audioProfile, sceneMedium: input.sceneMedium, sceneConfiguration: input.sceneConfiguration, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal,...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),onProviderAttempt:recordPaidAttempt,onProviderSubmission:input.onProviderSubmission,onBeforeProviderAttempt:input.plannerPreflight },
+        options: { itemCount: scenes.length, audience: input.audience, tone: input.tone, locale: input.locale, outputLocale:presentationAudienceLocale,presentationStyle: input.presentationStyle, presentationFidelity: input.presentationFidelity, requestedSlideCount: input.requestedSlideCount, authoredSlideCount: input.authoredSlideCount, videoSize: input.videoSize, videoAudioMode: input.videoAudioMode, audioProfile: input.audioProfile, audioProviderModel: input.audioProviderModel, sceneMedium: input.sceneMedium, sceneConfiguration: input.sceneConfiguration, productionMode: "managed", productionPlan: input.production, productionScenes: scenes, productionPage: pageOptions(index, issues), signal: input.signal,...(input.plannerResponse?{onProviderResponse:(receipt:ProviderResponseReceipt)=>input.plannerResponse!({...receipt,pageIndex,pageCount,globalStartIndex:index})}:{}),onProviderAttempt:recordPaidAttempt,onProviderSubmission:input.onProviderSubmission,onBeforeProviderAttempt:input.plannerPreflight },
       });
       pages[pageIndex] = repaired;
       attempts.push(repaired);

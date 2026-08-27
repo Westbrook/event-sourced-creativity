@@ -2283,4 +2283,9 @@ Object.assign(messages, {
 
 Object.assign(messages, FORMA_RESPONSIVE_MESSAGES.ar);
 
+Object.assign(messages, {
+  "system.auto.10fv3hf.51": "تعذّر على Forma تكييف طلب الصوت مع حدود هذا النموذج",
+  "system.auto.1bop32q.183": "راجع النص المحفوظ وتوجيهات الصوت الإلزامية وحدود النموذج قبل بدء طلب معدّل. لم يُرسل أي طلب لتوليد الصوت؛ ويظل أي استخدام ناتج عن التخطيط المكتمل مسجّلًا.",
+});
+
 export default messages;

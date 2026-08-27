@@ -1,4 +1,5 @@
 import type { AudioRequestProfile } from "../../src/model/audio.ts";
+export { AudioProviderInputError } from "../../src/model/audio-provider-contracts.ts";
 
 export type AudioProviderAdapterInput = {
   prompt: string;
@@ -7,14 +8,5 @@ export type AudioProviderAdapterInput = {
   videoUrl?: string;
   spokenScript?: string;
   voiceDirection?: string;
+  videoDurationSeconds?: number;
 };
-
-export class AudioProviderInputError extends Error {
-  readonly code: string;
-
-  constructor(code: string, message: string) {
-    super(message);
-    this.name = "AudioProviderInputError";
-    this.code = code;
-  }
-}

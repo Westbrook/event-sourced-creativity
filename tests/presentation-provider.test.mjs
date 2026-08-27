@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { buildManagedProductionPlan } from "../src/model/managed-production.ts";
 import { assessStoredPresentationCandidate, generateDocumentArtifact } from "../worker/openai-adapter.ts";
+import { GEMINI_TTS_ADAPTER_CONTRACT, SEED_AUDIO_ADAPTER_CONTRACT, STABLE_AUDIO_ADAPTER_CONTRACT } from "../src/model/audio.ts";
 
 const PRIVATE_BLOCK_ID = "PRIVATE_EXECUTIVE_SOURCE_BLOCK_8731";
 const PRIVATE_GROUP_ID = "PRIVATE_EXECUTIVE_SOURCE_GROUP_8731";
@@ -225,6 +226,90 @@ async function withProviderResponses(outputs, callback) {
     globalThis.fetch = originalFetch;
   }
 }
+
+const narrationArtifact = (script) => ({
+  title: "A spoken review", summary: "Two original perspectives.", content_markdown: script,
+  items: [{ title: "The conversation", body: "", notes: "Speak clearly and naturally.", image_prompt: "", context_group_ids: [] }],
+});
+
+test("audio planning receives the selected model's fields and script budget before any paid request", async () => {
+  const script = `Speaker1: ${"Explain this original decision. ".repeat(85)}\nSpeaker2: ${"Review this independent choice. ".repeat(85)}`;
+  await withProviderResponses([narrationArtifact(script)], async (requests) => {
+    const result = await generateDocumentArtifact({ OPENAI_API_KEY: "mock-provider-key" }, "authorized-actor", "audio", {
+      documentTitle: "A spoken review", snapshot: { facts: [] },
+      options: { itemCount: 1, audioProfile: { goal: "narration", speakerCount: 2, destination: "podcast" }, audioProviderModel: GEMINI_TTS_ADAPTER_CONTRACT.model },
+    });
+    assert.equal(requests.length, 1);
+    assert.ok(result.output.content_markdown.length > 5_000);
+    assert.equal(result.output.content_markdown, script);
+    const contract = requests[0].input.audio.provider_contract;
+    assert.equal(contract.model, GEMINI_TTS_ADAPTER_CONTRACT.model);
+    assert.equal(contract.provider_prompt_character_limit, 50_000);
+    assert.equal(contract.maximum_style_characters, 4_000);
+    assert.equal(contract.maximum_combined_utf8_bytes, 7_168);
+    assert.deepEqual(contract.speaker_aliases, ["Speaker1", "Speaker2"]);
+    assert.equal(requests[0].request.text.format.schema.properties.content_markdown.maxLength, contract.maximum_content_characters);
+    assert.match(requests[0].request.instructions, /UTF-8 bytes/);
+    assert.ok(requests[0].request.max_output_tokens > contract.maximum_script_utf8_bytes);
+  });
+  await withProviderResponses([narrationArtifact("An original musical progression.")], async (requests) => {
+    await generateDocumentArtifact({ OPENAI_API_KEY: "mock-provider-key", FAL_AUDIO_MODEL: STABLE_AUDIO_ADAPTER_CONTRACT.model }, "authorized-actor", "audio", { documentTitle: "A score", snapshot: { facts: [] }, options: { itemCount: 1 } });
+    const contract = requests[0].input.audio.provider_contract;
+    assert.equal(contract.model, STABLE_AUDIO_ADAPTER_CONTRACT.model);
+    assert.equal(contract.provider_prompt_character_limit, null);
+    assert.equal(contract.parameter_limits.duration.maximum, 380);
+    assert.deepEqual(contract.parameter_limits.enable_safety_checker.values, [true]);
+  });
+});
+
+test("approved long speaker labels are restored locally without asking the planner to regenerate immutable words", async () => {
+  const script = Array.from({ length: 295 }, () => "abcdefghijklmnopqrstuvwxyzABCDEF: A\nabcdefghijklmnopqrstuvwxyzFEDCBA: B").join("\n");
+  await withProviderResponses([narrationArtifact("")], async (requests) => {
+    const result = await generateDocumentArtifact({ OPENAI_API_KEY: "mock-provider-key" }, "authorized-actor", "audio", {
+      documentTitle: "Approved dialogue", snapshot: { facts: [] }, options: { itemCount: 1, audioProfile: { goal: "narration", speakerCount: 2, transcript: script } },
+    });
+    assert.ok(script.length > 20_000);
+    assert.equal(requests.length, 1);
+    assert.deepEqual(requests[0].request.text.format.schema.properties.content_markdown, { type: "string", enum: [""] });
+    assert.match(requests[0].request.instructions, /inserts those approved words unchanged locally/);
+    assert.equal(result.output.content_markdown, script);
+    assert.deepEqual(result.usage, { inputTokens: 120, outputTokens: 80, totalTokens: 200 });
+  });
+});
+
+test("an oversized generated speech payload uses the existing single repair and retains both paid responses", async () => {
+  const oversized = narrationArtifact(`A: ${"界".repeat(1_600)}\nB: ${"界".repeat(1_600)}`);
+  const repaired = narrationArtifact("Speaker1: Welcome.\nSpeaker2: Let us review the decision.");
+  await withProviderResponses([oversized, repaired], async (requests) => {
+    const result = await generateDocumentArtifact({ OPENAI_API_KEY: "mock-provider-key" }, "authorized-actor", "audio", {
+      documentTitle: "A conversation", snapshot: { facts: [] }, options: { itemCount: 1, audioProfile: { goal: "narration", speakerCount: 2 } },
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1].request.text.format.name, "document_audio_repair");
+    assert.ok(requests[1].input.validation_issues.some((issue) => issue.code === "audio_input_budget_exceeded"));
+    assert.deepEqual(requests[0].input.audio.provider_contract, requests[1].input.audio.provider_contract);
+    assert.equal(result.output.content_markdown, repaired.content_markdown);
+    assert.deepEqual(result.usage, { inputTokens: 240, outputTokens: 160, totalTokens: 400 });
+    assert.equal(result.inputReceipt.validation.provider_call_count, 2);
+  });
+  await withProviderResponses([oversized], async (requests) => {
+    await assert.rejects(generateDocumentArtifact({ OPENAI_API_KEY: "mock-provider-key" }, "authorized-actor", "audio", {
+      documentTitle: "A conversation", snapshot: { facts: [] }, options: { itemCount: 1, audioProfile: { goal: "narration", speakerCount: 2 } },
+    }), (error) => error.detail.code === "audio_preparation_failed" && !error.detail.retryable && error.providerCallCount === 2 && error.providerUsage.totalTokens === 400);
+    assert.equal(requests.length, 2);
+  });
+});
+
+test("immutable oversized scripts and required direction never consume a planning call", async () => {
+  await withProviderResponses([narrationArtifact("This response must not be requested.")], async (requests) => {
+    for (const [snapshot, audioProfile, audioProviderModel] of [
+      [{ facts: [] }, { goal: "narration", transcript: "界".repeat(2_400) }, GEMINI_TTS_ADAPTER_CONTRACT.model],
+      [{ facts: [{ type: "direction", locked: true, properties: { text: "a".repeat(4_001) } }] }, { goal: "narration" }, GEMINI_TTS_ADAPTER_CONTRACT.model],
+      [{ facts: [{ type: "direction", locked: true, properties: { text: "a".repeat(2_050) } }] }, { goal: "mixed_audio" }, SEED_AUDIO_ADAPTER_CONTRACT.model],
+    ]) await assert.rejects(generateDocumentArtifact({ OPENAI_API_KEY: "mock-provider-key" }, "authorized-actor", "audio", { documentTitle: "Approved source", snapshot, options: { itemCount: 1, audioProfile, audioProviderModel } }), (error) => ["audio_input_budget_exceeded", "audio_style_instructions_too_long", "audio_prompt_requirements_exceed_provider_limit"].includes(error.code));
+    assert.equal(requests.length, 0);
+  });
+});
 
 function generateExecutivePresentation(options = {}, snapshot = executiveSourceSnapshot()) {
   return generateDocumentArtifact(
