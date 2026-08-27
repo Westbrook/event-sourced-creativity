@@ -7,6 +7,7 @@ import {
   providerFacingProductionTargets,
   productionTeamFor,
   productionSceneSnapshot,
+  productionPresentationSnapshot,
   scoreManagedProductionPlan,
   type ManagedProductionPlan,
   type ProductionScene,
@@ -156,7 +157,10 @@ export function combinedSceneSnapshot(snapshot: Record<string, unknown>, scenes:
   }
   const selected = [...facts.values()];
   const retainedRelationships=[...relationships.values()];
-  return { ...snapshot, facts: selected, relationships: retainedRelationships, context_groups: combinedContextGroups({ facts: selected, relationships: retainedRelationships }) };
+  // Reconstruct the whole selected page from its full source contract. A
+  // shared prose block may contain several slides or evidence passages; the
+  // per-scene map above must not leave only its last scene's text behind.
+  return productionPresentationSnapshot(snapshot, scenes, { ...snapshot, facts: selected, relationships: retainedRelationships, context_groups: combinedContextGroups({ facts: selected, relationships: retainedRelationships }) });
 }
 
 function attributedSlideQuote(item: DocumentArtifactDraftItem): string {

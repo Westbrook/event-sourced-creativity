@@ -1533,6 +1533,35 @@ test("rejects source-free slideshow requests at both admission boundaries withou
   }finally{globalThis.fetch=previousFetch;}
 });
 
+test("unresolved output-outline evidence is rejected at both admission boundaries before reservations or job writes",async()=>{
+  const fixture=await reliabilityWorker();
+  const documentId="isolated-unresolved-output-outline";
+  await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","DocumentCreated",{project_id:"project-atmosphere",document_id:documentId,title:"Isolated outline preflight test"});
+  await appendAuditEvent(fixture.environment,"creative:dev-local-creative","user","BlockCreated",{
+    project_id:"project-atmosphere",document_id:documentId,block_id:"isolated-outline-only",type:"format",handle:"format/isolated-outline",position:"outline-1",
+    properties:{text:"Presentation outline\nSlide 1: Orchard yield. Explain orchard yield and drip irrigation.\nSlide 2: Archive retrieval. Describe archive retrieval and catalog records.",weight:1,authority:"authored"},
+  });
+  const baselineEvents=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count;
+  const baselinePrivate=fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count;
+  const original=globalThis.fetch;let providerCalls=0;
+  globalThis.fetch=async()=>{providerCalls+=1;throw new Error("Unresolved source scope must stop before provider contact.");};
+  try{
+    for(const mode of ["manual","managed"])for(const boundary of ["jobs","events"]){
+      const payload={artifactKind:"slides",productionMode:mode,itemCount:2,requestedSlideCount:2,budgetAcknowledged:true};
+      const rejected=boundary==="jobs"?await handleDocumentJobs(new Request("http://localhost/api/document-jobs",json({kind:"render_document",documentId,payload})),fixture.environment,""):await handleEvents(new Request("http://localhost/api/events",json({action:"render_document",documentId,...payload})),fixture.environment);
+      assert.equal(rejected.status,422,`${boundary}/${mode}: ${JSON.stringify(await rejected.clone().json())}`);
+      const detail=await rejected.json();assert.equal(detail.error,"presentation_source_contract_invalid");
+      assert.ok(detail.issues.some((issue)=>issue.code==="unresolved_outline_evidence"));
+    }
+    assert.equal(providerCalls,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events").get().count,baselineEvents);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM private_content").get().count,baselinePrivate);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM document_jobs WHERE document_id=?").get(documentId).count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM budget_reservations").get().count,0);
+    assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM cost_budget_reservations").get().count,0);
+  }finally{globalThis.fetch=original;}
+});
+
 test("both slideshow admission boundaries reject six slides for seven isolated authored chapters before any paid work",async()=>{
   const fixture=await reliabilityWorker();
   const documentId="seven-independent-authored-presentation-chapters";
@@ -2149,6 +2178,7 @@ test("invalid paid presentation alternatives retain visible drafts and safe per-
     assert.ok(candidates[0].issues.some((issue)=>issue.code==="unknown_source_reference"&&issue.category==="authorization"));
     assert.ok(candidates[1].issues.some((issue)=>issue.code==="unknown_context_group_reference"&&issue.category==="authorization"));
     assert.ok(candidates.every((candidate)=>candidate.generatedSlideCount===12&&!candidate.complete));
+    assert.ok(candidates.every((candidate)=>!Object.hasOwn(candidate,"citationChecks")),"private citation excerpts and passages never enter listing summaries");
 
     const detailed=await requestSourceJob(`${job.jobId}/presentation-candidates/rejected-visible-alternative-1`);
     assert.equal(detailed.status,200,JSON.stringify(await detailed.clone().json()));
@@ -2156,6 +2186,8 @@ test("invalid paid presentation alternatives retain visible drafts and safe per-
     const detail=JSON.parse(text).candidate;
     assert.equal(detail.slides.length,12);
     assert.equal(detail.slides[0].title,"RESPONSIVE ASSESSMENT");
+    assert.ok(detail.citationChecks.length>0,"the authorized private detail explains citation grounding against frozen source passages");
+    assert.ok(detail.citationChecks.every((check)=>check.passages.every((passage)=>!Object.hasOwn(passage,"id"))),"private passage identifiers never become display text");
     assert.doesNotMatch(text,/PRIVATE_AUTHORED_SLIDE_|blk_999|context_group_999|"(?:sourceIds|source_id|source_ids|image_prompt|content_markdown|output_text)"\s*:/u);
 
     const foreignHeaders={"oai-authenticated-user-id":"other-presentation-author","oai-authenticated-user-email":"other-presentation-author@example.test"};
@@ -2179,6 +2211,59 @@ test("invalid paid presentation alternatives retain visible drafts and safe per-
     assert.equal(impossiblePromotion.status,409,"source-invalid rejected alternatives cannot be promoted");
     assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,0);
     assert.equal(providerCalls,2,"candidate review and blocked promotion never issue another provider request");
+  }finally{globalThis.fetch=previousFetch;}
+});
+
+test("an adapter upgrade cannot promote a historically rejected paid presentation or rewrite its receipt",async()=>{
+  const fixture=await reliabilityWorker();
+  const documentId=await seedIndependentPresentation(fixture,"historical-rejection-review-only");
+  const requestSourceJob=(path="",init={})=>handleDocumentJobs(new Request(`http://localhost/api/document-jobs${path?`/${path}`:""}`,init),fixture.environment,path);
+  const previousFetch=globalThis.fetch;
+  let providerCalls=0;
+  globalThis.fetch=async(_url,init={})=>{
+    providerCalls+=1;
+    return Response.json({id:"historical-review-only-response",model:"gpt-5.6-terra",output_text:JSON.stringify(independentProviderResponse(init.body)),usage:{input_tokens:1200,output_tokens:800,total_tokens:2000}});
+  };
+  try{
+    const admitted=await requestSourceJob("",json(presentationAdmission(documentId,"historical-rejection-review-only")));
+    assert.equal(admitted.status,202,JSON.stringify(await admitted.clone().json()));
+    const{job}=await admitted.json();
+    fixture.sqlite.exec("CREATE TRIGGER fail_review_only_persistence BEFORE INSERT ON private_content WHEN NEW.kind='document-artifact' BEGIN SELECT RAISE(FAIL,'forced_review_only_persistence_failure'); END");
+    const failedResponse=await requestSourceJob(`${job.jobId}/run`,{method:"POST"});
+    const failed=(await failedResponse.json()).job;
+    assert.equal(failed.status,"failed");
+    fixture.sqlite.exec("DROP TRIGGER fail_review_only_persistence");
+    const current=JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(job.jobId).result_json);
+    assert.equal(current.recoverablePresentationCandidate,true,"the synthetic response passes current validation, so the historical guard is exercised");
+    for(const version of ["2026-08-26-source-aware-render-v4",undefined]){
+      const checkpoint=structuredClone(current);
+      checkpoint.generationReceipt.presentation_adapter_version=version;
+      checkpoint.generationReceipt.failure_stage="source_fidelity_validation";
+      checkpoint.generationReceipt.failure_code="source_fidelity_validation_failed";
+      checkpoint.errorDetail={...checkpoint.errorDetail,code:"source_fidelity_validation_failed"};
+      // This stale true flag must not override the historical validation rejection.
+      checkpoint.recoverablePresentationCandidate=true;
+      const original=JSON.stringify(checkpoint);
+      fixture.sqlite.prepare("UPDATE document_jobs SET result_json=? WHERE job_id=?").run(original,job.jobId);
+      const listed=await requestSourceJob();
+      assert.equal(listed.status,200);
+      assert.notEqual((await listed.json()).jobs.find((entry)=>entry.jobId===job.jobId).result.recoverablePresentationCandidate,true);
+      const alternatives=await requestSourceJob(`${job.jobId}/presentation-candidates`);
+      assert.equal(alternatives.status,200);
+      const candidates=(await alternatives.json()).candidates;
+      assert.equal(candidates.length,1);
+      assert.equal(candidates[0].complete,false);
+      assert.equal(candidates[0].reviewOnlyReason,"historical-validation-rejection");
+      assert.equal(candidates[0].issues.length,0,"passing current checks must not erase the previous rejection");
+      const recovery=await requestSourceJob(`${job.jobId}/recover`,{method:"POST"});
+      assert.equal(recovery.status,409);
+      assert.equal((await recovery.json()).reason,"historical_validation_rejection");
+      const retained=fixture.sqlite.prepare("SELECT result_json,status FROM document_jobs WHERE job_id=?").get(job.jobId);
+      assert.equal(retained.status,"failed");
+      assert.equal(retained.result_json,original,"review and blocked recovery do not migrate immutable failure accounting");
+      assert.equal(fixture.sqlite.prepare("SELECT COUNT(*) AS count FROM events WHERE type='DocumentRenderCompleted' AND json_extract(payload,'$.document_id')=?").get(documentId).count,0);
+    }
+    assert.equal(providerCalls,1,"reviewing and blocking recovery never submit another provider request");
   }finally{globalThis.fetch=previousFetch;}
 });
 

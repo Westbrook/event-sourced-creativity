@@ -517,6 +517,7 @@ test("opaque internal source aliases and UUIDs never appear in visible citations
     "grp_002",
     "clm_003",
     "source_004",
+    "passage_007",
     "decision_5",
     "context_group_6",
     "01a03126-27c6-77d5-a77c-0a7d5218e24e",
@@ -541,6 +542,16 @@ test("opaque internal source aliases and UUIDs never appear in visible citations
   for (let index = 0; index < opaqueLabels.length; index += 1) {
     assert.ok(!markup.includes(`Authorized source excerpt ${index + 1}`), "Complete private evidence remains available only in authorized inspection.");
   }
+});
+
+test("public research attribution survives real slide rendering without leaking private passage anchors", () => {
+  const citations = [{ sourceId: "private-research", label: "Published research passage_001", anchor: "Appendix B passage_002", excerpt: "PRIVATE_PASSAGE_EXCERPT" }];
+  const original = structuredClone(citations);
+  const markup = renderSlide(scorecard({ citations }));
+  assert.match(markup, /Published research/u);
+  assert.match(markup, /Appendix B/u);
+  assert.doesNotMatch(markup, /passage_\d+|PRIVATE_PASSAGE_EXCERPT/u);
+  assert.deepEqual(citations, original, "rendering does not mutate the canonical anchor or excerpt");
 });
 
 test("every supported presentation preset supplies 4.5:1 body, muted, accent, and inverted accent contrast", () => {

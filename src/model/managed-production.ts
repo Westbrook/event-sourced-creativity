@@ -2,7 +2,7 @@ import { combinedContextGroups, combinedContextMemberships, normalizeCombinedCon
 import { requiredContextAdaptationFacts } from "./context-adaptation.ts";
 import type { DocumentArtifactKind } from "./document-artifacts.ts";
 import { promptFactIsActive } from "./prompt-policy.ts";
-import { inferPresentationSourceOutline } from "./presentation-source.ts";
+import { buildPresentationSourceContract, inferPresentationSourceOutline, scopePresentationSourceSnapshot, type PresentationSourceContract } from "./presentation-source.ts";
 import type { SceneMedium } from "./scene-configuration.ts";
 import { VIDEO_ADAPTER_CONTRACT, type VideoDurationSeconds } from "./video-adapter.ts";
 
@@ -614,9 +614,14 @@ export function minimumPresentationSlideCount(snapshot: Record<string, unknown>)
 
 /** Compile the full source context without inheriting the legacy twelve-item schema cap. */
 export function buildManagedProductionPlan(format: ProductionFormat, snapshot: Record<string, unknown>, options: ProductionPlanOptions = {}): ManagedProductionPlan {
-  const sourceClaims = productionClaims(snapshot);
-  const sourceOutline = format === "slides" ? inferPresentationSourceOutline(snapshot) : null;
+  const sourceContract = format === "slides" ? buildPresentationSourceContract(snapshot) : null;
+  const scopedSnapshot = sourceContract ? scopePresentationSourceSnapshot(snapshot, sourceContract) : snapshot;
+  const sourceOutline = sourceContract?.outline ?? null;
   const authoredSlides = sourceOutline?.slides ?? [];
+  const outlinePositions = new Set(authoredSlides.flatMap((slide, index) => slide.sourceMode === "outline" ? [index] : []));
+  const sourceClaims = productionClaims(scopedSnapshot).map((claim) => outlinePositions.size && claim.sourceKind === "standing-constraint"
+    ? { ...claim, continuity: true } : claim);
+  const unresolvedSource = sourceContract?.sourceIssues?.find((issue) => issue.code !== "unassigned_required_presentation_source");
   const authoredClaims = authoredSlides.map((slide, index): ProductionClaim => {
     const source = sourceClaims.find((claim) => claim.blockId === slide.sourceBlockId && !claim.negative)
       ?? sourceClaims.find((claim) => !claim.negative && !claim.continuity);
@@ -635,16 +640,36 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
       sourceKind: "authored-slide",
     };
   });
+  const evidenceClaims = new Map<string, ProductionClaim>();
+  const evidenceBySlide = authoredSlides.map((slide) => {
+    if (slide.sourceMode !== "outline") return [];
+    return (sourceContract?.passages ?? []).filter((passage) => slide.evidencePassageIds?.includes(passage.id)).flatMap((passage) => {
+      const source = sourceClaims.find((claim) => claim.blockId === passage.sourceBlockId && !claim.negative);
+      if (!source || !passage.content.trim()) return [];
+      const claim = evidenceClaims.get(passage.id) ?? {
+        ...source,
+        id: `${source.id}:passage:${passage.id}`,
+        text: passage.content,
+        continuity: false,
+        contextGroupIds: unique([...source.contextGroupIds, ...passage.contextGroupIds]),
+        storyboardSequence: null,
+      } satisfies ProductionClaim;
+      evidenceClaims.set(passage.id, claim);
+      return [claim];
+    });
+  });
+  const evidenceClaimIds = new Set([...evidenceClaims.values()].map((claim) => claim.id));
   const outlineSourceBlockIds = new Set(authoredClaims.map((claim) => claim.blockId).filter(Boolean));
   const claims = authoredSlides.length
     ? [
       ...sourceClaims.filter((claim) => !outlineSourceBlockIds.has(claim.blockId) || claim.negative || claim.continuity),
       ...authoredClaims,
+      ...evidenceClaims.values(),
     ]
     : [...sourceClaims];
   const references = options.references ?? [];
-  const groups = combinedContextGroups(snapshot);
-  const beats = storyboardFacts(snapshot, sourceClaims);
+  const groups = combinedContextGroups(scopedSnapshot);
+  const beats = storyboardFacts(scopedSnapshot, sourceClaims);
   const plotClaims = sourceClaims.filter((claim) => !claim.continuity && !claim.negative && claim.storyboardSequence === null);
   const requiredSlideCount = format === "slides" ? minimumPresentationSlideCount(snapshot) : 0;
   const isolatedSlideChapters = format === "slides" && groups.some((group) => group.role === "slide_chapter" && group.application === "isolate");
@@ -668,8 +693,12 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
   if (format === "slides" && plannedCount > MAX_MANAGED_PRESENTATION_SLIDES) {
     throw new RangeError(`managed_presentation_slide_count_exceeds_supported_maximum:${MAX_MANAGED_PRESENTATION_SLIDES}`);
   }
+  if (outlinePositions.size && plannedCount > authoredSlides.length) {
+    throw new ManagedPresentationPlanningError("presentation_outline_slide_count_conflict", "Additional slides need explicit outline coverage and supporting evidence. Add their requirements before expanding this presentation.");
+  }
   const count = plannedCount;
   const groupTargets = format === "slides" ? managedPresentationGroupTargets(snapshot, groups, count) : new Map<string, ManagedPresentationSlideTarget>();
+  if (unresolvedSource) throw new ManagedPresentationPlanningError("presentation_source_contract_invalid", unresolvedSource.message);
   const buckets: ProductionClaim[][] = Array.from({ length: count }, () => []);
   const targetedClaims = new Set<string>();
   const groupMemberOrder = new Map(groups.flatMap((group) => group.members.map((member) => [`${group.id}\u0000${member.blockId}`, member.order] as const)));
@@ -681,13 +710,18 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
     if (end < start) {
       throw new ManagedPresentationPlanningError("presentation_context_target_conflict", "A source decision belongs to Combined Context groups assigned to different slides; resolve the conflicting targets before generating.");
     }
-    const offset = Math.min(end - start, Math.floor(claimIndex * (end - start + 1) / Math.max(1, groupClaims.length)));
-    const position = start + offset;
     const authoredPosition = authoredClaims.findIndex((authored) => authored.id === claim.id);
     if (authoredPosition >= 0 && (authoredPosition < start || authoredPosition > end)) {
       const group = groups.find((candidate) => claim.contextGroupIds.includes(candidate.id) && groupTargets.has(candidate.id));
       throw new ManagedPresentationPlanningError("presentation_context_target_conflict", `Combined Context “${group?.name ?? "source chapter"}” conflicts with its explicitly authored slide position.`);
     }
+    // Outline evidence is assigned below by the source contract, never by the
+    // distribution of other members of a Combined Context chapter.
+    if (outlinePositions.has(authoredPosition) || evidenceClaimIds.has(claim.id)) return false;
+    const positions = Array.from({ length: end - start + 1 }, (_, offset) => start + offset).filter((position) => !outlinePositions.has(position));
+    if (!positions.length) return false;
+    const offset = Math.min(positions.length - 1, Math.floor(claimIndex * positions.length / Math.max(1, groupClaims.length)));
+    const position = positions[offset]!;
     if (!buckets[position]!.some((existing) => existing.id === claim.id)) buckets[position]!.push(claim);
     targetedClaims.add(claim.id);
     return true;
@@ -714,9 +748,17 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
         throw new ManagedPresentationPlanningError("presentation_context_target_conflict", `An authored slide at position ${index + 1} conflicts with its Combined Context target.`);
       }
       if (!buckets[index]!.some((existing) => existing.id === claim.id)) buckets[index]!.push(claim);
+      for (const evidence of evidenceBySlide[index] ?? []) {
+        if (evidence.contextGroupIds.some((groupId) => {
+          const target = groupTargets.get(groupId);
+          return Boolean(target && (index < target.start || index > target.end));
+        })) throw new ManagedPresentationPlanningError("presentation_context_target_conflict", "Resolved presentation evidence conflicts with its explicitly assigned Combined Context slide or chapter.");
+        if (!buckets[index]!.some((existing) => existing.id === evidence.id)) buckets[index]!.push(evidence);
+      }
     }
     const supportingClaims = plotClaims.filter((claim) => !outlineSourceBlockIds.has(claim.blockId));
-    supportingClaims.filter((claim) => !targetedClaims.has(claim.id)).forEach((claim, index) => buckets[index % authoredSlides.length]!.push(claim));
+    const manuscriptPositions = authoredSlides.flatMap((slide, index) => slide.sourceMode === "outline" ? [] : [index]);
+    if (manuscriptPositions.length) supportingClaims.filter((claim) => !targetedClaims.has(claim.id)).forEach((claim, index) => buckets[manuscriptPositions[index % manuscriptPositions.length]!]!.push(claim));
     for (let index = authoredSlides.length; index < count; index += 1) {
       // Append extra evidence within the final authored chapter; reopening an earlier isolated
       // chapter would split its source group and fail the completed-deck grounding contract.
@@ -746,13 +788,35 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
   for (const group of groups) {
     const assigned = buckets.findIndex((bucket) => bucket.some((claim) => claim.contextGroupIds.includes(group.id)));
     if (assigned >= 0) continue;
+    if (outlinePositions.size) continue;
     const groupClaim = claims.find((claim) => group.members.some((member) => member.blockId === claim.blockId));
     if (groupClaim) buckets[Math.min(count - 1, groups.indexOf(group))]!.push(groupClaim);
   }
-  const unassignedMandatory = claims.filter((claim) => claim.required && !claim.continuity && !claim.negative && !buckets.some((bucket) => bucket.some((item) => item.id === claim.id)));
+  const assignedEvidenceBlocks = new Set([...evidenceClaims.values()].map((claim) => claim.blockId));
+  const unassignedMandatory = claims.filter((claim) => claim.required && !claim.continuity && !claim.negative
+    && !buckets.some((bucket) => bucket.some((item) => item.id === claim.id))
+    && !(assignedEvidenceBlocks.has(claim.blockId) && !evidenceClaimIds.has(claim.id)));
   unassignedMandatory.forEach((claim, index) => {
-    if (!assignTargetedClaim(claim, index, unassignedMandatory)) buckets[index % count]!.push(claim);
+    if (assignTargetedClaim(claim, index, unassignedMandatory)) return;
+    const available = buckets.flatMap((_, position) => outlinePositions.has(position) ? [] : [position]);
+    if (!available.length) throw new ManagedPresentationPlanningError("presentation_outline_required_source_unassigned", "Required source evidence is not assigned to any presentation outline requirement. Add an explicit source assignment or clarify the outline before generating.");
+    buckets[available[index % available.length]!]!.push(claim);
   });
+  if (outlinePositions.size) {
+    const missingRequiredPassage = sourceContract?.passages?.some((passage) => passage.slideNumber === null
+      && sourceClaims.some((claim) => claim.blockId === passage.sourceBlockId && claim.required && !claim.continuity && !claim.negative)
+      && !outlineSourceBlockIds.has(passage.sourceBlockId ?? "")
+      && !evidenceClaims.has(passage.id)
+      && !buckets.some((bucket, index) => !outlinePositions.has(index) && bucket.some((claim) => claim.blockId === passage.sourceBlockId)));
+    if (missingRequiredPassage) throw new ManagedPresentationPlanningError("presentation_outline_required_source_unassigned", "A required research passage has no resolved presentation coverage. Assign that passage explicitly before generating.");
+    // Optional, unassigned research stays in the source document, not in the
+    // production work units or their continuity instructions.
+    const assigned = new Set(buckets.flatMap((bucket) => bucket.map((claim) => claim.id)));
+    for (let index = claims.length - 1; index >= 0; index -= 1) {
+      const claim = claims[index]!;
+      if (!claim.negative && !claim.continuity && !assigned.has(claim.id)) claims.splice(index, 1);
+    }
+  }
   if (format === "slides" && !authoredSlides.length) {
     const authorizedBlockIds = new Set((Array.isArray(snapshot.facts) ? snapshot.facts : [])
       .filter(promptFactIsActive)
@@ -912,6 +976,102 @@ export function buildManagedProductionPlan(format: ProductionFormat, snapshot: R
   };
 }
 
+const presentationTextFields = ["text", "instruction", "description", "exact_text", "markdown", "body", "content", "artifact_markdown"] as const;
+
+function presentationClaimFitsText(candidate: unknown, text: string) {
+  const claim = asRecord(candidate);
+  const properties = asRecord(claim.properties);
+  const nested = asRecord(properties.content);
+  return [...presentationTextFields.flatMap((field) => [claim[field], properties[field]]), nested.text, nested.markdown]
+    .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
+    .every((value) => clean(text).includes(clean(value)));
+}
+
+function scopedPresentationFact(fact: Record<string, unknown>, text: string, mode?: "authored" | "outline") {
+  const scoped = { ...fact };
+  const originalProperties = asRecord(fact.properties);
+  const properties = { ...originalProperties };
+  // Replacing only properties.text would leave aliases of the same prose in
+  // the source compiler or rendering context and reopen the excluded passages.
+  for (const field of presentationTextFields) {
+    delete scoped[field];
+    delete properties[field];
+  }
+  delete properties.value;
+  for (const field of ["exact_text", "protected_phrase"]) {
+    if (typeof originalProperties[field] === "string" && text.includes(String(originalProperties[field]))) properties[field] = originalProperties[field];
+    else delete properties[field];
+  }
+  if (Array.isArray(properties.protected_phrases)) properties.protected_phrases = properties.protected_phrases.filter((phrase) => text.includes(clean(asRecord(phrase).text)));
+  if (Array.isArray(scoped.claims)) scoped.claims = scoped.claims.filter((claim) => presentationClaimFitsText(claim, text));
+  if (Array.isArray(properties.claims)) properties.claims = properties.claims.filter((claim) => presentationClaimFitsText(claim, text));
+  properties.text = text;
+  if (mode) properties.presentation_source_mode = mode;
+  return { ...scoped, properties };
+}
+
+/** Bound an outline page to its original requirements and resolved evidence. */
+export function productionPresentationSnapshot(
+  snapshot: Record<string, unknown>,
+  scenes: readonly ProductionScene[],
+  selectedSnapshot: Record<string, unknown> = snapshot,
+  sourceContract?: PresentationSourceContract,
+): Record<string, unknown> {
+  if (!scenes.some((scene) => scene.sourceOutlineOrder !== undefined)) return selectedSnapshot;
+  const contract = sourceContract ?? buildPresentationSourceContract(snapshot);
+  const scoped = scopePresentationSourceSnapshot(selectedSnapshot, contract);
+  if (!contract.numberedOutline.some((slide) => slide.sourceMode === "outline")) return scoped;
+  const original = scopePresentationSourceSnapshot(snapshot, contract);
+  const originalFacts = new Map((Array.isArray(original.facts) ? original.facts : []).map(asRecord).map((fact) => [clean(fact.block_id), fact]));
+  const positions = new Set(scenes.map((scene) => scene.sourceOutlineOrder));
+  const slides = contract.numberedOutline.filter((slide) => positions.has(slide.number));
+  const passageIds = new Set(slides.flatMap((slide) => slide.evidencePassageIds ?? []));
+  const passages = (contract.passages ?? []).filter((passage) => passageIds.has(passage.id));
+  const numberedBlocks = new Set(contract.numberedOutline.flatMap((slide) => slide.sourceBlockId ? [slide.sourceBlockId] : []));
+  const researchBlocks = new Set((contract.passages ?? []).filter((passage) => passage.slideNumber === null).flatMap((passage) => passage.sourceBlockId ? [passage.sourceBlockId] : []));
+  const facts = (Array.isArray(scoped.facts) ? scoped.facts : []).map(asRecord).flatMap((fact) => {
+    const blockId = clean(fact.block_id);
+    const selectedSlides = slides.filter((slide) => slide.sourceBlockId === blockId);
+    const selectedPassages = passages.filter((passage) => passage.sourceBlockId === blockId && passage.slideNumber === null);
+    if (selectedSlides.length || selectedPassages.length) {
+      const originalText = selectedSlides.length ? inferPresentationSourceOutline([originalFacts.get(blockId) ?? fact]).sourceText : "";
+      const heading = /\bslide\s*#?\s*\d{1,3}(?:\s+of\s+\d{1,3})?\s*(?:[—–:.-]\s*|(?=\n))/iu.exec(originalText)
+        ?? /(?:^|\n)\s*(?:#{1,6}\s*)?\d{1,3}[.)]\s+/u.exec(originalText);
+      const preamble = heading ? originalText.slice(0, heading.index).trim() : "";
+      const text = [
+        ...(preamble ? [preamble] : []),
+        ...selectedPassages.map((passage) => passage.content),
+        ...selectedSlides.map((slide) => `${slide.section ? `## ${slide.section}\n` : ""}Slide ${slide.number} — ${slide.content}`),
+      ].join("\n\n");
+      const modes = new Set(selectedSlides.map((slide) => slide.sourceMode ?? "authored"));
+      const mode = modes.size === 1 ? [...modes][0] : undefined;
+      return [scopedPresentationFact(fact, text, mode)];
+    }
+    if (numberedBlocks.has(blockId)) return [];
+    const type = clean(fact.type || fact.role);
+    if (researchBlocks.has(blockId) && !isNegativeProductionFact(fact) && !continuityTypes.has(type)) return [];
+    return [fact];
+  });
+  const retained = new Set(facts.map((fact) => clean(fact.block_id)));
+  const retainedFacts = new Map(facts.map((fact) => [clean(fact.block_id), fact]));
+  const relationships = (Array.isArray(scoped.relationships) ? scoped.relationships : []).map(asRecord)
+    .filter((relation) => retained.has(clean(relation.from_block_id)) && retained.has(clean(relation.to_block_id)));
+  const result: Record<string, unknown> = { ...scoped, facts, relationships, context_groups: combinedContextGroups({ facts, relationships }) };
+  if (Array.isArray(scoped.claims)) result.claims = scoped.claims.filter((candidate) => {
+    const claim = asRecord(candidate);
+    const fact = retainedFacts.get(clean(claim.blockId ?? claim.block_id ?? claim.sourceBlockId ?? claim.source_block_id));
+    return Boolean(fact && presentationClaimFitsText(claim, inferPresentationSourceOutline([fact]).sourceText));
+  });
+  if (Array.isArray(scoped.blocks)) result.blocks = scoped.blocks.flatMap((candidate) => {
+    const block = asRecord(candidate);
+    const fact = retainedFacts.get(clean(block.block_id ?? block.blockId ?? block.id));
+    if (!fact) return [];
+    const mode = asRecord(fact.properties).presentation_source_mode;
+    return [scopedPresentationFact(block, inferPresentationSourceOutline([fact]).sourceText, mode === "outline" || mode === "authored" ? mode : undefined)];
+  });
+  return result;
+}
+
 /** Keep global hard decisions while isolating a shot to its own plot beat and target groups. */
 export function productionSceneSnapshot(snapshot: Record<string, unknown>, scene: ProductionScene): Record<string, unknown> {
   const ids = new Set(scene.sourceBlockIds);
@@ -948,7 +1108,7 @@ export function productionSceneSnapshot(snapshot: Record<string, unknown>, scene
   });
   const retainedIds = new Set(facts.map((fact) => clean(fact.block_id)));
   const relationships = (Array.isArray(snapshot.relationships) ? snapshot.relationships : []).map(asRecord).filter((relation) => retainedIds.has(clean(relation.from_block_id)) && retainedIds.has(clean(relation.to_block_id)));
-  return {
+  return productionPresentationSnapshot(snapshot, [scene], {
     ...snapshot,
     facts,
     relationships,
@@ -962,7 +1122,7 @@ export function productionSceneSnapshot(snapshot: Record<string, unknown>, scene
       transition_in: scene.transitionIn,
       transition_out: scene.transitionOut,
     },
-  };
+  });
 }
 
 export type ProductionQualityScore = {

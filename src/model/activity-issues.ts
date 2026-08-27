@@ -25,6 +25,7 @@ export function activityJobEvidence(job: DocumentJob): ActivityIssueEvidence[] {
   const detail = documentJobFailure(job);
   const issues = detail?.validationIssues ?? [];
   const unique = new Map<string, ActivityIssueEvidence>();
+  const latestByPage = new Map<number, number>();
 
   for (const issue of issues) {
     const pageIndex = Number(issue.pageIndex);
@@ -48,12 +49,14 @@ export function activityJobEvidence(job: DocumentJob): ActivityIssueEvidence[] {
       { pageIndex, pageCount, globalStartIndex, providerAttempt, stage: issue.stage },
     );
     if (!safe) continue;
+    latestByPage.set(safe.pageIndex, Math.max(latestByPage.get(safe.pageIndex) ?? 0, safe.providerAttempt));
     const key = `${safe.globalSlideIndex ?? "-"}:${safe.pageIndex}:${safe.path}:${safe.code}`;
     const previous = unique.get(key);
     if (!previous || previous.providerAttempt <= safe.providerAttempt) unique.set(key, safe);
   }
 
-  return [...unique.values()].sort((left, right) =>
+  // Earlier alternatives remain in the retained receipt, not the current action list.
+  return [...unique.values()].filter((issue) => issue.providerAttempt === latestByPage.get(issue.pageIndex)).sort((left, right) =>
     Number(right.blocking && !right.overridable) - Number(left.blocking && !left.overridable)
     || (left.globalSlideIndex ?? Number.MAX_SAFE_INTEGER) - (right.globalSlideIndex ?? Number.MAX_SAFE_INTEGER)
     || left.path.localeCompare(right.path)

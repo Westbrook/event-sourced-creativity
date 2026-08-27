@@ -161,22 +161,59 @@ export class PresentationRejectedDrafts extends FormaElement {
     return html`<forma-presentation-slide .item=${item} .presentation=${presentation} .index=${index} .total=${total} .compact=${true} .showFooterLabel=${false}></forma-presentation-slide>`;
   }
 
+  #citationChecks(detail: PresentationCandidateDetail) {
+    const checks = detail.citationChecks ?? [];
+    if (!checks.length) return nothing;
+    const sourceStatus = {
+      authorized: this.i18n.t("presentation.draft.citationAssigned", "Authorized for this slide"),
+      unauthorized: this.i18n.t("presentation.draft.citationUnauthorized", "Not authorized for this request"),
+      unassigned: this.i18n.t("presentation.draft.citationUnassigned", "Authorized source, but not assigned to this slide"),
+      missing: this.i18n.t("presentation.draft.citationMissing", "No cited source reference"),
+    };
+    const excerptStatus = {
+      grounded: this.i18n.t("presentation.draft.excerptGrounded", "Matches a contiguous source quotation"),
+      ungrounded: this.i18n.t("presentation.draft.excerptUngrounded", "Does not match a contiguous source quotation"),
+      empty: this.i18n.t("presentation.draft.excerptEmpty", "No quotation supplied"),
+      unresolved: this.i18n.t("presentation.draft.excerptUnresolved", "Cannot check without a resolved source"),
+    };
+    const truncated = this.i18n.t("presentation.draft.citationTruncated", "Display shortened; validation used the complete original text.");
+    return html`<details class="presentation-rejected-draft-issues presentation-rejected-draft-citations">
+      <summary>${this.i18n.t("presentation.draft.citationChecks", "Inspect citation grounding · {count}", { count: this.i18n.number(checks.length) })}</summary>
+      <p>${this.i18n.t("presentation.draft.citationPrivacy", "Current checks use the frozen request. Private identifiers are hidden. This evidence is not included in shared diagnostics or exports.")}</p>
+      <ol>${checks.map((check) => html`<li>
+        <b>${this.i18n.t("presentation.draft.citationPosition", "Slide {slide} · citation {citation}", { slide: this.i18n.number(detail.globalStartIndex + check.slideIndex + 1), citation: this.i18n.number(check.citationIndex + 1) })}</b>
+        ${check.sourceLabel ? html`<span dir="auto">${check.sourceLabel}</span>` : nothing}
+        <dl>
+          <div><dt>${this.i18n.t("presentation.draft.citationSourceCheck", "Source assignment")}</dt><dd>${sourceStatus[check.sourceStatus]}</dd></div>
+          <div><dt>${this.i18n.t("presentation.draft.citationExcerptCheck", "Quotation check")}</dt><dd>${excerptStatus[check.excerptStatus]}</dd></div>
+          <div><dt>${this.i18n.t("presentation.draft.citationAnchorCheck", "Slide anchor")}</dt><dd>${check.anchorStatus === "incorrect" ? this.i18n.t("presentation.draft.citationAnchorIncorrect", "Does not match the resolved evidence passage") : this.i18n.t("presentation.draft.citationAnchorValid", "No conflicting slide anchor")}</dd></div>
+        </dl>
+        <strong>${this.i18n.t("presentation.draft.citationExcerpt", "Submitted citation excerpt")}</strong>
+        <blockquote dir="auto">${check.excerpt || this.i18n.t("presentation.draft.excerptEmpty", "No quotation supplied")}</blockquote>
+        ${check.excerptTruncated ? html`<small>${truncated}</small>` : nothing}
+        ${check.passages.length ? html`<details><summary>${this.i18n.t("presentation.draft.citationPassage", "Resolved frozen source passage")}</summary>${check.passages.map((passage) => html`<p dir="auto">${passage.content}</p>${passage.truncated ? html`<small>${truncated}</small>` : nothing}`)}</details>` : nothing}
+      </li>`)}</ol>
+    </details>`;
+  }
+
   #candidate(detail: PresentationCandidateDetail) {
     return html`<article class="presentation-rejected-draft-card">
       <header><div><span class="eyebrow">${detail.stage === "repair" ? this.i18n.t("presentation.draft.boundedRepair", "Bounded repair") : this.i18n.t("presentation.draft.initialResponse", "Initial response")}</span><h3>${detail.title || this.i18n.t("presentation.draft.rejectedTitle", "Rejected presentation draft")}</h3><p>${detail.summary || this.i18n.t("presentation.draft.incompleteSummary", "The response did not contain a complete presentation.")}</p></div>
         <button type="button" class="button secondary compact" ?disabled=${detail.retentionClass === "governed-evidence" || Boolean(this.#preserving)} @click=${() => void this.#preserveCandidate(detail.responseId)}>${detail.retentionClass === "governed-evidence" ? this.i18n.t("presentation.draft.preserved", "Preserved privately") : this.#preserving === detail.responseId ? this.i18n.t("presentation.draft.preserving", "Preserving…") : this.i18n.t("presentation.draft.preserve", "Preserve privately")}</button>
       </header>
+      ${detail.reviewOnlyReason === "historical-validation-rejection" ? html`<p class="presentation-rejected-draft-warning">${this.i18n.t("presentation.draft.historicalRejection", "This response was rejected under an earlier validation contract. Current checks are for private review only and cannot approve or recover it. The original receipt is unchanged.")}</p>` : nothing}
       <section class="generation-receipt-summary"><dl>
         <div><dt>${this.i18n.t("presentation.draft.providerAttempt", "Provider attempt")}</dt><dd>${this.i18n.t("presentation.draft.attemptCount", "{attempt} of {total}", { attempt: this.i18n.number(detail.providerAttempt), total: this.i18n.number(detail.providerCalls) })}</dd></div>
         <div><dt>${this.i18n.t("presentation.draft.requestedPlanned", "Requested / planned")}</dt><dd>${this.i18n.t("presentation.draft.slideCounts", "{requested} / {planned} slides", { requested: this.i18n.number(detail.requestedSlideCount), planned: this.i18n.number(detail.plannedSlideCount) })}</dd></div>
         <div><dt>${this.i18n.t("presentation.draft.pageCoverage", "Page coverage")}</dt><dd>${this.i18n.t("presentation.draft.pageCounts", "Page {page} of {total} · {generated} generated", { page: this.i18n.number(detail.pageIndex + 1), total: this.i18n.number(detail.pageCount), generated: this.i18n.number(detail.generatedSlideCount) })}</dd></div>
-        <div><dt>${this.i18n.t("presentation.draft.settledCost", "Settled provider cost")}</dt><dd>$${(detail.settledCostMicrousd / 1_000_000).toFixed(6)}</dd></div>
+        <div><dt>${this.i18n.t("presentation.draft.settledCost", "Settled job cost · all calls")}</dt><dd>$${(detail.settledCostMicrousd / 1_000_000).toFixed(6)}</dd></div>
         <div><dt>${this.i18n.t("presentation.draft.model", "Model")}</dt><dd>${detail.model}</dd></div>
         <div><dt>${this.i18n.t("presentation.draft.privateRetention", "Private retention")}</dt><dd>${this.i18n.date(new Date(detail.expiresAt), { dateStyle: "medium", timeStyle: "short" })}</dd></div>
       </dl></section>
       ${detail.missingContextGroupLabels.length ? html`<p class="presentation-rejected-draft-warning"><b>${this.i18n.t("presentation.draft.missingSource", "Missing source chapters:")}</b> ${detail.missingContextGroupLabels.join(" · ")}</p>` : nothing}
       ${detail.issues.length ? html`<section class="presentation-rejected-draft-issues"><h4>${this.i18n.t("presentation.draft.issuesHeading", "Why this response cannot be accepted")}</h4><ol>${detail.issues.map((issue) => html`<li><b>${issue.globalSlideIndex ? this.i18n.t("presentation.draft.issueSlide", "Slide {slide} · {code}", { slide: this.i18n.number(issue.globalSlideIndex), code: issue.code }) : issue.code}</b><span>${issue.message}</span><small>${this.i18n.t("presentation.draft.issueMetadata", "{category} · {stage} attempt {attempt} · {requirement}", { category: issue.category, stage: issue.stage === "repair" ? this.i18n.t("presentation.draft.repair", "Repair") : this.i18n.t("presentation.draft.initial", "Initial"), attempt: this.i18n.number(issue.providerAttempt), requirement: issue.overridable ? this.i18n.t("presentation.draft.preference", "presentation preference; still requires explicit revision and full validation") : this.i18n.t("presentation.draft.mandatory", "mandatory validation") })}</small></li>`)}</ol></section>` : html`<p>${this.i18n.t("presentation.draft.noIssues", "No page-level validation issues were found. This draft is still private and cannot be shared or exported from review.")}</p>`}
       ${detail.normalizationChanges.length ? html`<details class="presentation-rejected-draft-normalization"><summary>${this.i18n.t("presentation.draft.normalization", "Inspect {count} local normalization changes", { count: this.i18n.number(detail.normalizationChanges.length) })}</summary><ol>${detail.normalizationChanges.map((change) => html`<li><b>${change.path}</b><span>${change.originalValue || this.i18n.t("presentation.draft.empty", "Empty")} → ${change.normalizedValue || this.i18n.t("presentation.draft.empty", "Empty")}</span><small>${change.reason}</small></li>`)}</ol></details>` : nothing}
+      ${this.#citationChecks(detail)}
       ${detail.slides.length ? html`<ol class="presentation-rejected-draft-slides">${detail.slides.map((item, index) => html`<li>${this.#slide({ title: item.title, body: item.body, notes: item.notes, image_prompt: "", context_group_ids: [], slide: item.slide }, detail.presentation, index, detail.slides.length)}<p><b>${this.i18n.t("presentation.draft.slideHeading", "Slide {slide}: {title}", { slide: this.i18n.number(detail.globalStartIndex + index + 1), title: item.title })}</b>${item.groupLabels.length ? html` · ${item.groupLabels.join(" · ")}` : nothing}</p>${item.body ? html`<p>${item.body}</p>` : nothing}${item.notes ? html`<details><summary>${this.i18n.t("presentation.draft.speakerNotes", "Speaker notes")}</summary><p>${item.notes}</p></details>` : nothing}</li>`)}</ol>` : nothing}
     </article>`;
   }

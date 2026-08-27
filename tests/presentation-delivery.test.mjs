@@ -111,6 +111,21 @@ test("opaque aliases and durable UUIDs cannot hitchhike on legitimate public att
   assert.deepEqual(presentationAudienceCitations([{ label: "blk_001", anchor: "grp_004", excerpt: "" }]), []);
 });
 
+test("private passage anchors remain canonical for grounding but disappear from audience attribution", () => {
+  const original = slide({
+    citations: [{ sourceId: "private-research", label: "Published research passage_001", anchor: "Appendix B passage_002", excerpt: "PRIVATE_SOURCE_PASSAGE" }],
+    quote: { text: "The right medium is the one this person needs now.", speaker: "Research participant", role: "Product owner", sourceId: "private-research", citation: "Published research passage_001" },
+  });
+  const before = structuredClone(original);
+  const delivered = presentationAudienceItem(original);
+  assert.deepEqual(delivered.slide.citations, [{ label: "Published research", anchor: "Appendix B", excerpt: "" }]);
+  assert.equal(delivered.slide.quote.citation, "Published research");
+  assert.deepEqual(presentationAudienceCitations([{ label: "Published research", anchor: "passage_001", excerpt: "" }]), [{ label: "Published research", anchor: "", excerpt: "" }]);
+  assert.deepEqual(presentationAudienceCitations([{ label: "passage_001", anchor: "passage_002", excerpt: "" }]), []);
+  assert.doesNotMatch(JSON.stringify(delivered), /passage_\d+|PRIVATE_SOURCE_PASSAGE/u);
+  assert.deepEqual(original, before, "audience sanitation cannot erase evidence used by source validation or private inspection");
+});
+
 test("only trusted application source decisions can publish ordinary labels; explicit privacy wins", () => {
   const citation = {
     sourceId: "approved-external-source",

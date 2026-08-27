@@ -29,10 +29,10 @@ import { AudioProviderInputError } from "../src/model/audio-provider-contracts";
 import { clearPresentationServerOwnedCheckpointFields, documentRenderTokenReservation, estimatePlannerOperationMicrousd, generationBudgetGate, presentationServerOwnedCheckpointField } from "../src/model/generation-budget";
 import { buildManagedProductionPlan, ManagedPresentationPlanningError, MAX_MANAGED_PRESENTATION_SLIDES, minimumPresentationSlideCount, scoreManagedProductionPlan, type ManagedProductionPlan } from "../src/model/managed-production";
 import { productionSystemFor, productionUnitsForPlan } from "../src/model/production-system";
-import { buildPresentationSourceContract, inferPresentationSourceOutline } from "../src/model/presentation-source";
+import { buildPresentationSourceContract, inferPresentationSourceOutline, presentationCitationEvidenceChecks } from "../src/model/presentation-source";
 import { documentArtifactValidationIssues, isSlideStylePresetId, parseDocumentArtifactContent, type DocumentArtifactDraft } from "../src/model/document-artifacts";
 import { combinedContextGroups } from "../src/model/combined-context";
-import { safePresentationCandidateIssues, sanitizePresentationCandidateSlides, sanitizePresentationCandidateText, type PresentationCandidateDetail, type PresentationCandidateSummary } from "../src/model/presentation-candidates";
+import { historicalPresentationValidationRejection, safePresentationCandidateIssues, sanitizePresentationCandidateSlides, sanitizePresentationCandidateText, sanitizePresentationCitationChecks, type PresentationCandidateDetail, type PresentationCandidateSummary } from "../src/model/presentation-candidates";
 import { interruptedDocumentJobUsage, recordedDocumentPlannerUsage } from "./document-job-reservations";
 import { PRINCIPAL_WITH_ACCESS_SQL, principalAccessFromRow } from "./access-policy";
 import { authoritativeCreativeContext, authoritativePresentationRecoveryContext, ContextIntegrityError } from "./context-authority";
@@ -435,6 +435,7 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
   const retained=await privatePresentationCandidateRows(env,user,job,projectContextId,responseId);
   if(!retained.length)return[];
   const receiptCheckpoint=checkpoint.generationReceipt&&typeof checkpoint.generationReceipt==="object"&&!Array.isArray(checkpoint.generationReceipt)?checkpoint.generationReceipt as Record<string,unknown>:{};
+  const reviewOnlyReason=historicalPresentationValidationRejection(checkpoint,PRESENTATION_ADAPTER_VERSION)?"historical-validation-rejection" as const:undefined;
   let settledCostMicrousd=Math.max(0,Math.floor(Number(receiptCheckpoint.settled_cost_microusd??0)));
   if(!settledCostMicrousd){
     const settled=await env.DB.prepare(`SELECT COALESCE(SUM(CASE WHEN json_valid(payload)=1
@@ -516,12 +517,14 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
       providerBatchCount:Number(envelope.provider_batch_count??planned?.providerBatchCount??1),
       providerCalls:Math.max(recordedResponses.size,Number(receiptCheckpoint.actual_provider_call_count??0),providerAttempt),
       settledCostMicrousd,
-      complete:Boolean(assessment.output&&issues.length===0&&pageCount===1&&generatedSlideCount===plannedSlideCount&&requestedSlideCount===plannedSlideCount&&missingContextGroupLabels.length===0),
+      complete:Boolean(!reviewOnlyReason&&assessment.output&&issues.length===0&&pageCount===1&&generatedSlideCount===plannedSlideCount&&requestedSlideCount===plannedSlideCount&&missingContextGroupLabels.length===0),
+      ...(reviewOnlyReason?{reviewOnlyReason}:{}),
       missingContextGroupLabels,issues,
     };
-    const sourceContract=buildPresentationSourceContract(sourceSnapshot,{requestedSlideCount:plannedSlideCount,itemCount:expectedPageCount});
+    const sourceContract=assessment.sourceContract;
     const privateReferences=[...sourceContract.sources.flatMap((source)=>[source.alias,source.sourceId,source.blockId??"",...source.contextGroupIds]),...groups.map((group)=>group.id)];
     const slides=sanitizePresentationCandidateSlides(assessment.output?.items??[],labels,privateReferences);
+    const citationChecks=sanitizePresentationCitationChecks(presentationCitationEvidenceChecks(assessment.output?.items??[],sourceContract,{pageStart:globalStartIndex,pageSize:expectedPageCount}),privateReferences);
     let rawOutput:Record<string,unknown>={};try{rawOutput=JSON.parse(raw) as Record<string,unknown>;}catch{/* Invalid paid JSON remains reviewable as metadata only. */}
     const rawItems=Array.isArray(rawOutput.items)?rawOutput.items:[];
     const normalizationChanges=slides.flatMap((slide,index)=>{
@@ -533,7 +536,7 @@ async function verifiedPresentationCandidates(env:WorkerEnv,user:PilotUser,job:D
     });
     const sourcePresentation=assessment.output?.presentation;
     const presentation=sourcePresentation?{...sourcePresentation,theme:sanitizePresentationCandidateText(sourcePresentation.theme,privateReferences),footerLabel:sanitizePresentationCandidateText(sourcePresentation.footerLabel,privateReferences),...(sourcePresentation.fontFamily?{fontFamily:sanitizePresentationCandidateText(sourcePresentation.fontFamily,privateReferences)}:{})}:null;
-    const detail:PresentationCandidateDetail={...summary,title:sanitizePresentationCandidateText(assessment.output?.title,privateReferences),summary:sanitizePresentationCandidateText(assessment.output?.summary,privateReferences),presentation,slides,normalizationChanges};
+    const detail:PresentationCandidateDetail={...summary,title:sanitizePresentationCandidateText(assessment.output?.title,privateReferences),summary:sanitizePresentationCandidateText(assessment.output?.summary,privateReferences),presentation,slides,citationChecks,normalizationChanges};
     verified.push({row,envelope,summary,detail});
   }
   return verified.sort((left,right)=>left.summary.providerAttempt-right.summary.providerAttempt
@@ -555,6 +558,7 @@ async function freshlyRecoverablePresentationRows(env:WorkerEnv,user:PilotUser,r
       const retained=await readJob(env,user.userId,compact.job_id);
       if(!retained||retained.owner_id!==user.userId||retained.stream_id!==user.streamId||retained.document_id!==compact.document_id)continue;
       const checkpoint=parseResult(retained);
+      if(historicalPresentationValidationRejection(checkpoint,PRESENTATION_ADAPTER_VERSION)){certified.set(compact.job_id,false);continue;}
       const reservationId=String(checkpoint.costReservationId??"");
       const reservation=reservationId?await costBudgetReservation(env,user.billingUserId??user.userId,reservationId):null;
       if(!reservation||reservation.status!=="settled"||reservation.stream_id!==user.streamId||reservation.operation!=="document-render:slides")continue;
@@ -654,6 +658,7 @@ async function recoverRetainedPresentation(env:WorkerEnv,user:PilotUser,row:Docu
   const plannerResponseId=String(checkpoint.plannerResponseId??"");
   if(plannerResponseId)responseIds.add(plannerResponseId);
   if(!receipt||!originalHash||!plannerResponseId||!candidates.length)return failed("paid_response_receipt_missing");
+  if(historicalPresentationValidationRejection(checkpoint,PRESENTATION_ADAPTER_VERSION))return failed("historical_validation_rejection");
   const reservationId=String(checkpoint.costReservationId??"");
   const reservation=reservationId?await costBudgetReservation(env,user.billingUserId??user.userId,reservationId):null;
   if(!reservation||reservation.status!=="settled"||reservation.stream_id!==user.streamId||reservation.operation!=="document-render:slides")return failed("settled_reservation_unavailable");
@@ -852,6 +857,8 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
   const artifactKind=String(payload.artifactKind??"");
   const sceneConfiguration=sceneConfigurationFromRequest(payload);
   const isSlides=artifactKind==="slides";
+  // Scene has no downstream media render: the existing planning guard bounds its full cost.
+  const applicationSpendingCap=isSlides||artifactKind==="scene";
   const sourceOutline=isSlides?inferPresentationSourceOutline(snapshot):null;
   const rawRequestedCount=payload.requestedSlideCount??payload.itemCount;
   const requestedSlideCount=isSlides&&Number.isSafeInteger(Number(rawRequestedCount))&&Number(rawRequestedCount)>0?Number(rawRequestedCount):null;
@@ -895,7 +902,7 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
     source_block_versions:Array.isArray(payload.sourceBlockVersions)?payload.sourceBlockVersions:[],
     planner:{provider:plannerProvider,model:plannerModel,request_status:"not_submitted"},
     source:{scope:"authorized_document_context",status:"not_transmitted",snapshot_sha256:sourceHash},
-    accounting:{reservation_microusd:estimatedCostMicrousd,settled_cost_microusd:0,reservation_is_provider_hard_cap:false,reservation_is_application_hard_cap:isSlides,...(isSlides?{maximum_authorized_cost_microusd:estimatedCostMicrousd}:{})},
+    accounting:{reservation_microusd:estimatedCostMicrousd,settled_cost_microusd:0,reservation_is_provider_hard_cap:false,reservation_is_application_hard_cap:applicationSpendingCap,...(applicationSpendingCap?{maximum_authorized_cost_microusd:estimatedCostMicrousd}:{})},
   };
   const stored=await storePrivateContent(env,user.userId,"document-artifact-input",JSON.stringify(privateReceipt),contentScope);
   return{
@@ -906,7 +913,7 @@ async function acceptedGenerationReceipt(env:WorkerEnv,user:PilotUser,payload:Re
     ...(isSlides?{presentation_adapter_version:PRESENTATION_ADAPTER_VERSION}:{}),
     batch_count:batchCount,minimum_provider_call_count:plannedProviderCallCount,planned_provider_call_count:plannedProviderCallCount,actual_provider_call_count:null,max_repair_call_count:maxRepairCallCount,maximum_provider_call_count:maximumProviderCallCount,
     reservation_microusd:estimatedCostMicrousd,settled_cost_microusd:0,reservation_status:"estimated",
-    reservation_is_provider_hard_cap:false,reservation_is_application_hard_cap:isSlides,...(isSlides?{maximum_authorized_cost_microusd:estimatedCostMicrousd}:{}),repair_calls_may_incur_additional_usage:maxRepairCallCount>0,
+    reservation_is_provider_hard_cap:false,reservation_is_application_hard_cap:applicationSpendingCap,...(applicationSpendingCap?{maximum_authorized_cost_microusd:estimatedCostMicrousd}:{}),repair_calls_may_incur_additional_usage:maxRepairCallCount>0,
     source_transmission_scope:"authorized_document_context",source_transmission_status:"not_transmitted",provider_request_status:"not_submitted",
     source_fact_count:Array.isArray(snapshot.facts)?snapshot.facts.length:0,source_snapshot_sha256:sourceHash,
     input_ref:stored.contentId,input_expires_at:stored.expiresAt,settings:requestSettings,
@@ -2300,6 +2307,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
         if(sourceMinimumSlideCount>supportedMaximum)return Response.json({error:"presentation_slide_count_invalid",message:`This presentation requires ${sourceMinimumSlideCount} source-authored slides, exceeding the ${supportedMaximum}-slide ${payload.productionMode==="managed"?"managed":"manual"} limit.`,supported:{minimum:1,maximum:supportedMaximum},sourceMinimumSlideCount},{status:400});
         const requested=Number(payload.requestedSlideCount??payload.itemCount??0);
         if(requested>0&&requested<sourceMinimumSlideCount)return Response.json({error:"presentation_slide_count_conflict",message:`This presentation requires at least ${sourceMinimumSlideCount} source-authored or independently isolated slides; ${requested} would merge or omit required chapters.`,sourceMinimumSlideCount,authoredSlideCount:outline.authoredSlideCount??sourceMinimumSlideCount,requestedSlideCount:requested,plannedSlideCount:sourceMinimumSlideCount},{status:409});
+        const sourceContract=buildPresentationSourceContract(sourceSnapshot,{...(requested>0?{requestedSlideCount:requested}:{})});
+        if(sourceContract.sourceIssues?.length)return Response.json({error:"presentation_source_contract_invalid",message:sourceContract.sourceIssues[0]!.message,issues:sourceContract.sourceIssues},{status:422});
         payload.authoredSlideCount=outline.authoredSlideCount;
       }
     }catch(error){

@@ -18,7 +18,7 @@ import { adaptAudioPrompt, audioPreparationConstraints } from "./audio-prompt-ad
 import { selectAudioAdapter } from "./audio-selection.ts";
 import { productionTeamFor, productionTeamInstructions, providerFacingProductionContinuity, type ManagedProductionPlan, type ProductionMode, type ProductionScene } from "../src/model/managed-production.ts";
 import { createSceneConfiguration, type SceneConfiguration, type SceneMedium } from "../src/model/scene-configuration.ts";
-import { buildPresentationSourceContract, inferPresentationAudienceLocale, providerFacingPresentationSourceContract, repairProtectedPresentationMessages, resolvePresentationSourceReferences, type PresentationSourceContract, type PresentationSourceSlide } from "../src/model/presentation-source.ts";
+import { buildPresentationSourceContract, inferPresentationAudienceLocale, providerFacingPresentationSourceContract, repairProtectedPresentationMessages, resolvePresentationSourceReferences, scopePresentationSourceSnapshot, type PresentationSourceContract, type PresentationSourceSlide } from "../src/model/presentation-source.ts";
 import { PRESENTATION_LAYOUT_PROVIDER_INSTRUCTIONS } from "../src/model/presentation-layout.ts";
 import { safePresentationCandidateIssues } from "../src/model/presentation-candidates.ts";
 import { generationValidationReceipt } from "./generation-self-healing.ts";
@@ -83,7 +83,7 @@ export type ProductionPageContext = {
   repairIssues?: string[];
 };
 export type ProviderAttemptReceipt = { model:string; responseId:string; responseIds:string[]; usage:{inputTokens:number;outputTokens:number;totalTokens:number}; latencyMs:number };
-export const PRESENTATION_ADAPTER_VERSION="2026-08-26-source-aware-render-v4";
+export const PRESENTATION_ADAPTER_VERSION="2026-08-27-output-outline-evidence-v5";
 export const MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES=512*1024;
 export type ProviderResponseReceipt=ProviderAttemptReceipt&{candidateRaw:string|null;candidateBytes:number;candidateTruncated:boolean;completionStatus?:string;incompleteReason?:string};
 export type ProviderAttemptPreflight = {model:string;maximumInputTokens:number;maximumOutputTokens:number;clientRequestId:string};
@@ -304,6 +304,23 @@ function providerFacingCombinedContextPlan(snapshot:Record<string,unknown>,kind:
     instruction:instructions[index],
   }));
   return{groups,plan};
+}
+
+/** A binding group cannot silently lose members or retain excluded prose in its labels. */
+function presentationOutputGroupScopeIssues(snapshot:Record<string,unknown>,contract:PresentationSourceContract,scopedSnapshot=scopePresentationSourceSnapshot(snapshot,contract)):DocumentArtifactValidationIssue[]{
+  const original=providerFacingCombinedContextPlan(snapshot,"slides");
+  if(!original.groups.length)return[];
+  const scoped=providerFacingCombinedContextPlan(scopedSnapshot,"slides");
+  const scopedById=new Map(scoped.groups.map((group,index)=>[group.id,{group,plan:scoped.plan[index]!}]));
+  const changed=original.groups.some((group,index)=>{
+    const expected=scopedById.get(group.id);
+    if(!expected)return true;
+    const scopedMembers=new Set(expected.group.members.map((member)=>member.blockId));
+    if(group.members.some((member)=>!scopedMembers.has(member.blockId)))return true;
+    // Request-local alias positions are not authored group semantics.
+    return JSON.stringify({...original.plan[index]!,context_key:""})!==JSON.stringify({...expected.plan,context_key:""});
+  });
+  return changed?[{code:"ambiguous_presentation_context_group",path:"presentation_source.contextGroups",message:"A Combined Context group includes or describes a sibling output specification outside this presentation. Separate its output assignments before generating; binding group members and instructions cannot be silently discarded."}]:[];
 }
 
 /** Assistant mutations retain editable IDs but never see disabled or private source data. */
@@ -551,10 +568,11 @@ const uniquePresentationReferences=(values:readonly unknown[])=>[...new Set(valu
 const presentationProducerInstruction=/\bAuthored presentation[- ]ready narrative only\s*;\s*no generation\s*,\s*spend\s*,\s*publication\s+or\s+unsupported ROI claims\.?/giu;
 const audiencePresentationText=(value:string)=>String(value??"").replace(presentationProducerInstruction,"").replace(/[\t ]{2,}/g," ").trim();
 const opaquePresentationAlias=(value:string)=>/^(?:(?:blk|grp|clm|source|decision)[_-]\d+|context_group_\d+|[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12})$/iu.test(value.trim());
+const presentationEvidenceInstructions="The presentation_source separates fully authored slide passages (sourceMode authored) from output outlines (sourceMode outline). Use each outline row's title as its heading; coverageRequirements describe content that must be delivered, not authoring directions to display. The row's sourceAlias identifies the requirement owner; it does not make the whole owner block supporting evidence. Resolve that row's evidencePassageIds against presentation_source.passages and use only those permitted passages and their sourceAlias values as evidence for the slide. Every citation.excerpt and attributed quote.text must be one contiguous quotation in its own resolved cited passage. Preserve numbers, signs, decimals, percentages, and factual meaning; never synthesize, splice, reorder, or borrow evidence from a different source or unassigned passage. Fully authored slides remain restricted to their assigned manuscript passage. For outline evidence, use a truthful research section label or an empty citation.anchor; never mislabel supporting research as an authored Slide N. Manuscript citations may retain their assigned authored slide anchor. Cover every coverageRequirement separately in the audience-facing content; citations and speaker notes alone never satisfy missing required content. Sibling output specifications are excluded from the presentation and must never become slide titles, content, or evidence.";
 
 /** Repair a qualitative visual only with terms copied from its own authorized slide. */
 function reconcileAuthoredPresentationVisual(slide:SlideVisualData,authored:PresentationSourceSlide|undefined,contract:PresentationSourceContract):SlideVisualData{
-  if(!authored||["scorecard","bars","quote"].includes(slide.visual.kind))return slide;
+  if(!authored||authored.sourceMode==="outline"||["scorecard","bars","quote"].includes(slide.visual.kind))return slide;
   const roadmap=contract.roadmaps.find((entry)=>entry.slideNumber===authored.number&&(!entry.sourceBlockId||entry.sourceBlockId===authored.sourceBlockId));
   const collapsedRoadmap=Boolean(roadmap&&["roadmap","timeline"].includes(slide.layout)&&["hero-type","metric"].includes(slide.visual.kind)&&slide.visual.data.length<2);
   if(slideVisualIsComplete(slide)&&!collapsedRoadmap)return slide;
@@ -632,7 +650,8 @@ function resolveProviderPresentationSources(output:DocumentArtifactDraft|null,co
     const soleSource=contract.sources.filter((source)=>source.sourceKind==="block");
     const canonical=uniquePresentationReferences([...resolution.sourceIds,...resolution.blockIds]);
     if(!canonical.length&&unknownAssignments.size===initialUnknownCount){
-      const deterministic=sceneSources.length?sceneSources:soleSource.length===1?[soleSource[0]!.sourceId]:[];
+      const evidenceBlocks=uniquePresentationReferences((contract.passages??[]).filter((passage)=>authored?.evidencePassageIds?.includes(passage.id)).map((passage)=>passage.sourceBlockId)).filter((sourceId)=>authorizedBlockIds.has(sourceId));
+      const deterministic=authored?.sourceMode==="outline"?(evidenceBlocks.length===1?evidenceBlocks:[]):sceneSources.length?sceneSources:soleSource.length===1?[soleSource[0]!.sourceId]:[];
       if(deterministic.length){canonical.push(...deterministic);deterministicallyAssigned.push(index);}
     }
 
@@ -867,7 +886,8 @@ export function assessStoredPresentationCandidate(raw:string,snapshot:Record<str
     requireAllProtectedContent:complete,
   });
   issues.push(...presentationSourceSupplementalIssues(output,sourceContract,sourceResolution.receipt,{complete,requestedStyle,pageStart:page?.globalStartIndex??0,productionScenes:options.productionScenes}));
-  return{output,issues,groupResolution:groupResolution.receipt,sourceResolution:sourceResolution.receipt};
+  issues.push(...presentationOutputGroupScopeIssues(snapshot,sourceContract));
+  return{output,issues,sourceContract,groupResolution:groupResolution.receipt,sourceResolution:sourceResolution.receipt};
 }
 
 export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions}) {
@@ -896,11 +916,25 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     fidelity:input.options?.presentationFidelity,
     authoredSlideNumbers:page?.authoredSlideNumbers,
   }):null;
+  if(sourceContract?.sourceIssues?.length)throw new ProviderRequestError({
+    code:"presentation_source_contract_invalid",category:"provider",scope:"request",action:"edit_request",
+    message:"The presentation outline has unresolved source assignments or output boundaries. Clarify its requirements and assigned evidence before generating. No provider request was made.",
+    retryable:false,retryAfterMs:null,requestId:null,httpStatus:422,
+  });
+  const presentationSnapshot=sourceContract?scopePresentationSourceSnapshot(input.snapshot,sourceContract):input.snapshot;
+  if(sourceContract&&groups.length){
+    const scopeIssues=presentationOutputGroupScopeIssues(input.snapshot,sourceContract,presentationSnapshot);
+    if(scopeIssues.length)throw new ProviderRequestError({
+      code:"presentation_source_contract_invalid",category:"provider",scope:"request",action:"edit_request",
+      message:`${scopeIssues[0]!.message} No provider request was made.`,
+      retryable:false,retryAfterMs:null,requestId:null,httpStatus:422,
+    });
+  }
   const interfaceLocale=assistantResponseLocale(input.options?.locale);
   const responseLocale=sourceContract?inferPresentationAudienceLocale(sourceContract.outline.sourceText,interfaceLocale,input.options?.outputLocale):interfaceLocale;
   const sourceFacing=sourceContract?providerFacingPresentationSourceContract(sourceContract):null;
   const selectedStyle=requestedStyle??sourceContract?.style.preset??undefined;
-  const sourceDirection=sourceContract?` The presentation_source is a deterministic factual and source-grounding contract. Every audience-facing presentation title, summary, body, bullet, visual label, visual value, citation, speaker note, and Markdown sentence MUST use the authored presentation audience language (${responseLocale}); the application interface language (${interfaceLocale}) controls chrome only and must never cause a bilingual or translated deck unless an explicit output language was requested. Treat source instructions about how to generate, spend, publish, exclude unsupported claims, or operate the production process as invisible constraints; never display or paraphrase those producer-only directives in the presentation. Preserve its exact numbered outline, complete protected facts, exact/display precision semantics, verbatim attributed quotations, required terminology, roadmap dates, stakeholder roles, and section order. Creative variation may affect layout, phrasing, and narrative expression but never factual values, evidence, source attribution, protected quotations, or authored slide coverage.${sourceContract.fidelity==="faithful"?" Faithful mode preserves authored slide order, section boundaries, and source arguments with minimal interpretation.":" Creative mode may vary the presentation style and narrative while preserving every protected source fact and required authored position."}${selectedStyle?` Use the requested ${selectedStyle} presentation style exactly.`:""} Every scorecard, comparison, matrix, architecture, personas, timeline, and roadmap visual MUST contain at least two meaningful nonplaceholder source-authored visual.data points. Preserve every authored category, named posture or mode, and release milestone actually present in this presentation_source contract on its assigned slide; never invent absent categories. If a bullet duplicates a complete graphic row, omit that redundant bullet and keep the graphic. Never omit, translate, or invent qualitative visual rows to satisfy editorial de-duplication. slide.source_ids, quote.source_id, citation source_id, and visual.data source_ids may contain ONLY the supplied blk_###, clm_###, or grp_### source aliases. Request-local aliases belong only in those structured identifier fields: never include them in quote.citation, citation.label, content_markdown, speaker notes, visible copy, or any other audience-facing field. Every citation.excerpt must be one contiguous quotation from its own assigned authored numbered slide; preserve numbers, decimals, percentages, and factual meaning, and never synthesize, splice, reorder, or attribute another slide's evidence. context_group_ids is separate and may contain ONLY the supplied context_group_# aliases. Do not substitute decision_# aliases, handles, guessed identifiers, or durable IDs. Every authored slide must identify its authorized source evidence.`:"";
+  const sourceDirection=sourceContract?` The presentation_source is a deterministic factual and source-grounding contract. Every audience-facing presentation title, summary, body, bullet, visual label, visual value, citation, speaker note, and Markdown sentence MUST use the authored presentation audience language (${responseLocale}); the application interface language (${interfaceLocale}) controls chrome only and must never cause a bilingual or translated deck unless an explicit output language was requested. Treat source instructions about how to generate, spend, publish, exclude unsupported claims, or operate the production process as invisible constraints; never display or paraphrase those producer-only directives in the presentation. Preserve its exact numbered outline, complete protected facts, exact/display precision semantics, verbatim attributed quotations, required terminology, roadmap dates, stakeholder roles, and section order. Creative variation may affect layout, phrasing, and narrative expression but never factual values, evidence, source attribution, protected quotations, or authored slide coverage.${sourceContract.fidelity==="faithful"?" Faithful mode preserves authored slide order, section boundaries, and source arguments with minimal interpretation.":" Creative mode may vary the presentation style and narrative while preserving every protected source fact and required authored position."}${selectedStyle?` Use the requested ${selectedStyle} presentation style exactly.`:""} Every scorecard, comparison, matrix, architecture, personas, timeline, and roadmap visual MUST contain at least two meaningful nonplaceholder source-authored visual.data points. Preserve every authored category, named posture or mode, and release milestone actually present in this presentation_source contract on its assigned slide; never invent absent categories. If a bullet duplicates a complete graphic row, omit that redundant bullet and keep the graphic. Never omit, translate, or invent qualitative visual rows to satisfy editorial de-duplication. slide.source_ids, quote.source_id, citation source_id, and visual.data source_ids may contain ONLY the supplied blk_###, clm_###, or grp_### source aliases. Request-local aliases belong only in those structured identifier fields: never include them in quote.citation, citation.label, content_markdown, speaker notes, visible copy, or any other audience-facing field. ${presentationEvidenceInstructions} context_group_ids is separate and may contain ONLY the supplied context_group_# aliases. Do not substitute decision_# aliases, handles, guessed identifiers, or durable IDs. Every authored slide must identify its authorized source evidence.`:"";
   const protectedMessageDirection=sourceContract?.protectedMessages.length?" Every presentation_source.protectedMessages phrase is an exact authored audience-delivery requirement: reproduce its complete text verbatim in the title, body, bullet, quotation, or visual copy of its assigned slideNumber and opening/closing placement. Citation labels, anchors, excerpts, source aliases, production instructions, and speaker notes are private evidence or presenter material; they never satisfy visible protected-message delivery. Preserve a deliberately authored identical opening and closing promise on both positions. These exact, assigned protected messages take precedence over every general de-duplication instruction and prior_visible_copy exclusion; this exception never permits unrelated repeated copy or repetition on an unassigned slide.":"";
   const managedDirection=managed&&managedPlan?audioScene?audioSceneProductionInstructions(managedPlan,managedScenes):productionTeamInstructions(managedPlan,managedScenes):"";
   const formatInstructions=managed&&kind==="video"
@@ -938,7 +972,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     }:{}),
     ...(managedPlan?{continuity_bible:audioScene?audioSceneContinuity(managedPlan,scene):providerFacingProductionContinuity(managedPlan,scene)}:{}),
   }));
-  const creativeContext=kind==="video"?videoPlannerCreativeContext(input.snapshot):sourceContract?providerFacingRenderingContext(input.snapshot,sourceContract.sources):providerFacingRenderingContext(input.snapshot);
+  const creativeContext=kind==="video"?videoPlannerCreativeContext(input.snapshot):sourceContract?providerFacingRenderingContext(presentationSnapshot,sourceContract.sources):providerFacingRenderingContext(input.snapshot);
   const providerSceneConfiguration=sceneConfiguration?{
     medium:sceneConfiguration.medium,
     source:sceneConfiguration.source,
@@ -1061,7 +1095,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     repairAttempted=true;
     let repaired:Awaited<ReturnType<typeof run>>;
     if(kind==="slides"&&sourceContract){
-      const repairInstructions=`Repair a structured slide artifact without changing its creative intent. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Every audience-facing slide, summary, visual, note, and Markdown sentence must remain in the authored presentation audience language (${responseLocale}), independent of the application interface language (${interfaceLocale}). Treat source instructions about generation, spend, publication, unsupported claims, and production procedure as invisible constraints; never copy producer-only instructions into audience-facing presentation content. Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. Request-local aliases belong only in structured identifier fields; never put them in quote.citation, citation.label, Markdown, notes, or visible copy. Every citation.excerpt must be a contiguous quotation from that exact authored numbered slide and assigned source; preserve decimal and percentage semantics, and never synthesize, splice, reorder, or borrow another slide's evidence. Every comparison, matrix, architecture, personas, timeline, roadmap, and scorecard must contain at least TWO substantive source-authored editable visual.data rows; preserve every authored category, named mode, and milestone actually present in this presentation_source contract without importing examples from another document. Prioritize complete source-grounded visual rows and omit any bullet that would merely duplicate those rows; never leave a grouped visual empty or invent a value. Return the complete ${itemCount}-slide artifact, not a patch. Correct every listed validation issue, preserve every protected complete stakeholder quotation, speaker, numerical fact, exact/display precision meaning, scored category, authored slide position, and roadmap. Preserve all supplied request-local context_key aliases and source aliases with their authorized contiguous assignments; never invent a source or return a durable identifier. Keep visible slides, source citations, speaker notes, and content_markdown factually consistent. Retain distinct useful content, and do not add process language. A slide may intentionally omit body copy when its bullets, protected quotation, or visual carry the claim. Never repeat a title, sentence, quotation, bullet, metric explanation, or substantive narrative visual value within a slide or across the deck. A repeated complete opening sentence or substantial lead-in is duplicated even when the following claims differ; preserve every independently meaningful continuation. Visual labels are optional: use a distinct source-authored caption or an empty string, never Visual emphasis or Stakeholder perspective. Distinct source-authored visual.data rows with different meaningful labels may and must retain the same exact short measurement, status, or categorical value, including zero; never alter, omit, or invent a value merely to avoid repetition.${selectedStyle?` Preserve the explicitly selected ${selectedStyle} presentation style exactly.`:""}${providerPage?` This page is the ${providerPage.phase} movement of a larger work; retain its locked presentation, prior ending, assigned source scenes, and all previous visible-copy exclusions.`:""}`;
+      const repairInstructions=`Repair a structured slide artifact without changing its creative intent. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Every audience-facing slide, summary, visual, note, and Markdown sentence must remain in the authored presentation audience language (${responseLocale}), independent of the application interface language (${interfaceLocale}). Treat source instructions about generation, spend, publication, unsupported claims, and production procedure as invisible constraints; never copy producer-only instructions into audience-facing presentation content. Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. Request-local aliases belong only in structured identifier fields; never put them in quote.citation, citation.label, Markdown, notes, or visible copy. ${presentationEvidenceInstructions} Every comparison, matrix, architecture, personas, timeline, roadmap, and scorecard must contain at least TWO substantive source-authored editable visual.data rows; preserve every authored category, named mode, and milestone actually present in this presentation_source contract without importing examples from another document. Prioritize complete source-grounded visual rows and omit any bullet that would merely duplicate those rows; never leave a grouped visual empty or invent a value. Return the complete ${itemCount}-slide artifact, not a patch. Correct every listed validation issue, preserve every protected complete stakeholder quotation, speaker, numerical fact, exact/display precision meaning, scored category, authored slide position, and roadmap. Preserve all supplied request-local context_key aliases and source aliases with their authorized contiguous assignments; never invent a source or return a durable identifier. Keep visible slides, source citations, speaker notes, and content_markdown factually consistent. Retain distinct useful content, and do not add process language. A slide may intentionally omit body copy when its bullets, protected quotation, or visual carry the claim. Never repeat a title, sentence, quotation, bullet, metric explanation, or substantive narrative visual value within a slide or across the deck. A repeated complete opening sentence or substantial lead-in is duplicated even when the following claims differ; preserve every independently meaningful continuation. Visual labels are optional: use a distinct source-authored caption or an empty string, never Visual emphasis or Stakeholder perspective. Distinct source-authored visual.data rows with different meaningful labels may and must retain the same exact short measurement, status, or categorical value, including zero; never alter, omit, or invent a value merely to avoid repetition.${selectedStyle?` Preserve the explicitly selected ${selectedStyle} presentation style exactly.`:""}${providerPage?` This page is the ${providerPage.phase} movement of a larger work; retain its locked presentation, prior ending, assigned source scenes, and all previous visible-copy exclusions.`:""}`;
       const knownIdentifiers=[...groupContracts.map((contract)=>({id:contract.id,alias:contract.alias})),...sourceContract.sources.map((source)=>({id:source.sourceId,alias:source.alias}))];
       const providerIssues=initialIssues.map((issue)=>({...issue,message:knownIdentifiers.reduce((message,contract)=>message.replaceAll(contract.id,contract.alias),issue.message)}));
       const invalidReferences=uniquePresentationReferences([...(initialSourceResolution?.unknownAssignments??[]),...initialResolution.unknownAssignments]);
@@ -1072,7 +1106,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
         original_artifact:redactPresentationRepairArtifact(raw,sourceContract,groupContracts,invalidReferences),
         validation_issues:providerIssues,
         required_context_groups:providerGroups,
-        original_creative_context:providerFacingRenderingContext(input.snapshot,sourceContract.sources),
+        original_creative_context:providerFacingRenderingContext(presentationSnapshot,sourceContract.sources),
         presentation_source:sourceFacing,
         ...(providerPage?{production:{page:providerPage,assigned_scenes:providerScenes}}:{}),
       });
@@ -1113,7 +1147,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       ...safePresentationCandidateIssues(repairIssues,{...issueMetadata,providerAttempt:2,stage:"repair"}),
     ];
     const diagnostic=validationIssues.map((issue)=>`${issue.code} at ${issue.path}: ${issue.message}`).join(" | ");
-    const sourceFailure=kind==="slides"&&finalIssues.some((issue)=>/source|citation|context_group|precision|protected|scorecard|quote|exact|display|roadmap|terminology|markdown|style|slide_count|slide_order/iu.test(issue.code));
+    const sourceFailure=kind==="slides"&&finalIssues.some((issue)=>/source|citation|context_group|precision|protected|scorecard|quote|exact|display|roadmap|terminology|markdown|style|slide_count|slide_order|outline|coverage|requirement/iu.test(issue.code));
     const audioFailure=kind==="audio"&&finalIssues.some((issue)=>issue.code.startsWith("audio_"));
     throw new ProviderRequestError({
       code:audioFailure?"audio_preparation_failed":sourceFailure?"source_fidelity_validation_failed":"provider_returned_incomplete_document_artifact",

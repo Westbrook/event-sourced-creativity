@@ -11,6 +11,15 @@ export type FormaDirection = "ltr" | "rtl";
 
 export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   ...FORMA_RESPONSIVE_MESSAGES.en,
+  "presentation.planning.outlineEvidence": "Short outlines provide slide titles and coverage requirements. Supporting research is assigned separately; explicit source groups take priority. Unresolved source scope blocks generation before spending. Scene and other output specifications are excluded from Slides.",
+  "scene.provider.disclosure": "Paid Scene provider, source transmission, and cost",
+  "scene.provider.identity": "Paid provider · OpenAI Responses · {model}",
+  "scene.provider.modelUnavailable": "Configured text model",
+  "scene.provider.callsOne": "1 planned provider request; up to {maximum} total paid requests including bounded validation and continuity repairs.",
+  "scene.provider.callsMany": "{planned} planned provider requests; up to {maximum} total paid requests including bounded validation and continuity repairs.",
+  "scene.provider.ceiling": "Initial reservation and application-enforced spending ceiling: {amount}. Forma blocks any request or repair whose conservative maximum would exceed this ceiling. This is not a provider-enforced cap.",
+  "scene.provider.source": "Submitting sends this Document’s active, authorized text, Scene directions, and selected production source text to OpenAI. Stable source identifiers remain private to Forma.",
+  "scene.provider.output": "This creates a written Scene. It does not generate images, video, or audio. Paid attempts and charges remain recorded even if validation prevents an accepted output.",
   "action.default": "Action",
   "action.working": "Working",
   "action.busy": "{label}: {status}",

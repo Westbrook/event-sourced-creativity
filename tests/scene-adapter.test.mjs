@@ -204,3 +204,46 @@ test("managed audio scenes retain configuration and audible continuity across pa
     globalThis.fetch = previousFetch;
   }
 });
+
+test("manual Scene validation performs only one bounded repair and keeps all paid usage distinct from acceptance", async () => {
+  const previousFetch = globalThis.fetch;
+  try {
+    for (const acceptsRepair of [true, false]) {
+      const requests = [];
+      globalThis.fetch = async (url, init = {}) => {
+        assert.equal(String(url), "https://api.openai.com/v1/responses");
+        requests.push(JSON.parse(String(init.body)));
+        assert.ok(requests.length <= 2, "a manual Scene cannot make an undisclosed third request");
+        return Response.json({
+          id: `bounded-scene-${requests.length}`, model: "gpt-scene-test",
+          output_text: JSON.stringify(acceptsRepair && requests.length === 2 ? sceneOutput("visual") : {}),
+          usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
+        });
+      };
+      const run = generateDocumentArtifact(
+        { OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-scene-test" }, "authorized-test-actor", "scene",
+        { documentTitle: "Bounded Scene fixture", snapshot: sceneSnapshot, options: { itemCount: 1 } },
+      );
+      if (acceptsRepair) {
+        const result = await run;
+        assert.equal(result.inputReceipt.validation.maximum_provider_calls, 2);
+        assert.equal(result.inputReceipt.validation.provider_call_count, 2);
+        assert.equal(result.inputReceipt.validation.repair_attempted, true);
+        assert.deepEqual(result.inputReceipt.validation.repair_issues, []);
+        assert.equal(result.usage.totalTokens, 300);
+      } else {
+        await assert.rejects(run, (error) => {
+          assert.equal(error.detail.code, "provider_returned_incomplete_document_artifact");
+          assert.equal(error.providerCallCount, 2);
+          assert.equal(error.providerUsage.totalTokens, 300);
+          assert.deepEqual(error.providerResponseIds, ["bounded-scene-1", "bounded-scene-2"]);
+          return true;
+        });
+      }
+      assert.equal(requests.length, 2);
+      assert.match(requests[1].instructions, /Do not submit or request a separate image, video, or audio render/);
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});

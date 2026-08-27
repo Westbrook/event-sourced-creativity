@@ -16,6 +16,8 @@ export type PresentationSourceAlias = {
   blockId?: string;
   contextGroupIds: string[];
   label: string;
+  /** Local-only text for a specific claim; never borrow its whole parent block. */
+  claimText?: string;
 };
 
 export type PresentationSourceSlide = {
@@ -29,6 +31,21 @@ export type PresentationSourceSlide = {
   sourceAlias: string | null;
   contextGroupIds: string[];
   section: string | null;
+  /** Missing on retained v1 contracts, which retain authored-manuscript rules. */
+  sourceMode?: "authored" | "outline";
+  coverageRequirements?: string[];
+  evidencePassageIds?: string[];
+  evidenceAssignment?: "authored" | "explicit" | "matched" | "unresolved";
+};
+
+export type PresentationSourcePassage = {
+  id: string;
+  sourceBlockId: string | null;
+  sourceAlias: string | null;
+  contextGroupIds: string[];
+  content: string;
+  slideNumber: number | null;
+  required?: boolean;
 };
 
 export type PresentationSourceSection = {
@@ -42,6 +59,7 @@ export type PresentationSourceOutline = {
   slides: PresentationSourceSlide[];
   sections: PresentationSourceSection[];
   sourceText: string;
+  sourceIssues?: PresentationSourceCoverageIssue[];
 };
 
 export type ProtectedPresentationFact = {
@@ -117,7 +135,7 @@ export type PresentationSourceOptions = {
 };
 
 export type PresentationSourceContract = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   outline: PresentationSourceOutline;
   numberedOutline: PresentationSourceSlide[];
   authoredSlideCount: number | null;
@@ -132,6 +150,8 @@ export type PresentationSourceContract = {
   style: PresentationStyleContract;
   sources: PresentationSourceAlias[];
   fidelity: "faithful" | "creative";
+  passages?: PresentationSourcePassage[];
+  sourceIssues?: PresentationSourceCoverageIssue[];
 };
 
 export type PresentationSourceResolution = {
@@ -172,6 +192,9 @@ type SourceBlock = {
   label: string;
   contextGroupIds: string[];
   protectedMessages: AuthoredProtectedMessage[];
+  type?: string;
+  sourceMode?: "authored" | "outline";
+  required?: boolean;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -180,10 +203,14 @@ const compact = (value: unknown) => clean(value).replace(/\s+/gu, " ");
 const unique = (values: Iterable<string>) => [...new Set([...values].map(clean).filter(Boolean))];
 const sourceKey = (value: string) => value.toLocaleLowerCase().replace(/[\p{P}\p{S}\s]+/gu, " ").trim();
 const citationEvidenceKey = (value: string) => value.normalize("NFKC").toLocaleLowerCase()
+  .replace(/(?<=\d)\s*[–—-]\s*(?=\d)/gu, " rangeseparator ")
   .replace(/(?<![\p{L}\p{N}])[−-](?=\d)/gu," negativesign ")
   .replace(/(?<![\p{L}\p{N}])\+(?=\d)/gu," positivesign ")
   .replace(/(?<=\d)\.(?=\d)/gu, " decimaldot ")
   .replace(/(?<=\d),(?=\d)/gu, " decimalcomma ")
+  .replace(/(?<=\d)\s*:\s*(?=\d)/gu, " ratioseparator ")
+  .replace(/(?<=\d)\s*\/\s*(?=\d)/gu, " fractionseparator ")
+  .replace(/[$€£¥]/gu, (value) => ` currency${value.codePointAt(0)} `)
   .replace(/%/gu, " percentunit ")
   .replace(/[\p{P}\p{S}]+/gu, " ")
   .replace(/\s+/gu, " ").trim();
@@ -293,8 +320,55 @@ function sourceBlocks(input: PresentationSourceInput): SourceBlock[] {
         return [{ text: value, placements }];
       }),
     ];
-    return [{ id, text, label, contextGroupIds: unique([...blockGroups(block), ...(id ? authoritativeGroups.get(id) ?? [] : [])]), protectedMessages }];
+    const mode = clean(properties.presentation_source_mode);
+    return [{ id, text, label, contextGroupIds: unique([...blockGroups(block), ...(id ? authoritativeGroups.get(id) ?? [] : [])]), protectedMessages,
+      type: clean(block.type ?? properties.type).toLocaleLowerCase(),
+      ...(mode === "outline" || mode === "authored" ? { sourceMode: mode } : {}),
+      required: block.locked === true || properties.locked === true || properties.authority === "locked" || properties.required === true || properties.must_include === true,
+    }];
   });
+}
+
+type OutputBoundary = { offset: number; end: number; kind: "slides" | "sibling" | "ambiguous" };
+
+/** Explicit sibling deliverables bound prose before it can become evidence. */
+function outputBoundaries(text: string, formatBlock = false): OutputBoundary[] {
+  const boundaries: OutputBoundary[] = [];
+  let specification = formatBlock;
+  const lines = /(?:^|\n)[\t ]*(?:#{1,6}[\t ]+)?([^\n]+)/gu;
+  for (const match of text.matchAll(lines)) {
+    const line = match[1]!.trim().replace(/^\*{1,2}|\*{1,2}$/gu, "");
+    const output = /^(?:(?:required|optional|supporting|additional|secondary|primary)[\t ]+)*(?:output|deliverable)[\t ]*#?[\t ]*(?:\d+|[A-Z])?[\t ]*[:—–-][\t ]*(.+)$/iu.exec(line)?.[1];
+    const named = /^(?:(?:executive|scripted|visual|audio|supporting)[\t ]+)?(?:slides?|presentation|deck|scene|storyboard|video|audio|short story)[\t ]+(?:outline|brief|requirements|specification|manuscript)\s*:?[\t ]*$/iu.test(line);
+    if (!output && !named) continue;
+    const label = output ?? line;
+    const slides = /\b(?:slides?|presentation|deck)\b/iu.test(label);
+    const sibling = /\b(?:scene|storyboard|video|audio|short story)\b/iu.test(label);
+    // A topic such as "Video" or "Video requirements" inside an ordinary
+    // manuscript is not, by itself, a new deliverable. Explicit output labels
+    // and an opening presentation-outline heading establish that grammar.
+    if (!output && !specification && !(slides && !headingMatches(text.slice(0, match.index)).length)) continue;
+    specification = true;
+    const offset = match.index + (match[0].startsWith("\n") ? 1 : 0);
+    if (!output && slides && boundaries.at(-1)?.kind === "slides" && !headingMatches(text.slice(boundaries.at(-1)!.end, offset)).length) continue;
+    boundaries.push({ offset, end: match.index + match[0].length, kind: slides && sibling ? "ambiguous" : slides ? "slides" : "sibling" });
+  }
+  return boundaries;
+}
+
+function presentationBlockProjection(block: SourceBlock) {
+  const boundaries = outputBoundaries(block.text, block.type === "format" || block.sourceMode === "outline");
+  if (!boundaries.length) return { block, boundaries, ambiguous: false };
+  const parts = [block.text.slice(0, boundaries[0]!.offset)];
+  for (const [index, boundary] of boundaries.entries()) {
+    if (boundary.kind === "slides") parts.push(block.text.slice(boundary.offset, boundaries[index + 1]?.offset ?? block.text.length));
+  }
+  return { block: { ...block, text: parts.map((part) => part.trim()).filter(Boolean).join("\n\n") }, boundaries,
+    ambiguous: boundaries.some((boundary) => boundary.kind === "ambiguous") || boundaries.filter((boundary) => boundary.kind === "slides").length > 1 };
+}
+
+function presentationBlocks(input: PresentationSourceInput) {
+  return sourceBlocks(input).map(presentationBlockProjection).map(({ block }) => block).filter((block) => block.text.trim());
 }
 
 function sectionBefore(text: string, offset: number, fallback: string | null) {
@@ -306,7 +380,7 @@ function sectionBefore(text: string, offset: number, fallback: string | null) {
   return section ? compact(section.replace(/\s*,?\s*SLIDES\s+\d+\s*[—–-]\s*\d+\s*$/iu, "")) : chapter ? compact(chapter) : fallback;
 }
 
-function headingTitle(content: string) {
+function headingTitle(content: string, outline = false) {
   const firstLine = content.split("\n", 1)[0]?.trim() ?? "";
   const sentenceBoundary = firstLine.search(/[.!?](?=\s+[\p{Lu}“"([])/u);
   const colon = firstLine.indexOf(":");
@@ -317,10 +391,10 @@ function headingTitle(content: string) {
     // their substantive colon; prose after an earlier sentence is never a title.
     if (title && /\p{Lu}/u.test(title) && !/\p{Ll}/u.test(title)) return title;
   }
-  if (content.includes("\n")) {
+  if (!outline && content.includes("\n")) {
     const heading = compact(firstLine.replace(/^\*{1,2}|\*{1,2}$/gu, ""));
     const followingSentence = sentenceBoundary >= 0 ? firstLine.slice(sentenceBoundary + 1).trim() : "";
-    const inlineBody = /^(?:this|these|those|it|they|we|our|evidence|speaker\s+notes?|source\s+notes?|supporting\s+evidence)\b/iu.test(followingSentence);
+    const inlineBody = /^(?:this|these|those|it|they|we|our|evidence|speaker\s+notes?|source\s+notes?|supporting\s+evidence|scope|include|explain|show|describe|compare|summari[sz]e|label|do\s+not)\b/iu.test(followingSentence);
     // A physical line break explicitly separates the authored heading from its
     // body. Preserve deliberate multi-sentence taglines and final punctuation;
     // prose attached to an inline heading retains the historical title split.
@@ -348,18 +422,35 @@ function headingMatches(text: string) {
 }
 
 export function inferPresentationSourceOutline(input: PresentationSourceInput): PresentationSourceOutline {
-  const blocks = sourceBlocks(input);
+  const projections = sourceBlocks(input).map(presentationBlockProjection);
+  const blocks = projections.map(({ block }) => block).filter((block) => block.text.trim());
   const slides: PresentationSourceSlide[] = [];
+  const sourceIssues: PresentationSourceCoverageIssue[] = projections.flatMap(({ ambiguous }): PresentationSourceCoverageIssue[] => ambiguous
+    ? [{ code: "ambiguous_presentation_output", path: "presentation_source.outline", message: "Select one presentation output specification and give sibling outputs separate headings before generating." }] : []);
   const seen = new Set<number>();
   for (const block of blocks) {
     const matches = headingMatches(block.text);
+    const passages = matches.map((match, index) => block.text.slice(match.end, matches[index + 1]?.offset ?? block.text.length).trim());
+    const manuscriptHint = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:presentation|slides?|deck)\s+manuscript\b/iu.test(block.text);
+    const explicitMode = block.sourceMode ?? (manuscriptHint ? "authored" : undefined);
+    const outlineHint = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:(?:executive|supporting)\s+)?(?:presentation|slides?|deck)\s+(?:outline|brief|requirements)\b/iu.test(block.text)
+      || block.type === "format" && outputBoundaries(block.text).some((boundary) => boundary.kind === "slides");
+    const shortDirections = passages.length > 0 && passages.every((passage) => passage.length <= 600 && passage.split("\n").filter((line) => line.trim()).length <= 2);
+    const sourceMode = explicitMode ?? (outlineHint && shortDirections ? "outline" : "authored");
+    if (outlineHint && !shortDirections && !explicitMode) sourceIssues.push({ code: "ambiguous_presentation_source_mode", path: "presentation_source.outline", message: "This output mixes a short outline with manuscript prose. Use a Presentation manuscript heading for fully authored slides, or keep brief coverage directions separate from supporting research." });
     for (let index = 0; index < matches.length; index += 1) {
       const match = matches[index]!;
-      if (seen.has(match.number)) continue;
-      const content = block.text.slice(match.end, matches[index + 1]?.offset ?? block.text.length).trim().replace(/[\s.]+$/u, (ending) => ending.includes(".") ? "." : "");
-      const title = headingTitle(content) || `Slide ${match.number}`;
+      if (seen.has(match.number)) {
+        sourceIssues.push({ code: "ambiguous_presentation_slide_number", path: "presentation_source.outline", message: `Slide ${match.number} is specified more than once. Give the selected presentation unique numbered positions before generating.` });
+        continue;
+      }
+      const content = passages[index]!.replace(/[\s.]+$/u, (ending) => ending.includes(".") ? "." : "");
+      const title = headingTitle(content, sourceMode === "outline") || `Slide ${match.number}`;
       const section = sectionBefore(block.text, match.offset, null);
-      slides.push({ number: match.number, order: match.number, index: slides.length, title, content, text: content, sourceBlockId: block.id, sourceAlias: null, contextGroupIds: [...block.contextGroupIds], section });
+      const coverage = content.startsWith(title) ? content.slice(title.length).replace(/^[\s.:—–-]+/u, "") : content;
+      const coverageRequirements = sourceMode === "outline" ? coverage.split(/(?<=[.!?])\s+(?=[\p{Lu}])|;\s+|\n+/u)
+        .map((part) => part.trim()).filter((part) => part && !/^(?:do\s+not|never|avoid|must\s+not|no\s+(?:generated|paid|actual))\b/iu.test(part)) : [];
+      slides.push({ number: match.number, order: match.number, index: slides.length, title, content, text: content, sourceBlockId: block.id, sourceAlias: null, contextGroupIds: [...block.contextGroupIds], section, sourceMode, coverageRequirements });
       seen.add(match.number);
     }
   }
@@ -374,7 +465,42 @@ export function inferPresentationSourceOutline(input: PresentationSourceInput): 
       if (slide.sourceBlockId && !previous.sourceBlockIds.includes(slide.sourceBlockId)) previous.sourceBlockIds.push(slide.sourceBlockId);
     } else sections.push({ title: slide.section, slideNumbers: [slide.number], sourceBlockIds: slide.sourceBlockId ? [slide.sourceBlockId] : [] });
   }
-  return { authoredSlideCount: slides.length || null, slides, sections, sourceText: blocks.map((block) => block.text).join("\n\n") };
+  return { authoredSlideCount: slides.length || null, slides, sections, sourceText: blocks.map((block) => block.text).join("\n\n"), sourceIssues };
+}
+
+/** The provider gets the same output boundaries as extraction and validation. */
+export function scopePresentationSourceSnapshot(snapshot: Record<string, unknown>, _contract?: PresentationSourceContract): Record<string, unknown> {
+  // The second argument is accepted so all adapter/page callers explicitly bind
+  // this projection to the same contract; boundaries are source-derived only.
+  void _contract;
+  const original = sourceBlocks(snapshot);
+  const projections = new Map(original.flatMap((block) => block.id ? [[block.id, presentationBlockProjection(block).block] as const] : []));
+  const scope = (candidate: unknown) => {
+    const value = asRecord(candidate), properties = asRecord(value.properties);
+    const id = clean(value.block_id ?? value.blockId ?? value.id ?? properties.block_id);
+    const projected = projections.get(id);
+    if (!projected) return [candidate]; // Negative guardrails remain intact.
+    if (!projected.text.trim()) return [];
+    if (projected.text === sourceBlockText(value)) return [candidate];
+    const scoped = { ...value }, scopedProperties = { ...properties };
+    for (const field of ["text", "instruction", "description", "markdown", "body", "content", "value"]) {
+      delete scoped[field]; delete scopedProperties[field];
+    }
+    for (const field of ["exact_text", "protected_phrase"]) if (clean(scopedProperties[field]) && !projected.text.includes(clean(scopedProperties[field]))) delete scopedProperties[field];
+    if (Array.isArray(scopedProperties.protected_phrases)) scopedProperties.protected_phrases = scopedProperties.protected_phrases.filter((phrase) => projected.text.includes(clean(asRecord(phrase).text)));
+    scoped.properties = { ...scopedProperties, text: projected.text };
+    return [scoped];
+  };
+  const result = { ...snapshot };
+  if (Array.isArray(snapshot.facts)) result.facts = snapshot.facts.flatMap(scope);
+  if (Array.isArray(snapshot.blocks)) result.blocks = snapshot.blocks.flatMap(scope);
+  if (Array.isArray(snapshot.claims)) result.claims = snapshot.claims.filter((candidate) => {
+    const claim = asRecord(candidate), block = projections.get(clean(claim.blockId ?? claim.block_id));
+    const prior = original.find((candidate) => candidate.id === block?.id);
+    const text = sourceBlockText(claim);
+    return !block || block.text === prior?.text || Boolean(block.text.trim()) && (!text || block.text.includes(text));
+  });
+  return result;
 }
 
 function preset(value: unknown): PresentationStyleContract["preset"] {
@@ -383,7 +509,7 @@ function preset(value: unknown): PresentationStyleContract["preset"] {
 }
 
 export function inferPresentationStyleContract(input: PresentationSourceInput, options: Pick<PresentationSourceOptions, "stylePreset" | "presentationStyle"> = {}): PresentationStyleContract {
-  const text = typeof input === "string" ? input : inferPresentationSourceOutline(input).sourceText;
+  const text = inferPresentationSourceOutline(input).sourceText;
   const root = typeof input === "string" || Array.isArray(input) ? {} : asRecord(input);
   const constraints = (Array.isArray(root.standing_constraints) ? root.standing_constraints : []).map(asRecord)
     .filter((constraint) => !clean(constraint.authority) || clean(constraint.authority).toLowerCase() === "authored")
@@ -449,7 +575,8 @@ function buildSourceAliases(input: PresentationSourceInput, options: Presentatio
     const trustedLabel = entry.sourceKind === "block" ? blocks.find((block) => block.id === sourceId)?.label
       : entry.sourceKind === "context-group" ? groupDetails.get(sourceId)?.label
         : rootClaims.find((claim) => clean(claim.id ?? claim.claim_id) === sourceId && authorizedClaims.get(sourceId) === clean(claim.blockId ?? claim.block_id))?.label;
-    result.push({ ...entry, alias, sourceId, blockId: clean(entry.blockId) || undefined, contextGroupIds: unique(entry.contextGroupIds ?? []).filter((id) => authorizedGroups.has(id)), label: compact(trustedLabel) || (entry.sourceKind === "context-group" ? "Authorized context group" : entry.sourceKind === "claim" ? "Authored claim" : "Authored source") });
+    const claimText = entry.sourceKind === "claim" ? sourceBlockText(rootClaims.find((claim) => clean(claim.id ?? claim.claim_id) === sourceId) ?? {}) : "";
+    result.push({ ...entry, alias, sourceId, blockId: clean(entry.blockId) || undefined, contextGroupIds: unique(entry.contextGroupIds ?? []).filter((id) => authorizedGroups.has(id)), label: compact(trustedLabel) || (entry.sourceKind === "context-group" ? "Authorized context group" : entry.sourceKind === "claim" ? "Authored claim" : "Authored source"), claimText: claimText || undefined });
   };
   for (const entry of options.sourceAliases ?? []) append(entry);
   let blockIndex = result.filter((entry) => entry.sourceKind === "block").length;
@@ -733,8 +860,85 @@ function extractRoadmaps(blocks: SourceBlock[], outline: PresentationSourceOutli
   return result;
 }
 
+const coverageStopWords = new Set("a an the and or of to in on at by for from with as is are be been being that this these those it its they their we our you your each every one not only also then than into about after before where when how what why must should will would can could may use include explain show describe scope diagram label compare summarize summarise preserve retain make keep give discuss cover present based".split(" "));
+const evidenceStopWords = new Set([...coverageStopWords, ..."slide slides presentation deck output outputs requirement requirements proposed proposal research source sources evidence document content supporting shared brief actual current decision instruction instructions".split(" ")]);
+const presentationGuardrailTypes = new Set(["format", "brand", "style", "typography", "palette", "accessibility", "lighting", "camera", "audio"]);
+
+function coverageTokens(value: string, evidence = false) {
+  const stopWords = evidence ? evidenceStopWords : coverageStopWords;
+  return unique((value.normalize("NFKC").toLocaleLowerCase().match(/[\p{L}][\p{L}\p{N}]*/gu) ?? [])
+    .filter((word) => word.length >= 3 && !stopWords.has(word))
+    .map((word) => word.length > 5 && word.endsWith("ies") ? `${word.slice(0, -3)}y` : word.length > 4 && word.endsWith("s") && !word.endsWith("ss") ? word.slice(0, -1) : word)
+    .map((word) => word.length > 6 && word.endsWith("ly") ? word.slice(0, -2) : word));
+}
+
+function researchParagraphs(text: string) {
+  const paragraphs = text.split(/\n[\t ]*\n+/u).map((part) => part.trim()).filter(Boolean);
+  const result: string[] = [];
+  for (let index = 0; index < paragraphs.length; index += 1) {
+    const paragraph = paragraphs[index]!;
+    // Keep a short section heading with its paragraph, without splicing evidence.
+    if (!paragraph.includes("\n") && paragraph.length < 100 && !/[.!?]$/u.test(paragraph) && paragraphs[index + 1]) {
+      result.push(`${paragraph}\n\n${paragraphs[++index]}`);
+    } else result.push(paragraph);
+  }
+  return result;
+}
+
+function bindPresentationEvidence(input: PresentationSourceInput, blocks: SourceBlock[], outline: PresentationSourceOutline, sources: PresentationSourceAlias[]) {
+  const passages: PresentationSourcePassage[] = [];
+  const sourceIssues = [...(outline.sourceIssues ?? [])];
+  const append = (block: SourceBlock, content: string, slideNumber: number | null) => {
+    const passage: PresentationSourcePassage = { id: `passage_${String(passages.length + 1).padStart(3, "0")}`, sourceBlockId: block.id,
+      sourceAlias: sourceAliasFor(sources, block.id), contextGroupIds: [...block.contextGroupIds], content, slideNumber, required: block.required === true };
+    passages.push(passage);
+    return passage;
+  };
+  const outlineBlocks = new Set(outline.slides.map((slide) => slide.sourceBlockId));
+  for (const slide of outline.slides) if (slide.sourceMode !== "outline") {
+    const block = blocks.find((candidate) => candidate.id === slide.sourceBlockId);
+    if (block) slide.evidencePassageIds = [append(block, slide.content, slide.number).id];
+    slide.evidenceAssignment = "authored";
+  }
+  const research = blocks.filter((block) => !outlineBlocks.has(block.id) && !presentationGuardrailTypes.has(block.type ?? ""));
+  for (const block of research) for (const paragraph of researchParagraphs(block.text)) append(block, paragraph, null);
+  const candidates = passages.filter((passage) => passage.slideNumber === null);
+  const root = typeof input === "string" || Array.isArray(input) ? {} : asRecord(input);
+  const groupTargets = new Map(combinedContextGroups(root).flatMap((group): Array<[string, { start: number; end: number }]> => {
+    const target = /^\s*slides?\s+(\d+)(?:\s*(?:[-–—]|to|through)\s*(?:slides?\s+)?(\d+))?\s*$/iu.exec(group.target);
+    return target ? [[group.id, { start: Number(target[1]), end: Number(target[2] ?? target[1]) }]] : [];
+  }));
+  for (const slide of outline.slides) {
+    if (slide.sourceMode !== "outline") continue;
+    const groups = unique([...slide.contextGroupIds, ...[...groupTargets].filter(([, range]) => slide.number >= range.start && slide.number <= range.end).map(([id]) => id)]);
+    const query = new Set(coverageTokens(`${slide.title} ${(slide.coverageRequirements ?? []).join(" ")}`, true));
+    const selected = candidates.filter((passage) => {
+      if (passage.contextGroupIds.some((id) => {
+        const target = groupTargets.get(id);
+        return target && (slide.number < target.start || slide.number > target.end);
+      })) return false;
+      if (groups.length) return passage.contextGroupIds.some((id) => groups.includes(id));
+      const overlap = coverageTokens(passage.content, true).filter((token) => query.has(token));
+      // No top-K/all-document fallback: weak or generic overlap grants nothing.
+      // Keep this independent of the other available passages: page projection
+      // or an unrelated source edit must not change an existing assignment.
+      return overlap.filter((token) => token.length >= 4).length >= 2;
+    });
+    slide.evidencePassageIds = selected.map((passage) => passage.id);
+    slide.evidenceAssignment = selected.length ? groups.length ? "explicit" : "matched" : "unresolved";
+    if (!selected.length) sourceIssues.push({ code: "unresolved_outline_evidence", path: `presentation_source.outline.${slide.index}.evidencePassageIds`,
+      message: `Slide ${slide.number} has coverage instructions but no resolved supporting research. Assign its research and outline to a Combined Context group, or give the outline more specific coverage terms before generating.` });
+  }
+  if (outline.slides.some((slide) => slide.sourceMode === "outline")) for (const block of research.filter((candidate) => candidate.required)) {
+    if (passages.some((passage) => passage.sourceBlockId === block.id && !outline.slides.some((slide) => slide.evidencePassageIds?.includes(passage.id)))) sourceIssues.push({
+      code: "unassigned_required_presentation_source", path: "presentation_source.outline", message: "A mandatory research passage has no assigned presentation coverage. Assign it explicitly before generating; mandatory evidence cannot be discarded or placed on an arbitrary slide.",
+    });
+  }
+  return { passages, sourceIssues };
+}
+
 export function buildPresentationSourceContract(input: PresentationSourceInput, options: PresentationSourceOptions = {}): PresentationSourceContract {
-  const blocks = sourceBlocks(input);
+  const blocks = presentationBlocks(input);
   const sources = buildSourceAliases(input, options, blocks);
   const outline = inferPresentationSourceOutline(input);
   const requestedNumbers = options.authoredSlideNumbers;
@@ -750,10 +954,14 @@ export function buildPresentationSourceContract(input: PresentationSourceInput, 
     outline.authoredSlideCount = authoredSlideNumbers.length;
   }
   for (const slide of outline.slides) slide.sourceAlias = sourceAliasFor(sources, slide.sourceBlockId);
+  const evidence = bindPresentationEvidence(input, blocks, outline, sources);
   const requestedRaw = Number(options.requestedSlideCount ?? options.itemCount ?? 0);
   const requestedSlideCount = Number.isSafeInteger(requestedRaw) && requestedRaw > 0 && requestedRaw <= 100 ? requestedRaw : null;
+  if (requestedSlideCount !== null && outline.authoredSlideCount !== null && requestedSlideCount !== outline.authoredSlideCount && outline.slides.some((slide) => slide.sourceMode === "outline")) evidence.sourceIssues.push({
+    code: "outline_slide_count_conflict", path: "presentation_source.outline", message: "A research-backed outline needs explicit coverage for every requested slide. Match its numbered positions or author the added requirements before generating.",
+  });
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     outline,
     numberedOutline: outline.slides,
     authoredSlideCount: outline.authoredSlideCount,
@@ -768,6 +976,7 @@ export function buildPresentationSourceContract(input: PresentationSourceInput, 
     style: inferPresentationStyleContract(input, options),
     sources,
     fidelity: options.fidelity === "creative" ? "creative" : "faithful",
+    ...evidence,
   };
 }
 
@@ -786,7 +995,11 @@ export function providerFacingPresentationSourceContract(contract: PresentationS
     predictedSlideCount: contract.predictedSlideCount,
     slideCountMismatch: contract.slideCountMismatch,
     fidelity: contract.fidelity,
-    outline: contract.numberedOutline.map((slide) => ({ number: slide.number, order: slide.order, title: slide.title, content: slide.content, section: slide.section, sourceAlias: slide.sourceAlias, contextGroupAliases: slide.contextGroupIds.flatMap((id) => { const alias = groupAliasById.get(id); return alias ? [alias] : []; }) })),
+    outline: contract.numberedOutline.map((slide) => ({ number: slide.number, order: slide.order, title: slide.title, content: slide.content, section: slide.section, sourceAlias: slide.sourceAlias,
+      sourceMode: slide.sourceMode ?? "authored", coverageRequirements: slide.coverageRequirements ?? [], evidencePassageIds: slide.evidencePassageIds ?? [], evidenceAssignment: slide.evidenceAssignment ?? "authored",
+      contextGroupAliases: slide.contextGroupIds.flatMap((id) => { const alias = groupAliasById.get(id); return alias ? [alias] : []; }) })),
+    passages: (contract.passages ?? []).map((passage) => ({ id: passage.id, sourceAlias: passage.sourceAlias, content: passage.content, slideNumber: passage.slideNumber, required: passage.required === true,
+      contextGroupAliases: passage.contextGroupIds.flatMap((id) => { const alias = groupAliasById.get(id); return alias ? [alias] : []; }) })),
     sections: contract.outline.sections.map((section) => ({ title: section.title, slideNumbers: [...section.slideNumbers] })),
     protectedFacts: contract.protectedFacts.map(omitSourceBlockId),
     protectedQuotes: contract.protectedQuotes.map(omitSourceBlockId),
@@ -865,6 +1078,113 @@ function relatedSlideIndex(outline: PresentationSourceSlide[], slideNumber: numb
   return Math.max(0, Math.min(Math.max(0, length - 1), relative));
 }
 
+function expectedPresentationSlides(contract: PresentationSourceContract, pageStart: number, pageSize: number) {
+  const global = contract.numberedOutline.filter((slide) => slide.index >= pageStart && slide.index < pageStart + pageSize);
+  const numbered = contract.numberedOutline.filter((slide) => slide.number > pageStart && slide.number <= pageStart + pageSize);
+  return global.length ? global : numbered.length ? numbered : contract.numberedOutline.slice(pageStart, pageStart + pageSize);
+}
+
+function contractPassages(contract: PresentationSourceContract): PresentationSourcePassage[] {
+  return contract.passages ?? contract.numberedOutline.map((slide, index) => ({ id: `legacy_passage_${index + 1}`, sourceBlockId: slide.sourceBlockId,
+    sourceAlias: slide.sourceAlias, contextGroupIds: slide.contextGroupIds, content: slide.content, slideNumber: slide.number }));
+}
+
+function permittedPresentationPassages(contract: PresentationSourceContract, expected?: PresentationSourceSlide) {
+  const passages = contractPassages(contract);
+  if (!expected) return passages;
+  return expected.evidencePassageIds ? passages.filter((passage) => expected.evidencePassageIds!.includes(passage.id))
+    : passages.filter((passage) => passage.sourceBlockId === expected.sourceBlockId && passage.slideNumber === expected.number);
+}
+
+function citedPresentationPassages(reference: string, contract: PresentationSourceContract, quotation = false) {
+  const resolution = resolvePresentationSourceReferences([reference], contract, { allowDurableIds: true });
+  const source = contract.sources.find((candidate) => resolution.sourceAliases.includes(candidate.alias));
+  const passages = contractPassages(contract).filter((passage) => source?.sourceKind === "context-group"
+    ? passage.contextGroupIds.includes(source.sourceId)
+    : source && passage.sourceBlockId === (source.blockId ?? source.sourceId));
+  if (quotation && source?.sourceKind === "claim" && source.claimText) {
+    const claimKey = citationEvidenceKey(source.claimText);
+    return { source, passages: passages.filter((passage) => ` ${citationEvidenceKey(passage.content)} `.includes(` ${claimKey} `)).map((passage) => ({ ...passage, content: source.claimText! })) };
+  }
+  return { source, passages };
+}
+
+export type PresentationCitationEvidenceCheck = {
+  /** Local zero-based item index; the caller supplies the page's display offset. */
+  slideIndex: number;
+  citationIndex: number;
+  sourceLabel: string;
+  excerpt: string;
+  sourceStatus: "authorized" | "unauthorized" | "unassigned" | "missing";
+  excerptStatus: "grounded" | "ungrounded" | "empty" | "unresolved";
+  anchorStatus: "valid" | "incorrect";
+  passages: Array<{ id: string; content: string }>;
+};
+
+/** Private inspection and blocking validation use exactly the same resolver. */
+export function presentationCitationEvidenceChecks(values: readonly unknown[], contract: PresentationSourceContract, options: Pick<PresentationSourceCoverageOptions, "pageStart" | "pageSize"> = {}): PresentationCitationEvidenceCheck[] {
+  const pageStart = Math.max(0, Math.floor(Number(options.pageStart ?? 0)));
+  const expected = expectedPresentationSlides(contract, pageStart, options.pageSize ?? values.length);
+  return values.flatMap((value, slideIndex) => {
+    const slide = asRecord(asRecord(value).slide);
+    const permitted = permittedPresentationPassages(contract, expected[slideIndex]);
+    return (Array.isArray(slide.citations) ? slide.citations : []).map((candidate, citationIndex): PresentationCitationEvidenceCheck => {
+      const citation = asRecord(candidate), reference = clean(citation.sourceId ?? citation.source_id), excerpt = clean(citation.excerpt);
+      const { source, passages } = citedPresentationPassages(reference, contract, true);
+      const assigned = passages.filter((passage) => permitted.some((allowed) => allowed.id === passage.id));
+      const sourceStatus = !reference ? "missing" : !source ? "unauthorized" : assigned.length ? "authorized" : "unassigned";
+      // An unassigned but real citation can quote correctly. Report mapping and
+      // excerpt failures separately instead of calling every mismatch invented.
+      let resolved = sourceStatus === "authorized" ? assigned : passages;
+      if (!resolved.length && source?.sourceKind === "claim" && source.claimText) resolved = [{ id: "unassigned_claim", sourceBlockId: source.blockId ?? null, sourceAlias: source.alias, contextGroupIds: [], content: source.claimText, slideNumber: null }];
+      const anchor = clean(citation.anchor);
+      const anchoredSlide = anchor.match(/\b(?:authored\s+)?slide\s+(\d+)\b/iu)?.[1];
+      let anchorStatus: PresentationCitationEvidenceCheck["anchorStatus"] = "valid";
+      if (/^(?:passage|legacy_passage)_\d+$/u.test(anchor)) {
+        if (!resolved.some((passage) => passage.id === anchor)) anchorStatus = "incorrect";
+        else resolved = resolved.filter((passage) => passage.id === anchor);
+      } else if (anchoredSlide) {
+        if (expected[slideIndex]?.sourceMode === "outline" || expected[slideIndex] && Number(anchoredSlide) !== expected[slideIndex]!.number) anchorStatus = "incorrect";
+        else resolved = resolved.filter((passage) => passage.slideNumber === Number(anchoredSlide));
+      }
+      const key = citationEvidenceKey(excerpt);
+      const excerptStatus = !excerpt ? "empty" : !source ? "unresolved" : key && resolved.some((passage) => ` ${citationEvidenceKey(passage.content)} `.includes(` ${key} `)) ? "grounded" : "ungrounded";
+      return { slideIndex, citationIndex, sourceLabel: source?.label ?? "", excerpt, sourceStatus, excerptStatus, anchorStatus,
+        passages: resolved.map((passage) => ({ id: passage.id, content: passage.content })) };
+    });
+  });
+}
+
+const cardinalNumbers: Record<string, string> = { zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10", eleven: "11", twelve: "12" };
+const normalizeCardinals = (value: string) => value.replace(/\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/giu, (word) => cardinalNumbers[word.toLocaleLowerCase()]!);
+const numericClaimPattern = /[$€£¥]?[+−-]?\d+(?:[.,]\d+)*(?:\s*[:/–—-]\s*\d+(?:[.,]\d+)*)*(?:\s*%|\s*°\s*[CFK]\b|\s*(?:px|mm|cm|km|kg|ms|seconds?|minutes?|hours?|days?|weeks?|wks?|months?|years?)\b)?/giu;
+const numericClaimKey = (value: string) => citationEvidenceKey(value.replace(/\b(?:weeks?|wks?)\b/giu, "week").replace(/\b(seconds?|minutes?|hours?|days?|months?|years?)\b/giu, (unit) => unit.replace(/s$/iu, "")));
+
+function numericalClaims(text: string) {
+  const numeric = normalizeCardinals(text).replace(/^\s*\d+[.)]\s+/gmu, "").replace(/\b(?:slide|evidence|position|chapter)\s+\d+\b/giu, "");
+  return unique([...numeric.matchAll(numericClaimPattern)].map((match) => numericClaimKey(match[0])));
+}
+
+function numericalStatements(text: string) {
+  return normalizeCardinals(text).split(/(?<=[.!?])\s+(?=[\p{Lu}])|[;\n]+/u).flatMap((statement) => {
+    const matches = [...statement.matchAll(numericClaimPattern)];
+    return matches.map((match, index) => {
+      const before = statement.slice(index ? matches[index - 1]!.index + matches[index - 1]![0].length : 0, match.index).slice(-120);
+      const after = statement.slice(match.index + match[0].length, matches[index + 1]?.index ?? statement.length).slice(0, 80);
+      const context = coverageTokens(`${before} ${after}`).filter((token) => !["reached", "stayed", "remain", "target", "measure", "value", "metric", "count", "cover", "now"].includes(token));
+      return { key: numericClaimKey(match[0]), context };
+    });
+  });
+}
+
+function visibleNumericalStatements(item: Record<string, unknown>) {
+  const slide = asRecord(item.slide), visual = asRecord(slide.visual);
+  const data = Array.isArray(visual.data) ? visual.data.map(asRecord) : [];
+  return [clean(item.title), clean(item.body), ...(Array.isArray(slide.bullets) ? slide.bullets.map(clean) : []),
+    `${clean(visual.label)} ${clean(visual.value)}`, ...data.map((datum) => `${clean(datum.label)} ${clean(datum.value)}`)]
+    .flatMap(numericalStatements);
+}
+
 /**
  * Promote a missing final promise only when both its opening and final authored
  * slides independently authorize the exact same audience-visible wording.
@@ -922,62 +1242,94 @@ export function validatePresentationSourceCoverage(values: readonly unknown[], c
   const items = values.map(asRecord);
   const pageStart = Math.max(0, Math.floor(Number(options.pageStart ?? 0)));
   const pageSize = Math.max(0, Math.floor(Number(options.pageSize ?? items.length)));
-  const globalExpected = contract.numberedOutline.filter((slide) => slide.index >= pageStart && slide.index < pageStart + pageSize);
-  // Retained page contracts predate global position metadata. Their local
-  // indices start at zero, but authored slide numbers still identify the page.
-  const numberedExpected = contract.numberedOutline.filter((slide) => slide.number > pageStart && slide.number <= pageStart + pageSize);
-  const expected = globalExpected.length ? globalExpected : numberedExpected.length ? numberedExpected : contract.numberedOutline.slice(pageStart, pageStart + pageSize);
+  const expected = expectedPresentationSlides(contract, pageStart, pageSize);
   const complete = options.requireAllProtectedContent ?? (pageStart === 0 && (!contract.authoredSlideCount || items.length >= contract.authoredSlideCount));
   const requireGrounding = options.requireEverySlideSource ?? false;
-  const issues: PresentationSourceCoverageIssue[] = [];
+  const issues: PresentationSourceCoverageIssue[] = [...(contract.sourceIssues ?? [])];
   const add = (code: string, path: string, message: string) => issues.push({ code, path, message });
   const visible = items.map(visibleSlideText);
   const visibleDeck = visible.join("\n");
   const exactFact = contract.protectedFacts.find((fact) => fact.precision === "exact");
+  const citationChecks = presentationCitationEvidenceChecks(values, contract, { pageStart, pageSize });
 
   const requiredCount = contract.requestedSlideCount ?? contract.predictedSlideCount ?? contract.authoredSlideCount;
   if (complete && requiredCount !== null && items.length !== requiredCount) add("slide_count_mismatch", "items", `The planned presentation contains ${requiredCount} slides, but the generated deck contains ${items.length}.`);
 
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index]!;
+    const authored = expected[index];
+    const permitted = permittedPresentationPassages(contract, authored);
+    const matchesAuthoredSource = (references: readonly unknown[]) => references.some((reference) => {
+      const cited = citedPresentationPassages(clean(reference), contract);
+      return cited.passages.some((passage) => permitted.some((allowed) => allowed.id === passage.id));
+    });
     const references = referenceValues(item);
     if (contract.sources.length && references.length) {
       const resolution = resolvePresentationSourceReferences(references, contract, { allowDurableIds: true });
       resolution.unknownReferences.forEach(() => add("unknown_source_reference", `items.${index}.slide.sourceIds`, `Slide ${pageStart + index + 1} refers to an unauthorized or invented source reference.`));
       if (requireGrounding && !resolution.sourceIds.length) add("missing_slide_source", `items.${index}.slide.sourceIds`, `Slide ${pageStart + index + 1} has no authorized source attribution.`);
-      const expectedSource = expected[index]?.sourceBlockId;
-      if (expectedSource) {
-        const expectedGroups = contract.sources.find((source) => source.sourceKind === "block" && source.sourceId === expectedSource)?.contextGroupIds ?? [];
-        const matchesExpectedBlock = resolution.blockIds.includes(expectedSource);
-        const matchesExpectedGroup = resolution.contextGroupIds.some((groupId) => expectedGroups.includes(groupId));
-        if (!matchesExpectedBlock && !matchesExpectedGroup) add("incorrect_slide_source", `items.${index}.slide.sourceIds`, `Slide ${pageStart + index + 1} is not attributed to its authored outline source.`);
+      if (authored?.sourceBlockId) {
+        if (!matchesAuthoredSource(references)) add("incorrect_slide_source", `items.${index}.slide.sourceIds`, `Slide ${pageStart + index + 1} is not attributed to its permitted evidence passages.`);
+        else if (authored.sourceMode === "outline" && references.some((reference) => !matchesAuthoredSource([reference]))) add("incorrect_slide_source", `items.${index}.slide.sourceIds`, `Slide ${pageStart + index + 1} includes a source outside its assigned supporting evidence.`);
       }
     } else if (requireGrounding) add("missing_slide_source", `items.${index}.slide.sourceIds`, `Slide ${pageStart + index + 1} has no authorized source attribution.`);
 
     const slide = asRecord(item.slide);
-    const citations = Array.isArray(slide.citations) ? slide.citations.map(asRecord) : [];
-    const expectedSource = expected[index]?.sourceBlockId;
-    const expectedGroups = expectedSource ? contract.sources.find((source) => source.sourceKind === "block" && source.sourceId === expectedSource)?.contextGroupIds ?? [] : [];
-    const matchesAuthoredSource = (references:readonly unknown[]) => {
-      if(!expectedSource)return true;
-      const resolution=resolvePresentationSourceReferences(references,contract,{allowDurableIds:true});
-      return resolution.blockIds.includes(expectedSource)||resolution.contextGroupIds.some((groupId)=>expectedGroups.includes(groupId));
-    };
-    for (const [citationIndex, citation] of citations.entries()) {
-      const sourceReference = clean(citation.sourceId ?? citation.source_id);
-      if (sourceReference && !matchesAuthoredSource([sourceReference])) add("incorrect_citation_source", `items.${index}.slide.citations.${citationIndex}.sourceId`, `A citation on slide ${pageStart + index + 1} is not attributed to that slide's authored source.`);
-      const anchoredSlide=clean(citation.anchor).match(/\b(?:authored\s+)?slide\s+(\d+)\b/iu)?.[1];
-      if(anchoredSlide&&expected[index]?.number&&Number(anchoredSlide)!==expected[index]!.number)add("incorrect_citation_anchor",`items.${index}.slide.citations.${citationIndex}.anchor`,`A citation on slide ${pageStart+index+1} identifies a different authored slide.`);
-      const excerpt = clean(citation.excerpt), authoredContent = clean(expected[index]?.content);
-      if (excerpt && authoredContent) {
-        const excerptKey = citationEvidenceKey(excerpt), authoredKey = citationEvidenceKey(authoredContent);
-        if (excerptKey && !` ${authoredKey} `.includes(` ${excerptKey} `)) add("ungrounded_citation_excerpt", `items.${index}.slide.citations.${citationIndex}.excerpt`, `A citation on slide ${pageStart + index + 1} does not quote its authored source.`);
+    const checks = citationChecks.filter((check) => check.slideIndex === index);
+    for (const check of checks) {
+      const path = `items.${index}.slide.citations.${check.citationIndex}`;
+      if (check.sourceStatus !== "authorized") add("incorrect_citation_source", `${path}.sourceId`, `A citation on slide ${pageStart + index + 1} does not identify a permitted evidence source. Check its source assignment independently of its excerpt.`);
+      if (check.anchorStatus === "incorrect") add("incorrect_citation_anchor", `${path}.anchor`, `A citation on slide ${pageStart + index + 1} identifies a different or unassigned evidence passage.`);
+      if (check.excerptStatus === "ungrounded") add("ungrounded_citation_excerpt", `${path}.excerpt`, `A citation on slide ${pageStart + index + 1} is not a contiguous quotation from its resolved cited passage. Check the private citation evidence; this alone does not establish fabrication.`);
+      if (check.excerptStatus === "empty") add("missing_citation_excerpt", `${path}.excerpt`, `A citation on slide ${pageStart + index + 1} needs a nonempty quotation from its cited evidence passage.`);
+    }
+    if (authored?.sourceMode === "outline") {
+      if (contract.fidelity === "faithful" && sourceKey(clean(item.title)) !== sourceKey(authored.title)) add("incorrect_outline_title", `items.${index}.title`, `Slide ${authored.number} must retain its parsed title without adding authoring directions.`);
+      if (!checks.some((check) => check.sourceStatus === "authorized" && check.excerptStatus === "grounded" && check.anchorStatus === "valid")) add("missing_outline_evidence", `items.${index}.slide.citations`, `Slide ${authored.number} needs a grounded citation to its assigned supporting research; an outline instruction is not evidence.`);
+      const deliveredTokens = new Set(coverageTokens(visible[index] ?? ""));
+      for (const [requirementIndex, requirement] of (authored.coverageRequirements ?? []).entries()) {
+        const tokens = coverageTokens(normalizeCardinals(requirement)).filter((token) => !["behavior", "behaviour", "readable"].includes(token));
+        if (tokens.length && tokens.filter((token) => deliveredTokens.has(token)).length < Math.max(1, Math.ceil(tokens.length * .6))) add("missing_outline_coverage", `items.${index}.body`, `Slide ${authored.number} does not visibly cover requirement ${requirementIndex + 1}. Citation excerpts and speaker notes do not satisfy output coverage.`);
+        const qualifiers = coverageTokens(requirement).filter((token) => ["required", "optional", "proposed", "unsupported", "unmeasured"].includes(token));
+        if (qualifiers.some((qualifier) => !deliveredTokens.has(qualifier))) add("missing_outline_qualifier", `items.${index}.body`, `Slide ${authored.number} omits a required status or qualification from requirement ${requirementIndex + 1}.`);
+        if (/\b(?:no|not|never|without)\b/iu.test(requirement)) {
+          const negativeCoverage = (visible[index] ?? "").split(/(?<=[.!?])\s+|[;\n]+/u).some((statement) => /\b(?:no|not|never|without|zero|cannot|can't|doesn't|don't)\b/iu.test(statement)
+            && coverageTokens(statement).filter((token) => tokens.includes(token)).length >= Math.min(2, tokens.length));
+          if (!negativeCoverage) add("incorrect_outline_polarity", `items.${index}.body`, `Slide ${authored.number} does not preserve the negative condition in requirement ${requirementIndex + 1}.`);
+        }
+        for (const number of numericalClaims(requirement)) if (!numericalClaims(visible[index] ?? "").includes(number)) add("missing_outline_number", `items.${index}.body`, `Slide ${authored.number} omits a numerical claim required by its output instructions.`);
+      }
+      const allowedNumbers = new Set(numericalClaims([authored.content, ...permitted.map((passage) => passage.content)].join("\n")));
+      for (const number of numericalClaims(visible[index] ?? "")) if (!allowedNumbers.has(number)) add("unsupported_outline_number", `items.${index}.body`, `Slide ${authored.number} contains a numerical claim absent from its assigned evidence and output requirements.`);
+      const measurements = [authored.content, ...permitted.map((passage) => passage.content)].flatMap(numericalStatements);
+      for (const statement of visibleNumericalStatements(item)) {
+        const matched = measurements.filter((measurement) => measurement.key === statement.key);
+        if (matched.length && statement.context.length && matched.every((measurement) => measurement.context.length && !measurement.context.some((token) => token.length >= 4 && statement.context.includes(token)))) add("incorrect_outline_numeric_context", `items.${index}.body`, `Slide ${authored.number} assigns a source number to a different claim or measurement. Preserve its label and unit as well as its value.`);
       }
     }
 
     const visual = asRecord(slide.visual);
     const quote=asRecord(slide.quote??visual.quote),quoteSource=clean(quote.sourceId??quote.source_id);
     if(quoteSource&&!matchesAuthoredSource([quoteSource]))add("incorrect_quote_source",`items.${index}.slide.quote.sourceId`,`A stakeholder quotation on slide ${pageStart+index+1} is not attributed to its authored source.`);
+    const quoteText = clean(quote.text);
+    if (quoteText && quoteSource) {
+      const resolved = citedPresentationPassages(quoteSource, contract, true);
+      const assigned = resolved.passages.filter((passage) => permitted.some((allowed) => allowed.id === passage.id));
+      const key = citationEvidenceKey(quoteText);
+      // Existing manuscripts can give two protected chapter quotations their
+      // own visual cards. Keep that behavior only for the exact original quote
+      // within the same authored block, with its truthful source-slide anchor.
+      const quoteAnchor = clean(quote.citation).match(/\b(?:authored\s+)?slide\s+(\d+)\b/iu)?.[1];
+      if (authored && authored.sourceMode !== "outline" && quoteAnchor) {
+        const known = contract.protectedQuotes.find((candidate) => candidate.text === quoteText && candidate.sourceBlockId === authored.sourceBlockId && candidate.slideNumber === Number(quoteAnchor));
+        if (known) for (const passage of resolved.passages.filter((candidate) => candidate.sourceBlockId === known.sourceBlockId && candidate.slideNumber === known.slideNumber)) {
+          if (!assigned.some((candidate) => candidate.id === passage.id)) assigned.push(passage);
+        }
+      }
+      if (!key || !assigned.some((passage) => ` ${citationEvidenceKey(passage.content)} `.includes(` ${key} `))) add("ungrounded_quote_text", `items.${index}.slide.quote.text`, `A quotation on slide ${pageStart + index + 1} is not a contiguous quotation from its resolved permitted source.`);
+      const attributed = contract.protectedQuotes.some((known) => citationEvidenceKey(known.text) === key && assigned.some((passage) => passage.sourceBlockId === known.sourceBlockId));
+      if (!attributed) add("unverified_quote_attribution", `items.${index}.slide.quote.role`, `A quotation on slide ${pageStart + index + 1} has no matching authored speaker and role attribution. Do not turn unattributed research into a stakeholder quotation.`);
+    }
     const visualData=Array.isArray(visual.data)?visual.data.map(asRecord):[];
     for(const [datumIndex,datum] of visualData.entries()){
       const references=[...(Array.isArray(datum.sourceIds)?datum.sourceIds:[]),...(Array.isArray(datum.source_ids)?datum.source_ids:[])];
@@ -1012,6 +1364,12 @@ export function validatePresentationSourceCoverage(values: readonly unknown[], c
   }
 
   if (!complete) return issues;
+
+  if (contract.numberedOutline.some((slide) => slide.sourceMode === "outline")) for (const passage of contract.passages ?? []) {
+    if (!passage.required || passage.slideNumber !== null) continue;
+    const tokens = coverageTokens(passage.content), delivered = new Set(coverageTokens(visibleDeck));
+    if (tokens.length && tokens.filter((token) => delivered.has(token)).length < Math.ceil(tokens.length * .6)) add("missing_required_presentation_evidence", "items", "A mandatory supporting research passage is not covered in audience-facing content. Assignment and a citation alone do not satisfy required evidence coverage.");
+  }
 
   for (const fact of contract.protectedFacts) if (!containsNumber(visibleDeck, fact.value)) {
     const index = relatedSlideIndex(contract.numberedOutline, fact.slideNumber, fact.sourceBlockId, pageStart, items.length);

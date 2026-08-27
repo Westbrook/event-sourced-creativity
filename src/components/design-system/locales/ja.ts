@@ -3,6 +3,15 @@ import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
 
 const messages: Record<string, string> = {
   ...FORMA_RESPONSIVE_MESSAGES.ja,
+  "presentation.planning.outlineEvidence": "短いアウトラインはスライドのタイトルと取り上げる内容を指定します。裏付けとなる調査資料は別に割り当てられ、明示的なソースグループが優先されます。ソースの範囲が未確定の場合は、費用が発生する前に生成を停止します。シーンや他の成果物の仕様はスライドから除外されます。",
+  "scene.provider.disclosure": "有料シーン生成のプロバイダー、ソース送信、費用",
+  "scene.provider.identity": "有料プロバイダー · OpenAI Responses · {model}",
+  "scene.provider.modelUnavailable": "設定済みのテキストモデル",
+  "scene.provider.callsOne": "プロバイダーへの初回リクエストは1回です。検証と連続性に関する回数制限付きの修正を含め、有料リクエストは合計で最大{maximum}回です。",
+  "scene.provider.callsMany": "プロバイダーへの初回リクエストは{planned}回です。検証と連続性に関する回数制限付きの修正を含め、有料リクエストは合計で最大{maximum}回です。",
+  "scene.provider.ceiling": "初期予約額およびアプリケーションが適用する支出上限：{amount}。Formaは、保守的に見積もった最大費用がこの上限を超えるリクエストや修正を送信しません。この上限はプロバイダーが適用するものではありません。",
+  "scene.provider.source": "送信すると、このドキュメントの有効かつ使用を許可されたテキスト、シーンの指示、選択された制作ソースのテキストがOpenAIに送られます。永続的なソース識別子はForma内で非公開に保たれます。",
+  "scene.provider.output": "この操作では文章としてのシーンを作成します。画像、動画、音声は生成しません。検証により成果物が受け入れられなかった場合も、有料の試行と料金は記録に残ります。",
   "action.default": "アクション",
   "action.working": "処理中",
   "action.busy": "{label}：{status}",

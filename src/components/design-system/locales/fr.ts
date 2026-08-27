@@ -3,6 +3,15 @@ import { FORMA_RESPONSIVE_MESSAGES } from "./responsive-messages.ts";
 
 const messages: Record<string, string> = {
   ...FORMA_RESPONSIVE_MESSAGES.fr,
+  "presentation.planning.outlineEvidence": "Les plans courts définissent les titres des diapositives et les sujets à couvrir. Les recherches justificatives sont attribuées séparément ; les groupes de sources explicites sont prioritaires. Un périmètre de sources non résolu bloque la génération avant toute dépense. Les spécifications de scène et des autres livrables sont exclues des diapositives.",
+  "scene.provider.disclosure": "Fournisseur payant de scène, transmission des sources et coût",
+  "scene.provider.identity": "Fournisseur payant · OpenAI Responses · {model}",
+  "scene.provider.modelUnavailable": "Modèle de texte configuré",
+  "scene.provider.callsOne": "1 requête fournisseur prévue ; jusqu’à {maximum} requêtes payantes au total, corrections limitées de validation et de continuité comprises.",
+  "scene.provider.callsMany": "{planned} requêtes fournisseur prévues ; jusqu’à {maximum} requêtes payantes au total, corrections limitées de validation et de continuité comprises.",
+  "scene.provider.ceiling": "Réservation initiale et plafond de dépenses appliqué par l’application : {amount}. Forma bloque toute requête ou correction dont le coût maximal prudent dépasserait ce plafond. Ce plafond n’est pas appliqué par le fournisseur.",
+  "scene.provider.source": "L’envoi transmet à OpenAI le texte actif et autorisé de ce document, les consignes de scène et le texte des sources de production sélectionnées. Les identifiants stables des sources restent privés dans Forma.",
+  "scene.provider.output": "Cette action crée une scène écrite. Elle ne génère ni images, ni vidéo, ni audio. Les tentatives payantes et leurs frais restent enregistrés même si la validation empêche l’acceptation d’un résultat.",
   "action.default": "Action",
   "action.working": "En cours",
   "action.busy": "{label} : {status}",

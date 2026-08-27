@@ -42,6 +42,7 @@ export type PresentationCandidateSummary = {
   providerCalls: number;
   settledCostMicrousd: number;
   complete: boolean;
+  reviewOnlyReason?: "historical-validation-rejection";
   missingContextGroupLabels: string[];
   issues: PresentationCandidateValidationIssue[];
 };
@@ -54,11 +55,24 @@ export type PresentationCandidateSlide = {
   slide: SlideVisualData | null;
 };
 
+export type PresentationCandidateCitationCheck = {
+  slideIndex: number;
+  citationIndex: number;
+  sourceLabel: string;
+  excerpt: string;
+  excerptTruncated: boolean;
+  sourceStatus: "authorized" | "unauthorized" | "unassigned" | "missing";
+  excerptStatus: "grounded" | "ungrounded" | "empty" | "unresolved";
+  anchorStatus: "valid" | "incorrect";
+  passages: Array<{ content: string; truncated: boolean }>;
+};
+
 export type PresentationCandidateDetail = PresentationCandidateSummary & {
   title: string;
   summary: string;
   presentation: SlidePresentation | null;
   slides: PresentationCandidateSlide[];
+  citationChecks?: PresentationCandidateCitationCheck[];
   normalizationChanges: Array<{ path: string; originalValue: string; normalizedValue: string; reason: string }>;
 };
 
@@ -72,6 +86,19 @@ export type PreservedPresentationCandidateJobs = {
   documentId: string;
   jobs: PresentationCandidateList[];
 };
+
+/** A compiler upgrade does not authorize accepting a previously rejected paid response. */
+export function historicalPresentationValidationRejection(checkpoint: Record<string, unknown>, adapterVersion: string): boolean {
+  const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const receipt = record(checkpoint.generationReceipt);
+  if (receipt.presentation_adapter_version === adapterVersion) return false;
+  const detail = record(checkpoint.errorDetail);
+  const rejectionCodes = new Set(["source_fidelity_validation_failed", "provider_returned_incomplete_document_artifact"]);
+  return receipt.failure_stage === "source_fidelity_validation"
+    || rejectionCodes.has(String(receipt.failure_code ?? ""))
+    || rejectionCodes.has(String(detail.code ?? ""))
+    || Array.isArray(detail.validationIssues) && detail.validationIssues.length > 0;
+}
 
 const authorizationIssue = /(?:unknown|unauthorized|incorrect_(?:slide|visual|citation|quote)_source|incorrect_context_group|source_grounding|source_reference)/u;
 const integrityIssue = /(?:source|citation|protected|precision|scorecard|numeric|quote|roadmap|outline|context_group|exact_value|display_value)/u;
@@ -90,7 +117,30 @@ const issueMessage = (code: string): string => ({
   unknown_source_reference: "The response referenced source evidence that was not authorized for this request.",
   incorrect_slide_source: "A slide includes evidence assigned to a different authorized presentation chapter.",
   incorrect_visual_source: "A slide visual includes evidence assigned to a different authorized presentation chapter.",
+  incorrect_citation_source: "A citation does not identify evidence permitted for this slide. Review the source assignment separately from its quoted excerpt.",
+  incorrect_citation_anchor: "A citation's slide anchor does not match its resolved evidence passage. Review the cited passage and anchor separately.",
+  ungrounded_citation_excerpt: "A citation excerpt does not match a contiguous quotation in its resolved source passage. Review the cited passage and exact wording; this finding alone does not establish invented wording.",
+  missing_citation_excerpt: "A citation needs a nonempty quotation from its cited evidence passage.",
+  incorrect_quote_source: "A stakeholder quotation does not identify evidence permitted for this slide.",
+  ungrounded_quote_text: "A displayed quotation does not match a contiguous quotation in its resolved source passage.",
+  unverified_quote_attribution: "A quotation's speaker or role is not verified by its cited source passage. Preserve the source attribution without inventing an identity.",
   missing_source_grounding: "A slide does not identify its required authorized source evidence.",
+  missing_slide_source: "A slide does not identify its required authorized source evidence.",
+  ambiguous_presentation_output: "Select one presentation output and give sibling output specifications separate headings.",
+  ambiguous_presentation_context_group: "A presentation context group also includes or describes a sibling output. Separate the output assignments before generating.",
+  ambiguous_presentation_source_mode: "The source mixes an output outline with authored slide prose. Identify its intended source mode before generating.",
+  ambiguous_presentation_slide_number: "The selected presentation repeats a slide number. Give every slide a unique numbered position.",
+  unresolved_outline_evidence: "An outline slide has coverage instructions but no resolved supporting research. Assign its evidence explicitly or make the coverage terms more specific.",
+  unassigned_required_presentation_source: "Mandatory research has no assigned slide coverage. Assign it explicitly; required evidence cannot be dropped.",
+  incorrect_outline_title: "A slide must retain its parsed outline title without adding authoring directions.",
+  missing_outline_evidence: "An outline slide needs a grounded citation to its assigned supporting research. Output instructions are not supporting evidence.",
+  missing_outline_coverage: "A slide does not visibly cover a required part of the output outline. Citation excerpts and speaker notes do not satisfy visible coverage.",
+  missing_outline_number: "A slide omits a numerical claim required by its output instructions.",
+  unsupported_outline_number: "A slide contains a numerical value or unit not supported by its assigned evidence and output requirements.",
+  incorrect_outline_numeric_context: "A slide assigns a source number to a different claim or measurement. Preserve the value, label, and unit together.",
+  missing_required_presentation_evidence: "Mandatory supporting research is not covered in audience-facing slide content. A source assignment or citation alone does not satisfy required evidence coverage.",
+  missing_outline_qualifier: "A slide omits a required qualification from its output instructions, such as whether a claim is proposed or unverified.",
+  incorrect_outline_polarity: "A slide reverses a required limitation or exclusion. Preserve the meaning of the output instruction, including what must not be claimed.",
   missing_footer_label: "The presentation is missing its document-derived footer label.",
   missing_title: "A slide is missing its required title.",
   missing_slide: "A slide is missing its structured visual content.",
@@ -108,7 +158,7 @@ export function safePresentationCandidateIssues(
 ): PresentationCandidateValidationIssue[] {
   return issues.map((issue) => {
     const code = /^[a-z][a-z0-9_]{0,79}$/u.test(issue.code) ? issue.code : "presentation_validation_failed";
-    const path = /^(?:\$|(?:items(?:\.\d+)?|presentation|content_markdown)(?:\.[a-z_]+|\.\d+)*)$/u.test(issue.path)
+    const path = /^(?:\$|(?:items(?:\.\d+)?|presentation(?:_source)?|content_markdown)(?:\.[a-z_]+|\.(?:sourceId|sourceIds|sourceOrder|evidencePassageIds|exactValue|displayValue)|\.\d+)*)$/u.test(issue.path)
       ? issue.path
       : "$";
     const position = /^items\.(\d+)(?:\.|$)/u.exec(path);
@@ -147,6 +197,31 @@ export function sanitizePresentationCandidateText(value: unknown, privateReferen
     .replace(/\b(?:blk|grp|clm|context_group|decision)_\d+\b/giu, "[private source]")
     .replace(/\b[a-f\d]{8}-[a-f\d]{4}-[1-8][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}\b/giu, "[private source]");
   return /^(?:https?:|data:|javascript:|blob:)/iu.test(scrubbed.trim()) ? "" : scrubbed;
+}
+
+/** Private review only: omit passage identifiers and bound display text without changing validation. */
+export function sanitizePresentationCitationChecks(
+  checks: ReadonlyArray<Omit<PresentationCandidateCitationCheck, "excerptTruncated" | "passages"> & { passages: ReadonlyArray<{ content: string }> }>,
+  privateReferences: readonly string[] = [],
+): PresentationCandidateCitationCheck[] {
+  const display = (value: string) => {
+    const text = sanitizePresentationCandidateText(value, privateReferences);
+    return { content: text.slice(0, 12_000), truncated: text.length > 12_000 };
+  };
+  return checks.map((check) => {
+    const excerpt = display(check.excerpt);
+    return {
+      slideIndex: check.slideIndex,
+      citationIndex: check.citationIndex,
+      sourceLabel: sanitizePresentationCandidateText(check.sourceLabel, privateReferences),
+      excerpt: excerpt.content,
+      excerptTruncated: excerpt.truncated,
+      sourceStatus: check.sourceStatus,
+      excerptStatus: check.excerptStatus,
+      anchorStatus: check.anchorStatus,
+      passages: check.passages.map((passage) => display(passage.content)),
+    };
+  });
 }
 
 /** Convert an actor-private candidate to inert visible copy without durable references, prompts, or URLs. */
